@@ -1,0 +1,352 @@
+//! Prompt files: shipped, user (`~/.ryter/prompts`), project (`.ryter/prompts`).
+
+use std::fs;
+use std::path::Path;
+
+use crate::error::Result;
+use crate::phase::Phase;
+use crate::role::Role;
+use crate::session::Session;
+
+const ORCHESTRATOR: &str = include_str!("../../../prompts/orchestrator.md");
+const PLANNER: &str = include_str!("../../../prompts/planner.md");
+const ARCHITECT: &str = include_str!("../../../prompts/architect.md");
+const BUILDER: &str = include_str!("../../../prompts/builder.md");
+const AUDITOR: &str = include_str!("../../../prompts/auditor.md");
+
+/// Which prompt file to load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptKind {
+    /// User-facing orchestrator.
+    Orchestrator,
+    /// Plan specialist.
+    Planner,
+    /// Architect specialist.
+    Architect,
+    /// Build specialist.
+    Builder,
+    /// Audit specialist / merge gate.
+    Auditor,
+}
+
+impl PromptKind {
+    /// Filename stem.
+    pub fn file_stem(self) -> &'static str {
+        match self {
+            Self::Orchestrator => "orchestrator",
+            Self::Planner => "planner",
+            Self::Architect => "architect",
+            Self::Builder => "builder",
+            Self::Auditor => "auditor",
+        }
+    }
+
+    /// Shipped default body.
+    pub fn shipped(self) -> &'static str {
+        match self {
+            Self::Orchestrator => ORCHESTRATOR,
+            Self::Planner => PLANNER,
+            Self::Architect => ARCHITECT,
+            Self::Builder => BUILDER,
+            Self::Auditor => AUDITOR,
+        }
+    }
+
+    /// Specialist kind for a role (orchestrator is not a specialist prompt).
+    pub fn for_role(role: Role) -> Option<Self> {
+        match role {
+            Role::Orchestrator => Some(Self::Orchestrator),
+            Role::Planner => Some(Self::Planner),
+            Role::Architect => Some(Self::Architect),
+            Role::Builder => Some(Self::Builder),
+            Role::Auditor => Some(Self::Auditor),
+        }
+    }
+}
+
+/// Load a prompt with overrides: project (if trusted) > user home > shipped.
+pub fn load(kind: PromptKind, home: &Path, project_root: Option<&Path>, trusted: bool) -> String {
+    let name = format!("{}.md", kind.file_stem());
+    if trusted {
+        if let Some(root) = project_root {
+            let p = root.join(".ryter").join("prompts").join(&name);
+            if let Ok(s) = fs::read_to_string(&p) {
+                return s;
+            }
+        }
+    }
+    let user = home.join("prompts").join(&name);
+    if let Ok(s) = fs::read_to_string(&user) {
+        return s;
+    }
+    kind.shipped().to_string()
+}
+
+/// `RYTER.md`, or `AGENTS.md` if that file is missing. Loaded from the project
+/// root without a trust gate (markdown instructions, not executable hooks).
+pub fn load_project_instructions(project_root: Option<&Path>) -> Option<String> {
+    let root = project_root?;
+    for name in ["RYTER.md", "AGENTS.md"] {
+        let p = root.join(name);
+        if let Ok(s) = fs::read_to_string(&p) {
+            if !s.trim().is_empty() {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
+/// Orchestrator system prompt for this session: body + phase + pass notes.
+pub fn orchestrator_system(
+    home: &Path,
+    project_root: Option<&Path>,
+    trusted: bool,
+    session: &Session,
+) -> Result<String> {
+    let mut s = load(PromptKind::Orchestrator, home, project_root, trusted);
+    s.push_str("\n\n## Current phase\n");
+    s.push_str(session.meta.phase.as_str());
+    s.push_str("\nAllowed specialists: ");
+    let roles: Vec<_> = session
+        .meta
+        .phase
+        .allowed_roles()
+        .iter()
+        .map(|r| r.as_str())
+        .collect();
+    s.push_str(&roles.join(", "));
+    s.push('\n');
+
+    if let Some(root) = project_root {
+        let _ = crate::memory::ensure_project_memory(root);
+    }
+    if let Some(inst) = load_project_instructions(project_root) {
+        s.push_str("\n## Project instructions\n");
+        s.push_str(&inst);
+        if !inst.ends_with('\n') {
+            s.push('\n');
+        }
+    }
+    if let Some(mem) = crate::memory::load_project_memory(project_root) {
+        s.push_str("\n## Project memory (roadmap, decisions, notes)\n");
+        s.push_str("When the user asks why something is the way it is, read this and the files named in it. Update ROADMAP.md and DECISIONS.md as work changes. Do not paste specialist transcripts here.\n\n");
+        s.push_str(&mem);
+    }
+
+    let mut any = false;
+    for phase in [Phase::Plan, Phase::Architect, Phase::Build, Phase::Audit] {
+        let note = session.read_note(phase)?;
+        if note.is_empty() {
+            continue;
+        }
+        if !any {
+            s.push_str("\n## Pass notes\n");
+            any = true;
+        }
+        s.push_str("### ");
+        s.push_str(phase.as_str());
+        s.push('\n');
+        s.push_str(&note);
+        if !note.ends_with('\n') {
+            s.push('\n');
+        }
+    }
+    Ok(s)
+}
+
+/// Fresh-window messages for a specialist (no orchestrator transcript).
+pub fn specialist_messages(
+    home: &Path,
+    project_root: Option<&Path>,
+    trusted: bool,
+    role: Role,
+    pass_note: &str,
+    task: &str,
+) -> Vec<crate::llm::Message> {
+    let kind = PromptKind::for_role(role).unwrap_or(PromptKind::Builder);
+    let system = load(kind, home, project_root, trusted);
+    let mut user = String::new();
+    if let Some(root) = project_root {
+        let _ = crate::memory::ensure_project_memory(root);
+    }
+    if let Some(inst) = load_project_instructions(project_root) {
+        user.push_str("Project instructions:\n");
+        user.push_str(&inst);
+        if !inst.ends_with('\n') {
+            user.push('\n');
+        }
+        user.push('\n');
+    }
+    if let Some(mem) = crate::memory::load_project_memory(project_root) {
+        user.push_str(
+            "Project memory (update ROADMAP.md and DECISIONS.md; do not dump your transcript):\n",
+        );
+        user.push_str(&mem);
+        user.push('\n');
+    }
+    if !pass_note.is_empty() {
+        user.push_str("Pass note:\n");
+        user.push_str(pass_note);
+        user.push_str("\n\n");
+    }
+    user.push_str("Task:\n");
+    user.push_str(task);
+    vec![
+        crate::llm::Message {
+            role: "system".into(),
+            content: system,
+            tool_call_id: None,
+            tool_calls: None,
+        },
+        crate::llm::Message {
+            role: "user".into(),
+            content: user,
+            tool_call_id: None,
+            tool_calls: None,
+        },
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::phase::Phase;
+    use crate::session::Session;
+    use tempfile::TempDir;
+
+    #[test]
+    fn shipped_orchestrator_forbids_writing_source() {
+        let body = PromptKind::Orchestrator.shipped();
+        assert!(
+            body.to_ascii_lowercase()
+                .contains("never write product source")
+        );
+    }
+
+    #[test]
+    fn user_override_wins() {
+        let home = TempDir::new().unwrap();
+        fs::create_dir_all(home.path().join("prompts")).unwrap();
+        fs::write(home.path().join("prompts/orchestrator.md"), "OVERRIDE ORCH").unwrap();
+        let got = load(PromptKind::Orchestrator, home.path(), None, false);
+        assert_eq!(got, "OVERRIDE ORCH");
+    }
+
+    #[test]
+    fn project_override_only_when_trusted() {
+        let home = TempDir::new().unwrap();
+        let proj = TempDir::new().unwrap();
+        fs::create_dir_all(proj.path().join(".ryter/prompts")).unwrap();
+        fs::write(
+            proj.path().join(".ryter/prompts/builder.md"),
+            "PROJECT BUILDER",
+        )
+        .unwrap();
+        let untrusted = load(PromptKind::Builder, home.path(), Some(proj.path()), false);
+        assert_eq!(untrusted, PromptKind::Builder.shipped());
+        let trusted = load(PromptKind::Builder, home.path(), Some(proj.path()), true);
+        assert_eq!(trusted, "PROJECT BUILDER");
+    }
+
+    #[test]
+    fn orchestrator_system_includes_phase_and_notes() {
+        let home = TempDir::new().unwrap();
+        let cwd = TempDir::new().unwrap();
+        let mut s = Session::create(
+            home.path(),
+            cwd.path(),
+            Phase::Plan,
+            "spacexai".into(),
+            "grok-4.6".into(),
+        )
+        .unwrap();
+        s.handoff(Phase::Architect, "we need auth", None).unwrap();
+        let sys = orchestrator_system(home.path(), None, false, &s).unwrap();
+        assert!(sys.contains("## Current phase"));
+        assert!(sys.contains("architect"));
+        assert!(sys.contains("we need auth"));
+        assert_eq!(s.transcript.len(), 0);
+    }
+
+    #[test]
+    fn orchestrator_system_includes_roadmap() {
+        let home = TempDir::new().unwrap();
+        let cwd = TempDir::new().unwrap();
+        fs::write(
+            cwd.path().join("ROADMAP.md"),
+            "# Roadmap\n## Now\n- custom flag\n",
+        )
+        .unwrap();
+        let s = Session::create(
+            home.path(),
+            cwd.path(),
+            Phase::Build,
+            "spacexai".into(),
+            "grok-4.6".into(),
+        )
+        .unwrap();
+        let sys = orchestrator_system(home.path(), Some(cwd.path()), false, &s).unwrap();
+        assert!(sys.contains("Project memory"));
+        assert!(sys.contains("custom flag"));
+        assert!(cwd.path().join("DECISIONS.md").is_file());
+    }
+
+    #[test]
+    fn project_instructions_from_ryter_md() {
+        let home = TempDir::new().unwrap();
+        let cwd = TempDir::new().unwrap();
+        fs::write(cwd.path().join("AGENTS.md"), "agents file").unwrap();
+        fs::write(cwd.path().join("RYTER.md"), "never invent APIs").unwrap();
+        let s = Session::create(
+            home.path(),
+            cwd.path(),
+            Phase::Build,
+            "spacexai".into(),
+            "grok-4.6".into(),
+        )
+        .unwrap();
+        let sys = orchestrator_system(home.path(), Some(cwd.path()), false, &s).unwrap();
+        assert!(sys.contains("## Project instructions"));
+        assert!(sys.contains("never invent APIs"));
+        assert!(!sys.contains("agents file"));
+        let msgs = specialist_messages(
+            home.path(),
+            Some(cwd.path()),
+            false,
+            Role::Builder,
+            "",
+            "add a flag",
+        );
+        assert!(msgs[1].content.contains("never invent APIs"));
+    }
+
+    #[test]
+    fn agents_md_when_ryter_md_absent() {
+        let home = TempDir::new().unwrap();
+        let proj = TempDir::new().unwrap();
+        fs::write(proj.path().join("AGENTS.md"), "from agents").unwrap();
+        assert_eq!(
+            load_project_instructions(Some(proj.path())).as_deref(),
+            Some("from agents")
+        );
+        drop(home);
+    }
+
+    #[test]
+    fn specialist_messages_are_a_fresh_window() {
+        let home = TempDir::new().unwrap();
+        let msgs = specialist_messages(
+            home.path(),
+            None,
+            false,
+            Role::Builder,
+            "brief",
+            "add a flag",
+        );
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, "system");
+        assert!(msgs[1].content.contains("add a flag"));
+        assert!(msgs[1].content.contains("brief"));
+    }
+}

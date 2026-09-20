@@ -1,0 +1,16 @@
+{
+  "data": [
+    {
+      "id": "anthropic/claude-sonnet-4.6",
+      "context_length": 200000,
+      "pricing": {
+        "prompt": "0.000003",
+        "completion": "0.000015"
+      }
+    },
+    {
+      "id": "free/no-price",
+      "context_length": 8192
+    }
+  ]
+}
