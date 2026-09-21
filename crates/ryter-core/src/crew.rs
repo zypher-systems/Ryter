@@ -177,9 +177,11 @@ async fn run_build_task_inner(
     let mut findings = String::new();
     let mut pass = !auditor_enabled;
     if auditor_enabled {
+        // The auditor does not get a blanket approval. Its allowlist is what
+        // lets it run tests; anything outside that should stop, not sail past
+        // the one gate the product promises (`R-ASK-01`).
         let audit_ctx = ToolContext {
             role: Role::Auditor,
-            always_approve: true,
             ..ctx.clone()
         };
         let audit_msgs = specialist_messages(
@@ -226,6 +228,22 @@ async fn run_build_task_inner(
     }
 
     let onto = git::branch(repo)?;
+    // Never merge into work the user has not committed. `git merge` can refuse
+    // or half-apply on a dirty tree, and either way their changes end up mixed
+    // with a builder's.
+    if git::is_dirty(repo) {
+        return Ok(TaskOutcome {
+            id: task.id.clone(),
+            status: TaskStatus::Blocked,
+            findings,
+            summary: format!(
+                "not merged: `{onto}` has uncommitted changes. Commit or stash them, \
+                 then merge `{branch}` yourself."
+            ),
+        });
+    }
+    // Undo point: the merge is `--no-ff`, so this is what to reset to.
+    let before = git::head(repo).unwrap_or_default();
     if let Err(e) = git::merge_branch(repo, branch) {
         if git::rebase(wt, &onto).is_ok() && git::merge_branch(repo, branch).is_ok() {
             // merged after rebase
@@ -268,11 +286,19 @@ async fn run_build_task_inner(
         }
     }
     git::remove_worktree(repo, wt, branch)?;
+    let undo = if before.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "  undo: git reset --hard {}",
+            &before[..before.len().min(12)]
+        )
+    };
     Ok(TaskOutcome {
         id: task.id.clone(),
         status: TaskStatus::Done,
         findings,
-        summary: format!("merged {}", task.title),
+        summary: format!("merged {} onto {onto}{undo}", task.title),
     })
 }
 
@@ -590,6 +616,71 @@ mod tests {
         assert_eq!(out.status, crate::queue::TaskStatus::Done, "{out:?}");
         let body = std::fs::read_to_string(repo.path().join("extra.txt")).unwrap();
         assert!(body.contains("hello from worker"));
+    }
+
+    #[tokio::test]
+    async fn dirty_checkout_blocks_the_auto_merge() {
+        use crate::git;
+        use crate::llm::{ReplayProvider, StreamDelta};
+        use crate::queue::Task;
+        use tempfile::TempDir;
+
+        let repo = TempDir::new().unwrap();
+        git::init_repo(repo.path()).unwrap();
+        // The user has work in progress that a merge must not land on top of.
+        std::fs::write(repo.path().join("README.md"), "mine, uncommitted\n").unwrap();
+        let home = TempDir::new().unwrap();
+        let write_args = serde_json::json!({"path": "built.txt", "content": "ok\n"}).to_string();
+        let provider = std::sync::Arc::new(ReplayProvider::scripted(vec![
+            vec![
+                StreamDelta::ToolCall {
+                    id: "1".into(),
+                    name: "write".into(),
+                    arguments: write_args,
+                },
+                StreamDelta::Done,
+            ],
+            vec![StreamDelta::Text("done".into()), StreamDelta::Done],
+            vec![StreamDelta::Text("PASS".into()), StreamDelta::Done],
+        ]));
+        let task = Task {
+            id: "t3".into(),
+            title: "add a file".into(),
+            status: crate::queue::TaskStatus::Running,
+            retries: 0,
+            findings: String::new(),
+        };
+        let out = run_build_task(
+            provider.clone(),
+            repo.path(),
+            home.path(),
+            "sess03",
+            &task,
+            "grok-4.6",
+            provider.clone(),
+            "grok-4.6",
+            true,
+            false,
+            true,
+            0,
+            None,
+            false,
+            None,
+            crate::cancel::Cancel::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.status, crate::queue::TaskStatus::Blocked);
+        assert!(
+            out.summary.contains("uncommitted"),
+            "should say why: {out:?}"
+        );
+        // The audit passed, but nothing was merged and the user's file stands.
+        assert!(!repo.path().join("built.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("README.md")).unwrap(),
+            "mine, uncommitted\n"
+        );
     }
 
     #[tokio::test]

@@ -67,9 +67,23 @@ pub fn diff(dir: &Path) -> Result<String> {
     Ok(format!("{unstaged}{staged}"))
 }
 
-/// Merge `branch` into `repo` HEAD.
+/// Merge `branch` into `repo` HEAD as one revertable commit.
+///
+/// `--no-ff` keeps the builder's work as a single merge commit rather than
+/// fast-forwarding it into the user's history, so `git revert -m 1` undoes the
+/// whole task.
 pub fn merge_branch(repo: &Path, branch: &str) -> Result<()> {
-    git(repo, &["merge", "--no-edit", branch]).map(|_| ())
+    git(repo, &["merge", "--no-ff", "--no-edit", branch]).map(|_| ())
+}
+
+/// Current commit, for the undo point recorded before an auto-merge.
+pub fn head(dir: &Path) -> Result<String> {
+    Ok(git(dir, &["rev-parse", "HEAD"])?.trim().to_string())
+}
+
+/// True when the tree has staged or unstaged changes.
+pub fn is_dirty(dir: &Path) -> bool {
+    !porcelain(dir).unwrap_or_default().trim().is_empty()
 }
 
 /// Rebase `worktree` onto `onto` (a ref in that repo).
