@@ -2,12 +2,21 @@ name: release
 
 # Pushing a tag like v0.2.0 builds every binary and opens a *draft* release
 # with them attached; a person reviews and publishes it. Running the workflow
-# by hand (Actions → release → Run workflow) builds the same binaries as
-# downloadable artifacts, without a release: a dry run.
+# by hand (Actions → release → Run workflow), or a pull request that changes
+# packaging, builds the same binaries as downloadable artifacts without a
+# release: a dry run.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+  # A change to how releases are built is built on its pull request, so a
+  # packaging break shows up in review, not on release day. No release.
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - install.sh
+      - Cargo.toml
+      - Cargo.lock
 
 env:
   CARGO_TERM_COLOR: always
