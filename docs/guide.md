@@ -162,13 +162,22 @@ Sources, high wins: TOML `[pricing."<model>"]` → OpenRouter catalog (when inge
 
 Unknown rates show `$?.??` plus token counts. Ryter never invents `$0.00` for an unpriced model.
 
-`[spend] session_budget_usd` stops the loop (exit `3` in headless). `0` means no cap. `[spend] enabled = false` still counts in memory and prints a warning.
+A session budget is optional. With one, the crew stops when spend reaches it, says what finished and what didn't, and waits (exit `3` in headless). Without one, nothing stops on cost and you watch the spend card.
+
+| Command | Effect |
+| --- | --- |
+| `/budget` | where spend stands against the budget |
+| `/budget 5` | cap this session at $5 |
+| `/budget +2` | raise the cap by $2, e.g. after hitting it |
+| `/budget off` | no cap |
+
+`/budget` applies at once and is saved as your default (`~/.ryter/settings.toml`, the same value as *budget usd* in `/settings`). A trusted project's `[spend] session_budget_usd` overrides your default in that project. The default is $5. Each task is still capped at `[spend] task_budget_usd` ($1), which catches one runaway task whether or not there is a session budget. `[spend] enabled = false` still counts in memory and prints a warning.
 
 `/spend` is a panel: session total, a budget gauge, and tables by role and by connection; `e` exports CSV. The info panel’s spend card shows the same total and gauge at all times. `ryter spend` prints the roll-up on the CLI.
 
 ## Slash commands
 
-Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/crew` `/mcp` `/skills` `/hooks` `/sessions` `/agents` `/spend` `/theme` `/tools` `/auditor` `/context` `/doctor` `/help`. Direct commands act immediately: `/new` `/rename <title>` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
+Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/crew` `/mcp` `/skills` `/hooks` `/sessions` `/agents` `/spend` `/theme` `/tools` `/auditor` `/context` `/doctor` `/help`. Direct commands act immediately: `/new` `/rename <title>` `/budget [amount|+amount|off]` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
 
 User-invocable skills and `~/.ryter/commands/*.md` join the palette under **skills**. Built-ins win on a name clash.
 

@@ -2,19 +2,19 @@
 ────────────────────────────────────────────────────────────────────────────────
  · s╭─ settings ───────────────────────────────────────────────────────────╮
    w│ SPEND                                                                ┃
-    │› session budget usd  ‹ 5.00 ›                                default ┃
-    │  warn usd            ‹ 1.00 ›                                default ┃
+    │› budget usd (0 = off)  ‹ 5.00 ›                              default ┃
+    │  warn usd              ‹ 1.00 ›                              default ┃
     │                                                                      ┃
     │ AGENTS                                                               ┃
-    │  subagents max       ‹ 4 ›                                   default ┃
-    │  auditor             [ on ]                                  default ┃
+    │  subagents max         ‹ 4 ›                                 default ┃
+    │  auditor               [ on ]                                default ┃
     │                                                                      │
     │ TOOLS                                                                │
-    │  permission mode     ‹ ask ›                                 default │
-    │  features.web        [ off ]                                 default │
+    │  permission mode       ‹ ask ›                               default │
+    │  features.web          [ off ]                               default │
     │                                                                      │
     │ SANDBOX                                                              │
-    │  profile             ‹ off ›                                 default │
+    │  profile               ‹ off ›                               default │
     ╰─ ↑↓ move · space/←→ change · enter edit · ^s save · esc ─────────────╯
 
 

@@ -838,8 +838,9 @@ impl Agent {
             ));
         }
         s.push_str(
-            "Raise `[spend] session_budget_usd`, then tell the lead to continue \
-             (`ryter resume`, or `ryter -c -p continue` headless).",
+            "Raise the budget (`/budget +2`, or `/budget off`), then tell the \
+             lead to continue. Headless: raise `[spend] session_budget_usd`, \
+             then `ryter -c -p continue`.",
         );
         Ok(s)
     }

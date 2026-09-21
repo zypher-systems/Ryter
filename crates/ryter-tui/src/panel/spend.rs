@@ -152,6 +152,13 @@ impl Panel for Spend {
                 color,
             ));
         }
+        if view.budget_usd <= 0.0 {
+            lines.push(widgets::colored(
+                "budget off · nothing stops on cost · /budget <amount> sets a cap",
+                theme.dim,
+                theme,
+            ));
+        }
         if view.unpriced_calls > 0 {
             lines.push(widgets::colored(
                 &format!(

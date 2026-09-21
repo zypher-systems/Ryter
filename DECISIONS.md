@@ -2,6 +2,14 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-21 — The session budget is optional and one command away
+- **By:** lead
+- **Decision:** `/budget` shows spend against the cap. `/budget <n>` sets the cap, `/budget +n` raises it, and `/budget off` removes it. Changes apply to the running session and are saved as your default. The spend card and `/spend` say "budget off" rather than dropping the gauge. The default stays $5. `settings.toml` is now applied before a trusted project's config, so a project's `[spend]` cap overrides your saved default.
+- **Chosen vs rejected:** Rejected defaulting to no budget. A crew can spend on its own, and one runaway task is caught only by the per-task cap. With the budget visible and one command from off, a $5 default costs anyone who doesn't want a cap one command. Rejected keeping the budget only in `/settings` as a number where 0 means off: the budget was there, and nobody would find it.
+- **Why:** Some users want a hard stop, and others want to watch spend themselves. Both should be a choice made in the interface, not in a config file.
+- **Where:** TUI `palette/registry.rs` `run_budget`, `run/actions.rs` `set_budget`, `info/cards.rs`, `panel/spend.rs`; `config.rs` `load_at`
+- **Residual risk:** Saving any setting writes the current budget into `settings.toml`, including a project's cap if one was loaded. The budget should get its own saved key.
+
 ### 2026-09-21 — A budget stop says what it left, and the next message carries it
 - **By:** lead
 - **Decision:** When the session budget stops the crew, the harness writes the stop note itself: what is finished on the patch branch, what isn't, that nothing has landed, and how to continue. The crew report and note are kept in the session (`carry.md`) and put in front of the user's next message to the lead. `ryter -c -p` continues the latest session headless.

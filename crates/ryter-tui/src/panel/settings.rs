@@ -73,7 +73,7 @@ impl Settings {
             Field::new("g_spend", "spend", Kind::Header),
             num(
                 "budget",
-                "session budget usd",
+                "budget usd (0 = off)",
                 view.budget_usd,
                 0.0,
                 10_000.0,

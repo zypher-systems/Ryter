@@ -241,6 +241,10 @@ pub fn spend(view: &View, w: usize, theme: Theme) -> Card {
             }
         }
     }
+    if view.budget_usd <= 0.0 {
+        // Say it: no gauge could mean "no cap" or "not loaded yet".
+        rows.push(kv("budget", "off", w, theme, theme.side_muted()));
+    }
     let mut by_role: Vec<(&String, &f64)> = view.spend_by_role.iter().collect();
     by_role.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
     let shown = by_role.iter().take(4);
@@ -445,4 +449,41 @@ pub fn mcp(view: &View, w: usize, theme: Theme) -> Option<Card> {
         detail_from: rows.len(),
         rows,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(card: &Card) -> String {
+        card.rows
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect()
+    }
+
+    /// No gauge could mean "no cap" or "not loaded"; the card says which.
+    #[test]
+    fn the_spend_card_says_when_there_is_no_budget() {
+        let theme = Theme::truecolor_dark();
+        let mut v = View::new(
+            ryter_core::Phase::Build,
+            "c".into(),
+            "m".into(),
+            "/tmp".into(),
+        );
+        v.spend = Some(1.25);
+        v.budget_usd = 0.0;
+        let off = text(&spend(&v, 26, theme));
+        assert!(off.contains("budget") && off.contains("off"), "{off}");
+        v.budget_usd = 5.0;
+        let on = text(&spend(&v, 26, theme));
+        assert!(on.contains("$1.25 of $5.00") && !on.contains("off"), "{on}");
+    }
 }

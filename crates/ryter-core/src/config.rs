@@ -644,6 +644,10 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
         merge_file(&mut cfg, &user_path)?;
         check_key_file_mode(&user_path, &cfg)?;
     }
+    // Your saved settings (`/settings`, `/budget`) are your defaults. A trusted
+    // project that sets its own value wins: applied last, a saved budget
+    // silently overrode every project's cap.
+    apply_settings_file(&mut cfg, &home.join("settings.toml"));
     if trusted {
         if let Some(root) = project_root {
             let project = root.join(".ryter").join("config.toml");
@@ -657,7 +661,6 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
     apply_mcp_file(&mut cfg, &home.join("mcp.toml"));
     apply_hooks_file(&mut cfg, &home.join("hooks.toml"));
     apply_connections_file(&mut cfg, &home.join("connections.toml"));
-    apply_settings_file(&mut cfg, &home.join("settings.toml"));
     validate(&cfg)?;
     Ok(cfg)
 }
@@ -1993,6 +1996,27 @@ mod tests {
         assert_eq!(cfg.auditor.panel.len(), 1, "user panel survives");
         assert_eq!(cfg.spend.task_budget_usd, 0.25);
         assert_eq!(cfg.spend.session_budget_usd, 9.0, "user budget survives");
+    }
+
+    /// `/budget` saves a default; a project's own cap still applies there.
+    #[test]
+    fn a_project_budget_beats_the_saved_default() {
+        let home = TempDir::new().unwrap();
+        let proj = TempDir::new().unwrap();
+        let mut saved = Config::default();
+        saved.spend.session_budget_usd = 9.0;
+        save_settings(home.path(), &saved).unwrap();
+        fs::create_dir_all(proj.path().join(".ryter")).unwrap();
+        fs::write(
+            proj.path().join(".ryter/config.toml"),
+            "[spend]\nsession_budget_usd = 2.0\n",
+        )
+        .unwrap();
+        let cfg = load_at(home.path(), Some(proj.path()), true).unwrap();
+        assert_eq!(cfg.spend.session_budget_usd, 2.0);
+        // Elsewhere, the saved default holds.
+        let cfg = load_at(home.path(), None, false).unwrap();
+        assert_eq!(cfg.spend.session_budget_usd, 9.0);
     }
 
     #[test]

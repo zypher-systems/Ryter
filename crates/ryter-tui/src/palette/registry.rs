@@ -3,6 +3,7 @@
 use crate::action::{Action, PanelId, SessionsMode};
 use crate::panel::modal::Confirm;
 use crate::view::View;
+use ryter_core::format_usd;
 
 /// Palette category, in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -255,6 +256,17 @@ pub const COMMANDS: &[CommandSpec] = &[
         false,
         |_, _| Action::OpenPanel(PanelId::Spend),
     ),
+    spec(
+        "budget",
+        &[],
+        Category::Context,
+        "Cap this session's spend, raise the cap, or turn it off",
+        Some("[amount|+amount|off]"),
+        false,
+        None,
+        false,
+        run_budget,
+    ),
     // Configuration
     spec(
         "settings",
@@ -457,6 +469,52 @@ fn run_rename(_view: &mut View, rest: &str) -> Action {
     }
 }
 
+/// `/budget` shows where spend stands; `/budget 5`, `/budget +2`, and
+/// `/budget off` change the cap.
+fn run_budget(view: &mut View, rest: &str) -> Action {
+    let arg = rest.trim().trim_start_matches('$');
+    if arg.is_empty() {
+        let spent = format_usd(view.spend);
+        let msg = if view.budget_usd > 0.0 {
+            format!(
+                "budget {} · spent {spent} · the crew stops when it is reached. \
+                 /budget <amount> changes it, /budget off removes it",
+                format_usd(Some(view.budget_usd))
+            )
+        } else {
+            format!(
+                "no budget · spent {spent} · nothing stops on cost; the spend card \
+                 keeps count. /budget <amount> sets a cap"
+            )
+        };
+        view.system(msg);
+        return Action::None;
+    }
+    if matches!(arg, "off" | "none" | "0") {
+        return Action::SetBudget(0.0);
+    }
+    let (add, num) = match arg.strip_prefix('+') {
+        Some(n) => (true, n.trim().trim_start_matches('$')),
+        None => (false, arg),
+    };
+    match num.parse::<f64>() {
+        Ok(v) if v.is_finite() && v > 0.0 => {
+            // Raising a cap you just hit: add to what's set, or to what's spent
+            // when nothing is.
+            let base = if view.budget_usd > 0.0 {
+                view.budget_usd
+            } else {
+                view.spend.unwrap_or(0.0)
+            };
+            Action::SetBudget(if add { base + v } else { v })
+        }
+        _ => {
+            view.warn("usage: /budget [amount|+amount|off]   e.g. /budget 5, /budget +2");
+            Action::None
+        }
+    }
+}
+
 fn run_delete(_view: &mut View, rest: &str) -> Action {
     if rest.is_empty() {
         Action::OpenPanel(PanelId::Sessions(SessionsMode::Delete))
@@ -589,5 +647,40 @@ mod tests {
             );
             assert!(find(c.name).is_some());
         }
+    }
+
+    #[test]
+    fn budget_sets_raises_and_turns_off() {
+        let mut v = View::new(
+            ryter_core::Phase::Build,
+            "c".into(),
+            "m".into(),
+            "/tmp".into(),
+        );
+        v.budget_usd = 5.0;
+        v.spend = Some(5.2);
+        let set = |v: &mut View, arg: &str| match run_budget(v, arg) {
+            Action::SetBudget(x) => Some(x),
+            _ => None,
+        };
+        assert_eq!(set(&mut v, "10"), Some(10.0));
+        assert_eq!(set(&mut v, "$2.50"), Some(2.5));
+        assert_eq!(set(&mut v, "+2"), Some(7.0), "raise the cap you hit");
+        assert_eq!(set(&mut v, "off"), Some(0.0));
+        assert_eq!(set(&mut v, "-3"), None);
+        assert_eq!(set(&mut v, "lots"), None);
+        assert!(v.messages.last().unwrap().body.contains("usage: /budget"));
+        // With no cap, "+2" means two more than already spent.
+        v.budget_usd = 0.0;
+        assert_eq!(set(&mut v, "+2"), Some(7.2));
+        // Bare `/budget` reports; it changes nothing.
+        assert_eq!(set(&mut v, ""), None);
+        assert!(
+            v.messages
+                .last()
+                .unwrap()
+                .body
+                .starts_with("no budget · spent $5.20")
+        );
     }
 }

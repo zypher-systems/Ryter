@@ -140,6 +140,9 @@ pub enum Action {
     DeleteSession(String),
     /// Set the current session title.
     RenameSession(String),
+    /// Set the session budget in USD; `0` turns it off. Applies now and is
+    /// saved as the default.
+    SetBudget(f64),
     /// Kill a running specialist.
     KillAgent(String),
     /// Kill every running specialist.

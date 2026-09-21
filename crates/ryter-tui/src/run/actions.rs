@@ -10,7 +10,9 @@ use ryter_core::ids::ConnectionId;
 use ryter_core::sandbox::SandboxProfile;
 use ryter_core::session::Session;
 use ryter_core::spend::PriceBook;
-use ryter_core::{Config, HookSet, InboundHost, Permission, Phase, Provider, load_catalog};
+use ryter_core::{
+    Config, HookSet, InboundHost, Permission, Phase, Provider, format_usd, load_catalog,
+};
 
 use super::worker::Work;
 use crate::action::{Action, PanelId};
@@ -131,6 +133,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             cx.send(Work::Rename(title));
             cx.notice(Notice::SessionsChanged);
         }
+        Action::SetBudget(usd) => set_budget(view, cx, usd),
         Action::KillAgent(id) => {
             if let Some(c) = view.crew.iter().find(|c| c.id == id) {
                 view.system(format!("killing {} · {}", c.role, c.label));
@@ -782,6 +785,37 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
         max_crew: view.max_crew,
         web: view.web,
     });
+}
+
+fn set_budget(view: &mut View, cx: &mut Ctx, usd: f64) {
+    view.budget_usd = usd;
+    cx.cfg.spend.session_budget_usd = usd;
+    if let Err(e) = config::save_settings(&cx.home, &cx.cfg) {
+        view.error(e.to_string());
+    }
+    cx.send(Work::SetSettings {
+        budget_usd: usd,
+        max_crew: view.max_crew,
+        web: view.web,
+    });
+    if usd > 0.0 {
+        let over = view.spend.is_some_and(|s| s >= usd);
+        view.system(format!(
+            "budget {} · spent {}{}",
+            format_usd(Some(usd)),
+            format_usd(view.spend),
+            if over {
+                " · already reached: raise it to keep working"
+            } else {
+                ""
+            }
+        ));
+    } else {
+        view.system(format!(
+            "budget off · spent {} · nothing stops on cost now; each task is still capped at [spend] task_budget_usd",
+            format_usd(view.spend)
+        ));
+    }
 }
 
 /// Load and degrade a theme; bump the render generation. Returns success.
