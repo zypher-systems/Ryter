@@ -1,21 +1,21 @@
- ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator  grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patc…
 ────────────────────────────────────────────────────────────────────────────────
- dusty                                               │╭─ session ──────────────╮
- ▎ now implement step one                            ││ untitled               │
-    ┏━ permission · bash ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ld │
- · r│ tool  bash                                                           │   │
-    │                                                                      │ ──╯
- gro│   rm -rf target/ && cargo build --release                            │ ──╮
-   R│                                                                      │ 6 │
-    │ y · allow   n · deny   a · allow all this session                    │   │
-    │                                                                      │   │
-    ╰─ y allow once · n deny · a allow all this session ───────────────────╯   │
-                                                                             ──╯
-                                                     ┃╭─ spend ────────────────╮
-                                                     ┃│ session          $?.?? │
-                                                     ┃│ bud ░░░░░░░░░░░░   0%  │
-                                                     ┃│     $0.00 of $5.00     │
-                                                     ┃╰────────────────────────╯
+ dusty
+ ▎ now implement step one
+    ┏━ permission · bash ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+ · r│ tool  bash                                                           │ s
+    │                                                                      │
+ gro│   rm -rf target/ && cargo build --release                            │
+   R│                                                                      │
+    │ y · allow   n · deny   a · allow all this session                    │
+    │                                                                      │
+    ╰─ y allow once · n deny · a allow all this session ───────────────────╯
+
+
+
+
+
+
  ⠼ writing  ·  0:12  ·  ~11 tok                                ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────
 ╭─ dusty ────────────────────────────────────────────────────────────── build ─╮

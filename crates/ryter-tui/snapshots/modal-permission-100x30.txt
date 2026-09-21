@@ -1,27 +1,27 @@
- ryter  ·  orchestrator                                             ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator                     grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- dusty                                                                ╭─ session ──────────────────╮
- ▎ now implement step one                                             │ untitled                   │
-                                                                      │ 0193abcd             build │
- · read_file┏━ permission · bash ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ ask       │
-            │ tool  bash                                                               │ ──────────╯
- grok-4.6   │                                                                          │ ──────────╮
-   Reading t│   rm -rf target/ && cargo build --release                                │  grok-4.6 │
-            │                                                                          │ ░░░   5%  │
-            │ y · allow   n · deny   a · allow all this session                        │ tokens    │
-            │                                                                          │           │
-            ╰─ y allow once · n deny · a allow all this session ───────────────────────╯ ──────────╯
-                                                                                         ──────────╮
-                                                                      │ session              $?.?? │
-                                                                      │ bud ░░░░░░░░░░░░░░░░   0%  │
-                                                                      │     $0.00 of $5.00         │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ tasks ────────────────────╮
-                                                                      │ no tasks yet               │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ crew ─────────────── 0/4 ─╮
-                                                                      │ no specialists running     │
-                                                                      ╰────────────────────────────╯
+ dusty
+ ▎ now implement step one
+
+ · read_file┏━ permission · bash ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓      0.1s
+            │ tool  bash                                                               │
+ grok-4.6   │                                                                          │
+   Reading t│   rm -rf target/ && cargo build --release                                │
+            │                                                                          │
+            │ y · allow   n · deny   a · allow all this session                        │
+            │                                                                          │
+            ╰─ y allow once · n deny · a allow all this session ───────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
  ⠼ writing  ·  0:12  ·  ~11 tok                                                    ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 ╭─ dusty ────────────────────────────────────────────────────────────────────────────────── build ─╮

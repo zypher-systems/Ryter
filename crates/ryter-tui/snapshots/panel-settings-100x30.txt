@@ -1,27 +1,27 @@
- ryter  ·  orchestrator                                             ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator                     grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                             ╭─ session ──────────────────╮
-   welcome · /╭─ settings ───────────────────────────────────────────────────────────╮             │
-              │ SPEND                                                                ┃       build │
-              │› session budget usd  ‹ 5.00 ›                                default ┃ s ask       │
-              │  warn usd            ‹ 1.00 ›                                default ┃ ────────────╯
-              │                                                                      ┃ ────────────╮
-              │ AGENTS                                                               ┃    grok-4.6 │
-              │  subagents max       ‹ 4 ›                                   default ┃ ░░░░░   5%  │
-              │  auditor             [ on ]                                  default ┃ k tokens    │
-              │                                                                      ┃             │
-              │ TOOLS                                                                ┃ ────────────╯
-              │  permission mode     ‹ ask ›                                 default ┃ ────────────╮
-              │  features.web        [ off ]                                 default ┃       $?.?? │
-              │                                                                      ┃ ░░░░░   0%  │
-              │ SANDBOX                                                              │ .00         │
-              │  profile             ‹ off ›                                 default │ ────────────╯
-              │                                                                      │ ────────────╮
-              │ MCP                                                                  │             │
-              │  inbound             [ on ]                                  default │ ────────────╯
-              │  bind address                                                default │ ────── 0/4 ─╮
-              ╰─ ↑↓ move · space/←→ change · enter edit · ^s save · esc ─────────────╯ running     │
-                                                                                       ────────────╯
+ · system     ╭─ settings ───────────────────────────────────────────────────────────╮
+   welcome · /│ SPEND                                                                ┃
+              │› session budget usd  ‹ 5.00 ›                                default ┃
+              │  warn usd            ‹ 1.00 ›                                default ┃
+              │                                                                      ┃
+              │ AGENTS                                                               ┃
+              │  subagents max       ‹ 4 ›                                   default ┃
+              │  auditor             [ on ]                                  default ┃
+              │                                                                      ┃
+              │ TOOLS                                                                ┃
+              │  permission mode     ‹ ask ›                                 default ┃
+              │  features.web        [ off ]                                 default ┃
+              │                                                                      ┃
+              │ SANDBOX                                                              ┃
+              │  profile             ‹ off ›                                 default ┃
+              │                                                                      │
+              │ MCP                                                                  │
+              │  inbound             [ on ]                                  default │
+              │  bind address                                                default │
+              │                                                                      │
+              │ UI                                                                   │
+              ╰─ ↑↓ move · space/←→ change · enter edit · ^s save · esc ─────────────╯
 
 
 ╭─ dusty ────────────────────────────────────────────────────────────────────────────────── build ─╮

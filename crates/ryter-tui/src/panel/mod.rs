@@ -322,11 +322,11 @@ pub fn rect(full: Rect, body: Rect, pref_w: u16, content_rows: u16, modal: bool)
         return body;
     }
     let w = pref_w.clamp(40, full.width.saturating_sub(8));
-    let max_h = full
-        .height
-        .saturating_sub(10)
-        .min(body.height.saturating_sub(1))
-        .max(8);
+    // A panel may use the body it now owns. Reserving ten rows of the terminal
+    // meant `/help` got 20 rows for 40 rows of keybindings at 100x30 and
+    // clipped the first thing a new user reads; two rows of breathing room
+    // above and below is enough to still read as floating.
+    let max_h = body.height.saturating_sub(2).max(8);
     let h = (content_rows + 2).clamp(8, max_h);
     let x = body.x + body.width.saturating_sub(w) / 2;
     let y = body.y + body.height.saturating_sub(h) / if modal { 4 } else { 3 };

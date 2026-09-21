@@ -1,27 +1,27 @@
- ryter  ·  orchestrator                                             ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator                     grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                             ╭─ session ──────────────────╮
-   welcome · /help for keys                                           │ untitled                   │
-                                                                      │ 0193abcd             build │
-                                                                      │ auditor ✓  tools ask       │
-           ╭─ hooks ──────────────────────────────────────────────────────────────── 0 ─╮──────────╯
-           │ no hooks configured                                                        │ ─────────╮
-           │                                                                            │ grok-4.6 │
-           │›+ add hook  a add · appended to ~/.ryter/hooks.toml                        │ ░░   5%  │
-           │                                                                            │ okens    │
-           │                                                                            │          │
-           │                                                                            │ ─────────╯
-           │                                                                            │ ─────────╮
-           │                                                                            │    $?.?? │
-           ╰─ enter details · a add · d remove · esc ───────────────────────────────────╯ ░░   0%  │
-                                                                                                   │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ tasks ────────────────────╮
-                                                                      │ no tasks yet               │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ crew ─────────────── 0/4 ─╮
-                                                                      │ no specialists running     │
-                                                                      ╰────────────────────────────╯
+ · system
+   welcome · /help for keys
+
+
+           ╭─ hooks ──────────────────────────────────────────────────────────────── 0 ─╮
+           │ no hooks configured                                                        │
+           │                                                                            │
+           │›+ add hook  a add · appended to ~/.ryter/hooks.toml                        │
+           │                                                                            │
+           │                                                                            │
+           │                                                                            │
+           │                                                                            │
+           │                                                                            │
+           ╰─ enter details · a add · d remove · esc ───────────────────────────────────╯
+
+
+
+
+
+
+
+
 
 
 ╭─ dusty ────────────────────────────────────────────────────────────────────────────────── build ─╮

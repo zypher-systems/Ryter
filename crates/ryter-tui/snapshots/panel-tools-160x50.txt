@@ -1,27 +1,27 @@
- ryter  ·  orchestrator                                                                                                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator                                                                                 grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                                                                                     ╭─ session ──────────────────────╮
-   welcome · /help for keys                                                                                                   │ untitled                       │
-                                                                                                                              │ 0193abcd                 build │
-                                                                                                                              │ auditor ✓  tools ask           │
-                                                                                                                              ╰────────────────────────────────╯
-                                                                                                                              ╭─ model ────────────────────────╮
-                                                                                                                              │ spacexai ●            grok-4.6 │
-                                                                                                                              │ ctx █░░░░░░░░░░░░░░░░░░░   5%  │
-                                                                                                                              │     12.4k / 256k tokens        │
-                                                                                                                              │ price unknown                  │
-                                                                                                                              ╰────────────────────────────────╯
-                                               ╭─ tool permissions ─────────────────────────────────────────────╮             ╭─ spend ────────────────────────╮
-                                               │›● ask     current                                              │             │ session                  $?.?? │
-                                               │    shell, write, and delete calls pause for a y/n before they  │             │ bud ░░░░░░░░░░░░░░░░░░░░   0%  │
-                                               │    run.                                                        │             │     $0.00 of $5.00             │
-                                               │                                                                │             ╰────────────────────────────────╯
-                                               │ ○ always                                                       │             ╭─ tasks ────────────────────────╮
-                                               │    tools run without asking, including destructive ones.       │             │ no tasks yet                   │
-                                               │                                                                │             ╰────────────────────────────────╯
-                                               ╰─ ↑↓ move · enter apply · esc  · changes apply immediately ─────╯             ╭─ crew ─────────────────── 0/4 ─╮
-                                                                                                                              │ no specialists running         │
-                                                                                                                              ╰────────────────────────────────╯
+ · system
+   welcome · /help for keys
+
+
+
+
+
+
+
+
+
+                                               ╭─ tool permissions ─────────────────────────────────────────────╮
+                                               │›● ask     current                                              │
+                                               │    shell, write, and delete calls pause for a y/n before they  │
+                                               │    run.                                                        │
+                                               │                                                                │
+                                               │ ○ always                                                       │
+                                               │    tools run without asking, including destructive ones.       │
+                                               │                                                                │
+                                               ╰─ ↑↓ move · enter apply · esc  · changes apply immediately ─────╯
+
+
 
 
 

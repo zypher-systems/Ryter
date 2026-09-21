@@ -1,27 +1,27 @@
- ryter  ·  orchestrator                                                                                                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator                                                                                 grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                                                                                     ╭─ session ──────────────────────╮
-   welcome · /help for keys                                                                                                   │ untitled                       │
-                                                                                                                              │ 0193abcd                 build │
-                                                                                                                              │ auditor ✓  tools ask           │
-                                                                                                                              ╰────────────────────────────────╯
-                                                                                                                              ╭─ model ────────────────────────╮
-                                                                                                                              │ spacexai ●            grok-4.6 │
-                                                                                                                              │ ctx █░░░░░░░░░░░░░░░░░░░   5%  │
-                                                                                                                              │     12.4k / 256k tokens        │
-                                                                                                                              │ price unknown                  │
-                                                                                                                              ╰────────────────────────────────╯
-                                                ╭─ handoff to ─────────────────────────────────────────────────╮              ╭─ spend ────────────────────────╮
-                                                │ ● plan                                                       │              │ session                  $?.?? │
-                                                │   planner breaks the goal into a task list and open questions│              │ bud ░░░░░░░░░░░░░░░░░░░░   0%  │
-                                                │ ● architect                                                  │              │     $0.00 of $5.00             │
-                                                │   architect decides structure, interfaces, and trade-offs    │              ╰────────────────────────────────╯
-                                                │›● build                                              current │              ╭─ tasks ────────────────────────╮
-                                                │   builders implement tasks in parallel; auditor gates merges │              │ no tasks yet                   │
-                                                │ ● audit                                                      │              ╰────────────────────────────────╯
-                                                │   auditor reviews the work and reports findings              │              ╭─ crew ─────────────────── 0/4 ─╮
-                                                │                                                              │              │ no specialists running         │
-                                                ╰─ ↑↓ move · enter handoff · esc ──────────────────────────────╯              ╰────────────────────────────────╯
+ · system
+   welcome · /help for keys
+
+
+
+
+
+
+
+
+
+                                                ╭─ handoff to ─────────────────────────────────────────────────╮
+                                                │ ● plan                                                       │
+                                                │   planner breaks the goal into a task list and open questions│
+                                                │ ● architect                                                  │
+                                                │   architect decides structure, interfaces, and trade-offs    │
+                                                │›● build                                              current │
+                                                │   builders implement tasks in parallel; auditor gates merges │
+                                                │ ● audit                                                      │
+                                                │   auditor reviews the work and reports findings              │
+                                                │                                                              │
+                                                ╰─ ↑↓ move · enter handoff · esc ──────────────────────────────╯
 
 
 

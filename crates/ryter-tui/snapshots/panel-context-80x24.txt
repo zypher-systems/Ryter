@@ -1,21 +1,21 @@
- ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator  grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patc…
 ────────────────────────────────────────────────────────────────────────────────
- · system                                             ╭─ session ──────────────╮
-   welcome · /help for keys                           │ untitled               │
-        ╭─ context ─────────────────────────────────────────────── 5% ─╮ build │
-        │ used █░░░░░░░░░░░░░░░░░░░░░  5%  12.4k / 256k tokens         │ ask   │
-        │ asking the agent…                                            │ ──────╯
-        │                                                              │ ──────╮
-        │ no breakdown yet · r to refresh                              │ k-4.6 │
-        │                                                              │   5%  │
-        │ c compact · summarizes older turns                           │       │
-        │                                                              │       │
-        │                                                              │ ──────╯
-        ╰─ c compact · r refresh · esc ────────────────────────────────╯ ──────╮
-                                                                         $?.?? │
-                                                      │ bud ░░░░░░░░░░░░   0%  │
-                                                      │     $0.00 of $5.00     │
-                                                      ╰────────────────────────╯
+ · system
+   welcome · /help for keys
+        ╭─ context ─────────────────────────────────────────────── 5% ─╮
+        │ used █░░░░░░░░░░░░░░░░░░░░░  5%  12.4k / 256k tokens         │
+        │ asking the agent…                                            │
+        │                                                              │
+        │ no breakdown yet · r to refresh                              │
+        │                                                              │
+        │ c compact · summarizes older turns                           │
+        │                                                              │
+        │                                                              │
+        ╰─ c compact · r refresh · esc ────────────────────────────────╯
+
+
+
+
 
 
 ╭─ dusty ────────────────────────────────────────────────────────────── build ─╮

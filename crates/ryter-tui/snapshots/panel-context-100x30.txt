@@ -1,27 +1,27 @@
- ryter  ·  orchestrator                                             ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator                     grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                             ╭─ session ──────────────────╮
-   welcome · /help for keys                                           │ untitled                   │
-                                                                      │ 0193abcd             build │
-                                                                      │ auditor ✓  tools ask       │
-                  ╭─ context ─────────────────────────────────────────────── 5% ─╮─────────────────╯
-                  │ used █░░░░░░░░░░░░░░░░░░░░░  5%  12.4k / 256k tokens         │ ────────────────╮
-                  │ asking the agent…                                            │        grok-4.6 │
-                  │                                                              │ ░░░░░░░░░   5%  │
-                  │ no breakdown yet · r to refresh                              │  256k tokens    │
-                  │                                                              │ wn              │
-                  │ c compact · summarizes older turns                           │ ────────────────╯
-                  │                                                              │ ────────────────╮
-                  │                                                              │           $?.?? │
-                  ╰─ c compact · r refresh · esc ────────────────────────────────╯ ░░░░░░░░░   0%  │
-                                                                                   f $5.00         │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ tasks ────────────────────╮
-                                                                      │ no tasks yet               │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ crew ─────────────── 0/4 ─╮
-                                                                      │ no specialists running     │
-                                                                      ╰────────────────────────────╯
+ · system
+   welcome · /help for keys
+
+
+                  ╭─ context ─────────────────────────────────────────────── 5% ─╮
+                  │ used █░░░░░░░░░░░░░░░░░░░░░  5%  12.4k / 256k tokens         │
+                  │ asking the agent…                                            │
+                  │                                                              │
+                  │ no breakdown yet · r to refresh                              │
+                  │                                                              │
+                  │ c compact · summarizes older turns                           │
+                  │                                                              │
+                  │                                                              │
+                  ╰─ c compact · r refresh · esc ────────────────────────────────╯
+
+
+
+
+
+
+
+
 
 
 ╭─ dusty ────────────────────────────────────────────────────────────────────────────────── build ─╮

@@ -1,21 +1,21 @@
- ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator  grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patc…
 ────────────────────────────────────────────────────────────────────────────────
- · system                                             ╭─ session ──────────────╮
-   welcome · /help for keys                           │ untitled               │
-    ╭─ hooks ────────────────────────────────────────────────────────── 0 ─╮ld │
-    │ no hooks configured                                                  │   │
-    │                                                                      │ ──╯
-    │›+ add hook  a add · appended to ~/.ryter/hooks.toml                  │ ──╮
-    │                                                                      │ 6 │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │ ──╯
-    ╰─ enter details · a add · d remove · esc ─────────────────────────────╯ ──╮
-                                                                             ? │
-                                                      │ bud ░░░░░░░░░░░░   0%  │
-                                                      │     $0.00 of $5.00     │
-                                                      ╰────────────────────────╯
+ · system
+   welcome · /help for keys
+    ╭─ hooks ────────────────────────────────────────────────────────── 0 ─╮
+    │ no hooks configured                                                  │
+    │                                                                      │
+    │›+ add hook  a add · appended to ~/.ryter/hooks.toml                  │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    ╰─ enter details · a add · d remove · esc ─────────────────────────────╯
+
+
+
+
 
 
 ╭─ dusty ────────────────────────────────────────────────────────────── build ─╮

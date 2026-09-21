@@ -194,31 +194,51 @@ pub fn spend(view: &View, w: usize, theme: Theme) -> Card {
     rows.push(kv("session", &total, w, theme, total_style));
     let detail_from = rows.len();
     if view.budget_usd > 0.0 {
-        let spent = view.spend.unwrap_or(0.0);
-        let frac = spent / view.budget_usd;
-        let color = if spent >= view.budget_usd {
-            theme.error
-        } else if spent >= view.warn_usd {
-            theme.warn
-        } else {
-            theme.success
-        };
+        // An unpriced turn has no known cost, so there is no honest bar to
+        // draw. A 0% gauge beside `$?.??` is the exact fiction the spend system
+        // exists to avoid (`RYTER.md`), and it reads as "plenty of budget left"
+        // when the truth is "no idea".
         let cells = gauge_cells(w);
         let mut spans = vec![s("bud ", theme.side_muted())];
-        spans.extend(bar(frac, cells, color, theme));
-        spans.push(s(
-            format!(" {:>3}%", (frac * 100.0).round().min(999.0) as u32),
-            Style::default().fg(color).bg(theme.sidebar_bg),
-        ));
-        rows.push(row(spans));
-        rows.push(row(vec![s(
-            format!(
-                "    {} of {}",
-                format_usd(Some(spent)),
-                format_usd(Some(view.budget_usd))
-            ),
-            theme.side_muted(),
-        )]));
+        match view.spend {
+            Some(spent) => {
+                let frac = spent / view.budget_usd;
+                let color = if spent >= view.budget_usd {
+                    theme.error
+                } else if spent >= view.warn_usd {
+                    theme.warn
+                } else {
+                    theme.success
+                };
+                spans.extend(bar(frac, cells, color, theme));
+                spans.push(s(
+                    format!(" {:>3}%", (frac * 100.0).round().min(999.0) as u32),
+                    Style::default().fg(color).bg(theme.sidebar_bg),
+                ));
+                rows.push(row(spans));
+                rows.push(row(vec![s(
+                    format!(
+                        "    {} of {}",
+                        format_usd(Some(spent)),
+                        format_usd(Some(view.budget_usd))
+                    ),
+                    theme.side_muted(),
+                )]));
+            }
+            None => {
+                spans.extend(bar(0.0, cells, theme.dim, theme));
+                spans.push(s("   ?%", theme.side_muted()));
+                rows.push(row(spans));
+                rows.push(row(vec![s(
+                    format!(
+                        "    {} of {}",
+                        format_usd(None),
+                        format_usd(Some(view.budget_usd))
+                    ),
+                    theme.side_muted(),
+                )]));
+            }
+        }
     }
     let mut by_role: Vec<(&String, &f64)> = view.spend_by_role.iter().collect();
     by_role.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));

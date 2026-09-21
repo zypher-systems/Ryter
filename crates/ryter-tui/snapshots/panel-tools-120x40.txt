@@ -1,27 +1,27 @@
- ryter  ·  orchestrator                                                                 ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator                                         grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                                                 ╭─ session ──────────────────╮
-   welcome · /help for keys                                                               │ untitled                   │
-                                                                                          │ 0193abcd             build │
-                                                                                          │ auditor ✓  tools ask       │
-                                                                                          ╰────────────────────────────╯
-                                                                                          ╭─ model ────────────────────╮
-                                                                                          │ spacexai ●        grok-4.6 │
-                                                                                          │ ctx █░░░░░░░░░░░░░░░   5%  │
-                           ╭─ tool permissions ─────────────────────────────────────────────╮   12.4k / 256k tokens    │
-                           │›● ask     current                                              │ ice unknown              │
-                           │    shell, write, and delete calls pause for a y/n before they  │ ─────────────────────────╯
-                           │    run.                                                        │ pend ────────────────────╮
-                           │                                                                │ ssion              $?.?? │
-                           │ ○ always                                                       │ d ░░░░░░░░░░░░░░░░   0%  │
-                           │    tools run without asking, including destructive ones.       │   $0.00 of $5.00         │
-                           │                                                                │ ─────────────────────────╯
-                           ╰─ ↑↓ move · enter apply · esc  · changes apply immediately ─────╯ asks ────────────────────╮
-                                                                                               tasks yet               │
-                                                                                          ╰────────────────────────────╯
-                                                                                          ╭─ crew ─────────────── 0/4 ─╮
-                                                                                          │ no specialists running     │
-                                                                                          ╰────────────────────────────╯
+ · system
+   welcome · /help for keys
+
+
+
+
+
+
+                           ╭─ tool permissions ─────────────────────────────────────────────╮
+                           │›● ask     current                                              │
+                           │    shell, write, and delete calls pause for a y/n before they  │
+                           │    run.                                                        │
+                           │                                                                │
+                           │ ○ always                                                       │
+                           │    tools run without asking, including destructive ones.       │
+                           │                                                                │
+                           ╰─ ↑↓ move · enter apply · esc  · changes apply immediately ─────╯
+
+
+
+
+
 
 
 

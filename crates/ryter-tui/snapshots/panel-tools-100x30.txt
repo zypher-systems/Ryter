@@ -1,27 +1,27 @@
- ryter  ·  orchestrator                                             ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator                     grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                             ╭─ session ──────────────────╮
-   welcome · /help for keys                                           │ untitled                   │
-                                                                      │ 0193abcd             build │
-                                                                      │ auditor ✓  tools ask       │
-                                                                      ╰────────────────────────────╯
-                 ╭─ tool permissions ─────────────────────────────────────────────╮────────────────╮
-                 │›● ask     current                                              │       grok-4.6 │
-                 │    shell, write, and delete calls pause for a y/n before they  │ ░░░░░░░░   5%  │
-                 │    run.                                                        │ 256k tokens    │
-                 │                                                                │ n              │
-                 │ ○ always                                                       │ ───────────────╯
-                 │    tools run without asking, including destructive ones.       │ ───────────────╮
-                 │                                                                │          $?.?? │
-                 ╰─ ↑↓ move · enter apply · esc  · changes apply immediately ─────╯ ░░░░░░░░   0%  │
-                                                                                     $5.00         │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ tasks ────────────────────╮
-                                                                      │ no tasks yet               │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ crew ─────────────── 0/4 ─╮
-                                                                      │ no specialists running     │
-                                                                      ╰────────────────────────────╯
+ · system
+   welcome · /help for keys
+
+
+
+                 ╭─ tool permissions ─────────────────────────────────────────────╮
+                 │›● ask     current                                              │
+                 │    shell, write, and delete calls pause for a y/n before they  │
+                 │    run.                                                        │
+                 │                                                                │
+                 │ ○ always                                                       │
+                 │    tools run without asking, including destructive ones.       │
+                 │                                                                │
+                 ╰─ ↑↓ move · enter apply · esc  · changes apply immediately ─────╯
+
+
+
+
+
+
+
+
 
 
 ╭─ dusty ────────────────────────────────────────────────────────────────────────────────── build ─╮

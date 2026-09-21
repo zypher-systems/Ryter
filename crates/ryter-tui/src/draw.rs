@@ -54,7 +54,12 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         rows[0], rows[1], rows[2], rows[3], rows[4], rows[5], rows[6],
     );
 
-    let panel_w = if view.panel_visible {
+    // A popout owns the whole body (`R-POP-01`). The info cards used to keep
+    // their columns underneath it, so a centred panel covered their left half
+    // and left shredded tails beside its border (`k-4.6`, `ns`, `ew 0/4`).
+    // Dimming hid that in a real terminal but not on a monochrome capture, and
+    // it cost Help the width it needs to be readable at 100 columns.
+    let panel_w = if view.panel_visible && view.panels.is_empty() {
         info::width_for(full.width)
     } else {
         0
@@ -80,7 +85,12 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     draw_header(frame, header, view, theme, panel_w == 0);
     hairline(frame, hair1, theme);
     let cf = draw_chat(frame, chat, view, theme);
-    draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme);
+    // A panel owns the scroll keys, so a live transcript scrollbar beside it is
+    // both misleading and, next to a modal interrupt, visual noise on the one
+    // screen that has to read as a single closed shape (`R-POP-75`).
+    if view.panels.is_empty() {
+        draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme);
+    }
     let cards = if panel_w > 0 {
         info::draw(frame, cols[2], view, theme)
     } else {
@@ -152,13 +162,17 @@ fn draw_header(frame: &mut Frame, area: Rect, view: &View, theme: Theme, compact
             theme.on_bg(crate::panel::widgets::gauge_color(view.ctx_frac(), theme)),
         ));
         right.push(Span::styled(" · ", theme.muted()));
-        let spent = view.spend.unwrap_or(0.0);
-        let (label, style) = if view.budget_usd > 0.0 && spent >= view.budget_usd {
-            (format!("!{}", view.spend_label()), theme.on_bg(theme.error))
-        } else if view.warn_usd > 0.0 && spent >= view.warn_usd {
-            (view.spend_label(), theme.on_bg(theme.warn))
-        } else {
-            (view.spend_label(), theme.body())
+        // Unknown spend is not "under budget"; it is unknown. Colouring it
+        // green because `unwrap_or(0.0)` compared below the cap said so.
+        let (label, style) = match view.spend {
+            Some(spent) if view.budget_usd > 0.0 && spent >= view.budget_usd => {
+                (format!("!{}", view.spend_label()), theme.on_bg(theme.error))
+            }
+            Some(spent) if view.warn_usd > 0.0 && spent >= view.warn_usd => {
+                (view.spend_label(), theme.on_bg(theme.warn))
+            }
+            Some(_) => (view.spend_label(), theme.body()),
+            None => (view.spend_label(), theme.muted()),
         };
         right.push(Span::styled(label, style));
         right.push(Span::styled("   ", theme.muted()));

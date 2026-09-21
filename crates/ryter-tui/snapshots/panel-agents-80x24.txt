@@ -1,21 +1,21 @@
- ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator  grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patc…
 ────────────────────────────────────────────────────────────────────────────────
- · system                                             ╭─ session ──────────────╮
-   welcome · /help for keys                           │ untitled               │
-                                                      │ 0193abcd         build │
-    ╭─ running specialists ────────────────────────────────────────── 0/4 ─╮   │
-    │ no specialists running                                               │ ──╯
-    │ the orchestrator spawns planners, architects, builders, and auditors │ ──╮
-    │                                                                      │ 6 │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │   │
-    ╰─ ↑↓ move · enter/k kill · K kill all · esc ──────────────────────────╯ ──╯
-                                                                             ──╮
-                                                      │ session          $?.?? │
-                                                      │ bud ░░░░░░░░░░░░   0%  │
-                                                      │     $0.00 of $5.00     │
-                                                      ╰────────────────────────╯
+ · system
+   welcome · /help for keys
+
+    ╭─ running specialists ────────────────────────────────────────── 0/4 ─╮
+    │ no specialists running                                               │
+    │ the orchestrator spawns planners, architects, builders, and auditors │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    ╰─ ↑↓ move · enter/k kill · K kill all · esc ──────────────────────────╯
+
+
+
+
+
 
 
 ╭─ dusty ────────────────────────────────────────────────────────────── build ─╮

@@ -1,27 +1,27 @@
- ryter  ·  orchestrator                                                                 ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator                                         grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                                                 ╭─ session ──────────────────╮
-   welcome · /help for keys                                                               │ untitled                   │
-                                                                                          │ 0193abcd             build │
-                                                                                          │ auditor ✓  tools ask       │
-                                                                                          ╰────────────────────────────╯
-                                                                                          ╭─ model ────────────────────╮
-                                                                                          │ spacexai ●        grok-4.6 │
-                                                                                          │ ctx █░░░░░░░░░░░░░░░   5%  │
-                           ╭─ auditor gate ─────────────────────────────────────────────────╮   12.4k / 256k tokens    │
-                           │›● on      current                                              │ ice unknown              │
-                           │    every builder result is reviewed by an auditor before it    │ ─────────────────────────╯
-                           │    merges.                                                     │ pend ────────────────────╮
-                           │                                                                │ ssion              $?.?? │
-                           │ ○ off                                                          │ d ░░░░░░░░░░░░░░░░   0%  │
-                           │    builder results merge as soon as they finish. faster,       │   $0.00 of $5.00         │
-                           │    unreviewed.                                                 │ ─────────────────────────╯
-                           ╰─ ↑↓ move · enter apply · esc  · changes apply immediately ─────╯ asks ────────────────────╮
-                                                                                               tasks yet               │
-                                                                                          ╰────────────────────────────╯
-                                                                                          ╭─ crew ─────────────── 0/4 ─╮
-                                                                                          │ no specialists running     │
-                                                                                          ╰────────────────────────────╯
+ · system
+   welcome · /help for keys
+
+
+
+
+
+
+                           ╭─ auditor gate ─────────────────────────────────────────────────╮
+                           │›● on      current                                              │
+                           │    every builder result is reviewed by an auditor before it    │
+                           │    merges.                                                     │
+                           │                                                                │
+                           │ ○ off                                                          │
+                           │    builder results merge as soon as they finish. faster,       │
+                           │    unreviewed.                                                 │
+                           ╰─ ↑↓ move · enter apply · esc  · changes apply immediately ─────╯
+
+
+
+
+
 
 
 

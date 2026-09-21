@@ -1,21 +1,21 @@
- ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator  grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patc…
 ────────────────────────────────────────────────────────────────────────────────
- · system                                             ╭─ session ──────────────╮
-   welcome · /help for keys                           │ untitled               │
-                                                      │ 0193abcd         build │
-    ╭─ doctor ────────────────────────── running… · trusted · sandbox off ─╮   │
-    │ ⠋ running checks…                                                    │ ──╯
-    │                                                                      │ ──╮
-    │                                                                      │ 6 │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │ ──╯
-    ╰─ ↑↓ move · enter details · c copy/save report · esc ─────────────────╯ ──╮
-                                                                             ? │
-                                                      │ bud ░░░░░░░░░░░░   0%  │
-                                                      │     $0.00 of $5.00     │
-                                                      ╰────────────────────────╯
+ · system
+   welcome · /help for keys
+
+    ╭─ doctor ────────────────────────── running… · trusted · sandbox off ─╮
+    │ ⠋ running checks…                                                    │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    ╰─ ↑↓ move · enter details · c copy/save report · esc ─────────────────╯
+
+
+
+
 
 
 ╭─ dusty ────────────────────────────────────────────────────────────── build ─╮

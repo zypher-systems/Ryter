@@ -1,27 +1,27 @@
- ryter  ·  orchestrator                                                                 ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator                                         grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                                                 ╭─ session ──────────────────╮
-   welcome · /help for keys                                                               │ untitled                   │
-                                                                                          │ 0193abcd             build │
-                                                                                          │ auditor ✓  tools ask       │
-                                                                                          ╰────────────────────────────╯
-                                                                                          ╭─ model ────────────────────╮
-                       ╭─ mcp ───────────────────────────────────────────────────────── 0/0 up ─╮xai ●        grok-4.6 │
-                       │›○ inbound  let other agents drive this sessi…enabled · restart to bind │ ░░░░░░░░░░░░░░   5%  │
-                       │                                                                        │ .4k / 256k tokens    │
-                       │ outbound servers                                                       │ unknown              │
-                       │   none configured                                                      │ ─────────────────────╯
-                       │ + add server  stdio command → ~/.ryter/mcp.toml                        │  ────────────────────╮
-                       │                                                                        │ n              $?.?? │
-                       │                                                                        │ ░░░░░░░░░░░░░░   0%  │
-                       │                                                                        │ .00 of $5.00         │
-                       │                                                                        │ ─────────────────────╯
-                       │                                                                        │  ────────────────────╮
-                       │                                                                        │ ks yet               │
-                       │                                                                        │ ─────────────────────╯
-                       ╰─ enter open/toggle · r reconnect · d remove · esc  · changes apply i… ─╯ ─────────────── 0/4 ─╮
-                                                                                                  cialists running     │
-                                                                                          ╰────────────────────────────╯
+ · system
+   welcome · /help for keys
+
+
+
+
+                       ╭─ mcp ───────────────────────────────────────────────────────── 0/0 up ─╮
+                       │›○ inbound  let other agents drive this sessi…enabled · restart to bind │
+                       │                                                                        │
+                       │ outbound servers                                                       │
+                       │   none configured                                                      │
+                       │ + add server  stdio command → ~/.ryter/mcp.toml                        │
+                       │                                                                        │
+                       │                                                                        │
+                       │                                                                        │
+                       │                                                                        │
+                       │                                                                        │
+                       │                                                                        │
+                       │                                                                        │
+                       ╰─ enter open/toggle · r reconnect · d remove · esc  · changes apply i… ─╯
+
+
 
 
 

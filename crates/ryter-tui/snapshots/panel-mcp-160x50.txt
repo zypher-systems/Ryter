@@ -1,27 +1,27 @@
- ryter  ·  orchestrator                                                                                                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator                                                                                 grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                                                                                     ╭─ session ──────────────────────╮
-   welcome · /help for keys                                                                                                   │ untitled                       │
-                                                                                                                              │ 0193abcd                 build │
-                                                                                                                              │ auditor ✓  tools ask           │
-                                                                                                                              ╰────────────────────────────────╯
-                                                                                                                              ╭─ model ────────────────────────╮
-                                                                                                                              │ spacexai ●            grok-4.6 │
-                                                                                                                              │ ctx █░░░░░░░░░░░░░░░░░░░   5%  │
-                                                                                                                              │     12.4k / 256k tokens        │
-                                                                                                                              │ price unknown                  │
-                                           ╭─ mcp ───────────────────────────────────────────────────────── 0/0 up ─╮         ╰────────────────────────────────╯
-                                           │›○ inbound  let other agents drive this sessi…enabled · restart to bind │         ╭─ spend ────────────────────────╮
-                                           │                                                                        │         │ session                  $?.?? │
-                                           │ outbound servers                                                       │         │ bud ░░░░░░░░░░░░░░░░░░░░   0%  │
-                                           │   none configured                                                      │         │     $0.00 of $5.00             │
-                                           │ + add server  stdio command → ~/.ryter/mcp.toml                        │         ╰────────────────────────────────╯
-                                           │                                                                        │         ╭─ tasks ────────────────────────╮
-                                           │                                                                        │         │ no tasks yet                   │
-                                           │                                                                        │         ╰────────────────────────────────╯
-                                           │                                                                        │         ╭─ crew ─────────────────── 0/4 ─╮
-                                           │                                                                        │         │ no specialists running         │
-                                           │                                                                        │         ╰────────────────────────────────╯
+ · system
+   welcome · /help for keys
+
+
+
+
+
+
+
+
+                                           ╭─ mcp ───────────────────────────────────────────────────────── 0/0 up ─╮
+                                           │›○ inbound  let other agents drive this sessi…enabled · restart to bind │
+                                           │                                                                        │
+                                           │ outbound servers                                                       │
+                                           │   none configured                                                      │
+                                           │ + add server  stdio command → ~/.ryter/mcp.toml                        │
+                                           │                                                                        │
+                                           │                                                                        │
+                                           │                                                                        │
+                                           │                                                                        │
+                                           │                                                                        │
+                                           │                                                                        │
                                            │                                                                        │
                                            ╰─ enter open/toggle · r reconnect · d remove · esc  · changes apply i… ─╯
 

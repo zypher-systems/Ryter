@@ -1,27 +1,27 @@
- ryter  ·  orchestrator                                             ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator                     grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                             ╭─ session ──────────────────╮
-   welco╭─ models ─────────────────────────────────────────────────────────── 4 · loading ─╮       │
-        │ model           context   in/M  out/M  connection                                │ build │
-        │›grok-4.6  ●        500k     $2     $6  spacexai                                  │       │
-        │ grok-4.5           256k     $2     $6  spacexai                                  │ ──────╯
-        │ grok-4.3           256k  $1.25   $2.5  spacexai                                  │ ──────╮
-        │ grok-build-0.1     256k     $1     $2  spacexai                                  │ k-4.6 │
-        │                                                                                  │   5%  │
-        │                                                                                  │ ns    │
-        │                                                                                  │       │
-        │                                                                                  │ ──────╯
-        │                                                                                  │ ──────╮
-        │                                                                                  │ $?.?? │
-        │                                                                                  │   0%  │
-        │                                                                                  │       │
-        │                                                                                  │ ──────╯
-        │                                                                                  │ ──────╮
-        │                                                                                  │       │
-        │                                                                                  │ ──────╯
-        │ grok-4.6 · 500k ctx · $2/M input / $6/M output                                   │  0/4 ─╮
-        ╰─ type to filter · ↑↓ move · enter select · s sort · esc ─────────────────────────╯ g     │
-                                                                                             ──────╯
+ · system
+   welco╭─ models ─────────────────────────────────────────────────────────── 4 · loading ─╮
+        │ model           context   in/M  out/M  connection                                │
+        │›grok-4.6  ●        500k     $2     $6  spacexai                                  │
+        │ grok-4.5           256k     $2     $6  spacexai                                  │
+        │ grok-4.3           256k  $1.25   $2.5  spacexai                                  │
+        │ grok-build-0.1     256k     $1     $2  spacexai                                  │
+        │                                                                                  │
+        │                                                                                  │
+        │                                                                                  │
+        │                                                                                  │
+        │                                                                                  │
+        │                                                                                  │
+        │                                                                                  │
+        │                                                                                  │
+        │                                                                                  │
+        │                                                                                  │
+        │                                                                                  │
+        │                                                                                  │
+        │ grok-4.6 · 500k ctx · $2/M input / $6/M output                                   │
+        ╰─ type to filter · ↑↓ move · enter select · s sort · esc ─────────────────────────╯
+
 
 
 ╭─ filter ───────────────────────────────────────────────────────────────────────────────── build ─╮

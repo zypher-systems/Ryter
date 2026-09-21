@@ -1,27 +1,27 @@
- ryter  ·  orchestrator                                             ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator                     grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                             ╭─ session ──────────────────╮
-   welcome · /help for keys                                           │ untitled                   │
-                                                                      │ 0193abcd             build │
-                                                                      │ auditor ✓  tools ask       │
-           ╭─ skills & commands ──────────────────────────────── 0 skills · 0 commands ─╮──────────╯
-           │›+ new skill  SKILL.md with a body the model reads                          │ ─────────╮
-           │ + new command  template with $ARGUMENTS                                    │ grok-4.6 │
-           │                                                                            │ ░░   5%  │
-           │                                                                            │ okens    │
-           │                                                                            │          │
-           │                                                                            │ ─────────╯
-           │                                                                            │ ─────────╮
-           │                                                                            │    $?.?? │
-           ╰─ enter run · e edit in $EDITOR · d remove · esc ───────────────────────────╯ ░░   0%  │
-                                                                                                   │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ tasks ────────────────────╮
-                                                                      │ no tasks yet               │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ crew ─────────────── 0/4 ─╮
-                                                                      │ no specialists running     │
-                                                                      ╰────────────────────────────╯
+ · system
+   welcome · /help for keys
+
+
+           ╭─ skills & commands ──────────────────────────────── 0 skills · 0 commands ─╮
+           │›+ new skill  SKILL.md with a body the model reads                          │
+           │ + new command  template with $ARGUMENTS                                    │
+           │                                                                            │
+           │                                                                            │
+           │                                                                            │
+           │                                                                            │
+           │                                                                            │
+           │                                                                            │
+           ╰─ enter run · e edit in $EDITOR · d remove · esc ───────────────────────────╯
+
+
+
+
+
+
+
+
 
 
 ╭─ dusty ────────────────────────────────────────────────────────────────────────────────── build ─╮

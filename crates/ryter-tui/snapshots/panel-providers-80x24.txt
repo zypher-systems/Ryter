@@ -1,21 +1,21 @@
- ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator  grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patc…
 ────────────────────────────────────────────────────────────────────────────────
- · system                                             ╭─ session ──────────────╮
-   welcome · /help for keys                           │ untitled               │
-     ╭─ connections ────────────────────────────────────────────────── 2 ─╮ild │
-     │›● spacexai  spacexai · grok-4.6                            key set │    │
-     │ ○ openrouter  openrouter · claude-sonnet-4.6                no key │ ───╯
-     │                                                                    │ ───╮
-     │ + add connection                                                   │ .6 │
-     │ ⚙ test connection  live GET /models on the highlighted row         │ %  │
-     │                                                                    │    │
-     │                                                                    │    │
-     │                                                                    │ ───╯
-     ╰─ enter use · k set key · t test · d remove · esc ──────────────────╯ ───╮
-                                                                            ?? │
-                                                      │ bud ░░░░░░░░░░░░   0%  │
-                                                      │     $0.00 of $5.00     │
-                                                      ╰────────────────────────╯
+ · system
+   welcome · /help for keys
+     ╭─ connections ────────────────────────────────────────────────── 2 ─╮
+     │›● spacexai  spacexai · grok-4.6                            key set │
+     │ ○ openrouter  openrouter · claude-sonnet-4.6                no key │
+     │                                                                    │
+     │ + add connection                                                   │
+     │ ⚙ test connection  live GET /models on the highlighted row         │
+     │                                                                    │
+     │                                                                    │
+     │                                                                    │
+     ╰─ enter use · k set key · t test · d remove · esc ──────────────────╯
+
+
+
+
 
 
 ╭─ dusty ────────────────────────────────────────────────────────────── build ─╮

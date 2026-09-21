@@ -13,8 +13,8 @@
                                                       ╰────────────────────────╯
 ╭─ commands ────────────────────────────── 4 of 28 ─╮ ╭─ spend ────────────────╮
 │ mo                                                │ │ session          $?.?? │
-│›/models         Switch the orchestrator model  ▸  │ │ bud ░░░░░░░░░░░░   0%  │
-│ /tools          Tool permission mode           ▸  │ │     $0.00 of $5.00     │
+│›/models         Switch the orchestrator model  ▸  │ │ bud ░░░░░░░░░░░░   ?%  │
+│ /tools          Tool permission mode           ▸  │ │     $?.?? of $5.00     │
 │ /crew           Assign models per specialist … ▸  │ ╰────────────────────────╯
 │ /skills         Browse, run, create, and remo… ▸  │
 ╰─ enter run · tab complete · esc close ────────────╯

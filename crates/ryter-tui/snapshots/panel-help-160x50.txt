@@ -1,27 +1,27 @@
- ryter  ·  orchestrator                                                                                                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator                                                                                 grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                                                                                     ╭─ session ──────────────────────╮
-   welcome · /help for keys                                                                                                   │ untitled                       │
-                                                                                                                              │ 0193abcd                 build │
-                                                                                                                              │ auditor ✓  tools ask           │
-                                      ╭─ help ───────────────────────────────────────────────────────── [keys] commands ─╮    ╰────────────────────────────────╯
-                                      │ GLOBAL                                                                           ┃    ╭─ model ────────────────────────╮
-                                      │  ^c         clear composer → cancel turn → quit (double-press)                   ┃    │ spacexai ●            grok-4.6 │
-                                      │  ^d         quit when the composer is empty                                      ┃    │ ctx █░░░░░░░░░░░░░░░░░░░   5%  │
-                                      │  ^p         open the command palette                                             ┃    │     12.4k / 256k tokens        │
-                                      │  ^r         toggle the reasoning pane                                            ┃    │ price unknown                  │
-                                      │  ^b         toggle the info panel                                                ┃    ╰────────────────────────────────╯
-                                      │  ^l         redraw                                                               ┃    ╭─ spend ────────────────────────╮
-                                      │  f1         open /help                                                           ┃    │ session                  $?.?? │
-                                      │  esc        back one level                                                       ┃    │ bud ░░░░░░░░░░░░░░░░░░░░   0%  │
-                                      │                                                                                  ┃    │     $0.00 of $5.00             │
-                                      │ CHAT SCROLL                                                                      ┃    ╰────────────────────────────────╯
-                                      │  pgup       scroll one viewport up                                               ┃    ╭─ tasks ────────────────────────╮
-                                      │  pgdn       scroll one viewport down                                             │    │ no tasks yet                   │
-                                      │  ⇧↑         scroll one row up                                                    │    ╰────────────────────────────────╯
-                                      │  ⇧↓         scroll one row down                                                  │    ╭─ crew ─────────────────── 0/4 ─╮
-                                      │  ^home      top of the transcript                                                │    │ no specialists running         │
-                                      │  ^end       bottom (re-engages follow)                                           │    ╰────────────────────────────────╯
+ · system
+   welcome · /help for keys
+
+
+                                      ╭─ help ───────────────────────────────────────────────────────── [keys] commands ─╮
+                                      │ GLOBAL                                                                           ┃
+                                      │  ^c         clear composer → cancel turn → quit (double-press)                   ┃
+                                      │  ^d         quit when the composer is empty                                      ┃
+                                      │  ^p         open the command palette                                             ┃
+                                      │  ^r         toggle the reasoning pane                                            ┃
+                                      │  ^b         toggle the info panel                                                ┃
+                                      │  ^l         redraw                                                               ┃
+                                      │  f1         open /help                                                           ┃
+                                      │  esc        back one level                                                       ┃
+                                      │                                                                                  ┃
+                                      │ CHAT SCROLL                                                                      ┃
+                                      │  pgup       scroll one viewport up                                               ┃
+                                      │  pgdn       scroll one viewport down                                             │
+                                      │  ⇧↑         scroll one row up                                                    │
+                                      │  ⇧↓         scroll one row down                                                  │
+                                      │  ^home      top of the transcript                                                │
+                                      │  ^end       bottom (re-engages follow)                                           │
                                       │  ^↑         previous turn / jump to the sticky message                           │
                                       │  ^↓         next turn                                                            │
                                       │  ⌥pgup      reasoning pane up                                                    │

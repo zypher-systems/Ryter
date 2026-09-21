@@ -1,27 +1,27 @@
- ryter  ·  orchestrator                                                                 ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  orchestrator                                         grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                                                 ╭─ session ──────────────────╮
-   welcome · /help for keys                                                               │ untitled                   │
-                                                                                          │ 0193abcd             build │
-                                                                                          │ auditor ✓  tools ask       │
-                                                                                          ╰────────────────────────────╯
-                                                                                          ╭─ model ────────────────────╮
-                                                                                          │ spacexai ●        grok-4.6 │
-                                                                                          │ ctx █░░░░░░░░░░░░░░░   5%  │
-                 ╭─ sessions ───────────────────────────────────────────────────────────────────── 0 ─╮ 256k tokens    │
-                 │ no saved sessions in this directory                                                │ n              │
-                 │                                                                                    │ ───────────────╯
-                 │                                                                                    │ ───────────────╮
-                 │                                                                                    │          $?.?? │
-                 │                                                                                    │ ░░░░░░░░   0%  │
-                 │                                                                                    │  $5.00         │
-                 ╰─ enter resume · r rename · d delete · n new · type to filter · esc ────────────────╯ ───────────────╯
-                                                                                                        ───────────────╮
-                                                                                          │ no tasks yet               │
-                                                                                          ╰────────────────────────────╯
-                                                                                          ╭─ crew ─────────────── 0/4 ─╮
-                                                                                          │ no specialists running     │
-                                                                                          ╰────────────────────────────╯
+ · system
+   welcome · /help for keys
+
+
+
+
+
+
+                 ╭─ sessions ───────────────────────────────────────────────────────────────────── 0 ─╮
+                 │ no saved sessions in this directory                                                │
+                 │                                                                                    │
+                 │                                                                                    │
+                 │                                                                                    │
+                 │                                                                                    │
+                 │                                                                                    │
+                 ╰─ enter resume · r rename · d delete · n new · type to filter · esc ────────────────╯
+
+
+
+
+
+
 
 
 
