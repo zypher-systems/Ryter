@@ -61,6 +61,8 @@ pub enum Action {
     Quit,
     /// Clear and repaint the terminal (`Ctrl+L`).
     Redraw,
+    /// Release or re-grab the mouse (`Ctrl+G`).
+    ToggleMouse,
     /// Start a new session.
     New,
     /// Submit text to the orchestrator.

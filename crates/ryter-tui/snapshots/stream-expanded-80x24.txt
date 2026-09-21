@@ -1,17 +1,17 @@
  ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
- dusty                                               │╭─ model ────────────────╮
- ▎ now implement step one                            ││ spacexai ●    grok-4.6 │
-                                                     ││ ctx █░░░░░░░░░░░   5%  │
- · read_file  read crates/ryter-tui/src/run/m…  0.1s ││     12.4k / 256k       │
-                                                     ││ price unknown          │
- grok-4.6                                            ┃╰────────────────────────╯
-   Reading the loop now. The event loop drains       ┃╭─ spend ────────────────╮
+ dusty                                               │╭─ session ──────────────╮
+ ▎ now implement step one                            ││ untitled         build │
+                                                     │╰────────────────────────╯
+ · read_file  read crates/ryter-tui/src/run/m…  0.1s │╭─ model ────────────────╮
+                                                     ││ spacexai ●    grok-4.6 │
+ grok-4.6                                            ┃│ ctx █░░░░░░░░░░░   5%  │
+   Reading the loop now. The event loop drains       ┃│     12.4k / 256k       │
+                                                     ┃│ price unknown          │
+                                                     ┃╰────────────────────────╯
+                                                     ┃╭─ spend ────────────────╮
                                                      ┃│ session          $?.?? │
                                                      ┃╰────────────────────────╯
-                                                     ┃
-                                                     ┃
-                                                     ┃
  ⠼ writing                                                    0:12   ^r close ▴
  The user wants the loop wired. I should read run.rs first, then The user wants
  the loop wired. I should read run.rs first, then The user wants the loop
@@ -21,4 +21,4 @@
 ╭─ dusty ────────────────────────────────────────────────────────────── build ─╮
 │› type to queue the next message, / for commands                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- enter send    ⇧enter newline    / commands    ^r reasoning    ^b panel
+ enter send    ⇧enter newline    / commands    ^b panel    esc cancel    ^c quit

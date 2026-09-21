@@ -313,6 +313,82 @@ fn many_turns(n: usize) -> View {
 }
 
 #[test]
+fn hint_bar_never_drops_cancel_or_quit() {
+    // At 80 columns the streaming bar used to truncate its tail, losing `^c
+    // quit` exactly when a turn was running (G-05).
+    let view = mid_stream(ActivityMode::Collapsed);
+    for width in [80u16, 60, 48, 40, 32] {
+        let frame = render_to_string(&view, width, 24);
+        let hint = frame.lines().last().unwrap_or_default().to_string();
+        assert!(hint.contains("^c"), "width {width} lost quit: {hint:?}");
+        assert!(hint.contains("esc"), "width {width} lost cancel: {hint:?}");
+        assert!(
+            hint.chars().count() <= usize::from(width),
+            "width {width} overflowed: {hint:?}"
+        );
+    }
+}
+
+#[test]
+fn empty_cards_are_absent_not_blank() {
+    // Principle 1: the conversation gets the space. `no tasks yet` and
+    // `no specialists running` used to hold a column open to say nothing (G-03).
+    let view = idle();
+    for (w, h) in SIZES {
+        let frame = render_to_string(&view, w, h);
+        assert!(!frame.contains("no tasks yet"), "{w}x{h}: empty tasks card");
+        assert!(
+            !frame.contains("no specialists running"),
+            "{w}x{h}: empty crew card"
+        );
+    }
+}
+
+/// The raw session id is operator chrome; `/sessions` is where it belongs (G-07).
+#[test]
+fn session_card_leads_with_title_and_phase() {
+    let view = idle();
+    let frame = render_to_string(&view, 120, 40);
+    let card_line = frame
+        .lines()
+        .find(|l| l.contains("untitled"))
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        card_line.contains("build"),
+        "phase should share the row: {card_line:?}"
+    );
+    assert!(
+        !frame.contains("0193abcd"),
+        "the uuid should not lead the column"
+    );
+}
+
+/// An open panel owns the body: no sidebar card survives underneath it to be
+/// sliced into fragments by its border (G-01, G-02, G-06).
+#[test]
+fn an_open_panel_leaves_no_card_fragments() {
+    for id in [PanelId::Help, PanelId::Settings, PanelId::Crew] {
+        let view = with_panel(id);
+        for (w, h) in SIZES {
+            let frame = render_to_string(&view, w, h);
+            for needle in [
+                "╭─ session",
+                "╭─ model",
+                "╭─ spend",
+                "auditor ✓",
+                "price unknown",
+            ] {
+                assert!(
+                    !frame.contains(needle),
+                    "{id:?} at {w}x{h} still shows {needle:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn composer_present_at_every_message_count() {
     for n in [0usize, 1, 5, 40, 200] {
         let v = many_turns(n);

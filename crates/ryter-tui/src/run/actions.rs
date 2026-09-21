@@ -44,6 +44,9 @@ pub struct Ctx {
     pub perm_reply: Option<mpsc::Sender<Permission>>,
     /// Pending `ask_user` reply.
     pub ask_reply: Option<mpsc::Sender<String>>,
+    /// Mouse capture currently held. Released to let the terminal select
+    /// text, since capture takes click-drag away from the user.
+    pub mouse_grabbed: bool,
     /// Active theme.
     pub theme: Theme,
     /// Theme to restore on `/theme` cancel.
@@ -91,6 +94,23 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         }
         Action::Quit => cx.want_quit = true,
         Action::Redraw => cx.want_redraw = true,
+        // Capture gives us wheel scroll and card clicks but takes the
+        // terminal's own click-drag selection away, and per-message copy is not
+        // built yet — so without this there is no way to get text out of Ryter.
+        Action::ToggleMouse => {
+            use crossterm::ExecutableCommand;
+            use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+            let mut out = std::io::stdout();
+            cx.mouse_grabbed = !cx.mouse_grabbed;
+            if cx.mouse_grabbed {
+                let _ = out.execute(EnableMouseCapture);
+                view.system("mouse grabbed — wheel scroll and card clicks active");
+            } else {
+                let _ = out.execute(DisableMouseCapture);
+                view.system("mouse released — select and copy with the terminal; ^g to grab");
+            }
+            cx.want_redraw = true;
+        }
         Action::Submit(text) => cx.send(Work::Turn { text, reply: None }),
         Action::Cancel => {
             if view.busy {

@@ -9,11 +9,12 @@
                   │  ^r         toggle the reasoning pane                                            ┃
                   │  ^b         toggle the info panel                                                ┃
                   │  ^l         redraw                                                               ┃
+                  │  ^g         release/grab the mouse (release it to select and copy text)          ┃
                   │  f1         open /help                                                           ┃
                   │  esc        back one level                                                       ┃
                   │                                                                                  ┃
                   │ CHAT SCROLL                                                                      ┃
-                  │  pgup       scroll one viewport up                                               ┃
+                  │  pgup       scroll one viewport up                                               │
                   │  pgdn       scroll one viewport down                                             │
                   │  ⇧↑         scroll one row up                                                    │
                   │  ⇧↓         scroll one row down                                                  │
@@ -29,7 +30,6 @@
                   │  ⇧enter     newline                                                              │
                   │  ⌥enter     newline                                                              │
                   │  ←          move left                                                            │
-                  │  →          move right                                                           │
                   ╰─ ←→ tab · ↑↓ pgup pgdn scroll · type to filter · esc ────────────────────────────╯
 
 

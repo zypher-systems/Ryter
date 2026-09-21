@@ -296,6 +296,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         mcp_host: attach_host,
         perm_reply: None,
         ask_reply: None,
+        mouse_grabbed: mouse,
         theme,
         theme_before_preview: None,
         color_mode,
@@ -315,7 +316,8 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         &prompt_rx,
         mouse,
     );
-    leave_terminal(mouse);
+    // The user may have released it mid-session (`Ctrl+G`).
+    leave_terminal(cx.mouse_grabbed);
     if let Some(p) = sock_path {
         let _ = std::fs::remove_file(p);
     }

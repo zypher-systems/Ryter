@@ -1,13 +1,12 @@
  ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  dusty                                               │╭─ session ──────────────╮
- ▎ now implement step one                            ││ untitled               │
-                                                     ││ 0193abcd         build │
- · read_file  read crates/ryter-tui/src/run/m…  0.1s ┃│ auditor ✓  tools ask   │
-                                                     ┃╰────────────────────────╯
- grok-4.6                                            ┃╭─ model ────────────────╮
-   Reading the loop now. The event loop drains       ┃│ spacexai ●    grok-4.6 │
-                                                     ┃│ ctx █░░░░░░░░░░░   5%  │
+ ▎ now implement step one                            ││ untitled         build │
+                                                     ││ auditor ✓  tools ask   │
+ · read_file  read crates/ryter-tui/src/run/m…  0.1s ┃╰────────────────────────╯
+                                                     ┃╭─ model ────────────────╮
+ grok-4.6                                            ┃│ spacexai ●    grok-4.6 │
+   Reading the loop now. The event loop drains       ┃│ ctx █░░░░░░░░░░░   5%  │
                                                      ┃│     12.4k / 256k       │
                                                      ┃│ price unknown          │
                                                      ┃╰────────────────────────╯
@@ -16,9 +15,10 @@
                                                      ┃│ bud ░░░░░░░░░░░░   ?%  │
                                                      ┃│     $?.?? of $5.00     │
                                                      ┃╰────────────────────────╯
+                                                     ┃
  ⠼ writing  ·  0:12  ·  ~11 tok                                ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────
 ╭─ dusty ────────────────────────────────────────────────────────────── build ─╮
 │› type to queue the next message, / for commands                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- enter send    ⇧enter newline    / commands    ^r reasoning    ^b panel
+ enter send    ⇧enter newline    / commands    ^b panel    esc cancel    ^c quit

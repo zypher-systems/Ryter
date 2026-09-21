@@ -8,6 +8,7 @@
         │  ^r         toggle the reasoning pane                                            ┃
         │  ^b         toggle the info panel                                                ┃
         │  ^l         redraw                                                               │
+        │  ^g         release/grab the mouse (release it to select and copy text)          │
         │  f1         open /help                                                           │
         │  esc        back one level                                                       │
         │                                                                                  │
@@ -20,7 +21,6 @@
         │  ^end       bottom (re-engages follow)                                           │
         │  ^↑         previous turn / jump to the sticky message                           │
         │  ^↓         next turn                                                            │
-        │  ⌥pgup      reasoning pane up                                                    │
         ╰─ ←→ tab · ↑↓ pgup pgdn scroll · type to filter · esc ────────────────────────────╯
 
 

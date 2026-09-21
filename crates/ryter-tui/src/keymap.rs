@@ -54,6 +54,8 @@ pub enum KeyAction {
     TogglePanel,
     /// Redraw.
     Redraw,
+    /// Release the mouse so the terminal can select text.
+    ToggleMouse,
     /// Open `/help`.
     Help,
     /// Back one level.
@@ -182,6 +184,12 @@ pub const KEYMAP: &[Binding] = &[
         "toggle the info panel",
     ),
     b(Ctx::Global, "Ctrl+L", KeyAction::Redraw, "redraw"),
+    b(
+        Ctx::Global,
+        "Ctrl+G",
+        KeyAction::ToggleMouse,
+        "release/grab the mouse (release it to select and copy text)",
+    ),
     b(Ctx::Global, "F1", KeyAction::Help, "open /help"),
     b(Ctx::Global, "Esc", KeyAction::Back, "back one level"),
     // Chat scroll

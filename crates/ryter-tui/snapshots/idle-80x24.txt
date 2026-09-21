@@ -1,8 +1,7 @@
  ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  · system                                             ╭─ session ──────────────╮
-   welcome · /help for keys                           │ untitled               │
-                                                      │ 0193abcd         build │
+   welcome · /help for keys                           │ untitled         build │
                                                       │ auditor ✓  tools ask   │
                                                       ╰────────────────────────╯
                                                       ╭─ model ────────────────╮
@@ -16,6 +15,7 @@
                                                       │ bud ░░░░░░░░░░░░   ?%  │
                                                       │     $?.?? of $5.00     │
                                                       ╰────────────────────────╯
+
 
 
 ╭─ dusty ────────────────────────────────────────────────────────────── build ─╮

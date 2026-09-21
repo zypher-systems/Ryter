@@ -299,6 +299,38 @@ fn draw_scrollbar(
 }
 
 /// Context-sensitive hint bar.
+/// How willing a hint is to be dropped when the bar does not fit.
+///
+/// The old bar truncated the tail, so the 80-column streaming frame lost `^c
+/// quit` — the one key you want while a turn is running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Hint {
+    /// Never dropped: cancel and quit.
+    Essential,
+    /// Dropped only after every optional hint has gone.
+    Useful,
+    /// First to go.
+    Optional,
+}
+
+/// Context hints with their priority.
+pub fn hints_ranked(view: &View) -> Vec<(&'static str, String, Hint)> {
+    hints(view)
+        .into_iter()
+        .map(|(k, l)| {
+            let rank = match k {
+                // Getting out: cancel, quit, and the permission answers.
+                "^c" | "esc" | "^d" | "y" | "n" | "a" => Hint::Essential,
+                // Discoverable without the bar, so first to go.
+                "⇧enter" | "^r" | "end" => Hint::Optional,
+                // `enter` included: everyone knows Enter sends.
+                _ => Hint::Useful,
+            };
+            (k, l, rank)
+        })
+        .collect()
+}
+
 pub fn hints(view: &View) -> Vec<(&'static str, String)> {
     if let Some(until) = view.quit_armed_until {
         if view.now_ms <= until {
@@ -355,25 +387,46 @@ pub fn hints(view: &View) -> Vec<(&'static str, String)> {
     v
 }
 
+/// Width one hint occupies, including its leading separator.
+fn hint_width(key: &str, label: &str, first: bool) -> usize {
+    wrap::width(key) + 1 + wrap::width(label) + if first { 0 } else { 4 }
+}
+
 fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let w = area.width as usize;
-    let mut spans: Vec<Span<'static>> = vec![Span::styled(" ", theme.body())];
-    let mut used = 1;
-    for (i, (key, label)) in hints(view).into_iter().enumerate() {
-        let piece = wrap::width(key) + 1 + wrap::width(&label) + 4;
-        if used + piece > w {
+    let mut items = hints_ranked(view);
+    // Drop the least important hints until the rest fit, rather than chopping
+    // whatever happens to be last.
+    loop {
+        let mut used = 1;
+        for (i, (k, l, _)) in items.iter().enumerate() {
+            used += hint_width(k, l, i == 0);
+        }
+        if used <= w || items.len() <= 1 {
             break;
         }
+        let worst = items
+            .iter()
+            .enumerate()
+            .max_by_key(|(i, (_, _, rank))| (*rank, *i))
+            .map(|(i, _)| i);
+        match worst {
+            Some(i) => {
+                items.remove(i);
+            }
+            None => break,
+        }
+    }
+    let mut spans: Vec<Span<'static>> = vec![Span::styled(" ", theme.body())];
+    for (i, (key, label, _)) in items.iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled("    ", theme.body()));
-            used += 4;
         }
         spans.push(Span::styled(
-            key.to_string(),
+            (*key).to_string(),
             theme.body().add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(format!(" {label}"), theme.muted()));
-        used += piece - 4;
     }
     frame.render_widget(Paragraph::new(Line::from(spans)).style(theme.body()), area);
 }

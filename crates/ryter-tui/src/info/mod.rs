@@ -81,12 +81,11 @@ pub fn cards(view: &View, inner_w: usize, theme: Theme) -> Vec<Card> {
         cards::session(view, inner_w, theme),
         cards::model(view, inner_w, theme),
         cards::spend(view, inner_w, theme),
-        cards::tasks(view, inner_w, theme),
-        cards::crew(view, inner_w, theme),
     ];
-    if let Some(m) = cards::mcp(view, inner_w, theme) {
-        v.push(m);
-    }
+    // Cards that have nothing to say are absent, not empty (`R-PANEL-18`).
+    v.extend(cards::tasks(view, inner_w, theme));
+    v.extend(cards::crew(view, inner_w, theme));
+    v.extend(cards::mcp(view, inner_w, theme));
     v
 }
 

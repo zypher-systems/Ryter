@@ -21,6 +21,7 @@ pub fn handle(view: &mut View, key: KeyEvent) -> Action {
         match a {
             KeyAction::CtrlC => return ctrl_c(view),
             KeyAction::Redraw => return Action::Redraw,
+            KeyAction::ToggleMouse => return Action::ToggleMouse,
             KeyAction::TogglePanel => {
                 view.panel_visible = !view.panel_visible;
                 return Action::None;

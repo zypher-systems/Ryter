@@ -59,18 +59,18 @@ pub fn session(view: &View, w: usize, theme: Theme) -> Card {
     } else {
         view.session_title.clone()
     };
-    let short: String = view.session_id.chars().take(8).collect();
-    let mut rows = vec![row(vec![s(wrap::truncate(&title, w), theme.side())])];
+    // Title and phase lead. The raw session id is operator chrome: it belongs
+    // in `/sessions`, not in the first row of an empty product.
     let phase = view.phase.to_string();
-    rows.push(kv(
-        &short,
+    let mut rows = vec![kv(
+        &wrap::truncate(&title, w.saturating_sub(phase.chars().count() + 2)),
         &phase,
         w,
         theme,
         Style::default()
             .fg(theme.phase(view.phase))
             .bg(theme.sidebar_bg),
-    ));
+    )];
     let detail_from = rows.len();
     let auditor = if view.auditor_on {
         "auditor ✓"
@@ -281,7 +281,15 @@ fn task_rank(status: &str) -> u8 {
 }
 
 /// `tasks` card (`R-PANEL-08..11`).
-pub fn tasks(view: &View, w: usize, theme: Theme) -> Card {
+/// `tasks` card, or `None` until there is a task (`R-PANEL-18`).
+///
+/// Principle 1 is that the conversation gets the space. Three bordered boxes
+/// saying `no tasks yet` / `no specialists running` took a quarter of the width
+/// to say nothing.
+pub fn tasks(view: &View, w: usize, theme: Theme) -> Option<Card> {
+    if view.todos.is_empty() {
+        return None;
+    }
     let done = view
         .todos
         .iter()
@@ -290,9 +298,6 @@ pub fn tasks(view: &View, w: usize, theme: Theme) -> Card {
     let mut sorted: Vec<_> = view.todos.iter().collect();
     sorted.sort_by_key(|t| task_rank(&t.status));
     let mut rows = Vec::new();
-    if sorted.is_empty() {
-        rows.push(row(vec![s("no tasks yet", theme.side_muted())]));
-    }
     for t in sorted.iter().take(8) {
         let (glyph, color, strike) = match t.status.as_str() {
             "running" | "in_progress" => ("◐", theme.accent, false),
@@ -328,25 +333,22 @@ pub fn tasks(view: &View, w: usize, theme: Theme) -> Card {
             theme.side_muted(),
         )]));
     }
-    Card {
+    Some(Card {
         id: CardId::Tasks,
         title: "tasks".into(),
-        counter: if view.todos.is_empty() {
-            String::new()
-        } else {
-            format!("{done}/{}", view.todos.len())
-        },
+        counter: format!("{done}/{}", view.todos.len()),
         detail_from: rows.len(),
         rows,
-    }
+    })
 }
 
 /// `crew` card (`R-PANEL-12..15`).
-pub fn crew(view: &View, w: usize, theme: Theme) -> Card {
-    let mut rows = Vec::new();
+/// `crew` card, or `None` while no specialist is running.
+pub fn crew(view: &View, w: usize, theme: Theme) -> Option<Card> {
     if view.crew.is_empty() {
-        rows.push(row(vec![s("no specialists running", theme.side_muted())]));
+        return None;
     }
+    let mut rows = Vec::new();
     for c in &view.crew {
         let role_w = wrap::width(&c.role);
         let label = wrap::truncate(&c.label, w.saturating_sub(role_w + 2));
@@ -380,13 +382,13 @@ pub fn crew(view: &View, w: usize, theme: Theme) -> Card {
             s(right, theme.side_muted()),
         ]));
     }
-    Card {
+    Some(Card {
         id: CardId::Crew,
         title: "crew".into(),
         counter: format!("{}/{}", view.crew.len(), view.max_crew),
         detail_from: rows.len(),
         rows,
-    }
+    })
 }
 
 /// `mcp` card (`R-PANEL-16`), only when relevant.

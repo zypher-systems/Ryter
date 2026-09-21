@@ -109,24 +109,43 @@ impl Panel for Spend {
             ),
         ]));
         if view.budget_usd > 0.0 {
-            let spent = view.spend.unwrap_or(0.0);
-            let frac = spent / view.budget_usd;
-            let color = if spent >= view.budget_usd {
-                theme.error
-            } else if spent >= view.warn_usd {
-                theme.warn
-            } else {
-                theme.success
+            // Same rule as the sidebar card: with no priced turn yet there is
+            // no honest percentage, and `$0.00` would claim one (`RYTER.md`).
+            let (frac, color, label) = match view.spend {
+                Some(spent) => {
+                    let frac = spent / view.budget_usd;
+                    let color = if spent >= view.budget_usd {
+                        theme.error
+                    } else if spent >= view.warn_usd {
+                        theme.warn
+                    } else {
+                        theme.success
+                    };
+                    (
+                        frac,
+                        color,
+                        format!(
+                            "{}%  {} of {}",
+                            (frac * 100.0).round().min(999.0) as u32,
+                            format_usd(Some(spent)),
+                            format_usd(Some(view.budget_usd))
+                        ),
+                    )
+                }
+                None => (
+                    0.0,
+                    theme.dim,
+                    format!(
+                        "?%  {} of {}",
+                        format_usd(None),
+                        format_usd(Some(view.budget_usd))
+                    ),
+                ),
             };
             lines.push(widgets::gauge(
                 "budget",
                 frac,
-                &format!(
-                    "{}%  {} of {}",
-                    (frac * 100.0).round().min(999.0) as u32,
-                    format_usd(Some(spent)),
-                    format_usd(Some(view.budget_usd))
-                ),
+                &label,
                 w.saturating_sub(40).clamp(12, 24),
                 theme.panel_bg,
                 theme,

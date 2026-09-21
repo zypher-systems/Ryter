@@ -1,8 +1,7 @@
  ryter  ·  orchestrator                                             ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  · system                                                             ╭─ session ──────────────────╮
-   welcome · /help for keys                                           │ untitled                   │
-                                                                      │ 0193abcd             build │
+   welcome · /help for keys                                           │ untitled             build │
                                                                       │ auditor ✓  tools ask       │
                                                                       ╰────────────────────────────╯
                                                                       ╭─ model ────────────────────╮
@@ -16,12 +15,13 @@
                                                                       │ bud ░░░░░░░░░░░░░░░░   ?%  │
                                                                       │     $?.?? of $5.00         │
                                                                       ╰────────────────────────────╯
-                                                                      ╭─ tasks ────────────────────╮
-╭─ commands ────────────────────────────────────────────── 4 of 28 ─╮ │ no tasks yet               │
-│ mo                                                                │ ╰────────────────────────────╯
-│›/models         Switch the orchestrator model                  ▸  │ ╭─ crew ─────────────── 0/4 ─╮
-│ /tools          Tool permission mode                           ▸  │ │ no specialists running     │
-│ /crew           Assign models per specialist role, save prese… ▸  │ ╰────────────────────────────╯
+
+
+╭─ commands ────────────────────────────────────────────── 4 of 28 ─╮
+│ mo                                                                │
+│›/models         Switch the orchestrator model                  ▸  │
+│ /tools          Tool permission mode                           ▸  │
+│ /crew           Assign models per specialist role, save prese… ▸  │
 │ /skills         Browse, run, create, and remove skills and us… ▸  │
 ╰─ enter run · tab complete · esc close ────────────────────────────╯
 ╭─ dusty ────────────────────────────────────────────────────────────────────────────────── build ─╮

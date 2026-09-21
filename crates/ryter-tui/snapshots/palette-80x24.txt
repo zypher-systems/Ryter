@@ -1,8 +1,7 @@
  ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  · system                                             ╭─ session ──────────────╮
-   welcome · /help for keys                           │ untitled               │
-                                                      │ 0193abcd         build │
+   welcome · /help for keys                           │ untitled         build │
                                                       │ auditor ✓  tools ask   │
                                                       ╰────────────────────────╯
                                                       ╭─ model ────────────────╮
@@ -11,11 +10,12 @@
                                                       │     12.4k / 256k       │
                                                       │ price unknown          │
                                                       ╰────────────────────────╯
-╭─ commands ────────────────────────────── 4 of 28 ─╮ ╭─ spend ────────────────╮
-│ mo                                                │ │ session          $?.?? │
-│›/models         Switch the orchestrator model  ▸  │ │ bud ░░░░░░░░░░░░   ?%  │
-│ /tools          Tool permission mode           ▸  │ │     $?.?? of $5.00     │
-│ /crew           Assign models per specialist … ▸  │ ╰────────────────────────╯
+                                                      ╭─ spend ────────────────╮
+╭─ commands ────────────────────────────── 4 of 28 ─╮ │ session          $?.?? │
+│ mo                                                │ │ bud ░░░░░░░░░░░░   ?%  │
+│›/models         Switch the orchestrator model  ▸  │ │     $?.?? of $5.00     │
+│ /tools          Tool permission mode           ▸  │ ╰────────────────────────╯
+│ /crew           Assign models per specialist … ▸  │
 │ /skills         Browse, run, create, and remo… ▸  │
 ╰─ enter run · tab complete · esc close ────────────╯
 ╭─ dusty ────────────────────────────────────────────────────────────── build ─╮
