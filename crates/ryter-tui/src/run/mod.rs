@@ -75,13 +75,7 @@ struct TuiAttach {
 }
 
 impl InboundHost for TuiAttach {
-    fn prompt(&self, text: &str, phase: Option<Phase>) -> ryter_core::Result<String> {
-        if let Some(p) = phase {
-            let _ = self.work.send(Work::Handoff {
-                to: p,
-                note: String::new(),
-            });
-        }
+    fn prompt(&self, text: &str) -> ryter_core::Result<String> {
         let (tx, rx) = mpsc::channel();
         self.work
             .send(Work::Turn {
@@ -98,15 +92,6 @@ impl InboundHost for TuiAttach {
 
     fn spend(&self) -> String {
         self.spend.lock().map(|g| g.clone()).unwrap_or_default()
-    }
-
-    fn set_phase(&self, phase: Phase, note: &str) -> ryter_core::Result<()> {
-        self.work
-            .send(Work::Handoff {
-                to: phase,
-                note: note.to_string(),
-            })
-            .map_err(|e| ryter_core::Error::Io(e.to_string()))
     }
 
     fn cancel(&self) {
@@ -244,7 +229,6 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     let (notice_tx, notice_rx) = mpsc::channel::<Notice>();
     let cancel = Cancel::new();
     let live_status = Arc::new(Mutex::new(StatusSnapshot {
-        phase: phase.to_string(),
         model: model.clone(),
         connection: conn_name.clone(),
         session: session.meta.id.to_string(),

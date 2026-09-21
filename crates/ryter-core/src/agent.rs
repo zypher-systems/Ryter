@@ -183,9 +183,16 @@ impl Agent {
     }
 
     async fn turn_inner(&mut self, user: &str, tools: &mut u32) -> Result<TurnResult> {
+        // A run that stopped at the budget never showed the lead its crew
+        // report; without it, "continue" reached a lead that didn't know what
+        // had finished.
+        let content = match self.session.take_carry() {
+            Some(report) => format!("{}\n\n---\n\n{user}", crew_report_message(&report)),
+            None => user.to_string(),
+        };
         self.session.push_message(Message {
             role: "user".into(),
-            content: user.to_string(),
+            content,
             tool_call_id: None,
             tool_calls: None,
         })?;
@@ -784,9 +791,57 @@ impl Agent {
             let _ = self.session.write_crew_report(&report);
         }
         if let Some(e) = budget_hit {
+            let note = self.budget_stop_note(&e)?;
+            let _ = self.session.set_carry(&format!("{report}\n\n{note}"));
+            self.emit(AgentEvent::Error { message: note })?;
             return Err(e);
         }
         Ok(report)
+    }
+
+    /// What a budget stop left behind, written by the harness so it costs
+    /// nothing: the lead can't be asked once the budget is spent.
+    fn budget_stop_note(&self, e: &Error) -> Result<String> {
+        let q = self
+            .queue
+            .lock()
+            .map_err(|e| Error::Config(e.to_string()))?;
+        let titles = |want: &dyn Fn(TaskStatus) -> bool| -> Vec<String> {
+            q.tasks
+                .iter()
+                .filter(|t| t.role == "builder" && want(t.status))
+                .map(|t| format!("  - {}", t.title))
+                .collect()
+        };
+        let done = titles(&|s| s == TaskStatus::Done);
+        let open = titles(&|s| {
+            matches!(
+                s,
+                TaskStatus::Pending | TaskStatus::Running | TaskStatus::Blocked
+            )
+        });
+        let mut s = format!("Stopped: {e}.\n");
+        if let Some(p) = &self.session.meta.patch {
+            if !done.is_empty() {
+                s.push_str(&format!(
+                    "Finished, waiting on `{}`:\n{}\n",
+                    p.branch,
+                    done.join("\n")
+                ));
+            }
+            s.push_str(&format!("Nothing has landed on `{}`.\n", p.target));
+        }
+        if !open.is_empty() {
+            s.push_str(&format!(
+                "Not finished (work so far is kept on its branch):\n{}\n",
+                open.join("\n")
+            ));
+        }
+        s.push_str(
+            "Raise `[spend] session_budget_usd`, then tell the lead to continue \
+             (`ryter resume`, or `ryter -c -p continue` headless).",
+        );
+        Ok(s)
     }
 
     /// Switch phase, write a pass note (may be empty), keep the transcript.
@@ -1720,6 +1775,72 @@ mod tests {
         assert_eq!(log.len(), 3, "{roles:?}");
         let total = agent.session.meta.spend_usd_total.unwrap_or(0.0);
         assert!((total - 0.10).abs() < 1e-9, "counted once: {total}");
+    }
+
+    /// A budget stop says what it left behind, and the lead hears about it
+    /// on the next message instead of starting blind.
+    #[tokio::test]
+    async fn a_budget_stop_explains_itself_and_reaches_the_lead() {
+        let usage = |t: &str| {
+            vec![
+                StreamDelta::Text(t.into()),
+                StreamDelta::Usage(Usage {
+                    input_tokens: 2_000,
+                    output_tokens: 100,
+                    cached_tokens: 0,
+                }),
+                StreamDelta::ReportedCost(0.05),
+                StreamDelta::Done,
+            ]
+        };
+        let p = ReplayProvider::scripted(vec![
+            write("a.txt", "a\n"),
+            usage("STATUS: DONE"),
+            vec![StreamDelta::Text("noted".into()), StreamDelta::Done],
+        ]);
+        let (_home, _cwd, mut agent) = crew_setup(p);
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.budget_usd = 0.04;
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo(&serde_json::json!({"items": [
+                {"id": "t1", "title": "write a", "files": ["a.txt"]}
+            ]}))
+            .unwrap();
+        let err = agent.drain_crew().await.unwrap_err();
+        assert!(matches!(err, Error::Budget { .. }), "{err}");
+        let note = rx
+            .try_iter()
+            .find_map(|e| match e {
+                AgentEvent::Error { message } if message.starts_with("Stopped:") => Some(message),
+                _ => None,
+            })
+            .expect("a stop note");
+        assert!(
+            note.contains("Not finished") && note.contains("write a") && note.contains("continue"),
+            "{note}"
+        );
+
+        agent.budget_usd = 0.0;
+        agent.turn("continue").await.unwrap();
+        let first = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "user")
+            .unwrap();
+        assert!(
+            first.content.starts_with("[crew report")
+                && first.content.contains("write a")
+                && first.content.ends_with("continue"),
+            "{}",
+            first.content
+        );
+        // Handed over once.
+        assert!(agent.session.take_carry().is_none());
     }
 
     #[tokio::test]

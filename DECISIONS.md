@@ -1,6 +1,46 @@
 # Decisions
 
-Why, not what. Specialists append when they make a non-obvious choice.
+Why, not what. The lead records non-obvious choices, its own and the crew's.
+
+### 2026-09-21 — A budget stop says what it left, and the next message carries it
+- **By:** lead
+- **Decision:** When the session budget stops the crew, the harness writes the stop note itself: what is finished on the patch branch, what isn't, that nothing has landed, and how to continue. The crew report and note are kept in the session (`carry.md`) and put in front of the user's next message to the lead. `ryter -c -p` continues the latest session headless.
+- **Chosen vs rejected:** Rejected letting the lead write the summary: the budget is spent, and the stop is the one moment it can't be asked. Rejected pushing the report into the transcript at stop time: it would leave two user turns in a row.
+- **Why:** Live run 4 stopped at its cap with two of three tasks done. The user saw "budget exceeded", and headless had no way to continue. With the carried report, the continuation (run 5) requeued the task and landed the patch for $0.28.
+- **Where:** `agent.rs` `budget_stop_note`, `turn_inner`; `session.rs` `set_carry` / `take_carry`; `ryter-cli` `--continue`
+- **Residual risk:** A budget-stopped task is Blocked, and the lead has to set it back to pending. It did so in the live run, but the prompt doesn't spell it out.
+
+### 2026-09-21 — The architect writes the design once
+- **By:** lead
+- **Decision:** `notes/architect.md` holds the design and the exact interfaces between tasks, in about 500 words. Briefs cite it instead of restating it, and DECISIONS entries are a few lines each.
+- **Chosen vs rejected:** Rejected "put the interface in both briefs": every builder already sees `notes/architect.md`, so the rule made the most expensive model write the same thing three or four times.
+- **Why:** In live run 4 the Opus architect cost $0.91 of $1.72: a 1,400-word note, a 1,300-word DECISIONS entry, and 2,700 words of briefs that repeated them.
+- **Where:** `prompts/architect.md`
+- **Residual risk:** Not re-measured after the change. Much of the architect's output was probably reasoning, which the prompt can't control; a per-role reasoning-effort setting would.
+
+### 2026-09-21 — The lead routes the crew; there are no phases
+- **By:** lead
+- **Decision:** Every message goes to the lead. The lead answers, proposes a small edit, writes builder tasks itself, or queues an architect task, whose builder tasks run in the same drain. `hold: true` stops at the design. Plan/Build/Audit phases, `/plan` `/build` `/audit` `/handoff`, `ryter handoff`, and `--mode` are gone from the product; the header and composer say "lead".
+- **Chosen vs rejected:** Rejected user-switched phases: a user who pasted a request into plan mode got a design and nothing else, and the models were confused about which phase they were in and what they could do. Rejected always running the architect: on a precise two-module request, the lead wrote the tasks itself and the whole run cost $0.15 (live run 3). The architect is worth its ~$0.70 on designs, not on specs.
+- **Why:** The product is "tell the lead what you want and receive a patch". The user never talks to a specialist; specialists report through the chat.
+- **Where:** `agent.rs` `drain_crew` (batches by task role), `queue.rs` (`role`, `hold`, merge-by-id, `dropped`), `prompts/orchestrator.md`, TUI header/composer/session card
+- **Residual risk:** Routing quality is the lead model's judgment. A cheap lead that never calls the architect would build designs from thin briefs; the benchmark needs a multi-file case to catch that.
+
+### 2026-09-21 — A specialist's failed tool call is a result, not the end of the task
+- **By:** lead
+- **Decision:** A tool error (unreadable file, bad path, failed command) goes back to the model as an error result; only cancellation ends a specialist. A reply cut off at the output limit is resumed (unparseable calls are dropped, the model is told it was cut off), up to three times. An architect that produces neither text nor tasks is Blocked, not Done. After every audit the worktree is reset, and `commit_all` never stages caches (`__pycache__`, `*.pyc`, `node_modules`, …).
+- **Chosen vs rejected:** Rejected propagating tool errors: in live run 2 one `read_file` on a missing path killed a builder's whole task. Rejected raising output limits alone: the Opus architect hit its cap and the run returned nothing for $0.24.
+- **Why:** Every failure mode here was seen in a paid live run, and each one wasted the spend before it.
+- **Where:** `tools/mod.rs` `run_with_hooks`, `crew.rs` `run_specialist` / `sign_off` / `run_note_task`, `git.rs` `commit_all` / `discard_uncommitted`
+- **Residual risk:** The cache exclude list is fixed; a stack with other generated directories needs a `.gitignore`.
+
+### 2026-09-21 — Inline interpreter code stays refused; the refusal names the way round
+- **By:** lead
+- **Decision:** `python -c`, heredocs, and stdin-fed interpreters stay denied for every role. The denial now says to write a probe file and run it, which the gate allows, and the builder and auditor prompts say the same.
+- **Chosen vs rejected:** Rejected allowing inline code for builders and auditors. A builder can already run any script it writes, so the refusal protects little against a builder, but the Landlock sandbox is off by default, so the gate is often the only check, and code on disk can at least be read.
+- **Why:** In live run 3 both auditors met the refusal, were told only "outside policy", and hand-traced the code instead of probing it.
+- **Where:** `tools/policy.rs` `bash_hint`, `tools/mod.rs` `gated_execute`, `prompts/auditor.md`, `prompts/builder.md`
+- **Residual risk:** The gate is a guard against mistakes, not a sandbox. `[sandbox] profile = "workspace"` is the boundary.
 
 ### 2026-09-21 — Local connections are keyless and cost $0
 - **By:** orchestrator

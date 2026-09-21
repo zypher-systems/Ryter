@@ -18,7 +18,7 @@ Every rule below exists to keep that sentence true.
 
 | Role | Runs | Window | Writes | Returns |
 | --- | --- | --- | --- | --- |
-| **Orchestrator** | your tree, conversational | the session transcript | project memory only | answers; tasks via `todo_write`; memory updates |
+| **Lead** (`orchestrator` in code) | your tree, conversational | the session transcript | project memory only | answers; tasks via `todo_write`; memory updates |
 | **Architect** | your tree, one-shot | fresh: memory + brief | project memory only; never source | `notes/architect.md`, tasks, DECISIONS, a short summary |
 | **Builder** | its own worktree, parallel | fresh: memory + its brief | product source in its owned paths | a structured handback |
 | **Auditor** (one or a panel) | the builder's worktree | fresh: brief + handback + checks + diff | nothing | findings + `VERDICT: PASS/FAIL` |
@@ -36,22 +36,20 @@ Every rule below exists to keep that sentence true.
 - The planner was folded into the architect. Two sequential read-and-write-a-note
   roles re-read the repo twice and lost detail at the handoff. `planner` still
   parses, and old sessions, logs, and saved crew rows still load.
-- The orchestrator never writes product source. This is enforced by the tool mask,
+- The lead never writes product source. This is enforced by the tool mask,
   not by the prompt.
-- **Project memory has serial writers only**: the orchestrator and the architect,
+- **Project memory has serial writers only**: the lead and the architect,
   both in your tree. Builders are denied `ROADMAP.md`, `DECISIONS.md` and `notes/`,
   because N parallel copies of those files conflict on every merge. Their decisions
-  come back in the handback, and the orchestrator records them.
+  come back in the handback, and the lead records them.
 
-## 2. Phases are guardrails, not a pipeline
+## 2. The lead routes; there are no phases
 
-| Phase | Runs from the queue | Meaning |
-| --- | --- | --- |
-| `plan` | architect | Design. Nothing writes product source. (`/architect` and `/design` are aliases.) |
-| `build` | builders, gated by checks + auditor | Make changes. |
-| `audit` | auditor | Review what exists; report. |
-
-The phase limits what *may* run. The orchestrator decides what *does* run.
+Every user message goes to the lead. Each task carries a `role`: `architect` tasks
+run first in a drain, and the builder tasks they write run in the same drain. A
+task with `hold: true` waits for the user's go-ahead (for "design only"). Phases
+and handoffs were removed (see `DECISIONS.md`): switching them by hand confused
+users and models alike.
 
 ## 3. Tasks
 
@@ -147,8 +145,8 @@ weaker: whether anything gets tested is then up to a model.
 ## 6. How results travel
 
 - **Builder → auditor:** the handback (`STATUS / FILES / DECISIONS / NOTES`).
-- **Crew → orchestrator:** after a batch, `drain_crew` returns a report (status,
-  handback, checks, audit per task). The orchestrator gets another round to tell
+- **Crew → lead:** after a batch, `drain_crew` returns a report (status,
+  handback, checks, audit per task). The lead gets another round to tell
   you what happened and to record decisions. The report is also kept in the session
   (`notes/crew.md`), so later turns can see it.
 - **Orchestrator → you:** what merged, what was rejected and why, and which branches
@@ -162,11 +160,10 @@ first-class constraint (`docs/cost.md`).
 
 Still open:
 
-1. **Name.** Recommendation: *lead* in the UI, `orchestrator` in code.
-2. **Setup defaults.** Independence means setup must ask for two models. It
+1. **Setup defaults.** Independence means setup must ask for two models. It
    should default to a cheap builder and a strong auditor/architect from another
    provider (`docs/cost.md` §4).
-3. **Abandoning a whole patch.** Today you drop its tasks one by one. A
+2. **Abandoning a whole patch.** Today you drop its tasks one by one. A
    `/patch drop` would be clearer.
-4. **Pull requests.** An optional alternative to local landing, for teams:
+3. **Pull requests.** An optional alternative to local landing, for teams:
    the patch becomes a PR with the audits as its description.

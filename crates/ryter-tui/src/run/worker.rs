@@ -28,13 +28,6 @@ pub enum Work {
         /// Optional reply channel.
         reply: Option<mpsc::Sender<String>>,
     },
-    /// Phase handoff.
-    Handoff {
-        /// Target.
-        to: Phase,
-        /// Pass note.
-        note: String,
-    },
     /// Fresh session.
     New,
     /// Auditor gate.
@@ -215,17 +208,6 @@ pub fn run(init: WorkerInit) {
                     if let Some(reply) = reply {
                         let _ = reply.send(String::new());
                     }
-                }
-            }
-            Ok(Work::Handoff { to, note }) => {
-                if let Some(a) = &mut agent {
-                    if let Err(e) = a.handoff(to, &note, None) {
-                        send_err(&ev_tx, e.to_string());
-                    }
-                    refresh_live(a, &live_status, &live_spend);
-                } else if let Some(s) = &mut session_hold {
-                    let _ = s.handoff(to, &note, None);
-                    let _ = ev_tx.send(AgentEvent::PhaseChanged { phase: to });
                 }
             }
             Ok(Work::SetAuditor(on)) => {
@@ -500,7 +482,6 @@ fn emit_mcp_status(a: &Agent, tx: &mpsc::Sender<AgentEvent>) {
 fn refresh_live(agent: &Agent, status: &Mutex<StatusSnapshot>, spend: &Mutex<String>) {
     if let Ok(mut s) = status.lock() {
         *s = StatusSnapshot {
-            phase: agent.session.meta.phase.to_string(),
             model: agent.model.clone(),
             connection: agent.connection.clone(),
             session: agent.session.meta.id.to_string(),

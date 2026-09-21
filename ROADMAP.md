@@ -1,6 +1,6 @@
 # Roadmap
 
-Living plan for Ryter. Orchestrator and specialists update this as work lands.
+Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
@@ -19,8 +19,9 @@ Product direction: `docs/product-direction.md`. Crew contract: `crew.md`. Cost m
 - **Checks auto-detect** on first use (`Cargo.toml` → `cargo test`, `package.json` → its test script, `pyproject.toml` → `pytest`, `go.mod` → `go test`), written to `.ryter/config.toml` after the user confirms.
 - **Recorded wire fixtures + a live smoke test.** Tool calling was broken on two backends while 212 tests passed, because every test used idealized deltas. Record real SSE per provider (tool calls, parallel calls, truncation) and replay those; add one nightly live round trip per built-in provider.
 - **Crew review surface.** One panel for every task: state, diff, handback, checks, audit, cost; merge a waiting branch, retry with a note, reject, revert a merged task (`git revert -m 1`). The tasks card opens it.
-- **Cost per task and a cap per task.** A crew multiplies spend. Also: refuse unpriced models without an explicit opt-in, since `over_budget` cannot trip on unknown spend.
-- **Task benchmark.** ~20 real tasks in fixture repos, end to end: landed / rejected / conflicted, cost per landed task, wall time, per model pairing. Tune prompts and default pairings against it.
+- **Refuse unpriced models** in the crew without an explicit opt-in: the dollar caps cannot trip on unknown spend (the token cap still does).
+- **Keep specialist transcripts** in the session directory. Live run 3's auditor was refused a command, and there was no record of which one.
+- **From the live runs:** a task is recorded as landed on the patch only when its whole batch finishes (batch barrier); parallel jobs can overshoot the session budget by about one round each (~$0.10 seen); the retry brief says "start clean" but the worktree is reused; the architect is the slowest and dearest role (~$0.70 per design on Opus), so measure whether a cheaper architect designs as well.
 - **Streamed `bash` output**, and **reconcile the context gauge** with the provider's real `input_tokens` rather than bytes/4.
 - **`ryter run tasks.toml`** unattended, producing branches or PRs with the audit as the description.
 - **macOS without the sandbox**, labelled Linux-only.
@@ -39,6 +40,13 @@ Previously listed:
 - Session search across transcripts from `/sessions`
 
 ## Done
+
+### 0.2.0-patch — the lead routes the crew; live-tested (2026-09-21)
+
+- One conversation with the lead; phases, `/plan` `/build` `/handoff`, `--mode`, and the MCP phase tool removed. Tasks carry a role; the architect's tasks build in the same pass; `hold` for design-only
+- Five paid live runs on a real crew (Opus architect, grok-4.6 builder, glm-5.3 auditor, deepseek lead), about $4.3 in total. Run 3: a precise two-module request; the lead wrote the tasks, two builders ran in parallel, both were audited, one patch commit, 25 tests, $0.15 in 2 minutes. Runs 4–5: a request that needed a design; the architect split it into three tasks, the $1.40 cap stopped the third, and `ryter -c -p continue` finished it; one 12-file commit, 76 tests, a working CLI, $1.72, of which $0.91 was the architect
+- Fixed from those runs: tool errors ending tasks, cut-off replies lost, empty architect results counted as done, audit probes and `.pyc` files committed, builders serialized on blocking tools, crew reports overwritten, auditors re-running checks, inline-code refusals that gave no way round, the lead not knowing the date, a budget stop that said only "budget exceeded" and left the lead unaware on the next message, no way to continue a session headless, an architect that wrote its design three times
+- Specialists report activity to the chat as they work
 
 ### 0.2.0-patch — local models, tiered crews, benchmark (2026-09-21)
 

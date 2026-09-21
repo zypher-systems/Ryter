@@ -31,6 +31,11 @@ struct Cli {
     #[arg(long)]
     json: bool,
 
+    /// Continue the latest session in this directory (with `-p`): its
+    /// transcript, task queue, and open patch.
+    #[arg(short = 'c', long = "continue")]
+    resume: bool,
+
     /// Treat Ask as Allow. Deny still wins.
     #[arg(long)]
     always_approve: bool,
@@ -383,7 +388,13 @@ async fn run_prompt(
     let provider = http_provider(conn, key);
     let _ = config::save_last_route(&home, &config::LastRoute::new(&conn_name, &model));
     let trusted = config::is_trusted(&cwd);
-    let mut session = Session::create(&home, &cwd, phase, conn_name.clone(), model.clone())?;
+    // A budget stop tells the user to continue; headless could only start over.
+    let mut session = if cli.resume {
+        Session::latest(&home, &cwd)?
+            .ok_or_else(|| Error::Config("no session in this directory to continue".into()))?
+    } else {
+        Session::create(&home, &cwd, phase, conn_name.clone(), model.clone())?
+    };
     session.set_auditor(cfg.auditor.enabled)?;
     sandbox::apply(profile, &cwd, &home)?;
     let notes = session.notes_dir();
@@ -762,15 +773,12 @@ struct ServeHost {
 }
 
 impl ryter_core::InboundHost for ServeHost {
-    fn prompt(&self, text: &str, phase: Option<Phase>) -> ryter_core::Result<String> {
+    fn prompt(&self, text: &str) -> ryter_core::Result<String> {
         self.cancel.reset();
         let mut agent = self
             .agent
             .lock()
             .map_err(|e| Error::Config(e.to_string()))?;
-        if let Some(p) = phase {
-            agent.handoff(p, "", None)?;
-        }
         let rt = self.rt.lock().map_err(|e| Error::Config(e.to_string()))?;
         let r = rt.block_on(agent.turn(text))?;
         Ok(r.text)
@@ -779,7 +787,6 @@ impl ryter_core::InboundHost for ServeHost {
     fn status(&self) -> ryter_core::StatusSnapshot {
         let agent = self.agent.lock().expect("serve host");
         ryter_core::StatusSnapshot {
-            phase: agent.session.meta.phase.to_string(),
             model: agent.model.clone(),
             connection: agent.connection.clone(),
             session: agent.session.meta.id.to_string(),
@@ -790,14 +797,6 @@ impl ryter_core::InboundHost for ServeHost {
     fn spend(&self) -> String {
         let agent = self.agent.lock().expect("serve host");
         format_usd(agent.session.meta.spend_usd_total)
-    }
-
-    fn set_phase(&self, phase: Phase, note: &str) -> ryter_core::Result<()> {
-        let mut agent = self
-            .agent
-            .lock()
-            .map_err(|e| Error::Config(e.to_string()))?;
-        agent.handoff(phase, note, None)
     }
 
     fn cancel(&self) {

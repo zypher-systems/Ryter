@@ -307,6 +307,20 @@ impl Session {
         self.dir.join("spend.jsonl")
     }
 
+    /// Keep a crew report the lead never saw, because the run stopped before
+    /// it could take another round. The next turn hands it over.
+    pub fn set_carry(&self, report: &str) -> Result<()> {
+        fs::write(self.dir.join("carry.md"), report).map_err(|e| Error::Io(e.to_string()))
+    }
+
+    /// The report kept by [`set_carry`](Self::set_carry), removed as it is read.
+    pub fn take_carry(&self) -> Option<String> {
+        let path = self.dir.join("carry.md");
+        let text = fs::read_to_string(&path).ok()?;
+        let _ = fs::remove_file(&path);
+        (!text.trim().is_empty()).then_some(text)
+    }
+
     /// All spend rows.
     pub fn spend_log(&self) -> Result<Vec<SpendRecord>> {
         read_jsonl(&self.dir.join("spend.jsonl"))

@@ -103,32 +103,32 @@ Without a tty, use headless:
 ```sh
 ryter -p "add a --json flag" --always-approve
 ryter -p "…" --json                  # NDJSON AgentEvent stream
-ryter --mode plan -p "what should we build?"
+ryter -c -p "continue"               # continue the latest session: transcript, tasks, open patch
 ```
 
 `--always-approve` treats Ask as Allow. Deny still wins.
 
-## Orchestrator, phases, handoff
+## The lead
 
-The orchestrator prompt is `prompts/orchestrator.md` (overridable). It may read the repo, grep, glob, and call `todo_write`. It cannot write product source.
+Every message you send goes to the lead. You never talk to a specialist; they report back through the chat. The lead's prompt is `prompts/orchestrator.md` (overridable). It may read the repo, grep, glob, and call `todo_write`. It cannot write product source. For each request it does one of these:
 
-**Phase** only changes which specialist *kinds* may run. Default is **Build**.
+| The request | What the lead does |
+| --- | --- |
+| A question | answers it |
+| A trivial edit | `propose_edit`: you see the diff and press `y` |
+| A precise change | writes builder tasks itself |
+| Something that needs a design | queues an architect task; the architect's builder tasks run in the same pass |
+| "Design it, don't build yet" | the same, with `hold`: the design waits for your go-ahead |
 
-| Command | Phase | Specialists |
-| --- | --- | --- |
-| `/plan` (`/architect`) | Plan | the architect |
-| `/build` | Build | builders, gated by checks + auditor |
-| `/audit` | Audit | extra reviewers |
-
-`/handoff plan` (or `ryter handoff plan --note "…"`) writes a pass note for the current phase and switches. Empty notes are allowed. `/handoff back` goes to the previous phase. The orchestrator transcript is not cleared. Specialists get a **fresh window**: their task brief + `RYTER.md` / `AGENTS.md` + project memory, not the chat history.
+There is no mode to switch. Specialists get a **fresh window**: their task brief, `RYTER.md` / `AGENTS.md`, and the project memory scoped to their files, not the chat history.
 
 Project markdown is loaded from the working tree without a trust gate: `RYTER.md`, or `AGENTS.md` if `RYTER.md` is absent.
 
 ## Build workers, auditor, merge
 
-`todo_write` **is** the work queue. After an orchestrator turn with no remaining tool calls, Ryter drains pending tasks for the **current phase**, up to `[subagents] max` in parallel (must be ≥ 1). Plan → the architect, Build → builders + auditor, Audit → extra auditors. Tasks declare the `files` they own; disjoint tasks run in parallel, overlapping or undeclared ones one at a time.
+`todo_write` **is** the work queue. After a lead turn with no remaining tool calls, Ryter drains pending tasks, up to `[subagents] max` in parallel (must be ≥ 1). Each task names its role: architect tasks run first, then builders, each gated by checks and an auditor. Tasks declare the `files` they own; disjoint tasks run in parallel, overlapping or undeclared ones one at a time.
 
-Crew roles default to the orchestrator’s current provider and model. Assign a different model per role with `/crew` (Enter on a role, first picker row is `default`). That is also how you split providers. Optional `[specialists.*]` tables in `~/.ryter/config.toml` pin the same overrides.
+Crew roles default to the lead’s current provider and model. Assign a different model per role with `/crew` (Enter on a role, first picker row is `default`). That is also how you split providers. Optional `[specialists.*]` tables in `~/.ryter/config.toml` pin the same overrides.
 
 Each builder task:
 
@@ -140,17 +140,17 @@ Each builder task:
 6. **Land**: one `--no-ff` merge commit (undo with `git revert -m 1`). If your branch moved meanwhile, it re-integrates and re-checks first. If you have uncommitted edits to the same files, it stops and keeps the branch
 7. Rejected → retry with the findings, up to `[auditor] max_retries`, then `blocked`
 
-In **build**, tasks land on a patch branch (`ryter/patch-…`), not yours. When every task in the patch is done and the combined checks pass, the patch lands on your branch as **one commit** (`git revert -m 1` undoes it all). A blocked task holds the patch until you retry or drop it; the orchestrator says what it is waiting on.
+Tasks land on a patch branch (`ryter/patch-…`), not yours. When every task in the patch is done and the combined checks pass, the patch lands on your branch as **one commit** (`git revert -m 1` undoes it all). A blocked task holds the patch until you retry or drop it; the lead says what it is waiting on.
 
-Auditors must be different models from the orchestrator and the builder — otherwise builds refuse to start and say how to fix it. Assign one in `/crew`, or list a panel under `[[auditor.panel]]` (all must pass; cheapest first; seats may have a `focus` and `paths`).
+Auditors must be different models from the lead and the builder — otherwise builds refuse to start and say how to fix it. Assign one in `/crew`, or list a panel under `[[auditor.panel]]` (all must pass; cheapest first; seats may have a `focus` and `paths`).
 
-For a trivial change the orchestrator can `propose_edit`: you see the diff and press `y`. Only a person can approve it.
+For a trivial change the lead can `propose_edit`: you see the diff and press `y`. Only a person can approve it.
 
 `ryter crew suggest` (or `s` in `/crew`) proposes a cost-tiered crew from every model you can reach; `--apply` saves it and keeps your old crew as the `before-suggest` preset. A local model server works as a connection with no key: `ryter connections add box --kind ollama --model qwen3-coder:30b`. `ryter bench` runs `bench/` through the crew and reports what landed, what passed hidden tests, and the cost per accepted task — it spends real money.
 
 Crew spend is metered per task and role and counts against `[spend] session_budget_usd`; each task also stops at `task_budget_usd` / `task_max_tokens`. See `docs/cost.md`.
 
-`/auditor on|off` is session-only unless you also change config. With the auditor off, **nothing merges**: finished work waits on its branch. After each batch the orchestrator gets the crew report, tells you what landed, and records builder decisions in `DECISIONS.md` — builders never write project memory themselves.
+`/auditor on|off` is session-only unless you also change config. With the auditor off, **nothing merges**: finished work waits on its branch. After each batch the lead gets the crew report, tells you what landed, and records builder decisions in `DECISIONS.md` — builders never write project memory themselves.
 
 The architect runs in-process (no worktree) and writes tasks straight into the queue builders read from. Nested subagents are not supported.
 
@@ -168,7 +168,7 @@ Unknown rates show `$?.??` plus token counts. Ryter never invents `$0.00` for an
 
 ## Slash commands
 
-Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/crew` `/mcp` `/skills` `/hooks` `/sessions` `/agents` `/spend` `/theme` `/tools` `/auditor` `/phase` `/context` `/doctor` `/help`. Direct commands act immediately: `/new` `/rename <title>` `/handoff <phase>` `/plan` `/architect` `/build` `/audit` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
+Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/crew` `/mcp` `/skills` `/hooks` `/sessions` `/agents` `/spend` `/theme` `/tools` `/auditor` `/context` `/doctor` `/help`. Direct commands act immediately: `/new` `/rename <title>` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
 
 User-invocable skills and `~/.ryter/commands/*.md` join the palette under **skills**. Built-ins win on a name clash.
 
@@ -185,7 +185,7 @@ User-invocable skills and `~/.ryter/commands/*.md` join the palette under **skil
 
 Enter on **token** creates or rotates a `ryt_…` secret stored in `~/.ryter/keys/mcp-inbound.toml` (mode 0600); it is masked until you press `v`. Enter on a link copies it into the chat so you can paste it. Live flags persist in `~/.ryter/mcp.toml` (does not rewrite `config.toml`).
 
-Another agent can also spawn `ryter mcp serve` (stdio), or `ryter serve --socket` / `--bind`. Tools: `ryter_prompt`, `ryter_status`, `ryter_spend`, `ryter_set_phase`, `ryter_cancel`. Resources: `ryter://session/transcript`, `ryter://session/spend`. Keys are never returned.
+Another agent can also spawn `ryter mcp serve` (stdio), or `ryter serve --socket` / `--bind`. Tools: `ryter_prompt`, `ryter_status`, `ryter_spend`, `ryter_cancel`. Resources: `ryter://session/transcript`, `ryter://session/spend`. Keys are never returned.
 
 TCP requires `--token` (or `RYTER_MCP_TOKEN`) on `initialize.params.token`. Binding `0.0.0.0` / `::` requires `--i-mean-it`.
 
@@ -268,7 +268,7 @@ Orchestrator may write only these memory files, never `src/`.
   tasks.json
 ```
 
-No SQLite. `ryter spend` / `ryter handoff` use the latest session for this directory.
+No SQLite. `ryter spend` uses the latest session for this directory.
 
 ## Exit codes
 
