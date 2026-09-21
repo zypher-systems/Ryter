@@ -5,7 +5,7 @@
 //! and the architect — most of a crew's tokens — never reached the spend total,
 //! the spend card, or the budget stop.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
 
 use crate::error::{Error, Result};
@@ -48,6 +48,8 @@ pub struct Caps {
 pub struct Meter {
     book: PriceBook,
     caps: Caps,
+    /// Connections with no API cost (local model servers).
+    free: HashSet<String>,
     lines: Mutex<Vec<SpendLine>>,
     /// How many lines the session has already recorded.
     recorded: Mutex<usize>,
@@ -95,9 +97,17 @@ impl Meter {
         Self {
             book,
             caps,
+            free: HashSet::new(),
             lines: Mutex::new(Vec::new()),
             recorded: Mutex::new(0),
         }
+    }
+
+    /// Treat these connections as free: a local model has no API cost. Its
+    /// tokens still count, so the token cap still stops a runaway loop.
+    pub fn with_free(mut self, connections: HashSet<String>) -> Self {
+        self.free = connections;
+        self
     }
 
     /// Record one call and enforce the caps. `Error::Budget` stops the whole
@@ -117,7 +127,13 @@ impl Meter {
             connection: connection.to_string(),
             model: model.to_string(),
             usage,
-            usd: reported_usd.or_else(|| self.book.cost(model, usage)),
+            usd: reported_usd.or_else(|| {
+                if self.free.contains(connection) {
+                    Some(0.0)
+                } else {
+                    self.book.cost(model, usage)
+                }
+            }),
         };
         let mut lines = self
             .lines
@@ -267,6 +283,41 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, Error::TaskBudget(_)), "{err}");
         assert_eq!(m.task("t1").label(), "$?.??");
+    }
+
+    /// A local model costs nothing in fees, and that is a real $0.00, not an
+    /// unknown one. Its tokens still count toward the cap.
+    #[test]
+    fn local_connections_are_free_but_still_capped() {
+        let m = Meter::new(
+            PriceBook::new(),
+            Caps {
+                task_tokens: 1_000,
+                ..Caps::default()
+            },
+        )
+        .with_free(["ollama".to_string()].into());
+        m.charge(
+            "t1",
+            Role::Builder,
+            "ollama",
+            "qwen3-coder",
+            usage(500, 100),
+            None,
+        )
+        .unwrap();
+        assert_eq!(m.task("t1").label(), "$0.00");
+        let err = m
+            .charge(
+                "t1",
+                Role::Builder,
+                "ollama",
+                "qwen3-coder",
+                usage(500, 100),
+                None,
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::TaskBudget(_)));
     }
 
     #[test]

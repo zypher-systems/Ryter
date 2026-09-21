@@ -156,7 +156,8 @@ pub struct FeaturesConfig {
 /// One named LLM endpoint.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConnectionConfig {
-    /// Built-in kind: `spacexai`, `openrouter`, `openai_compat`, `anthropic`.
+    /// Built-in kind: `spacexai`, `openrouter`, `openai_compat`, `anthropic`,
+    /// or `local` (a model server on this machine: no key, no API cost).
     pub kind: String,
     /// API base URL.
     pub base_url: String,
@@ -178,6 +179,24 @@ pub struct ConnectionConfig {
     /// OpenRouter `X-Title`.
     #[serde(default)]
     pub x_title: Option<String>,
+}
+
+impl ConnectionConfig {
+    /// A model server on this machine: no key required, no API cost.
+    pub fn is_local(&self) -> bool {
+        self.kind == "local"
+    }
+}
+
+impl Config {
+    /// Connections whose calls cost nothing in API fees.
+    pub fn local_connections(&self) -> std::collections::HashSet<String> {
+        self.connections
+            .iter()
+            .filter(|(_, c)| c.is_local())
+            .map(|(n, _)| n.clone())
+            .collect()
+    }
 }
 
 impl std::fmt::Debug for ConnectionConfig {
@@ -495,7 +514,8 @@ pub fn connection_template(kind: &str) -> Result<ConnectionConfig> {
         }),
         "anthropic" => Ok(ConnectionConfig {
             kind: "anthropic".into(),
-            base_url: "https://api.anthropic.com".into(),
+            // The API lives under /v1; the provider appends `/messages`.
+            base_url: "https://api.anthropic.com/v1".into(),
             api_backend: "messages".into(),
             env_key: Some("ANTHROPIC_API_KEY".into()),
             api_key: None,
@@ -503,8 +523,25 @@ pub fn connection_template(kind: &str) -> Result<ConnectionConfig> {
             http_referer: None,
             x_title: None,
         }),
+        // A model server on this machine, speaking the OpenAI API. No key and
+        // no API cost; a builder here costs tokens against the cap, not money.
+        "local" | "ollama" | "lmstudio" | "llamacpp" => Ok(ConnectionConfig {
+            kind: "local".into(),
+            base_url: match kind {
+                "lmstudio" => "http://localhost:1234/v1",
+                "llamacpp" => "http://localhost:8080/v1",
+                _ => "http://localhost:11434/v1",
+            }
+            .into(),
+            api_backend: "chat_completions".into(),
+            env_key: None,
+            api_key: None,
+            default_model: None,
+            http_referer: None,
+            x_title: None,
+        }),
         other => Err(Error::Config(format!(
-            "unknown kind {other:?} (spacexai, openrouter, openai, anthropic)"
+            "unknown kind {other:?} (spacexai, openrouter, openai, anthropic, local, ollama, lmstudio, llamacpp)"
         ))),
     }
 }
@@ -1214,6 +1251,11 @@ pub fn resolve_secret_with(
     if let Some(k) = file_key(name) {
         return Ok(k);
     }
+    // A local server needs no key. A key set above still wins, for servers
+    // that are configured to require one.
+    if conn.is_local() {
+        return Ok(String::new());
+    }
     let fallback = match conn.kind.as_str() {
         "spacexai" => Some("XAI_API_KEY"),
         "openrouter" => Some("OPENROUTER_API_KEY"),
@@ -1901,6 +1943,35 @@ mod tests {
         assert_eq!(cfg.hooks.len(), 1);
         assert_eq!(cfg.hooks[0].event, "PreToolUse");
         assert_eq!(cfg.hooks[0].matcher.as_deref(), Some("bash"));
+    }
+
+    #[test]
+    fn local_presets_need_no_key() {
+        for (kind, port) in [
+            ("ollama", 11434),
+            ("lmstudio", 1234),
+            ("llamacpp", 8080),
+            ("local", 11434),
+        ] {
+            let c = connection_template(kind).unwrap();
+            assert!(c.is_local(), "{kind}");
+            assert!(
+                c.base_url.contains(&format!(":{port}/v1")),
+                "{kind}: {}",
+                c.base_url
+            );
+            assert_eq!(c.env_key, None);
+        }
+        let mut cfg = Config::default();
+        cfg.connections
+            .insert("box".into(), connection_template("ollama").unwrap());
+        let key = resolve_secret_with(&cfg, &ConnectionId::new("box"), |_| None).unwrap();
+        assert_eq!(key, "", "keyless, not an error");
+        assert!(cfg.local_connections().contains("box"));
+        // A cloud connection still needs its key.
+        cfg.connections
+            .insert("cloud".into(), connection_template("openai").unwrap());
+        assert!(resolve_secret_with(&cfg, &ConnectionId::new("cloud"), |_| None).is_err());
     }
 
     #[test]

@@ -17,6 +17,8 @@ use crate::llm::{
 
 /// How long to wait for the connection itself.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Idle bound for a local model server, which may load weights first.
+const LOCAL_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
 /// How long a stream may go silent before it is considered dead.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 /// Attempts after the first for a retryable failure.
@@ -80,16 +82,29 @@ pub struct HttpProvider {
 impl HttpProvider {
     /// New client. Does not touch the network until `stream` / `list_models`.
     pub fn new(conn: &ConnectionConfig, api_key: String) -> Self {
+        let mut base_url = conn.base_url.trim_end_matches('/').to_string();
+        // Connections saved from the old Anthropic template lack `/v1`, and
+        // `{base}/messages` then 404s.
+        if base_url == "https://api.anthropic.com" {
+            base_url.push_str("/v1");
+        }
+        // A local server may spend minutes loading a model before its first
+        // token; the idle bound is for dead sockets, not cold starts.
+        let idle = if conn.is_local() {
+            LOCAL_IDLE_TIMEOUT
+        } else {
+            IDLE_TIMEOUT
+        };
         Self {
             client: reqwest::Client::builder()
                 // A streamed turn has no useful total deadline: a long agentic
                 // turn is legitimate, a stalled socket is not. Bound the gap
                 // between chunks instead of the whole request.
                 .connect_timeout(CONNECT_TIMEOUT)
-                .read_timeout(IDLE_TIMEOUT)
+                .read_timeout(idle)
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
-            base_url: conn.base_url.trim_end_matches('/').to_string(),
+            base_url,
             api_key,
             backend: backend_for(conn),
             kind: conn.kind.clone(),
@@ -108,6 +123,9 @@ impl HttpProvider {
                 h.insert("x-api-key", key);
                 h.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
             }
+            // A keyless local server gets no Authorization header rather than
+            // an empty `Bearer `, which some servers reject.
+            _ if self.api_key.is_empty() => {}
             _ => {
                 let auth = format!("Bearer {}", self.api_key);
                 h.insert(
@@ -170,6 +188,14 @@ impl Provider for HttpProvider {
                 .await;
             let resp = match sent {
                 Ok(r) => r,
+                // A local server that refuses the connection is not running, and
+                // will not be in three seconds: fail at once, and say so.
+                Err(e) if e.is_connect() && self.kind == "local" => {
+                    return Err(Error::Provider(format!(
+                        "could not reach the local model server at {} — is it running? ({e})",
+                        self.base_url
+                    )));
+                }
                 Err(e) if is_retryable_error(&e) && attempt < MAX_RETRIES => {
                     last = e.to_string();
                     continue;
@@ -876,6 +902,121 @@ mod tests {
         assert!(
             !wire.contains("cache_control"),
             "providers that cache automatically get plain content"
+        );
+    }
+
+    /// A one-shot OpenAI-compatible server on a real socket. Returns its base
+    /// URL and a handle yielding the raw request it received.
+    fn fake_server(sse: &'static str) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = vec![0u8; 65_536];
+            let mut req = String::new();
+            loop {
+                let n = sock.read(&mut buf).unwrap();
+                req.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if let Some(h) = req.find("\r\n\r\n") {
+                    let len = req[..h]
+                        .lines()
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap_or(0);
+                    if req.len() >= h + 4 + len {
+                        break;
+                    }
+                }
+                if n == 0 {
+                    break;
+                }
+            }
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{sse}",
+                sse.len()
+            );
+            sock.write_all(resp.as_bytes()).unwrap();
+            req
+        });
+        (format!("http://{addr}/v1"), handle)
+    }
+
+    /// The whole HTTP path — headers, body, SSE, tool-call reassembly — against
+    /// a local, keyless server. Every earlier provider test skipped HTTP.
+    #[tokio::test]
+    async fn a_local_server_round_trips_a_streamed_tool_call() {
+        use futures_util::StreamExt;
+        let sse = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":50,\"completion_tokens\":7}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let (base, server) = fake_server(sse);
+        let mut conn = crate::config::connection_template("ollama").unwrap();
+        conn.base_url = base;
+        let p = HttpProvider::new(&conn, String::new());
+        let mut stream = p.stream(tool_loop()).await.unwrap();
+        let mut calls = crate::llm::ToolCallAccumulator::default();
+        let mut usage = None;
+        while let Some(d) = stream.next().await {
+            match d.unwrap() {
+                StreamDelta::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                } => calls.push(&id, &name, &arguments),
+                StreamDelta::Usage(u) => usage = Some(u),
+                _ => {}
+            }
+        }
+        let calls = calls.finish();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(calls[0].arguments, r#"{"path":"a.rs"}"#);
+        assert_eq!(usage.unwrap().input_tokens, 50);
+        let req = server.join().unwrap();
+        assert!(req.starts_with("POST /v1/chat/completions"), "{req}");
+        assert!(
+            !req.to_ascii_lowercase().contains("authorization:"),
+            "a keyless local server gets no auth header: {req}"
+        );
+        assert!(req.contains("\"call_1\"") || req.contains("\"c1\"") || req.contains("read_file"));
+    }
+
+    #[tokio::test]
+    async fn a_stopped_local_server_says_so() {
+        // Bind then drop: the port is closed, so the connect is refused.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut conn = crate::config::connection_template("ollama").unwrap();
+        conn.base_url = format!("http://127.0.0.1:{port}/v1");
+        let p = HttpProvider::new(&conn, String::new());
+        let err = match p.stream(tool_loop()).await {
+            Ok(_) => panic!("a closed port must not stream"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("is it running?"), "{err}");
+    }
+
+    #[test]
+    fn anthropic_endpoints_live_under_v1() {
+        let conn = crate::config::connection_template("anthropic").unwrap();
+        let p = HttpProvider::new(&conn, "k".into());
+        assert_eq!(p.endpoint(), "https://api.anthropic.com/v1/messages");
+        // A connection saved from the old template is corrected.
+        let mut old = conn.clone();
+        old.base_url = "https://api.anthropic.com".into();
+        assert_eq!(
+            HttpProvider::new(&old, "k".into()).endpoint(),
+            "https://api.anthropic.com/v1/messages"
         );
     }
 

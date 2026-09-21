@@ -265,7 +265,18 @@ impl Agent {
                 }
             }
 
-            let total_usd = reported_cost.or_else(|| self.book.cost(&self.model, usage));
+            let local = self
+                .cfg
+                .as_ref()
+                .and_then(|c| c.connections.get(&self.connection))
+                .is_some_and(|c| c.is_local());
+            let total_usd = reported_cost.or_else(|| {
+                if local {
+                    Some(0.0)
+                } else {
+                    self.book.cost(&self.model, usage)
+                }
+            });
             self.session.record_spend(spend_record(
                 self.connection.clone(),
                 self.model.clone(),
@@ -402,7 +413,12 @@ impl Agent {
             return Ok(String::new());
         }
 
-        let meter = Arc::new(Meter::new(self.book.clone(), self.caps()));
+        let free = self
+            .cfg
+            .as_ref()
+            .map(|c| c.local_connections())
+            .unwrap_or_default();
+        let meter = Arc::new(Meter::new(self.book.clone(), self.caps()).with_free(free));
         let (builder_p, builder_m, builder_c) = self.specialist_stack(role);
         let auditors = if role == Role::Builder && self.session.meta.auditor_enabled {
             match self.auditor_panel() {

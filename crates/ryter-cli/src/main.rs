@@ -133,7 +133,8 @@ enum ConnCmd {
     Add {
         /// Name (`local`, `work`, …).
         name: String,
-        /// Kind: spacexai, openrouter, openai, anthropic.
+        /// Kind: spacexai, openrouter, openai, anthropic, or a local server:
+        /// ollama, lmstudio, llamacpp (no key needed, no API cost).
         #[arg(long)]
         kind: String,
         /// Override the template base URL.
