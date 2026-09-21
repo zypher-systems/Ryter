@@ -607,7 +607,7 @@ fn now_stamp() -> String {
     ms.to_string()
 }
 
-pub(crate) fn cwd_slug(cwd: &Path) -> String {
+pub fn cwd_slug(cwd: &Path) -> String {
     let raw = cwd.to_string_lossy();
     let mut enc = String::new();
     for b in raw.as_bytes() {

@@ -401,6 +401,12 @@ fn open_panel(view: &mut View, cx: &mut Ctx, id: PanelId) {
     match id {
         PanelId::Models => cx.send(Work::ListModels),
         PanelId::CrewBuilder => cx.send(Work::ListCrewModels),
+        // The logs are the truth; replace the live running copy with them.
+        PanelId::Spend => {
+            if let Ok(p) = ryter_core::project::project_spend(&cx.home, &cx.workspace) {
+                view.project_spend = Some(p);
+            }
+        }
         PanelId::Theme => {
             cx.theme_before_preview = Some((view.theme_name.clone(), cx.theme));
         }

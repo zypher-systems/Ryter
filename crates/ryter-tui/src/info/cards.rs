@@ -200,6 +200,9 @@ pub fn spend(view: &View, w: usize, theme: Theme) -> Card {
         theme.side().add_modifier(Modifier::BOLD)
     };
     rows.push(kv("session", &total, w, theme, total_style));
+    if let Some(p) = &view.project_spend {
+        rows.push(kv("project", &project_label(p), w, theme, theme.side()));
+    }
     let detail_from = rows.len();
     let mut by_role: Vec<(&String, &f64)> = view.spend_by_role.iter().collect();
     by_role.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -238,6 +241,18 @@ fn task_rank(status: &str) -> u8 {
         "pending" => 1,
         "blocked" => 2,
         _ => 3,
+    }
+}
+
+/// `$14.20`, or `$14.20+` when some calls had no known price (never a
+/// silent undercount).
+pub fn project_label(p: &ryter_core::project::ProjectSpend) -> String {
+    if p.calls > 0 && p.calls == p.unpriced_calls {
+        "$?.??".into()
+    } else if p.unpriced_calls > 0 {
+        format!("{}+", format_usd(Some(p.total_usd)))
+    } else {
+        format_usd(Some(p.total_usd))
     }
 }
 

@@ -3,7 +3,7 @@
  · system
    welcome · /help for keys
 
-           ╭─ spend ──────────────────────────────────────────────────────────── $?.?? ─╮
+           ╭─ spend · session ────────────────────────────────────────────────── $?.?? ─╮
            │ total  $?.??                                                               │
            │ budget off · nothing stops on cost · /budget <amount> sets a cap           │
            │                                                                            │
@@ -16,7 +16,7 @@
            │                                                                            │
            │                                                                            │
            │                                                                            │
-           ╰─ e export csv · ↑↓ scroll · esc ───────────────────────────────────────────╯
+           ╰─ p project · e export csv · ↑↓ scroll · esc ───────────────────────────────╯
 
 
 

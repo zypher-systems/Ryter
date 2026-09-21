@@ -74,21 +74,27 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
         }
         AgentEvent::Spend {
             connection,
+            model,
             role,
             input_tokens,
             output_tokens,
             cached_tokens,
             total_usd,
             ..
-        } => on_spend(
-            view,
-            connection,
-            *role,
-            *input_tokens,
-            *output_tokens,
-            *cached_tokens,
-            *total_usd,
-        ),
+        } => {
+            if let Some(p) = &mut view.project_spend {
+                p.add(*role, model, *total_usd);
+            }
+            on_spend(
+                view,
+                connection,
+                *role,
+                *input_tokens,
+                *output_tokens,
+                *cached_tokens,
+                *total_usd,
+            );
+        }
         AgentEvent::PhaseChanged { phase } => {
             view.phase = *phase;
         }

@@ -2,6 +2,14 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-21 — Project cost is the sessions' logs, summed per repository
+- **By:** lead
+- **Decision:** Project cost adds up every session's `spend.jsonl` for sessions run in the project's git repository root or any folder under it; outside a repository, the folder. A running total with per-log byte offsets in `~/.ryter/projects/<root>.json` means each read covers only new lines; a missing, corrupt, or shrunk-log total is rebuilt. The spend card shows it; `p` in `/spend` shows totals by role, model, month, and solo vs. crew; `ryter spend --project` prints it. Unpriced calls are counted and flagged (`$14.20+`).
+- **Chosen vs rejected:** Rejected a new end-of-session breadcrumb: every call is already logged as charged (since live run 2), and a session that crashes never reaches its end. Rejected keying by folder path: a subfolder or a different launch folder would split one project's history (the user's call: repository root). Rejected recomputing every log at every launch: it grows with every session.
+- **Why:** Session cost resets with each session; "what has this project cost me?" is the question that decides between solo and crew, and between tiers.
+- **Where:** core `project.rs`; TUI `info/cards.rs` (`project_label`), `panel/spend.rs`, `run/events.rs` (live add), `run/mod.rs`, `run/actions.rs` (refresh on `/spend`); CLI `ryter spend --project`
+- **Residual risk:** A repository that is moved or renamed starts a new total; linking them by the repository's first commit is possible later. Sessions in a nested repository count toward the inner one only.
+
 ### 2026-09-21 — Two modes in one app: solo (one model, three hats) and crew
 - **By:** lead
 - **Decision:** Ryter starts in solo mode: one model in the user's tree, with `Tab` cycling build → plan → review. `/crew` enters crew mode (the crew builder the first time, straight in after); `/solo` leaves. The hats are roles (`SoloBuild`, `SoloPlan`, `SoloReview`) with one shared tool list and system prompt; the hat is a one-line note on each message, and the gate enforces it. Build checkpoints files before each turn (a commit object under `refs/ryter/undo/`, built with a private index) for `/undo`. Crew cards appear only in crew mode; the right-hand panel is wider (28/36/42 columns).

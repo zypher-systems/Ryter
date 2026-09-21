@@ -20,6 +20,7 @@ pub mod mcp;
 pub mod memory;
 pub mod meter;
 pub mod phase;
+pub mod project;
 pub mod prompt;
 pub mod queue;
 pub mod role;

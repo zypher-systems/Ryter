@@ -151,6 +151,10 @@ pub struct View {
     /// builder): the fallback when the built-in price book doesn't know a
     /// model, which is most of OpenRouter's catalog.
     pub catalog_rates: BTreeMap<String, (f64, f64)>,
+    /// What this project (its git repository) has cost across sessions.
+    /// Read from disk at startup and when `/spend` opens; live spend is added
+    /// as it happens.
+    pub project_spend: Option<ryter_core::project::ProjectSpend>,
     /// Live `[specialists.*]` assignment (edited by `/crew`).
     pub specialists: BTreeMap<String, ryter_core::RoleModel>,
     /// Unix socket path if inbound MCP is listening.
@@ -296,6 +300,7 @@ impl View {
             price_label: String::new(),
             price_in: None,
             catalog_rates: BTreeMap::new(),
+            project_spend: None,
             price_out: None,
             specialists: BTreeMap::new(),
             mcp_listen: None,

@@ -69,6 +69,9 @@ enum Command {
     Spend {
         /// Session id.
         session: Option<String>,
+        /// This project (its git repository) across every session.
+        #[arg(long)]
+        project: bool,
     },
     /// MCP: inbound server or echo helper.
     Mcp {
@@ -228,7 +231,14 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Some(Command::Spend { session }) => match spend_cmd(session.as_deref()) {
+        Some(Command::Spend { project: true, .. }) => match project_spend_cmd() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(1)
+            }
+        },
+        Some(Command::Spend { session, .. }) => match spend_cmd(session.as_deref()) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("{e}");
@@ -1174,6 +1184,52 @@ fn serve_host_from_config(
         rt: std::sync::Mutex::new(rt),
         cancel,
     })
+}
+
+fn project_spend_cmd() -> ryter_core::Result<()> {
+    let cwd = std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?;
+    let p = ryter_core::project::project_spend(&config::home_dir(), &cwd)?;
+    let unpriced = if p.unpriced_calls > 0 {
+        format!(
+            "  ({} of {} calls unpriced, not included)",
+            p.unpriced_calls, p.calls
+        )
+    } else {
+        String::new()
+    };
+    println!(
+        "project {}  total {}  sessions {}{unpriced}",
+        p.root.display(),
+        format_usd(Some(p.total_usd)),
+        p.sessions
+    );
+    println!(
+        "this month {}  solo {}  crew {}",
+        format_usd(Some(p.this_month())),
+        format_usd(Some(p.solo_usd())),
+        format_usd(Some(p.crew_usd()))
+    );
+    for (title, map) in [
+        ("role", &p.by_role),
+        ("model", &p.by_model),
+        ("month", &p.by_month),
+    ] {
+        let mut rows: Vec<_> = map.iter().collect();
+        if title == "month" {
+            rows.sort_by(|a, b| b.0.cmp(a.0));
+        } else {
+            rows.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
+        }
+        for (k, v) in rows {
+            let k = if k == "orchestrator" {
+                "lead"
+            } else {
+                k.as_str()
+            };
+            println!("  {title:<6} {k:<40} {}", format_usd(Some(*v)));
+        }
+    }
+    Ok(())
 }
 
 fn spend_cmd(id: Option<&str>) -> ryter_core::Result<()> {

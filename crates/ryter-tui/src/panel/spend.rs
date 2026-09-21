@@ -14,6 +14,74 @@ use crate::view::{SpendRow, View};
 pub struct Spend {
     exported: Option<String>,
     scroll: usize,
+    /// `p`: this project across sessions, instead of this session.
+    project: bool,
+}
+
+/// `[name, usd]` rows, largest first, at most `n`.
+fn usd_rows(map: &std::collections::BTreeMap<String, f64>, n: usize) -> Vec<Vec<String>> {
+    let mut v: Vec<(&String, &f64)> = map.iter().filter(|(_, u)| **u > 0.0).collect();
+    v.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
+    v.into_iter()
+        .take(n)
+        .map(|(k, u)| vec![crate::view::role_label(k).to_string(), format_usd(Some(*u))])
+        .collect()
+}
+
+/// The project view: this repository's cost across every session.
+fn project_lines(view: &View, w: usize, theme: Theme) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let Some(p) = &view.project_spend else {
+        lines.push(widgets::note("no project spend recorded yet", theme));
+        return lines;
+    };
+    let two = [widgets::Al::L, widgets::Al::R];
+    lines.push(widgets::text(
+        &format!(
+            "project  {}   across {} session(s) · {}",
+            crate::info::cards::project_label(p),
+            p.sessions,
+            p.root.display()
+        ),
+        theme,
+    ));
+    lines.push(widgets::note(
+        &format!(
+            "this month {} · solo {} · crew {}",
+            format_usd(Some(p.this_month())),
+            format_usd(Some(p.solo_usd())),
+            format_usd(Some(p.crew_usd()))
+        ),
+        theme,
+    ));
+    if p.unpriced_calls > 0 {
+        lines.push(widgets::colored(
+            &format!(
+                "unpriced: {} of {} calls had no known rate and are left out of the total",
+                p.unpriced_calls, p.calls
+            ),
+            theme.warn,
+            theme,
+        ));
+    }
+    for (title, map, n) in [
+        ("by role", &p.by_role, 8),
+        ("by model", &p.by_model, 8),
+        ("by month", &p.by_month, 12),
+    ] {
+        lines.push(widgets::blank(theme));
+        lines.push(widgets::note(title, theme));
+        let mut rows = usd_rows(map, n);
+        if title == "by month" {
+            rows.sort_by(|a, b| b[0].cmp(&a[0]));
+        }
+        if rows.is_empty() {
+            lines.push(widgets::note("  nothing yet", theme));
+        } else {
+            lines.extend(widgets::table(&["", "usd"], &rows, &two, None, w, theme));
+        }
+    }
+    lines
 }
 
 fn rows(map: &std::collections::BTreeMap<String, SpendRow>) -> Vec<Vec<String>> {
@@ -77,17 +145,25 @@ impl Panel for Spend {
     }
 
     fn title(&self, _view: &View) -> String {
-        "spend".into()
+        if self.project {
+            "spend · project".into()
+        } else {
+            "spend · session".into()
+        }
     }
 
     fn status(&self, view: &View) -> String {
-        view.spend_label()
+        match (&view.project_spend, self.project) {
+            (Some(p), true) => crate::info::cards::project_label(p),
+            _ => view.spend_label(),
+        }
     }
 
     fn legend(&self, _view: &View) -> String {
+        let other = if self.project { "session" } else { "project" };
         match &self.exported {
             Some(p) => format!("wrote {p} · esc"),
-            None => "e export csv · ↑↓ scroll · esc".into(),
+            None => format!("p {other} · e export csv · ↑↓ scroll · esc"),
         }
     }
 
@@ -98,6 +174,16 @@ impl Panel for Spend {
 
     fn render(&self, view: &View, width: u16, height: u16, theme: Theme) -> Body {
         let w = usize::from(width);
+        if self.project {
+            let h = usize::from(height).max(1);
+            let lines = project_lines(view, w, theme);
+            let total = lines.len();
+            let first = self.scroll.min(total.saturating_sub(h));
+            return Body {
+                lines: lines.into_iter().skip(first).take(h).collect(),
+                scroll: (total > h).then_some((first, total)),
+            };
+        }
         let h = usize::from(height).max(1);
         let mut lines: Vec<Line<'static>> = Vec::new();
         // Total with budget gauge (R-POP-43).
@@ -210,6 +296,11 @@ impl Panel for Spend {
         match key.code {
             KeyCode::Esc => Outcome::Close,
             KeyCode::Char('e') => Outcome::Act(Action::ExportSpend),
+            KeyCode::Char('p') => {
+                self.project = !self.project;
+                self.scroll = 0;
+                Outcome::Stay
+            }
             KeyCode::Up => {
                 self.scroll = self.scroll.saturating_sub(1);
                 Outcome::Stay
@@ -238,5 +329,54 @@ impl Panel for Spend {
 
     fn box_clone(&self) -> Box<dyn Panel> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+
+    fn text(body: Body) -> String {
+        body.lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect()
+    }
+
+    /// `p` switches between this session and the project across sessions;
+    /// unpriced calls are said, not hidden.
+    #[test]
+    fn p_shows_the_project_across_sessions() {
+        let mut v = View::new(
+            ryter_core::Phase::Build,
+            "c".into(),
+            "m".into(),
+            "/tmp".into(),
+        );
+        let mut p = ryter_core::project::ProjectSpend::default();
+        p.add(ryter_core::Role::Architect, "opus", Some(0.91));
+        p.add(ryter_core::Role::SoloBuild, "flash", Some(0.09));
+        p.add(ryter_core::Role::Builder, "grok", None);
+        v.project_spend = Some(p);
+        let theme = Theme::truecolor_dark();
+        let mut panel = Spend::default();
+        assert!(!text(panel.render(&v, 78, 26, theme)).contains("across"));
+        panel.key(
+            KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
+            &mut v,
+        );
+        let t = text(panel.render(&v, 78, 26, theme));
+        assert!(t.contains("$1.00+"), "{t}");
+        assert!(t.contains("solo $0.09") && t.contains("crew $0.91"), "{t}");
+        assert!(t.contains("1 of 3 calls had no known rate"), "{t}");
+        assert!(t.contains("architect") && t.contains("opus"), "{t}");
+        assert_eq!(panel.title(&v), "spend · project");
     }
 }

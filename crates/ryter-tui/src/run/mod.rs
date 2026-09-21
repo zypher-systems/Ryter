@@ -204,6 +204,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
             "no API key for {conn_name} — /provider set-key, or export XAI_API_KEY / OPENROUTER_API_KEY"
         ));
     }
+    view.project_spend = ryter_core::project::project_spend(&home, &cwd).ok();
     if cwd.join(".ryter").is_dir() && !trusted {
         view.panels.push(Box::new(TrustModal::default()));
     }

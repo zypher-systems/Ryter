@@ -217,7 +217,9 @@ A session budget is optional. With one, the crew stops when spend reaches it, sa
 
 The **budget** card on the right shows the cap, how much is used and left, or `off`; click it to open the panel. Changes apply at once and are saved as your default (`~/.ryter/settings.toml`, the same value as *budget usd* in `/settings`). A trusted project's `[spend] session_budget_usd` overrides your default in that project. There is no session budget until you set one; the crew builder suggests one sized to the job. Each task is still capped at `[spend] task_budget_usd` ($3 by default; the crew builder raises it when your crew's normal design would not fit), which catches one runaway task whether or not there is a session budget. `[spend] enabled = false` still counts in memory and prints a warning.
 
-`/spend` is a panel: session total, a budget gauge, and tables by role and by connection; `e` exports CSV. The info panel’s spend card shows the total, and the budget card below it shows the cap. `ryter spend` prints the roll-up on the CLI.
+**Project cost.** A project is its git repository (the folder, outside one), so sessions started in any subfolder count toward it. The spend card shows `project` under the session total, and `p` in `/spend` switches to the project view: the total across sessions, this month, solo vs. crew, and breakdowns by role, model, and month. `ryter spend --project` prints the same. Nothing extra is recorded: every call is already in its session's `spend.jsonl`, and a running total in `~/.ryter/projects/` means only new lines are read. Calls with no known price are counted and shown (`$14.20+`), never added as $0.
+
+`/spend` is a panel: session total, a budget gauge, and tables by role and by connection; `p` switches to the project; `e` exports CSV. The info panel’s spend card shows the total, and the budget card below it shows the cap. `ryter spend` prints the roll-up on the CLI.
 
 ## Slash commands
 

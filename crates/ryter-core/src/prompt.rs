@@ -107,7 +107,7 @@ fn today_utc() -> String {
 }
 
 /// Days since 1970-01-01 to a proleptic Gregorian date (Hinnant's algorithm).
-fn civil_date(days: u64) -> String {
+pub(crate) fn civil_date(days: u64) -> String {
     let z = days as i64 + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;

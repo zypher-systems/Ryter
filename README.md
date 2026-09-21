@@ -53,6 +53,7 @@ ryter --hat build|plan|review|crew -p TEXT   (default build)
 ryter --connection spacexai|openrouter
 ryter --sandbox off|workspace|read-only
 ryter spend [session]
+ryter spend --project         this repository, across sessions
 ryter connections [list|add|remove|test|set-key]
 ryter models [connection]
 ryter sessions
