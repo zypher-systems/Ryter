@@ -326,6 +326,24 @@ fn chat_body(req: &CompletionRequest) -> Value {
         }
         messages.push(obj);
     }
+    if wants_cache_marks(&req.model) {
+        // System prompt, then the newest user/assistant message. Tool results
+        // stay plain strings: not every route accepts blocks in that role.
+        if let Some(first) = messages.first_mut() {
+            if first["role"] == "system" {
+                mark_last_for_cache(std::slice::from_mut(first));
+            }
+        }
+        if let Some(last) = messages
+            .iter_mut()
+            .rev()
+            .find(|m| m["role"] == "user" || m["role"] == "assistant")
+        {
+            if last["content"].as_str().is_some_and(|c| !c.is_empty()) {
+                mark_last_for_cache(std::slice::from_mut(last));
+            }
+        }
+    }
     let mut body = json!({
         "model": req.model,
         "messages": messages,
@@ -444,6 +462,7 @@ fn messages_body(req: &CompletionRequest) -> Value {
             _ => messages.push(json!({"role": m.role, "content": m.content})),
         }
     }
+    mark_last_for_cache(&mut messages);
     let mut body = json!({
         "model": req.model,
         "messages": messages,
@@ -470,6 +489,34 @@ fn messages_body(req: &CompletionRequest) -> Value {
         body["tools"] = tools;
     }
     body
+}
+
+/// Put a cache breakpoint on the newest message.
+///
+/// An agent loop resends the whole conversation every round. With the
+/// breakpoint rolling forward, everything up to the previous round is read
+/// from cache at a fraction of the input price; without it only the system
+/// prompt and tools were cached and the conversation was billed in full,
+/// every round. Uses one of the four breakpoints Anthropic allows (system,
+/// tools, and this).
+fn mark_last_for_cache(messages: &mut [Value]) {
+    let Some(last) = messages.last_mut() else {
+        return;
+    };
+    let content = &mut last["content"];
+    if let Some(text) = content.as_str().map(str::to_string) {
+        *content = json!([{ "type": "text", "text": text }]);
+    }
+    if let Some(block) = content.as_array_mut().and_then(|a| a.last_mut()) {
+        block["cache_control"] = json!({ "type": "ephemeral" });
+    }
+}
+
+/// Anthropic models reached through an OpenAI-compatible route (OpenRouter)
+/// cache only when a block is marked, the same as on the Messages API.
+fn wants_cache_marks(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.starts_with("anthropic/") || m.contains("claude")
 }
 
 /// True when `msg` is a user turn built only of `tool_result` blocks, so a
@@ -799,6 +846,37 @@ mod tests {
         );
         assert_eq!(retry_after(&h), None);
         assert_eq!(retry_after(&HeaderMap::new()), None);
+    }
+
+    /// The conversation, not just the system prompt, must be cacheable: an
+    /// agent loop resends all of it every round.
+    #[test]
+    fn messages_rolls_a_cache_breakpoint_onto_the_newest_turn() {
+        let body = messages_body(&tool_loop());
+        let ms = body["messages"].as_array().unwrap();
+        let last = ms.last().unwrap();
+        let blocks = last["content"].as_array().unwrap();
+        assert_eq!(blocks.last().unwrap()["cache_control"]["type"], "ephemeral");
+        // Only the newest turn: earlier turns stay unmarked (4-breakpoint cap).
+        let marked = ms
+            .iter()
+            .filter(|m| serde_json::to_string(m).unwrap().contains("cache_control"))
+            .count();
+        assert_eq!(marked, 1);
+    }
+
+    #[test]
+    fn claude_over_openrouter_is_marked_and_others_are_not() {
+        let mut req = tool_loop();
+        req.model = "anthropic/claude-sonnet-4.6".into();
+        let wire = serde_json::to_string(&chat_body(&req)).unwrap();
+        assert!(wire.contains("cache_control"), "{wire}");
+        req.model = "x-ai/grok-4.6".into();
+        let wire = serde_json::to_string(&chat_body(&req)).unwrap();
+        assert!(
+            !wire.contains("cache_control"),
+            "providers that cache automatically get plain content"
+        );
     }
 
     #[test]
