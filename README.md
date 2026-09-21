@@ -2,7 +2,7 @@
 
 Ryter is Zypher Systems’ terminal AI coding harness.
 
-Two ways to work, in one app. **Normal mode**: one model in your project, and `Tab` switches its hat between **build**, **plan**, and **review**. **Crew mode** (`/crew`): you talk to a lead, an architect designs, builders work in parallel git worktrees, and independent auditors sign off before anything lands. You get one reviewed patch. Bring your own keys: **SpaceXAI** and **OpenRouter** are built in, and local model servers (Ollama, LM Studio, llama.cpp) work without one.
+Two ways to work, in one app. **Solo mode**: one model in your project, and `Tab` switches its hat between **build**, **plan**, and **review**. **Crew mode** (`/crew`): you talk to a lead, an architect designs, builders work in parallel git worktrees, and independent auditors sign off before anything lands. You get one reviewed patch. Bring your own keys: **SpaceXAI** and **OpenRouter** are built in, and local model servers (Ollama, LM Studio, llama.cpp) work without one.
 
 Linux first. Apache-2.0.
 
@@ -23,7 +23,7 @@ Full usage: [docs/guide.md](docs/guide.md).
 
 ## How it works
 
-**Normal mode** is where Ryter starts. One model works in your files. `Tab` cycles its hat, and the message box shows the hat in its own color:
+**Solo mode** is where Ryter starts. One model works in your files. `Tab` cycles its hat, and the message box shows the hat in its own color:
 
 | Hat | Does |
 | --- | --- |
@@ -33,7 +33,7 @@ Full usage: [docs/guide.md](docs/guide.md).
 
 Before each build turn Ryter checkpoints your files, and `/undo` puts them back. Nothing is committed for you.
 
-**Crew mode**: type `/crew`. The first time, the crew builder walks you through choosing the lead, architect, builder, and auditor, with a recommendation for each, and a budget. `/normal` goes back. In crew mode you talk to the lead, which reads the repo, answers questions, and decides who does the work. It does **not** edit `src/`.
+**Crew mode**: type `/crew`. The first time, the crew builder walks you through choosing the lead, architect, builder, and auditor, with a recommendation for each, and a budget. `/solo` goes back. In crew mode you talk to the lead, which reads the repo, answers questions, and decides who does the work. It does **not** edit `src/`.
 
 - A precise change: the lead writes builder tasks.
 - Something that needs a design: the lead asks the architect, whose tasks go straight to builders.

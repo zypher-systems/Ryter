@@ -556,7 +556,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         b.session.dir.join("tasks.json"),
     )));
     let notes = b.session.notes_dir();
-    // Normal mode's build hat unless the session was left in another mode.
+    // Solo mode's build hat unless the session was left in another mode.
     let role = b.session.meta.mode.unwrap_or(Role::SoloBuild);
     Agent {
         provider: Arc::new(provider),

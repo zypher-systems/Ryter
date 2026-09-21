@@ -2,8 +2,8 @@
 
 Status: built (v1), with these decisions from review:
 
-- Ryter starts in **normal mode**, in the **build** hat. `Tab` cycles build → plan → review.
-- **Crew is a mode, not a Tab stop.** `/crew` enters it: the crew builder the first time, straight in after that. `/normal` leaves it.
+- Ryter starts in **solo mode**, in the **build** hat. `Tab` cycles build → plan → review.
+- **Crew is a mode, not a Tab stop.** `/crew` enters it: the crew builder the first time, straight in after that. `/solo` leaves it.
 - The message box shows the mode as a colored badge. The right-hand panel is wider, and the crew's cards appear only in crew mode.
 - One model for all hats. `/undo` checkpoints are in. A second-opinion review on the auditor model is for later.
 

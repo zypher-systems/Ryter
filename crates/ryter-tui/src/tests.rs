@@ -411,7 +411,7 @@ fn crew_offers_three_ready_made_crews() {
     }
 }
 
-/// The screen says who gets the next message: the hat in normal mode (its
+/// The screen says who gets the next message: the hat in solo mode (its
 /// badge on the composer), the lead in crew mode. Never "orchestrator" or a
 /// phase.
 #[test]
@@ -440,7 +440,7 @@ fn the_screen_shows_the_mode() {
     }
 }
 
-/// Normal mode has no crew, so the crew's cards only appear in crew mode.
+/// Solo mode has no crew, so the crew's cards only appear in crew mode.
 #[test]
 fn crew_cards_only_in_crew_mode() {
     let mut view = mid_stream(ActivityMode::Collapsed);
@@ -455,7 +455,7 @@ fn crew_cards_only_in_crew_mode() {
     let frame = render_to_string(&view, 160, 50);
     assert!(
         !frame.contains("╭─ crew"),
-        "normal mode shows the crew card:\n{frame}"
+        "solo mode shows the crew card:\n{frame}"
     );
     view.mode = ryter_core::Role::Orchestrator;
     let frame = render_to_string(&view, 160, 50);

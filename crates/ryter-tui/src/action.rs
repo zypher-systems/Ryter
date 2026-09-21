@@ -147,9 +147,9 @@ pub enum Action {
     /// Set the session budget in USD; `0` turns it off. Applies now and is
     /// saved as the default.
     SetBudget(f64),
-    /// Switch hats (normal mode), or to the crew lead (`Orchestrator`).
+    /// Switch hats (solo mode), or to the crew lead (`Orchestrator`).
     SetMode(ryter_core::Role),
-    /// `/crew` from normal mode: the crew builder first time, then crew mode.
+    /// `/crew` from solo mode: the crew builder first time, then crew mode.
     EnterCrew,
     /// `/undo`: put files back as they were before the last build turn.
     Undo,

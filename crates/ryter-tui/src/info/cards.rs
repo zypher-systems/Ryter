@@ -83,7 +83,7 @@ pub fn session(view: &View, w: usize, theme: Theme) -> Card {
         "auditor ✗"
     };
     let tools = format!("tools {}", view.perm_mode);
-    // The auditor is the crew's; in normal mode only the tool mode matters.
+    // The auditor is the crew's; in solo mode only the tool mode matters.
     let auditor = if view.crew_mode() { auditor } else { "" };
     let gap = if auditor.is_empty() { "" } else { "  " };
     rows.push(row(vec![

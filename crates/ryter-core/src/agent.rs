@@ -192,7 +192,7 @@ impl Agent {
             Some(report) => format!("{}\n\n---\n\n{user}", crew_report_message(&report)),
             None => user.to_string(),
         };
-        // Normal mode: say which hat this message is in, per message, so a
+        // Solo mode: say which hat this message is in, per message, so a
         // Tab never changes the system prompt or the tools (or the cache).
         let content = match self.role.hat_note() {
             Some(note) => format!("{note}\n\n{content}"),
@@ -1548,7 +1548,7 @@ mod tests {
         assert!(agent.session.meta.checkpoints.is_empty());
     }
 
-    /// Normal mode: the build hat edits the user's files directly, the hat
+    /// Solo mode: the build hat edits the user's files directly, the hat
     /// note reaches the model, and /undo puts the files back.
     #[tokio::test]
     async fn build_hat_edits_directly_and_undo_puts_it_back() {

@@ -51,7 +51,7 @@ pub struct Meta {
     #[serde(default)]
     pub checkpoints: Vec<String>,
     /// The mode the user left the session in: a hat, or the crew's lead.
-    /// `None` (sessions from before normal mode) means build.
+    /// `None` (sessions from before solo mode) means build.
     #[serde(default)]
     pub mode: Option<crate::role::Role>,
 }

@@ -21,15 +21,15 @@ pub enum Role {
     Builder,
     /// Reviews a builder diff; cannot write product code.
     Auditor,
-    /// Normal mode, plan hat: one model reading and proposing in the user's
+    /// Solo mode, plan hat: one model reading and proposing in the user's
     /// tree. Writes notes and memory only.
     #[serde(rename = "plan")]
     SoloPlan,
-    /// Normal mode, build hat: one model changing the user's tree directly,
+    /// Solo mode, build hat: one model changing the user's tree directly,
     /// behind the permission gate (edits and non-read-only commands ask).
     #[serde(rename = "build")]
     SoloBuild,
-    /// Normal mode, review hat: one model critiquing what changed. Runs tests
+    /// Solo mode, review hat: one model critiquing what changed. Runs tests
     /// and linters; edits nothing.
     #[serde(rename = "review")]
     SoloReview,
@@ -41,7 +41,7 @@ impl Role {
         matches!(self, Self::Builder | Self::SoloBuild)
     }
 
-    /// One of normal mode's hats.
+    /// One of solo mode's hats.
     pub fn is_solo(self) -> bool {
         matches!(self, Self::SoloPlan | Self::SoloBuild | Self::SoloReview)
     }

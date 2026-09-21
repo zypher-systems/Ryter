@@ -25,7 +25,7 @@ pub enum PromptKind {
     Builder,
     /// Audit specialist / merge gate.
     Auditor,
-    /// Normal mode: one model, three hats.
+    /// Solo mode: one model, three hats.
     Solo,
 }
 
@@ -137,7 +137,7 @@ pub fn orchestrator_system(
 }
 
 /// System prompt for the conversation the user types into: the crew lead, or
-/// normal mode's one model. Both carry project instructions and memory.
+/// solo mode's one model. Both carry project instructions and memory.
 pub fn conversation_system(
     kind: PromptKind,
     home: &Path,
@@ -152,7 +152,7 @@ pub fn conversation_system(
     // Without it the lead dated DECISIONS entries from its training data.
     // Changes once a day, so it costs the prompt cache nothing within a day.
     s.push_str(&format!("\nToday's date (UTC) is {}.\n", today_utc()));
-    // The crew keeps its memory in the project; normal mode doesn't create
+    // The crew keeps its memory in the project; solo mode doesn't create
     // files the user didn't ask for (they appeared on "are you there?").
     if kind == PromptKind::Orchestrator {
         if let Some(root) = project_root {

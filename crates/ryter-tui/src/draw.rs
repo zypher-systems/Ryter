@@ -139,7 +139,7 @@ fn draw_header(frame: &mut Frame, area: Rect, view: &View, theme: Theme, compact
         Span::styled(" ryter", theme.muted()),
         Span::styled("  ·  ", theme.muted()),
     ];
-    // Who the user is talking to: a hat in normal mode, the lead in crew mode.
+    // Who the user is talking to: a hat in solo mode, the lead in crew mode.
     let speaker = if view.crew_mode() {
         "crew · lead".to_string()
     } else {

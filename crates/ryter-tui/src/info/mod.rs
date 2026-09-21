@@ -87,7 +87,7 @@ pub fn cards(view: &View, inner_w: usize, theme: Theme) -> Vec<Card> {
         cards::budget(view, inner_w, theme),
     ];
     // Cards that have nothing to say are absent, not empty (`R-PANEL-18`).
-    // The crew's cards belong to crew mode; normal mode has no crew.
+    // The crew's cards belong to crew mode; solo mode has no crew.
     if view.crew_mode() {
         v.extend(cards::tasks(view, inner_w, theme));
         v.extend(cards::crew(view, inner_w, theme));

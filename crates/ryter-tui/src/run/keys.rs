@@ -197,13 +197,13 @@ fn reasoning_scroll(view: &mut View, dir: i32) {
 
 /// Composer editing and submit (`R-COMP-09..13`).
 fn composer_key(view: &mut View, key: KeyEvent) -> Action {
-    // Tab switches hats in normal mode. In crew mode there is one speaker,
+    // Tab switches hats in solo mode. In crew mode there is one speaker,
     // the lead; say how to get back rather than doing nothing.
     if matches!(view.composer.mode, crate::composer::Mode::Normal)
         && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
     {
         if view.crew_mode() {
-            view.system("crew mode · /normal to go back to build, plan, and review");
+            view.system("crew mode · /solo to go back to build, plan, and review");
             return Action::None;
         }
         return Action::SetMode(if key.code == KeyCode::BackTab {

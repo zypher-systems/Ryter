@@ -705,7 +705,7 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
     }
 }
 
-/// Switch hats, or between normal and crew mode. A switch while a turn runs
+/// Switch hats, or between solo and crew mode. A switch while a turn runs
 /// applies to the next message.
 fn set_mode(view: &mut View, cx: &mut Ctx, role: ryter_core::Role) {
     let entering_crew = role == ryter_core::Role::Orchestrator && !view.crew_mode();
@@ -715,10 +715,10 @@ fn set_mode(view: &mut View, cx: &mut Ctx, role: ryter_core::Role) {
     if entering_crew {
         view.system(
             "crew mode · your messages go to the lead, and the crew does the work · /crew for \
-             the crew's settings · /normal to go back",
+             the crew's settings · /solo to go back",
         );
     } else if leaving_crew {
-        view.system("normal mode · Tab switches between build, plan, and review");
+        view.system("solo mode · Tab switches between build, plan, and review");
     }
 }
 

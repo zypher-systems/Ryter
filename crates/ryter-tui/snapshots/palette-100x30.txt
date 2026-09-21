@@ -21,7 +21,7 @@
 │›/models         Switch the lead's model                  ▸  │
 │ /tools          Tool permission mode                     ▸  │
 │ /crew           Crew mode: a lead, an architect, parall… ▸  │
-│ /normal         Leave crew mode: one model, Tab between …   │
+│ /solo           Leave crew mode: one model, Tab between …   │
 │ /skills         Browse, run, create, and remove skills … ▸  │
 ╰─ enter run · tab complete · esc close ──────────────────────╯
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮

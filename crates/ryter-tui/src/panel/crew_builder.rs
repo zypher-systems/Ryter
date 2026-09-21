@@ -105,7 +105,7 @@ pub struct CrewBuilder {
     budget_touched: bool,
     probes: HashMap<(String, String), Probe>,
     /// Opened by `/crew` with no crew yet: say what crew mode needs, and let
-    /// `esc` mean "stay in normal mode".
+    /// `esc` mean "stay in solo mode".
     first_run: bool,
 }
 
@@ -406,7 +406,7 @@ impl Panel for CrewBuilder {
     fn legend(&self, _view: &View) -> String {
         match self.step {
             Step::Start if self.first_run => {
-                "↑↓ move · enter choose · esc stay in normal mode".into()
+                "↑↓ move · enter choose · esc stay in solo mode".into()
             }
             Step::Start => "↑↓ move · enter choose · esc close".into(),
             Step::Seat(_) => "type to filter · ↑↓ move · enter choose · esc back".into(),

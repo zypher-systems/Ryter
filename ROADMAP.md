@@ -41,9 +41,9 @@ Previously listed:
 
 ## Done
 
-### 0.2.0-patch — normal mode: one model, three hats (2026-09-21)
+### 0.2.0-patch — solo mode: one model, three hats (2026-09-21)
 
-- Starts in build; `Tab` cycles build / plan / review; `/crew` enters crew mode (crew builder first), `/normal` leaves
+- Starts in build; `Tab` cycles build / plan / review; `/crew` enters crew mode (crew builder first), `/solo` leaves
 - Per-hat permission rules in the user's tree; `/undo` checkpoints before each build turn; git set up for non-repositories (never in the home folder)
 - Mode badge on the message box, mode in the header, crew cards only in crew mode, wider right-hand panel; `ryter --hat`
 - Fixed on the way: `python3 -m …` and `python3 --version` were refused as inline code for every role; `2>/dev/null` was refused as a write outside the workspace

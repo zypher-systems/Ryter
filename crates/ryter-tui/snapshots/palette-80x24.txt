@@ -15,7 +15,7 @@
 │›/models         Switch the lead's model      ▸  │ ╰──────────────────────────╯
 │ /tools          Tool permission mode         ▸  │ ╭─ budget ─────────── off ─╮
 │ /crew           Crew mode: a lead, an archi… ▸  │ │ cap                  off │
-│ /normal         Leave crew mode: one model, …   │ ╰──────────────────────────╯
+│ /solo           Leave crew mode: one model, …   │ ╰──────────────────────────╯
 │ /skills         Browse, run, create, and re… ▸  │
 ╰─ enter run · tab complete · esc close ──────────╯
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮

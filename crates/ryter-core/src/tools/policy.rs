@@ -837,7 +837,7 @@ mod tests {
         decide("bash", &json!({"command": cmd}), &ctx_for(role, dir))
     }
 
-    /// Normal mode works in the user's own tree: build asks before changing
+    /// Solo mode works in the user's own tree: build asks before changing
     /// anything, plan and review change nothing.
     #[test]
     fn hats_in_the_users_tree() {

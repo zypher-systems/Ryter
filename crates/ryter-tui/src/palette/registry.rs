@@ -199,8 +199,8 @@ pub const COMMANDS: &[CommandSpec] = &[
         run_crew,
     ),
     spec(
-        "normal",
-        &["solo"],
+        "solo",
+        &["normal"],
         Category::Model,
         "Leave crew mode: one model, Tab between build, plan, and review",
         None,

@@ -62,7 +62,7 @@ pub struct CrewRow {
 pub struct View {
     /// Current phase.
     pub phase: Phase,
-    /// Who the user is talking to: a hat in normal mode (build, plan,
+    /// Who the user is talking to: a hat in solo mode (build, plan,
     /// review), or the crew's lead (`Orchestrator`) in crew mode.
     pub mode: ryter_core::Role,
     /// Connection name.

@@ -110,9 +110,9 @@ ryter -c -p "continue"               # continue the latest session: transcript, 
 
 An empty folder, or one that is not a git repository, works as is. Before the crew's first build, Ryter runs `git init` (your `init.defaultBranch`, else `main`), writes a `.gitignore` for secrets and caches unless one exists, commits what is already there as the starting point, and says so in the chat. A repository with no commits gets just the first commit.
 
-## Normal mode and hats
+## Solo mode and hats
 
-Ryter starts in normal mode: one model in your project. `Tab` switches its hat (build → plan → review), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. The header, the message box's badge, and its border all show the hat in its own color. A switch applies to your next message.
+Ryter starts in solo mode: one model in your project. `Tab` switches its hat (build → plan → review), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. The header, the message box's badge, and its border all show the hat in its own color. A switch applies to your next message.
 
 | Hat | May | May not |
 | --- | --- | --- |
@@ -128,7 +128,7 @@ Headless, `ryter -p` runs in build; `--hat plan|review|crew` picks another. Head
 
 ## Crew mode
 
-`/crew` switches to crew mode. The first time, the crew builder opens (below); once a crew is saved, `/crew` switches straight to it, and in crew mode `/crew` opens the crew's settings. `/normal` (or `/solo`) goes back. In crew mode the right-hand panel adds the tasks and crew cards.
+`/crew` switches to crew mode. The first time, the crew builder opens (below); once a crew is saved, `/crew` switches straight to it, and in crew mode `/crew` opens the crew's settings. `/solo` goes back. In crew mode the right-hand panel adds the tasks and crew cards.
 
 ## The lead
 
