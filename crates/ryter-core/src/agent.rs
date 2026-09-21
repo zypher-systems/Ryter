@@ -30,6 +30,8 @@ pub enum StopReason {
     Budget,
     /// User or MCP cancelled the in-flight turn.
     Cancelled,
+    /// The model hit its output-token ceiling mid-answer. The text is partial.
+    Truncated,
 }
 
 /// One user turn (may include many model/tool rounds).
@@ -198,6 +200,8 @@ impl Agent {
             let mut usage = Usage::default();
             let mut reported_cost: Option<f64> = None;
             let mut anon = 0u32;
+            // Set when the provider says the answer hit the output ceiling.
+            let mut truncated = false;
 
             loop {
                 if self.ctx.cancel.is_cancelled() {
@@ -252,6 +256,7 @@ impl Agent {
                     }
                     StreamDelta::Usage(u) => usage = u,
                     StreamDelta::ReportedCost(c) => reported_cost = Some(c),
+                    StreamDelta::Truncated => truncated = true,
                     StreamDelta::Done => {}
                 }
             }
@@ -307,8 +312,14 @@ impl Agent {
                 if self.ctx.cancel.is_cancelled() {
                     return self.finish_cancelled(last_text).await;
                 }
+                // "No tool calls" used to mean success even when the provider
+                // had cut the answer off at `max_tokens`.
                 return Ok(TurnResult {
-                    reason: StopReason::Completed,
+                    reason: if truncated {
+                        StopReason::Truncated
+                    } else {
+                        StopReason::Completed
+                    },
                     text: last_text,
                 });
             }

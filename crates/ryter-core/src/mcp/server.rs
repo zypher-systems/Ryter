@@ -251,6 +251,16 @@ pub fn serve_inbound(host: &dyn InboundHost) -> Result<()> {
     serve_session(stdin, stdout, host, &[])
 }
 
+/// Compare a bearer token without leaking its length or first difference
+/// through timing. Not a big win over a local socket, but it costs one line.
+fn token_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 /// One JSON-RPC line session. `ryter_prompt` runs on a helper thread so the same
 /// connection can send `ryter_cancel` / `notifications/cancelled` while it is in flight.
 pub fn serve_session<R, W>(
@@ -296,7 +306,7 @@ where
                         .or_else(|| p.get("bearer"))
                         .and_then(Value::as_str)
                 });
-                let ok = got.is_some_and(|g| tokens.iter().any(|t| t == g));
+                let ok = got.is_some_and(|g| tokens.iter().any(|t| token_eq(t, g)));
                 if !ok {
                     if let Some(id) = req.id.clone() {
                         let resp = RpcResponse::err(id, -32001, "unauthorized");

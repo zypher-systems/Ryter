@@ -98,6 +98,9 @@ fn push_chat(out: &mut Vec<StreamDelta>, data: &str) -> Result<()> {
             out.push(StreamDelta::Reasoning(s.to_string()));
         }
     }
+    if choice.get("finish_reason").and_then(Value::as_str) == Some("length") {
+        out.push(StreamDelta::Truncated);
+    }
     if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
         for call in calls {
             let id = call.get("id").and_then(Value::as_str).unwrap_or("");
@@ -166,9 +169,12 @@ fn push_responses(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) -
                 });
             }
         }
-        "response.completed" => {
+        "response.completed" | "response.incomplete" => {
             if let Some(u) = usage_from(&v["response"]["usage"]) {
                 out.push(StreamDelta::Usage(u));
+            }
+            if v["response"]["incomplete_details"]["reason"].as_str() == Some("max_output_tokens") {
+                out.push(StreamDelta::Truncated);
             }
         }
         _ => {
@@ -228,6 +234,9 @@ fn push_messages(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) ->
             if let Some(u) = usage_from(&v["usage"]) {
                 out.push(StreamDelta::Usage(u));
             }
+            if v["delta"]["stop_reason"].as_str() == Some("max_tokens") {
+                out.push(StreamDelta::Truncated);
+            }
         }
         _ => {}
     }
@@ -273,4 +282,72 @@ fn reported_cost(v: &Value) -> Option<f64> {
         .and_then(|u| u.get("cost").or_else(|| u.get("total_cost")))
         .and_then(Value::as_f64)
         .or_else(|| v.get("cost").and_then(Value::as_f64))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A turn cut off at the output ceiling must be distinguishable from a
+    /// finished one; otherwise the agent loop reports a partial answer as
+    /// success.
+    #[test]
+    fn each_backend_reports_truncation() {
+        let cases: &[(Backend, &str)] = &[
+            (
+                Backend::ChatCompletions,
+                r#"data: {"choices":[{"delta":{"content":"half"},"finish_reason":"length"}]}
+
+"#,
+            ),
+            (
+                Backend::Responses,
+                r#"event: response.incomplete
+data: {"response":{"incomplete_details":{"reason":"max_output_tokens"}}}
+
+"#,
+            ),
+            (
+                Backend::Messages,
+                r#"event: message_delta
+data: {"delta":{"stop_reason":"max_tokens"}}
+
+"#,
+            ),
+        ];
+        for (backend, sse) in cases {
+            let deltas = parse_sse(*backend, sse).expect("parse");
+            assert!(
+                deltas.contains(&StreamDelta::Truncated),
+                "{backend:?} missed truncation: {deltas:?}"
+            );
+        }
+    }
+
+    /// A normal stop must not be flagged.
+    #[test]
+    fn a_normal_stop_is_not_truncation() {
+        let cases: &[(Backend, &str)] = &[
+            (
+                Backend::ChatCompletions,
+                r#"data: {"choices":[{"delta":{"content":"all"},"finish_reason":"stop"}]}
+
+"#,
+            ),
+            (
+                Backend::Messages,
+                r#"event: message_delta
+data: {"delta":{"stop_reason":"end_turn"}}
+
+"#,
+            ),
+        ];
+        for (backend, sse) in cases {
+            let deltas = parse_sse(*backend, sse).expect("parse");
+            assert!(
+                !deltas.contains(&StreamDelta::Truncated),
+                "{backend:?} false positive: {deltas:?}"
+            );
+        }
+    }
 }

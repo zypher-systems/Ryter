@@ -40,6 +40,9 @@ pub enum StreamDelta {
     Usage(Usage),
     /// Provider-reported USD (OpenRouter generation cost). Wins over the price book.
     ReportedCost(f64),
+    /// The model ran into the output-token ceiling mid-answer. Without this a
+    /// truncated turn is indistinguishable from a finished one.
+    Truncated,
     /// Stream finished.
     Done,
 }

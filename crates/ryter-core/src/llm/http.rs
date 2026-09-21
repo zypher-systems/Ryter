@@ -442,11 +442,24 @@ fn messages_body(req: &CompletionRequest) -> Value {
         "stream": true,
         "max_tokens": req.max_tokens.unwrap_or(8192),
     });
+    // The system prompt and tool schemas are byte-identical on every turn of an
+    // agent loop, so without a cache breakpoint they are re-billed each time.
+    // `cached_tokens` was already parsed and shown; nothing ever asked for it.
     if let Some(sys) = &req.system {
-        body["system"] = json!(sys);
+        body["system"] = json!([{
+            "type": "text",
+            "text": sys,
+            "cache_control": { "type": "ephemeral" },
+        }]);
     }
     if !req.tools.is_empty() {
-        body["tools"] = json!(tools_anthropic(&req.tools));
+        let mut tools = tools_anthropic(&req.tools);
+        // One breakpoint covers everything before it, so it goes on the last
+        // tool: system + all tools become the cached prefix.
+        if let Some(last) = tools.as_array_mut().and_then(|a| a.last_mut()) {
+            last["cache_control"] = json!({ "type": "ephemeral" });
+        }
+        body["tools"] = tools;
     }
     body
 }
@@ -653,7 +666,14 @@ mod tests {
         assert_eq!(ms[1]["content"][0]["input"]["path"], "a.rs");
         assert_eq!(ms[2]["content"][0]["type"], "tool_result");
         assert_eq!(ms[2]["content"][0]["tool_use_id"], "call_1");
-        assert_eq!(body["system"], "sys");
+        // System is a cacheable text block now, not a bare string.
+        assert_eq!(body["system"][0]["text"], "sys");
+        assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
+        // One breakpoint on the last tool covers system + every tool.
+        assert_eq!(
+            body["tools"].as_array().unwrap().last().unwrap()["cache_control"]["type"],
+            "ephemeral"
+        );
     }
 
     /// Parallel calls answer into one user turn (Anthropic rejects a bare
