@@ -1,24 +1,24 @@
- ryter  ·  lead                                 ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build                                ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
- · system                                             ╭─ session ──────────────╮
-   welcome · /help for keys                           │ untitled          idle │
-                                                      │ auditor ✓  tools ask   │
-                                                      ╰────────────────────────╯
-                                                      ╭─ model ────────────────╮
-                                                      │ spacexai ●    grok-4.6 │
-                                                      │ ctx █░░░░░░░░░░░   5%  │
-                                                      │     12.4k / 256k       │
-                                                      │ price unknown          │
-                                                      ╰────────────────────────╯
-                                                      ╭─ spend ────────────────╮
-╭─ commands ────────────────────────────── 4 of 23 ─╮ │ session          $?.?? │
-│ mo                                                │ ╰────────────────────────╯
-│›/models         Switch the lead's model        ▸  │ ╭─ budget ───────── off ─╮
-│ /tools          Tool permission mode           ▸  │ │ cap                off │
-│ /crew           Assign models per specialist … ▸  │ ╰────────────────────────╯
-│ /skills         Browse, run, create, and remo… ▸  │
-╰─ enter run · tab complete · esc close ────────────╯
-╭─ dusty ──────────────────────────────────────────────────────────────────────╮
+ · system                                           ╭─ session ────────────────╮
+   welcome · /help for keys                         │ untitled           build │
+                                                    │ tools ask                │
+                                                    ╰──────────────────────────╯
+                                                    ╭─ model ──────────────────╮
+                                                    │ spacexai ●      grok-4.6 │
+                                                    │ ctx █░░░░░░░░░░░░░   5%  │
+                                                    │     12.4k / 256k tokens  │
+                                                    │ price unknown            │
+                                                    ╰──────────────────────────╯
+╭─ commands ──────────────────────────── 5 of 28 ─╮ ╭─ spend ──────────────────╮
+│ mo                                              │ │ session            $?.?? │
+│›/models         Switch the lead's model      ▸  │ ╰──────────────────────────╯
+│ /tools          Tool permission mode         ▸  │ ╭─ budget ─────────── off ─╮
+│ /crew           Crew mode: a lead, an archi… ▸  │ │ cap                  off │
+│ /normal         Leave crew mode: one model, …   │ ╰──────────────────────────╯
+│ /skills         Browse, run, create, and re… ▸  │
+╰─ enter run · tab complete · esc close ──────────╯
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
 │› /mo█                                                                        │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    tab complete    enter run    → open    esc close

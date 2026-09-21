@@ -191,12 +191,67 @@ pub const COMMANDS: &[CommandSpec] = &[
         "crew",
         &[],
         Category::Model,
-        "Assign models per specialist role, save presets",
+        "Crew mode: a lead, an architect, parallel builders, independent auditors",
         None,
         true,
         None,
         false,
-        |_, _| Action::OpenPanel(PanelId::Crew),
+        run_crew,
+    ),
+    spec(
+        "normal",
+        &["solo"],
+        Category::Model,
+        "Leave crew mode: one model, Tab between build, plan, and review",
+        None,
+        false,
+        None,
+        false,
+        |_, _| Action::SetMode(ryter_core::Role::SoloBuild),
+    ),
+    spec(
+        "build",
+        &[],
+        Category::Model,
+        "Build hat: make changes in your files",
+        None,
+        false,
+        None,
+        false,
+        |_, _| Action::SetMode(ryter_core::Role::SoloBuild),
+    ),
+    spec(
+        "plan",
+        &[],
+        Category::Model,
+        "Plan hat: read and propose, change nothing",
+        None,
+        false,
+        None,
+        false,
+        |_, _| Action::SetMode(ryter_core::Role::SoloPlan),
+    ),
+    spec(
+        "review",
+        &[],
+        Category::Model,
+        "Review hat: run the tests and critique what changed",
+        None,
+        false,
+        None,
+        false,
+        |_, _| Action::SetMode(ryter_core::Role::SoloReview),
+    ),
+    spec(
+        "undo",
+        &[],
+        Category::Session,
+        "Put your files back as they were before the last build turn",
+        None,
+        false,
+        None,
+        false,
+        |_, _| Action::Undo,
     ),
     // Agents & phase
     spec(
@@ -457,6 +512,16 @@ fn run_sessions(_view: &mut View, rest: &str) -> Action {
         Action::OpenPanel(PanelId::Sessions(SessionsMode::Browse))
     } else {
         Action::Resume(rest.to_string())
+    }
+}
+
+/// `/crew` enters crew mode (the crew builder the first time); in crew mode
+/// it opens the crew's settings.
+fn run_crew(view: &mut View, _rest: &str) -> Action {
+    if view.crew_mode() {
+        Action::OpenPanel(PanelId::Crew)
+    } else {
+        Action::EnterCrew
     }
 }
 

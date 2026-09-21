@@ -485,7 +485,8 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
                 }
             }
             None => Ok(ToolOutput::err(format!(
-                "ask: {name} requires approval (no TUI)"
+                "ask: {name} needs approval and nobody can be asked (headless). Tell the user: \
+                 run with --always-approve to let it run, or use the TUI"
             ))),
         },
     }
@@ -899,7 +900,7 @@ mod tests {
         )
         .unwrap();
         assert!(out.is_error);
-        assert!(out.text.contains("no TUI"), "{out:?}");
+        assert!(out.text.contains("--always-approve"), "{out:?}");
     }
 
     #[test]

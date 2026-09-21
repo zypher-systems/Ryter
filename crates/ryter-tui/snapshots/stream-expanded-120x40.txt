@@ -1,21 +1,21 @@
- ryter  ·  lead                                                                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build                                                                        ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- dusty                                                                                    ╭─ session ──────────────────╮
- ▎ now implement step one                                                                 │ untitled              idle │
-                                                                                          │ auditor ✓  tools ask       │
- · read_file  read crates/ryter-tui/src/run/mod.rs                                  0.1s  ╰────────────────────────────╯
-                                                                                          ╭─ model ────────────────────╮
- grok-4.6                                                                                 │ spacexai ●        grok-4.6 │
-   Reading the loop now. The event loop drains                                            │ ctx █░░░░░░░░░░░░░░░   5%  │
-                                                                                          │     12.4k / 256k tokens    │
-                                                                                          │ price unknown              │
-                                                                                          ╰────────────────────────────╯
-                                                                                          ╭─ spend ────────────────────╮
-                                                                                          │ session              $?.?? │
-                                                                                          ╰────────────────────────────╯
-                                                                                          ╭─ budget ───────────── off ─╮
-                                                                                          │ cap                    off │
-                                                                                          ╰────────────────────────────╯
+ dusty                                                                              ╭─ session ────────────────────────╮
+ ▎ now implement step one                                                           │ untitled                   build │
+                                                                                    │ tools ask                        │
+ · read_file  read crates/ryter-tui/src/run/mod.rs                            0.1s  ╰──────────────────────────────────╯
+                                                                                    ╭─ model ──────────────────────────╮
+ grok-4.6                                                                           │ spacexai ●              grok-4.6 │
+   Reading the loop now. The event loop drains                                      │ ctx █░░░░░░░░░░░░░░░░░░░   5%    │
+                                                                                    │     12.4k / 256k tokens          │
+                                                                                    │ price unknown                    │
+                                                                                    ╰──────────────────────────────────╯
+                                                                                    ╭─ spend ──────────────────────────╮
+                                                                                    │ session                    $?.?? │
+                                                                                    ╰──────────────────────────────────╯
+                                                                                    ╭─ budget ─────────────────── off ─╮
+                                                                                    │ cap                          off │
+                                                                                    ╰──────────────────────────────────╯
 
 
 
@@ -34,7 +34,7 @@
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-╭─ dusty ──────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› type to queue the next message, / for commands                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- enter send    ⇧enter newline    / commands    ^r reasoning    ^b panel    esc cancel    ^c quit
+ enter send    tab plan    ⇧enter newline    / commands    ^r reasoning    ^b panel    esc cancel    ^c quit

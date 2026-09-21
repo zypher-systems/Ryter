@@ -423,20 +423,28 @@ pub fn bash_hint(args: &Value) -> Option<&'static str> {
         )
 }
 
-/// True when an interpreter was given a script file to run rather than inline
-/// code. `-c`, `-e`, and a bare `-` all mean the code is not on disk.
+/// True when an interpreter runs code that is on disk (a script, or a module
+/// with `-m`) or no code at all (`--version`), rather than code handed to it
+/// inline. `-c`, `-e`, a bare `-`, and no arguments (stdin) are inline.
+///
+/// `python3 -m unittest discover -s tests` used to be refused as inline code:
+/// `unittest` isn't a path. It only ever passed when some later argument, like
+/// `-t .`, happened to look like one.
 fn runs_a_script(words: &[String]) -> bool {
     let mut saw_inline = false;
-    let mut script = None;
+    let mut on_disk = false;
     for w in words.iter().skip(1) {
         if w == "-" || w.starts_with("-c") || w.starts_with("-e") {
             saw_inline = true;
         }
-        if !w.starts_with('-') && script.is_none() && looks_like_path(w) {
-            script = Some(w);
+        if w == "-m" || matches!(w.as_str(), "--version" | "-V" | "--help" | "-h") {
+            on_disk = true;
+        }
+        if !w.starts_with('-') && looks_like_path(w) {
+            on_disk = true;
         }
     }
-    !saw_inline && script.is_some()
+    !saw_inline && on_disk
 }
 
 /// `git` is one binary with many verbs; the verb decides.
@@ -899,6 +907,36 @@ mod tests {
             bash("printf x > probe.py", Role::Auditor, d),
             Decision::Allow
         );
+    }
+
+    /// Code on disk runs; code handed over inline doesn't.
+    #[test]
+    fn interpreters_run_modules_and_scripts_not_inline_code() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        for cmd in [
+            "python3 -m unittest discover -s tests -v",
+            "python3 -m pytest",
+            "python3 --version",
+            "python3 tests/test_hello.py",
+        ] {
+            assert_eq!(bash(cmd, Role::Auditor, d), Decision::Allow, "{cmd}");
+        }
+        // Auditors may not run arbitrary scripts; a worktree builder may.
+        assert_eq!(
+            bash("bash scripts/check.sh", Role::Builder, d),
+            Decision::Allow
+        );
+        for cmd in [
+            "python3 -c 'print(1)'",
+            "python3 -m pytest -c 'x'",
+            "python3",
+            "python3 - < x",
+            "bash -c 'rm -rf ~'",
+            "perl -e 'print 1'",
+        ] {
+            assert_eq!(bash(cmd, Role::Auditor, d), Decision::Deny, "{cmd}");
+        }
     }
 
     #[test]

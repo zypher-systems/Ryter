@@ -139,11 +139,18 @@ fn draw_header(frame: &mut Frame, area: Rect, view: &View, theme: Theme, compact
         Span::styled(" ryter", theme.muted()),
         Span::styled("  ·  ", theme.muted()),
     ];
-    // The one agent the user talks to.
-    let speaker = "lead".to_string();
+    // Who the user is talking to: a hat in normal mode, the lead in crew mode.
+    let speaker = if view.crew_mode() {
+        "crew · lead".to_string()
+    } else {
+        view.mode_label().to_string()
+    };
     left.push(Span::styled(
         speaker,
-        theme.body().add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(theme.mode(view.mode))
+            .bg(theme.bg)
+            .add_modifier(Modifier::BOLD),
     ));
     let left_w: usize = left.iter().map(|s| wrap::width(&s.content)).sum();
 
@@ -357,11 +364,13 @@ pub fn hints(view: &View) -> Vec<(&'static str, String)> {
     if let ComposerMode::Secret { .. } = &view.composer.mode {
         return vec![("enter", "save key".into()), ("esc", "cancel".into())];
     }
-    let mut v = vec![
-        ("enter", "send".to_string()),
-        ("⇧enter", "newline".into()),
-        ("/", "commands".into()),
-    ];
+    let mut v = vec![("enter", "send".to_string())];
+    // The one key that isn't discoverable any other way.
+    if !view.crew_mode() {
+        v.push(("tab", view.mode.next_hat().as_str().to_string()));
+    }
+    v.push(("⇧enter", "newline".into()));
+    v.push(("/", "commands".into()));
     if view.activity.has_history {
         v.push(("^r", "reasoning".into()));
     }

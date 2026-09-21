@@ -50,6 +50,10 @@ pub struct Meta {
     /// Build-hat checkpoints, oldest first, for `/undo`.
     #[serde(default)]
     pub checkpoints: Vec<String>,
+    /// The mode the user left the session in: a hat, or the crew's lead.
+    /// `None` (sessions from before normal mode) means build.
+    #[serde(default)]
+    pub mode: Option<crate::role::Role>,
 }
 
 /// Several tasks' work collected on one integration branch. It lands on the
@@ -144,6 +148,7 @@ impl Session {
             patch: None,
             patches_opened: 0,
             checkpoints: Vec::new(),
+            mode: None,
         };
         let s = Self {
             dir,
@@ -412,6 +417,12 @@ impl Session {
     /// Replace the open patch.
     pub fn set_patch(&mut self, patch: Option<Patch>) -> Result<()> {
         self.meta.patch = patch;
+        self.touch()
+    }
+
+    /// Remember the mode for resume.
+    pub fn set_mode(&mut self, mode: crate::role::Role) -> Result<()> {
+        self.meta.mode = Some(mode);
         self.touch()
     }
 

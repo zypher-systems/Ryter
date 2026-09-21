@@ -1,4 +1,4 @@
- ryter  ·  lead         grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  · sys╭─ crew ─────────────────────────────────────── max concurrent: 4 ─╮
    wel│ roles · b opens the crew builder: every seat, with recommendation│
@@ -18,7 +18,7 @@
       ╰─ enter assign/apply · b crew builder · r reset · d delete · esc ─╯
 
 
-╭─ dusty ──────────────────────────────────────────────────────────────────────╮
-│› ask the lead, or / for commands                                             │
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back

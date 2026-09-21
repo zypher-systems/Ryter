@@ -1,4 +1,4 @@
- ryter  ·  lead                                                 grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build                                                grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  · system
    welcome · /help for keys

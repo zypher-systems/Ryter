@@ -1,6 +1,13 @@
 # Hats: one model, or a crew, in one app
 
-Status: sketch for review. Nothing here is built yet.
+Status: built (v1), with these decisions from review:
+
+- Ryter starts in **normal mode**, in the **build** hat. `Tab` cycles build → plan → review.
+- **Crew is a mode, not a Tab stop.** `/crew` enters it: the crew builder the first time, straight in after that. `/normal` leaves it.
+- The message box shows the mode as a colored badge. The right-hand panel is wider, and the crew's cards appear only in crew mode.
+- One model for all hats. `/undo` checkpoints are in. A second-opinion review on the auditor model is for later.
+
+The sketch below is kept as written. Where it differs from the list above, the list wins.
 
 ## The idea
 

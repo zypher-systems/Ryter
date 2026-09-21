@@ -104,7 +104,8 @@ pub struct CrewBuilder {
     /// The user moved the budget, so a size change no longer resets it.
     budget_touched: bool,
     probes: HashMap<(String, String), Probe>,
-    /// Opened on first launch: say so, and let `esc` mean "later".
+    /// Opened by `/crew` with no crew yet: say what crew mode needs, and let
+    /// `esc` mean "stay in normal mode".
     first_run: bool,
 }
 
@@ -404,7 +405,9 @@ impl Panel for CrewBuilder {
 
     fn legend(&self, _view: &View) -> String {
         match self.step {
-            Step::Start if self.first_run => "↑↓ move · enter choose · esc later (/crew)".into(),
+            Step::Start if self.first_run => {
+                "↑↓ move · enter choose · esc stay in normal mode".into()
+            }
             Step::Start => "↑↓ move · enter choose · esc close".into(),
             Step::Seat(_) => "type to filter · ↑↓ move · enter choose · esc back".into(),
             Step::Budget => "↑↓ move · ←→ change · enter next · esc back".into(),
@@ -439,9 +442,10 @@ impl Panel for CrewBuilder {
                 if self.first_run {
                     prose(
                         &mut lines,
-                        "no crew is set up yet. ryter works as a crew: a lead you talk to, an \
-                         architect, builders, and an independent auditor. pick a starting \
-                         point; you choose every seat next, with a recommendation beside each.",
+                        "crew mode needs a crew: a lead you talk to, an architect who designs, \
+                         builders who work in parallel, and an auditor who signs off. pick a \
+                         starting point; you choose every seat next, with a recommendation \
+                         beside each. when it's saved, you're in crew mode.",
                     );
                 } else {
                     prose(
@@ -724,9 +728,6 @@ impl Panel for CrewBuilder {
             Step::Start => {
                 let n = Tier::ALL.len() + 1;
                 match key.code {
-                    // On first launch, "later" is remembered, so it doesn't
-                    // return every launch; /crew → b reopens it.
-                    KeyCode::Esc if self.first_run => Outcome::CloseAct(Action::SaveCrew),
                     KeyCode::Esc => Outcome::Close,
                     KeyCode::Up => {
                         self.sel = super::step(self.sel, -1, n);

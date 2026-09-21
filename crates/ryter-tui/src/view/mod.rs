@@ -62,6 +62,9 @@ pub struct CrewRow {
 pub struct View {
     /// Current phase.
     pub phase: Phase,
+    /// Who the user is talking to: a hat in normal mode (build, plan,
+    /// review), or the crew's lead (`Orchestrator`) in crew mode.
+    pub mode: ryter_core::Role,
     /// Connection name.
     pub connection: String,
     /// Model id.
@@ -227,9 +230,24 @@ pub struct SpendRow {
 
 impl View {
     /// Empty session chrome for tests / startup.
+    /// In crew mode: messages go to the lead, and the crew does the work.
+    pub fn crew_mode(&self) -> bool {
+        self.mode == ryter_core::Role::Orchestrator
+    }
+
+    /// `build`, `plan`, `review`, or `crew`.
+    pub fn mode_label(&self) -> &'static str {
+        if self.crew_mode() {
+            "crew"
+        } else {
+            self.mode.as_str()
+        }
+    }
+
     pub fn new(phase: Phase, connection: String, model: String, cwd: String) -> Self {
         Self {
             phase,
+            mode: ryter_core::Role::SoloBuild,
             connection,
             model,
             spend: None,

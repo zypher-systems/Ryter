@@ -417,6 +417,16 @@ impl Theme {
     }
 
     /// Accent for a specialist role name.
+    /// The color of a mode: each hat, and crew.
+    pub fn mode(self, mode: ryter_core::Role) -> Color {
+        match mode {
+            ryter_core::Role::SoloBuild => self.build,
+            ryter_core::Role::SoloPlan => self.plan,
+            ryter_core::Role::SoloReview => self.audit,
+            _ => self.architect,
+        }
+    }
+
     pub fn role(self, role: &str) -> Color {
         match role {
             "planner" => self.plan,

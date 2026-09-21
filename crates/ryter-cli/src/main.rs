@@ -36,6 +36,11 @@ struct Cli {
     #[arg(short = 'c', long = "continue")]
     resume: bool,
 
+    /// build | plan | review (one model), or crew (the lead and its crew).
+    /// Default: build, or the mode a continued session was left in.
+    #[arg(long)]
+    hat: Option<String>,
+
     /// Treat Ask as Allow. Deny still wins.
     #[arg(long)]
     always_approve: bool,
@@ -445,6 +450,18 @@ async fn run_prompt(
             }
         }
     });
+    let role = match cli.hat.as_deref() {
+        Some(h) => match h.parse::<Role>() {
+            Ok(r) if r.is_solo() || r == Role::Orchestrator => r,
+            _ => {
+                return Err(Error::Config(format!(
+                    "unknown hat {h:?}: build, plan, review, or crew"
+                )));
+            }
+        },
+        None => session.meta.mode.unwrap_or(Role::SoloBuild),
+    };
+    let _ = session.set_mode(role);
     let mut agent = Agent {
         provider: Arc::new(provider),
         book: PriceBook::from_config(&cfg),
@@ -452,7 +469,7 @@ async fn run_prompt(
         ctx: ToolContext {
             workspace: cwd.clone(),
             notes_dir: notes,
-            role: Role::Orchestrator,
+            role,
             always_approve: cli.always_approve,
             queue: queue.clone(),
             mcp: None,
@@ -468,7 +485,7 @@ async fn run_prompt(
         },
         connection: conn_name,
         model,
-        role: Role::Orchestrator,
+        role,
         max_turns: 40,
         budget_usd: cfg.spend.session_budget_usd,
         sink: Some(tx),

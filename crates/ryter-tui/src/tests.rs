@@ -411,19 +411,58 @@ fn crew_offers_three_ready_made_crews() {
     }
 }
 
-/// The user talks to the lead. No phase, no handoff, no "orchestrator" on screen.
+/// The screen says who gets the next message: the hat in normal mode (its
+/// badge on the composer), the lead in crew mode. Never "orchestrator" or a
+/// phase.
 #[test]
-fn the_screen_speaks_of_the_lead_not_phases() {
-    for view in [idle(), mid_stream(ActivityMode::Collapsed)] {
-        for (w, h) in SIZES {
-            let frame = render_to_string(&view, w, h);
-            assert!(!frame.contains("orchestrator"), "{w}x{h}:\n{frame}");
-            assert!(frame.contains("lead"), "{w}x{h}:\n{frame}");
-            for gone in ["─ build ─", "─ plan ─", "handoff", "phase"] {
-                assert!(!frame.contains(gone), "{w}x{h} shows {gone:?}:\n{frame}");
+fn the_screen_shows_the_mode() {
+    for mode in [
+        ryter_core::Role::SoloBuild,
+        ryter_core::Role::SoloPlan,
+        ryter_core::Role::SoloReview,
+        ryter_core::Role::Orchestrator,
+    ] {
+        for base in [idle(), mid_stream(ActivityMode::Collapsed)] {
+            let mut view = base;
+            view.mode = mode;
+            for (w, h) in SIZES {
+                let frame = render_to_string(&view, w, h);
+                let badge = format!(" {} ", view.mode_label().to_ascii_uppercase());
+                assert!(frame.contains(&badge), "{w}x{h} no {badge:?}:\n{frame}");
+                if mode == ryter_core::Role::Orchestrator {
+                    assert!(frame.contains("crew · lead"), "{w}x{h}:\n{frame}");
+                }
+                for gone in ["orchestrator", "handoff", "phase"] {
+                    assert!(!frame.contains(gone), "{w}x{h} shows {gone:?}:\n{frame}");
+                }
             }
         }
     }
+}
+
+/// Normal mode has no crew, so the crew's cards only appear in crew mode.
+#[test]
+fn crew_cards_only_in_crew_mode() {
+    let mut view = mid_stream(ActivityMode::Collapsed);
+    view.crew.push(crate::view::CrewRow {
+        id: "01".into(),
+        role: "builder".into(),
+        label: "add a flag".into(),
+        spend: None,
+        status: "working".into(),
+        started_ms: 0,
+    });
+    let frame = render_to_string(&view, 160, 50);
+    assert!(
+        !frame.contains("╭─ crew"),
+        "normal mode shows the crew card:\n{frame}"
+    );
+    view.mode = ryter_core::Role::Orchestrator;
+    let frame = render_to_string(&view, 160, 50);
+    assert!(
+        frame.contains("╭─ crew"),
+        "crew mode hides the crew card:\n{frame}"
+    );
 }
 
 #[test]
@@ -469,8 +508,8 @@ fn session_card_leads_with_title_and_crew_state() {
         .unwrap_or_default()
         .to_string();
     assert!(
-        card_line.contains("idle"),
-        "the crew's state shares the row: {card_line:?}"
+        card_line.contains("build"),
+        "the mode shares the row: {card_line:?}"
     );
     assert!(
         !frame.contains("0193abcd"),
@@ -508,7 +547,7 @@ fn composer_present_at_every_message_count() {
         let v = many_turns(n);
         let s = render_to_string(&v, 100, 30);
         assert!(
-            s.contains("ask the lead") || s.contains("you"),
+            s.contains("what should change") || s.contains("you"),
             "n={n}\n{s}"
         );
         assert!(s.contains('›'), "prompt glyph missing at n={n}");

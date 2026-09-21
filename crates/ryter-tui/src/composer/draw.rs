@@ -29,13 +29,9 @@ pub fn border_color(view: &View, theme: Theme) -> Color {
         Mode::Field { .. } => return theme.accent,
         Mode::Normal => {}
     }
-    if view.busy {
-        theme.warn
-    } else if !view.composer.is_empty() {
-        theme.accent
-    } else {
-        theme.dim
-    }
+    // The mode's color, always: it is how the user knows, at the point of
+    // typing, which hat (or the crew) gets this message.
+    theme.mode(view.mode)
 }
 
 /// Border title per `R-COMP-02`.
@@ -57,7 +53,16 @@ fn glyph(view: &View) -> &'static str {
 fn placeholder(view: &View) -> String {
     match &view.composer.mode {
         Mode::Normal if view.busy => "type to queue the next message, / for commands".into(),
-        Mode::Normal => "ask the lead, or / for commands".into(),
+        Mode::Normal => match view.mode {
+            ryter_core::Role::SoloBuild => {
+                "what should change? · Tab: plan · / for commands".into()
+            }
+            ryter_core::Role::SoloPlan => {
+                "what are we planning? nothing changes here · Tab: review".into()
+            }
+            ryter_core::Role::SoloReview => "what should be reviewed? · Tab: build".into(),
+            _ => "ask the lead; the crew does the work · /normal to leave".into(),
+        },
         Mode::Secret { connection } => format!("paste the API key for {connection}"),
         Mode::Field { label } => format!("type {label}…"),
     }
@@ -84,10 +89,23 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Option<
             .bg(bg)
             .add_modifier(Modifier::BOLD);
     }
-    let fill = w.saturating_sub(2 + 1 + wrap::width(&t) + wrap::width(&right) + 1);
+    let badge = if matches!(view.composer.mode, Mode::Normal) {
+        format!(" {} ", view.mode_label().to_ascii_uppercase())
+    } else {
+        String::new()
+    };
+    let fill =
+        w.saturating_sub(2 + 1 + wrap::width(&badge) + wrap::width(&t) + wrap::width(&right) + 1);
     let top = Line::from(vec![
         Span::styled("╭", bs),
         Span::styled("─", bs),
+        Span::styled(
+            badge,
+            Style::default()
+                .fg(theme.composer_bg)
+                .bg(theme.mode(view.mode))
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(
             t,
             Style::default()

@@ -136,10 +136,19 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         Action::SetBudget(usd) => set_budget(view, cx, usd),
         Action::SaveBudget { usd, warn, task } => save_budget(view, cx, usd, warn, task),
         Action::ProbeModels(seats) => probe_models(cx, seats),
-        Action::SaveCrew => {
-            save_crew(view, cx);
-            view.system("no crew yet · /crew → b opens the crew builder when you're ready");
+        Action::SetMode(role) => set_mode(view, cx, role),
+        Action::EnterCrew => {
+            if config::crew_unconfigured(&cx.home, &cx.cfg) && view.specialists.is_empty() {
+                // First time: build the crew, then drop into crew mode.
+                view.panels
+                    .push(Box::new(panel::crew_builder::CrewBuilder::new(view, true)));
+                panel::sync_composer(view);
+                cx.send(Work::ListCrewModels);
+            } else {
+                set_mode(view, cx, ryter_core::Role::Orchestrator);
+            }
         }
+        Action::Undo => cx.send(Work::Undo),
         Action::SaveCrewSetup {
             lead_connection,
             lead_model,
@@ -498,6 +507,7 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
     view.session_id = session.meta.id.to_string();
     view.session_title = session.meta.title.clone();
     view.phase = session.meta.phase;
+    view.mode = session.meta.mode.unwrap_or(ryter_core::Role::SoloBuild);
     view.spend = session.meta.spend_usd_total;
     view.spend_unknown = session.meta.spend_unknown;
     view.auditor_on = session.meta.auditor_enabled;
@@ -657,13 +667,6 @@ fn set_key(view: &mut View, cx: &mut Ctx, name: &str, key: &str) {
             }
             view.system(format!("key saved for {name} in {store}"));
             use_connection(view, cx, name);
-            // A first key on a fresh install: set up the crew next.
-            if config::crew_unconfigured(&cx.home, &cx.cfg) && view.specialists.is_empty() {
-                view.panels
-                    .push(Box::new(panel::crew_builder::CrewBuilder::new(view, true)));
-                panel::sync_composer(view);
-                cx.send(Work::ListCrewModels);
-            }
         }
         Err(e) => view.error(e.to_string()),
     }
@@ -684,6 +687,23 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
             });
         }
         Err(_) => perform(view, cx, Action::BeginSetKey(view.connection.clone())),
+    }
+}
+
+/// Switch hats, or between normal and crew mode. A switch while a turn runs
+/// applies to the next message.
+fn set_mode(view: &mut View, cx: &mut Ctx, role: ryter_core::Role) {
+    let entering_crew = role == ryter_core::Role::Orchestrator && !view.crew_mode();
+    let leaving_crew = role.is_solo() && view.crew_mode();
+    view.mode = role;
+    cx.send(Work::SetRole(role));
+    if entering_crew {
+        view.system(
+            "crew mode · your messages go to the lead, and the crew does the work · /crew for \
+             the crew's settings · /normal to go back",
+        );
+    } else if leaving_crew {
+        view.system("normal mode · Tab switches between build, plan, and review");
     }
 }
 
@@ -762,6 +782,7 @@ fn save_crew_setup(
     }
     let warn = view.warn_usd;
     save_budget(view, cx, budget, warn, task_cap);
+    set_mode(view, cx, ryter_core::Role::Orchestrator);
     cx.notice(Notice::PresetsChanged(config::list_crew_presets(&cx.home)));
     view.system(format!(
         "crew saved · lead {} · architect {} · builder {} · auditor {}",

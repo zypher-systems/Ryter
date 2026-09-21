@@ -60,6 +60,10 @@ pub enum Work {
         /// Hooks.
         hooks: Vec<ryter_core::HookConfig>,
     },
+    /// Switch hats, or to the crew's lead.
+    SetRole(ryter_core::Role),
+    /// `/undo`.
+    Undo,
     /// Live settings knobs.
     SetSettings {
         /// Budget cap.
@@ -234,7 +238,9 @@ pub fn run(init: WorkerInit) {
                         a.connection.clone(),
                         a.model.clone(),
                     ) {
-                        Ok(s) => {
+                        Ok(mut s) => {
+                            // A new session stays in the mode the user is in.
+                            let _ = s.set_mode(a.role);
                             swap_session(a, s);
                             let _ = ev_tx.send(session_event(a));
                         }
@@ -246,7 +252,10 @@ pub fn run(init: WorkerInit) {
                 if let Some(a) = &mut agent {
                     match Session::find(&home, Some(&cwd), &id) {
                         Ok(s) => {
+                            let role = s.meta.mode.unwrap_or(Role::SoloBuild);
                             swap_session(a, s);
+                            a.role = role;
+                            a.ctx.role = role;
                             a.model = a.session.meta.model.clone();
                             a.connection = a.session.meta.connection.clone();
                             refresh_live(a, &live_status, &live_spend);
@@ -325,6 +334,20 @@ pub fn run(init: WorkerInit) {
                         Some(Arc::new(HookSet::from_config(&hooks)))
                     };
                 }
+            }
+            Ok(Work::SetRole(role)) => {
+                if let Some(a) = &mut agent {
+                    a.role = role;
+                    a.ctx.role = role;
+                    let _ = a.session.set_mode(role);
+                }
+            }
+            Ok(Work::Undo) => {
+                let message = match &mut agent {
+                    Some(a) => a.undo().unwrap_or_else(|e| format!("undo failed: {e}")),
+                    None => "nothing to undo yet".into(),
+                };
+                let _ = ev_tx.send(AgentEvent::Notice { message });
             }
             Ok(Work::SetSettings {
                 budget_usd,
@@ -525,6 +548,8 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         b.session.dir.join("tasks.json"),
     )));
     let notes = b.session.notes_dir();
+    // Normal mode's build hat unless the session was left in another mode.
+    let role = b.session.meta.mode.unwrap_or(Role::SoloBuild);
     Agent {
         provider: Arc::new(provider),
         book: PriceBook::from_config(b.cfg),
@@ -532,7 +557,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         ctx: ToolContext {
             workspace: b.cwd.to_path_buf(),
             notes_dir: notes,
-            role: Role::Orchestrator,
+            role,
             always_approve: b.always_approve,
             queue: queue.clone(),
             mcp: ryter_core::McpHub::connect(&b.cfg.mcp_servers)
@@ -550,7 +575,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         },
         connection: b.conn_name,
         model: b.model,
-        role: Role::Orchestrator,
+        role,
         max_turns: 40,
         budget_usd: b.cfg.spend.session_budget_usd,
         sink: Some(b.ev_tx),

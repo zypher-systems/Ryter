@@ -2,6 +2,14 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-21 — Two modes in one app: normal (one model, three hats) and crew
+- **By:** lead
+- **Decision:** Ryter starts in normal mode: one model in the user's tree, with `Tab` cycling build → plan → review. `/crew` enters crew mode (the crew builder the first time, straight in after); `/normal` leaves. The hats are roles (`SoloBuild`, `SoloPlan`, `SoloReview`) with one shared tool list and system prompt; the hat is a one-line note on each message, and the gate enforces it. Build checkpoints files before each turn (a commit object under `refs/ryter/undo/`, built with a private index) for `/undo`. Crew cards appear only in crew mode; the right-hand panel is wider (28/36/42 columns).
+- **Chosen vs rejected:** Rejected a fork into a separate single-agent harness: the interface, providers, spend, budgets, permission gate, sessions, and memory are shared, and a mode is far cheaper than a second product. Rejected crew as a fourth Tab stop (the user's call): it changes who you talk to, not just what the model may do. Rejected a tool list per hat: every switch would re-bill the whole context. Rejected giving build the worktree builder's rules: a builder may run anything because its tree is thrown away; the user's tree isn't.
+- **Why:** The user liked the interface most, and wanted the everyday single-agent flow without giving up the crew for big jobs. Normal mode also removes first-run friction (no crew, no auditor rule until `/crew`) and gives the benchmark its single-agent baseline.
+- **Where:** core `role.rs`, `tools/policy.rs` (per-hat rows, `writes_via_redirect`), `tools/mod.rs`, `agent.rs` (`checkpoint_before_build`, `undo`), `git.rs` (`checkpoint`, `restore_checkpoint`), `prompts/solo.md`, `session.rs` (`mode`, `checkpoints`); TUI keys, header, composer badge, cards, `/crew` `/normal` `/build` `/plan` `/review` `/undo`; CLI `--hat`
+- **Residual risk:** Build in headless needs `--always-approve` to edit, unlike the old headless crew. `/undo` restores files, not side effects of commands (installed packages, databases). The inbound MCP server still talks to the crew lead.
+
 ### 2026-09-21 — Ryter sets up git; budgets are opt-in; forms ask on Esc
 - **By:** lead
 - **Decision:** When the crew first needs a branch and the folder has no repository (or no commits), the harness runs `git init` (the user's `init.defaultBranch`, else `main`), writes a `.gitignore` for secrets and caches unless one exists, commits what is there, and tells the user with a notice. The session budget is off by default; the per-task cap defaults to $3 and the crew builder raises it to fit the chosen crew. `Esc` on a changed form asks "save your changes?" (y save · n discard · esc keep editing).

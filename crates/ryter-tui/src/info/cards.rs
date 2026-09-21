@@ -59,11 +59,15 @@ pub fn session(view: &View, w: usize, theme: Theme) -> Card {
     } else {
         view.session_title.clone()
     };
-    // Title, then what the crew is doing. There are no phases to show; the
-    // raw session id belongs in `/sessions`.
-    let (state, color) = match view.crew.len() {
-        0 => ("idle".to_string(), theme.dim),
-        n => (format!("{n} working"), theme.accent),
+    // Title, then the mode: which hat, or what the crew is doing. The raw
+    // session id belongs in `/sessions`.
+    let (state, color) = if view.crew_mode() {
+        match view.crew.len() {
+            0 => ("crew · idle".to_string(), theme.mode(view.mode)),
+            n => (format!("crew · {n} working"), theme.mode(view.mode)),
+        }
+    } else {
+        (view.mode_label().to_string(), theme.mode(view.mode))
     };
     let mut rows = vec![kv(
         &wrap::truncate(&title, w.saturating_sub(state.chars().count() + 2)),
@@ -79,6 +83,9 @@ pub fn session(view: &View, w: usize, theme: Theme) -> Card {
         "auditor ✗"
     };
     let tools = format!("tools {}", view.perm_mode);
+    // The auditor is the crew's; in normal mode only the tool mode matters.
+    let auditor = if view.crew_mode() { auditor } else { "" };
+    let gap = if auditor.is_empty() { "" } else { "  " };
     rows.push(row(vec![
         s(
             auditor,
@@ -90,7 +97,7 @@ pub fn session(view: &View, w: usize, theme: Theme) -> Card {
                 })
                 .bg(theme.sidebar_bg),
         ),
-        s("  ", theme.side()),
+        s(gap, theme.side()),
         s(
             tools,
             Style::default()

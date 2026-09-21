@@ -147,8 +147,12 @@ pub enum Action {
     /// Set the session budget in USD; `0` turns it off. Applies now and is
     /// saved as the default.
     SetBudget(f64),
-    /// Write the crew as it stands to `crew.toml`.
-    SaveCrew,
+    /// Switch hats (normal mode), or to the crew lead (`Orchestrator`).
+    SetMode(ryter_core::Role),
+    /// `/crew` from normal mode: the crew builder first time, then crew mode.
+    EnterCrew,
+    /// `/undo`: put files back as they were before the last build turn.
+    Undo,
     /// Test that each `(connection, model)` answers a tiny request with a tool.
     ProbeModels(Vec<(String, String)>),
     /// Save what the crew builder chose: the lead's route, the crew, the budget.

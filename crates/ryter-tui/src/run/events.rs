@@ -235,7 +235,7 @@ fn on_tool_call(
     );
     m.meta.tool_id = Some(id.to_string());
     if !label.is_empty() {
-        m.meta.label = Some(if role == Role::Orchestrator {
+        m.meta.label = Some(if role == Role::Orchestrator || role.is_solo() {
             label.clone()
         } else {
             format!("{role} · {label}")
@@ -244,7 +244,7 @@ fn on_tool_call(
     if name == "todo_write" {
         view.todos = parse_todos(args);
     }
-    if view.activity.busy() && role == Role::Orchestrator {
+    if view.activity.busy() && (role == Role::Orchestrator || role.is_solo()) {
         view.activity.verb = Verb::Tool(name.to_string());
         view.activity.current = wrap::truncate(&label, 48);
         view.activity.tools += 1;
@@ -319,7 +319,7 @@ fn on_spend(
             view.unpriced_calls += 1;
         }
     }
-    if role == Role::Orchestrator {
+    if role == Role::Orchestrator || role.is_solo() {
         // Tokens this turn become exact once accounting lands (`R-ACT-07`).
         view.activity.tokens = output_tokens;
         view.activity.tokens_estimated = false;

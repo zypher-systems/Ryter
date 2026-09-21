@@ -110,9 +110,29 @@ ryter -c -p "continue"               # continue the latest session: transcript, 
 
 An empty folder, or one that is not a git repository, works as is. Before the crew's first build, Ryter runs `git init` (your `init.defaultBranch`, else `main`), writes a `.gitignore` for secrets and caches unless one exists, commits what is already there as the starting point, and says so in the chat. A repository with no commits gets just the first commit.
 
+## Normal mode and hats
+
+Ryter starts in normal mode: one model in your project. `Tab` switches its hat (build → plan → review), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. The header, the message box's badge, and its border all show the hat in its own color. A switch applies to your next message.
+
+| Hat | May | May not |
+| --- | --- | --- |
+| **build** (default) | edit files and run commands; edits and commands that change things ask (or run with "allow all" / `--always-approve`); destructive commands always ask | read secrets, push, run inline interpreter code |
+| **plan** | read, search, run read-only commands, write `notes/` and project memory | edit source, run anything that changes the project |
+| **review** | read, run the tests and linters, read-only git | write anything, not even by redirect |
+
+Every hat shares one system prompt (`prompts/solo.md`) and one tool list. The hat is a one-line note in front of each message, and the permission gate enforces it, so switching never throws away the provider's prompt cache.
+
+Before each build turn, Ryter snapshots your files as a git object under `refs/ryter/undo/`. Your branch, staging area, and files aren't touched. `/undo` puts the files back as they were before the last build turn that changed them, deleting files it created. A folder that isn't a repository gets git set up first, and Ryter says so. It won't make one in your home folder or at the root.
+
+Headless, `ryter -p` runs in build; `--hat plan|review|crew` picks another. Headless nobody can approve an edit, so pass `--always-approve` to let build change files.
+
+## Crew mode
+
+`/crew` switches to crew mode. The first time, the crew builder opens (below); once a crew is saved, `/crew` switches straight to it, and in crew mode `/crew` opens the crew's settings. `/normal` (or `/solo`) goes back. In crew mode the right-hand panel adds the tasks and crew cards.
+
 ## The lead
 
-Every message you send goes to the lead. You never talk to a specialist; they report back through the chat. The lead's prompt is `prompts/orchestrator.md` (overridable). It may read the repo, grep, glob, and call `todo_write`. It cannot write product source. For each request it does one of these:
+In crew mode every message you send goes to the lead. You never talk to a specialist; they report back through the chat. The lead's prompt is `prompts/orchestrator.md` (overridable). It may read the repo, grep, glob, and call `todo_write`. It cannot write product source. For each request it does one of these:
 
 | The request | What the lead does |
 | --- | --- |
@@ -148,7 +168,7 @@ Auditors must be different models from the lead and the builder — otherwise bu
 
 For a trivial change the lead can `propose_edit`: you see the diff and press `y`. Only a person can approve it.
 
-**The crew builder** is where a crew is set up. It opens by itself on first launch, when no crew has been saved, and from `/crew` with `b`. It walks through seven steps:
+**The crew builder** is where a crew is set up. It opens the first time you type `/crew`, and from the crew settings with `b`. When you save, you're in crew mode. It walks through seven steps:
 
 1. A starting point: skiff, schooner, galleon, or your current crew.
 2. The lead.

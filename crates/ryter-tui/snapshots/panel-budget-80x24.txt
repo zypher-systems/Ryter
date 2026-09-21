@@ -1,4 +1,4 @@
- ryter  ·  lead         grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  · s╭─ budget ─────────────────────────────────────────────────────── off ─╮
    w│ spent $?.?? · no cap                                                 │
@@ -18,7 +18,7 @@
     ╰─ ↑↓ move · space/←→ change · enter edit · esc done ──────────────────╯
 
 
-╭─ dusty ──────────────────────────────────────────────────────────────────────╮
-│› ask the lead, or / for commands                                             │
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back

@@ -1,30 +1,30 @@
- ryter  ·  lead                                                     ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build                                                    ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                             ╭─ session ──────────────────╮
-   welcome · /help for keys                                           │ untitled              idle │
-                                                                      │ auditor ✓  tools ask       │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ model ────────────────────╮
-                                                                      │ spacexai ●        grok-4.6 │
-                                                                      │ ctx █░░░░░░░░░░░░░░░   5%  │
-                                                                      │     12.4k / 256k tokens    │
-                                                                      │ price unknown              │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ spend ────────────────────╮
-                                                                      │ session              $?.?? │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ budget ───────────── off ─╮
-                                                                      │ cap                    off │
-                                                                      ╰────────────────────────────╯
-
-╭─ commands ────────────────────────────────────────────── 4 of 23 ─╮
-│ mo                                                                │
-│›/models         Switch the lead's model                        ▸  │
-│ /tools          Tool permission mode                           ▸  │
-│ /crew           Assign models per specialist role, save prese… ▸  │
-│ /skills         Browse, run, create, and remove skills and us… ▸  │
-╰─ enter run · tab complete · esc close ────────────────────────────╯
-╭─ dusty ──────────────────────────────────────────────────────────────────────────────────────────╮
+ · system                                                       ╭─ session ────────────────────────╮
+   welcome · /help for keys                                     │ untitled                   build │
+                                                                │ tools ask                        │
+                                                                ╰──────────────────────────────────╯
+                                                                ╭─ model ──────────────────────────╮
+                                                                │ spacexai ●              grok-4.6 │
+                                                                │ ctx █░░░░░░░░░░░░░░░░░░░   5%    │
+                                                                │     12.4k / 256k tokens          │
+                                                                │ price unknown                    │
+                                                                ╰──────────────────────────────────╯
+                                                                ╭─ spend ──────────────────────────╮
+                                                                │ session                    $?.?? │
+                                                                ╰──────────────────────────────────╯
+                                                                ╭─ budget ─────────────────── off ─╮
+                                                                │ cap                          off │
+                                                                ╰──────────────────────────────────╯
+╭─ commands ──────────────────────────────────────── 5 of 28 ─╮
+│ mo                                                          │
+│›/models         Switch the lead's model                  ▸  │
+│ /tools          Tool permission mode                     ▸  │
+│ /crew           Crew mode: a lead, an architect, parall… ▸  │
+│ /normal         Leave crew mode: one model, Tab between …   │
+│ /skills         Browse, run, create, and remove skills … ▸  │
+╰─ enter run · tab complete · esc close ──────────────────────╯
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
 │› /mo█                                                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    tab complete    enter run    → open    esc close

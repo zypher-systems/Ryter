@@ -1,4 +1,4 @@
- ryter  ·  lead         grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  · s╭─ models ─────────────────────────────────────────────── 4 · loading ─╮
    w│ model           context   in/M  out/M  connection                    │
