@@ -182,9 +182,9 @@ impl Agent {
     }
 
     async fn turn_inner(&mut self, user: &str, tools: &mut u32) -> Result<TurnResult> {
-        if self.role == Role::SoloBuild {
-            self.checkpoint_before_build()?;
-        }
+        // Set up git and snapshot the files only when this turn is about to
+        // change something. "Are you there?" used to open with git work.
+        let mut checkpointed = false;
         // A run that stopped at the budget never showed the lead its crew
         // report; without it, "continue" reached a lead that didn't know what
         // had finished.
@@ -387,6 +387,13 @@ impl Agent {
                     summary: Some(tool_summary(&call.name, &args)),
                 })?;
                 let t0 = std::time::Instant::now();
+                if self.role == Role::SoloBuild
+                    && !checkpointed
+                    && self.would_change(&call.name, &args)
+                {
+                    self.checkpoint_before_build()?;
+                    checkpointed = true;
+                }
                 let out = gated_execute(&call.name, &args, &self.ctx)?;
                 self.emit(AgentEvent::ToolResult {
                     id: call.id.clone(),
@@ -807,6 +814,16 @@ impl Agent {
             return Err(e);
         }
         Ok(report)
+    }
+
+    /// Whether a tool call may change the user's files: an edit, or a command
+    /// the gate doesn't pass as read-only. Reads never trigger a checkpoint.
+    fn would_change(&self, name: &str, args: &Value) -> bool {
+        match name {
+            "write" | "search_replace" => true,
+            "bash" => crate::tools::decide(name, args, &self.ctx) != crate::tools::Decision::Allow,
+            _ => false,
+        }
     }
 
     /// Before a build-hat turn edits the user's files: make sure there is a
@@ -1504,6 +1521,31 @@ mod tests {
 
     fn say(text: &str) -> Vec<StreamDelta> {
         vec![StreamDelta::Text(text.into()), StreamDelta::Done]
+    }
+
+    /// "Are you there?" is a conversation, not a reason to touch git: a turn
+    /// that only talks or reads makes no repository and no snapshot.
+    #[tokio::test]
+    async fn a_build_turn_that_changes_nothing_touches_no_git() {
+        let ls = vec![
+            StreamDelta::ToolCall {
+                id: "b".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({"command": "ls"}).to_string(),
+            },
+            StreamDelta::Done,
+        ];
+        let p = ReplayProvider::scripted(vec![say("yes, here"), ls, say("two files")]);
+        let (_home, cwd, mut agent) = setup(p);
+        agent.role = Role::SoloBuild;
+        agent.ctx.role = Role::SoloBuild;
+        agent.turn("are you there?").await.unwrap();
+        agent.turn("what's here?").await.unwrap();
+        assert!(
+            !cwd.path().join(".git").exists(),
+            "no repository for a chat"
+        );
+        assert!(agent.session.meta.checkpoints.is_empty());
     }
 
     /// Normal mode: the build hat edits the user's files directly, the hat

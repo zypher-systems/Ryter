@@ -69,7 +69,6 @@ pub fn ensure_project_memory(project_root: &Path) -> std::io::Result<()> {
 /// Roadmap + decisions + `notes/*.md` for prompts. Missing files are skipped.
 pub fn load_project_memory(project_root: Option<&Path>) -> Option<String> {
     let root = project_root?;
-    let _ = ensure_project_memory(root);
     let mut out = String::new();
     append_file(&mut out, "ROADMAP.md", &root.join("ROADMAP.md"));
     append_file(&mut out, "DECISIONS.md", &root.join("DECISIONS.md"));

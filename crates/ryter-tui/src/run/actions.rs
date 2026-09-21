@@ -613,7 +613,22 @@ fn route_from_view(view: &View) -> config::LastRoute {
 }
 
 fn apply_pricing(view: &mut View, cfg: &Config, model: &str) {
-    let book = PriceBook::from_config(cfg);
+    let mut book = PriceBook::from_config(cfg);
+    // The picker showed a price from the provider's list; use it when the
+    // built-in book has none, rather than saying "price unknown".
+    if book.rates(model).is_none() {
+        if let Some(&(i, o)) = view.catalog_rates.get(model) {
+            book.ingest_model_info(&[ryter_core::ModelInfo {
+                id: model.to_string(),
+                context_length: None,
+                input_per_million: Some(i),
+                output_per_million: Some(o),
+                connection: None,
+                created: None,
+                tools: None,
+            }]);
+        }
+    }
     view.price_label = book.format_model_rates(model);
     match book.rates(model) {
         Some(r) => {
@@ -1079,4 +1094,30 @@ pub fn display_home_path(cwd: &Path) -> String {
 pub fn parse_phase(s: Option<&str>) -> ryter_core::Result<Option<Phase>> {
     use std::str::FromStr;
     s.map(Phase::from_str).transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The model picker shows a provider's price; the sidebar must use it
+    /// when the built-in book doesn't know the model.
+    #[test]
+    fn the_sidebar_uses_the_catalog_price() {
+        let mut v = View::new(
+            ryter_core::Phase::Build,
+            "openrouter".into(),
+            "vendor/new-model".into(),
+            "/tmp".into(),
+        );
+        let cfg = Config::default();
+        apply_pricing(&mut v, &cfg, "vendor/new-model");
+        assert_eq!(v.price_in, None, "unknown to the book and no catalog yet");
+        v.catalog_rates
+            .insert("vendor/new-model".into(), (0.15, 0.6));
+        apply_pricing(&mut v, &cfg, "vendor/new-model");
+        assert_eq!(v.price_in, Some(0.15));
+        assert_eq!(v.price_out, Some(0.6));
+        assert!(!v.price_label.contains('?'), "{}", v.price_label);
+    }
 }

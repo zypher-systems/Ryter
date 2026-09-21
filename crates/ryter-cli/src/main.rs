@@ -399,7 +399,6 @@ async fn run_prompt(
     let prompt = cli
         .prompt
         .ok_or_else(|| Error::Config("missing -p/--prompt".into()))?;
-    let _ = ryter_core::ensure_project_memory(&cwd);
     if !cfg.spend.enabled {
         eprintln!("warning: [spend] enabled = false; counters still increment");
     }

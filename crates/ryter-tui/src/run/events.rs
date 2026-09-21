@@ -203,6 +203,11 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
             );
         }
         AgentEvent::ModelsListed { models } => {
+            for m in models {
+                if let (Some(i), Some(o)) = (m.input_per_million, m.output_per_million) {
+                    view.catalog_rates.insert(m.id.clone(), (i, o));
+                }
+            }
             if let Some(m) = models.iter().find(|m| m.id == view.model) {
                 apply_model_catalog(view, m);
             }

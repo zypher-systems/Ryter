@@ -69,17 +69,18 @@ impl Role {
     /// cache) changing on every switch.
     pub fn hat_note(self) -> Option<&'static str> {
         match self {
+            // What the hat allows, not orders: a directive here made the model
+            // start working on "are you there?".
             Self::SoloBuild => Some(
-                "[hat: build — make the change in the user's files, run the project's tests \
-                 for what you touched, and say what you did]",
+                "[hat: build — you may change files and run commands when the request calls for it]",
             ),
             Self::SoloPlan => Some(
-                "[hat: plan — read and think; do not edit source or run commands that change \
-                 anything. End with a short plan: files, steps, risks, how to verify]",
+                "[hat: plan — nothing may change; read and think. When asked for a plan, end with \
+                 files, steps, risks, and how to verify]",
             ),
             Self::SoloReview => Some(
-                "[hat: review — critique what changed (`git diff`, the tests, the code); edit \
-                 nothing. End with findings, blocking ones first]",
+                "[hat: review — nothing may change; read and run tests. When asked for a review, \
+                 end with findings, blocking ones first]",
             ),
             _ => None,
         }

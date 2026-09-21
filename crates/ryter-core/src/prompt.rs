@@ -152,8 +152,12 @@ pub fn conversation_system(
     // Without it the lead dated DECISIONS entries from its training data.
     // Changes once a day, so it costs the prompt cache nothing within a day.
     s.push_str(&format!("\nToday's date (UTC) is {}.\n", today_utc()));
-    if let Some(root) = project_root {
-        let _ = crate::memory::ensure_project_memory(root);
+    // The crew keeps its memory in the project; normal mode doesn't create
+    // files the user didn't ask for (they appeared on "are you there?").
+    if kind == PromptKind::Orchestrator {
+        if let Some(root) = project_root {
+            let _ = crate::memory::ensure_project_memory(root);
+        }
     }
     if let Some(inst) = load_project_instructions(project_root) {
         s.push_str("\n## Project instructions\n");

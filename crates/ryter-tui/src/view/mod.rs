@@ -147,6 +147,10 @@ pub struct View {
     pub price_in: Option<f64>,
     /// Last known USD / million output.
     pub price_out: Option<f64>,
+    /// Prices from the model lists providers returned (`/models`, the crew
+    /// builder): the fallback when the built-in price book doesn't know a
+    /// model, which is most of OpenRouter's catalog.
+    pub catalog_rates: BTreeMap<String, (f64, f64)>,
     /// Live `[specialists.*]` assignment (edited by `/crew`).
     pub specialists: BTreeMap<String, ryter_core::RoleModel>,
     /// Unix socket path if inbound MCP is listening.
@@ -291,6 +295,7 @@ impl View {
             ctx_breakdown: Vec::new(),
             price_label: String::new(),
             price_in: None,
+            catalog_rates: BTreeMap::new(),
             price_out: None,
             specialists: BTreeMap::new(),
             mcp_listen: None,

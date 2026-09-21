@@ -106,7 +106,6 @@ fn io_err(e: impl std::fmt::Display) -> ryter_core::Error {
 /// Run the fullscreen TUI. Restores the terminal on exit.
 pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     let cwd = std::env::current_dir().map_err(io_err)?;
-    let _ = ryter_core::ensure_project_memory(&cwd);
     let trusted = config::is_trusted(&cwd);
     let cfg = config::load(Some(&cwd), trusted)?;
     let home = config::home_dir();

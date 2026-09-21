@@ -389,6 +389,11 @@ pub fn run(init: WorkerInit) {
                         }
                     }
                 }
+                // Price spend from the catalog too, for providers that don't
+                // report cost per call.
+                if let Some(a) = &mut agent {
+                    a.book.ingest_model_info(&all);
+                }
                 let _ = ev_tx.send(AgentEvent::ModelsListed { models: all });
             }
             Ok(Work::ListModels) => {
@@ -410,6 +415,9 @@ pub fn run(init: WorkerInit) {
                                 m
                             })
                             .collect();
+                        if let Some(a) = &mut agent {
+                            a.book.ingest_model_info(&models);
+                        }
                         let _ = ev_tx.send(AgentEvent::ModelsListed { models });
                     }
                     Err(e) => {
