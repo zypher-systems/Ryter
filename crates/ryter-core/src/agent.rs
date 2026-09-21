@@ -45,6 +45,15 @@ pub struct TurnResult {
     pub text: String,
 }
 
+/// Builder provider, model, connection, auditor panel, patch worktree.
+type BuildStack = (
+    Arc<dyn Provider>,
+    String,
+    String,
+    Vec<crew::Auditor>,
+    PathBuf,
+);
+
 /// Role, model, connection: one spend event per group per batch.
 type SpendKey = (String, String, String);
 
@@ -386,34 +395,31 @@ impl Agent {
     }
 
     /// Run pending queue items. Orchestrator only. Role follows the current phase.
-    /// Run the queue for the current phase. Returns the crew's report for the
-    /// orchestrator (empty when nothing ran).
+    /// Run the crew until the queue is done. Returns the crew's report for the
+    /// lead (empty when nothing ran).
     ///
-    /// In Build, tasks land on an open patch branch and the patch lands on the
-    /// user's branch as one commit once all of it is done. Every specialist
-    /// round is metered against the session budget and per-task caps.
+    /// Each task names who does it. Architect tasks run first — design before
+    /// build — and the builder tasks they write run next, in the same call:
+    /// the user never switches modes. Builder work lands on an open patch
+    /// branch, and the patch lands on the user's branch as one commit once all
+    /// of it is done. Every specialist round is metered.
     pub async fn drain_crew(&mut self) -> Result<String> {
         if self.role != Role::Orchestrator {
             return Ok(String::new());
         }
-        let phase = self.session.meta.phase;
-        let role = match phase {
-            Phase::Plan => Role::Architect,
-            Phase::Build => Role::Builder,
-            Phase::Audit => Role::Auditor,
+        let pending = |q: &TaskQueue, role: &str| {
+            q.tasks
+                .iter()
+                .any(|t| t.status == TaskStatus::Pending && t.role == role)
         };
-        // Outside Build, tasks an architect wrote are build work waiting for
-        // the build phase. Taking them now ran more architects to "design"
-        // each build task — on the strongest, most expensive model.
-        let eligible = move |t: &crate::queue::Task| phase == Phase::Build || t.by != "architect";
-        let has_pending = self
-            .queue
-            .lock()
-            .map_err(|e| Error::Config(e.to_string()))?
-            .tasks
-            .iter()
-            .any(|t| t.status == TaskStatus::Pending && eligible(t));
-        if !has_pending && (role != Role::Builder || self.session.meta.patch.is_none()) {
+        let anything = {
+            let q = self
+                .queue
+                .lock()
+                .map_err(|e| Error::Config(e.to_string()))?;
+            pending(&q, "architect") || pending(&q, "builder")
+        };
+        if !anything && self.session.meta.patch.is_none() {
             return Ok(String::new());
         }
 
@@ -427,47 +433,70 @@ impl Agent {
                 .with_free(free)
                 .with_log(self.session.spend_path()),
         );
-        let (builder_p, builder_m, builder_c) = self.specialist_stack(role);
-        let auditors = if role == Role::Builder && self.session.meta.auditor_enabled {
-            match self.auditor_panel() {
-                Ok(a) => a,
-                Err(why) => return Ok(format!("### builds paused\n{why}\n")),
-            }
-        } else {
-            Vec::new()
-        };
-        // Refuse before a builder spends anything: work that cannot be signed
-        // off by a different model must not be started.
-        if role == Role::Builder && has_pending && self.session.meta.auditor_enabled {
-            if let Some(why) = crew::independence_problem(&self.model, &builder_m, &auditors) {
-                return Ok(format!("### builds paused\nNothing ran: {why}\n"));
-            }
-        }
-        let target_repo = if role == Role::Builder && has_pending {
-            match self.open_patch() {
-                Ok(p) => p.worktree,
-                Err(e) => return Ok(format!("### builds paused\n{e}\n")),
-            }
-        } else {
-            self.ctx.workspace.clone()
-        };
-
         let mut reports: Vec<String> = Vec::new();
         let mut budget_hit: Option<Error> = None;
+        let mut paused = false;
+        // Resolved at the first builder batch, not before: a design-only run
+        // must not be refused for want of an auditor.
+        let mut build: Option<BuildStack> = None;
         loop {
             if self.ctx.cancel.is_cancelled() || budget_hit.is_some() {
                 break;
             }
+            let role = {
+                let q = self
+                    .queue
+                    .lock()
+                    .map_err(|e| Error::Config(e.to_string()))?;
+                if pending(&q, "architect") {
+                    Role::Architect
+                } else if pending(&q, "builder") {
+                    Role::Builder
+                } else {
+                    break;
+                }
+            };
+            let (builder_p, builder_m, builder_c, auditors, target_repo) = if role == Role::Builder
+            {
+                if build.is_none() {
+                    match self.build_stack() {
+                        Ok(b) => build = Some(b),
+                        Err(why) => {
+                            reports.push(format!("### builds paused\n{why}\n"));
+                            paused = true;
+                            break;
+                        }
+                    }
+                }
+                build.clone().expect("resolved above")
+            } else {
+                let (p, m, c) = self.specialist_stack(role);
+                (p, m, c, Vec::new(), self.ctx.workspace.clone())
+            };
+            let before: std::collections::HashSet<String> = self
+                .queue
+                .lock()
+                .map_err(|e| Error::Config(e.to_string()))?
+                .tasks
+                .iter()
+                .map(|t| t.id.clone())
+                .collect();
+            let role_name = if role == Role::Architect {
+                "architect"
+            } else {
+                "builder"
+            };
             let batch = {
                 let mut q = self
                     .queue
                     .lock()
                     .map_err(|e| Error::Config(e.to_string()))?;
-                q.take_pending_where(self.max_crew, eligible)
+                q.take_pending_where(self.max_crew, |t| t.role == role_name)
             };
             if batch.is_empty() {
                 break;
             }
+            let hold = role == Role::Architect && batch.iter().any(|t| t.hold);
             if role == Role::Builder {
                 if let Some(mut p) = self.session.meta.patch.clone() {
                     for t in &batch {
@@ -690,16 +719,39 @@ impl Agent {
                 }
             }
             if role != Role::Builder && !combined.is_empty() {
-                let _ = self.session.write_note(phase, &combined);
+                let _ = self.session.write_note(Phase::Plan, &combined);
+            }
+            // "Design it, don't build yet": the builder tasks this architect
+            // wrote wait as proposed until the lead releases them.
+            if hold {
+                let mut q = self
+                    .queue
+                    .lock()
+                    .map_err(|e| Error::Config(e.to_string()))?;
+                for t in q.tasks.iter_mut() {
+                    if !before.contains(&t.id) && t.status == TaskStatus::Pending {
+                        t.status = TaskStatus::Proposed;
+                    }
+                }
+                q.set_all_saved();
             }
         }
 
-        if role == Role::Builder && budget_hit.is_none() && !self.ctx.cancel.is_cancelled() {
-            if let Some(line) = self
-                .try_land_patch(&meter, &builder_p, &builder_m, &builder_c, &auditors)
-                .await?
-            {
-                reports.push(line);
+        if !paused
+            && budget_hit.is_none()
+            && !self.ctx.cancel.is_cancelled()
+            && self.session.meta.patch.is_some()
+        {
+            if build.is_none() {
+                match self.build_stack() {
+                    Ok(b) => build = Some(b),
+                    Err(why) => reports.push(format!("### patch waiting\n{why}\n")),
+                }
+            }
+            if let Some((p, m, c, auditors, _)) = &build {
+                if let Some(line) = self.try_land_patch(&meter, p, m, c, auditors).await? {
+                    reports.push(line);
+                }
             }
             self.record_crew_spend(&meter)?;
         }
@@ -848,6 +900,25 @@ impl Agent {
         // Falls back to the lead. For the auditor this is caught by the
         // independence check rather than silently signing off its own work.
         lead()
+    }
+
+    /// Everything builders need: provider, model, connection, the auditor
+    /// panel, and the patch worktree they land on. `Err` says why builds
+    /// cannot run (no independent auditor, no repository, no commits).
+    fn build_stack(&mut self) -> std::result::Result<BuildStack, String> {
+        let (p, m, c) = self.specialist_stack(Role::Builder);
+        let auditors = if self.session.meta.auditor_enabled {
+            self.auditor_panel()?
+        } else {
+            Vec::new()
+        };
+        if self.session.meta.auditor_enabled {
+            if let Some(why) = crew::independence_problem(&self.model, &m, &auditors) {
+                return Err(format!("Nothing was built: {why}"));
+            }
+        }
+        let repo = self.open_patch().map_err(|e| e.to_string())?.worktree;
+        Ok((p, m, c, auditors, repo))
     }
 
     /// Caps for a crew run from config and the session's spend so far.
@@ -1380,9 +1451,7 @@ mod tests {
             .queue
             .lock()
             .unwrap()
-            .apply_todo(&serde_json::json!({"items": [
-                {"id": "t1", "title": "add a", "status": "done"}
-            ]}))
+            .apply_todo(&serde_json::json!({"items": [{"id": "t2", "status": "dropped"}]}))
             .unwrap();
         let report = agent.drain_crew().await.unwrap();
         assert!(report.contains("patch landed"), "{report}");
@@ -1391,50 +1460,123 @@ mod tests {
     }
 
     /// The crew's spend reaches the session log, so the budget sees it.
-    /// In plan mode the architect runs once. The build tasks it writes wait
-    /// for the build phase instead of being taken by more architect runs.
+    fn architect_writes(tasks: serde_json::Value) -> Vec<StreamDelta> {
+        vec![
+            StreamDelta::ToolCall {
+                id: "t".into(),
+                name: "todo_write".into(),
+                arguments: serde_json::json!({ "items": tasks }).to_string(),
+            },
+            StreamDelta::Done,
+        ]
+    }
+
+    /// The vision, end to end: one request, and the lead's crew carries it from
+    /// design to a single commit on the user's branch — no phases, no handoffs.
     #[tokio::test]
-    async fn plan_mode_leaves_the_architects_tasks_for_build() {
-        let todo = serde_json::json!({"items": [
-            {"id": "design", "title": "design it", "status": "running"},
-            {"id": "b1", "title": "build a", "files": ["a.txt"]},
-            {"id": "b2", "title": "build b", "files": ["b.txt"]}
-        ]})
-        .to_string();
+    async fn a_request_flows_from_architect_to_builders_to_one_patch() {
         let p = ReplayProvider::scripted(vec![
-            vec![
-                StreamDelta::ToolCall {
-                    id: "t".into(),
-                    name: "todo_write".into(),
-                    arguments: todo,
-                },
-                StreamDelta::Done,
-            ],
-            say("two tasks, parallel"),
+            // Architect: writes two parallel builder tasks, then summarises.
+            architect_writes(serde_json::json!([
+                {"id": "b1", "title": "add a", "brief": "write a.txt", "files": ["a.txt"]},
+                {"id": "b2", "title": "add b", "brief": "write b.txt", "files": ["b.txt"]}
+            ])),
+            say("plan: two files, in parallel"),
+            // Builder b1, its audit; builder b2, its audit.
+            write("a.txt", "a\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: PASS"),
+            write("b.txt", "b\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: PASS"),
         ]);
-        let (_home, _cwd, mut agent) = crew_setup(p);
-        agent.session.handoff(Phase::Plan, "", None).unwrap();
+        let (_home, cwd, mut agent) = crew_setup(p);
         agent
             .queue
             .lock()
             .unwrap()
             .apply_todo_as(
-                &serde_json::json!({"items": [{"id": "design", "title": "design it"}]}),
+                &serde_json::json!({"items": [{"id": "design", "title": "design two files", "role": "architect"}]}),
+                "orchestrator",
+            )
+            .unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert!(report.contains("patch landed"), "{report}");
+        assert!(cwd.path().join("a.txt").exists() && cwd.path().join("b.txt").exists());
+        let log = first_parent_log(cwd.path());
+        assert_eq!(log.len(), 2, "one commit for the whole request: {log:?}");
+        let q = agent.queue.lock().unwrap();
+        assert!(
+            q.tasks.iter().all(|t| t.status == TaskStatus::Done),
+            "{:?}",
+            q.tasks
+        );
+        let b1 = q.tasks.iter().find(|t| t.id == "b1").unwrap();
+        assert_eq!((b1.by.as_str(), b1.role.as_str()), ("architect", "builder"));
+    }
+
+    /// "Design it, but don't build yet": the builder tasks wait as proposed
+    /// until the lead releases them on the user's word.
+    #[tokio::test]
+    async fn a_held_design_waits_for_approval_then_builds() {
+        let p = ReplayProvider::scripted(vec![
+            architect_writes(serde_json::json!([
+                {"id": "b1", "title": "add a", "files": ["a.txt"]}
+            ])),
+            say("plan: one file"),
+            write("a.txt", "a\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: PASS"),
+        ]);
+        let (_home, cwd, mut agent) = crew_setup(p);
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo_as(
+                &serde_json::json!({"items": [{"id": "design", "title": "design", "role": "architect", "hold": true}]}),
                 "orchestrator",
             )
             .unwrap();
         agent.drain_crew().await.unwrap();
-        // Draining again in plan mode must not run the build tasks.
-        agent.drain_crew().await.unwrap();
-        let q = agent.queue.lock().unwrap();
-        let status = |id: &str| q.tasks.iter().find(|t| t.id == id).map(|t| t.status);
-        assert_eq!(status("design"), Some(TaskStatus::Done));
-        assert_eq!(status("b1"), Some(TaskStatus::Pending));
-        assert_eq!(status("b2"), Some(TaskStatus::Pending));
-        assert_eq!(
-            q.tasks.iter().find(|t| t.id == "b1").unwrap().by,
-            "architect"
+        {
+            let q = agent.queue.lock().unwrap();
+            let b1 = q.tasks.iter().find(|t| t.id == "b1").unwrap();
+            assert_eq!(b1.status, TaskStatus::Proposed);
+        }
+        assert!(
+            !cwd.path().join("a.txt").exists(),
+            "nothing builds before approval"
         );
+        // Draining again without approval still builds nothing.
+        agent.drain_crew().await.unwrap();
+        assert!(!cwd.path().join("a.txt").exists());
+        // The user approves; the lead releases the task.
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo_as(
+                &serde_json::json!({"items": [{"id": "b1", "status": "pending"}]}),
+                "orchestrator",
+            )
+            .unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert!(report.contains("patch landed"), "{report}");
+        assert!(cwd.path().join("a.txt").exists());
+    }
+
+    /// An architect never queues more architects: whatever it writes is build work.
+    #[test]
+    fn an_architect_can_only_queue_builder_work() {
+        let d = TempDir::new().unwrap();
+        let mut q = crate::queue::TaskQueue::open(d.path().join("tasks.json"));
+        q.apply_todo_as(
+            &serde_json::json!({"items": [{"id": "x", "title": "x", "role": "architect"}]}),
+            "architect",
+        )
+        .unwrap();
+        assert_eq!(q.tasks[0].role, "builder");
     }
 
     #[tokio::test]
@@ -1766,20 +1908,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn plan_phase_spawns_the_architect_and_writes_notes() {
+    async fn an_architect_task_runs_as_an_architect_without_a_phase() {
         let p = ReplayProvider::scripted(vec![vec![
             StreamDelta::Text("## Plan\nShip a CLI flag.\n".into()),
             StreamDelta::Done,
         ]]);
         let (_home, cwd, mut agent) = setup(p);
-        agent
-            .session
-            .handoff(Phase::Plan, "need a flag", None)
-            .unwrap();
+        // The session is in its default state; the task's role routes it.
         {
             let mut q = agent.queue.lock().unwrap();
-            q.apply_todo(&serde_json::json!({"items": ["draft the plan"]}))
-                .unwrap();
+            q.apply_todo(
+                &serde_json::json!({"items": [{"title": "draft the plan", "role": "architect"}]}),
+            )
+            .unwrap();
         }
         agent.drain_crew().await.unwrap();
         let note = agent.session.read_note(Phase::Plan).unwrap();
@@ -1791,14 +1932,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn plan_phase_runs_two_tasks() {
+    async fn two_architect_tasks_both_run() {
         let p = ReplayProvider::new(vec![StreamDelta::Text("planned".into()), StreamDelta::Done]);
         let (_home, cwd, mut agent) = setup(p);
-        agent.session.handoff(Phase::Plan, "", None).unwrap();
         {
             let mut q = agent.queue.lock().unwrap();
-            q.apply_todo(&serde_json::json!({"items": ["one", "two"]}))
-                .unwrap();
+            q.apply_todo(&serde_json::json!({"items": [
+                {"title": "one", "role": "architect"},
+                {"title": "two", "role": "architect"}
+            ]}))
+            .unwrap();
         }
         agent.drain_crew().await.unwrap();
         let q = agent.queue.lock().unwrap();

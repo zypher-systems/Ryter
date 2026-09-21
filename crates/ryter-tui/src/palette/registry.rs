@@ -1,9 +1,5 @@
 //! Commands as data (`R-PAL-19`). `/help` and the palette are generated from here.
 
-use std::str::FromStr;
-
-use ryter_core::Phase;
-
 use crate::action::{Action, PanelId, SessionsMode};
 use crate::panel::modal::Confirm;
 use crate::view::View;
@@ -173,7 +169,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "models",
         &["model"],
         Category::Model,
-        "Switch the orchestrator model",
+        "Switch the lead's model",
         Some("[id]"),
         true,
         None,
@@ -213,61 +209,6 @@ pub const COMMANDS: &[CommandSpec] = &[
         None,
         false,
         |_, _| Action::OpenPanel(PanelId::Agents),
-    ),
-    spec(
-        "phase",
-        &[],
-        Category::Agents,
-        "Change the campaign phase",
-        None,
-        true,
-        None,
-        false,
-        |_, _| Action::OpenPanel(PanelId::Phase),
-    ),
-    spec(
-        "handoff",
-        &[],
-        Category::Agents,
-        "Hand off to a phase with a pass note",
-        Some("plan|architect|build|audit|back"),
-        true,
-        None,
-        false,
-        run_handoff,
-    ),
-    spec(
-        "plan",
-        &["architect", "design"],
-        Category::Agents,
-        "Plan: the architect designs and writes tasks; nothing touches source",
-        None,
-        false,
-        None,
-        false,
-        |v, _| begin(v, Phase::Plan),
-    ),
-    spec(
-        "build",
-        &[],
-        Category::Agents,
-        "Hand off to a builder",
-        None,
-        false,
-        None,
-        false,
-        |v, _| begin(v, Phase::Build),
-    ),
-    spec(
-        "audit",
-        &[],
-        Category::Agents,
-        "Hand off to the auditor",
-        None,
-        false,
-        None,
-        false,
-        |v, _| begin(v, Phase::Audit),
     ),
     spec(
         "cancel",
@@ -487,11 +428,6 @@ pub fn run_command(view: &mut View, raw: &str) -> Action {
     Action::None
 }
 
-fn begin(view: &mut View, to: Phase) -> Action {
-    view.begin_handoff(to);
-    Action::None
-}
-
 fn run_new(view: &mut View, _rest: &str) -> Action {
     if view.has_content() {
         view.panels.push(Box::new(Confirm::new(
@@ -576,37 +512,6 @@ fn run_provider(view: &mut View, rest: &str) -> Action {
             Action::None
         }
         other => Action::UseConnection(other.to_string()),
-    }
-}
-
-fn run_handoff(view: &mut View, rest: &str) -> Action {
-    let first = rest.split_whitespace().next().unwrap_or("");
-    if first.is_empty() {
-        return Action::OpenPanel(PanelId::Phase);
-    }
-    if first == "back" {
-        return match previous(view.phase) {
-            Some(p) => begin(view, p),
-            None => {
-                view.system("already at plan");
-                Action::None
-            }
-        };
-    }
-    match Phase::from_str(first) {
-        Ok(p) => begin(view, p),
-        Err(_) => {
-            view.warn("usage: /handoff plan|architect|build|audit|back");
-            Action::None
-        }
-    }
-}
-
-fn previous(phase: Phase) -> Option<Phase> {
-    match phase {
-        Phase::Plan => None,
-        Phase::Build => Some(Phase::Plan),
-        Phase::Audit => Some(Phase::Build),
     }
 }
 

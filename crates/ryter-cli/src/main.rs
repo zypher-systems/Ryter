@@ -2,7 +2,6 @@
 
 use std::io::{self, IsTerminal, Write};
 use std::process::ExitCode;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::mpsc;
 
@@ -14,7 +13,7 @@ use ryter_core::sandbox::{self, SandboxProfile};
 use ryter_core::session::Session;
 use ryter_core::spend::{PriceBook, format_usd};
 use ryter_core::tools::ToolContext;
-use ryter_core::{Agent, AgentEvent, Error, HookDecision, HookSet, Phase, Provider, Role, VERSION};
+use ryter_core::{Agent, AgentEvent, Error, HookSet, Phase, Provider, Role, VERSION};
 
 #[derive(Parser)]
 #[command(
@@ -44,10 +43,6 @@ struct Cli {
     #[arg(short = 'm', long)]
     model: Option<String>,
 
-    /// Phase: plan, build, audit (`architect` is accepted as plan).
-    #[arg(long)]
-    mode: Option<String>,
-
     /// Landlock profile: off, workspace, read-only. Default from config (`off`).
     #[arg(long)]
     sandbox: Option<String>,
@@ -64,20 +59,6 @@ enum Command {
     Spend {
         /// Session id.
         session: Option<String>,
-    },
-    /// Write a pass note and switch phase (latest session in this directory).
-    Handoff {
-        /// Target phase, or `back`.
-        to: String,
-        /// Pass note body (empty is allowed).
-        #[arg(long)]
-        note: Option<String>,
-        /// Read the pass note from a file.
-        #[arg(long)]
-        note_file: Option<std::path::PathBuf>,
-        /// Reason when going `back`.
-        #[arg(long)]
-        reason: Option<String>,
     },
     /// MCP: inbound server or echo helper.
     Mcp {
@@ -217,7 +198,7 @@ fn main() -> ExitCode {
                 always_approve: cli.always_approve,
                 connection: cli.connection,
                 model: cli.model,
-                phase: cli.mode,
+                phase: None,
                 sandbox: cli.sandbox,
                 session: None,
             }) {
@@ -306,7 +287,7 @@ fn main() -> ExitCode {
                 always_approve: cli.always_approve,
                 connection: cli.connection,
                 model: cli.model,
-                phase: cli.mode,
+                phase: None,
                 sandbox: cli.sandbox,
                 session: Some(id.unwrap_or_else(|| "latest".into())),
             }) {
@@ -332,23 +313,6 @@ fn main() -> ExitCode {
                     ExitCode::from(1)
                 }
             }
-            Err(e) => {
-                eprintln!("{e}");
-                ExitCode::from(1)
-            }
-        },
-        Some(Command::Handoff {
-            to,
-            note,
-            note_file,
-            reason,
-        }) => match handoff_cmd(
-            &to,
-            note.as_deref(),
-            note_file.as_deref(),
-            reason.as_deref(),
-        ) {
-            Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("{e}");
                 ExitCode::from(1)
@@ -413,12 +377,8 @@ async fn run_prompt(
         .connections
         .get(&conn_name)
         .ok_or_else(|| Error::Config(format!("unknown connection {conn_name}")))?;
-    let phase = cli
-        .mode
-        .as_deref()
-        .map(Phase::from_str)
-        .transpose()?
-        .unwrap_or(Phase::Build);
+    // Sessions still record a phase for compatibility; nothing routes on it.
+    let phase = Phase::Build;
     let key = resolve_secret(&cfg, &ConnectionId::new(&conn_name))?;
     let provider = http_provider(conn, key);
     let _ = config::save_last_route(&home, &config::LastRoute::new(&conn_name, &model));
@@ -1044,40 +1004,6 @@ fn serve_host_from_config(
         rt: std::sync::Mutex::new(rt),
         cancel,
     })
-}
-
-fn handoff_cmd(
-    to: &str,
-    note: Option<&str>,
-    note_file: Option<&std::path::Path>,
-    reason: Option<&str>,
-) -> ryter_core::Result<()> {
-    let cwd = std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?;
-    let home = config::home_dir();
-    let mut session = Session::latest(&home, &cwd)?
-        .ok_or_else(|| Error::Config("no session in this directory".into()))?;
-    let (target, back_reason) = if to.eq_ignore_ascii_case("back") {
-        let prev = Session::previous_phase(session.meta.phase)
-            .ok_or_else(|| Error::Config("already at plan; there is no previous phase".into()))?;
-        (prev, reason)
-    } else {
-        (Phase::from_str(to)?, None)
-    };
-    let mut body = note.unwrap_or("").to_string();
-    if let Some(path) = note_file {
-        body = std::fs::read_to_string(path).map_err(|e| Error::Io(e.to_string()))?;
-    }
-    let from = session.meta.phase;
-    let trusted = config::is_trusted(&cwd);
-    if let Ok(cfg) = config::load(Some(&cwd), trusted) {
-        let hooks = HookSet::from_config(&cfg.hooks);
-        if let HookDecision::Deny(msg) = hooks.handoff(from, target, &body, &cwd) {
-            return Err(Error::Config(format!("handoff hook denied: {msg}")));
-        }
-    }
-    session.handoff(target, &body, back_reason)?;
-    println!("handoff {from} → {target}");
-    Ok(())
 }
 
 fn spend_cmd(id: Option<&str>) -> ryter_core::Result<()> {

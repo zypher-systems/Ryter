@@ -1,4 +1,4 @@
- ryter  ·  orchestrator  grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patc…
+ ryter  ·  lead         grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  · s╭─ models ─────────────────────────────────────────────── 4 · loading ─╮
    w│ model           context   in/M  out/M  connection                    │
@@ -18,7 +18,7 @@
     ╰─ type to filter · ↑↓ move · enter select · s sort · esc ─────────────╯
 
 
-╭─ filter ───────────────────────────────────────────────────────────── build ─╮
+╭─ filter ─────────────────────────────────────────────────────────────────────╮
 │› type filter…                                                                │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back

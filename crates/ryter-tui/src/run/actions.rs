@@ -120,11 +120,6 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 view.system("cancelling…");
             }
         }
-        Action::Handoff { to, note } => {
-            view.composer.end_special();
-            cx.send(Work::Handoff { to, note });
-        }
-        Action::BeginHandoff(to) => view.begin_handoff(to),
         Action::New => new_session(view, cx),
         Action::OpenPanel(id) => open_panel(view, cx, id),
         Action::Resume(id) => resume(view, cx, &id),

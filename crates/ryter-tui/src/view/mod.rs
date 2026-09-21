@@ -12,7 +12,7 @@ use crate::action::Action;
 use crate::activity::{Activity, Mode as ActivityMode};
 use crate::chat::cache::RenderCache;
 use crate::chat::{Message, MessageKind, MessageMeta, OffsetTimestamp, SystemLevel, ToolStatus};
-use crate::composer::{Composer, Mode as ComposerMode};
+use crate::composer::Composer;
 use crate::palette::Palette;
 use crate::panel::PanelStack;
 use history::History;
@@ -466,22 +466,6 @@ impl View {
         self.recent_commands.truncate(10);
     }
 
-    /// Put the composer into handoff note mode (`R-COMP-02`).
-    pub fn begin_handoff(&mut self, to: Phase) {
-        self.composer.clear();
-        self.composer.mode = ComposerMode::Handoff(to);
-        self.palette = None;
-        self.system(format!("handoff → {to}  (edit note, Enter to accept)"));
-    }
-
-    /// Handoff target, if the composer is in note mode.
-    pub fn handoff_to(&self) -> Option<Phase> {
-        match self.composer.mode {
-            ComposerMode::Handoff(p) => Some(p),
-            _ => None,
-        }
-    }
-
     /// Spend label for the header / cards (`$?.??` when any turn was unpriced).
     pub fn spend_label(&self) -> String {
         if self.spend_unknown && self.spend.is_none() {
@@ -501,6 +485,15 @@ impl View {
     pub fn ctx_frac(&self) -> f64 {
         let w = self.ctx_window_or_default().max(1) as f64;
         (self.ctx_tokens.unwrap_or(0) as f64 / w).clamp(0.0, 1.0)
+    }
+}
+
+/// What a role is called on screen. The code and logs say `orchestrator`; the
+/// user talks to the lead.
+pub fn role_label(role: &str) -> &str {
+    match role {
+        "orchestrator" => "lead",
+        other => other,
     }
 }
 

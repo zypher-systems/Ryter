@@ -13,7 +13,6 @@ pub mod hooks;
 pub mod mcp;
 pub mod modal;
 pub mod models;
-pub mod phase;
 pub mod providers;
 pub mod sessions;
 pub mod settings;
@@ -306,7 +305,6 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
         PanelId::Mcp => Box::new(mcp::Mcp::default()),
         PanelId::Skills => Box::new(skills::Skills::default()),
         PanelId::Hooks => Box::new(hooks::Hooks::default()),
-        PanelId::Phase => Box::new(phase::PhasePicker::new(view)),
         PanelId::Context => Box::new(context::Context::default()),
         PanelId::Help => Box::new(help::Help::default()),
         PanelId::Doctor => Box::new(doctor::Doctor::new(env)),

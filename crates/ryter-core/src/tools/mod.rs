@@ -197,22 +197,26 @@ fn spec(name: &str) -> Option<ToolSpec> {
             },"required":["path","old_string","new_string","reason"]}),
         ),
         "todo_write" => (
-            "Replace the task list. In Build, pending items run as builders in \
-             parallel git worktrees, each gated by checks and an auditor before \
-             it merges. Each item's brief is the builder's entire spec: say what \
-             to change, the constraints, and how to know it is done. Declare the \
-             files each task owns: tasks with disjoint files run in parallel, \
-             overlapping or undeclared ones run one at a time.",
+            "Queue work for the crew. Updates tasks by id and adds new ones; it \
+             never replaces the list (set status \"dropped\" to remove one). Each \
+             task names who does it: role \"architect\" designs and writes builder \
+             tasks; role \"builder\" (the default) implements one in a git \
+             worktree, gated by checks and auditors before it lands. The crew runs \
+             when your reply ends. A builder's brief is its entire spec: what to \
+             change, the constraints, how to know it is done. Declare the files each \
+             builder task owns: disjoint tasks run in parallel. On an architect task, \
+             hold: true keeps its builder tasks proposed until the user approves.",
             json!({"type":"object","properties":{"items":{"type":"array","items":{
                 "type":"object",
                 "properties":{
                     "id":{"type":"string","description":"stable id; reuse it to update a task"},
                     "title":{"type":"string","description":"one line, shown to the user"},
-                    "brief":{"type":"string","description":"the builder's full spec"},
-                    "files":{"type":"array","items":{"type":"string"},"description":"paths or directories this task owns"},
-                    "status":{"type":"string","enum":["pending","running","done","blocked"]}
-                },
-                "required":["title"]
+                    "brief":{"type":"string","description":"the full spec"},
+                    "role":{"type":"string","enum":["architect","builder"]},
+                    "files":{"type":"array","items":{"type":"string"},"description":"paths this builder task owns"},
+                    "hold":{"type":"boolean","description":"architect only: wait for approval before building"},
+                    "status":{"type":"string","enum":["pending","proposed","done","blocked","dropped"]}
+                }
             }}},"required":["items"]}),
         ),
         "search_tool" => (

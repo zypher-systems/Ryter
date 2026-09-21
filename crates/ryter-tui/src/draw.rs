@@ -139,10 +139,8 @@ fn draw_header(frame: &mut Frame, area: Rect, view: &View, theme: Theme, compact
         Span::styled(" ryter", theme.muted()),
         Span::styled("  ·  ", theme.muted()),
     ];
-    let speaker = match view.handoff_to() {
-        Some(p) => format!("orchestrator → {p}"),
-        None => "orchestrator".into(),
-    };
+    // The one agent the user talks to.
+    let speaker = "lead".to_string();
     left.push(Span::styled(
         speaker,
         theme.body().add_modifier(Modifier::BOLD),
@@ -356,18 +354,8 @@ pub fn hints(view: &View) -> Vec<(&'static str, String)> {
             ("esc", "close".into()),
         ];
     }
-    match &view.composer.mode {
-        ComposerMode::Handoff(p) => {
-            return vec![
-                ("enter", format!("hand off to {p}")),
-                ("⇧enter", "newline".into()),
-                ("esc", "cancel handoff".into()),
-            ];
-        }
-        ComposerMode::Secret { .. } => {
-            return vec![("enter", "save key".into()), ("esc", "cancel".into())];
-        }
-        _ => {}
+    if let ComposerMode::Secret { .. } = &view.composer.mode {
+        return vec![("enter", "save key".into()), ("esc", "cancel".into())];
     }
     let mut v = vec![
         ("enter", "send".to_string()),

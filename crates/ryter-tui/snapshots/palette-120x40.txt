@@ -1,7 +1,7 @@
- ryter  ·  orchestrator                                                                 ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  lead                                                                         ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  · system                                                                                 ╭─ session ──────────────────╮
-   welcome · /help for keys                                                               │ untitled             build │
+   welcome · /help for keys                                                               │ untitled              idle │
                                                                                           │ auditor ✓  tools ask       │
                                                                                           ╰────────────────────────────╯
                                                                                           ╭─ model ────────────────────╮
@@ -27,14 +27,14 @@
 
 
 
-╭─ commands ───────────────────────────────────────────────── 4 of 27 ─╮
+╭─ commands ───────────────────────────────────────────────── 4 of 22 ─╮
 │ mo                                                                   │
-│›/models         Switch the orchestrator model                     ▸  │
+│›/models         Switch the lead's model                           ▸  │
 │ /tools          Tool permission mode                              ▸  │
 │ /crew           Assign models per specialist role, save presets   ▸  │
 │ /skills         Browse, run, create, and remove skills and user … ▸  │
 ╰─ enter run · tab complete · esc close ───────────────────────────────╯
-╭─ dusty ────────────────────────────────────────────────────────────────────────────────────────────────────── build ─╮
+╭─ dusty ──────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› /mo█                                                                                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    tab complete    enter run    → open    esc close

@@ -91,9 +91,6 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
         ),
         AgentEvent::PhaseChanged { phase } => {
             view.phase = *phase;
-            if view.handoff_to().is_some() {
-                view.composer.end_special();
-            }
         }
         AgentEvent::SubagentStarted {
             id,
@@ -272,7 +269,8 @@ fn on_spend(
     cached_tokens: u64,
     total_usd: Option<f64>,
 ) {
-    let role_name = role.to_string();
+    // The user knows this role as the lead; logs keep `orchestrator`.
+    let role_name = crate::view::role_label(&role.to_string()).to_string();
     {
         let row = view.spend_rows_role.entry(role_name.clone()).or_default();
         row.calls += 1;
@@ -489,7 +487,7 @@ mod tests {
         assert_eq!(v.activity.verb, Verb::Done);
         assert_eq!(v.activity.tools, 3);
         assert_eq!(v.spend, Some(0.01));
-        assert_eq!(v.spend_rows_role["orchestrator"].calls, 1);
+        assert_eq!(v.spend_rows_role["lead"].calls, 1);
     }
 
     #[test]

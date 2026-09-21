@@ -142,13 +142,10 @@ fn esc(view: &mut View) -> Action {
         palette::close(view);
         return Action::None;
     }
-    match view.composer.mode {
-        ComposerMode::Handoff(_) | ComposerMode::Secret { .. } => {
-            view.composer.end_special();
-            view.system("cancelled");
-            return Action::None;
-        }
-        _ => {}
+    if let ComposerMode::Secret { .. } = view.composer.mode {
+        view.composer.end_special();
+        view.system("cancelled");
+        return Action::None;
     }
     if view.queued_prompt.take().is_some() {
         view.system("queued message dropped");
@@ -302,11 +299,6 @@ fn composer_key(view: &mut View, key: KeyEvent) -> Action {
 fn submit(view: &mut View) -> Action {
     if view.palette.is_some() {
         return palette::run(view);
-    }
-    if let Some(to) = view.handoff_to() {
-        let note = view.composer.take().trim().to_string();
-        view.composer.end_special();
-        return Action::Handoff { to, note };
     }
     let text = view.composer.take();
     let trimmed = text.trim();

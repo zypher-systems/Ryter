@@ -1,7 +1,7 @@
- ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  lead                                 ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  dusty                                               │╭─ session ──────────────╮
- ▎ now implement step one                            ││ untitled         build │
+ ▎ now implement step one                            ││ untitled          idle │
                                                      ││ auditor ✓  tools ask   │
  · read_file  read crates/ryter-tui/src/run/m…  0.1s ┃╰────────────────────────╯
                                                      ┃╭─ model ────────────────╮
@@ -18,7 +18,7 @@
                                                      ┃
  ⠼ writing  ·  0:12  ·  ~11 tok                                ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────
-╭─ dusty ────────────────────────────────────────────────────────────── build ─╮
+╭─ dusty ──────────────────────────────────────────────────────────────────────╮
 │› type to queue the next message, / for commands                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  enter send    ⇧enter newline    / commands    ^b panel    esc cancel    ^c quit

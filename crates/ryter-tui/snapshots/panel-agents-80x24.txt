@@ -1,11 +1,11 @@
- ryter  ·  orchestrator  grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patc…
+ ryter  ·  lead         grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  · system
    welcome · /help for keys
 
     ╭─ running specialists ────────────────────────────────────────── 0/4 ─╮
     │ no specialists running                                               │
-    │ the orchestrator spawns planners, architects, builders, and auditors │
+    │ the lead starts architects, builders, and auditors as your requests n│
     │                                                                      │
     │                                                                      │
     │                                                                      │
@@ -18,7 +18,7 @@
 
 
 
-╭─ dusty ────────────────────────────────────────────────────────────── build ─╮
-│› ask the orchestrator, or / for commands                                     │
+╭─ dusty ──────────────────────────────────────────────────────────────────────╮
+│› ask the lead, or / for commands                                             │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back

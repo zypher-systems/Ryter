@@ -59,17 +59,18 @@ pub fn session(view: &View, w: usize, theme: Theme) -> Card {
     } else {
         view.session_title.clone()
     };
-    // Title and phase lead. The raw session id is operator chrome: it belongs
-    // in `/sessions`, not in the first row of an empty product.
-    let phase = view.phase.to_string();
+    // Title, then what the crew is doing. There are no phases to show; the
+    // raw session id belongs in `/sessions`.
+    let (state, color) = match view.crew.len() {
+        0 => ("idle".to_string(), theme.dim),
+        n => (format!("{n} working"), theme.accent),
+    };
     let mut rows = vec![kv(
-        &wrap::truncate(&title, w.saturating_sub(phase.chars().count() + 2)),
-        &phase,
+        &wrap::truncate(&title, w.saturating_sub(state.chars().count() + 2)),
+        &state,
         w,
         theme,
-        Style::default()
-            .fg(theme.phase(view.phase))
-            .bg(theme.sidebar_bg),
+        Style::default().fg(color).bg(theme.sidebar_bg),
     )];
     let detail_from = rows.len();
     let auditor = if view.auditor_on {

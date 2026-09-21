@@ -1,6 +1,6 @@
 //! Side effects the event loop performs on behalf of commands, keys, and panels.
 
-use ryter_core::{ConnectionConfig, Permission, Phase};
+use ryter_core::{ConnectionConfig, Permission};
 
 /// Session browser entry mode (`R-POP-38`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,8 +42,6 @@ pub enum PanelId {
     Skills,
     /// `/hooks`.
     Hooks,
-    /// `/phase`.
-    Phase,
     /// `/context`.
     Context,
     /// `/help`.
@@ -67,15 +65,6 @@ pub enum Action {
     New,
     /// Submit text to the orchestrator.
     Submit(String),
-    /// Phase handoff with pass note.
-    Handoff {
-        /// Target phase.
-        to: Phase,
-        /// Pass note.
-        note: String,
-    },
-    /// Put the composer into handoff note mode.
-    BeginHandoff(Phase),
     /// Toggle auditor gate.
     SetAuditor(bool),
     /// Switch and persist the theme.

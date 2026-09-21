@@ -25,7 +25,6 @@ pub fn border_color(view: &View, theme: Theme) -> Color {
         return theme.error;
     }
     match &view.composer.mode {
-        Mode::Handoff(p) => return theme.phase(*p),
         Mode::Secret { .. } => return theme.warn,
         Mode::Field { .. } => return theme.accent,
         Mode::Normal => {}
@@ -43,7 +42,6 @@ pub fn border_color(view: &View, theme: Theme) -> Color {
 pub fn title(view: &View) -> String {
     match &view.composer.mode {
         Mode::Normal => view.username.clone(),
-        Mode::Handoff(p) => format!("→ {p}"),
         Mode::Secret { .. } => "api key".into(),
         Mode::Field { label } => label.clone(),
     }
@@ -52,7 +50,6 @@ pub fn title(view: &View) -> String {
 fn glyph(view: &View) -> &'static str {
     match view.composer.mode {
         Mode::Normal | Mode::Field { .. } => "›",
-        Mode::Handoff(_) => "→",
         Mode::Secret { .. } => "key",
     }
 }
@@ -60,8 +57,7 @@ fn glyph(view: &View) -> &'static str {
 fn placeholder(view: &View) -> String {
     match &view.composer.mode {
         Mode::Normal if view.busy => "type to queue the next message, / for commands".into(),
-        Mode::Normal => "ask the orchestrator, or / for commands".into(),
-        Mode::Handoff(p) => format!("pass note for {p}…"),
+        Mode::Normal => "ask the lead, or / for commands".into(),
         Mode::Secret { connection } => format!("paste the API key for {connection}"),
         Mode::Field { label } => format!("type {label}…"),
     }
@@ -77,11 +73,10 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Option<
     let bs = Style::default().fg(border).bg(bg);
     let w = area.width as usize;
     frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
-    // Top border: ╭─ title ───── phase ─╮
+    // Top border: ╭─ title ──────── queued ─╮ (no phase: there are none).
     let t = format!(" {} ", wrap::truncate(&title(view), w.saturating_sub(12)));
-    let phase = view.phase.to_string();
-    let mut right = format!(" {phase} ");
-    let mut right_style = Style::default().fg(theme.phase(view.phase)).bg(bg);
+    let mut right = String::new();
+    let mut right_style = Style::default().fg(theme.dim).bg(bg);
     if view.queued_prompt.is_some() {
         right = " queued ".into();
         right_style = Style::default()

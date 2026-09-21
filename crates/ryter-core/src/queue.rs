@@ -12,6 +12,9 @@ use crate::ids::SubagentId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskStatus {
+    /// Designed but held for the user's go-ahead (an architect task with
+    /// `hold`). The lead releases it by setting it to pending.
+    Proposed,
     /// Waiting for a specialist.
     Pending,
     /// A specialist is running.
@@ -37,10 +40,17 @@ pub struct Task {
     /// run in parallel; overlapping or undeclared ones run one at a time.
     #[serde(default)]
     pub files: Vec<String>,
-    /// Who created it (`orchestrator`, `architect`). An architect's tasks are
-    /// build work: they must never be picked up by another architect run.
+    /// Who created it (`orchestrator`, `architect`).
     #[serde(default)]
     pub by: String,
+    /// Who does it: `architect` (design; writes builder tasks) or `builder`.
+    /// The lead routes each task; there are no phases to switch.
+    #[serde(default = "default_role")]
+    pub role: String,
+    /// On an architect task: hold the builder tasks it writes as proposed,
+    /// for the user to approve ("design it, don't build yet").
+    #[serde(default)]
+    pub hold: bool,
     /// Status.
     pub status: TaskStatus,
     /// Auditor retries used.
@@ -81,58 +91,79 @@ impl TaskQueue {
             .get("items")
             .and_then(Value::as_array)
             .ok_or_else(|| Error::Config("todo_write: missing items array".into()))?;
-        let mut next = Vec::new();
-        for (i, item) in items.iter().enumerate() {
-            let Item {
-                id,
-                title,
-                brief,
-                files,
-                status,
-            } = parse_item(i, item);
-            if let Some(old) = self.tasks.iter().find(|t| t.id == id) {
-                next.push(Task {
+        // Merge by id. The lead and the architect both write this queue, so
+        // replacing it wholesale let one erase the other's tasks unless it
+        // re-listed every one. Removing a task is explicit: status "dropped".
+        for item in items {
+            let u = parse_update(item);
+            let id = u.id.clone().unwrap_or_else(|| self.next_id());
+            if u.dropped {
+                self.tasks
+                    .retain(|t| t.id != id || t.status == TaskStatus::Running);
+                continue;
+            }
+            match self.tasks.iter_mut().find(|t| t.id == id) {
+                Some(t) => {
+                    if let Some(v) = u.title {
+                        t.title = v;
+                    }
+                    if let Some(v) = u.brief {
+                        t.brief = v;
+                    }
+                    if let Some(v) = u.files {
+                        t.files = v;
+                    }
+                    if let Some(v) = u.role {
+                        t.role = v;
+                    }
+                    if let Some(v) = u.hold {
+                        t.hold = v;
+                    }
+                    // A running task keeps running whatever the list says.
+                    if let Some(v) = u.status {
+                        if t.status != TaskStatus::Running {
+                            t.status = v;
+                        }
+                    }
+                }
+                None => self.tasks.push(Task {
                     id,
-                    title,
-                    brief,
-                    files,
-                    by: old.by.clone(),
-                    status: if status == TaskStatus::Pending && old.status == TaskStatus::Running {
-                        old.status
-                    } else {
-                        status
-                    },
-                    retries: old.retries,
-                    findings: old.findings.clone(),
-                });
-            } else {
-                next.push(Task {
-                    id,
-                    title,
-                    brief,
-                    files,
+                    title: u.title.unwrap_or_else(|| "task".into()),
+                    brief: u.brief.unwrap_or_default(),
+                    files: u.files.unwrap_or_default(),
                     by: by.to_string(),
-                    status,
+                    // An architect writes build work; it never queues designers.
+                    role: if by == "architect" {
+                        default_role()
+                    } else {
+                        u.role.unwrap_or_else(default_role)
+                    },
+                    hold: u.hold.unwrap_or(false),
+                    status: u.status.unwrap_or(TaskStatus::Pending),
                     retries: 0,
                     findings: String::new(),
-                });
+                }),
             }
         }
-        // Keep in-flight tasks the new list omits. An architect running as a
-        // queue item rewrites the list; dropping its own entry would orphan
-        // the result when it finishes.
-        for t in &self.tasks {
-            if t.status == TaskStatus::Running && !next.iter().any(|n| n.id == t.id) {
-                next.insert(0, t.clone());
-            }
-        }
-        self.tasks = next;
         self.save()
     }
 
     /// Pending items, up to `max`, marked running.
     pub fn take_pending(&mut self, max: u32) -> Vec<Task> {
         self.take_pending_where(max, |_| true)
+    }
+
+    /// Persist after an in-place edit of `tasks`.
+    pub fn set_all_saved(&mut self) {
+        let _ = self.save();
+    }
+
+    /// The first `t<n>` id not in use.
+    fn next_id(&self) -> String {
+        (1..)
+            .map(|n| format!("t{n}"))
+            .find(|id| !self.tasks.iter().any(|t| &t.id == id))
+            .unwrap_or_default()
     }
 
     /// Like [`Self::take_pending`], but only tasks `eligible` accepts.
@@ -186,46 +217,43 @@ impl TaskQueue {
     }
 }
 
-/// One `todo_write` item, parsed.
-struct Item {
-    id: String,
-    title: String,
-    brief: String,
-    files: Vec<String>,
-    status: TaskStatus,
+fn default_role() -> String {
+    "builder".into()
 }
 
-fn parse_item(i: usize, item: &Value) -> Item {
+/// One `todo_write` item. Every field is optional so an update can name
+/// only what changes.
+struct Update {
+    id: Option<String>,
+    title: Option<String>,
+    brief: Option<String>,
+    files: Option<Vec<String>>,
+    role: Option<String>,
+    hold: Option<bool>,
+    status: Option<TaskStatus>,
+    dropped: bool,
+}
+
+fn parse_update(item: &Value) -> Update {
     if let Some(s) = item.as_str() {
-        return Item {
-            id: format!("t{}", i + 1),
-            title: s.to_string(),
-            brief: String::new(),
-            files: Vec::new(),
-            status: TaskStatus::Pending,
+        return Update {
+            id: None,
+            title: Some(s.to_string()),
+            brief: None,
+            files: None,
+            role: None,
+            hold: None,
+            status: None,
+            dropped: false,
         };
     }
-    let title = item
-        .get("content")
-        .or_else(|| item.get("title"))
-        .and_then(Value::as_str)
-        .unwrap_or("task")
-        .to_string();
-    let id = item
-        .get("id")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("t{}", i + 1));
-    let brief = item
-        .get("brief")
-        .or_else(|| item.get("description"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
-    let files = item
-        .get("files")
-        .and_then(Value::as_array)
-        .map(|a| {
+    let text = |k: &str| item.get(k).and_then(Value::as_str).map(str::to_string);
+    let status_word = text("status").unwrap_or_default().to_ascii_lowercase();
+    Update {
+        id: text("id"),
+        title: text("title").or_else(|| text("content")),
+        brief: text("brief").or_else(|| text("description")),
+        files: item.get("files").and_then(Value::as_array).map(|a| {
             a.iter()
                 .filter_map(Value::as_str)
                 .map(|f| {
@@ -236,24 +264,24 @@ fn parse_item(i: usize, item: &Value) -> Item {
                 })
                 .filter(|f| !f.is_empty())
                 .collect()
-        })
-        .unwrap_or_default();
-    let status = match item
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or("pending")
-    {
-        "done" | "completed" => TaskStatus::Done,
-        "blocked" => TaskStatus::Blocked,
-        "running" => TaskStatus::Running,
-        _ => TaskStatus::Pending,
-    };
-    Item {
-        id,
-        title,
-        brief,
-        files,
-        status,
+        }),
+        role: text("role").map(|r| match r.to_ascii_lowercase().as_str() {
+            "architect" | "design" | "designer" | "plan" | "planner" => "architect".to_string(),
+            _ => default_role(),
+        }),
+        hold: item.get("hold").and_then(Value::as_bool),
+        status: match status_word.as_str() {
+            "" => None,
+            "done" | "completed" => Some(TaskStatus::Done),
+            "blocked" => Some(TaskStatus::Blocked),
+            "running" => Some(TaskStatus::Running),
+            "proposed" => Some(TaskStatus::Proposed),
+            _ => Some(TaskStatus::Pending),
+        },
+        dropped: matches!(
+            status_word.as_str(),
+            "dropped" | "drop" | "removed" | "cancelled"
+        ),
     }
 }
 
@@ -344,6 +372,35 @@ mod scope_tests {
         assert!(scopes_overlap("src/tui/draw.rs", "src/tui"));
         assert!(!scopes_overlap("src/tui", "src/tuix/a.rs"));
         assert!(!scopes_overlap("src/a.rs", "src/b.rs"));
+    }
+
+    /// The lead updating one task must not erase the architect's others.
+    #[test]
+    fn writes_merge_by_id_instead_of_replacing() {
+        let (_d, mut q) = queue(json!([
+            {"id": "b1", "title": "a", "files": ["a"]},
+            {"id": "b2", "title": "b", "files": ["b"]},
+        ]));
+        q.apply_todo(&json!({"items": [{"id": "b1", "status": "blocked"}]}))
+            .unwrap();
+        assert_eq!(q.tasks.len(), 2, "b2 survives an update to b1");
+        assert_eq!(q.tasks[0].status, TaskStatus::Blocked);
+        assert_eq!(
+            q.tasks[0].files,
+            vec!["a".to_string()],
+            "unnamed fields are kept"
+        );
+        q.apply_todo(&json!({"items": [{"id": "b2", "status": "dropped"}]}))
+            .unwrap();
+        assert_eq!(ids(&q.tasks), ["b1"]);
+    }
+
+    /// Items without ids never overwrite earlier ones.
+    #[test]
+    fn new_items_get_fresh_ids() {
+        let (_d, mut q) = queue(json!(["one", "two"]));
+        q.apply_todo(&json!({"items": ["three"]})).unwrap();
+        assert_eq!(ids(&q.tasks), ["t1", "t2", "t3"]);
     }
 
     /// Rewriting the list must not orphan a task that is running right now.

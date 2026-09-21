@@ -1,7 +1,7 @@
- ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  lead                                 ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  dusty                                               │╭─ session ──────────────╮
- ▎ now implement step one                            ││ untitled         build │
+ ▎ now implement step one                            ││ untitled          idle │
                                                      │╰────────────────────────╯
  · read_file  read crates/ryter-tui/src/run/m…  0.1s │╭─ model ────────────────╮
                                                      ││ spacexai ●    grok-4.6 │
@@ -18,7 +18,7 @@
  wired. I should read run.rs first, then
 
 ────────────────────────────────────────────────────────────────────────────────
-╭─ dusty ────────────────────────────────────────────────────────────── build ─╮
+╭─ dusty ──────────────────────────────────────────────────────────────────────╮
 │› type to queue the next message, / for commands                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  enter send    ⇧enter newline    / commands    ^b panel    esc cancel    ^c quit

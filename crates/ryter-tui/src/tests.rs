@@ -193,7 +193,7 @@ fn snapshot_palette_open() {
 
 #[test]
 fn snapshot_every_panel() {
-    let panels: [(&str, PanelId); 17] = [
+    let panels: [(&str, PanelId); 16] = [
         ("providers", PanelId::Providers),
         ("models", PanelId::Models),
         ("crew", PanelId::Crew),
@@ -207,7 +207,6 @@ fn snapshot_every_panel() {
         ("mcp", PanelId::Mcp),
         ("skills", PanelId::Skills),
         ("hooks", PanelId::Hooks),
-        ("phase", PanelId::Phase),
         ("context", PanelId::Context),
         ("help", PanelId::Help),
         ("doctor", PanelId::Doctor),
@@ -358,6 +357,21 @@ fn crew_suggests_a_tiered_crew_and_applies_it_on_y() {
     }
 }
 
+/// The user talks to the lead. No phase, no handoff, no "orchestrator" on screen.
+#[test]
+fn the_screen_speaks_of_the_lead_not_phases() {
+    for view in [idle(), mid_stream(ActivityMode::Collapsed)] {
+        for (w, h) in SIZES {
+            let frame = render_to_string(&view, w, h);
+            assert!(!frame.contains("orchestrator"), "{w}x{h}:\n{frame}");
+            assert!(frame.contains("lead"), "{w}x{h}:\n{frame}");
+            for gone in ["─ build ─", "─ plan ─", "handoff", "phase"] {
+                assert!(!frame.contains(gone), "{w}x{h} shows {gone:?}:\n{frame}");
+            }
+        }
+    }
+}
+
 #[test]
 fn hint_bar_never_drops_cancel_or_quit() {
     // At 80 columns the streaming bar used to truncate its tail, losing `^c
@@ -392,7 +406,7 @@ fn empty_cards_are_absent_not_blank() {
 
 /// The raw session id is operator chrome; `/sessions` is where it belongs (G-07).
 #[test]
-fn session_card_leads_with_title_and_phase() {
+fn session_card_leads_with_title_and_crew_state() {
     let view = idle();
     let frame = render_to_string(&view, 120, 40);
     let card_line = frame
@@ -401,8 +415,8 @@ fn session_card_leads_with_title_and_phase() {
         .unwrap_or_default()
         .to_string();
     assert!(
-        card_line.contains("build"),
-        "phase should share the row: {card_line:?}"
+        card_line.contains("idle"),
+        "the crew's state shares the row: {card_line:?}"
     );
     assert!(
         !frame.contains("0193abcd"),
@@ -440,7 +454,7 @@ fn composer_present_at_every_message_count() {
         let v = many_turns(n);
         let s = render_to_string(&v, 100, 30);
         assert!(
-            s.contains("ask the orchestrator") || s.contains("you"),
+            s.contains("ask the lead") || s.contains("you"),
             "n={n}\n{s}"
         );
         assert!(s.contains('›'), "prompt glyph missing at n={n}");

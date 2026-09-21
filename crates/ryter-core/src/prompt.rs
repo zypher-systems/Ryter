@@ -98,20 +98,10 @@ pub fn orchestrator_system(
     trusted: bool,
     session: &Session,
 ) -> Result<String> {
+    // No phase section: the lead routes each task to a role itself, and a
+    // "current phase" line only confused the models about what they could do.
     let mut s = load(PromptKind::Orchestrator, home, project_root, trusted);
-    s.push_str("\n\n## Current phase\n");
-    s.push_str(session.meta.phase.as_str());
-    s.push_str("\nAllowed specialists: ");
-    let roles: Vec<_> = session
-        .meta
-        .phase
-        .allowed_roles()
-        .iter()
-        .map(|r| r.as_str())
-        .collect();
-    s.push_str(&roles.join(", "));
     s.push('\n');
-
     if let Some(root) = project_root {
         let _ = crate::memory::ensure_project_memory(root);
     }
@@ -287,8 +277,10 @@ mod tests {
         .unwrap();
         s.handoff(Phase::Build, "we need auth", None).unwrap();
         let sys = orchestrator_system(home.path(), None, false, &s).unwrap();
-        assert!(sys.contains("## Current phase"));
-        assert!(sys.contains("builder, auditor"));
+        // Phases are gone from what the lead is told.
+        assert!(!sys.contains("## Current phase"));
+        assert!(!sys.contains("Allowed specialists"));
+        // Notes left by older sessions still reach it.
         assert!(sys.contains("we need auth"));
         assert_eq!(s.transcript.len(), 0);
     }

@@ -2,7 +2,6 @@
 
 pub mod draw;
 
-use ryter_core::Phase;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::chat::wrap;
@@ -17,10 +16,8 @@ pub const MAX_ROWS: usize = 8;
 /// What the composer is capturing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
-    /// A prompt for the orchestrator.
+    /// A message for the lead. Everything the user types goes here.
     Normal,
-    /// A pass note for a handoff.
-    Handoff(Phase),
     /// An API key; text is masked and never rendered (`R-COMP-07`).
     Secret {
         /// Connection the key is for.
