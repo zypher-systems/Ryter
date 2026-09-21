@@ -2,6 +2,21 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-21 — On Linux, keys live in a 0600 file; the kernel keyring isn't storage
+- **By:** lead
+- **Decision:** Saving a key on Linux writes `~/.ryter/keys/<connection>` (mode 0600) and removes any kernel-keyring copy; lookups read the file before the keyring. macOS keeps the keychain, falling back to the file. Tests never touch the real keyring.
+- **Chosen vs rejected:** Rejected the kernel keyring (`linux-native`): it is "completely in-memory and will not persist across reboots" (keyring crate docs), so 0.2.0 saved a key there, deleted the file, and lost the key at the next restart. Rejected Secret Service (GNOME Keyring, KWallet) for now: it needs libdbus, which breaks the static musl binaries, and headless servers have no desktop keyring. The file is what `~/.ssh`, the AWS CLI, and `gh` use without one.
+- **Why:** Found while answering "where does Ryter store my OpenRouter key?". The user's key was safe only because it was saved before 0.2.0 preferred the keyring.
+- **Where:** `config.rs` (`durable_keyring`, `store_secret_at`, `resolve_secret_with`, `keyring_*`)
+- **Residual risk:** The key is plaintext on disk, protected by file permissions. A Secret Service backend could come back as an opt-in build feature.
+
+### 2026-09-21 — The model asks to switch hats with a prompt, not in text
+- **By:** lead
+- **Decision:** A `request_hat` tool (solo hats only) shows the user a yes/no prompt ("switch to the build hat: carry out the plan"). On yes, the agent switches its role, permissions, and saved mode mid-turn, emits `ModeChanged` so the header and badge follow, and the model carries on in the new hat in the same turn. The prompt has no "allow all". Headless, it tells the user to rerun with `--hat`.
+- **Chosen vs rejected:** Rejected treating "yes" typed in plan as consent to build: the next message still arrives in plan, and guessing intent from text would let a model talk its way out of a hat. Rejected leaving it to the prompt ("tell the user to press Tab"): it was already told, and a user who just read a plan wants to say yes, not learn a key.
+- **Why:** In hands-on testing the plan hat ended with "want me to switch to build?" and there was no way to answer it.
+- **Where:** `agent.rs` `request_hat`, `tools/mod.rs` (spec), `event.rs` `ModeChanged`, TUI `panel/modal.rs` (`is_hat`), `run/events.rs`, `prompts/solo.md`
+
 ### 2026-09-21 — Project cost is the sessions' logs, summed per repository
 - **By:** lead
 - **Decision:** Project cost adds up every session's `spend.jsonl` for sessions run in the project's git repository root or any folder under it; outside a repository, the folder. A running total with per-log byte offsets in `~/.ryter/projects/<root>.json` means each read covers only new lines; a missing, corrupt, or shrunk-log total is rebuilt. The spend card shows it; `p` in `/spend` shows totals by role, model, month, and solo vs. crew; `ryter spend --project` prints it. Unpriced calls are counted and flagged (`$14.20+`).

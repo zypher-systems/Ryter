@@ -116,6 +116,11 @@ pub enum AgentEvent {
         #[serde(default)]
         body: String,
     },
+    /// The model switched hats with the user's yes (`request_hat`).
+    ModeChanged {
+        /// The new hat.
+        role: Role,
+    },
     /// Something Ryter did on the user's behalf that they should know about
     /// (it set up git in the folder). Not an error; the turn goes on.
     Notice {

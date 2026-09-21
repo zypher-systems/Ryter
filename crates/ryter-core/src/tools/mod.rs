@@ -105,7 +105,7 @@ impl ToolOutput {
         }
     }
 
-    fn err(text: impl Into<String>) -> Self {
+    pub(crate) fn err(text: impl Into<String>) -> Self {
         Self {
             text: cap_output(text.into()),
             is_error: true,
@@ -227,6 +227,16 @@ fn spec(name: &str) -> Option<ToolSpec> {
             "Call an MCP tool by catalog key (server__tool).",
             json!({"type":"object","properties":{"name":{"type":"string"},"arguments":{"type":"object"}},"required":["name"]}),
         ),
+        "request_hat" => (
+            "Ask the user to switch your hat, e.g. to build once a plan is ready or once a \
+             review found things to fix. They answer yes or no; on yes you continue in the \
+             new hat in this same turn. Never ask in plain text whether to switch: the user \
+             can't answer that from here.",
+            json!({"type":"object","properties":{
+                "hat":{"type":"string","enum":["build","plan","review"]},
+                "reason":{"type":"string","description":"one line the user sees, e.g. 'carry out the plan'"}
+            },"required":["hat","reason"]}),
+        ),
         "ask_user" => (
             "Ask the human a question. Use options for a short multiple-choice; omit options for free text.",
             json!({"type":"object","properties":{"question":{"type":"string"},"options":{"type":"array","items":{"type":"string"}}},"required":["question"]}),
@@ -263,6 +273,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "search_replace",
             "bash",
             "ask_user",
+            "request_hat",
             "search_tool",
             "use_tool",
             "web_fetch",
@@ -326,6 +337,8 @@ pub fn execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput
         "search_tool" => mcp_search(args, ctx),
         "use_tool" => mcp_use(args, ctx),
         "ask_user" => ask_user(args, ctx),
+        // The agent loop answers this itself: it changes who the agent is.
+        "request_hat" => Ok(ToolOutput::err("request_hat is handled by the agent loop")),
         "web_fetch" => web::web_fetch(args, ctx),
         "web_search" => web::web_search(args, ctx),
         other => Ok(ToolOutput::err(format!("unknown tool {other}"))),

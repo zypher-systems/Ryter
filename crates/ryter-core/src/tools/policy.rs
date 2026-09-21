@@ -53,7 +53,8 @@ pub fn decide(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
         "propose_edit" => decide_proposal(args, ctx),
         "read_file" | "list_dir" => decide_read(args, ctx),
         "bash" => decide_bash(args, ctx),
-        "grep" | "glob" | "todo_write" | "search_tool" | "use_tool" | "ask_user" => Decision::Allow,
+        "grep" | "glob" | "todo_write" | "search_tool" | "use_tool" | "ask_user"
+        | "request_hat" => Decision::Allow,
         "web_fetch" | "web_search" => {
             if ctx.web {
                 Decision::Allow

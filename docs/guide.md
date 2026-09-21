@@ -28,7 +28,9 @@ SpaceXAI and OpenRouter are compiled in as equals. Other OpenAI-compatible or An
 | Env | `XAI_API_KEY` | `OPENROUTER_API_KEY` |
 | Default model | `grok-4.6` | `anthropic/claude-sonnet-4.6` |
 
-Credential order per connection: TOML `api_key` → `env_key` → OS keyring (`service=ryter`, `account=connection:<name>`) → well-known env.
+Credential order per connection: TOML `api_key` → `env_key` → the stored key → well-known env (`OPENROUTER_API_KEY`, `XAI_API_KEY`).
+
+Where a saved key (`/provider` set-key, `ryter connections set-key`) is stored: on **Linux**, `~/.ryter/keys/<connection>`, readable only by you (mode 0600). Linux's kernel keyring is in memory and doesn't survive a reboot, so it isn't used to store keys. On **macOS**, the keychain (`service=ryter`, `account=connection:<name>`), falling back to the file if the keychain refuses.
 
 If `config.toml` contains `api_key` and is group/world-readable, Ryter refuses to start until the mode is `0600`.
 
@@ -112,7 +114,7 @@ An empty folder, or one that is not a git repository, works as is. Before the cr
 
 ## Solo mode and hats
 
-Ryter starts in solo mode: one model in your project. `Tab` switches its hat (build → plan → review), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. The header, the message box's badge, and its border all show the hat in its own color. A switch applies to your next message.
+Ryter starts in solo mode: one model in your project. `Tab` switches its hat (build → plan → review), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. The header, the message box's badge, and its border all show the hat in its own color. A switch applies to your next message. The model can also offer a switch itself: after a plan ("carry out the plan?") or a review ("fix these?") it asks with a yes/no prompt, and on `y` it carries on in the new hat in the same turn.
 
 | Hat | May | May not |
 | --- | --- | --- |

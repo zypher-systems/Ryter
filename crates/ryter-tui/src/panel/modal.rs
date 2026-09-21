@@ -48,17 +48,33 @@ fn lang_for(tool: &str, summary: &str) -> Option<String> {
     }
 }
 
+impl PermissionModal {
+    /// The model asking to switch hats (`request_hat`): a yes/no question,
+    /// with no "allow all", which would approve every later tool call.
+    fn is_hat(&self) -> bool {
+        self.tool == "switch hat"
+    }
+}
+
 impl Panel for PermissionModal {
     fn kind(&self) -> &'static str {
         "permission"
     }
 
     fn title(&self, _view: &View) -> String {
-        format!("permission · {}", self.tool)
+        if self.is_hat() {
+            "switch hat?".into()
+        } else {
+            format!("permission · {}", self.tool)
+        }
     }
 
     fn legend(&self, _view: &View) -> String {
-        "y allow once · n deny · a allow all this session".into()
+        if self.is_hat() {
+            "y switch · n stay".into()
+        } else {
+            "y allow once · n deny · a allow all this session".into()
+        }
     }
 
     fn size(&self, _view: &View) -> (u16, u16) {
@@ -74,6 +90,34 @@ impl Panel for PermissionModal {
         let w = usize::from(width);
         let h = usize::from(height).max(3);
         let mut lines: Vec<Line<'static>> = Vec::new();
+        if self.is_hat() {
+            for row in wrap::wrap_plain(&self.summary, w.saturating_sub(2)) {
+                lines.push(widgets::text(&row, theme));
+            }
+            lines.push(widgets::blank(theme));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    " y ",
+                    Style::default()
+                        .fg(theme.success)
+                        .bg(theme.panel_bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("· switch   ", theme.panel()),
+                Span::styled(
+                    "n ",
+                    Style::default()
+                        .fg(theme.error)
+                        .bg(theme.panel_bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("· stay", theme.panel()),
+            ]));
+            return Body {
+                lines,
+                scroll: None,
+            };
+        }
         lines.push(Line::from(vec![
             Span::styled(" tool  ", theme.panel_muted()),
             Span::styled(
@@ -158,6 +202,7 @@ impl Panel for PermissionModal {
             KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                 Outcome::CloseAct(Action::PermissionReply(Permission::Deny))
             }
+            KeyCode::Char('a' | 'A') if self.is_hat() => Outcome::Stay,
             KeyCode::Char('a' | 'A') => {
                 if self.arm_always {
                     Outcome::CloseAct(Action::PermissionReply(Permission::Always))
@@ -477,5 +522,57 @@ impl Panel for TrustModal {
 
     fn box_clone(&self) -> Box<dyn Panel> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+
+    fn view() -> View {
+        View::new(
+            ryter_core::Phase::Build,
+            "c".into(),
+            "m".into(),
+            "/tmp".into(),
+        )
+    }
+
+    fn press(m: &mut PermissionModal, c: char) -> Outcome {
+        m.key(
+            KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            &mut view(),
+        )
+    }
+
+    /// A hat switch is a yes/no question: no "allow all", which would
+    /// approve every later tool call without asking.
+    #[test]
+    fn a_hat_switch_is_yes_or_no() {
+        let v = view();
+        let mut m = PermissionModal::new(
+            "switch hat".into(),
+            "switch to the build hat: carry out the plan".into(),
+        );
+        assert_eq!(m.title(&v), "switch hat?");
+        assert!(!m.legend(&v).contains("allow all"));
+        assert!(matches!(press(&mut m, 'a'), Outcome::Stay));
+        assert!(
+            matches!(press(&mut m, 'a'), Outcome::Stay),
+            "no armed allow-all"
+        );
+        assert!(matches!(
+            press(&mut m, 'y'),
+            Outcome::CloseAct(Action::PermissionReply(Permission::Allow))
+        ));
+        // Tool permissions keep allow-all.
+        let mut t = PermissionModal::new("bash".into(), "rm -rf target".into());
+        assert!(t.legend(&v).contains("allow all"));
+        press(&mut t, 'a');
+        assert!(matches!(
+            press(&mut t, 'a'),
+            Outcome::CloseAct(Action::PermissionReply(Permission::Always))
+        ));
     }
 }
