@@ -1193,24 +1193,62 @@ pub fn has_secret(cfg: &Config, connection: &str) -> bool {
     resolve_secret(cfg, &ConnectionId::new(connection)).is_ok()
 }
 
-/// Persist a secret: keyring if it works, else `home/keys/<name>` mode 0600.
-pub fn store_secret_at(home: &Path, connection: &str, secret: &str) -> Result<()> {
+/// Where a stored secret ended up, so the caller can tell the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecretStore {
+    /// OS keyring (Secret Service / kwallet).
+    Keyring,
+    /// `home/keys/<name>`, mode 0600, because the keyring was unavailable.
+    File,
+}
+
+impl std::fmt::Display for SecretStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Keyring => f.write_str("OS keyring"),
+            Self::File => f.write_str("~/.ryter/keys (mode 0600)"),
+        }
+    }
+}
+
+/// Persist a secret: the OS keyring when it works, otherwise
+/// `home/keys/<name>` at mode 0600.
+///
+/// The file is only written when the keyring genuinely failed. Writing both
+/// meant the keyring was decorative: a plaintext copy always landed on disk,
+/// where any tool call could read it.
+pub fn store_secret_at(home: &Path, connection: &str, secret: &str) -> Result<SecretStore> {
     let secret = secret.trim();
     if secret.is_empty() {
         return Err(Error::Config("empty API key".into()));
     }
-    let _ = keyring_set(connection, secret);
+    if keyring_set(connection, secret).is_ok() {
+        // A stale file would shadow nothing, but it is still a plaintext key.
+        let _ = fs::remove_file(home.join("keys").join(connection));
+        return Ok(SecretStore::Keyring);
+    }
     let dir = home.join("keys");
     fs::create_dir_all(&dir).map_err(|e| Error::Config(e.to_string()))?;
     let path = dir.join(connection);
-    fs::write(&path, secret).map_err(|e| Error::Config(e.to_string()))?;
+    // Create at 0600 rather than widening then narrowing: a write followed by
+    // chmod leaves the key readable for as long as the write takes.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| Error::Config(e.to_string()))?;
+        f.write_all(secret.as_bytes())
             .map_err(|e| Error::Config(e.to_string()))?;
     }
-    Ok(())
+    #[cfg(not(unix))]
+    fs::write(&path, secret).map_err(|e| Error::Config(e.to_string()))?;
+    Ok(SecretStore::File)
 }
 
 /// Last provider + model the user picked (TUI or CLI).
@@ -1668,12 +1706,35 @@ mod tests {
         assert_eq!(cfg.default_connection, "spacexai");
     }
 
+    /// A key goes to exactly one place. The old code wrote the file even when
+    /// the keyring succeeded, so a plaintext copy always existed.
     #[test]
-    fn store_secret_file_fallback() {
+    fn store_secret_uses_one_store_only() {
         let dir = TempDir::new().unwrap();
-        store_secret_at(dir.path(), "ryter-test-conn", "xai-test-secret").unwrap();
-        let got = fs::read_to_string(dir.path().join("keys/ryter-test-conn")).unwrap();
-        assert_eq!(got.trim(), "xai-test-secret");
+        let path = dir.path().join("keys/ryter-test-conn");
+        let store = store_secret_at(dir.path(), "ryter-test-conn", "xai-test-secret").unwrap();
+        match store {
+            SecretStore::Keyring => assert!(
+                !path.exists(),
+                "keyring succeeded, so no plaintext file should remain"
+            ),
+            SecretStore::File => {
+                let got = fs::read_to_string(&path).unwrap();
+                assert_eq!(got.trim(), "xai-test-secret");
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+                    assert_eq!(mode, 0o600, "key file must not be group/world readable");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn store_secret_rejects_an_empty_key() {
+        let dir = TempDir::new().unwrap();
+        assert!(store_secret_at(dir.path(), "ryter-test-conn", "   ").is_err());
     }
 
     #[test]

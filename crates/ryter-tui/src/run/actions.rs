@@ -596,11 +596,13 @@ fn use_connection(view: &mut View, cx: &mut Ctx, name: &str) {
 
 fn set_key(view: &mut View, cx: &mut Ctx, name: &str, key: &str) {
     match config::store_secret_at(&cx.home, name, key) {
-        Ok(()) => {
+        // Say where it landed: a keyring failure used to be silent, leaving the
+        // user to assume the key was not on disk in plaintext.
+        Ok(store) => {
             if let Some(c) = view.connections.iter_mut().find(|c| c.name == name) {
                 c.has_key = true;
             }
-            view.system(format!("key saved for {name}"));
+            view.system(format!("key saved for {name} in {store}"));
             use_connection(view, cx, name);
         }
         Err(e) => view.error(e.to_string()),

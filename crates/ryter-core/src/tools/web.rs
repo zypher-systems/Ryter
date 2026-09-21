@@ -89,15 +89,44 @@ fn get_text(url: &str) -> Result<String> {
     Ok(out)
 }
 
+/// Hostnames that never resolve anywhere useful, plus the well-known cloud
+/// metadata names. Checked before resolution so they fail even if DNS lies.
+const BLOCKED_NAMES: &[&str] = &[
+    "localhost",
+    "metadata",
+    "metadata.google.internal",
+    "metadata.goog",
+    "instance-data",
+];
+
 fn blocked_host(host: &str) -> bool {
     let h = host.trim_matches(['[', ']']).to_ascii_lowercase();
-    if h == "localhost" || h.ends_with(".localhost") || h.ends_with(".local") {
+    let h = h.trim_end_matches('.');
+    if BLOCKED_NAMES.contains(&h)
+        || h.ends_with(".localhost")
+        || h.ends_with(".local")
+        || h.ends_with(".internal")
+        || h.ends_with(".arpa")
+    {
         return true;
     }
     if let Ok(ip) = h.parse::<IpAddr>() {
         return is_nonpublic(ip);
     }
-    false
+    // A name is only safe if every address it resolves to is public. Checking
+    // the string alone let `metadata.google.internal` and any attacker-owned
+    // name pointing at 169.254.169.254 straight through.
+    match resolve_host(h) {
+        Ok(ips) => ips.is_empty() || ips.iter().any(|ip| is_nonpublic(*ip)),
+        // Refuse what cannot be checked.
+        Err(_) => true,
+    }
+}
+
+/// Every address `host` resolves to. The port is irrelevant to the check.
+fn resolve_host(host: &str) -> std::io::Result<Vec<IpAddr>> {
+    use std::net::ToSocketAddrs;
+    Ok((host, 80u16).to_socket_addrs()?.map(|sa| sa.ip()).collect())
 }
 
 fn is_nonpublic(ip: IpAddr) -> bool {
@@ -107,11 +136,27 @@ fn is_nonpublic(ip: IpAddr) -> bool {
                 || v.is_private()
                 || v.is_link_local()
                 || v.is_multicast()
-                || v.octets()[0] == 169 && v.octets()[1] == 254
+                || v.is_broadcast()
+                || v.is_documentation()
                 || v.octets()[0] == 0
+                // Carrier-grade NAT and benchmarking ranges.
+                || (v.octets()[0] == 100 && (64..128).contains(&v.octets()[1]))
+                || (v.octets()[0] == 198 && (18..20).contains(&v.octets()[1]))
+                // Reserved / shared address space.
+                || v.octets()[0] >= 240
         }
         IpAddr::V6(v) => {
-            v.is_loopback() || v.is_multicast() || v.is_unique_local() || v.is_unspecified()
+            // An IPv4-mapped address is an IPv4 address wearing a hat:
+            // `::ffff:169.254.169.254` is not loopback, private, or unique
+            // local, so it walked past the old check.
+            if let Some(v4) = v.to_ipv4_mapped() {
+                return is_nonpublic(IpAddr::V4(v4));
+            }
+            v.is_loopback()
+                || v.is_multicast()
+                || v.is_unique_local()
+                || v.is_unspecified()
+                || v.is_unicast_link_local()
         }
     }
 }
@@ -172,11 +217,66 @@ mod tests {
 
     #[test]
     fn blocks_localhost_and_metadata() {
-        assert!(blocked_host("localhost"));
-        assert!(blocked_host("127.0.0.1"));
-        assert!(blocked_host("169.254.169.254"));
-        assert!(blocked_host("10.0.0.1"));
-        assert!(!blocked_host("example.com"));
+        // Literals and names, decided without touching the network.
+        for host in [
+            "localhost",
+            "LOCALHOST",
+            "foo.localhost",
+            "db.local",
+            "metadata",
+            "metadata.google.internal",
+            "metadata.google.internal.",
+            "anything.internal",
+            "169.254.169.254.in-addr.arpa",
+            "127.0.0.1",
+            "169.254.169.254",
+            "10.0.0.1",
+            "192.168.1.1",
+            "172.16.0.1",
+            "0.0.0.0",
+            "100.64.0.1",
+            "[::1]",
+            "[fe80::1]",
+            "[fd00::1]",
+        ] {
+            assert!(blocked_host(host), "{host} should be blocked");
+        }
+    }
+
+    /// `::ffff:169.254.169.254` is an IPv4 address in an IPv6 suit: none of
+    /// `is_loopback` / `is_private` / `is_unique_local` catch it.
+    #[test]
+    fn ipv4_mapped_ipv6_is_unwrapped() {
+        for host in [
+            "[::ffff:127.0.0.1]",
+            "[::ffff:169.254.169.254]",
+            "[::ffff:10.0.0.1]",
+        ] {
+            assert!(blocked_host(host), "{host} should be blocked");
+        }
+        assert!(is_nonpublic("::ffff:169.254.169.254".parse().unwrap()));
+        assert!(!is_nonpublic("::ffff:93.184.216.34".parse().unwrap()));
+    }
+
+    #[test]
+    fn public_literals_are_allowed() {
+        for host in ["93.184.216.34", "1.1.1.1", "[2606:4700:4700::1111]"] {
+            assert!(!blocked_host(host), "{host} should be allowed");
+        }
+    }
+
+    /// A name that resolves only to public addresses is allowed; one that
+    /// cannot be resolved is refused rather than assumed safe.
+    #[test]
+    fn names_are_judged_by_what_they_resolve_to() {
+        assert!(
+            blocked_host("this-name-does-not-exist.ryter-test.invalid"),
+            "unresolvable names must be refused"
+        );
+        // Only meaningful with working DNS; skip offline.
+        if resolve_host("example.com").is_ok() {
+            assert!(!blocked_host("example.com"));
+        }
     }
 
     #[test]

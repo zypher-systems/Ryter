@@ -15,6 +15,57 @@ use crate::llm::{
     CompletionRequest, DeltaStream, ModelInfo, Provider, StreamDelta, ToolSpec, backend_for,
 };
 
+/// How long to wait for the connection itself.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a stream may go silent before it is considered dead.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+/// Attempts after the first for a retryable failure.
+const MAX_RETRIES: u32 = 3;
+/// First backoff step; doubles per attempt.
+const BACKOFF_BASE: Duration = Duration::from_millis(500);
+/// Ceiling on one backoff wait.
+const BACKOFF_CAP: Duration = Duration::from_secs(20);
+
+/// Statuses worth trying again: rate limits, overload, and gateway noise.
+/// A 400 or 401 will not change on a second attempt.
+fn is_retryable_status(code: u16) -> bool {
+    matches!(code, 408 | 425 | 429 | 500 | 502 | 503 | 504 | 529)
+}
+
+/// Transport failures that are worth another attempt.
+fn is_retryable_error(e: &reqwest::Error) -> bool {
+    e.is_timeout() || e.is_connect() || e.is_request()
+}
+
+/// `Retry-After` in seconds, when the provider sent one.
+fn retry_after(headers: &HeaderMap) -> Option<Duration> {
+    let v = headers.get("retry-after")?.to_str().ok()?;
+    v.trim()
+        .parse::<u64>()
+        .ok()
+        .map(|s| Duration::from_secs(s.min(BACKOFF_CAP.as_secs())))
+}
+
+/// Exponential backoff with a little jitter, so parallel specialists that hit
+/// the same rate limit do not retry in lockstep.
+fn backoff(attempt: u32) -> Duration {
+    let step = BACKOFF_BASE
+        .saturating_mul(1u32 << attempt.min(5))
+        .min(BACKOFF_CAP);
+    let jitter = Duration::from_millis(u64::from(jitter_ms()));
+    step.saturating_add(jitter)
+}
+
+/// Cheap jitter source; avoids taking a dependency on `rand` for 250ms.
+fn jitter_ms() -> u16 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    (nanos % 250) as u16
+}
+
 /// reqwest-backed provider for SpaceXAI, OpenRouter, and generic endpoints.
 pub struct HttpProvider {
     client: reqwest::Client,
@@ -31,7 +82,11 @@ impl HttpProvider {
     pub fn new(conn: &ConnectionConfig, api_key: String) -> Self {
         Self {
             client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(600))
+                // A streamed turn has no useful total deadline: a long agentic
+                // turn is legitimate, a stalled socket is not. Bound the gap
+                // between chunks instead of the whole request.
+                .connect_timeout(CONNECT_TIMEOUT)
+                .read_timeout(IDLE_TIMEOUT)
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
             base_url: conn.base_url.trim_end_matches('/').to_string(),
@@ -97,22 +152,50 @@ impl HttpProvider {
 #[async_trait]
 impl Provider for HttpProvider {
     async fn stream(&self, req: CompletionRequest) -> Result<DeltaStream> {
-        let resp = self
-            .client
-            .post(self.endpoint())
-            .headers(self.headers()?)
-            .json(&self.body(&req))
-            .send()
-            .await
-            .map_err(|e| Error::Provider(e.to_string()))?;
-        let status = resp.status();
-        if !status.is_success() {
+        let headers = self.headers()?;
+        let body = self.body(&req);
+        let mut last = String::new();
+        // Only the opening request is retried. Once deltas have been handed to
+        // the caller, a retry would duplicate text they already have.
+        for attempt in 0..=MAX_RETRIES {
+            if attempt > 0 {
+                tokio::time::sleep(backoff(attempt - 1)).await;
+            }
+            let sent = self
+                .client
+                .post(self.endpoint())
+                .headers(headers.clone())
+                .json(&body)
+                .send()
+                .await;
+            let resp = match sent {
+                Ok(r) => r,
+                Err(e) if is_retryable_error(&e) && attempt < MAX_RETRIES => {
+                    last = e.to_string();
+                    continue;
+                }
+                Err(e) => return Err(Error::Provider(e.to_string())),
+            };
+            let status = resp.status();
+            if status.is_success() {
+                return Ok(Box::pin(sse_delta_stream(
+                    self.backend,
+                    resp.bytes_stream(),
+                )));
+            }
+            let wait = retry_after(resp.headers());
             let text = resp.text().await.unwrap_or_default();
-            return Err(Error::Provider(format!("http {status}: {text}")));
+            last = format!("http {status}: {text}");
+            if !is_retryable_status(status.as_u16()) || attempt == MAX_RETRIES {
+                return Err(Error::Provider(last));
+            }
+            if let Some(w) = wait {
+                tokio::time::sleep(w).await;
+            }
         }
-        let backend = self.backend;
-        let byte_stream = resp.bytes_stream();
-        Ok(Box::pin(sse_delta_stream(backend, byte_stream)))
+        Err(Error::Provider(format!(
+            "{last} (after {MAX_RETRIES} retries)"
+        )))
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
@@ -642,6 +725,50 @@ mod tests {
         };
         let body = messages_body(&req);
         assert_eq!(body["messages"][0]["content"][0]["input"], json!({}));
+    }
+
+    /// A rate limit or an overloaded provider is the most common failure in a
+    /// BYOK harness; a client error is not worth a second attempt.
+    #[test]
+    fn retryable_statuses_are_the_transient_ones() {
+        for code in [408, 425, 429, 500, 502, 503, 504, 529] {
+            assert!(is_retryable_status(code), "{code} should retry");
+        }
+        for code in [200, 400, 401, 403, 404, 413, 422] {
+            assert!(!is_retryable_status(code), "{code} should not retry");
+        }
+    }
+
+    #[test]
+    fn backoff_grows_and_is_capped() {
+        let waits: Vec<Duration> = (0..8).map(backoff).collect();
+        assert!(waits[0] >= BACKOFF_BASE);
+        assert!(waits[3] > waits[0], "should grow: {waits:?}");
+        for w in &waits {
+            assert!(
+                *w <= BACKOFF_CAP + Duration::from_millis(250),
+                "capped, got {w:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn retry_after_header_is_honored_and_clamped() {
+        let mut h = HeaderMap::new();
+        h.insert("retry-after", HeaderValue::from_static("3"));
+        assert_eq!(retry_after(&h), Some(Duration::from_secs(3)));
+        // A hostile or absurd value must not park the turn for an hour.
+        let mut h = HeaderMap::new();
+        h.insert("retry-after", HeaderValue::from_static("99999"));
+        assert_eq!(retry_after(&h), Some(BACKOFF_CAP));
+        // A date form is not parsed; fall back to our own backoff.
+        let mut h = HeaderMap::new();
+        h.insert(
+            "retry-after",
+            HeaderValue::from_static("Wed, 21 Oct 2026 07:28:00 GMT"),
+        );
+        assert_eq!(retry_after(&h), None);
+        assert_eq!(retry_after(&HeaderMap::new()), None);
     }
 
     #[test]

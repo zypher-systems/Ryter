@@ -488,8 +488,8 @@ fn connections_cmd(cmd: Option<ConnCmd>) -> ryter_core::Result<()> {
             io::stdin()
                 .read_line(&mut line)
                 .map_err(|e| Error::Io(e.to_string()))?;
-            config::store_secret_at(&config::home_dir(), &name, line.trim())?;
-            println!("saved key for {name}");
+            let store = config::store_secret_at(&config::home_dir(), &name, line.trim())?;
+            println!("saved key for {name} in {store}");
             Ok(())
         }
         Some(ConnCmd::Add {
