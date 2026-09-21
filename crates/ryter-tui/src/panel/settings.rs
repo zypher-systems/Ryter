@@ -79,7 +79,7 @@ impl Settings {
                 10_000.0,
                 0.5,
                 false,
-                5.0,
+                0.0,
             ),
             num(
                 "warn",
@@ -258,11 +258,11 @@ impl Panel for Settings {
 
     fn legend(&self, _view: &View) -> String {
         if self.confirm_discard {
-            "discard changes? y / n".into()
+            "y save · n discard · esc keep editing".into()
         } else if self.editing {
             "type · enter apply · esc cancel".into()
         } else {
-            "↑↓ move · space/←→ change · enter edit · ^s save · esc".into()
+            "↑↓ move · space/←→ change · enter edit · esc done".into()
         }
     }
 
@@ -294,12 +294,7 @@ impl Panel for Settings {
         let first = super::window(sel_row, total, h);
         let mut lines: Vec<_> = rows.into_iter().skip(first).take(h).collect();
         if self.confirm_discard {
-            lines.pop();
-            lines.push(super::widgets::colored(
-                "unsaved changes · y discard · n keep editing",
-                theme.warn,
-                theme,
-            ));
+            lines = super::widgets::save_prompt(lines, usize::from(width), h, theme);
         }
         Body {
             lines,
@@ -310,8 +305,17 @@ impl Panel for Settings {
     fn key(&mut self, key: KeyEvent, view: &mut View) -> Outcome {
         if self.confirm_discard {
             return match key.code {
-                KeyCode::Char('y' | 'Y') => Outcome::Close,
-                KeyCode::Char('n' | 'N') | KeyCode::Esc => {
+                KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
+                    if self.form.has_errors() {
+                        self.confirm_discard = false;
+                        return Outcome::Stay;
+                    }
+                    self.apply(view);
+                    self.form.dirty = false;
+                    Outcome::CloseAct(Action::SaveSettings)
+                }
+                KeyCode::Char('n' | 'N') => Outcome::Close,
+                KeyCode::Esc => {
                     self.confirm_discard = false;
                     Outcome::Stay
                 }

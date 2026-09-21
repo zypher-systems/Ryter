@@ -12,7 +12,7 @@
 
                                          ╭─ spend ──────────────────────────────────────────────────────────── $?.?? ─╮
                                          │ total  $?.??                                                               │
-                                         │ budget ░░░░░░░░░░░░░░░░░░░░░░░░  ?%  $?.?? of $5.00                        │
+                                         │ budget off · nothing stops on cost · /budget <amount> sets a cap           │
                                          │                                                                            │
                                          │ by role                                                                    │
                                          │   nothing spent yet                                                        │

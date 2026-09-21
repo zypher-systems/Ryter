@@ -2,7 +2,7 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  · system     ╭─ settings ───────────────────────────────────────────────────────────╮
    welcome · /│ SPEND                                                                ┃
-              │› budget usd (0 = off)  ‹ 5.00 ›                              default ┃
+              │› budget usd (0 = off)  ‹ 0.00 ›                              default ┃
               │  warn usd              ‹ 1.00 ›                              default ┃
               │                                                                      ┃
               │ AGENTS                                                               ┃
@@ -21,7 +21,7 @@
               │  bind address                                                default │
               │                                                                      │
               │ UI                                                                   │
-              ╰─ ↑↓ move · space/←→ change · enter edit · ^s save · esc ─────────────╯
+              ╰─ ↑↓ move · space/←→ change · enter edit · esc done ──────────────────╯
 
 
 ╭─ dusty ──────────────────────────────────────────────────────────────────────────────────────────╮

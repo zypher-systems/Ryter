@@ -139,9 +139,9 @@ impl CrewBuilder {
             ],
             sel: 1,
             size: JobSize::Medium,
-            // First launch: a cap sized to the job, one toggle from off.
-            // Later: keep whatever the user has.
-            budget_on: first_run || view.budget_usd > 0.0,
+            // Off unless the user already has one: a budget is their call.
+            // The suggested cap is shown either way, one toggle away.
+            budget_on: view.budget_usd > 0.0,
             budget: if view.budget_usd > 0.0 {
                 view.budget_usd
             } else {
@@ -347,7 +347,15 @@ impl CrewBuilder {
         Outcome::Stay
     }
 
-    fn save(&self) -> Action {
+    /// The per-task cap to save: never lower than what's set, raised when
+    /// this crew's normal task or design would not fit under it.
+    fn task_cap(&self, view: &View) -> f64 {
+        let e = estimate(self.crew_rates(view), JobSize::Large);
+        view.task_budget_usd
+            .max(ryter_core::estimate::task_cap_for(&e))
+    }
+
+    fn save(&self, view: &View) -> Action {
         let seat = |i: usize| {
             self.seat(i).map(|s| RoleModel {
                 connection: Some(s.connection.clone()),
@@ -366,6 +374,7 @@ impl CrewBuilder {
             lead_model: lead.1,
             crew,
             budget: if self.budget_on { self.budget } else { 0.0 },
+            task_cap: self.task_cap(view),
         }
     }
 
@@ -644,6 +653,22 @@ impl Panel for CrewBuilder {
                     ));
                 }
                 lines.push(widgets::blank(theme));
+                let cap = self.task_cap(view);
+                lines.push(widgets::note(
+                    &format!(
+                        "  each task stops at {}{}",
+                        format_usd(Some(cap)),
+                        if cap > view.task_budget_usd + 0.001 {
+                            format!(
+                                " (raised from {} so this crew's designs fit)",
+                                format_usd(Some(view.task_budget_usd))
+                            )
+                        } else {
+                            String::new()
+                        }
+                    ),
+                    theme,
+                ));
                 lines.push(widgets::note(
                     &format!(
                         "  budget: {} · {} job, ~{} estimated",
@@ -830,7 +855,7 @@ impl Panel for CrewBuilder {
                 KeyCode::Enter => {
                     let problems = self.problems();
                     if problems.is_empty() && self.all_tested() {
-                        return Outcome::CloseAct(self.save());
+                        return Outcome::CloseAct(self.save(view));
                     }
                     // Test whatever hasn't answered yet (failed ones again too).
                     let pending: Vec<(String, String)> = self
@@ -945,8 +970,13 @@ mod tests {
             press(&mut b, &mut v, KeyCode::Enter); // ★ recommended
         }
         assert_eq!(b.step, Step::Budget);
-        // Large job, suggested budget.
+        // Off by default; choose a large job and switch the budget on.
+        assert!(!b.budget_on);
         b.sel = 2;
+        press(&mut b, &mut v, KeyCode::Right);
+        b.sel = 3;
+        press(&mut b, &mut v, KeyCode::Char(' '));
+        assert!(b.budget_on);
         press(&mut b, &mut v, KeyCode::Enter);
         assert_eq!(b.step, Step::Review);
         let Outcome::Act(Action::ProbeModels(asked)) = press(&mut b, &mut v, KeyCode::Enter) else {

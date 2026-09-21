@@ -154,6 +154,13 @@ pub fn estimate(rates: CrewRates, size: JobSize) -> Estimate {
     }
 }
 
+/// A per-task cap that lets this crew's normal task or design finish, with
+/// room for a hard one, and still stops a runaway: twice the larger of the
+/// two, rounded up.
+pub fn task_cap_for(e: &Estimate) -> f64 {
+    round_up(2.0 * e.per_task.max(e.per_design))
+}
+
 /// $0.50 steps under $2, whole dollars under $20, then $5 steps.
 fn round_up(v: f64) -> f64 {
     let step = if v < 2.0 {
@@ -228,6 +235,18 @@ mod tests {
         let mut c = live_crew();
         c.architect = None;
         assert!(!estimate(c, JobSize::Small).partial);
+    }
+
+    /// An Opus design (~$0.91) must fit under the task cap; the old $1
+    /// default nearly cut it off.
+    #[test]
+    fn the_task_cap_fits_a_design_with_room() {
+        let e = estimate(live_crew(), JobSize::Medium);
+        let cap = task_cap_for(&e);
+        assert!(
+            cap >= 1.5 * e.per_design && cap >= 1.5 * e.per_task,
+            "{cap} {e:?}"
+        );
     }
 
     #[test]

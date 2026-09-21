@@ -1055,18 +1055,17 @@ impl Agent {
             }
         }
         let repo = self.ctx.workspace.clone();
-        if !crate::git::is_repo(&repo) {
-            return Err(Error::Config(
-                "the workspace is not a git repository".into(),
-            ));
-        }
-        if crate::git::head(&repo).is_err() {
-            return Err(Error::Config(
-                "the repository has no commits yet, so there is nothing for a patch to \
-                 branch from. Make a first commit (`git commit --allow-empty -m init`) and \
-                 say continue."
-                    .into(),
-            ));
+        // An empty folder, or one that was never a repository: set git up
+        // rather than refuse. The user asked for work, not for git chores.
+        if let Some(setup) = crate::git::ensure_repo(&repo)? {
+            let undo = if setup.created {
+                " If you didn't want a repository here, delete the `.git` folder."
+            } else {
+                ""
+            };
+            self.emit(AgentEvent::Notice {
+                message: format!("Set up git so the crew can work: {}.{undo}", setup.summary),
+            })?;
         }
         let target = crate::git::branch(&repo)?;
         if target == "HEAD" {
@@ -1659,22 +1658,45 @@ mod tests {
         assert_eq!(q.tasks[0].role, "builder");
     }
 
+    /// A folder that was never a repository: Ryter sets git up, says so, and
+    /// the work lands. The user used to get "not a git repository".
     #[tokio::test]
-    async fn a_repository_without_commits_says_what_to_do() {
-        let (_home, cwd, mut agent) = crew_setup(ReplayProvider::scripted(vec![]));
-        // Replace the fixture repo with a fresh, commitless one.
+    async fn a_folder_without_git_is_set_up_and_the_work_lands() {
+        let p = ReplayProvider::scripted(vec![
+            write("a.txt", "a\n"),
+            vec![StreamDelta::Text("STATUS: DONE".into()), StreamDelta::Done],
+            vec![StreamDelta::Text("VERDICT: PASS".into()), StreamDelta::Done],
+        ]);
+        let (_home, cwd, mut agent) = crew_setup(p);
         std::fs::remove_dir_all(cwd.path().join(".git")).unwrap();
-        crate::git::git(cwd.path(), &["init", "-q"]).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
         agent
             .queue
             .lock()
             .unwrap()
-            .apply_todo(&serde_json::json!({"items": [{"id": "t1", "title": "x", "files": ["a"]}]}))
+            .apply_todo(
+                &serde_json::json!({"items": [{"id": "t1", "title": "a", "files": ["a.txt"]}]}),
+            )
             .unwrap();
-        let report = agent.drain_crew().await.unwrap();
+        agent.drain_crew().await.unwrap();
+        let notice = rx
+            .try_iter()
+            .find_map(|e| match e {
+                AgentEvent::Notice { message } => Some(message),
+                _ => None,
+            })
+            .expect("the user is told git was set up");
         assert!(
-            report.contains("no commits yet") && report.contains("git commit --allow-empty"),
-            "{report}"
+            notice.contains("initialized") && notice.contains(".git"),
+            "{notice}"
+        );
+        let log = crate::git::git(cwd.path(), &["log", "--oneline"]).unwrap();
+        assert!(log.contains("Initial commit"), "{log}");
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("a.txt")).unwrap(),
+            "a\n",
+            "the task landed on the new branch:\n{log}"
         );
     }
 

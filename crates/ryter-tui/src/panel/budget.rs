@@ -64,7 +64,7 @@ impl Budget {
             num("amount", "cap usd", amount, 0.5, 5.0),
             num("warn", "warn at usd", view.warn_usd, 0.0, 1.0),
             Field::new("g_task", "per task", Kind::Header),
-            num("task", "task cap usd", view.task_budget_usd, 0.25, 1.0),
+            num("task", "task cap usd", view.task_budget_usd, 0.25, 3.0),
         ];
         Self {
             form: Form::new(fields),
@@ -180,11 +180,11 @@ impl Panel for Budget {
 
     fn legend(&self, _view: &View) -> String {
         if self.confirm_discard {
-            "discard changes? y / n".into()
+            "y save · n discard · esc keep editing".into()
         } else if self.editing {
             "type · enter apply · esc cancel".into()
         } else {
-            "↑↓ move · space/←→ change · enter edit · ^s save · esc".into()
+            "↑↓ move · space/←→ change · enter edit · esc done".into()
         }
     }
 
@@ -216,14 +216,10 @@ impl Panel for Budget {
         for row in wrap::wrap_plain(prose, w.saturating_sub(2)) {
             lines.push(widgets::note(&row, theme));
         }
-        if self.confirm_discard {
-            lines.push(widgets::colored(
-                "unsaved changes · y discard · n keep editing",
-                theme.warn,
-                theme,
-            ));
-        }
         lines.truncate(usize::from(height).max(1));
+        if self.confirm_discard {
+            lines = widgets::save_prompt(lines, w, usize::from(height).max(1), theme);
+        }
         Body {
             lines,
             scroll: None,
@@ -233,8 +229,16 @@ impl Panel for Budget {
     fn key(&mut self, key: KeyEvent, view: &mut View) -> Outcome {
         if self.confirm_discard {
             return match key.code {
-                KeyCode::Char('y' | 'Y') => Outcome::Close,
-                KeyCode::Char('n' | 'N') | KeyCode::Esc => {
+                KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
+                    if self.form.has_errors() {
+                        self.confirm_discard = false;
+                        return Outcome::Stay;
+                    }
+                    self.form.dirty = false;
+                    Outcome::CloseAct(self.save())
+                }
+                KeyCode::Char('n' | 'N') => Outcome::Close,
+                KeyCode::Esc => {
                     self.confirm_discard = false;
                     Outcome::Stay
                 }
@@ -371,7 +375,7 @@ mod tests {
             Action::SaveBudget {
                 usd: 0.0,
                 warn: 1.0,
-                task: 1.0
+                task: 3.0
             }
         );
         v.budget_usd = 0.0;
@@ -379,6 +383,50 @@ mod tests {
         let mut p = Budget::new(&v);
         press(&mut p, &mut v, KeyCode::Char(' '));
         assert!(matches!(save(&mut p, &mut v), Action::SaveBudget { usd, .. } if usd == 7.5));
+    }
+
+    /// Esc on a changed form asks: y saves, n discards, esc keeps editing.
+    #[test]
+    fn esc_asks_to_save_changes() {
+        let mut v = view();
+        let mut p = Budget::new(&v);
+        // Unchanged: esc just closes.
+        assert!(matches!(
+            press(&mut p, &mut v, KeyCode::Esc),
+            Outcome::Close
+        ));
+        press(&mut p, &mut v, KeyCode::Char(' ')); // switch the cap on
+        assert!(matches!(press(&mut p, &mut v, KeyCode::Esc), Outcome::Stay));
+        let text: String = p
+            .render(&v, 72, 17, Theme::truecolor_dark())
+            .lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect();
+        assert!(text.contains("save your changes?"), "{text}");
+        // esc: back to editing.
+        assert!(matches!(press(&mut p, &mut v, KeyCode::Esc), Outcome::Stay));
+        assert!(!p.confirm_discard);
+        // esc again, then y: saved with the cap on.
+        press(&mut p, &mut v, KeyCode::Esc);
+        match press(&mut p, &mut v, KeyCode::Char('y')) {
+            Outcome::CloseAct(Action::SaveBudget { usd, .. }) => assert!(usd > 0.0),
+            _ => panic!("y must save and close"),
+        }
+        // n discards.
+        let mut p = Budget::new(&v);
+        press(&mut p, &mut v, KeyCode::Char(' '));
+        press(&mut p, &mut v, KeyCode::Esc);
+        assert!(matches!(
+            press(&mut p, &mut v, KeyCode::Char('n')),
+            Outcome::Close
+        ));
     }
 
     /// Typing a cap while the budget is off means "turn it on at this".

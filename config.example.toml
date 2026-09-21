@@ -57,11 +57,12 @@ max_retries = 2
 [spend]
 enabled = true
 currency = "USD"
-session_budget_usd = 5.00
+# Off (0) by default: set one with /budget or in the crew builder.
+session_budget_usd = 0
 warn_usd = 1.00
 # Per crew task, builder and auditors together. The token cap (uncached input
 # plus output) also stops models with no known price. See docs/cost.md.
-task_budget_usd = 1.00
+task_budget_usd = 3.00
 task_max_tokens = 1000000
 
 # TUI presentation. Every key is optional; defaults shown. Unknown keys warn once at

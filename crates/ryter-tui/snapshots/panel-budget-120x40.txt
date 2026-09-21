@@ -5,25 +5,25 @@
 
 
 
-                        ╭─ budget ──────────────────────────────────────────────── on · $5.00 ─╮
-                        │ spent $?.?? of $5.00 · a price is unknown, so no percentage          │
+                        ╭─ budget ─────────────────────────────────────────────────────── off ─╮
+                        │ spent $?.?? · no cap                                                 │
                         │                                                                      │
                         │ SESSION                                                              │
-                        │› cap spend     [ on ]                                        default │
+                        │› cap spend     [ off ]                                        config │
                         │  cap usd       ‹ 5.00 ›                                      default │
                         │  warn at usd   ‹ 1.00 ›                                      default │
                         │                                                                      │
                         │ PER TASK                                                             │
-                        │  task cap usd  ‹ 1.00 ›                                      default │
+                        │  task cap usd  ‹ 3.00 ›                                      default │
                         │                                                                      │
-                        │ the crew stops when session spend reaches the cap, says what         │
-                        │ finished and what didn't, and waits. raise the cap and tell the lead │
-                        │ to continue.                                                         │
-                        │                                                                      │
+                        │ nothing stops on cost. the spend card keeps count; watch it          │
+                        │ yourself.                                                            │
                         │                                                                      │
                         │                                                                      │
                         │                                                                      │
-                        ╰─ ↑↓ move · space/←→ change · enter edit · ^s save · esc ─────────────╯
+                        │                                                                      │
+                        │                                                                      │
+                        ╰─ ↑↓ move · space/←→ change · enter edit · esc done ──────────────────╯
 
 
 

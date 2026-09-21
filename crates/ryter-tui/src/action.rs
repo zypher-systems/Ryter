@@ -161,6 +161,8 @@ pub enum Action {
         crew: std::collections::BTreeMap<String, ryter_core::RoleModel>,
         /// Session budget; `0` is off.
         budget: f64,
+        /// Per-task cap that fits this crew's normal work.
+        task_cap: f64,
     },
     /// Save everything the `/budget` panel edits.
     SaveBudget {

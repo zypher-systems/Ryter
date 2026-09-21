@@ -32,7 +32,7 @@ task benchmark has to answer (`ROADMAP.md`).
 | Change | Where |
 | --- | --- |
 | Every specialist round is priced, attributed to task and role, logged, and counted against the session budget. | `meter.rs`, `crew.rs` `run_specialist`, `agent.rs` `record_crew_spend` |
-| Per-task caps: `[spend] task_budget_usd = 1.0`, `task_max_tokens = 1_000_000`. The token cap also stops unpriced models. A capped task keeps its branch. | `meter.rs` |
+| Per-task caps: `[spend] task_budget_usd = 3.0` (was 1.0; a strong model's design is ~$1), `task_max_tokens = 1_000_000`. The token cap also stops unpriced models. A capped task keeps its branch. | `meter.rs` |
 | Scoped context: builders and auditors get `notes/architect.md` plus the DECISIONS entries that name their files. Measured on this repo: **~10,200 → ~1,000–2,000 tokens per round.** | `memory.rs` `load_scoped_memory` |
 | Rolling cache breakpoint on the newest message (Anthropic, and Claude via OpenRouter). | `llm/http.rs` |
 | The lead's system prompt is built once per turn, and the crew report is no longer copied into it. | `agent.rs` `turn_inner`, `prompt.rs` |

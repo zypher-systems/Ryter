@@ -116,6 +116,12 @@ pub enum AgentEvent {
         #[serde(default)]
         body: String,
     },
+    /// Something Ryter did on the user's behalf that they should know about
+    /// (it set up git in the folder). Not an error; the turn goes on.
+    Notice {
+        /// Human-readable message.
+        message: String,
+    },
     /// Unrecoverable session error.
     Error {
         /// Human-readable message.

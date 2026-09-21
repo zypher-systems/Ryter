@@ -440,6 +440,8 @@ async fn run_prompt(
             } else if let AgentEvent::Token { text } = ev {
                 let _ = io::stdout().write_all(text.as_bytes());
                 let _ = io::stdout().flush();
+            } else if let AgentEvent::Notice { message } = ev {
+                eprintln!("ryter: {message}");
             }
         }
     });

@@ -13,10 +13,10 @@
                                                                      ┃╭─ spend ────────────────────╮
                                                                      ┃│ session              $?.?? │
                                                                      ┃╰────────────────────────────╯
-                                                                     ┃╭─ budget ────────────── ?% ─╮
-                                                                     ┃│     ░░░░░░░░░░░░░░░░       │
-                                                                     ┃│ used        $?.?? of $5.00 │
+                                                                     ┃╭─ budget ───────────── off ─╮
+                                                                     ┃│ cap                    off │
                                                                      ┃╰────────────────────────────╯
+                                                                     ┃
                                                                      ┃
  ⠼ writing                                                                        0:12   ^r close ▴
  The user wants the loop wired. I should read run.rs first, then The user wants the loop wired. I

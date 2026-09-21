@@ -2,6 +2,14 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-21 — Ryter sets up git; budgets are opt-in; forms ask on Esc
+- **By:** lead
+- **Decision:** When the crew first needs a branch and the folder has no repository (or no commits), the harness runs `git init` (the user's `init.defaultBranch`, else `main`), writes a `.gitignore` for secrets and caches unless one exists, commits what is there, and tells the user with a notice. The session budget is off by default; the per-task cap defaults to $3 and the crew builder raises it to fit the chosen crew. `Esc` on a changed form asks "save your changes?" (y save · n discard · esc keep editing).
+- **Chosen vs rejected:** Rejected having the lead model run `git init`: the lead can't run shell commands by design, and a deterministic harness step costs nothing and can't be skipped. Rejected refusing with "make a first commit": the user asked for work, not git chores. Rejected keeping a $5 default budget: stopping work the user didn't ask to stop surprised them twice on a large project. With no session budget the per-task cap is the only guard, and at $1 it would have cut off a strong model's design (~$1.04 on gpt-5.5), so it rose to $3. Rejected `^s` as the only way to save: people didn't find it.
+- **Why:** The user's own testing: an empty folder hit "not a git repository", budgets of $5 and $10 stopped a real project, and `^s` felt clunky.
+- **Where:** `git.rs` `ensure_repo`, `agent.rs` `open_patch`, `event.rs` `Notice`; `config.rs` spend defaults, `estimate.rs` `task_cap_for`; TUI `panel/widgets.rs` `save_prompt`, `panel/settings.rs`, `panel/budget.rs`, `panel/crew_builder.rs`
+- **Residual risk:** The first commit includes whatever is already in the folder. The `.gitignore` covers common secrets (`.env*`, `*.pem`, `*.key`), but not every secret a project could hold. A folder inside another repository (a dotfiles-managed home, say) counts as a repository, so no new one is made there and the crew works in the outer one.
+
 ### 2026-09-21 — The user builds the crew; the tiers only recommend
 - **By:** lead
 - **Decision:** On first launch (no `crew.toml` and no `[specialists]`), and from `/crew` → `b`, a crew builder walks through a starting point, each of the four seats (lead included), the budget, and a review. Every seat shows a ★ recommendation and why the role matters, but any reachable model can be chosen. Before saving, each model gets one tiny request with a tool. The budget step estimates per task, per design, and per job size from token profiles measured on the paid live runs, and suggests a cap: on by default on first launch, one toggle from off.

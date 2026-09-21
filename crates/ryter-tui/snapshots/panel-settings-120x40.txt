@@ -4,7 +4,7 @@
    welcome · /help for keys
                         ╭─ settings ───────────────────────────────────────────────────────────╮
                         │ SPEND                                                                ┃
-                        │› budget usd (0 = off)  ‹ 5.00 ›                              default ┃
+                        │› budget usd (0 = off)  ‹ 0.00 ›                              default ┃
                         │  warn usd              ‹ 1.00 ›                              default ┃
                         │                                                                      ┃
                         │ AGENTS                                                               ┃
@@ -29,7 +29,7 @@
                         │  mouse                 [ on ]                                default ┃
                         │  panel                 [ on ]                                default ┃
                         │  timestamps            [ off ]                                config │
-                        ╰─ ↑↓ move · space/←→ change · enter edit · ^s save · esc ─────────────╯
+                        ╰─ ↑↓ move · space/←→ change · enter edit · esc done ──────────────────╯
 
 
 

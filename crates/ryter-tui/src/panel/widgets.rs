@@ -536,6 +536,60 @@ pub fn step_line(step: usize, of: usize, title: &str, theme: Theme) -> Line<'sta
     ])
 }
 
+/// A form's "save changes?" popup, drawn over the middle of its body: `esc`
+/// on a changed form asks rather than making people remember a save key.
+pub fn save_prompt(
+    mut lines: Vec<Line<'static>>,
+    width: usize,
+    height: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    const ASK: &str = "save your changes?";
+    const KEYS: &str = "y save · n discard · esc keep editing";
+    let inner = crate::chat::wrap::width(KEYS) + 2;
+    let bw = (inner + 2).min(width.saturating_sub(2));
+    let left = width.saturating_sub(bw) / 2;
+    let border = Style::default()
+        .fg(theme.warn)
+        .bg(theme.panel_bg)
+        .add_modifier(Modifier::BOLD);
+    let pad = |n: usize| Span::styled(" ".repeat(n), theme.panel());
+    let title = " unsaved changes ";
+    let top = format!(
+        "╭─{title}{}╮",
+        "─".repeat(bw.saturating_sub(3 + crate::chat::wrap::width(title)))
+    );
+    let bottom = format!("╰{}╯", "─".repeat(bw.saturating_sub(2)));
+    let body = |text: &str, style: Style| {
+        let room = bw.saturating_sub(2);
+        let t = crate::chat::wrap::truncate(&format!(" {text}"), room);
+        let fill = room.saturating_sub(crate::chat::wrap::width(&t));
+        Line::from(vec![
+            pad(left),
+            Span::styled("│", border),
+            Span::styled(t, style),
+            pad(fill),
+            Span::styled("│", border),
+        ])
+    };
+    let rows = vec![
+        Line::from(vec![pad(left), Span::styled(top, border)]),
+        body(ASK, theme.panel().add_modifier(Modifier::BOLD)),
+        body(KEYS, theme.panel_muted()),
+        Line::from(vec![pad(left), Span::styled(bottom, border)]),
+    ];
+    let h = height.max(rows.len());
+    while lines.len() < h {
+        lines.push(blank(theme));
+    }
+    lines.truncate(h);
+    let start = (h - rows.len()) / 2;
+    for (i, r) in rows.into_iter().enumerate() {
+        lines[start + i] = r;
+    }
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

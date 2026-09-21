@@ -328,8 +328,11 @@ fn default_task_tokens() -> u64 {
     1_000_000
 }
 
+/// One task's cap. With no session budget by default this is the only
+/// spending guard, so it must fit a normal task or design on a strong crew
+/// (a gpt-5.5 design is estimated at ~$1.04) while still stopping a runaway.
 fn default_task_usd() -> f64 {
-    1.0
+    3.0
 }
 
 fn usd() -> String {
@@ -440,7 +443,8 @@ impl Default for SpendConfig {
         Self {
             enabled: true,
             currency: usd(),
-            session_budget_usd: 5.0,
+            // Off: a budget is the user's choice (`/budget`, the crew builder).
+            session_budget_usd: 0.0,
             warn_usd: 1.0,
             task_budget_usd: default_task_usd(),
             task_max_tokens: default_task_tokens(),

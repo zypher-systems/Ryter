@@ -2,19 +2,19 @@
 ────────────────────────────────────────────────────────────────────────────────
  dusty                                               │╭─ session ──────────────╮
  ▎ now implement step one                            ││ untitled          idle │
-                                                     │╰────────────────────────╯
- · read_file  read crates/ryter-tui/src/run/m…  0.1s ┃╭─ model ────────────────╮
-                                                     ┃│ spacexai ●    grok-4.6 │
- grok-4.6                                            ┃│ ctx █░░░░░░░░░░░   5%  │
-   Reading the loop now. The event loop drains       ┃│     12.4k / 256k       │
+                                                     ││ auditor ✓  tools ask   │
+ · read_file  read crates/ryter-tui/src/run/m…  0.1s ┃╰────────────────────────╯
+                                                     ┃╭─ model ────────────────╮
+ grok-4.6                                            ┃│ spacexai ●    grok-4.6 │
+   Reading the loop now. The event loop drains       ┃│ ctx █░░░░░░░░░░░   5%  │
+                                                     ┃│     12.4k / 256k       │
                                                      ┃│ price unknown          │
                                                      ┃╰────────────────────────╯
                                                      ┃╭─ spend ────────────────╮
                                                      ┃│ session          $?.?? │
                                                      ┃╰────────────────────────╯
-                                                     ┃╭─ budget ────────── ?% ─╮
-                                                     ┃│     ░░░░░░░░░░░░       │
-                                                     ┃│ used    $?.?? of $5.00 │
+                                                     ┃╭─ budget ───────── off ─╮
+                                                     ┃│ cap                off │
                                                      ┃╰────────────────────────╯
  ⠼ writing  ·  0:12  ·  ~11 tok                                ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────

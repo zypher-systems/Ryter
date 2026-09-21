@@ -145,7 +145,15 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             lead_model,
             crew,
             budget,
-        } => save_crew_setup(view, cx, lead_connection, lead_model, crew, budget),
+            task_cap,
+        } => save_crew_setup(
+            view,
+            cx,
+            lead_connection,
+            lead_model,
+            crew,
+            (budget, task_cap),
+        ),
         Action::KillAgent(id) => {
             if let Some(c) = view.crew.iter().find(|c| c.id == id) {
                 view.system(format!("killing {} · {}", c.role, c.label));
@@ -721,7 +729,7 @@ fn save_crew_setup(
     lead_connection: String,
     lead_model: String,
     crew: std::collections::BTreeMap<String, ryter_core::RoleModel>,
-    budget: f64,
+    (budget, task_cap): (f64, f64),
 ) {
     if !view.specialists.is_empty() {
         if let Err(e) = config::save_crew_preset(&cx.home, "before-builder", &view.specialists) {
@@ -752,7 +760,8 @@ fn save_crew_setup(
             _ => view.error(format!("lead not changed: no key for {lead_connection}")),
         }
     }
-    set_budget(view, cx, budget);
+    let warn = view.warn_usd;
+    save_budget(view, cx, budget, warn, task_cap);
     cx.notice(Notice::PresetsChanged(config::list_crew_presets(&cx.home)));
     view.system(format!(
         "crew saved · lead {} · architect {} · builder {} · auditor {}",

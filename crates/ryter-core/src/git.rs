@@ -30,6 +30,92 @@ pub fn is_repo(dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Kept out of the first commit Ryter makes in a folder with no repository:
+/// secrets first, then the caches and dependency trees tools create.
+const FIRST_GITIGNORE: &str = "\
+# Written by Ryter when it set up git here. Edit freely.
+.env
+.env.*
+*.pem
+*.key
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+target/
+.DS_Store
+";
+
+/// What [`ensure_repo`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoSetup {
+    /// A repository was created (so removing `.git` undoes it).
+    pub created: bool,
+    /// What was done, for the user.
+    pub summary: String,
+}
+
+/// Make `dir` a repository with at least one commit, so a crew has a branch
+/// to build from and a patch has somewhere to land. `None` when there was
+/// nothing to do.
+///
+/// A folder with no repository gets `git init` (the user's
+/// `init.defaultBranch`, else `main`), a `.gitignore` for secrets and caches
+/// unless one exists, and a first commit of what is there. A repository with
+/// no commits gets the first commit.
+pub fn ensure_repo(dir: &Path) -> Result<Option<RepoSetup>> {
+    let mut did = Vec::new();
+    let created = !is_repo(dir);
+    if created {
+        let branch = git(dir, &["config", "--get", "init.defaultBranch"])
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "main".into());
+        git(dir, &["init", "-q", "-b", &branch])?;
+        did.push(format!("initialized a git repository on `{branch}`"));
+    }
+    if head(dir).is_ok() {
+        return Ok((!did.is_empty()).then(|| RepoSetup {
+            created,
+            summary: did.join(", "),
+        }));
+    }
+    let ignore = dir.join(".gitignore");
+    if !ignore.exists() {
+        std::fs::write(&ignore, FIRST_GITIGNORE).map_err(|e| Error::Io(e.to_string()))?;
+        did.push("added a .gitignore for secrets and caches".into());
+    }
+    git(dir, &["add", "-A"])?;
+    let files = git(dir, &["diff", "--cached", "--name-only"])?
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .count();
+    git_as(
+        dir,
+        &[
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "Initial commit (made by Ryter)",
+        ],
+    )?;
+    did.push(match files {
+        0 => "made an empty first commit".into(),
+        1 => "committed the 1 file already here as the starting point".into(),
+        n => format!("committed the {n} files already here as the starting point"),
+    });
+    Ok(Some(RepoSetup {
+        created,
+        summary: did.join(", "),
+    }))
+}
+
 /// Current branch name.
 pub fn branch(dir: &Path) -> Result<String> {
     Ok(git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])?
@@ -316,5 +402,89 @@ mod tests {
         assert!(wt.join("README.md").exists());
         remove_worktree(dir.path(), &wt, "ryter-test-wt").unwrap();
         assert!(!wt.exists());
+    }
+
+    fn tracked(dir: &Path) -> Vec<String> {
+        git(dir, &["ls-files"])
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// An empty folder becomes a repository with a first commit.
+    #[test]
+    fn an_empty_folder_gets_a_repository_and_a_first_commit() {
+        let dir = TempDir::new().unwrap();
+        let setup = ensure_repo(dir.path())
+            .unwrap()
+            .expect("something was done");
+        assert!(setup.created);
+        assert!(is_repo(dir.path()) && head(dir.path()).is_ok());
+        assert!(setup.summary.contains("initialized"), "{}", setup.summary);
+        // The .gitignore it wrote is the first commit.
+        assert_eq!(tracked(dir.path()), vec![".gitignore".to_string()]);
+        // Nothing left to do the second time.
+        assert_eq!(ensure_repo(dir.path()).unwrap(), None);
+    }
+
+    /// Existing files are the starting point; secrets and caches are not.
+    #[test]
+    fn existing_files_are_committed_but_secrets_and_caches_are_not() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("app.py"), "print(1)\n").unwrap();
+        std::fs::write(d.join(".env"), "API_KEY=secret\n").unwrap();
+        std::fs::create_dir_all(d.join("node_modules/x")).unwrap();
+        std::fs::write(d.join("node_modules/x/i.js"), "").unwrap();
+        let setup = ensure_repo(d).unwrap().unwrap();
+        let files = tracked(d);
+        assert!(files.contains(&"app.py".to_string()), "{files:?}");
+        assert!(
+            !files
+                .iter()
+                .any(|f| f.contains(".env") && f != ".gitignore"),
+            "{files:?}"
+        );
+        assert!(
+            !files.iter().any(|f| f.starts_with("node_modules")),
+            "{files:?}"
+        );
+        assert!(setup.summary.contains("2 files"), "{}", setup.summary);
+        assert!(
+            porcelain(d).unwrap().is_empty(),
+            "a clean tree to build from"
+        );
+    }
+
+    /// A repository someone made but never committed to gets its first
+    /// commit, and is not reported as created (so no "delete .git" advice).
+    #[test]
+    fn an_unborn_repository_gets_a_first_commit_only() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        git(d, &["init", "-q", "-b", "trunk"]).unwrap();
+        std::fs::write(d.join(".gitignore"), "secret.txt\n").unwrap();
+        std::fs::write(d.join("secret.txt"), "x").unwrap();
+        let setup = ensure_repo(d).unwrap().unwrap();
+        assert!(!setup.created);
+        assert_eq!(branch(d).unwrap(), "trunk", "their branch name is kept");
+        // Their own .gitignore is used, not replaced.
+        assert_eq!(
+            std::fs::read_to_string(d.join(".gitignore")).unwrap(),
+            "secret.txt\n"
+        );
+        assert!(!tracked(d).contains(&"secret.txt".to_string()));
+    }
+
+    /// A repository with history is left alone.
+    #[test]
+    fn a_repository_with_history_is_left_alone() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path()).unwrap();
+        let before = head(dir.path()).unwrap();
+        assert_eq!(ensure_repo(dir.path()).unwrap(), None);
+        assert_eq!(head(dir.path()).unwrap(), before);
+        assert!(!dir.path().join(".gitignore").exists());
     }
 }

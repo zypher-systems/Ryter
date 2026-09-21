@@ -148,6 +148,7 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
             view.phase = *phase;
             view.session_title = title.clone();
         }
+        AgentEvent::Notice { message } => view.system(message.clone()),
         AgentEvent::Error { message } => {
             let was_busy = view.busy || view.activity.busy();
             view.busy = false;

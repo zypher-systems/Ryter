@@ -13,10 +13,10 @@
                                                       ╭─ spend ────────────────╮
 ╭─ commands ────────────────────────────── 4 of 23 ─╮ │ session          $?.?? │
 │ mo                                                │ ╰────────────────────────╯
-│›/models         Switch the lead's model        ▸  │ ╭─ budget ────────── ?% ─╮
-│ /tools          Tool permission mode           ▸  │ │     ░░░░░░░░░░░░       │
-│ /crew           Assign models per specialist … ▸  │ │ used    $?.?? of $5.00 │
-│ /skills         Browse, run, create, and remo… ▸  │ ╰────────────────────────╯
+│›/models         Switch the lead's model        ▸  │ ╭─ budget ───────── off ─╮
+│ /tools          Tool permission mode           ▸  │ │ cap                off │
+│ /crew           Assign models per specialist … ▸  │ ╰────────────────────────╯
+│ /skills         Browse, run, create, and remo… ▸  │
 ╰─ enter run · tab complete · esc close ────────────╯
 ╭─ dusty ──────────────────────────────────────────────────────────────────────╮
 │› /mo█                                                                        │
