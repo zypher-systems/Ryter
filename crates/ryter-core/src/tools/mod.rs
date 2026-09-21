@@ -514,7 +514,12 @@ mod tests {
     fn ask_is_fail_closed_without_tui() {
         let dir = TempDir::new().unwrap();
         let c = ctx(Role::Builder, dir.path());
-        let out = gated_execute("bash", &json!({"command": "rm -rf doomed"}), &c).unwrap();
+        let out = gated_execute(
+            "bash",
+            &json!({"command": "rm -rf /nonexistent-ryter-ask-fixture"}),
+            &c,
+        )
+        .unwrap();
         assert!(out.is_error);
         assert!(out.text.contains("no TUI"), "{out:?}");
     }
@@ -526,7 +531,12 @@ mod tests {
         let mut c = ctx(Role::Builder, dir.path());
         c.user_io = Some(io);
         let worker = std::thread::spawn(move || {
-            gated_execute("bash", &json!({"command": "rm -rf doomed"}), &c).unwrap()
+            gated_execute(
+                "bash",
+                &json!({"command": "rm -rf /nonexistent-ryter-ask-fixture"}),
+                &c,
+            )
+            .unwrap()
         });
         match rx.recv_timeout(std::time::Duration::from_secs(2)) {
             Ok(crate::user_io::UserRequest::Permission { reply, .. }) => {
