@@ -2,6 +2,30 @@
 
 Why, not what. Specialists append when they make a non-obvious choice.
 
+### 2026-09-21 — Local connections are keyless and cost $0
+- **By:** orchestrator
+- **Decision:** A `local` connection kind (presets `ollama`, `lmstudio`, `llamacpp`) needs no key and sends no Authorization header. Its calls are priced at $0 in the meter and the lead's turns; its tokens still count against `task_max_tokens`. A refused connection fails at once with "is it running?". Idle timeout is 600s.
+- **Chosen vs rejected:** Rejected leaving local calls unpriced (`$?.??`): the API cost is genuinely zero, and an unknown price would disable the dollar caps' meaning for the cheapest crew. Rejected retrying a refused local connection: a server that is not up will not be up in three seconds.
+- **Why:** A local builder is the cheapest crew there is (`docs/cost.md`: ~0.24×), and nothing let a keyless server be connected.
+- **Where:** `config.rs` (`connection_template`, `is_local`, `local_connections`), `llm/http.rs`, `meter.rs` (`with_free`), `agent.rs`
+- **Residual risk:** $0 ignores electricity and hardware. Local models' tool use varies widely; `ryter bench` is how to tell whether one can build.
+
+### 2026-09-21 — Crew suggestions rank by price, fenced by what price gets wrong
+- **By:** orchestrator
+- **Decision:** `ryter crew suggest` / `s` in `/crew` proposes a builder (a local model; else the lead's own model when builder-priced; else the cheapest in a band of 1/30–1/4 of the strongest), an auditor (strongest model from another vendor than lead and builder), and an architect (strongest under a ~$15/M blended ceiling). Excluded outright: router meta-models, negative prices, no tool support, windows under 64k, cloud `:variant` ids, and models more than 18 months older than the newest in the catalog.
+- **Chosen vs rejected:** Rejected price alone: tuned against a live 446-model OpenRouter catalog, it picked a router priced at -1/token as the cheapest builder and 2023's gpt-4 as the strongest model. Rejected a hard-coded model list (stale within months). Rejected letting the builder floor overrule the lead model the user already chose.
+- **Why:** Independence requires a second model, and tiering is where the savings are. Price is the only quality signal before a benchmark; the suggestion says so every time.
+- **Where:** `crates/ryter-core/src/tiering.rs`, `ModelInfo.created` / `.tools`, TUI `panel/crew.rs`, `ryter crew suggest`
+- **Residual risk:** Direct-provider catalogs (xAI, Anthropic) carry no release date or tool flag, so fewer fences apply to them. The ceiling and band are judgment calls to revisit with benchmark data.
+
+### 2026-09-21 — The benchmark's ground truth is hidden tests
+- **By:** orchestrator
+- **Decision:** `ryter bench` runs each task through the real crew in a fresh repo and runs *hidden* acceptance tests, never shown to the crew, only after work lands. It reports landed, accepted, false passes (landed but failed hidden tests), and cost per accepted task. Every shipped task carries a reference solution, and a test proves each task is unsolved as shipped and solvable.
+- **Chosen vs rejected:** Rejected measuring "landed" alone: that measures the auditor's opinion, not the work. Rejected running the lead in the loop: it adds variance and cost without telling us about builder/auditor tiering.
+- **Why:** docs/cost.md's per-task numbers are assumptions; tiering decisions need measured cost per accepted task, and the false-pass rate is the only measurement of how far the auditor can be trusted.
+- **Where:** `crates/ryter-core/src/bench.rs`, `bench/`, `ryter bench`
+- **Residual risk:** Four small Python tasks are a smoke test, not a benchmark of real-world work; the suite must grow (multi-file, Rust/TS, parallel tasks) before its numbers mean much.
+
 ### 2026-09-21 — The user receives one patch, not a stream of merges
 - **By:** user (product decision), orchestrator (design)
 - **Decision:** In Build, tasks land on an integration branch (`ryter/patch-<id>-<n>`). The patch lands on the user's branch as one `--no-ff` commit only when every task in it is done, after a final run of the checks on the combined tree. A blocked task holds the whole patch until it is retried or dropped; a fix task lands into the same patch. If the user committed meanwhile, their branch is integrated in the patch worktree and any resolution is re-audited.

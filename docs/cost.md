@@ -119,8 +119,8 @@ print(single, ryter(1_500, True, 0.25, 1, 0.25))    # now, tiered
    *different* provider. Independence is already required, so setup has to ask for
    two models anyway. Make the cheap-builder / strong-reviewer split the default,
    not something the user has to discover.
-2. **Local builders.** An `openai_compat` connection to a local model makes the
-   builder nearly free. What's left is the quality tax, ~$0.12 per task in the
+2. **Local builders.** A `local` connection (`--kind ollama`, `lmstudio`, or
+   `llamacpp`) makes the builder nearly free, and `crew suggest` picks it. What's left is the quality tax, ~$0.12 per task in the
    model above. Test this against the benchmark before recommending it.
 3. **Fewer builder rounds through better briefs.** Rounds are the multiplier in
    every row. The architect has already read the relevant code, so it should put
@@ -144,8 +144,8 @@ task it is the cheapest part of the pipeline.
 ## 5. How to know
 
 The meter now produces the real numbers: cost per task, per role, and per model,
-in `spend.jsonl`. The task benchmark turns them into the figure that decides
-whether the product works:
+in `spend.jsonl`. `ryter bench` turns them into the figure that decides whether
+the product works (`ryter bench --crew <preset>` to compare tierings):
 
 > **Cost per landed task, at a given land rate.**
 

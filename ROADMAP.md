@@ -12,8 +12,8 @@ Living plan for Ryter. Orchestrator and specialists update this as work lands.
 
 Product direction: `docs/product-direction.md`. Crew contract: `crew.md`. Cost model: `docs/cost.md`.
 
-- **Tiered defaults in setup.** Independence now requires two models, so first run must ask for them. Default to a cheap builder and a strong auditor/architect from another provider — tiering is what makes a crew cheaper than a strong single agent (`docs/cost.md`).
-- **Task benchmark with cost per landed task.** The meter now records real per-task, per-role spend; the benchmark turns it into land rate and cost per landed task by tiering, and replaces the cost model's assumptions with measurements.
+- **Grow the benchmark, then run it.** `ryter bench` and a 4-task starter suite exist; before its numbers mean much it needs multi-file and multi-task (parallel) cases, a Rust and a TypeScript task, and a run per candidate tiering. Then fold the measurements back into `docs/cost.md` and the suggester's ceiling and band.
+- **Tiered defaults at first run.** `ryter crew suggest` exists; first-run setup and the builds-paused message should offer it directly rather than pointing at it.
 - **Crew spend where people look.** Per-role lines (builder / auditor / architect) on the spend card and `/spend`; per-task cost on the crew review surface. A cost preview before a batch, with a threshold that asks.
 - **`/patch` surface.** Show the open patch (tasks, what it waits on), land now, drop it.
 - **Checks auto-detect** on first use (`Cargo.toml` → `cargo test`, `package.json` → its test script, `pyproject.toml` → `pytest`, `go.mod` → `go test`), written to `.ryter/config.toml` after the user confirms.
@@ -39,6 +39,13 @@ Previously listed:
 - Session search across transcripts from `/sessions`
 
 ## Done
+
+### 0.2.0-patch — local models, tiered crews, benchmark (2026-09-21)
+
+- `local` connections (Ollama / LM Studio / llama.cpp): keyless, $0, fail fast when down; Anthropic endpoint fixed; first socket-level provider test
+- `ryter crew suggest [--apply]` and `s` in `/crew`: cheap builder, independent strong auditor, strong architect, fenced against price-only traps found on a live catalog
+- `ryter bench`: real crew, fresh repos, hidden acceptance tests, false passes, cost per accepted task; starter suite with a soundness test
+- Crew spend written to disk as charged, so an interrupted run still has a record
 
 ### 0.2.0-patch — cost, patch, independent sign-off (2026-09-21)
 

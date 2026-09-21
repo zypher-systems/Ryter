@@ -146,6 +146,8 @@ Auditors must be different models from the orchestrator and the builder — othe
 
 For a trivial change the orchestrator can `propose_edit`: you see the diff and press `y`. Only a person can approve it.
 
+`ryter crew suggest` (or `s` in `/crew`) proposes a cost-tiered crew from every model you can reach; `--apply` saves it and keeps your old crew as the `before-suggest` preset. A local model server works as a connection with no key: `ryter connections add box --kind ollama --model qwen3-coder:30b`. `ryter bench` runs `bench/` through the crew and reports what landed, what passed hidden tests, and the cost per accepted task — it spends real money.
+
 Crew spend is metered per task and role and counts against `[spend] session_budget_usd`; each task also stops at `task_budget_usd` / `task_max_tokens`. See `docs/cost.md`.
 
 `/auditor on|off` is session-only unless you also change config. With the auditor off, **nothing merges**: finished work waits on its branch. After each batch the orchestrator gets the crew report, tells you what landed, and records builder decisions in `DECISIONS.md` — builders never write project memory themselves.
