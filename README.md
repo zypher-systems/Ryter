@@ -29,12 +29,11 @@ Open tasks become specialists, up to `[subagents] max` at once:
 
 | Phase | Who runs |
 | --- | --- |
-| Plan | planners |
-| Architect | architects |
-| **Build** (default) | builders in worktrees, then an auditor |
-| Audit | extra review specialists |
+| Plan | the architect: shapes the change and writes the task list |
+| **Build** (default) | builders in parallel worktrees, each gated before it merges |
+| Audit | extra review |
 
-A builder pass that the auditor accepts is merged automatically. `/auditor off` skips the gate.
+Nothing reaches your branch until the project's checks pass and an auditor signs off (`VERDICT: PASS`). With `/auditor off`, finished work waits on its branch for you. See `crew.md` for the full contract.
 
 ## CLI
 

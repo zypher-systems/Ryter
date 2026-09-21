@@ -10,17 +10,18 @@ Living plan for Ryter. Orchestrator and specialists update this as work lands.
 
 ## Next
 
-Correctness and cost follow-ups from the 0.2.0 review (see `DECISIONS.md` 2026-09-21):
+Product direction and its reasoning: `docs/product-direction.md`. Crew contract: `crew.md`.
 
-- **`/diff` review surface.** The auto-merge gate is an LLM auditor that by default is the same model as the builder, so PASS is not an independent opinion. Merging now refuses a dirty tree and records an undo sha, but the real fix is letting the user see a builder's diff before it lands.
-- **Streamed `bash` output.** The shell buffers, so a 120s build shows nothing until it finishes. Needs an incremental `AgentEvent`.
-- **Reconcile the context gauge with real usage.** `estimate_tokens` is bytes/4 and is never checked against the provider's `input_tokens`, which is already parsed into `Usage`. Auto-compact at 85% therefore fires on a guess, and there is no retry-with-compaction when a provider rejects a turn for length.
-- **Budget cap with unpriced models.** `over_budget` cannot trip when spend is unknown, so an unpriced model has no cap. The UI no longer claims otherwise (`?%`), but the guardrail is absent — needs either a token-based cap or a refusal to run unpriced without an explicit opt-in.
-- **Compaction keeps a summary, not just a file list.** `extract_prefix` preserves tool names, touched paths, and the pass note; all prose is dropped. Deliberate (deterministic, no extra model call) but lossy enough to feel like amnesia in a long session.
-- **`ryter-cli` has no tests.** 934 lines, one integration test. `--prompt`, `serve`, `sessions`, exit code 3 for budget — all unverified. Also missing for automation: `--allowed-tools`, `--max-turns`, headless `--resume`, shell completions.
-- **Anthropic extended thinking + tools.** "Reasoning is display-only" is right for most providers, but thinking blocks must be echoed back on the `messages` backend or the API rejects the request. `Message.content: String` structurally forbids it (as it does images).
-- **Transcript anchoring.** A short transcript is top-anchored, so an idle 160×50 is mostly blank above the composer. Whether it should sit above the composer like a terminal chat is a `design.md` question (see `gaps.md` G-03).
-- **Confirm grok-4.6's context window.** `compact::window_for` says 500k; the TUI fixtures say 256k. The catalog value wins at runtime, so this only matters pre-connection, but the two should agree.
+- **Make "tested and independently reviewed" true by default.** Checks auto-detect on first use (`Cargo.toml` → `cargo test`, `package.json` → its test script, `pyproject.toml` → `pytest`, `go.mod` → `go test`), written to `.ryter/config.toml` after the user confirms. First-run setup puts the auditor on a different model or provider from the builder; warn in `/crew` and `doctor` when they match.
+- **Recorded wire fixtures + a live smoke test.** Tool calling was broken on two backends while 212 tests passed, because every test used idealized deltas. Record real SSE per provider (tool calls, parallel calls, truncation) and replay those; add one nightly live round trip per built-in provider.
+- **Crew review surface.** One panel for every task: state, diff, handback, checks, audit, cost; merge a waiting branch, retry with a note, reject, revert a merged task (`git revert -m 1`). The tasks card opens it.
+- **Cost per task and a cap per task.** A crew multiplies spend. Also: refuse unpriced models without an explicit opt-in, since `over_budget` cannot trip on unknown spend.
+- **Task benchmark.** ~20 real tasks in fixture repos, end to end: landed / rejected / conflicted, cost per landed task, wall time, per model pairing. Tune prompts and default pairings against it.
+- **Fast path for trivial edits.** Orchestrator proposes a small diff, applied on `y` (user approval is sign-off). Open question in `crew.md`.
+- **Streamed `bash` output**, and **reconcile the context gauge** with the provider's real `input_tokens` rather than bytes/4.
+- **`ryter run tasks.toml`** unattended, producing branches or PRs with the audit as the description.
+- **macOS without the sandbox**, labelled Linux-only.
+- Anthropic extended thinking + tools (thinking blocks must be echoed back on `messages`); compaction that keeps a summary rather than a file list; `ryter-cli` tests; confirm grok-4.6's context window (500k in `window_for`, 256k in fixtures).
 
 Previously listed:
 
@@ -35,6 +36,16 @@ Previously listed:
 - Session search across transcripts from `/sessions`
 
 ## Done
+
+### 0.2.0-patch — crew rebuilt around sign-off (2026-09-21)
+
+- Streamed tool calls reassemble on every backend; Anthropic models can call tools (they could not); Messages specialists receive their role prompt
+- Build pipeline: integrate into the worktree, harness-run checks, auditor `VERDICT: PASS`, serialized `--no-ff` land; nothing lands with the auditor off; conflicts never touch the user's checkout and are re-audited
+- Tasks carry `brief` + `files`; disjoint scopes run in parallel; the architect writes the real queue
+- Planner folded into architect; phases plan → build → audit, old names still parse
+- Serial memory writers; builder handback contract; crew report returned to the orchestrator
+- All four prompts rewritten with output contracts pinned by tests; `grep` gains `path` / `include`
+- `crew.md` design contract; `docs/product-direction.md`
 
 ### 0.2.0-patch — review fixes (2026-09-21)
 

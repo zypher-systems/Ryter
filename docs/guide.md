@@ -116,33 +116,33 @@ The orchestrator prompt is `prompts/orchestrator.md` (overridable). It may read 
 
 | Command | Phase | Specialists |
 | --- | --- | --- |
-| `/plan` | Plan | planners |
-| `/architect` | Architect | architects |
-| `/build` | Build | builders + auditor gate |
+| `/plan` (`/architect`) | Plan | the architect |
+| `/build` | Build | builders, gated by checks + auditor |
 | `/audit` | Audit | extra reviewers |
 
-`/handoff architect` (or `ryter handoff architect --note "…"`) writes a pass note for the current phase and switches. Empty notes are allowed. `/handoff back` goes to the previous phase. The orchestrator transcript is not cleared. Specialists get a **fresh window**: pass note + task + `RYTER.md` / `AGENTS.md`, not the chat history.
+`/handoff plan` (or `ryter handoff plan --note "…"`) writes a pass note for the current phase and switches. Empty notes are allowed. `/handoff back` goes to the previous phase. The orchestrator transcript is not cleared. Specialists get a **fresh window**: their task brief + `RYTER.md` / `AGENTS.md` + project memory, not the chat history.
 
 Project markdown is loaded from the working tree without a trust gate: `RYTER.md`, or `AGENTS.md` if `RYTER.md` is absent.
 
 ## Build workers, auditor, merge
 
-`todo_write` **is** the work queue. After an orchestrator turn with no remaining tool calls, Ryter drains pending tasks for the **current phase**, up to `[subagents] max` in parallel (must be ≥ 1). Plan → planners, Architect → architects, Build → builders + auditor, Audit → extra auditors.
+`todo_write` **is** the work queue. After an orchestrator turn with no remaining tool calls, Ryter drains pending tasks for the **current phase**, up to `[subagents] max` in parallel (must be ≥ 1). Plan → the architect, Build → builders + auditor, Audit → extra auditors. Tasks declare the `files` they own; disjoint tasks run in parallel, overlapping or undeclared ones one at a time.
 
 Crew roles default to the orchestrator’s current provider and model. Assign a different model per role with `/crew` (Enter on a role, first picker row is `default`). That is also how you split providers. Optional `[specialists.*]` tables in `~/.ryter/config.toml` pin the same overrides.
 
-Each builder:
+Each builder task:
 
 1. `git worktree add` under `~/.ryter/worktrees/<session>/<task>/` on branch `ryter-<8hex>-<slug>`
-2. Implements the task with a builder prompt and a builder tool mask
-3. Commits
-4. Auditor (if enabled) sees the diff and replies `PASS` or `FAIL`
-5. Pass → merge into the session branch (rebase once on conflict; if that still fails, one extra builder turn in the worktree, then `blocked`). Fail → retry up to `[auditor] max_retries`, then `blocked` with no merge
-6. Worktree is removed
+2. The builder implements its brief and ends with a handback (`STATUS / FILES / DECISIONS / NOTES`)
+3. The runtime commits, then merges **your branch into the worktree**. Conflicts are resolved there by a builder — never in your checkout — and the resolution is re-audited
+4. **Checks**: `[auditor] checks` run in the worktree (set them per project in `.ryter/config.toml`). A failure rejects the work before any audit
+5. **Auditor**: reviews the brief, handback, check output, and full diff, and ends with `VERDICT: PASS` or `VERDICT: FAIL`
+6. **Land**: one `--no-ff` merge commit (undo with `git revert -m 1`). If your branch moved meanwhile, it re-integrates and re-checks first. If you have uncommitted edits to the same files, it stops and keeps the branch
+7. Rejected → retry with the findings, up to `[auditor] max_retries`, then `blocked`
 
-`/auditor on|off` is session-only unless you also change config. Status line shows the gate. `/auditor off` merges without review.
+`/auditor on|off` is session-only unless you also change config. With the auditor off, **nothing merges**: finished work waits on its branch. After each batch the orchestrator gets the crew report, tells you what landed, and records builder decisions in `DECISIONS.md` — builders never write project memory themselves.
 
-Planners and architects run in-process (no worktree). Nested subagents are not supported.
+The architect runs in-process (no worktree) and writes tasks straight into the queue builders read from. Nested subagents are not supported.
 
 ## Spend
 
@@ -215,17 +215,17 @@ Look at `git diff` and report findings.
 
 `ryter doctor` (and the `/doctor` panel, which runs the checks off-thread and can save the report with `c`) checks OS, tty, home, config, both built-in connections (key set/missing, never printed), spend catalog, git, Landlock, sandbox profile, and whether `.ryter/` is trusted. No network.
 
-`--sandbox workspace` Landlock-restricts the tool thread to the project tree (writable) plus `~/.ryter`. `--sandbox read-only` makes the project tree read-only. `--sandbox off` is the default. A non-off profile **refuses to start** if the kernel cannot enforce Landlock. `/tmp` itself is not granted; scratch is `~/.ryter/tmp`. Sandboxed runs use a current-thread tokio runtime.
+`--sandbox workspace` Landlock-restricts the tool thread to the project tree (writable) plus `~/.ryter/{tmp,logs,sessions}` — never `~/.ryter/keys`. The sandbox is filesystem-only; it does not restrict network. `--sandbox read-only` makes the project tree read-only. `--sandbox off` is the default. A non-off profile **refuses to start** if the kernel cannot enforce Landlock. `/tmp` itself is not granted; scratch is `~/.ryter/tmp`. Sandboxed runs use a current-thread tokio runtime.
 
 ## Safety
 
 - One gate: `decide(role, tool, args)` → Allow / Ask / Deny. Role masks omit tools the model should not see.
 - Orchestrator: read, list, grep, glob, `todo_write`, MCP. Cannot write `src/`.
-- Planner / architect: notes + read tools.
-- Builder: full tool set in its worktree.
-- Auditor: read + test/lint bash.
+- Architect: read tools, project memory, `todo_write`.
+- Builder: full tool set in its worktree; denied project memory files.
+- Auditor: read tools + test/lint/read-only-git bash; no write tools.
 - Denied even for builders: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files.
-- Destructive bash is Ask. In the TUI a permission modal shows the tool and its arguments: `y` allow this call, `n` deny, `a` allow for the rest of the session. Headless (no TUI) fail-closes.
+- Shell commands are judged per segment (`a && b` is two commands). Privilege escalation, disk writes, `git push`, and piping into a shell are denied; destroying files outside the worktree is Ask. In the TUI a permission modal shows the tool and its arguments: `y` allow this call, `n` deny, `a` allow for the rest of the session. Headless (no TUI) fail-closes.
 - `ask_user` lets the orchestrator ask a question; the TUI shows it as a modal (number keys pick a choice, or type free text).
 - `[features] web = true` offers `web_fetch` / `web_search`. Localhost and private IPs are blocked.
 - Hooks can still deny after the policy allows.

@@ -24,7 +24,7 @@ model = "grok-4.6"
 
 # Crew defaults follow the orchestrator. Assign per-role models in the TUI (/crew)
 # or uncomment:
-# [specialists.planner]
+# [specialists.architect]
 # connection = "openrouter"
 # model = "anthropic/claude-sonnet-4.6"
 

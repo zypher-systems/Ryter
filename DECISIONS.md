@@ -2,6 +2,38 @@
 
 Why, not what. Specialists append when they make a non-obvious choice.
 
+### 2026-09-21 — Work lands only after checks and sign-off, integrated in the worktree
+- **By:** orchestrator
+- **Decision:** A build task is builder → commit → merge the user's branch *into the worktree* → harness-run `[auditor] checks` → auditor `VERDICT: PASS` → serialized `--no-ff` land. With the auditor off nothing lands; the branch waits. A conflict is resolved by a builder in the worktree and the result is re-audited. If the target moves while a task is gated, it re-integrates and re-runs the checks; the auditor re-runs only if a resolver changed code. A dirty user tree blocks only when its dirty files overlap the task's changed files.
+- **Chosen vs rejected:** Rejected merging into the user's checkout and rebasing on conflict (the old path left the checkout mid-merge with markers when both failed). Rejected re-auditing after every clean re-integration (cost, and a clean merge of already-audited upstream work does not change what this builder wrote). Rejected letting the auditor decide whether to run tests.
+- **Why:** The product promise is that you can stop watching. That needs a gate that is mechanical first (tests the harness runs), independent second (a reviewer that did not write the code), and never destructive to the user's checkout. Integrating into the worktree first means landing cannot conflict.
+- **Where:** `crates/ryter-core/src/crew.rs` (`run_build_task`, `build_inner`, `run_checks`, `audit`), `git.rs` (`integrate`, `land`), `crew.md` §4
+- **Residual risk:** The auditor is still the same model as the builder unless `/crew` says otherwise, so "independent" is a default to fix, not a fact (`crew.md` open question 2). With no checks configured, whether anything is tested is up to a model. An LLM resolving conflicts can misjudge intent; re-audit catches some of that, not all.
+
+### 2026-09-21 — The planner is folded into the architect
+- **By:** orchestrator
+- **Decision:** Roles are orchestrator, architect, builder, auditor. Phases are plan → build → audit; the plan phase runs the architect. `planner` and the `architect` phase still parse; old sessions, logs, and saved crew rows load (a `planner` crew row routes the architect).
+- **Chosen vs rejected:** Rejected keeping two pre-build roles. Rejected dropping the pre-build phase entirely (it is a useful guardrail: nothing writes source).
+- **Why:** Planner and architect had identical tools and outputs and ran strictly in sequence, each in a fresh window that re-read the repository, losing detail at the handoff. Planning scope is largely what the orchestrator learns in conversation; the architect's job is to turn it into a shape and tasks.
+- **Where:** `role.rs`, `phase.rs`, `prompts/architect.md`, TUI `/crew` and `/phase`
+- **Residual risk:** One fresh window now carries both jobs, so a very large change may want the architect run more than once.
+
+### 2026-09-21 — Project memory has serial writers; builders hand back
+- **By:** orchestrator
+- **Decision:** Only the orchestrator and the architect write `ROADMAP.md`, `DECISIONS.md`, and `notes/`. Builders are denied those paths and end with a `STATUS / FILES / DECISIONS / NOTES` handback; the auditor has no write tools. After a batch the orchestrator receives the crew report and records what matters.
+- **Chosen vs rejected:** Rejected letting builders append to DECISIONS.md and resolving the conflicts. Rejected having the runtime append builder decisions verbatim (lossy in the other direction: every trivial choice would be recorded).
+- **Why:** N builders in N worktrees each editing the same memory files conflicted on every parallel merge by construction, and the auditor's writes were discarded with its worktree. One writer at a time removes the conflict instead of resolving it.
+- **Where:** `tools/policy.rs` (`decide_write`), `tools/mod.rs` (`tools_for`), `agent.rs` (`drain_crew`, `crew_report_message`), `prompts/builder.md`
+- **Residual risk:** A decision reaches DECISIONS.md only if the orchestrator's model judges it worth recording.
+
+### 2026-09-21 — Tasks carry a brief and a file scope
+- **By:** orchestrator
+- **Decision:** A task is `{id, title, brief, files}`. The brief is the builder's whole spec. The scheduler runs tasks with disjoint scopes in parallel and serializes overlapping or undeclared ones.
+- **Chosen vs rejected:** Rejected running undeclared tasks in parallel and letting the merge sort it out (conflicts would become the common case). Rejected declared dependencies for now; queue order plus scope serialization covers the cases seen so far.
+- **Why:** A task used to be a title string and a builder's brief was that title. Parallelism is the payoff for worktrees, and it is only safe when tasks do not touch the same files.
+- **Where:** `queue.rs` (`Task`, `can_run_together`, `take_pending`), `todo_write` schema in `tools/mod.rs`
+- **Residual risk:** Scopes are declared by a model. A builder can still edit outside its scope (it is told to say so in the handback, and the auditor checks scope), so overlap is prevented by convention plus review, not by the sandbox.
+
 ### 2026-09-21 — Shell commands are judged per segment, not by substring
 - **By:** orchestrator
 - **Decision:** `decide_bash` splits a command the way a shell would (quote-aware, including `$( )` and backticks) and takes the most restrictive verdict across segments. `NEVER` denies privilege escalation, disk/device writes, host config, and outbound shells for every role. An interpreter with no script file is denied. Destruction is judged before the role: non-writing roles never destroy, builders may inside their worktree, escaping it prompts.
@@ -19,6 +51,7 @@ Why, not what. Specialists append when they make a non-obvious choice.
 - **Residual risk:** Users who learned the alias will press `Enter` and see nothing happen. That is the safe direction.
 
 ### 2026-09-21 — Auto-merge refuses a dirty checkout and lands as one commit
+- **Superseded** later the same day by "Work lands only after checks and sign-off": a dirty tree now blocks only when the dirty files overlap the task, and conflicts are resolved in the worktree.
 - **By:** orchestrator
 - **Decision:** Before merging a builder branch, refuse if `repo` has uncommitted changes and say why. Merge `--no-ff` so a task is one revertable commit, and report the pre-merge sha as an undo point. The auditor no longer runs with `always_approve: true`.
 - **Chosen vs rejected:** Rejected refusing to merge onto `main` (people legitimately work there). Rejected a mandatory human review step for now — that needs a `/diff` surface first.

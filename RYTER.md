@@ -4,7 +4,7 @@ Instructions for Ryter (and any other coding agent) working **in this repo**.
 
 ## Product
 
-Ryter is a Linux-first BYOK terminal coding harness. The user talks to an **orchestrator**. Plan / Architect / Build / Audit are **specialist kinds** with their own context, not costumes on one body. Do not mention or copy Conn.
+Ryter is a Linux-first BYOK terminal coding harness. The user talks to an **orchestrator**. Architect / Builder / Auditor are **specialist kinds** with their own context, not costumes on one body (`crew.md`). Do not mention or copy Conn.
 
 ## Layout
 
@@ -28,7 +28,7 @@ Edition 2024, MSRV 1.88, Apache-2.0. `#![forbid(unsafe_code)]`.
 - TUI chrome is structural — borders group and separate, they never decorate. Panels are bordered; the base layout uses hairline rules. Golden snapshots under `crates/ryter-tui/snapshots/` are the contract; regenerate with `UPDATE_SNAPSHOTS=1` only when the change is intended.
 - Specialists get a fresh window (pass note + task + this file + ROADMAP/DECISIONS). Do not dump the orchestrator transcript into a builder.
 - `ROADMAP.md` and `DECISIONS.md` are required project memory. Update them as work changes. Decisions are the *why* (including obscure risks); the code is the *what*. The orchestrator must not invent a why when a decision is recorded.
-- `[subagents] max` ≥ 1. Builders always use a git worktree. Auditor pass auto-merges; fail retries then blocks.
+- `[subagents] max` ≥ 1. Builders always use a git worktree. Nothing lands without passing checks and a `VERDICT: PASS`; conflicts are resolved in the worktree, never the user's checkout. Only the orchestrator and architect write project memory.
 - MCP is a small JSON-RPC 2.0 stdio subset in-tree. Do not add the `rmcp` crate.
 - Landlock non-off profiles fail closed. Do not silently no-op a requested sandbox.
 
