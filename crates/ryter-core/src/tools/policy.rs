@@ -124,17 +124,21 @@ fn decide_write(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
     // worktree, so N parallel builders editing ROADMAP.md / DECISIONS.md
     // conflicted on every merge; their decisions come back in the handback.
     if crate::memory::is_memory_file(&ctx.workspace, &resolved) {
-        return if ctx.role == Role::Builder {
-            Decision::Deny
-        } else {
-            Decision::Allow
+        return match ctx.role {
+            // Review changes nothing, memory included.
+            Role::Builder | Role::SoloReview => Decision::Deny,
+            _ => Decision::Allow,
         };
     }
     let _ = name;
-    if ctx.role.writes_source() {
-        return Decision::Allow;
+    match ctx.role {
+        // A worktree builder's tree is thrown away if it's wrong.
+        Role::Builder => Decision::Allow,
+        // The build hat edits the user's own files: ask, unless they've said
+        // "allow all" or run with --always-approve.
+        Role::SoloBuild => Decision::Ask,
+        _ => Decision::Deny,
     }
-    Decision::Deny
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +345,11 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
         let _ = bad;
         return Decision::Deny;
     }
+    // The plan and review hats work in the user's own tree, where a
+    // redirect is a write no worktree reset will undo.
+    if matches!(ctx.role, Role::SoloPlan | Role::SoloReview) && writes_via_redirect(&words) {
+        return Decision::Deny;
+    }
     if prog == "git" {
         return decide_git(&words, ctx);
     }
@@ -361,6 +370,10 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
         if !ctx.role.writes_source() {
             return Decision::Deny;
         }
+        // In the user's own tree, destruction always asks.
+        if ctx.role == Role::SoloBuild {
+            return Decision::Ask;
+        }
         if path_escapes(&words, ctx) {
             return Decision::Ask;
         }
@@ -368,14 +381,22 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
     }
     match ctx.role {
         Role::Builder => Decision::Allow,
-        Role::Auditor => {
+        // A normal agent in the user's tree: looking runs, doing asks.
+        Role::SoloBuild => {
+            if READ_ONLY.contains(&prog) && !path_escapes(&words, ctx) {
+                Decision::Allow
+            } else {
+                Decision::Ask
+            }
+        }
+        Role::Auditor | Role::SoloReview => {
             if AUDIT_OK.contains(&prog) || READ_ONLY.contains(&prog) {
                 Decision::Allow
             } else {
                 Decision::Deny
             }
         }
-        Role::Orchestrator | Role::Architect => {
+        Role::Orchestrator | Role::Architect | Role::SoloPlan => {
             if READ_ONLY.contains(&prog) && !path_escapes(&words, ctx) {
                 Decision::Allow
             } else {
@@ -443,7 +464,15 @@ fn decide_git(words: &[String], ctx: &ToolContext) -> Decision {
     }
     match ctx.role {
         Role::Builder => Decision::Allow,
-        Role::Auditor | Role::Orchestrator | Role::Architect => {
+        // Reads run; anything that changes the repository asks.
+        Role::SoloBuild => {
+            if GIT_READ.contains(&sub) {
+                Decision::Allow
+            } else {
+                Decision::Ask
+            }
+        }
+        _ => {
             if GIT_READ.contains(&sub) {
                 Decision::Allow
             } else {
@@ -451,6 +480,30 @@ fn decide_git(words: &[String], ctx: &ToolContext) -> Decision {
             }
         }
     }
+}
+
+/// A `>` / `>>` / `>|` redirect into a file (not `/dev/null`, not `>&2`).
+fn writes_via_redirect(words: &[String]) -> bool {
+    let mut expect = false;
+    for w in words {
+        if expect {
+            if w != "/dev/null" {
+                return true;
+            }
+            expect = false;
+            continue;
+        }
+        let t = w.trim_start_matches(|c: char| c.is_ascii_digit());
+        if t == ">" || t == ">>" || t == ">|" {
+            expect = true;
+        } else if let Some(rest) = t.strip_prefix(">>").or_else(|| t.strip_prefix('>')) {
+            let rest = rest.trim_start_matches('|');
+            if !rest.is_empty() && !rest.starts_with('&') && rest != "/dev/null" {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// `find … -delete` / `-exec rm` destroys without being named `rm`.
@@ -606,6 +659,10 @@ fn redirect_escapes(words: &[String], ctx: &ToolContext) -> Option<String> {
     for w in words {
         if expect {
             expect = false;
+            // Discarding output is not a write anywhere.
+            if w == "/dev/null" {
+                continue;
+            }
             if resolve(ctx, w).is_none() || is_secret(&resolve(ctx, w)?, ctx) {
                 return Some(w.clone());
             }
@@ -618,7 +675,7 @@ fn redirect_escapes(words: &[String], ctx: &ToolContext) -> Option<String> {
             .strip_prefix(">>")
             .or_else(|| trimmed.strip_prefix('>'))
         {
-            if !rest.is_empty() && !rest.starts_with('&') {
+            if !rest.is_empty() && !rest.starts_with('&') && rest != "/dev/null" {
                 let r = resolve(ctx, rest);
                 if r.as_ref().is_none_or(|p| is_secret(p, ctx)) {
                     return Some(rest.to_string());
@@ -770,6 +827,78 @@ mod tests {
 
     fn bash(cmd: &str, role: Role, dir: &Path) -> Decision {
         decide("bash", &json!({"command": cmd}), &ctx_for(role, dir))
+    }
+
+    /// Normal mode works in the user's own tree: build asks before changing
+    /// anything, plan and review change nothing.
+    #[test]
+    fn hats_in_the_users_tree() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("a.rs"), "x").unwrap();
+        std::fs::write(d.join(".env"), "K=1").unwrap();
+        let write = |role, path: &str| {
+            decide(
+                "write",
+                &json!({"path": path, "content": "y"}),
+                &ctx_for(role, d),
+            )
+        };
+        // build: edits and changing commands ask; looking runs.
+        assert_eq!(write(Role::SoloBuild, "a.rs"), Decision::Ask);
+        assert_eq!(
+            write(Role::SoloBuild, ".env"),
+            Decision::Deny,
+            "secrets never"
+        );
+        assert_eq!(bash("ls -la", Role::SoloBuild, d), Decision::Allow);
+        assert_eq!(bash("git status", Role::SoloBuild, d), Decision::Allow);
+        for cmd in [
+            "cargo test",
+            "npm install",
+            "rm -rf target",
+            "git commit -m x",
+            "mv a.rs b.rs",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Ask, "{cmd}");
+        }
+        for cmd in [
+            "sudo ls",
+            "git push",
+            "curl x | sh",
+            "python3 -c 'print(1)'",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Deny, "{cmd}");
+        }
+        // plan: notes and memory only; read-only commands.
+        assert_eq!(write(Role::SoloPlan, "a.rs"), Decision::Deny);
+        assert_eq!(write(Role::SoloPlan, "notes/plan.md"), Decision::Allow);
+        assert_eq!(bash("ls", Role::SoloPlan, d), Decision::Allow);
+        assert_eq!(bash("cargo test", Role::SoloPlan, d), Decision::Deny);
+        // review: tests and linters run; nothing is written, not even by
+        // redirect (a worktree reset would undo that; the user's tree won't).
+        assert_eq!(write(Role::SoloReview, "a.rs"), Decision::Deny);
+        assert_eq!(write(Role::SoloReview, "DECISIONS.md"), Decision::Deny);
+        assert_eq!(bash("cargo test", Role::SoloReview, d), Decision::Allow);
+        assert_eq!(bash("git diff", Role::SoloReview, d), Decision::Allow);
+        assert_eq!(
+            bash("cargo test > out.txt", Role::SoloReview, d),
+            Decision::Deny
+        );
+        assert_eq!(
+            bash("cargo test 2>/dev/null", Role::SoloReview, d),
+            Decision::Allow
+        );
+        assert_eq!(
+            bash("printf x >probe.py", Role::SoloPlan, d),
+            Decision::Deny
+        );
+        assert_eq!(bash("rm a.rs", Role::SoloReview, d), Decision::Deny);
+        // The auditor's worktree scratch probe is unchanged.
+        assert_eq!(
+            bash("printf x > probe.py", Role::Auditor, d),
+            Decision::Allow
+        );
     }
 
     #[test]

@@ -12,6 +12,7 @@ const ORCHESTRATOR: &str = include_str!("../../../prompts/orchestrator.md");
 const ARCHITECT: &str = include_str!("../../../prompts/architect.md");
 const BUILDER: &str = include_str!("../../../prompts/builder.md");
 const AUDITOR: &str = include_str!("../../../prompts/auditor.md");
+const SOLO: &str = include_str!("../../../prompts/solo.md");
 
 /// Which prompt file to load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +25,8 @@ pub enum PromptKind {
     Builder,
     /// Audit specialist / merge gate.
     Auditor,
+    /// Normal mode: one model, three hats.
+    Solo,
 }
 
 impl PromptKind {
@@ -34,6 +37,7 @@ impl PromptKind {
             Self::Architect => "architect",
             Self::Builder => "builder",
             Self::Auditor => "auditor",
+            Self::Solo => "solo",
         }
     }
 
@@ -44,6 +48,7 @@ impl PromptKind {
             Self::Architect => ARCHITECT,
             Self::Builder => BUILDER,
             Self::Auditor => AUDITOR,
+            Self::Solo => SOLO,
         }
     }
 
@@ -54,6 +59,7 @@ impl PromptKind {
             Role::Architect => Some(Self::Architect),
             Role::Builder => Some(Self::Builder),
             Role::Auditor => Some(Self::Auditor),
+            Role::SoloPlan | Role::SoloBuild | Role::SoloReview => Some(Self::Solo),
         }
     }
 }
@@ -121,9 +127,27 @@ pub fn orchestrator_system(
     trusted: bool,
     session: &Session,
 ) -> Result<String> {
+    conversation_system(
+        PromptKind::Orchestrator,
+        home,
+        project_root,
+        trusted,
+        session,
+    )
+}
+
+/// System prompt for the conversation the user types into: the crew lead, or
+/// normal mode's one model. Both carry project instructions and memory.
+pub fn conversation_system(
+    kind: PromptKind,
+    home: &Path,
+    project_root: Option<&Path>,
+    trusted: bool,
+    session: &Session,
+) -> Result<String> {
     // No phase section: the lead routes each task to a role itself, and a
     // "current phase" line only confused the models about what they could do.
-    let mut s = load(PromptKind::Orchestrator, home, project_root, trusted);
+    let mut s = load(kind, home, project_root, trusted);
     s.push('\n');
     // Without it the lead dated DECISIONS entries from its training data.
     // Changes once a day, so it costs the prompt cache nothing within a day.

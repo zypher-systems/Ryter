@@ -23,6 +23,96 @@ pub fn git(dir: &Path, args: &[&str]) -> Result<String> {
     Ok(stdout)
 }
 
+/// Run git with a private index, so building a snapshot never touches the
+/// user's staging area.
+fn git_with_index(dir: &Path, index: &Path, args: &[&str]) -> Result<String> {
+    let out = Command::new("git")
+        .args(["-C", &dir.to_string_lossy()])
+        .args(args)
+        .env("GIT_INDEX_FILE", index)
+        .output()
+        .map_err(|e| Error::Io(format!("git: {e}")))?;
+    if !out.status.success() {
+        return Err(Error::Io(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr)
+        )));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Snapshot the working files (tracked and untracked, not ignored) as a
+/// commit object kept under `refs/ryter/undo/`, without touching the
+/// branch, the index, or the files. `None` outside a repository.
+pub fn checkpoint(dir: &Path, name: &str) -> Result<Option<String>> {
+    if !is_repo(dir) {
+        return Ok(None);
+    }
+    let index = std::path::PathBuf::from(
+        git(dir, &["rev-parse", "--git-path", "ryter-undo-index"])?.trim(),
+    );
+    let index = if index.is_absolute() {
+        index
+    } else {
+        dir.join(index)
+    };
+    let _ = std::fs::remove_file(&index);
+    let has_head = head(dir).is_ok();
+    if has_head {
+        git_with_index(dir, &index, &["read-tree", "HEAD"])?;
+    }
+    git_with_index(dir, &index, &["add", "-A"])?;
+    let tree = git_with_index(dir, &index, &["write-tree"])?
+        .trim()
+        .to_string();
+    let _ = std::fs::remove_file(&index);
+    let mut args = vec!["commit-tree", tree.as_str(), "-m", "ryter undo checkpoint"];
+    if has_head {
+        args.extend(["-p", "HEAD"]);
+    }
+    let sha = git_as(dir, &args)?.trim().to_string();
+    git(
+        dir,
+        &["update-ref", &format!("refs/ryter/undo/{name}"), &sha],
+    )?;
+    Ok(Some(sha))
+}
+
+/// The tree a checkpoint recorded, to compare against the files now.
+pub fn checkpoint_tree(dir: &Path, sha: &str) -> Result<String> {
+    Ok(git(dir, &["rev-parse", &format!("{sha}^{{tree}}")])?
+        .trim()
+        .to_string())
+}
+
+/// Put the working files back as `sha` recorded them: restore what changed or
+/// was deleted, and remove files created since. Ignored files, the index,
+/// and the branch are left alone.
+pub fn restore_checkpoint(dir: &Path, sha: &str) -> Result<usize> {
+    let then: std::collections::HashSet<String> = git(dir, &["ls-tree", "-r", "--name-only", sha])?
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let now = git(dir, &["ls-files", "-co", "--exclude-standard"])?;
+    let mut touched = 0;
+    for f in now.lines().filter(|f| !then.contains(*f)) {
+        if std::fs::remove_file(dir.join(f)).is_ok() {
+            touched += 1;
+        }
+    }
+    if !then.is_empty() {
+        let missing = then.iter().filter(|f| !dir.join(f).exists()).count();
+        let changed = git(dir, &["diff", "--name-only", sha, "--", "."])?
+            .lines()
+            .filter(|f| dir.join(f).exists())
+            .count();
+        git(dir, &["restore", "--source", sha, "--worktree", "--", "."])?;
+        touched += missing + changed;
+    }
+    Ok(touched)
+}
+
 /// Whether `dir` is inside a git work tree.
 pub fn is_repo(dir: &Path) -> bool {
     git(dir, &["rev-parse", "--is-inside-work-tree"])
@@ -70,6 +160,19 @@ pub struct RepoSetup {
 pub fn ensure_repo(dir: &Path) -> Result<Option<RepoSetup>> {
     let mut did = Vec::new();
     let created = !is_repo(dir);
+    // Started from the home folder or the root: a repository there would
+    // sweep up everything the user owns. Ask them to pick a project folder.
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    if created
+        && (dir.parent().is_none() || home.as_deref().is_some_and(|h| canon(h) == canon(dir)))
+    {
+        return Err(Error::Config(
+            "Ryter won't create a git repository in your home folder or at the root. Start it \
+             in a project folder (mkdir myapp && cd myapp && ryter)."
+                .into(),
+        ));
+    }
     if created {
         let branch = git(dir, &["config", "--get", "init.defaultBranch"])
             .ok()
@@ -475,6 +578,53 @@ mod tests {
             "secret.txt\n"
         );
         assert!(!tracked(d).contains(&"secret.txt".to_string()));
+    }
+
+    /// A checkpoint puts back edits, deletions, and new files, and never
+    /// touches the branch or the staging area.
+    #[test]
+    fn a_checkpoint_restores_files_without_touching_git_state() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        init_repo(d).unwrap();
+        std::fs::write(d.join("keep.txt"), "draft\n").unwrap(); // untracked, pre-existing
+        git(d, &["add", "README.md"]).unwrap();
+        let head_before = head(d).unwrap();
+        let sha = checkpoint(d, "t1").unwrap().unwrap();
+        assert_eq!(
+            porcelain(d).unwrap(),
+            "?? keep.txt\n",
+            "files and index untouched"
+        );
+        // A turn edits, deletes, and creates.
+        std::fs::write(d.join("README.md"), "changed\n").unwrap();
+        std::fs::remove_file(d.join("keep.txt")).unwrap();
+        std::fs::write(d.join("new.rs"), "fn x() {}\n").unwrap();
+        restore_checkpoint(d, &sha).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(d.join("README.md")).unwrap(),
+            "repo\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.join("keep.txt")).unwrap(),
+            "draft\n"
+        );
+        assert!(!d.join("new.rs").exists());
+        assert_eq!(head(d).unwrap(), head_before, "no commit on the branch");
+        assert_eq!(porcelain(d).unwrap(), "?? keep.txt\n");
+    }
+
+    /// Never a repository in the home folder.
+    #[test]
+    fn no_repository_in_the_home_folder() {
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap();
+        if is_repo(&home) {
+            return; // a dotfiles repo: nothing to create, nothing to test
+        }
+        assert!(ensure_repo(&home).is_err());
+        assert!(!home.join(".git").exists());
     }
 
     /// A repository with history is left alone.

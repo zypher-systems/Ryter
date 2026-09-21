@@ -14,7 +14,6 @@ use crate::llm::{
 };
 use crate::meter::{Caps, Meter};
 use crate::phase::Phase;
-use crate::prompt::orchestrator_system;
 use crate::queue::{TaskQueue, TaskStatus};
 use crate::role::Role;
 use crate::session::{Session, spend_record};
@@ -183,12 +182,21 @@ impl Agent {
     }
 
     async fn turn_inner(&mut self, user: &str, tools: &mut u32) -> Result<TurnResult> {
+        if self.role == Role::SoloBuild {
+            self.checkpoint_before_build()?;
+        }
         // A run that stopped at the budget never showed the lead its crew
         // report; without it, "continue" reached a lead that didn't know what
         // had finished.
         let content = match self.session.take_carry() {
             Some(report) => format!("{}\n\n---\n\n{user}", crew_report_message(&report)),
             None => user.to_string(),
+        };
+        // Normal mode: say which hat this message is in, per message, so a
+        // Tab never changes the system prompt or the tools (or the cache).
+        let content = match self.role.hat_note() {
+            Some(note) => format!("{note}\n\n{content}"),
+            None => content,
         };
         self.session.push_message(Message {
             role: "user".into(),
@@ -801,6 +809,78 @@ impl Agent {
         Ok(report)
     }
 
+    /// Before a build-hat turn edits the user's files: make sure there is a
+    /// repository to snapshot into, then snapshot the files, so `/undo` can
+    /// put them back. A snapshot identical to the last one isn't kept twice.
+    fn checkpoint_before_build(&mut self) -> Result<()> {
+        let dir = self.ctx.workspace.clone();
+        match crate::git::ensure_repo(&dir) {
+            Ok(Some(setup)) => {
+                let undo = if setup.created {
+                    " If you didn't want a repository here, delete the `.git` folder."
+                } else {
+                    ""
+                };
+                self.emit(AgentEvent::Notice {
+                    message: format!(
+                        "Set up git so changes can be undone: {}.{undo}",
+                        setup.summary
+                    ),
+                })?;
+            }
+            Ok(None) => {}
+            // Home folder or root: work without checkpoints, and say so once.
+            Err(e) => {
+                if self.session.meta.checkpoints.is_empty() {
+                    self.emit(AgentEvent::Notice {
+                        message: format!("{e} Until then, /undo is unavailable."),
+                    })?;
+                }
+                return Ok(());
+            }
+        }
+        let name = format!(
+            "{}-{}",
+            self.session.meta.id,
+            self.session.meta.checkpoints.len() + 1
+        );
+        let Some(sha) = crate::git::checkpoint(&dir, &name)? else {
+            return Ok(());
+        };
+        let same = self.session.meta.checkpoints.last().is_some_and(|last| {
+            crate::git::checkpoint_tree(&dir, last).ok()
+                == crate::git::checkpoint_tree(&dir, &sha).ok()
+        });
+        if !same {
+            self.session.push_checkpoint(sha)?;
+        }
+        Ok(())
+    }
+
+    /// Put the user's files back as they were before the last build turn that
+    /// changed them. Returns what happened, for the user.
+    pub fn undo(&mut self) -> Result<String> {
+        let dir = self.ctx.workspace.clone();
+        let now = crate::git::checkpoint(&dir, "now")?;
+        let now_tree = now.and_then(|s| crate::git::checkpoint_tree(&dir, &s).ok());
+        // Skip checkpoints the files already match: undo means "go back
+        // before the last change", not "restore what's already there".
+        while let Some(last) = self.session.meta.checkpoints.last().cloned() {
+            if crate::git::checkpoint_tree(&dir, &last).ok() == now_tree {
+                self.session.pop_checkpoint()?;
+                continue;
+            }
+            let n = crate::git::restore_checkpoint(&dir, &last)?;
+            self.session.pop_checkpoint()?;
+            let left = self.session.meta.checkpoints.len();
+            return Ok(format!(
+                "undone: {n} file(s) put back as they were before the last build turn. \
+                 {left} earlier checkpoint(s) left."
+            ));
+        }
+        Ok("nothing to undo: no build turn has changed files in this session".into())
+    }
+
     /// What a budget stop left behind, written by the harness so it costs
     /// nothing: the lead can't be asked once the budget is spent.
     fn budget_stop_note(&self, e: &Error) -> Result<String> {
@@ -1248,7 +1328,15 @@ The auditor is off, so the patch stays on `{}`.
     }
 
     fn system_prompt(&self) -> Result<String> {
-        orchestrator_system(
+        // Every hat shares one prompt: the hat is a note on each message, so
+        // switching doesn't change the prompt's prefix (or its cache).
+        let kind = if self.role.is_solo() {
+            crate::prompt::PromptKind::Solo
+        } else {
+            crate::prompt::PromptKind::Orchestrator
+        };
+        crate::prompt::conversation_system(
+            kind,
             &self.home,
             self.project_root.as_deref(),
             self.trusted,
@@ -1320,7 +1408,7 @@ fn pass_note_for(session: &crate::session::Session, role: Role) -> String {
             }
             s
         }
-        Role::Builder | Role::Orchestrator => String::new(),
+        _ => String::new(),
     }
 }
 
@@ -1416,6 +1504,47 @@ mod tests {
 
     fn say(text: &str) -> Vec<StreamDelta> {
         vec![StreamDelta::Text(text.into()), StreamDelta::Done]
+    }
+
+    /// Normal mode: the build hat edits the user's files directly, the hat
+    /// note reaches the model, and /undo puts the files back.
+    #[tokio::test]
+    async fn build_hat_edits_directly_and_undo_puts_it_back() {
+        let p = ReplayProvider::scripted(vec![
+            write("README.md", "rewritten\n"),
+            say("done"),
+            say("planned"),
+        ]);
+        let (_home, cwd, mut agent) = crew_setup(p);
+        agent.role = Role::SoloBuild;
+        agent.ctx.role = Role::SoloBuild;
+        agent.ctx.always_approve = true;
+        agent.turn("rewrite the readme").await.unwrap();
+        let readme = cwd.path().join("README.md");
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), "rewritten\n");
+        let first = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "user")
+            .unwrap();
+        assert!(
+            first.content.starts_with("[hat: build"),
+            "{}",
+            first.content
+        );
+        // No patch, no crew: the edit is in the user's tree, uncommitted.
+        assert!(agent.session.meta.patch.is_none());
+
+        // A plan turn is not a checkpoint, and can't edit.
+        agent.role = Role::SoloPlan;
+        agent.ctx.role = Role::SoloPlan;
+        agent.turn("what next?").await.unwrap();
+
+        let msg = agent.undo().unwrap();
+        assert!(msg.starts_with("undone"), "{msg}");
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), "repo\n");
+        assert!(agent.undo().unwrap().starts_with("nothing to undo"));
     }
 
     fn first_parent_log(repo: &std::path::Path) -> Vec<String> {

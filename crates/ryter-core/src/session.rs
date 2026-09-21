@@ -47,6 +47,9 @@ pub struct Meta {
     /// Patches opened so far (names the next branch).
     #[serde(default)]
     pub patches_opened: u32,
+    /// Build-hat checkpoints, oldest first, for `/undo`.
+    #[serde(default)]
+    pub checkpoints: Vec<String>,
 }
 
 /// Several tasks' work collected on one integration branch. It lands on the
@@ -140,6 +143,7 @@ impl Session {
             auditor_enabled: true,
             patch: None,
             patches_opened: 0,
+            checkpoints: Vec::new(),
         };
         let s = Self {
             dir,
@@ -409,6 +413,23 @@ impl Session {
     pub fn set_patch(&mut self, patch: Option<Patch>) -> Result<()> {
         self.meta.patch = patch;
         self.touch()
+    }
+
+    /// Record a build-hat checkpoint (keeps the last 50).
+    pub fn push_checkpoint(&mut self, sha: String) -> Result<()> {
+        self.meta.checkpoints.push(sha);
+        let n = self.meta.checkpoints.len();
+        if n > 50 {
+            self.meta.checkpoints.drain(..n - 50);
+        }
+        self.touch()
+    }
+
+    /// Drop the newest checkpoint.
+    pub fn pop_checkpoint(&mut self) -> Result<Option<String>> {
+        let c = self.meta.checkpoints.pop();
+        self.touch()?;
+        Ok(c)
     }
 
     pub fn set_auditor(&mut self, on: bool) -> Result<()> {

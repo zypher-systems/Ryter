@@ -21,12 +21,68 @@ pub enum Role {
     Builder,
     /// Reviews a builder diff; cannot write product code.
     Auditor,
+    /// Normal mode, plan hat: one model reading and proposing in the user's
+    /// tree. Writes notes and memory only.
+    #[serde(rename = "plan")]
+    SoloPlan,
+    /// Normal mode, build hat: one model changing the user's tree directly,
+    /// behind the permission gate (edits and non-read-only commands ask).
+    #[serde(rename = "build")]
+    SoloBuild,
+    /// Normal mode, review hat: one model critiquing what changed. Runs tests
+    /// and linters; edits nothing.
+    #[serde(rename = "review")]
+    SoloReview,
 }
 
 impl Role {
     /// Whether this role may mutate product source (not pass notes).
     pub fn writes_source(self) -> bool {
-        matches!(self, Self::Builder)
+        matches!(self, Self::Builder | Self::SoloBuild)
+    }
+
+    /// One of normal mode's hats.
+    pub fn is_solo(self) -> bool {
+        matches!(self, Self::SoloPlan | Self::SoloBuild | Self::SoloReview)
+    }
+
+    /// The hat `Tab` moves to: build → plan → review → build.
+    pub fn next_hat(self) -> Self {
+        match self {
+            Self::SoloBuild => Self::SoloPlan,
+            Self::SoloPlan => Self::SoloReview,
+            _ => Self::SoloBuild,
+        }
+    }
+
+    /// The hat `Shift+Tab` moves to.
+    pub fn prev_hat(self) -> Self {
+        match self {
+            Self::SoloBuild => Self::SoloReview,
+            Self::SoloReview => Self::SoloPlan,
+            _ => Self::SoloBuild,
+        }
+    }
+
+    /// The line put in front of each message in a hat, so the model knows
+    /// what it may do this turn without the system prompt (and the prompt
+    /// cache) changing on every switch.
+    pub fn hat_note(self) -> Option<&'static str> {
+        match self {
+            Self::SoloBuild => Some(
+                "[hat: build — make the change in the user's files, run the project's tests \
+                 for what you touched, and say what you did]",
+            ),
+            Self::SoloPlan => Some(
+                "[hat: plan — read and think; do not edit source or run commands that change \
+                 anything. End with a short plan: files, steps, risks, how to verify]",
+            ),
+            Self::SoloReview => Some(
+                "[hat: review — critique what changed (`git diff`, the tests, the code); edit \
+                 nothing. End with findings, blocking ones first]",
+            ),
+            _ => None,
+        }
     }
 
     /// Stable lowercase name.
@@ -36,6 +92,9 @@ impl Role {
             Self::Architect => "architect",
             Self::Builder => "builder",
             Self::Auditor => "auditor",
+            Self::SoloPlan => "plan",
+            Self::SoloBuild => "build",
+            Self::SoloReview => "review",
         }
     }
 }
@@ -51,10 +110,13 @@ impl FromStr for Role {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "orchestrator" => Ok(Self::Orchestrator),
-            "architect" | "planner" | "plan" => Ok(Self::Architect),
-            "builder" | "build" => Ok(Self::Builder),
+            "orchestrator" | "lead" | "crew" => Ok(Self::Orchestrator),
+            "architect" | "planner" => Ok(Self::Architect),
+            "builder" => Ok(Self::Builder),
             "auditor" | "audit" => Ok(Self::Auditor),
+            "plan" => Ok(Self::SoloPlan),
+            "build" => Ok(Self::SoloBuild),
+            "review" => Ok(Self::SoloReview),
             other => Err(Error::Config(format!("unknown role {other:?}"))),
         }
     }
@@ -71,5 +133,26 @@ mod tests {
         assert!(!Role::Architect.writes_source());
         assert!(Role::Builder.writes_source());
         assert!(!Role::Auditor.writes_source());
+        assert!(Role::SoloBuild.writes_source());
+        assert!(!Role::SoloPlan.writes_source() && !Role::SoloReview.writes_source());
+    }
+
+    #[test]
+    fn tab_cycles_build_plan_review() {
+        let mut h = Role::SoloBuild;
+        let mut seen = Vec::new();
+        for _ in 0..3 {
+            seen.push(h.as_str());
+            h = h.next_hat();
+        }
+        assert_eq!(seen, ["build", "plan", "review"]);
+        assert_eq!(h, Role::SoloBuild);
+        assert_eq!(Role::SoloBuild.prev_hat(), Role::SoloReview);
+        // Round-trips as the hat name, in logs and sessions.
+        assert_eq!(
+            serde_json::to_string(&Role::SoloReview).unwrap(),
+            "\"review\""
+        );
+        assert_eq!("plan".parse::<Role>().unwrap(), Role::SoloPlan);
     }
 }

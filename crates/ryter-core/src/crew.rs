@@ -1096,7 +1096,7 @@ fn persist_workspace_note(workspace: &Path, role: Role, body: &str) {
         Role::Architect => "architect.md",
         Role::Auditor => "audit.md",
         Role::Builder => "build.md",
-        Role::Orchestrator => return,
+        _ => return,
     };
     let dir = workspace.join("notes");
     let _ = std::fs::create_dir_all(&dir);
@@ -1174,7 +1174,7 @@ fn limits(role: Role) -> (usize, u32) {
     match role {
         Role::Builder => (40, 32_768),
         Role::Architect => (30, 32_768),
-        Role::Auditor | Role::Orchestrator => (12, 16_384),
+        _ => (12, 16_384),
     }
 }
 

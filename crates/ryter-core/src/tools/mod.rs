@@ -251,6 +251,23 @@ fn spec(name: &str) -> Option<ToolSpec> {
 /// Tools this role may be offered at all.
 pub fn tools_for(role: Role) -> &'static [&'static str] {
     match role {
+        // One list for every hat, so switching hats never changes the tool
+        // definitions (and never throws away the prompt cache). The gate
+        // decides what each hat may run.
+        Role::SoloPlan | Role::SoloBuild | Role::SoloReview => &[
+            "read_file",
+            "list_dir",
+            "grep",
+            "glob",
+            "write",
+            "search_replace",
+            "bash",
+            "ask_user",
+            "search_tool",
+            "use_tool",
+            "web_fetch",
+            "web_search",
+        ],
         Role::Orchestrator => &[
             "propose_edit",
             "read_file",
@@ -422,6 +439,24 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
             "denied: the {} role does not have the {name} tool",
             ctx.role
         ))),
+        // A hat that can't do this: say which one can, so the model tells the
+        // user instead of hunting for a way round.
+        Decision::Deny
+            if matches!(ctx.role, Role::SoloPlan | Role::SoloReview)
+                && matches!(name, "write" | "search_replace" | "bash")
+                && !(name == "bash" && policy::bash_hint(args).is_some()) =>
+        {
+            Ok(ToolOutput::err(format!(
+                "denied: the {} hat can't {} — tell the user; they can press Tab to switch to \
+                 build",
+                ctx.role,
+                if name == "bash" {
+                    "run commands that change things"
+                } else {
+                    "edit files"
+                }
+            )))
+        }
         Decision::Deny if name == "bash" && policy::bash_hint(args).is_some() => {
             Ok(ToolOutput::err(format!(
                 "denied: bash {} — {}",

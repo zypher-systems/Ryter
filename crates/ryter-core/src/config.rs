@@ -560,7 +560,10 @@ impl RoleModel {
 impl Config {
     fn specialist_row(&self, role: crate::role::Role) -> RoleModel {
         let key = match role {
-            crate::role::Role::Orchestrator => return self.orchestrator.clone(),
+            crate::role::Role::Orchestrator
+            | crate::role::Role::SoloPlan
+            | crate::role::Role::SoloBuild
+            | crate::role::Role::SoloReview => return self.orchestrator.clone(),
             crate::role::Role::Architect => "architect",
             crate::role::Role::Builder => "builder",
             crate::role::Role::Auditor => "auditor",
