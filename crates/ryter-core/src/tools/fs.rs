@@ -14,7 +14,16 @@ const DEFAULT_LINE_LIMIT: usize = 2_000;
 
 pub fn read_file(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     let path = require_path(args, ctx)?;
-    let text = fs::read_to_string(&path).map_err(|e| Error::Config(e.to_string()))?;
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+            return Ok(ToolOutput::err(format!(
+                "{} is not a text file (compiled or binary); read the source instead",
+                path.display()
+            )));
+        }
+        Err(e) => return Err(Error::Config(e.to_string())),
+    };
     // `offset` is 1-based to match the line numbers this prints.
     let offset = args
         .get("offset")

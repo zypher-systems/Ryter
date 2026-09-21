@@ -313,7 +313,7 @@ async fn build_inner(
         //    only when the builder's own code changed.
         let head = git::head(wt)?;
         if gate.checked_at.as_deref() != Some(head.as_str()) {
-            match run_checks(job, wt, &ctx) {
+            match run_checks(job, wt, &ctx).await {
                 Ok(out) => {
                     gate.checks = out;
                     gate.checked_at = Some(head.clone());
@@ -514,7 +514,12 @@ async fn sign_off(
     let changed = git::changed_paths(wt, target, "HEAD");
     let mut reviews = Vec::new();
     for seat in job.auditors.iter().filter(|a| a.applies_to(&changed)) {
-        let text = audit(job, seat, task, wt, ctx, target, handback, gate).await?;
+        let text = audit(job, seat, task, wt, ctx, target, handback, gate).await;
+        // Reviewers probe: they write scratch tests, run them, sometimes leave
+        // them. The builder's work is committed, so reset to it. On the first
+        // live crew run an audit probe was swept into the next commit.
+        git::discard_uncommitted(wt);
+        let text = text?;
         let pass = parse_verdict(&text);
         let lens = if seat.focus.is_empty() {
             "review"
@@ -688,7 +693,7 @@ pub async fn land_patch(job: &BuildJob<'_>, patch: &crate::session::Patch) -> Re
             }
         }
     }
-    if let Err(out) = run_checks(job, wt, &ctx) {
+    if let Err(out) = run_checks(job, wt, &ctx).await {
         return Ok(PatchLanding::Waiting(format!(
             "each task passed on its own, but the combined patch fails its checks — \
              queue a fix task and it lands into this patch:\n{out}"
@@ -759,31 +764,57 @@ fn builder_brief(task: &Task) -> String {
 }
 
 /// Run the configured checks in the worktree. `Err` carries the failing output.
-fn run_checks(
+/// Run a tool call on a blocking thread. Crew jobs share one async task, so a
+/// synchronous shell command or file walk on the executor stalled every other
+/// builder until it finished: "parallel" builders ran one tool at a time.
+async fn run_tool(
+    name: &str,
+    args: serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<crate::tools::ToolOutput> {
+    let (name, ctx) = (name.to_string(), ctx.clone());
+    tokio::task::spawn_blocking(move || gated_execute(&name, &args, &ctx))
+        .await
+        .map_err(|e| Error::Config(format!("tool thread: {e}")))?
+}
+
+/// Run the configured checks in the worktree, off the executor (they can take
+/// minutes). `Err` carries the failing output.
+async fn run_checks(
     job: &BuildJob<'_>,
     wt: &Path,
     ctx: &ToolContext,
 ) -> std::result::Result<String, String> {
+    let checks = job.checks.to_vec();
+    let wt = wt.to_path_buf();
+    let timeout = job.check_timeout;
+    let cancel = ctx.cancel.clone();
+    tokio::task::spawn_blocking(move || checks_blocking(&checks, &wt, timeout, &cancel))
+        .await
+        .unwrap_or_else(|e| Err(format!("checks thread: {e}")))
+}
+
+fn checks_blocking(
+    checks: &[String],
+    wt: &Path,
+    timeout: std::time::Duration,
+    cancel: &Cancel,
+) -> std::result::Result<String, String> {
     use crate::tools::shell::{Run, run_command};
     let mut out = String::new();
-    for cmd in job.checks {
-        let run = run_command(cmd, wt, job.check_timeout, &ctx.cancel)
-            .map_err(|e| format!("$ {cmd}\n{e}"))?;
+    for cmd in checks {
+        let run = run_command(cmd, wt, timeout, cancel).map_err(|e| format!("$ {cmd}\n{e}"))?;
         let (ok, text) = match run {
             Run::Ok(t) => (true, t),
             Run::Failed(t) => (false, t),
             Run::Cancelled => (false, "cancelled".into()),
-            Run::TimedOut => (
-                false,
-                format!("timed out after {}s", job.check_timeout.as_secs()),
-            ),
+            Run::TimedOut => (false, format!("timed out after {}s", timeout.as_secs())),
         };
-        let block = format!(
+        out.push_str(&format!(
             "$ {cmd}  → {}\n{}\n",
             if ok { "ok" } else { "FAILED" },
             crate::tools::cap_output(text)
-        );
-        out.push_str(&block);
+        ));
         if !ok {
             return Err(out);
         }
@@ -1242,7 +1273,7 @@ async fn run_specialist(
             for call in &calls {
                 let parsed: serde_json::Value =
                     serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
-                let out = gated_execute(&call.name, &parsed, ctx)?;
+                let out = run_tool(&call.name, parsed, ctx).await?;
                 messages.push(crate::llm::Message {
                     role: "tool".into(),
                     content: out.text,
@@ -1287,7 +1318,7 @@ async fn run_specialist(
             if let Some(p) = bill.progress {
                 p.say(role, crate::agent::tool_summary(&call.name, &parsed));
             }
-            let out = gated_execute(&call.name, &parsed, ctx)?;
+            let out = run_tool(&call.name, parsed, ctx).await?;
             messages.push(crate::llm::Message {
                 role: "tool".into(),
                 content: out.text,
@@ -2039,6 +2070,58 @@ mod tests {
             "{said:?}"
         );
         assert!(said.iter().any(|t| t.contains("reviewing")), "{said:?}");
+    }
+
+    /// Live run 2 committed an auditor's probe test and __pycache__ files.
+    /// Neither may reach the branch.
+    #[tokio::test]
+    async fn audit_scratch_and_caches_never_reach_the_branch() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            write_call("feature.py", "X = 1\n"),
+            say("STATUS: DONE"),
+            // The auditor leaves a probe and a cache behind, then fails it…
+            vec![
+                StreamDelta::ToolCall {
+                    id: "probe".into(),
+                    name: "bash".into(),
+                    arguments: serde_json::json!({
+                        // As the live auditor did: a redirect it is allowed,
+                        // and a compile that leaves a cache behind.
+                        "command": "printf 'X = 3\\n' > probe_test.py && python3 -m py_compile probe_test.py"
+                    })
+                    .to_string(),
+                },
+                StreamDelta::Done,
+            ],
+            say("VERDICT: FAIL\n- feature.py: X must be 2"),
+            // …so the builder retries in place, and commits.
+            write_call("feature.py", "X = 2\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: PASS"),
+        ]);
+        let panel = vec![seat(&p, "auditor-m", "", &[])];
+        let meter = Meter::new(
+            crate::spend::PriceBook::new(),
+            crate::meter::Caps::default(),
+        );
+        let mut t = task("t1", "feature");
+        let first = run_with(&f, &p, &t, true, &[], &panel, &meter, 1).await;
+        assert_eq!(first.status, TaskStatus::Pending, "{first:?}");
+        t.retries = 1;
+        t.findings = first.findings;
+        let second = run_with(&f, &p, &t, true, &[], &panel, &meter, 1).await;
+        assert_eq!(second.status, TaskStatus::Done, "{second:?}");
+        let tracked = git::git(f.repo.path(), &["ls-files"]).unwrap();
+        assert!(
+            !tracked.contains("probe_test.py"),
+            "audit probe committed:\n{tracked}"
+        );
+        assert!(
+            !tracked.contains("__pycache__"),
+            "cache committed:\n{tracked}"
+        );
+        assert!(tracked.contains("feature.py"));
     }
 
     #[test]

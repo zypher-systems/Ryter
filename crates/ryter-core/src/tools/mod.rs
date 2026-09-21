@@ -457,7 +457,16 @@ fn run_with_hooks(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOut
             return Ok(ToolOutput::err(format!("hook denied: {msg}")));
         }
     }
-    let out = execute(name, args, ctx)?;
+    // A tool failing is information for the model — the file does not exist
+    // yet, the path is a directory, the bytes are not text — not a reason to
+    // end the task. On the first live crew run, builders reading a file they
+    // were about to create died with "No such file or directory". Only a
+    // cancel ends the task.
+    let out = match execute(name, args, ctx) {
+        Ok(o) => o,
+        Err(crate::error::Error::Cancelled) => return Err(crate::error::Error::Cancelled),
+        Err(e) => ToolOutput::err(format!("{name} failed: {e}")),
+    };
     if let Some(hooks) = &ctx.hooks {
         hooks.post_tool(name, args, &out.text, &ctx.workspace, ctx.role);
     }
@@ -797,6 +806,22 @@ mod tests {
                 &b
             ),
             Decision::Deny
+        );
+    }
+
+    /// Live run 2: a builder reading a file that did not exist yet, or a
+    /// compiled .pyc, ended its whole task. The model must see the error.
+    #[test]
+    fn a_failing_tool_is_an_error_result_not_a_dead_task() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(Role::Builder, dir.path());
+        let missing = gated_execute("read_file", &json!({"path": "not/yet.py"}), &c).unwrap();
+        assert!(missing.is_error, "{missing:?}");
+        std::fs::write(dir.path().join("x.pyc"), [0xff_u8, 0xfe, 0x00, 0x01]).unwrap();
+        let binary = gated_execute("read_file", &json!({"path": "x.pyc"}), &c).unwrap();
+        assert!(
+            binary.is_error && binary.text.contains("not a text file"),
+            "{binary:?}"
         );
     }
 

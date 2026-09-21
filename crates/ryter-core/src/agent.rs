@@ -1077,9 +1077,8 @@ impl Agent {
         };
         if !open.is_empty() {
             return Ok(Some(format!(
-                "### patch waiting
-`{}` holds {} finished task(s) and lands on `{}` once these                  are done, retried, or dropped from the list: {}
-",
+                "### patch waiting\n`{}` holds {} finished task(s) and lands on `{}` once these \
+                 are done, retried, or dropped from the list: {}\n",
                 patch.branch,
                 patch.landed.len(),
                 patch.target,
@@ -1401,6 +1400,9 @@ mod tests {
             say("VERDICT: PASS"),
         ]);
         let (_home, cwd, mut agent) = crew_setup(p);
+        // A fixed script needs one builder at a time; concurrent jobs would
+        // consume each other's turns. Parallelism is tested with `ByRole`.
+        agent.max_crew = 1;
         agent
             .queue
             .lock()
@@ -1436,6 +1438,9 @@ mod tests {
             say("VERDICT: FAIL\n- b.txt: wrong"),
         ]);
         let (_home, cwd, mut agent) = crew_setup(p);
+        // A fixed script needs one builder at a time; concurrent jobs would
+        // consume each other's turns. Parallelism is tested with `ByRole`.
+        agent.max_crew = 1;
         agent.max_retries = 0;
         agent
             .queue
@@ -1498,6 +1503,9 @@ mod tests {
             say("VERDICT: PASS"),
         ]);
         let (_home, cwd, mut agent) = crew_setup(p);
+        // A fixed script needs one builder at a time; concurrent jobs would
+        // consume each other's turns. Parallelism is tested with `ByRole`.
+        agent.max_crew = 1;
         agent
             .queue
             .lock()
@@ -1602,6 +1610,72 @@ mod tests {
         assert!(
             report.contains("no commits yet") && report.contains("git commit --allow-empty"),
             "{report}"
+        );
+    }
+
+    /// Answers by role rather than by script order, since concurrent jobs
+    /// consume a fixed script in an unpredictable order.
+    struct ByRole;
+
+    #[async_trait::async_trait]
+    impl Provider for ByRole {
+        async fn stream(&self, req: CompletionRequest) -> Result<crate::llm::DeltaStream> {
+            let system = req
+                .messages
+                .first()
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            let acted = req.messages.iter().any(|m| m.role == "tool");
+            let deltas = if system.contains("Ryter auditor") {
+                vec![StreamDelta::Text("VERDICT: PASS".into()), StreamDelta::Done]
+            } else if !acted {
+                // Each builder works 1.5s in its own worktree (named after its task).
+                vec![
+                    StreamDelta::ToolCall {
+                        id: "b".into(),
+                        name: "bash".into(),
+                        arguments: serde_json::json!({
+                            "command": "sleep 1.5 && touch \"$(basename \"$PWD\").txt\""
+                        })
+                        .to_string(),
+                    },
+                    StreamDelta::Done,
+                ]
+            } else {
+                vec![StreamDelta::Text("STATUS: DONE".into()), StreamDelta::Done]
+            };
+            Ok(Box::pin(futures_util::stream::iter(
+                deltas.into_iter().map(Ok),
+            )))
+        }
+        async fn list_models(&self) -> Result<Vec<crate::llm::ModelInfo>> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Parallel builders must actually overlap. Tool calls used to run on the
+    /// executor, so one builder's shell command stalled every other builder.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn parallel_builders_overlap_in_time() {
+        let (_home, cwd, mut agent) = crew_setup(ReplayProvider::scripted(vec![]));
+        agent.provider = Arc::new(ByRole);
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo(&serde_json::json!({"items": [
+                {"id": "left", "title": "left", "files": ["left.txt"]},
+                {"id": "right", "title": "right", "files": ["right.txt"]}
+            ]}))
+            .unwrap();
+        let t0 = std::time::Instant::now();
+        let report = agent.drain_crew().await.unwrap();
+        let took = t0.elapsed();
+        assert!(report.contains("patch landed"), "{report}");
+        assert!(cwd.path().join("left.txt").exists() && cwd.path().join("right.txt").exists());
+        assert!(
+            took < std::time::Duration::from_millis(2_700),
+            "two 1.5s builders took {took:?}: they ran one after the other"
         );
     }
 

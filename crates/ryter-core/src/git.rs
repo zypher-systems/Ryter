@@ -181,14 +181,38 @@ fn git_as(dir: &Path, args: &[&str]) -> Result<String> {
     git(dir, &all)
 }
 
-/// Stage everything and commit it. Returns whether a commit was made.
+/// Build and tool caches that are never source. Running a project's tests
+/// creates them; a fresh repository has no .gitignore for them yet, and
+/// `add -A` committed `__pycache__/*.pyc` on the first live crew run.
+const NEVER_COMMIT: &[&str] = &[
+    ":(exclude)*__pycache__*",
+    ":(exclude)*.pyc",
+    ":(exclude)*.pytest_cache*",
+    ":(exclude)*.mypy_cache*",
+    ":(exclude)*.ruff_cache*",
+    ":(exclude)*node_modules*",
+    ":(exclude)*.DS_Store",
+];
+
+/// Stage everything except caches and commit it. Returns whether a commit
+/// was made.
 pub fn commit_all(dir: &Path, message: &str) -> Result<bool> {
-    git(dir, &["add", "-A"])?;
-    if porcelain(dir)?.trim().is_empty() {
+    let mut args = vec!["add", "-A", "--", "."];
+    args.extend_from_slice(NEVER_COMMIT);
+    git(dir, &args)?;
+    // Only what is staged matters: changed caches alone are not a commit.
+    if git(dir, &["diff", "--cached", "--quiet"]).is_ok() {
         return Ok(false);
     }
     git_as(dir, &["commit", "--no-verify", "-m", message])?;
     Ok(true)
+}
+
+/// Throw away everything in `dir` that is not committed: edits, new files,
+/// scratch. Used after a review, whose probes must never reach a commit.
+pub fn discard_uncommitted(dir: &Path) {
+    let _ = git(dir, &["reset", "-q", "--hard", "HEAD"]);
+    let _ = git(dir, &["clean", "-q", "-fd"]);
 }
 
 /// Result of pulling the target branch into a builder's worktree.

@@ -337,13 +337,20 @@ impl Session {
     /// Latest crew results, kept outside the repository so the orchestrator
     /// sees them on later turns. Only the tail is kept.
     pub fn write_crew_report(&self, body: &str) -> Result<()> {
-        const KEEP: usize = 16_000;
-        let start = body.len().saturating_sub(KEEP);
-        let start = (start..=body.len())
-            .find(|i| body.is_char_boundary(*i))
-            .unwrap_or(body.len());
+        // Appended, not overwritten: a turn can drain the crew more than once,
+        // and the last drain's report alone hid what the earlier ones did.
+        const KEEP: usize = 32_000;
+        let mut all = self.read_crew_report();
+        if !all.is_empty() {
+            all.push_str("\n---\n\n");
+        }
+        all.push_str(body);
+        let start = all.len().saturating_sub(KEEP);
+        let start = (start..=all.len())
+            .find(|i| all.is_char_boundary(*i))
+            .unwrap_or(all.len());
         fs::create_dir_all(self.notes_dir()).map_err(|e| Error::Io(e.to_string()))?;
-        fs::write(self.notes_dir().join("crew.md"), &body[start..])
+        fs::write(self.notes_dir().join("crew.md"), &all[start..])
             .map_err(|e| Error::Io(e.to_string()))
     }
 
