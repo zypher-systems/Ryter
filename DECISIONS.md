@@ -2,6 +2,14 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-21 — The user builds the crew; the tiers only recommend
+- **By:** lead
+- **Decision:** On first launch (no `crew.toml` and no `[specialists]`), and from `/crew` → `b`, a crew builder walks through a starting point, each of the four seats (lead included), the budget, and a review. Every seat shows a ★ recommendation and why the role matters, but any reachable model can be chosen. Before saving, each model gets one tiny request with a tool. The budget step estimates per task, per design, and per job size from token profiles measured on the paid live runs, and suggests a cap: on by default on first launch, one toggle from off.
+- **Chosen vs rejected:** Rejected tiers as the product: a computed pick can be odd, and a curated list goes stale and still can't see an account's data policy. Rejected a monthly hand-maintained model list for the same reason. Rejected choosing the lead for the user: it runs on every message, and the user knows what they want to pay for it.
+- **Why:** Users have their own reasons for picking models (zero data retention, a provider they trust, cost). A new user whose only key is SpaceXAI used to reach the auditor rule as a refusal on their first build; now the first thing they see is a guided setup.
+- **Where:** TUI `panel/crew_builder.rs`, `run/actions.rs` (`probe_models`, `save_crew_setup`), `run/mod.rs` (first launch); core `tiering.rs` (`suggest_for`, `recommend_lead`, `probe`), `estimate.rs`, `config.rs` (`crew_unconfigured`); CLI `ryter crew check`
+- **Residual risk:** The estimate's token profiles come from four runs on one crew, and models that reason heavily will exceed them. A probe proves a model answers with a tool, not that it builds well; that is what `ryter bench` is for.
+
 ### 2026-09-21 — Three ready-made crews: skiff, schooner, galleon
 - **By:** lead
 - **Decision:** `/crew` offers three crews by cost: **skiff** (budget models in every seat, the auditor still independent), **schooner** (budget builder, strong architect and auditor; the old `crew suggest`), and **galleon** (strong models everywhere, the builder included). Each is computed from the models the user can reach at current prices. For the strong seats, established vendors win when one is within half the top price; a price tie goes to the newer model; cloud `-latest` aliases are never picked.

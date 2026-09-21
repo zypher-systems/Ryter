@@ -1,0 +1,24 @@
+ ryter  ·  lead         grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────
+ · s╭─ crew builder ────────────────────────────────────────────── 1 of 7 ─╮
+   w│ step 1 of 7  starting point                                          │
+    │  pick a starting point. you choose every seat next, with a           │
+    │  recommendation beside each.                                         │
+    │                                                                      │
+    │ ▸ skiff  low cost                                                    │
+    │     light and cheap: budget models in every seat. small,             │
+    │     well-specified jobs                                              │
+    │›▸ schooner  balanced                                                 │
+    │     cheap hands, sharp eyes: a budget builder, a strong architect    │
+    │     and auditor                                                      │
+    │ ▸ galleon  high cost                                                 │
+    │     heavy and costly: strong models in every seat. large or subtle   │
+    │     work                                                             │
+    │ ◇ my current crew  start from what is set now                        │
+    ╰─ ↑↓ move · enter choose · esc close ─────────────────────────────────╯
+
+
+╭─ dusty ──────────────────────────────────────────────────────────────────────╮
+│› ask the lead, or / for commands                                             │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move    enter select    tab next field    ? keys    esc back

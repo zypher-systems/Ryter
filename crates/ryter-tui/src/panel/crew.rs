@@ -79,7 +79,7 @@ impl Panel for Crew {
 
     fn legend(&self, _view: &View) -> String {
         match &self.mode {
-            Mode::Browse => "enter assign/apply · r reset · d delete · esc".into(),
+            Mode::Browse => "enter assign/apply · b crew builder · r reset · d delete · esc".into(),
             Mode::Suggesting(_) => "reading every model catalog you can reach… · esc".into(),
             Mode::Suggested(_, t) if t.auditor.is_some() => {
                 "y apply (current crew kept as a preset) · esc".into()
@@ -166,7 +166,10 @@ impl Panel for Crew {
             }
             _ => {}
         }
-        lines.push(widgets::note("roles", theme));
+        lines.push(widgets::note(
+            "roles · b opens the crew builder: every seat, with recommendations and a budget",
+            theme,
+        ));
         for (i, role) in CREW_ROLES.iter().enumerate() {
             let label = crew_role_label(view, role);
             let status = if view.specialists.get(*role).is_some_and(|r| r.is_override()) {
@@ -347,6 +350,12 @@ impl Panel for Crew {
             }
             // The balanced crew, as before the tiers existed.
             KeyCode::Char('s') => self.preview(Tier::Schooner),
+            KeyCode::Char('b') => Outcome::PushAct(
+                Box::new(super::crew_builder::CrewBuilder::new(view, false)),
+                Action::ListCrewModels {
+                    role: String::new(),
+                },
+            ),
             KeyCode::Char('r') if self.selected < CREW_ROLES.len() => {
                 Outcome::Act(Action::ResetCrewRole(CREW_ROLES[self.selected].to_string()))
             }

@@ -1,7 +1,7 @@
  ryter  ·  lead         grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  · sys╭─ crew ─────────────────────────────────────── max concurrent: 4 ─╮
-   wel│ roles                                                            │
+   wel│ roles · b opens the crew builder: every seat, with recommendation│
       │›● architect  default (grok-4.6)                                  │
       │ ● builder  default (grok-4.6)                                    │
       │ ● auditor  default (grok-4.6)                                    │
@@ -15,7 +15,7 @@
       │ + save preset  current assignment → ~/.ryter/crews/<name>.toml   │
       │   no presets yet                                                 │
       │                                                                  │
-      ╰─ enter assign/apply · r reset · d delete · esc ──────────────────╯
+      ╰─ enter assign/apply · b crew builder · r reset · d delete · esc ─╯
 
 
 ╭─ dusty ──────────────────────────────────────────────────────────────────────╮

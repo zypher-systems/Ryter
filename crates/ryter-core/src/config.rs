@@ -667,6 +667,12 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
 
 const CREW_ROLES: &[&str] = &["architect", "builder", "auditor"];
 
+/// No crew was ever saved (no `crew.toml`) and none is configured in
+/// `[specialists]`: the first-launch crew builder should run.
+pub fn crew_unconfigured(home: &Path, cfg: &Config) -> bool {
+    !crew_path(home).exists() && cfg.specialists.is_empty()
+}
+
 /// Live crew assignment file (`~/.ryter/crew.toml`).
 pub fn crew_path(home: &Path) -> PathBuf {
     home.join("crew.toml")

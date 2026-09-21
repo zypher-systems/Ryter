@@ -8,6 +8,7 @@ pub mod budget;
 pub mod chrome;
 pub mod context;
 pub mod crew;
+pub mod crew_builder;
 pub mod doctor;
 pub mod help;
 pub mod hooks;
@@ -87,6 +88,8 @@ pub enum Notice {
     Exported(String),
     /// Models arrived for a specific picker (`/models`, `/crew`).
     Models(Vec<ryter_core::ModelInfo>),
+    /// Results of [`Action::ProbeModels`](crate::action::Action::ProbeModels).
+    Probed(Vec<(String, String, Result<(), String>)>),
     /// Crew presets on disk changed.
     PresetsChanged(Vec<String>),
     /// Sessions list refreshed (after rename/delete).
@@ -296,6 +299,7 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
         PanelId::Providers => Box::new(providers::Providers::new(view)),
         PanelId::Models => Box::new(models::Models::new(view, None)),
         PanelId::Crew => Box::new(crew::Crew::new(env)),
+        PanelId::CrewBuilder => Box::new(crew_builder::CrewBuilder::new(view, false)),
         PanelId::Agents => Box::new(agents::Agents::default()),
         PanelId::Sessions(mode) => Box::new(sessions::Sessions::new(view, env, mode)),
         PanelId::Spend => Box::new(spend::Spend::default()),

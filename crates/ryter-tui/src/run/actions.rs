@@ -135,6 +135,17 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         }
         Action::SetBudget(usd) => set_budget(view, cx, usd),
         Action::SaveBudget { usd, warn, task } => save_budget(view, cx, usd, warn, task),
+        Action::ProbeModels(seats) => probe_models(cx, seats),
+        Action::SaveCrew => {
+            save_crew(view, cx);
+            view.system("no crew yet · /crew → b opens the crew builder when you're ready");
+        }
+        Action::SaveCrewSetup {
+            lead_connection,
+            lead_model,
+            crew,
+            budget,
+        } => save_crew_setup(view, cx, lead_connection, lead_model, crew, budget),
         Action::KillAgent(id) => {
             if let Some(c) = view.crew.iter().find(|c| c.id == id) {
                 view.system(format!("killing {} · {}", c.role, c.label));
@@ -372,6 +383,7 @@ fn open_panel(view: &mut View, cx: &mut Ctx, id: PanelId) {
     panel::sync_composer(view);
     match id {
         PanelId::Models => cx.send(Work::ListModels),
+        PanelId::CrewBuilder => cx.send(Work::ListCrewModels),
         PanelId::Theme => {
             cx.theme_before_preview = Some((view.theme_name.clone(), cx.theme));
         }
@@ -637,6 +649,13 @@ fn set_key(view: &mut View, cx: &mut Ctx, name: &str, key: &str) {
             }
             view.system(format!("key saved for {name} in {store}"));
             use_connection(view, cx, name);
+            // A first key on a fresh install: set up the crew next.
+            if config::crew_unconfigured(&cx.home, &cx.cfg) && view.specialists.is_empty() {
+                view.panels
+                    .push(Box::new(panel::crew_builder::CrewBuilder::new(view, true)));
+                panel::sync_composer(view);
+                cx.send(Work::ListCrewModels);
+            }
         }
         Err(e) => view.error(e.to_string()),
     }
@@ -658,6 +677,90 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
         }
         Err(_) => perform(view, cx, Action::BeginSetKey(view.connection.clone())),
     }
+}
+
+/// One tiny request per model, off the UI thread; results come back as a
+/// notice. Unknown connections and missing keys fail without a request.
+fn probe_models(cx: &mut Ctx, seats: Vec<(String, String)>) {
+    let tx = cx.notice_tx.clone();
+    let cfg = cx.cfg.clone();
+    std::thread::spawn(move || {
+        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        let results = rt.block_on(async {
+            let mut out = Vec::new();
+            for (conn, model) in seats {
+                let r = match (
+                    cfg.connections.get(&conn),
+                    resolve_secret(&cfg, &ConnectionId::new(&conn)),
+                ) {
+                    (Some(c), Ok(key)) => {
+                        let p = ryter_core::http_provider(c, key);
+                        ryter_core::tiering::probe(&p, &model).await
+                    }
+                    (None, _) => Err(format!("unknown connection {conn}")),
+                    (_, Err(_)) => Err(format!("no key for {conn}")),
+                };
+                out.push((conn, model, r));
+            }
+            out
+        });
+        let _ = tx.send(Notice::Probed(results));
+    });
+}
+
+/// Save the crew builder's choices: the crew (the old one kept as a preset),
+/// the lead's route, and the budget.
+fn save_crew_setup(
+    view: &mut View,
+    cx: &mut Ctx,
+    lead_connection: String,
+    lead_model: String,
+    crew: std::collections::BTreeMap<String, ryter_core::RoleModel>,
+    budget: f64,
+) {
+    if !view.specialists.is_empty() {
+        if let Err(e) = config::save_crew_preset(&cx.home, "before-builder", &view.specialists) {
+            view.error(format!("not saved: could not keep the current crew: {e}"));
+            return;
+        }
+    }
+    view.specialists = crew;
+    save_crew(view, cx);
+    if lead_connection != view.connection || lead_model != view.model {
+        match (
+            cx.cfg.connections.get(&lead_connection).cloned(),
+            resolve_secret(&cx.cfg, &ConnectionId::new(&lead_connection)),
+        ) {
+            (Some(_), Ok(key)) => {
+                view.connection = lead_connection.clone();
+                view.model = lead_model.clone();
+                view.has_key = true;
+                view.ctx_window = Some(ryter_core::window_for(&lead_model));
+                apply_pricing(view, &cx.cfg, &lead_model);
+                let _ = config::save_last_route(&cx.home, &route_from_view(view));
+                cx.send(Work::Reconnect {
+                    name: lead_connection,
+                    model: lead_model,
+                    key,
+                });
+            }
+            _ => view.error(format!("lead not changed: no key for {lead_connection}")),
+        }
+    }
+    set_budget(view, cx, budget);
+    cx.notice(Notice::PresetsChanged(config::list_crew_presets(&cx.home)));
+    view.system(format!(
+        "crew saved · lead {} · architect {} · builder {} · auditor {}",
+        view.model,
+        crate::view::crew_role_label(view, "architect"),
+        crate::view::crew_role_label(view, "builder"),
+        crate::view::crew_role_label(view, "auditor"),
+    ));
 }
 
 fn test_connection(view: &mut View, cx: &mut Ctx, name: &str) {

@@ -10,6 +10,7 @@ pub mod config;
 pub mod crew;
 pub mod doctor;
 pub mod error;
+pub mod estimate;
 pub mod event;
 pub mod git;
 pub mod hooks;

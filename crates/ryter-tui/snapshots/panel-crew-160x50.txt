@@ -9,7 +9,7 @@
 
 
                                               ╭─ crew ─────────────────────────────────────── max concurrent: 4 ─╮
-                                              │ roles                                                            │
+                                              │ roles · b opens the crew builder: every seat, with recommendation│
                                               │›● architect  default (grok-4.6)                                  │
                                               │ ● builder  default (grok-4.6)                                    │
                                               │ ● auditor  default (grok-4.6)                                    │
@@ -26,7 +26,7 @@
                                               │ max concurrent specialists: 4 · change in /settings              │
                                               │                                                                  │
                                               │                                                                  │
-                                              ╰─ enter assign/apply · r reset · d delete · esc ──────────────────╯
+                                              ╰─ enter assign/apply · b crew builder · r reset · d delete · esc ─╯
 
 
 

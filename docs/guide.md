@@ -146,6 +146,20 @@ Auditors must be different models from the lead and the builder — otherwise bu
 
 For a trivial change the lead can `propose_edit`: you see the diff and press `y`. Only a person can approve it.
 
+**The crew builder** is where a crew is set up. It opens by itself on first launch, when no crew has been saved, and from `/crew` with `b`. It walks through seven steps:
+
+1. A starting point: skiff, schooner, galleon, or your current crew.
+2. The lead.
+3. The architect.
+4. The builder.
+5. The auditor.
+6. Budget: pick the job size (small, medium, or large) and see an estimate per task, per design, and for the whole job, with a suggested cap.
+7. Review.
+
+Each seat step says what the role does, puts a ★ recommendation first, and lists every model you can reach (type to filter). The auditor step refuses the lead's and builder's models. Review sends each model one tiny request with a tool (well under a cent) and saves only when all of them answer. That catches what no catalog shows: an OpenRouter data policy such as zero data retention that leaves a model no provider, missing tool support, a model you have no access to, or no credits. `ryter crew check` runs the same test on your saved crew. Esc on first launch means "later"; the builder doesn't come back on its own.
+
+The estimate uses token counts measured on paid runs (`crates/ryter-core/src/estimate.rs`). It is rough, and a job is usually larger than it looks.
+
 Three ready-made crews sit in `/crew`, picked from every model you can reach at today's prices, so they never name a model you can't use or one that has gone stale:
 
 | Crew | Cost | Builder | Architect and auditor |

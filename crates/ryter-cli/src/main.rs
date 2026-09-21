@@ -148,6 +148,10 @@ enum CrewCmd {
     },
     /// Show all three tiers side by side, from the models you can reach.
     Tiers,
+    /// Send each crew model (and the lead) one tiny request with a tool, to
+    /// catch a data policy, missing tool support, access, or credits. Costs
+    /// well under a cent.
+    Check,
 }
 
 #[derive(Subcommand)]
@@ -269,6 +273,16 @@ fn main() -> ExitCode {
             cmd: CrewCmd::Suggest { tier, apply },
         }) => match crew_suggest_cmd(&tier, apply) {
             Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(1)
+            }
+        },
+        Some(Command::Crew {
+            cmd: CrewCmd::Check,
+        }) => match crew_check_cmd() {
+            Ok(true) => ExitCode::SUCCESS,
+            Ok(false) => ExitCode::from(1),
             Err(e) => {
                 eprintln!("{e}");
                 ExitCode::from(1)
@@ -708,6 +722,58 @@ fn reach() -> ryter_core::Result<Reach> {
         lead_model,
         models,
     })
+}
+
+/// Test the lead and every crew seat; true when all answered.
+fn crew_check_cmd() -> ryter_core::Result<bool> {
+    let cwd = std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?;
+    let trusted = config::is_trusted(&cwd);
+    let cfg = config::load(Some(&cwd), trusted)?;
+    let home = config::home_dir();
+    let last = config::load_last_route(&home);
+    let (lead_conn, lead_model) = config::resolve_route(&cfg, last.as_ref(), None, None);
+    let mut seats = vec![("lead".to_string(), lead_conn.clone(), lead_model.clone())];
+    for role in ["architect", "builder", "auditor"] {
+        let r = cfg.specialists.get(role);
+        let conn = r
+            .and_then(|r| r.connection.clone())
+            .unwrap_or_else(|| lead_conn.clone());
+        let model = r
+            .and_then(|r| r.model.clone())
+            .unwrap_or_else(|| lead_model.clone());
+        seats.push((role.to_string(), conn, model));
+    }
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Error::Io(e.to_string()))?;
+    let mut ok = true;
+    let mut seen: std::collections::HashMap<(String, String), Result<(), String>> =
+        std::collections::HashMap::new();
+    for (role, conn, model) in seats {
+        let key = (conn.clone(), model.clone());
+        if !seen.contains_key(&key) {
+            let r = match (
+                cfg.connections.get(&conn),
+                resolve_secret(&cfg, &ConnectionId::new(&conn)),
+            ) {
+                (Some(c), Ok(k)) => {
+                    rt.block_on(ryter_core::tiering::probe(&http_provider(c, k), &model))
+                }
+                (None, _) => Err(format!("unknown connection {conn}")),
+                (_, Err(_)) => Err(format!("no key for {conn}")),
+            };
+            seen.insert(key.clone(), r);
+        }
+        match &seen[&key] {
+            Ok(()) => println!("✓ {role:<10}{model} on {conn}"),
+            Err(e) => {
+                ok = false;
+                println!("✗ {role:<10}{model} on {conn}: {e}");
+            }
+        }
+    }
+    Ok(ok)
 }
 
 fn crew_tiers_cmd() -> ryter_core::Result<()> {

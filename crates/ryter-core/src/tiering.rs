@@ -47,6 +47,67 @@ pub async fn reachable_models(cfg: &crate::config::Config) -> (Vec<ModelInfo>, V
     (all, failed)
 }
 
+/// Can this account actually run `model` as a crew member? One tiny request
+/// with one tool, capped at 16 output tokens: a fraction of a cent. It
+/// catches what no catalog says: an OpenRouter account whose data policy
+/// (zero data retention) leaves the model no provider, no tool support on any
+/// endpoint, a model you have no access to, or one that was retired.
+pub async fn probe(provider: &dyn crate::llm::Provider, model: &str) -> Result<(), String> {
+    use futures_util::StreamExt;
+    let req = crate::llm::CompletionRequest {
+        model: model.to_string(),
+        system: None,
+        messages: vec![crate::llm::Message {
+            role: "user".into(),
+            content: "Reply with the single word: ok".into(),
+            tool_call_id: None,
+            tool_calls: None,
+        }],
+        tools: vec![crate::llm::ToolSpec {
+            name: "noop".into(),
+            description: "Does nothing. Do not call it.".into(),
+            parameters: serde_json::json!({"type": "object", "properties": {}}),
+        }],
+        max_tokens: Some(16),
+    };
+    let run = async {
+        let mut stream = provider.stream(req).await.map_err(|e| e.to_string())?;
+        while let Some(d) = stream.next().await {
+            d.map_err(|e| e.to_string())?;
+        }
+        Ok::<(), String>(())
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(45), run).await {
+        Ok(r) => r.map_err(|e| short_reason(&e)),
+        Err(_) => Err("no answer in 45s".into()),
+    }
+}
+
+/// Provider errors are long JSON; keep the part a person can act on.
+fn short_reason(e: &str) -> String {
+    let lower = e.to_ascii_lowercase();
+    if lower.contains("data policy") || lower.contains("zero data retention") {
+        return "not available under your account's data policy (e.g. zero data retention)".into();
+    }
+    if lower.contains("tool use") || lower.contains("tools") && lower.contains("support") {
+        return "no provider serves it with tool use, which every crew role needs".into();
+    }
+    if lower.contains("not a valid model") {
+        return "not a model this connection knows (renamed or retired?)".into();
+    }
+    if lower.contains("401") || lower.contains("403") || lower.contains("unauthorized") {
+        return "the key was refused for this model".into();
+    }
+    if lower.contains("404") || lower.contains("not found") || lower.contains("no endpoints") {
+        return "not found, or no provider serves it for this account".into();
+    }
+    if lower.contains("402") || lower.contains("credit") {
+        return "out of credits".into();
+    }
+    let one: String = e.lines().next().unwrap_or(e).chars().take(140).collect();
+    one
+}
+
 /// Above this blended price ($/M tokens) a model is a premium outlier, not a
 /// default. docs/cost.md prices the auditor and architect at a mainstream
 /// flagship; a "pro" tier several times that makes every audit cost several
@@ -347,6 +408,39 @@ pub fn suggest_tier(
     models: &[ModelInfo],
     local: &HashSet<String>,
 ) -> Tiering {
+    suggest_inner(tier, lead_connection, lead_model, None, models, local)
+}
+
+/// Recommendations for a crew whose lead and builder the user already chose:
+/// the auditor is independent of both. The crew builder asks this as the user
+/// changes seats.
+pub fn suggest_for(
+    tier: Tier,
+    lead: (&str, &str),
+    builder: (&str, &str),
+    models: &[ModelInfo],
+    local: &HashSet<String>,
+) -> Tiering {
+    suggest_inner(tier, lead.0, lead.1, Some(builder), models, local)
+}
+
+/// The lead talks with you and writes tasks on every message, so a capable
+/// budget model is enough; a galleon pays for a strong one.
+pub fn recommend_lead(tier: Tier, t: &Tiering) -> Option<Pick> {
+    match tier {
+        Tier::Galleon => t.architect.clone(),
+        _ => t.builder.clone(),
+    }
+}
+
+fn suggest_inner(
+    tier: Tier,
+    lead_connection: &str,
+    lead_model: &str,
+    fixed_builder: Option<(&str, &str)>,
+    models: &[ModelInfo],
+    local: &HashSet<String>,
+) -> Tiering {
     let mut t = Tiering::default();
     let mut unpriced = 0usize;
     let mut cands: Vec<Candidate> = Vec::new();
@@ -459,8 +553,24 @@ pub fn suggest_tier(
         b
     });
     t.builder = builder.map(|c| c.pick.clone());
+    let mut builder_family = builder.map(|b| b.family.clone()).unwrap_or_default();
+    // The user's own builder, whatever it costs.
+    if let Some((conn, model)) = fixed_builder {
+        t.builder = Some(
+            cands
+                .iter()
+                .find(|c| c.pick.connection == conn && same_model(&c.pick.model, model))
+                .map(|c| c.pick.clone())
+                .unwrap_or_else(|| Pick {
+                    connection: conn.to_string(),
+                    model: model.to_string(),
+                    blended: 0.0,
+                    local: local.contains(conn),
+                }),
+        );
+        builder_family = family(conn, model);
+    }
     let lead_family = family(lead_connection, lead_model);
-    let builder_family = builder.map(|b| b.family.clone()).unwrap_or_default();
     let builder_model = t
         .builder
         .as_ref()
@@ -679,6 +789,39 @@ mod tests {
                 &HashSet::new(),
             );
             assert_eq!(t.architect.unwrap().model, "anthropic/claude-opus-5");
+        }
+    }
+
+    /// Provider errors are long JSON; a person needs the reason. The first
+    /// case is OpenRouter's real reply to an unknown model.
+    #[test]
+    fn probe_failures_read_as_reasons() {
+        let cases = [
+            (
+                r#"provider: http 400 Bad Request: {"error":{"message":"nonexistent-vendor/no-such-model is not a valid model ID","code":400}}"#,
+                "renamed or retired",
+            ),
+            (
+                r#"http 404: {"error":{"message":"No endpoints found matching your data policy (Zero data retention)"}}"#,
+                "data policy",
+            ),
+            (
+                r#"http 404: {"error":{"message":"No endpoints found that support tool use"}}"#,
+                "tool use",
+            ),
+            (
+                r#"http 402: {"error":{"message":"Insufficient credits"}}"#,
+                "credits",
+            ),
+            (
+                r#"http 401: {"error":{"message":"User not found."}}"#,
+                "key was refused",
+            ),
+        ];
+        for (raw, want) in cases {
+            let got = short_reason(raw);
+            assert!(got.contains(want), "{raw} -> {got}");
+            assert!(!got.contains('{'), "no JSON left: {got}");
         }
     }
 

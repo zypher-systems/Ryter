@@ -22,6 +22,8 @@ pub enum PanelId {
     Models,
     /// `/crew`.
     Crew,
+    /// The crew builder (from `/crew`, or on first launch).
+    CrewBuilder,
     /// `/agents`.
     Agents,
     /// `/sessions`.
@@ -145,6 +147,21 @@ pub enum Action {
     /// Set the session budget in USD; `0` turns it off. Applies now and is
     /// saved as the default.
     SetBudget(f64),
+    /// Write the crew as it stands to `crew.toml`.
+    SaveCrew,
+    /// Test that each `(connection, model)` answers a tiny request with a tool.
+    ProbeModels(Vec<(String, String)>),
+    /// Save what the crew builder chose: the lead's route, the crew, the budget.
+    SaveCrewSetup {
+        /// Lead connection.
+        lead_connection: String,
+        /// Lead model.
+        lead_model: String,
+        /// Architect, builder, auditor.
+        crew: std::collections::BTreeMap<String, ryter_core::RoleModel>,
+        /// Session budget; `0` is off.
+        budget: f64,
+    },
     /// Save everything the `/budget` panel edits.
     SaveBudget {
         /// Session cap; `0` is off.

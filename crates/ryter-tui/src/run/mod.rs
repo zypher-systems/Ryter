@@ -236,6 +236,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     }));
     let live_spend = Arc::new(Mutex::new(String::new()));
 
+    let has_lead_key = key.is_some();
     let init = WorkerInit {
         cfg: cfg.clone(),
         conn,
@@ -256,6 +257,15 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         user_io,
     };
     let _ = work_tx.send(Work::ListModels);
+    // No crew has ever been saved: every role would run on the lead's model
+    // and builds would refuse on the auditor rule. Set one up first.
+    if has_lead_key && config::crew_unconfigured(&home, &cfg) && view.panels.is_empty() {
+        view.panels
+            .push(Box::new(crate::panel::crew_builder::CrewBuilder::new(
+                &view, true,
+            )));
+        let _ = work_tx.send(Work::ListCrewModels);
+    }
     std::thread::spawn(move || worker::run(init));
 
     let attach_host: Arc<dyn InboundHost> = Arc::new(TuiAttach {
