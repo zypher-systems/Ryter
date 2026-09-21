@@ -49,6 +49,33 @@ pub fn add_worktree(repo: &Path, path: &Path, branch: &str) -> Result<()> {
     Ok(())
 }
 
+/// Open the worktree for `branch` at `path`, creating whichever part is
+/// missing. Returns true when earlier work was already there (a retry).
+pub fn open_worktree(repo: &Path, path: &Path, branch: &str) -> Result<bool> {
+    if path.join(".git").exists() {
+        return Ok(true);
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| Error::Io(e.to_string()))?;
+    }
+    let exists = git(
+        repo,
+        &["rev-parse", "--verify", &format!("refs/heads/{branch}")],
+    )
+    .is_ok();
+    if exists {
+        let _ = git(repo, &["worktree", "prune"]);
+        git(repo, &["worktree", "add", &path.to_string_lossy(), branch])?;
+        Ok(true)
+    } else {
+        git(
+            repo,
+            &["worktree", "add", "-b", branch, &path.to_string_lossy()],
+        )?;
+        Ok(false)
+    }
+}
+
 /// Remove a worktree and its branch.
 pub fn remove_worktree(repo: &Path, path: &Path, branch: &str) -> Result<()> {
     let _ = git(

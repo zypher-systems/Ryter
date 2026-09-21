@@ -36,7 +36,7 @@ impl PermissionModal {
 fn lang_for(tool: &str, summary: &str) -> Option<String> {
     match tool {
         "bash" | "shell" | "run" => Some("bash".into()),
-        "search_replace" | "apply_patch" => Some("diff".into()),
+        "search_replace" | "apply_patch" | "propose_edit" => Some("diff".into()),
         _ => {
             let path = summary.split_whitespace().last().unwrap_or("");
             if path.contains('/') || path.contains('.') {

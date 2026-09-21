@@ -16,6 +16,7 @@ pub mod ids;
 pub mod llm;
 pub mod mcp;
 pub mod memory;
+pub mod meter;
 pub mod phase;
 pub mod prompt;
 pub mod queue;

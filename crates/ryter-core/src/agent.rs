@@ -12,6 +12,7 @@ use crate::event::AgentEvent;
 use crate::llm::{
     AssistantToolCall, CompletionRequest, Message, Provider, StreamDelta, ToolCallAccumulator,
 };
+use crate::meter::{Caps, Meter};
 use crate::phase::Phase;
 use crate::prompt::orchestrator_system;
 use crate::queue::{TaskQueue, TaskStatus};
@@ -43,6 +44,9 @@ pub struct TurnResult {
     /// Assistant text from the last model round.
     pub text: String,
 }
+
+/// Role, model, connection: one spend event per group per batch.
+type SpendKey = (String, String, String);
 
 /// The synthetic turn that hands a crew's results back to the orchestrator.
 fn crew_report_message(report: &str) -> String {
@@ -182,6 +186,12 @@ impl Agent {
         }
 
         let mut last_text = String::new();
+        // One system prompt per turn, not per round. It embeds ROADMAP.md and
+        // DECISIONS.md, which this same turn edits: rebuilding it every round
+        // changed the prompt's prefix and threw away the provider's cache for
+        // the whole conversation, every time memory was touched.
+        let mut system = self.system_prompt()?;
+        let mut compactions = self.session.transcript.len();
         for _round in 0..self.max_turns {
             if self.ctx.cancel.is_cancelled() {
                 return self.finish_cancelled(last_text).await;
@@ -193,10 +203,15 @@ impl Agent {
                 });
             }
             self.maybe_compact()?;
+            if self.session.transcript.len() < compactions {
+                // Compaction already rewrote the prefix; memory can catch up free.
+                system = self.system_prompt()?;
+            }
+            compactions = self.session.transcript.len();
 
             let req = CompletionRequest {
                 model: self.model.clone(),
-                system: Some(self.system_prompt()?),
+                system: Some(system.clone()),
                 messages: self.session.transcript.clone(),
                 tools: crate::tools::specs_for_opts(self.role, self.ctx.web),
                 max_tokens: Some(8192),
@@ -360,20 +375,63 @@ impl Agent {
     }
 
     /// Run pending queue items. Orchestrator only. Role follows the current phase.
-    /// Returns the crew's report for the orchestrator (empty when nothing ran).
+    /// Run the queue for the current phase. Returns the crew's report for the
+    /// orchestrator (empty when nothing ran).
+    ///
+    /// In Build, tasks land on an open patch branch and the patch lands on the
+    /// user's branch as one commit once all of it is done. Every specialist
+    /// round is metered against the session budget and per-task caps.
     pub async fn drain_crew(&mut self) -> Result<String> {
         if self.role != Role::Orchestrator {
             return Ok(String::new());
         }
-        let mut reports: Vec<String> = Vec::new();
         let phase = self.session.meta.phase;
         let role = match phase {
             Phase::Plan => Role::Architect,
             Phase::Build => Role::Builder,
             Phase::Audit => Role::Auditor,
         };
+        let has_pending = self
+            .queue
+            .lock()
+            .map_err(|e| Error::Config(e.to_string()))?
+            .tasks
+            .iter()
+            .any(|t| t.status == TaskStatus::Pending);
+        if !has_pending && (role != Role::Builder || self.session.meta.patch.is_none()) {
+            return Ok(String::new());
+        }
+
+        let meter = Arc::new(Meter::new(self.book.clone(), self.caps()));
+        let (builder_p, builder_m, builder_c) = self.specialist_stack(role);
+        let auditors = if role == Role::Builder && self.session.meta.auditor_enabled {
+            match self.auditor_panel() {
+                Ok(a) => a,
+                Err(why) => return Ok(format!("### builds paused\n{why}\n")),
+            }
+        } else {
+            Vec::new()
+        };
+        // Refuse before a builder spends anything: work that cannot be signed
+        // off by a different model must not be started.
+        if role == Role::Builder && has_pending && self.session.meta.auditor_enabled {
+            if let Some(why) = crew::independence_problem(&self.model, &builder_m, &auditors) {
+                return Ok(format!("### builds paused\nNothing ran: {why}\n"));
+            }
+        }
+        let target_repo = if role == Role::Builder && has_pending {
+            match self.open_patch() {
+                Ok(p) => p.worktree,
+                Err(e) => return Ok(format!("### builds paused\n{e}\n")),
+            }
+        } else {
+            self.ctx.workspace.clone()
+        };
+
+        let mut reports: Vec<String> = Vec::new();
+        let mut budget_hit: Option<Error> = None;
         loop {
-            if self.ctx.cancel.is_cancelled() {
+            if self.ctx.cancel.is_cancelled() || budget_hit.is_some() {
                 break;
             }
             let batch = {
@@ -385,6 +443,16 @@ impl Agent {
             };
             if batch.is_empty() {
                 break;
+            }
+            if role == Role::Builder {
+                if let Some(mut p) = self.session.meta.patch.clone() {
+                    for t in &batch {
+                        if !p.tasks.contains(&t.id) {
+                            p.tasks.push(t.id.clone());
+                        }
+                    }
+                    self.session.set_patch(Some(p))?;
+                }
             }
             let mut jobs = Vec::new();
             let mut child_cancels: Vec<Arc<crate::cancel::Cancel>> = Vec::new();
@@ -405,8 +473,12 @@ impl Agent {
                 }
                 child_cancels.push(child_cancel.clone());
                 self.emit(crew::started_event(sub_id.clone(), role, &task))?;
-                let (provider, model) = self.specialist_stack(role);
-                let (auditor_p, auditor_m) = self.specialist_stack(Role::Auditor);
+                let provider = builder_p.clone();
+                let model = builder_m.clone();
+                let connection = builder_c.clone();
+                let auditors = auditors.clone();
+                let meter = meter.clone();
+                let repo = target_repo.clone();
                 let workspace = self.ctx.workspace.clone();
                 let home = self.home.clone();
                 let session_id = self.session.meta.id.as_str().to_string();
@@ -440,9 +512,10 @@ impl Agent {
                             let job = crew::BuildJob {
                                 provider: provider.clone(),
                                 model: &model,
-                                auditor_provider: auditor_p.clone(),
-                                auditor_model: &auditor_m,
-                                repo: &workspace,
+                                connection: &connection,
+                                auditors: &auditors,
+                                meter: &meter,
+                                repo: &repo,
                                 home: &home,
                                 session_id: &session_id,
                                 project_root: project_root.as_deref(),
@@ -487,6 +560,8 @@ impl Agent {
                             &pass,
                             cancel,
                             queue,
+                            &meter,
+                            &connection,
                         )
                         .await;
                         (sub_id, task_id, task.retries, outcome)
@@ -507,6 +582,7 @@ impl Agent {
             });
             let results = futures_util::future::join_all(jobs).await;
             watch.abort();
+            self.record_crew_spend(&meter)?;
             let mut combined = String::new();
             for (sub_id, task_id, retries, outcome) in results {
                 match outcome {
@@ -517,6 +593,24 @@ impl Agent {
                                 combined.push_str("\n\n---\n\n");
                             }
                             combined.push_str(&outcome.findings);
+                        }
+                        if role == Role::Builder && outcome.status == TaskStatus::Done {
+                            if let Some(mut p) = self.session.meta.patch.clone() {
+                                if !p.landed.contains(&outcome.id) {
+                                    p.landed.push(outcome.id.clone());
+                                    if let Some(t) = self
+                                        .queue
+                                        .lock()
+                                        .map_err(|e| Error::Config(e.to_string()))?
+                                        .tasks
+                                        .iter()
+                                        .find(|t| t.id == outcome.id)
+                                    {
+                                        p.titles.push(t.title.clone());
+                                    }
+                                }
+                                self.session.set_patch(Some(p))?;
+                            }
                         }
                         {
                             let mut q = self
@@ -559,6 +653,12 @@ impl Agent {
                                 .map_err(|e| Error::Config(e.to_string()))?;
                             q.set(&task_id, TaskStatus::Blocked, e.to_string());
                         }
+                        if let Error::Budget { spent, cap } = &e {
+                            budget_hit = Some(Error::Budget {
+                                spent: *spent,
+                                cap: *cap,
+                            });
+                        }
                         self.emit(AgentEvent::Error {
                             message: e.to_string(),
                         })?;
@@ -569,9 +669,40 @@ impl Agent {
                 let _ = self.session.write_note(phase, &combined);
             }
         }
+
+        if role == Role::Builder && budget_hit.is_none() && !self.ctx.cancel.is_cancelled() {
+            if let Some(line) = self
+                .try_land_patch(&meter, &builder_p, &builder_m, &builder_c, &auditors)
+                .await?
+            {
+                reports.push(line);
+            }
+            self.record_crew_spend(&meter)?;
+        }
+        let total = meter.total();
+        if total.billable_tokens > 0 {
+            let mut line = format!(
+                "Crew cost this run: {} ({} billable tokens, {} cached)",
+                total.label(),
+                total.billable_tokens,
+                total.cached_tokens
+            );
+            let by_role: Vec<String> = meter
+                .by_role()
+                .iter()
+                .map(|(r, t)| format!("{r} {}", t.label()))
+                .collect();
+            if !by_role.is_empty() {
+                line.push_str(&format!(" — {}", by_role.join(", ")));
+            }
+            reports.insert(0, line);
+        }
         let report = reports.join("\n");
         if !report.trim().is_empty() {
             let _ = self.session.write_crew_report(&report);
+        }
+        if let Some(e) = budget_hit {
+            return Err(e);
         }
         Ok(report)
     }
@@ -666,23 +797,279 @@ impl Agent {
         }
     }
 
-    fn specialist_stack(&self, role: Role) -> (Arc<dyn Provider>, String) {
+    /// Provider, model, and connection for a crew role.
+    fn specialist_stack(&self, role: Role) -> (Arc<dyn Provider>, String, String) {
+        let lead = || {
+            (
+                self.provider.clone(),
+                self.model.clone(),
+                self.connection.clone(),
+            )
+        };
         let Some(cfg) = &self.cfg else {
-            return (self.provider.clone(), self.model.clone());
+            return lead();
         };
         if cfg.follows_orchestrator(role) {
-            return (self.provider.clone(), self.model.clone());
+            return lead();
         }
         let (conn, model) = cfg.route_for(role);
-        if conn == self.connection && model == self.model {
-            return (self.provider.clone(), model);
+        if conn == self.connection {
+            return (self.provider.clone(), model, conn);
         }
         if let Ok(key) = crate::config::resolve_secret(cfg, &crate::ids::ConnectionId::new(&conn)) {
             if let Some(c) = cfg.connections.get(&conn) {
-                return (Arc::new(crate::llm::http_provider(c, key)), model);
+                return (Arc::new(crate::llm::http_provider(c, key)), model, conn);
             }
         }
-        (self.provider.clone(), self.model.clone())
+        // Falls back to the lead. For the auditor this is caught by the
+        // independence check rather than silently signing off its own work.
+        lead()
+    }
+
+    /// Caps for a crew run from config and the session's spend so far.
+    fn caps(&self) -> Caps {
+        let spend = self
+            .cfg
+            .as_ref()
+            .map(|c| c.spend.clone())
+            .unwrap_or_default();
+        Caps {
+            session_usd: self.budget_usd,
+            session_before: self.session.meta.spend_usd_total.unwrap_or(0.0),
+            task_usd: spend.task_budget_usd,
+            task_tokens: spend.task_max_tokens,
+        }
+    }
+
+    /// The auditor panel, each seat resolved to a live provider. An explicit
+    /// `[[auditor.panel]]` wins; otherwise one seat routed like any crew role.
+    fn auditor_panel(&self) -> std::result::Result<Vec<crew::Auditor>, String> {
+        let panel = self
+            .cfg
+            .as_ref()
+            .map(|c| c.auditor.panel.clone())
+            .unwrap_or_default();
+        if panel.is_empty() {
+            let (provider, model, connection) = self.specialist_stack(Role::Auditor);
+            return Ok(vec![crew::Auditor {
+                provider,
+                model,
+                connection,
+                focus: String::new(),
+                paths: Vec::new(),
+            }]);
+        }
+        let cfg = self.cfg.as_ref().ok_or("no config")?;
+        let mut out = Vec::new();
+        for seat in panel {
+            let conn = seat
+                .connection
+                .clone()
+                .unwrap_or_else(|| self.connection.clone());
+            let provider: Arc<dyn Provider> = if conn == self.connection {
+                self.provider.clone()
+            } else {
+                let c = cfg
+                    .connections
+                    .get(&conn)
+                    .ok_or_else(|| format!("auditor panel: unknown connection {conn:?}"))?;
+                let key = crate::config::resolve_secret(cfg, &crate::ids::ConnectionId::new(&conn))
+                    .map_err(|e| format!("auditor panel: no key for {conn}: {e}"))?;
+                Arc::new(crate::llm::http_provider(c, key))
+            };
+            out.push(crew::Auditor {
+                provider,
+                model: seat.model,
+                connection: conn,
+                focus: seat.focus,
+                paths: seat.paths,
+            });
+        }
+        Ok(out)
+    }
+
+    /// The open patch, opening one on the user's current branch if needed.
+    fn open_patch(&mut self) -> Result<crate::session::Patch> {
+        if let Some(p) = &self.session.meta.patch {
+            if p.worktree.join(".git").exists() {
+                return Ok(p.clone());
+            }
+        }
+        let repo = self.ctx.workspace.clone();
+        if !crate::git::is_repo(&repo) {
+            return Err(Error::Config(
+                "the workspace is not a git repository".into(),
+            ));
+        }
+        let target = crate::git::branch(&repo)?;
+        if target == "HEAD" {
+            return Err(Error::Config(
+                "your checkout is a detached HEAD; check out a branch for the patch to land on"
+                    .into(),
+            ));
+        }
+        let base = crate::git::head(&repo)?;
+        let n = self.session.meta.patches_opened + 1;
+        let sid: String = self
+            .session
+            .meta
+            .id
+            .as_str()
+            .chars()
+            .filter(|c| c.is_ascii_hexdigit())
+            .take(8)
+            .collect();
+        let branch = format!("ryter/patch-{sid}-{n}");
+        let worktree = self
+            .home
+            .join("worktrees")
+            .join(self.session.meta.id.as_str())
+            .join("_patch");
+        crate::git::open_worktree(&repo, &worktree, &branch)?;
+        let patch = crate::session::Patch {
+            branch,
+            worktree,
+            target,
+            base,
+            tasks: Vec::new(),
+            landed: Vec::new(),
+            titles: Vec::new(),
+        };
+        self.session.meta.patches_opened = n;
+        self.session.set_patch(Some(patch.clone()))?;
+        Ok(patch)
+    }
+
+    /// Land the open patch if every task in it is finished. `None` when there
+    /// is no patch to report on.
+    async fn try_land_patch(
+        &mut self,
+        meter: &Meter,
+        provider: &Arc<dyn Provider>,
+        model: &str,
+        connection: &str,
+        auditors: &[crew::Auditor],
+    ) -> Result<Option<String>> {
+        let Some(patch) = self.session.meta.patch.clone() else {
+            return Ok(None);
+        };
+        let open: Vec<String> = {
+            let q = self
+                .queue
+                .lock()
+                .map_err(|e| Error::Config(e.to_string()))?;
+            patch
+                .tasks
+                .iter()
+                .filter_map(|id| q.tasks.iter().find(|t| &t.id == id))
+                .filter(|t| t.status != TaskStatus::Done)
+                .map(|t| format!("{} ({:?})", t.id, t.status).to_lowercase())
+                .collect()
+        };
+        if !open.is_empty() {
+            return Ok(Some(format!(
+                "### patch waiting
+`{}` holds {} finished task(s) and lands on `{}` once these                  are done, retried, or dropped from the list: {}
+",
+                patch.branch,
+                patch.landed.len(),
+                patch.target,
+                open.join(", ")
+            )));
+        }
+        if patch.landed.is_empty() {
+            let _ =
+                crate::git::remove_worktree(&self.ctx.workspace, &patch.worktree, &patch.branch);
+            self.session.set_patch(None)?;
+            return Ok(None);
+        }
+        if !self.session.meta.auditor_enabled || auditors.is_empty() {
+            return Ok(Some(format!(
+                "### patch waiting
+The auditor is off, so the patch stays on `{}`.
+",
+                patch.branch
+            )));
+        }
+        let job = crew::BuildJob {
+            provider: provider.clone(),
+            model,
+            connection,
+            auditors,
+            meter,
+            repo: &self.ctx.workspace,
+            home: &self.home,
+            session_id: self.session.meta.id.as_str(),
+            project_root: self.project_root.as_deref(),
+            trusted: self.trusted,
+            always_approve: self.ctx.always_approve,
+            web: self.ctx.web,
+            auditor_enabled: true,
+            checks: &self.checks,
+            check_timeout: std::time::Duration::from_secs(self.check_timeout_secs),
+            max_retries: self.max_retries,
+            hooks: self.ctx.hooks.clone(),
+            cancel: self.ctx.cancel.clone(),
+        };
+        Ok(Some(match crew::land_patch(&job, &patch).await? {
+            crew::PatchLanding::Landed(msg) => {
+                self.session.set_patch(None)?;
+                format!(
+                    "### patch landed
+{msg}
+"
+                )
+            }
+            crew::PatchLanding::Waiting(why) => format!(
+                "### patch waiting
+`{}` is not on `{}` yet: {why}
+",
+                patch.branch, patch.target
+            ),
+        }))
+    }
+
+    /// Write the crew's new spend to the session log and the spend card.
+    fn record_crew_spend(&mut self, meter: &Meter) -> Result<()> {
+        // One event per role and model, not per round.
+        let mut grouped: std::collections::BTreeMap<SpendKey, (Role, Usage, Option<f64>)> =
+            std::collections::BTreeMap::new();
+        for line in meter.unrecorded() {
+            self.session.record_spend(spend_record(
+                line.connection.clone(),
+                line.model.clone(),
+                line.role,
+                line.usage,
+                line.usd,
+            ))?;
+            let e = grouped
+                .entry((
+                    line.role.to_string(),
+                    line.model.clone(),
+                    line.connection.clone(),
+                ))
+                .or_insert((line.role, Usage::default(), Some(0.0)));
+            e.1.input_tokens += line.usage.input_tokens;
+            e.1.output_tokens += line.usage.output_tokens;
+            e.1.cached_tokens += line.usage.cached_tokens;
+            e.2 = match (e.2, line.usd) {
+                (Some(a), Some(b)) => Some(a + b),
+                _ => None,
+            };
+        }
+        for ((_, model, connection), (role, usage, usd)) in grouped {
+            self.emit(AgentEvent::Spend {
+                connection,
+                model,
+                role,
+                subagent_id: None,
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                cached_tokens: usage.cached_tokens,
+                total_usd: usd,
+            })?;
+        }
+        Ok(())
     }
 
     fn system_prompt(&self) -> Result<String> {
@@ -823,6 +1210,190 @@ mod tests {
             running: Arc::new(Mutex::new(Vec::new())),
         };
         (home, cwd, agent)
+    }
+
+    /// A git workspace whose auditor is a different model from the lead.
+    fn crew_setup(provider: ReplayProvider) -> (TempDir, TempDir, Agent) {
+        let (home, cwd, mut agent) = setup(provider);
+        crate::git::init_repo(cwd.path()).unwrap();
+        let mut cfg = crate::config::Config::default();
+        cfg.specialists.insert(
+            "auditor".into(),
+            crate::config::RoleModel {
+                connection: Some("spacexai".into()),
+                model: Some("claude-auditor".into()),
+            },
+        );
+        agent.cfg = Some(cfg);
+        (home, cwd, agent)
+    }
+
+    fn write(path: &str, content: &str) -> Vec<StreamDelta> {
+        vec![
+            StreamDelta::ToolCall {
+                id: "w".into(),
+                name: "write".into(),
+                arguments: serde_json::json!({"path": path, "content": content}).to_string(),
+            },
+            StreamDelta::Done,
+        ]
+    }
+
+    fn say(text: &str) -> Vec<StreamDelta> {
+        vec![StreamDelta::Text(text.into()), StreamDelta::Done]
+    }
+
+    fn first_parent_log(repo: &std::path::Path) -> Vec<String> {
+        crate::git::git(repo, &["log", "--first-parent", "--format=%s"])
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// With every role on the lead's model there is no independent sign-off,
+    /// so builds refuse before any builder spends a token.
+    #[tokio::test]
+    async fn builds_pause_when_the_auditor_is_the_lead() {
+        let p = ReplayProvider::scripted(vec![]);
+        let (home, cwd, mut agent) = setup(p);
+        crate::git::init_repo(cwd.path()).unwrap();
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo(
+                &serde_json::json!({"items": [{"id": "t1", "title": "x", "files": ["a.txt"]}]}),
+            )
+            .unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert!(report.contains("builds paused"), "{report}");
+        assert!(report.contains("same model as the lead"), "{report}");
+        assert_eq!(
+            agent.queue.lock().unwrap().tasks[0].status,
+            TaskStatus::Pending
+        );
+        assert!(!home.path().join("worktrees").exists(), "nothing may start");
+    }
+
+    /// Your branch receives the whole change as one commit, and only once
+    /// every task in it has landed on the patch.
+    #[tokio::test]
+    async fn two_tasks_land_as_one_patch_commit() {
+        let p = ReplayProvider::scripted(vec![
+            write("a.txt", "a\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: PASS"),
+            write("b.txt", "b\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: PASS"),
+        ]);
+        let (_home, cwd, mut agent) = crew_setup(p);
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo(&serde_json::json!({"items": [
+                {"id": "t1", "title": "add a", "files": ["a.txt"]},
+                {"id": "t2", "title": "add b", "files": ["b.txt"]}
+            ]}))
+            .unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert!(report.contains("patch landed"), "{report}");
+        assert!(cwd.path().join("a.txt").exists() && cwd.path().join("b.txt").exists());
+        let log = first_parent_log(cwd.path());
+        assert!(log[0].starts_with("ryter: add a; add b"), "{log:?}");
+        assert_eq!(
+            log.len(),
+            2,
+            "one commit on your branch for the whole patch: {log:?}"
+        );
+        assert!(agent.session.meta.patch.is_none());
+    }
+
+    /// A blocked task holds the patch: nothing reaches your branch, not even
+    /// the tasks that passed. Dropping the blocked task lets the rest land.
+    #[tokio::test]
+    async fn a_blocked_task_holds_the_whole_patch() {
+        let p = ReplayProvider::scripted(vec![
+            write("a.txt", "a\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: PASS"),
+            write("b.txt", "bad\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: FAIL\n- b.txt: wrong"),
+        ]);
+        let (_home, cwd, mut agent) = crew_setup(p);
+        agent.max_retries = 0;
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo(&serde_json::json!({"items": [
+                {"id": "t1", "title": "add a", "files": ["a.txt"]},
+                {"id": "t2", "title": "add b", "files": ["b.txt"]}
+            ]}))
+            .unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert!(report.contains("patch waiting"), "{report}");
+        assert!(
+            !cwd.path().join("a.txt").exists(),
+            "t1 passed but must wait for the patch"
+        );
+
+        // The user (via the lead) drops t2; the patch lands without it.
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo(&serde_json::json!({"items": [
+                {"id": "t1", "title": "add a", "status": "done"}
+            ]}))
+            .unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert!(report.contains("patch landed"), "{report}");
+        assert!(cwd.path().join("a.txt").exists());
+        assert!(!cwd.path().join("b.txt").exists());
+    }
+
+    /// The crew's spend reaches the session log, so the budget sees it.
+    #[tokio::test]
+    async fn crew_spend_reaches_the_session() {
+        let usage = |t: &str| {
+            vec![
+                StreamDelta::Text(t.into()),
+                StreamDelta::Usage(Usage {
+                    input_tokens: 2_000,
+                    output_tokens: 100,
+                    cached_tokens: 0,
+                }),
+                StreamDelta::ReportedCost(0.05),
+                StreamDelta::Done,
+            ]
+        };
+        let p = ReplayProvider::scripted(vec![
+            write("a.txt", "a\n"),
+            usage("STATUS: DONE"),
+            usage("VERDICT: PASS"),
+        ]);
+        let (_home, _cwd, mut agent) = crew_setup(p);
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo(
+                &serde_json::json!({"items": [{"id": "t1", "title": "a", "files": ["a.txt"]}]}),
+            )
+            .unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert!(report.contains("Crew cost this run"), "{report}");
+        let log = agent.session.spend_log().unwrap();
+        let roles: Vec<Role> = log.iter().map(|r| r.role).collect();
+        assert!(
+            roles.contains(&Role::Builder) && roles.contains(&Role::Auditor),
+            "{roles:?}"
+        );
+        assert!(agent.session.meta.spend_usd_total.unwrap_or(0.0) >= 0.10);
     }
 
     #[tokio::test]

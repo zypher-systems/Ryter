@@ -240,6 +240,26 @@ pub struct AuditorConfig {
     /// Wall clock for each check.
     #[serde(default = "default_check_timeout")]
     pub check_timeout_secs: u64,
+    /// Auditors that must all sign off, in order. They stop at the first
+    /// FAIL, so put the cheapest first. Empty = one auditor from `/crew`.
+    #[serde(default)]
+    pub panel: Vec<AuditorSeatConfig>,
+}
+
+/// One seat on the auditor panel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuditorSeatConfig {
+    /// Connection name; the orchestrator's when omitted.
+    #[serde(default)]
+    pub connection: Option<String>,
+    /// Model id. Must differ from the lead's and the builder's.
+    pub model: String,
+    /// What this seat looks for, e.g. `"security"`. Empty = general review.
+    #[serde(default)]
+    pub focus: String,
+    /// Only review changes touching these globs. Empty = every change.
+    #[serde(default)]
+    pub paths: Vec<String>,
 }
 
 fn default_retries() -> u32 {
@@ -257,6 +277,7 @@ impl Default for AuditorConfig {
             max_retries: 2,
             checks: Vec::new(),
             check_timeout_secs: default_check_timeout(),
+            panel: Vec::new(),
         }
     }
 }
@@ -275,6 +296,21 @@ pub struct SpendConfig {
     /// Status-line warning threshold.
     #[serde(default)]
     pub warn_usd: f64,
+    /// USD cap per crew task, builder and auditors together (`0` = none).
+    #[serde(default = "default_task_usd")]
+    pub task_budget_usd: f64,
+    /// Billable-token cap per crew task: uncached input plus output. Unlike a
+    /// dollar cap it also stops unpriced models (`0` = none).
+    #[serde(default = "default_task_tokens")]
+    pub task_max_tokens: u64,
+}
+
+fn default_task_tokens() -> u64 {
+    1_000_000
+}
+
+fn default_task_usd() -> f64 {
+    1.0
 }
 
 fn usd() -> String {
@@ -387,6 +423,8 @@ impl Default for SpendConfig {
             currency: usd(),
             session_budget_usd: 5.0,
             warn_usd: 1.0,
+            task_budget_usd: default_task_usd(),
+            task_max_tokens: default_task_tokens(),
         }
     }
 }

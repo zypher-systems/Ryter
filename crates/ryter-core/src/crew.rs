@@ -9,6 +9,7 @@ use crate::event::AgentEvent;
 use crate::git;
 use crate::ids::SubagentId;
 use crate::llm::{CompletionRequest, Provider, StreamDelta};
+use crate::meter::Meter;
 use crate::prompt::specialist_messages;
 use crate::queue::{Task, TaskStatus};
 use crate::role::Role;
@@ -65,16 +66,45 @@ pub fn parse_verdict(text: &str) -> bool {
         .is_some_and(|l| l.starts_with("PASS"))
 }
 
+/// One seat on the auditor panel.
+#[derive(Clone)]
+pub struct Auditor {
+    /// Inference.
+    pub provider: Arc<dyn Provider>,
+    /// Model id.
+    pub model: String,
+    /// Connection name.
+    pub connection: String,
+    /// What this seat weighs most (`"security"`); empty for a general review.
+    pub focus: String,
+    /// Only reviews changes touching these globs; empty for every change.
+    pub paths: Vec<String>,
+}
+
+impl Auditor {
+    /// Whether this seat reviews a change touching `changed`.
+    pub fn applies_to(&self, changed: &[String]) -> bool {
+        self.paths.is_empty()
+            || self
+                .paths
+                .iter()
+                .any(|g| glob::Pattern::new(g).is_ok_and(|p| changed.iter().any(|c| p.matches(c))))
+    }
+}
+
 /// Everything a build task needs besides the task itself.
 pub struct BuildJob<'a> {
     /// Builder inference.
     pub provider: Arc<dyn Provider>,
     /// Builder model.
     pub model: &'a str,
-    /// Auditor inference. Ideally a different model from the builder.
-    pub auditor_provider: Arc<dyn Provider>,
-    /// Auditor model.
-    pub auditor_model: &'a str,
+    /// Builder connection name, for the spend log.
+    pub connection: &'a str,
+    /// Auditors that must all sign off, in order; they stop at the first FAIL.
+    /// Each must be a different model from the lead and the builder.
+    pub auditors: &'a [Auditor],
+    /// Prices and caps every specialist round.
+    pub meter: &'a Meter,
     /// The user's repository.
     pub repo: &'a Path,
     /// `~/.ryter`.
@@ -154,11 +184,25 @@ pub async fn run_build_task(job: &BuildJob<'_>, task: &Task) -> Result<TaskOutco
     // committed and merged into the user's repository.
     let scratch = root.join(format!("{}.scratch", task.id));
     let _ = std::fs::create_dir_all(&scratch);
-    git::add_worktree(job.repo, &wt, &branch)?;
-    let result = build_inner(job, task, &onto, &wt, &branch, &scratch).await;
+    // A retry reopens the rejected attempt instead of starting over: fixing
+    // findings in place costs a fraction of rebuilding the task from scratch.
+    let resumed = git::open_worktree(job.repo, &wt, &branch)?;
+    let result = build_inner(job, task, &onto, &wt, &branch, &scratch, resumed).await;
     let _ = std::fs::remove_dir_all(&scratch);
     match result {
         Ok(o) => Ok(o),
+        // A cap stopped the work partway: keep what it produced.
+        Err(Error::TaskBudget(why)) => {
+            let gate = Gate {
+                cost: job.meter.task(&task.id).label(),
+                ..Gate::default()
+            };
+            Ok(keep_branch(job, task, &wt, &branch, why, "", &gate))
+        }
+        Err(e @ Error::Budget { .. }) => {
+            git::remove_worktree_keep_branch(job.repo, &wt);
+            Err(e)
+        }
         Err(e) => {
             let _ = git::remove_worktree(job.repo, &wt, &branch);
             Err(e)
@@ -167,7 +211,7 @@ pub async fn run_build_task(job: &BuildJob<'_>, task: &Task) -> Result<TaskOutco
 }
 
 /// Gate state carried across integrations.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Gate {
     /// Worktree HEAD at which the checks last passed.
     checked_at: Option<String>,
@@ -177,6 +221,8 @@ struct Gate {
     checks: String,
     /// Auditor text, for the report.
     audit: String,
+    /// Task cost so far, for the report.
+    cost: String,
 }
 
 async fn build_inner(
@@ -186,7 +232,13 @@ async fn build_inner(
     wt: &Path,
     branch: &str,
     scratch: &Path,
+    resumed: bool,
 ) -> Result<TaskOutcome> {
+    let bill = Bill {
+        meter: job.meter,
+        task: &task.id,
+        connection: job.connection,
+    };
     let ctx = ToolContext {
         workspace: wt.to_path_buf(),
         notes_dir: scratch.to_path_buf(),
@@ -203,16 +255,31 @@ async fn build_inner(
         web: job.web,
     };
 
+    let mut brief = builder_brief(task);
+    if resumed {
+        brief.push_str(
+            "\nYour previous attempt is already committed in this worktree. Fix the \
+             findings above in place; do not start over.\n",
+        );
+    }
     let msgs = specialist_messages(
         job.home,
         job.project_root,
         job.trusted,
         Role::Builder,
         "",
-        &builder_brief(task),
+        &brief,
+        &task.files,
     );
-    let handback =
-        run_specialist(job.provider.as_ref(), job.model, Role::Builder, msgs, &ctx).await?;
+    let handback = run_specialist(
+        job.provider.as_ref(),
+        job.model,
+        Role::Builder,
+        msgs,
+        &ctx,
+        &bill,
+    )
+    .await?;
     git::commit_all(wt, &format!("ryter: {}", task.title))?;
 
     let mut gate = Gate::default();
@@ -221,30 +288,7 @@ async fn build_inner(
         //    builder's copy, and a builder resolves them — never the user's.
         let target = git::rev(job.repo, onto)?;
         if let git::Integration::Conflict(files) = git::integrate(wt, onto)? {
-            let prompt = format!(
-                "Merging `{onto}` into your branch conflicted in:\n{}\n\n\
-                 Resolve every conflict marker, keeping both the upstream change \
-                 and the intent of your task:\n\n{}",
-                files.join("\n"),
-                builder_brief(task),
-            );
-            let msgs = specialist_messages(
-                job.home,
-                job.project_root,
-                job.trusted,
-                Role::Builder,
-                "",
-                &prompt,
-            );
-            let _ =
-                run_specialist(job.provider.as_ref(), job.model, Role::Builder, msgs, &ctx).await?;
-            // A path stays "unmerged" until it is staged, so stage first, then
-            // refuse if anything is still unmerged or still carries markers.
-            let _ = git::git(wt, &["add", "-A"]);
-            let unresolved = !git::unmerged(wt).is_empty()
-                || files.iter().any(|f| has_conflict_markers(&wt.join(f)));
-            if unresolved || git::commit_all(wt, &format!("ryter: integrate {onto}")).is_err() {
-                git::merge_abort(wt);
+            if !resolve_in(job, task, wt, onto, &files, &ctx, &bill).await? {
                 return Ok(keep_branch(
                     job,
                     task,
@@ -285,7 +329,7 @@ async fn build_inner(
                 }
             }
         }
-        if !job.auditor_enabled {
+        if !job.auditor_enabled || job.auditors.is_empty() {
             return Ok(keep_branch(
                 job,
                 task,
@@ -297,12 +341,22 @@ async fn build_inner(
             ));
         }
         if !gate.signed_off {
-            let audit = audit(job, task, wt, &ctx, &target, &handback, &gate).await?;
-            gate.signed_off = parse_verdict(&audit);
-            gate.audit = audit;
-            if !gate.signed_off {
-                let findings = gate.audit.clone();
-                return Ok(failed(job, task, wt, branch, &findings, &handback, &gate));
+            match sign_off(job, task, wt, &ctx, &target, &handback, &mut gate).await? {
+                SignOff::Passed => gate.signed_off = true,
+                SignOff::Failed(findings) => {
+                    return Ok(failed(job, task, wt, branch, &findings, &handback, &gate));
+                }
+                SignOff::Uncovered => {
+                    return Ok(keep_branch(
+                        job,
+                        task,
+                        wt,
+                        branch,
+                        "no auditor on the panel covers the paths this task changed".into(),
+                        &handback,
+                        &gate,
+                    ));
+                }
             }
         }
 
@@ -358,6 +412,7 @@ async fn build_inner(
             ));
         }
         git::remove_worktree(job.repo, wt, branch)?;
+        gate.cost = job.meter.task(&task.id).label();
         let summary = format!(
             "merged {} onto {onto}  undo: git revert -m 1 HEAD  (or reset to {})",
             task.title,
@@ -382,12 +437,293 @@ async fn build_inner(
     ))
 }
 
+/// Have a builder resolve conflict markers in `wt`, then commit. Returns false
+/// (after aborting the merge) when anything is still unresolved.
+async fn resolve_in(
+    job: &BuildJob<'_>,
+    task: &Task,
+    wt: &Path,
+    onto: &str,
+    files: &[String],
+    ctx: &ToolContext,
+    bill: &Bill<'_>,
+) -> Result<bool> {
+    let prompt = format!(
+        "Merging `{onto}` into your branch conflicted in:\n{}\n\n\
+         Resolve every conflict marker, keeping both the upstream change and \
+         the intent of your task:\n\n{}",
+        files.join("\n"),
+        builder_brief(task),
+    );
+    let msgs = specialist_messages(
+        job.home,
+        job.project_root,
+        job.trusted,
+        Role::Builder,
+        "",
+        &prompt,
+        files,
+    );
+    let _ = run_specialist(
+        job.provider.as_ref(),
+        job.model,
+        Role::Builder,
+        msgs,
+        ctx,
+        bill,
+    )
+    .await?;
+    // A path stays "unmerged" until it is staged, so stage first, then refuse
+    // if anything is still unmerged or still carries markers.
+    let _ = git::git(wt, &["add", "-A"]);
+    let unresolved =
+        !git::unmerged(wt).is_empty() || files.iter().any(|f| has_conflict_markers(&wt.join(f)));
+    if unresolved || git::commit_all(wt, &format!("ryter: integrate {onto}")).is_err() {
+        git::merge_abort(wt);
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// How the auditor panel ruled.
+enum SignOff {
+    /// Every seat that covers the change passed it.
+    Passed,
+    /// A seat failed it; its findings.
+    Failed(String),
+    /// No seat covers the changed paths, so nobody can sign off.
+    Uncovered,
+}
+
+/// Run the panel over everything `wt` would land on top of `target`. Seats run
+/// in order and stop at the first FAIL, so a cheap general reviewer first
+/// saves paying a specialist to reject the same work.
+#[allow(clippy::too_many_arguments)]
+async fn sign_off(
+    job: &BuildJob<'_>,
+    task: &Task,
+    wt: &Path,
+    ctx: &ToolContext,
+    target: &str,
+    handback: &str,
+    gate: &mut Gate,
+) -> Result<SignOff> {
+    let changed = git::changed_paths(wt, target, "HEAD");
+    let mut reviews = Vec::new();
+    for seat in job.auditors.iter().filter(|a| a.applies_to(&changed)) {
+        let text = audit(job, seat, task, wt, ctx, target, handback, gate).await?;
+        let pass = parse_verdict(&text);
+        let lens = if seat.focus.is_empty() {
+            "review"
+        } else {
+            seat.focus.as_str()
+        };
+        reviews.push(format!("[{} · {lens}]\n{}", seat.model, text.trim()));
+        gate.audit = reviews.join("\n\n");
+        if !pass {
+            return Ok(SignOff::Failed(gate.audit.clone()));
+        }
+    }
+    Ok(if reviews.is_empty() {
+        SignOff::Uncovered
+    } else {
+        SignOff::Passed
+    })
+}
+
+/// The same model, whichever route reached it: `x-ai/grok-4.6`, `grok-4.6`,
+/// and `grok-4.6-latest` are one model.
+pub fn same_model(a: &str, b: &str) -> bool {
+    let norm = |m: &str| {
+        let m = m
+            .rsplit('/')
+            .next()
+            .unwrap_or(m)
+            .trim()
+            .to_ascii_lowercase();
+        m.trim_end_matches("-latest").to_string()
+    };
+    norm(a) == norm(b)
+}
+
+/// Why this panel cannot sign off work built under `lead` and `builder`, if
+/// it cannot. A pass from the model that wrote (or directs) the code is not a
+/// second opinion, so every auditor must be a different model from both.
+pub fn independence_problem(lead: &str, builder: &str, panel: &[Auditor]) -> Option<String> {
+    if !panel.iter().any(|a| a.paths.is_empty()) {
+        return Some(
+            "the auditor panel needs at least one seat without `paths`, so every change has a reviewer"
+                .into(),
+        );
+    }
+    for a in panel {
+        for (who, model) in [("lead", lead), ("builder", builder)] {
+            if same_model(&a.model, model) {
+                return Some(format!(
+                    "the auditor ({}) is the same model as the {who} ({model}). Sign-off \
+                     must come from a different model: assign one with /crew → auditor \
+                     (another provider is best), or add seats under [[auditor.panel]]. \
+                     If you already assigned one, check its connection has a key: an \
+                     unresolvable route falls back to the lead's model.",
+                    a.model
+                ));
+            }
+        }
+    }
+    None
+}
+
 /// True when a file still holds a conflict marker line.
 fn has_conflict_markers(path: &Path) -> bool {
     std::fs::read_to_string(path).is_ok_and(|t| {
         t.lines()
             .any(|l| l.starts_with("<<<<<<< ") || l.starts_with(">>>>>>> ") || l == "=======")
     })
+}
+
+/// What happened when the crew tried to land its patch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PatchLanding {
+    /// On the user's branch as one commit.
+    Landed(String),
+    /// Held back; why, and what would unblock it.
+    Waiting(String),
+}
+
+/// Land a finished patch on the user's branch (`job.repo`) as one commit.
+///
+/// Every task was checked and signed off against the patch branch as it stood
+/// then; the combined tree is checked once more here, because two tasks that
+/// pass alone can still break each other. If the user committed meanwhile,
+/// their branch is integrated into the patch first — in the patch worktree,
+/// never in their checkout — and any resolution goes back to the auditors.
+pub async fn land_patch(job: &BuildJob<'_>, patch: &crate::session::Patch) -> Result<PatchLanding> {
+    let user = job.repo;
+    let wt = patch.worktree.as_path();
+    let _held = LAND.lock().await;
+    let current = git::branch(user)?;
+    if current != patch.target {
+        return Ok(PatchLanding::Waiting(format!(
+            "you are on `{current}`, but the patch lands on `{}`. Switch back and say continue.",
+            patch.target
+        )));
+    }
+    let scratch = wt.with_extension("scratch");
+    let _ = std::fs::create_dir_all(&scratch);
+    let task = Task {
+        id: "patch".into(),
+        title: format!("integrate {} into the patch", patch.target),
+        brief: format!(
+            "The user committed to `{}` while the crew worked. Bring those commits \
+             into the patch, keeping both the user's changes and the crew's work.",
+            patch.target
+        ),
+        files: Vec::new(),
+        status: TaskStatus::Running,
+        retries: 0,
+        findings: String::new(),
+    };
+    let ctx = ToolContext {
+        workspace: wt.to_path_buf(),
+        notes_dir: scratch.clone(),
+        role: Role::Builder,
+        always_approve: job.always_approve,
+        queue: Arc::new(std::sync::Mutex::new(crate::queue::TaskQueue::open(
+            scratch.join("tasks.json"),
+        ))),
+        mcp: None,
+        hooks: job.hooks.clone(),
+        cancel: job.cancel.clone(),
+        user_io: None,
+        sticky_approve: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        web: job.web,
+    };
+    let bill = Bill {
+        meter: job.meter,
+        task: &task.id,
+        connection: job.connection,
+    };
+    let mut gate = Gate::default();
+    let user_head = git::rev(user, &patch.target)?;
+    if user_head != patch.base {
+        if let git::Integration::Conflict(files) = git::integrate(wt, &patch.target)? {
+            if !resolve_in(job, &task, wt, &patch.target, &files, &ctx, &bill).await? {
+                return Ok(PatchLanding::Waiting(format!(
+                    "your new commits on `{}` conflict with the patch in {}, and the \
+                     conflict could not be resolved automatically",
+                    patch.target,
+                    files.join(", ")
+                )));
+            }
+            match sign_off(
+                job,
+                &task,
+                wt,
+                &ctx,
+                &user_head,
+                "(conflict resolution)",
+                &mut gate,
+            )
+            .await?
+            {
+                SignOff::Passed => {}
+                SignOff::Failed(f) => {
+                    return Ok(PatchLanding::Waiting(format!(
+                        "the auditors rejected the conflict resolution:\n{f}"
+                    )));
+                }
+                SignOff::Uncovered => {
+                    return Ok(PatchLanding::Waiting(
+                        "no auditor covers the files the conflict resolution changed".into(),
+                    ));
+                }
+            }
+        }
+    }
+    if let Err(out) = run_checks(job, wt, &ctx) {
+        return Ok(PatchLanding::Waiting(format!(
+            "each task passed on its own, but the combined patch fails its checks — \
+             queue a fix task and it lands into this patch:\n{out}"
+        )));
+    }
+    let touched = git::changed_paths(wt, &user_head, "HEAD");
+    let dirty = git::dirty_paths(user);
+    let clash: Vec<&str> = touched
+        .iter()
+        .filter(|p| dirty.contains(p))
+        .map(String::as_str)
+        .collect();
+    if !clash.is_empty() {
+        return Ok(PatchLanding::Waiting(format!(
+            "you have uncommitted changes to files the patch changes: {}. Commit or \
+             stash them and say continue.",
+            clash.join(", ")
+        )));
+    }
+    let _ = std::fs::remove_dir_all(&scratch);
+    if touched.is_empty() {
+        let _ = git::remove_worktree(user, wt, &patch.branch);
+        return Ok(PatchLanding::Landed(
+            "the patch changed nothing; closed it".into(),
+        ));
+    }
+    let n = patch.landed.len();
+    let mut title = patch.titles.join("; ");
+    if title.chars().count() > 60 {
+        title = format!("{}…", title.chars().take(59).collect::<String>());
+    }
+    let message = format!("ryter: {title}\n\n{n} task(s): {}", patch.landed.join(", "));
+    if let Err(e) = git::land(user, &patch.branch, &message) {
+        return Ok(PatchLanding::Waiting(format!(
+            "the merge failed and was aborted: {e}"
+        )));
+    }
+    let _ = git::remove_worktree(user, wt, &patch.branch);
+    Ok(PatchLanding::Landed(format!(
+        "landed {n} task(s) on `{}` as one commit ({} files). Undo it all with `git revert -m 1 HEAD`.",
+        patch.target,
+        touched.len()
+    )))
 }
 
 /// The builder's whole brief. It used to be the title alone.
@@ -447,8 +783,10 @@ fn run_checks(
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn audit(
     job: &BuildJob<'_>,
+    seat: &Auditor,
     task: &Task,
     wt: &Path,
     ctx: &ToolContext,
@@ -475,6 +813,16 @@ async fn audit(
         builder_brief(task),
         short = &target[..target.len().min(12)],
     );
+    let body = if seat.focus.is_empty() {
+        body
+    } else {
+        format!(
+            "You sit on an auditor panel with a {focus} focus. Other seats cover \
+             general correctness; weigh {focus} most, but fail anything that must \
+             not merge.\n\n{body}",
+            focus = seat.focus
+        )
+    };
     let audit_ctx = ToolContext {
         role: Role::Auditor,
         ..ctx.clone()
@@ -486,18 +834,34 @@ async fn audit(
         Role::Auditor,
         "",
         &body,
+        &task.files,
     );
+    let bill = Bill {
+        meter: job.meter,
+        task: &task.id,
+        connection: &seat.connection,
+    };
     run_specialist(
-        job.auditor_provider.as_ref(),
-        job.auditor_model,
+        seat.provider.as_ref(),
+        &seat.model,
         Role::Auditor,
         msgs,
         &audit_ctx,
+        &bill,
     )
     .await
 }
 
-/// The gate refused: drop the attempt so a retry starts from a clean branch.
+/// The gate state with the task's cost filled in, for the report.
+fn priced(job: &BuildJob<'_>, task: &Task, gate: &Gate) -> Gate {
+    Gate {
+        cost: job.meter.task(&task.id).label(),
+        ..gate.clone()
+    }
+}
+
+/// The gate refused. While retries remain the attempt is kept, so the next
+/// one fixes it in place.
 fn failed(
     job: &BuildJob<'_>,
     task: &Task,
@@ -507,18 +871,24 @@ fn failed(
     handback: &str,
     gate: &Gate,
 ) -> TaskOutcome {
-    let _ = git::remove_worktree(job.repo, wt, branch);
     let retries = task.retries + 1;
     let status = if retries > job.max_retries {
         TaskStatus::Blocked
     } else {
         TaskStatus::Pending
     };
+    // A retry fixes this attempt in place, so the worktree stays. Out of
+    // retries, the branch stays for the user and only the directory goes.
+    if status == TaskStatus::Blocked {
+        git::remove_worktree_keep_branch(job.repo, wt);
+    }
+    let _ = branch;
     let summary = if status == TaskStatus::Blocked {
         format!("rejected {retries} times; blocked")
     } else {
         "rejected; retrying".into()
     };
+    let gate = &priced(job, task, gate);
     TaskOutcome {
         id: task.id.clone(),
         status,
@@ -539,6 +909,7 @@ fn keep_branch(
     gate: &Gate,
 ) -> TaskOutcome {
     git::remove_worktree_keep_branch(job.repo, wt);
+    let gate = &priced(job, task, gate);
     let summary = format!("not merged: {why}. Branch `{branch}` has the work.");
     TaskOutcome {
         id: task.id.clone(),
@@ -561,6 +932,9 @@ fn outcome(task: &Task, status: TaskStatus, why: &str, handback: &str, audit: &s
 
 fn report(task: &Task, status: &str, detail: &str, handback: &str, gate: &Gate) -> String {
     let mut s = format!("### {} — {} ({status})\n{detail}\n", task.id, task.title);
+    if !gate.cost.is_empty() {
+        s.push_str(&format!("Cost: {}\n", gate.cost));
+    }
     if !handback.trim().is_empty() {
         s.push_str("\nBuilder handback:\n");
         s.push_str(handback.trim());
@@ -599,6 +973,8 @@ pub async fn run_note_task(
     pass_note: &str,
     cancel: Arc<Cancel>,
     queue: Arc<std::sync::Mutex<crate::queue::TaskQueue>>,
+    meter: &Meter,
+    connection: &str,
 ) -> Result<TaskOutcome> {
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
@@ -626,14 +1002,25 @@ pub async fn run_note_task(
         role,
         pass_note,
         &builder_brief(task),
+        &task.files,
     );
-    let text = run_specialist(provider.as_ref(), model, role, msgs, &ctx).await?;
+    let bill = Bill {
+        meter,
+        task: &task.id,
+        connection,
+    };
+    let text = run_specialist(provider.as_ref(), model, role, msgs, &ctx, &bill).await?;
     let body = clip_handback(&text);
     persist_workspace_note(workspace, role, &body);
     Ok(TaskOutcome {
         id: task.id.clone(),
         status: TaskStatus::Done,
-        report: format!("### {} — {} ({role})\n{body}\n", task.id, task.title),
+        report: format!(
+            "### {} — {} ({role})\nCost: {}\n{body}\n",
+            task.id,
+            task.title,
+            meter.task(&task.id).label()
+        ),
         findings: body.clone(),
         summary: first_line(&body).unwrap_or_else(|| format!("{} {}", role, task.title)),
     })
@@ -680,11 +1067,26 @@ fn first_line(text: &str) -> Option<String> {
         .map(|l| l.chars().take(120).collect())
 }
 
-/// Tool rounds a specialist may take before it must hand back.
-const SPECIALIST_ROUNDS: usize = 40;
-/// Output ceiling per specialist response. A builder writing a whole file puts
-/// that file in its tool arguments; 4096 truncated them mid-JSON.
-const SPECIALIST_MAX_TOKENS: u32 = 16_384;
+/// Who a specialist's tokens are charged to.
+pub struct Bill<'a> {
+    /// The crew run's meter.
+    pub meter: &'a Meter,
+    /// Queue task id.
+    pub task: &'a str,
+    /// Connection name, for the spend log.
+    pub connection: &'a str,
+}
+
+/// Tool rounds and output ceiling per role. A builder writing a whole file puts
+/// it in its tool arguments, so it needs room; an auditor reviewing one diff
+/// with the checks already run does not need forty rounds.
+fn limits(role: Role) -> (usize, u32) {
+    match role {
+        Role::Builder => (40, 16_384),
+        Role::Architect => (30, 8_192),
+        Role::Auditor | Role::Orchestrator => (12, 4_096),
+    }
+}
 
 async fn run_specialist(
     provider: &dyn Provider,
@@ -692,9 +1094,11 @@ async fn run_specialist(
     role: Role,
     mut messages: Vec<crate::llm::Message>,
     ctx: &ToolContext,
+    bill: &Bill<'_>,
 ) -> Result<String> {
+    let (rounds, max_tokens) = limits(role);
     let mut last = String::new();
-    for _ in 0..SPECIALIST_ROUNDS {
+    for _ in 0..rounds {
         if ctx.cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
@@ -703,7 +1107,7 @@ async fn run_specialist(
             system: None,
             messages: messages.clone(),
             tools: crate::tools::specs_for_opts(role, ctx.web),
-            max_tokens: Some(SPECIALIST_MAX_TOKENS),
+            max_tokens: Some(max_tokens),
         };
         let mut stream = tokio::select! {
             biased;
@@ -714,6 +1118,8 @@ async fn run_specialist(
         // Several calls may arrive in one response; tracking a single name and
         // argument string glued their fragments into one unparseable call.
         let mut calls = crate::llm::ToolCallAccumulator::default();
+        let mut usage = crate::spend::Usage::default();
+        let mut reported: Option<f64> = None;
         loop {
             let d = tokio::select! {
                 biased;
@@ -730,9 +1136,15 @@ async fn run_specialist(
                     name,
                     arguments,
                 } => calls.push(&id, &name, &arguments),
+                StreamDelta::Usage(u) => usage = u,
+                StreamDelta::ReportedCost(c) => reported = Some(c),
                 _ => {}
             }
         }
+        // Charged every round, so a cap stops a runaway loop mid-task rather
+        // than after it has spent the money.
+        bill.meter
+            .charge(bill.task, role, bill.connection, model, usage, reported)?;
         last = text.clone();
         let calls = calls.finish();
         if calls.is_empty() {
@@ -921,6 +1333,16 @@ mod tests {
         }
     }
 
+    fn seat(p: &Arc<Scripted>, model: &str, focus: &str, paths: &[&str]) -> Auditor {
+        Auditor {
+            provider: p.clone(),
+            model: model.into(),
+            connection: "c".into(),
+            focus: focus.into(),
+            paths: paths.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
     async fn run(
         f: &Fixture,
         p: &Arc<Scripted>,
@@ -928,11 +1350,31 @@ mod tests {
         auditor_enabled: bool,
         checks: &[String],
     ) -> TaskOutcome {
+        let panel = vec![seat(p, "auditor-m", "", &[])];
+        let meter = Meter::new(
+            crate::spend::PriceBook::new(),
+            crate::meter::Caps::default(),
+        );
+        run_with(f, p, t, auditor_enabled, checks, &panel, &meter, 0).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_with(
+        f: &Fixture,
+        p: &Arc<Scripted>,
+        t: &Task,
+        auditor_enabled: bool,
+        checks: &[String],
+        panel: &[Auditor],
+        meter: &Meter,
+        max_retries: u32,
+    ) -> TaskOutcome {
         let job = BuildJob {
             provider: p.clone(),
             model: "m",
-            auditor_provider: p.clone(),
-            auditor_model: "m",
+            connection: "c",
+            auditors: panel,
+            meter,
             repo: f.repo.path(),
             home: f.home.path(),
             session_id: "sess0001",
@@ -943,7 +1385,7 @@ mod tests {
             auditor_enabled,
             checks,
             check_timeout: std::time::Duration::from_secs(30),
-            max_retries: 0,
+            max_retries,
             hooks: None,
             cancel: Cancel::new(),
         };
@@ -994,6 +1436,11 @@ mod tests {
             "",
             Cancel::new(),
             queue.clone(),
+            &Meter::new(
+                crate::spend::PriceBook::new(),
+                crate::meter::Caps::default(),
+            ),
+            "c",
         )
         .await
         .unwrap();
@@ -1176,5 +1623,200 @@ mod tests {
         assert!(!mid_merge(f.repo.path()));
         // The resolver's result reached the auditor.
         assert!(p.request(4).contains("upstream line"), "{}", p.request(4));
+    }
+    fn say_with_usage(text: &str, input: u64, output: u64) -> Vec<StreamDelta> {
+        vec![
+            StreamDelta::Text(text.into()),
+            StreamDelta::Usage(crate::spend::Usage {
+                input_tokens: input,
+                output_tokens: output,
+                cached_tokens: 0,
+            }),
+            StreamDelta::ReportedCost(0.01),
+            StreamDelta::Done,
+        ]
+    }
+
+    /// Crew spend used to be invisible: every specialist round is now priced
+    /// and attributed to its task and role.
+    #[tokio::test]
+    async fn every_specialist_round_is_metered() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            write_call("extra.txt", "x\n"),
+            say_with_usage("STATUS: DONE", 1_000, 50),
+            say_with_usage("VERDICT: PASS", 400, 10),
+        ]);
+        let panel = vec![seat(&p, "auditor-m", "", &[])];
+        let meter = Meter::new(
+            crate::spend::PriceBook::new(),
+            crate::meter::Caps::default(),
+        );
+        let out = run_with(&f, &p, &task("t1", "x"), true, &[], &panel, &meter, 0).await;
+        assert_eq!(out.status, TaskStatus::Done, "{out:?}");
+        let t = meter.task("t1");
+        assert_eq!(t.billable_tokens, 1_460);
+        assert!((t.usd - 0.02).abs() < 1e-9, "{t:?}");
+        assert!(meter.by_role().contains_key("auditor"));
+        // The first round reported no price, so the total is a lower bound
+        // rather than a claim.
+        assert!(out.report.contains("Cost: ≥$0.02"), "{}", out.report);
+    }
+
+    /// A runaway task stops at its cap and keeps what it produced.
+    #[tokio::test]
+    async fn a_task_cap_stops_the_task_and_keeps_its_branch() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            write_call("extra.txt", "x\n"),
+            say_with_usage("STATUS: DONE", 5_000, 50),
+            say("VERDICT: PASS"),
+        ]);
+        let panel = vec![seat(&p, "auditor-m", "", &[])];
+        let caps = crate::meter::Caps {
+            task_tokens: 1_000,
+            ..crate::meter::Caps::default()
+        };
+        let meter = Meter::new(crate::spend::PriceBook::new(), caps);
+        let out = run_with(&f, &p, &task("t1", "x"), true, &[], &panel, &meter, 0).await;
+        assert_eq!(out.status, TaskStatus::Blocked);
+        assert!(out.summary.contains("token cap"), "{out:?}");
+        assert!(!f.repo.path().join("extra.txt").exists());
+        let b = git::git(f.repo.path(), &["branch", "--list", "ryter-*"]).unwrap();
+        assert!(!b.trim().is_empty(), "work kept for the user");
+    }
+
+    /// A rejected attempt is fixed in place: the retry reopens the same
+    /// worktree instead of paying to rebuild the task from scratch.
+    #[tokio::test]
+    async fn a_retry_fixes_the_rejected_attempt_in_place() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            write_call("feature.txt", "half done\n"),
+            say("STATUS: PARTIAL"),
+            say("VERDICT: FAIL\n- feature.txt: unfinished"),
+            // Retry: one targeted edit, not a rebuild.
+            write_call("feature.txt", "done\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: PASS"),
+        ]);
+        let panel = vec![seat(&p, "auditor-m", "", &[])];
+        let meter = Meter::new(
+            crate::spend::PriceBook::new(),
+            crate::meter::Caps::default(),
+        );
+        let mut t = task("t1", "feature");
+        let first = run_with(&f, &p, &t, true, &[], &panel, &meter, 1).await;
+        assert_eq!(first.status, TaskStatus::Pending, "{first:?}");
+        t.retries = 1;
+        t.findings = first.findings;
+        let second = run_with(&f, &p, &t, true, &[], &panel, &meter, 1).await;
+        assert_eq!(second.status, TaskStatus::Done, "{second:?}");
+        let retry_brief = p.request(3);
+        assert!(
+            retry_brief.contains("already committed in this worktree"),
+            "{retry_brief}"
+        );
+        assert!(retry_brief.contains("feature.txt: unfinished"));
+        assert_eq!(
+            std::fs::read_to_string(f.repo.path().join("feature.txt")).unwrap(),
+            "done\n"
+        );
+    }
+
+    /// Every covering seat must pass; the first FAIL ends the review, so the
+    /// seats after it are never paid for.
+    #[tokio::test]
+    async fn the_panel_stops_at_the_first_fail() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            write_call("extra.txt", "x\n"),
+            say("done"),
+            say("VERDICT: FAIL\n- extra.txt: wrong"),
+            say("VERDICT: PASS"),
+        ]);
+        let panel = vec![
+            seat(&p, "cheap-auditor", "", &[]),
+            seat(&p, "security-auditor", "security", &[]),
+        ];
+        let meter = Meter::new(
+            crate::spend::PriceBook::new(),
+            crate::meter::Caps::default(),
+        );
+        let out = run_with(&f, &p, &task("t1", "x"), true, &[], &panel, &meter, 0).await;
+        assert_eq!(out.status, TaskStatus::Blocked);
+        assert_eq!(p.calls(), 3, "the second seat must not run after a FAIL");
+        assert!(out.findings.contains("cheap-auditor"));
+    }
+
+    /// A path-scoped seat only reviews changes that touch its paths.
+    #[tokio::test]
+    async fn a_path_scoped_seat_skips_unrelated_changes() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            write_call("docs/guide.md", "words\n"),
+            say("done"),
+            say("VERDICT: PASS"),
+        ]);
+        let panel = vec![
+            seat(&p, "general", "", &[]),
+            seat(&p, "security", "security", &["src/auth/**"]),
+        ];
+        let meter = Meter::new(
+            crate::spend::PriceBook::new(),
+            crate::meter::Caps::default(),
+        );
+        let out = run_with(&f, &p, &task("t1", "docs"), true, &[], &panel, &meter, 0).await;
+        assert_eq!(out.status, TaskStatus::Done, "{out:?}");
+        assert_eq!(p.calls(), 3, "only the general seat reviewed a docs change");
+
+        let f = fixture();
+        let p = Scripted::new(vec![
+            write_call("src/auth/login.rs", "fn login() {}\n"),
+            say("done"),
+            say("VERDICT: PASS"),
+            say("VERDICT: FAIL\n- src/auth/login.rs: no rate limit"),
+        ]);
+        let panel = vec![
+            seat(&p, "general", "", &[]),
+            seat(&p, "security", "security", &["src/auth/**"]),
+        ];
+        let out = run_with(&f, &p, &task("t2", "login"), true, &[], &panel, &meter, 0).await;
+        assert_eq!(out.status, TaskStatus::Blocked);
+        assert!(p.request(3).contains("security focus"));
+    }
+
+    #[test]
+    fn same_model_sees_through_routes() {
+        assert!(same_model("x-ai/grok-4.6", "grok-4.6"));
+        assert!(same_model("grok-4.6-latest", "grok-4.6"));
+        assert!(same_model(
+            "Anthropic/Claude-Sonnet-4.6",
+            "claude-sonnet-4.6"
+        ));
+        assert!(!same_model("grok-4.6", "grok-4.5"));
+    }
+
+    /// Sign-off must come from a model that neither directs nor wrote the work.
+    #[test]
+    fn auditors_must_differ_from_lead_and_builder() {
+        let p = Scripted::new(vec![]);
+        let ok = vec![seat(&p, "claude-sonnet-4.6", "", &[])];
+        assert_eq!(independence_problem("grok-4.6", "grok-4.6", &ok), None);
+        let same_as_lead = vec![seat(&p, "x-ai/grok-4.6", "", &[])];
+        let why = independence_problem("grok-4.6", "deepseek-v4", &same_as_lead).unwrap();
+        assert!(why.contains("same model as the lead"), "{why}");
+        let same_as_builder = vec![seat(&p, "deepseek-v4", "", &[])];
+        let why = independence_problem("grok-4.6", "deepseek-v4", &same_as_builder).unwrap();
+        assert!(why.contains("same model as the builder"), "{why}");
+        // Any seat, not only the first.
+        let mixed = vec![
+            seat(&p, "claude-sonnet-4.6", "", &[]),
+            seat(&p, "grok-4.6", "security", &[]),
+        ];
+        assert!(independence_problem("grok-4.6", "grok-4.6", &mixed).is_some());
+        // Every change needs a reviewer: an all-scoped panel is refused.
+        let scoped = vec![seat(&p, "claude-sonnet-4.6", "security", &["src/**"])];
+        assert!(independence_problem("grok-4.6", "grok-4.6", &scoped).is_some());
     }
 }

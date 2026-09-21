@@ -41,6 +41,36 @@ pub struct Meta {
     /// Auditor gate for this session.
     #[serde(default = "default_auditor_on")]
     pub auditor_enabled: bool,
+    /// The open patch, if the crew is building one.
+    #[serde(default)]
+    pub patch: Option<Patch>,
+    /// Patches opened so far (names the next branch).
+    #[serde(default)]
+    pub patches_opened: u32,
+}
+
+/// Several tasks' work collected on one integration branch. It lands on the
+/// user's branch as a single commit, and only once every task in it is done,
+/// so the user has nothing to act on until the whole change is in.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Patch {
+    /// Integration branch (`ryter/patch-<session>-<n>`).
+    pub branch: String,
+    /// Worktree where the integration branch is checked out.
+    pub worktree: PathBuf,
+    /// The user's branch it will land on.
+    pub target: String,
+    /// `target`'s commit when the patch opened.
+    pub base: String,
+    /// Tasks taken into this patch.
+    #[serde(default)]
+    pub tasks: Vec<String>,
+    /// Tasks whose work is on the integration branch.
+    #[serde(default)]
+    pub landed: Vec<String>,
+    /// Their titles, for the landing commit message.
+    #[serde(default)]
+    pub titles: Vec<String>,
 }
 
 fn default_auditor_on() -> bool {
@@ -108,6 +138,8 @@ impl Session {
             spend_usd_total: None,
             spend_unknown: false,
             auditor_enabled: true,
+            patch: None,
+            patches_opened: 0,
         };
         let s = Self {
             dir,
@@ -342,6 +374,12 @@ impl Session {
     }
 
     /// Enable or disable the auditor gate.
+    /// Replace the open patch.
+    pub fn set_patch(&mut self, patch: Option<Patch>) -> Result<()> {
+        self.meta.patch = patch;
+        self.touch()
+    }
+
     pub fn set_auditor(&mut self, on: bool) -> Result<()> {
         self.meta.auditor_enabled = on;
         self.touch()

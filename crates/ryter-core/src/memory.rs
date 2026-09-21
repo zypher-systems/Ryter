@@ -90,6 +90,71 @@ pub fn load_project_memory(project_root: Option<&Path>) -> Option<String> {
     if out.is_empty() { None } else { Some(out) }
 }
 
+/// Relevant project memory for a builder or auditor.
+///
+/// Every specialist used to receive all of ROADMAP.md, DECISIONS.md, and every
+/// note on every round — about 9k tokens on this repository, and growing with
+/// each decision recorded. A builder needs the current design and the
+/// decisions about the files it owns; it does not write memory and does not
+/// need the roadmap.
+pub fn load_scoped_memory(project_root: Option<&Path>, scope: &[String]) -> Option<String> {
+    let root = project_root?;
+    let mut out = String::new();
+    append_file(
+        &mut out,
+        "notes/architect.md (current design)",
+        &root.join("notes/architect.md"),
+    );
+    let decisions = fs::read_to_string(root.join("DECISIONS.md")).unwrap_or_default();
+    let relevant = relevant_decisions(&decisions, scope);
+    if !relevant.is_empty() {
+        out.push_str("### DECISIONS.md (entries about the files you own)\n");
+        out.push_str(&relevant);
+        out.push('\n');
+    }
+    if out.is_empty() { None } else { Some(out) }
+}
+
+/// Cap on relevant decisions shown to one specialist.
+const SCOPED_DECISIONS_CAP: usize = 8_000;
+
+/// DECISIONS.md entries that name one of `scope`'s paths or file names.
+fn relevant_decisions(decisions: &str, scope: &[String]) -> String {
+    let needles: Vec<String> = scope
+        .iter()
+        .flat_map(|p| {
+            let p = p.trim_matches('/').to_string();
+            let name = p.rsplit('/').next().unwrap_or(&p).to_string();
+            // A bare name like `mod.rs` matches everything; keep the path only.
+            let generic = matches!(
+                name.as_str(),
+                "mod.rs" | "lib.rs" | "main.rs" | "index.ts" | "__init__.py"
+            );
+            if name.len() >= 5 && name != p && !generic {
+                vec![p, name]
+            } else {
+                vec![p]
+            }
+        })
+        .filter(|n| !n.is_empty())
+        .collect();
+    if needles.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    for entry in decisions.split("\n### ").skip(1) {
+        if needles.iter().any(|n| entry.contains(n.as_str())) {
+            let block = format!("### {}\n", entry.trim_end());
+            if out.len() + block.len() > SCOPED_DECISIONS_CAP {
+                out.push_str("…(more decisions touch these files; read DECISIONS.md)\n");
+                break;
+            }
+            out.push_str(&block);
+        }
+    }
+    out
+}
+
 fn append_file(out: &mut String, label: &str, path: &Path) {
     let Ok(raw) = fs::read_to_string(path) else {
         return;
@@ -135,6 +200,37 @@ pub fn is_memory_file(workspace: &Path, path: &Path) -> bool {
         return true;
     }
     parent.is_some_and(|p| p == Path::new("notes")) && name.ends_with(".md")
+}
+
+#[cfg(test)]
+mod scoped_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn builders_see_the_design_and_their_decisions_only() {
+        let d = TempDir::new().unwrap();
+        fs::write(d.path().join("ROADMAP.md"), "# Roadmap\nNow: lots\n").unwrap();
+        fs::write(
+            d.path().join("DECISIONS.md"),
+            "# Decisions\n\n### A — parser\n- **Where:** `src/parse.rs`\n\n### B — tui\n- **Where:** `src/tui/draw.rs`\n",
+        )
+        .unwrap();
+        fs::create_dir_all(d.path().join("notes")).unwrap();
+        fs::write(d.path().join("notes/architect.md"), "shape: parser first").unwrap();
+        let m = load_scoped_memory(Some(d.path()), &["src/parse.rs".into()]).unwrap();
+        assert!(m.contains("shape: parser first"));
+        assert!(m.contains("A — parser"));
+        assert!(!m.contains("B — tui"), "{m}");
+        assert!(!m.contains("Roadmap"), "builders do not need the roadmap");
+    }
+
+    #[test]
+    fn a_generic_file_name_does_not_match_everything() {
+        let decisions = "# D\n\n### A\nsrc/a/mod.rs\n\n### B\nsrc/b/mod.rs\n";
+        let got = relevant_decisions(decisions, &["src/a/mod.rs".into()]);
+        assert!(got.contains("### A") && !got.contains("### B"), "{got}");
+    }
 }
 
 #[cfg(test)]

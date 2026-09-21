@@ -182,6 +182,20 @@ fn spec(name: &str) -> Option<ToolSpec> {
              timeout_secs (max 600) for a long build or test run.",
             json!({"type":"object","properties":{"command":{"type":"string"},"timeout_secs":{"type":"integer"}},"required":["command"]}),
         ),
+        "propose_edit" => (
+            "Fast path for a trivial change (a typo, a one-line fix, a config \
+             value): propose replacing old_string with new_string in one file. The \
+             user sees the diff and approves it with y — their approval is the \
+             sign-off, so it skips the crew. At most 20 lines on each side; \
+             anything larger is a task. Include enough context in old_string to \
+             make it unique.",
+            json!({"type":"object","properties":{
+                "path":{"type":"string"},
+                "old_string":{"type":"string"},
+                "new_string":{"type":"string"},
+                "reason":{"type":"string","description":"one line: why"}
+            },"required":["path","old_string","new_string","reason"]}),
+        ),
         "todo_write" => (
             "Replace the task list. In Build, pending items run as builders in \
              parallel git worktrees, each gated by checks and an auditor before \
@@ -234,6 +248,7 @@ fn spec(name: &str) -> Option<ToolSpec> {
 pub fn tools_for(role: Role) -> &'static [&'static str] {
     match role {
         Role::Orchestrator => &[
+            "propose_edit",
             "read_file",
             "list_dir",
             "grep",
@@ -284,7 +299,7 @@ pub fn execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput
         "grep" => fs::grep(args, ctx),
         "glob" => fs::glob_files(args, ctx),
         "write" => fs::write_file(args, ctx),
-        "search_replace" => fs::search_replace(args, ctx),
+        "search_replace" | "propose_edit" => fs::search_replace(args, ctx),
         "bash" => shell::bash(args, ctx),
         "todo_write" => todo_write(args, ctx),
         "search_tool" => mcp_search(args, ctx),
@@ -374,6 +389,26 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
     }
     match decide(name, args, ctx) {
         Decision::Allow => run_with_hooks(name, args, ctx),
+        // A proposed edit skips the crew because a person approves it. No
+        // blanket approval stands in for that person: not --always-approve,
+        // not the session-wide `a`.
+        Decision::Ask if name == "propose_edit" => match &ctx.user_io {
+            Some(io) => {
+                let summary = crate::user_io::summary_args(name, args);
+                match io.permission(name, &summary) {
+                    crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
+                        run_with_hooks(name, args, ctx)
+                    }
+                    crate::user_io::Permission::Deny => Ok(ToolOutput::err(
+                        "the user declined the edit; ask what they want instead",
+                    )),
+                }
+            }
+            None => Ok(ToolOutput::err(
+                "a proposed edit needs a person to approve it and none is attached; \
+                 queue it as a task instead",
+            )),
+        },
         Decision::Ask if ctx.always_approve || ctx.sticky_approve.load(Ordering::SeqCst) => {
             run_with_hooks(name, args, ctx)
         }
@@ -674,6 +709,91 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.text.trim(), "1", "should not be a login shell");
+    }
+
+    fn propose(dir: &std::path::Path) -> Value {
+        std::fs::write(dir.join("config.toml"), "retries = 3\n").unwrap();
+        json!({"path": "config.toml", "old_string": "retries = 3", "new_string": "retries = 5", "reason": "user asked"})
+    }
+
+    /// The fast path: a person sees the diff and approves it.
+    #[test]
+    fn a_proposed_edit_applies_when_the_user_approves() {
+        let dir = TempDir::new().unwrap();
+        let args = propose(dir.path());
+        let (io, rx) = crate::user_io::UserIo::pair();
+        let mut c = ctx(Role::Orchestrator, dir.path());
+        c.user_io = Some(io);
+        let sticky = c.sticky_approve.clone();
+        let worker = std::thread::spawn(move || gated_execute("propose_edit", &args, &c).unwrap());
+        match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+            Ok(crate::user_io::UserRequest::Permission { summary, reply, .. }) => {
+                assert!(
+                    summary.contains("-retries = 3") && summary.contains("+retries = 5"),
+                    "{summary}"
+                );
+                reply.send(crate::user_io::Permission::Always).unwrap();
+            }
+            other => panic!("expected the diff for approval, got {other:?}"),
+        }
+        let out = worker.join().unwrap();
+        assert!(!out.is_error, "{out:?}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("config.toml")).unwrap(),
+            "retries = 5\n"
+        );
+        // "allow all" must not turn later proposals into silent writes.
+        assert!(!sticky.load(Ordering::SeqCst));
+    }
+
+    /// No person, no fast path — whatever blanket approval is configured.
+    #[test]
+    fn a_proposed_edit_is_refused_without_a_person() {
+        let dir = TempDir::new().unwrap();
+        let args = propose(dir.path());
+        let mut c = ctx(Role::Orchestrator, dir.path());
+        c.always_approve = true;
+        c.sticky_approve.store(true, Ordering::SeqCst);
+        let out = gated_execute("propose_edit", &args, &c).unwrap();
+        assert!(
+            out.is_error && out.text.contains("queue it as a task"),
+            "{out:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("config.toml")).unwrap(),
+            "retries = 3\n"
+        );
+    }
+
+    #[test]
+    fn only_small_edits_take_the_fast_path() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("big.rs"), "x\n".repeat(50)).unwrap();
+        let big = "x\n".repeat(crate::tools::policy::FAST_PATH_MAX_LINES + 1);
+        let c = ctx(Role::Orchestrator, dir.path());
+        let d = decide(
+            "propose_edit",
+            &json!({"path": "big.rs", "old_string": big, "new_string": "y", "reason": "r"}),
+            &c,
+        );
+        assert_eq!(d, Decision::Deny);
+        std::fs::write(dir.path().join(".env"), "K=1").unwrap();
+        let d = decide(
+            "propose_edit",
+            &json!({"path": ".env", "old_string": "K=1", "new_string": "K=2", "reason": "r"}),
+            &c,
+        );
+        assert_eq!(d, Decision::Deny, "secrets never take the fast path");
+        // Builders have the crew's gate; the fast path is the lead's alone.
+        let b = ctx(Role::Builder, dir.path());
+        assert_eq!(
+            decide(
+                "propose_edit",
+                &json!({"path": "big.rs", "old_string": "x", "new_string": "y", "reason": "r"}),
+                &b
+            ),
+            Decision::Deny
+        );
     }
 
     #[test]

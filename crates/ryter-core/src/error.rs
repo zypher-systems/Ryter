@@ -30,6 +30,10 @@ pub enum Error {
         cap: f64,
     },
 
+    /// One crew task hit its dollar or token cap. Stops that task only.
+    #[error("task budget: {0}")]
+    TaskBudget(String),
+
     /// In-flight turn was cancelled.
     #[error("cancelled")]
     Cancelled,

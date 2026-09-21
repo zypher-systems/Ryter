@@ -146,14 +146,9 @@ pub fn orchestrator_system(
             s.push('\n');
         }
     }
-    let crew = session.read_crew_report();
-    if !crew.trim().is_empty() {
-        s.push_str("\n## Latest crew results\n");
-        s.push_str(&crew);
-        if !crew.ends_with('\n') {
-            s.push('\n');
-        }
-    }
+    // The latest crew report is not repeated here: it already reaches the
+    // orchestrator as a turn in the transcript, and a copy in the system prompt
+    // changed the cached prefix after every build.
     Ok(s)
 }
 
@@ -165,6 +160,7 @@ pub fn specialist_messages(
     role: Role,
     pass_note: &str,
     task: &str,
+    scope: &[String],
 ) -> Vec<crate::llm::Message> {
     let kind = PromptKind::for_role(role).unwrap_or(PromptKind::Builder);
     let system = load(kind, home, project_root, trusted);
@@ -180,10 +176,17 @@ pub fn specialist_messages(
         }
         user.push('\n');
     }
-    if let Some(mem) = crate::memory::load_project_memory(project_root) {
-        user.push_str(
-            "Project memory (update ROADMAP.md and DECISIONS.md; do not dump your transcript):\n",
-        );
+    // The architect writes project memory, so it reads all of it. Builders and
+    // auditors get the design and the decisions about their files: the whole
+    // log on every round was most of their fixed cost.
+    let memory = if role == Role::Architect {
+        crate::memory::load_project_memory(project_root)
+            .map(|m| format!("Project memory (you keep ROADMAP.md and DECISIONS.md current):\n{m}"))
+    } else {
+        crate::memory::load_scoped_memory(project_root, scope)
+            .map(|m| format!("Project memory relevant to this task:\n{m}"))
+    };
+    if let Some(mem) = memory {
         user.push_str(&mem);
         user.push('\n');
     }
@@ -338,6 +341,7 @@ mod tests {
             Role::Builder,
             "",
             "add a flag",
+            &[],
         );
         assert!(msgs[1].content.contains("never invent APIs"));
     }
@@ -364,6 +368,7 @@ mod tests {
             Role::Builder,
             "brief",
             "add a flag",
+            &[],
         );
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, "system");

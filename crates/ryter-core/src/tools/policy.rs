@@ -50,6 +50,7 @@ pub fn decide(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
     }
     match name {
         "write" | "search_replace" => decide_write(name, args, ctx),
+        "propose_edit" => decide_proposal(args, ctx),
         "read_file" | "list_dir" => decide_read(args, ctx),
         "bash" => decide_bash(args, ctx),
         "grep" | "glob" | "todo_write" | "search_tool" | "use_tool" | "ask_user" => Decision::Allow,
@@ -62,6 +63,36 @@ pub fn decide(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
         }
         _ => Decision::Deny,
     }
+}
+
+/// Lines allowed on each side of a fast-path edit.
+pub const FAST_PATH_MAX_LINES: usize = 20;
+
+/// A fast-path edit always goes to a person, and only small, in-workspace,
+/// non-secret edits qualify. Larger work belongs to the crew.
+fn decide_proposal(args: &Value, ctx: &ToolContext) -> Decision {
+    let Some(path) = arg_path(args) else {
+        return Decision::Deny;
+    };
+    let Some(resolved) = resolve(ctx, &path) else {
+        return Decision::Deny;
+    };
+    if is_secret(&resolved, ctx) || !resolved.is_file() {
+        return Decision::Deny;
+    }
+    let lines = |k: &str| {
+        args.get(k)
+            .and_then(Value::as_str)
+            .map(|s| s.lines().count())
+            .unwrap_or(0)
+    };
+    if lines("old_string") == 0
+        || lines("old_string") > FAST_PATH_MAX_LINES
+        || lines("new_string") > FAST_PATH_MAX_LINES
+    {
+        return Decision::Deny;
+    }
+    Decision::Ask
 }
 
 fn decide_read(args: &Value, ctx: &ToolContext) -> Decision {
