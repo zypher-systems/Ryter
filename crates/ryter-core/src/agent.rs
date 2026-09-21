@@ -1873,7 +1873,15 @@ mod tests {
 
     /// Answers by role rather than by script order, since concurrent jobs
     /// consume a fixed script in an unpredictable order.
-    struct ByRole;
+    /// Also records when each builder handed out its slow command and when
+    /// it got the result back, so a test can check the two builders' work
+    /// overlapped, whatever the setup around it costs on a slow machine.
+    #[derive(Default)]
+    struct ByRole {
+        /// `(task, returned, when)`: `returned` is false when the builder
+        /// hands out its command, true when the result comes back.
+        log: Mutex<Vec<(String, bool, std::time::Instant)>>,
+    }
 
     #[async_trait::async_trait]
     impl Provider for ByRole {
@@ -1884,6 +1892,20 @@ mod tests {
                 .map(|m| m.content.clone())
                 .unwrap_or_default();
             let acted = req.messages.iter().any(|m| m.role == "tool");
+            if !system.contains("Ryter auditor") {
+                let all: String = req.messages.iter().map(|m| m.content.as_str()).collect();
+                // Titles only this test uses: "left" alone appears in the
+                // shared builder prompt.
+                let task = if all.contains("RIGHT-TASK") {
+                    "right"
+                } else {
+                    "left"
+                };
+                self.log
+                    .lock()
+                    .unwrap()
+                    .push((task.to_string(), acted, std::time::Instant::now()));
+            }
             let deltas = if system.contains("Ryter auditor") {
                 vec![StreamDelta::Text("VERDICT: PASS".into()), StreamDelta::Done]
             } else if !acted {
@@ -1916,24 +1938,41 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn parallel_builders_overlap_in_time() {
         let (_home, cwd, mut agent) = crew_setup(ReplayProvider::scripted(vec![]));
-        agent.provider = Arc::new(ByRole);
+        let provider = Arc::new(ByRole::default());
+        agent.provider = provider.clone();
         agent
             .queue
             .lock()
             .unwrap()
             .apply_todo(&serde_json::json!({"items": [
-                {"id": "left", "title": "left", "files": ["left.txt"]},
-                {"id": "right", "title": "right", "files": ["right.txt"]}
+                {"id": "left", "title": "LEFT-TASK", "files": ["left.txt"]},
+                {"id": "right", "title": "RIGHT-TASK", "files": ["right.txt"]}
             ]}))
             .unwrap();
-        let t0 = std::time::Instant::now();
         let report = agent.drain_crew().await.unwrap();
-        let took = t0.elapsed();
         assert!(report.contains("patch landed"), "{report}");
         assert!(cwd.path().join("left.txt").exists() && cwd.path().join("right.txt").exists());
+        // Each builder's 1.5s command runs between its first request (handing
+        // it out) and its next (the result back). Overlap means each one
+        // started before the other finished. A wall-clock limit failed on
+        // macOS runners, where the git work around the builds is slow.
+        let log = provider.log.lock().unwrap().clone();
+        let at = |task: &str, returned: bool| {
+            log.iter()
+                .filter(|(t, r, _)| t == task && *r == returned)
+                .map(|(_, _, when)| *when)
+                .min()
+                .unwrap_or_else(|| panic!("no {task} {returned} in {log:?}"))
+        };
+        let (l0, l1) = (at("left", false), at("left", true));
+        let (r0, r1) = (at("right", false), at("right", true));
         assert!(
-            took < std::time::Duration::from_millis(2_700),
-            "two 1.5s builders took {took:?}: they ran one after the other"
+            l0 < r1 && r0 < l1,
+            "the builders ran one after the other: left {:?}..{:?}, right {:?}..{:?} after left began",
+            std::time::Duration::ZERO,
+            l1 - l0,
+            r0.saturating_duration_since(l0),
+            r1.saturating_duration_since(l0)
         );
     }
 

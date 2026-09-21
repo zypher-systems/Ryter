@@ -116,14 +116,17 @@ fn decide_write(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
     if is_secret(&resolved, ctx) {
         return Decision::Deny;
     }
-    if is_under(&resolved, &ctx.notes_dir) {
+    // `resolved` has its symlinks resolved; compare it with real paths too.
+    // On macOS a temp folder lives behind /var -> /private/var, and the raw
+    // paths never matched, so notes and memory writes were refused there.
+    if is_under(&resolved, &real_path(&ctx.notes_dir)) {
         return Decision::Allow;
     }
     // Project memory has one writer at a time: the orchestrator and the
     // architect, both in the user's tree. A builder's copy lives in a
     // worktree, so N parallel builders editing ROADMAP.md / DECISIONS.md
     // conflicted on every merge; their decisions come back in the handback.
-    if crate::memory::is_memory_file(&ctx.workspace, &resolved) {
+    if crate::memory::is_memory_file(&real_path(&ctx.workspace), &resolved) {
         return match ctx.role {
             // Review changes nothing, memory included.
             Role::Builder | Role::SoloReview => Decision::Deny,
@@ -787,7 +790,11 @@ fn is_under(path: &Path, root: &Path) -> bool {
 }
 
 pub(crate) fn is_secret(path: &Path, ctx: &ToolContext) -> bool {
-    let rel = path.strip_prefix(&ctx.workspace).unwrap_or(path);
+    let workspace = real_path(&ctx.workspace);
+    let rel = path
+        .strip_prefix(&workspace)
+        .or_else(|_| path.strip_prefix(&ctx.workspace))
+        .unwrap_or(path);
     let name = rel
         .file_name()
         .and_then(|n| n.to_str())
@@ -835,6 +842,29 @@ mod tests {
 
     fn bash(cmd: &str, role: Role, dir: &Path) -> Decision {
         decide("bash", &json!({"command": cmd}), &ctx_for(role, dir))
+    }
+
+    /// A workspace reached through a symlink (every temp folder on macOS:
+    /// /var -> /private/var) still gets its notes, memory, and secret rules.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_workspace_is_the_same_workspace() {
+        let real = TempDir::new().unwrap();
+        let links = TempDir::new().unwrap();
+        let link = links.path().join("ws");
+        std::os::unix::fs::symlink(real.path(), &link).unwrap();
+        std::fs::write(real.path().join(".env"), "K=1").unwrap();
+        let c = ctx_for(Role::Orchestrator, &link);
+        let w = |path: &str| decide("write", &json!({"path": path, "content": "x"}), &c);
+        assert_eq!(w("notes/plan.md"), Decision::Allow);
+        assert_eq!(w("ROADMAP.md"), Decision::Allow);
+        assert_eq!(w("src/main.rs"), Decision::Deny);
+        let b = ctx_for(Role::Builder, &link);
+        assert_eq!(
+            decide("write", &json!({"path": ".env", "content": "x"}), &b),
+            Decision::Deny,
+            "secrets stay secret"
+        );
     }
 
     /// Solo mode works in the user's own tree: build asks before changing

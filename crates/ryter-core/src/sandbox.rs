@@ -83,9 +83,9 @@ pub fn apply(profile: SandboxProfile, workspace: &Path, home: &Path) -> Result<(
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (workspace, home);
-        return Err(Error::Config(format!(
+        Err(Error::Config(format!(
             "sandbox {profile} requested but Landlock is Linux-only"
-        )));
+        )))
     }
     #[cfg(target_os = "linux")]
     {
