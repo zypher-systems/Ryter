@@ -93,6 +93,16 @@ pub enum AgentEvent {
         /// Short task label.
         description: String,
     },
+    /// What a running specialist is doing now (`edit src/store.py`,
+    /// `bash python3 -m unittest`). Progress for the crew card, not chat.
+    SubagentActivity {
+        /// Child id.
+        id: SubagentId,
+        /// Role.
+        role: Role,
+        /// Short description.
+        text: String,
+    },
     /// A specialist finished.
     SubagentFinished {
         /// Child id.

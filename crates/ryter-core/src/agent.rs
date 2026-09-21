@@ -550,6 +550,10 @@ impl Agent {
                 let cancel = child_cancel;
                 let running = self.running.clone();
                 let task_id = task.id.clone();
+                let progress = self.sink.clone().map(|sink| crew::Progress {
+                    sink,
+                    id: sub_id.clone(),
+                });
                 jobs.push(async move {
                     let result = if role == Role::Builder {
                         let mut task = task;
@@ -581,6 +585,7 @@ impl Agent {
                                 max_retries,
                                 hooks: hooks.clone(),
                                 cancel: cancel.clone(),
+                                progress: progress.clone(),
                             };
                             let outcome = crew::run_build_task(&job, &task).await;
                             match outcome {
@@ -615,6 +620,7 @@ impl Agent {
                             queue,
                             &meter,
                             &connection,
+                            progress,
                         )
                         .await;
                         (sub_id, task_id, task.retries, outcome)
@@ -1113,6 +1119,7 @@ The auditor is off, so the patch stays on `{}`.
             max_retries: self.max_retries,
             hooks: self.ctx.hooks.clone(),
             cancel: self.ctx.cancel.clone(),
+            progress: None,
         };
         Ok(Some(match crew::land_patch(&job, &patch).await? {
             crew::PatchLanding::Landed(msg) => {

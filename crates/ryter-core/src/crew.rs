@@ -131,6 +131,8 @@ pub struct BuildJob<'a> {
     pub hooks: Option<Arc<crate::hooks::HookSet>>,
     /// This task's cancel.
     pub cancel: Arc<Cancel>,
+    /// Where progress is reported.
+    pub progress: Option<Progress>,
 }
 
 /// Serializes landing across parallel builders. A merge is a handful of
@@ -238,6 +240,7 @@ async fn build_inner(
         meter: job.meter,
         task: &task.id,
         connection: job.connection,
+        progress: job.progress.as_ref(),
     };
     let ctx = ToolContext {
         workspace: wt.to_path_buf(),
@@ -646,6 +649,7 @@ pub async fn land_patch(job: &BuildJob<'_>, patch: &crate::session::Patch) -> Re
         meter: job.meter,
         task: &task.id,
         connection: job.connection,
+        progress: job.progress.as_ref(),
     };
     let mut gate = Gate::default();
     let user_head = git::rev(user, &patch.target)?;
@@ -840,10 +844,14 @@ async fn audit(
         &body,
         &task.files,
     );
+    if let Some(p) = &job.progress {
+        p.say(Role::Auditor, format!("reviewing ({})", seat.model));
+    }
     let bill = Bill {
         meter: job.meter,
         task: &task.id,
         connection: &seat.connection,
+        progress: job.progress.as_ref(),
     };
     run_specialist(
         seat.provider.as_ref(),
@@ -979,6 +987,7 @@ pub async fn run_note_task(
     queue: Arc<std::sync::Mutex<crate::queue::TaskQueue>>,
     meter: &Meter,
     connection: &str,
+    progress: Option<Progress>,
 ) -> Result<TaskOutcome> {
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
@@ -1012,8 +1021,29 @@ pub async fn run_note_task(
         meter,
         task: &task.id,
         connection,
+        progress: progress.as_ref(),
     };
+    let wrote =
+        |q: &crate::queue::TaskQueue| q.tasks.iter().filter(|t| t.by == "architect").count();
+    let before = ctx.queue.lock().map(|q| wrote(&q)).unwrap_or(0);
     let text = run_specialist(provider.as_ref(), model, role, msgs, &ctx, &bill).await?;
+    let after = ctx.queue.lock().map(|q| wrote(&q)).unwrap_or(0);
+    // An architect that wrote no tasks and said nothing produced nothing; do
+    // not call that done. (The first live run "finished" exactly like this.)
+    if role == Role::Architect && after == before && text.trim().is_empty() {
+        return Ok(TaskOutcome {
+            id: task.id.clone(),
+            status: TaskStatus::Blocked,
+            findings: "the architect returned no design and no tasks".into(),
+            summary: "architect returned nothing".into(),
+            report: format!(
+                "### {} — {} (architect returned nothing)\nCost: {}\nNo design, no builder tasks. Retrying unchanged is unlikely to help.\n",
+                task.id,
+                task.title,
+                meter.task(&task.id).label()
+            ),
+        });
+    }
     let body = clip_handback(&text);
     persist_workspace_note(workspace, role, &body);
     Ok(TaskOutcome {
@@ -1071,7 +1101,7 @@ fn first_line(text: &str) -> Option<String> {
         .map(|l| l.chars().take(120).collect())
 }
 
-/// Who a specialist's tokens are charged to.
+/// Who a specialist's tokens are charged to, and where its progress goes.
 pub struct Bill<'a> {
     /// The crew run's meter.
     pub meter: &'a Meter,
@@ -1079,18 +1109,46 @@ pub struct Bill<'a> {
     pub task: &'a str,
     /// Connection name, for the spend log.
     pub connection: &'a str,
+    /// Progress events, when someone is watching.
+    pub progress: Option<&'a Progress>,
+}
+
+/// Where a specialist's activity is reported.
+#[derive(Clone)]
+pub struct Progress {
+    /// Event sink (TUI, `--json`).
+    pub sink: std::sync::mpsc::Sender<AgentEvent>,
+    /// The specialist's id on the crew card.
+    pub id: SubagentId,
+}
+
+impl Progress {
+    fn say(&self, role: Role, text: impl Into<String>) {
+        let _ = self.sink.send(AgentEvent::SubagentActivity {
+            id: self.id.clone(),
+            role,
+            text: text.into(),
+        });
+    }
 }
 
 /// Tool rounds and output ceiling per role. A builder writing a whole file puts
 /// it in its tool arguments, so it needs room; an auditor reviewing one diff
 /// with the checks already run does not need forty rounds.
 fn limits(role: Role) -> (usize, u32) {
+    // Output ceilings, not budgets: only what is generated is billed. Models
+    // that reason spend output tokens before they answer, and on the first
+    // live run an architect used its whole 8k on that and returned nothing.
+    // The per-task caps are what bound spend.
     match role {
-        Role::Builder => (40, 16_384),
-        Role::Architect => (30, 8_192),
-        Role::Auditor | Role::Orchestrator => (12, 4_096),
+        Role::Builder => (40, 32_768),
+        Role::Architect => (30, 32_768),
+        Role::Auditor | Role::Orchestrator => (12, 16_384),
     }
 }
+
+/// A reply cut off at the output limit this many times in a row ends the task.
+const MAX_TRUNCATIONS: usize = 3;
 
 async fn run_specialist(
     provider: &dyn Provider,
@@ -1102,6 +1160,7 @@ async fn run_specialist(
 ) -> Result<String> {
     let (rounds, max_tokens) = limits(role);
     let mut last = String::new();
+    let mut cutoffs = 0usize;
     for _ in 0..rounds {
         if ctx.cancel.is_cancelled() {
             return Err(Error::Cancelled);
@@ -1124,6 +1183,7 @@ async fn run_specialist(
         let mut calls = crate::llm::ToolCallAccumulator::default();
         let mut usage = crate::spend::Usage::default();
         let mut reported: Option<f64> = None;
+        let mut truncated = false;
         loop {
             let d = tokio::select! {
                 biased;
@@ -1142,6 +1202,7 @@ async fn run_specialist(
                 } => calls.push(&id, &name, &arguments),
                 StreamDelta::Usage(u) => usage = u,
                 StreamDelta::ReportedCost(c) => reported = Some(c),
+                StreamDelta::Truncated => truncated = true,
                 _ => {}
             }
         }
@@ -1150,7 +1211,64 @@ async fn run_specialist(
         bill.meter
             .charge(bill.task, role, bill.connection, model, usage, reported)?;
         last = text.clone();
-        let calls = calls.finish();
+        let mut calls = calls.finish();
+        if truncated {
+            // Cut off mid-reply. A call whose arguments are not complete JSON
+            // would run with nothing; drop it and ask for smaller steps rather
+            // than ending the task with an empty result.
+            cutoffs += 1;
+            let before = calls.len();
+            calls.retain(|c| {
+                serde_json::from_str::<serde_json::Value>(&c.arguments).is_ok_and(|v| v.is_object())
+            });
+            let dropped = before - calls.len();
+            if let Some(p) = bill.progress {
+                p.say(
+                    role,
+                    "reply cut off at the output limit; continuing in smaller steps",
+                );
+            }
+            if cutoffs >= MAX_TRUNCATIONS {
+                return Err(Error::TaskBudget(format!(
+                    "{role} was cut off at the output limit {cutoffs} times in a row"
+                )));
+            }
+            messages.push(crate::llm::Message {
+                role: "assistant".into(),
+                content: text,
+                tool_call_id: None,
+                tool_calls: (!calls.is_empty()).then(|| calls.clone()),
+            });
+            for call in &calls {
+                let parsed: serde_json::Value =
+                    serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+                let out = gated_execute(&call.name, &parsed, ctx)?;
+                messages.push(crate::llm::Message {
+                    role: "tool".into(),
+                    content: out.text,
+                    tool_call_id: Some(call.id.clone()),
+                    tool_calls: None,
+                });
+            }
+            messages.push(crate::llm::Message {
+                role: "user".into(),
+                content: format!(
+                    "Your last reply was cut off at the output limit{}. Continue from \
+                     where you stopped, in smaller steps: think less before acting, \
+                     write large files in parts (one file per call, or several \
+                     search_replace edits), and keep each reply short.",
+                    if dropped > 0 {
+                        format!(", and {dropped} unfinished tool call(s) were discarded")
+                    } else {
+                        String::new()
+                    }
+                ),
+                tool_call_id: None,
+                tool_calls: None,
+            });
+            continue;
+        }
+        cutoffs = 0;
         if calls.is_empty() {
             return Ok(last);
         }
@@ -1166,6 +1284,9 @@ async fn run_specialist(
             }
             let parsed: serde_json::Value =
                 serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+            if let Some(p) = bill.progress {
+                p.say(role, crate::agent::tool_summary(&call.name, &parsed));
+            }
             let out = gated_execute(&call.name, &parsed, ctx)?;
             messages.push(crate::llm::Message {
                 role: "tool".into(),
@@ -1395,6 +1516,7 @@ mod tests {
             max_retries,
             hooks: None,
             cancel: Cancel::new(),
+            progress: None,
         };
         run_build_task(&job, t).await.unwrap()
     }
@@ -1448,6 +1570,7 @@ mod tests {
                 crate::meter::Caps::default(),
             ),
             "c",
+            None,
         )
         .await
         .unwrap();
@@ -1791,6 +1914,131 @@ mod tests {
         let out = run_with(&f, &p, &task("t2", "login"), true, &[], &panel, &meter, 0).await;
         assert_eq!(out.status, TaskStatus::Blocked);
         assert!(p.request(3).contains("security focus"));
+    }
+
+    /// Live run 1: a reply cut off at the output limit ended the task with
+    /// nothing. Now the broken call is dropped, the model is asked to continue
+    /// in smaller steps, and the task still lands.
+    #[tokio::test]
+    async fn a_cut_off_reply_is_resumed_not_lost() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            // Cut off mid tool call: the arguments are not complete JSON.
+            vec![
+                StreamDelta::ToolCall {
+                    id: "w".into(),
+                    name: "write".into(),
+                    arguments: r#"{"path": "extra.txt", "content": "hal"#.into(),
+                },
+                StreamDelta::Truncated,
+                StreamDelta::Done,
+            ],
+            write_call("extra.txt", "whole\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: PASS"),
+        ]);
+        let out = run(&f, &p, &task("t1", "x"), true, &[]).await;
+        assert_eq!(out.status, TaskStatus::Done, "{out:?}");
+        assert!(
+            p.request(1).contains("cut off at the output limit"),
+            "{}",
+            p.request(1)
+        );
+        assert_eq!(
+            std::fs::read_to_string(f.repo.path().join("extra.txt")).unwrap(),
+            "whole\n"
+        );
+    }
+
+    /// An architect that writes nothing and says nothing did not finish.
+    #[tokio::test]
+    async fn an_empty_architect_result_is_blocked_not_done() {
+        let ws = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let queue = Arc::new(Mutex::new(crate::queue::TaskQueue::open(
+            home.path().join("tasks.json"),
+        )));
+        let out = run_note_task(
+            Arc::new(ReplayProvider::scripted(vec![say("")])),
+            ws.path(),
+            home.path(),
+            &task("a1", "design"),
+            "m",
+            Role::Architect,
+            true,
+            false,
+            Some(ws.path()),
+            false,
+            None,
+            home.path().join("notes"),
+            "",
+            Cancel::new(),
+            queue,
+            &Meter::new(
+                crate::spend::PriceBook::new(),
+                crate::meter::Caps::default(),
+            ),
+            "c",
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.status, TaskStatus::Blocked, "{out:?}");
+        assert!(out.report.contains("returned nothing"));
+    }
+
+    /// Specialists report what they are doing, for the crew card.
+    #[tokio::test]
+    async fn specialists_report_their_activity() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            write_call("extra.txt", "x\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: PASS"),
+        ]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let panel = vec![seat(&p, "auditor-m", "", &[])];
+        let meter = Meter::new(
+            crate::spend::PriceBook::new(),
+            crate::meter::Caps::default(),
+        );
+        let job = BuildJob {
+            provider: p.clone(),
+            model: "m",
+            connection: "c",
+            auditors: &panel,
+            meter: &meter,
+            repo: f.repo.path(),
+            home: f.home.path(),
+            session_id: "sess0001",
+            project_root: None,
+            trusted: false,
+            always_approve: true,
+            web: false,
+            auditor_enabled: true,
+            checks: &[],
+            check_timeout: std::time::Duration::from_secs(30),
+            max_retries: 0,
+            hooks: None,
+            cancel: Cancel::new(),
+            progress: Some(Progress {
+                sink: tx,
+                id: crate::queue::new_sub_id(),
+            }),
+        };
+        run_build_task(&job, &task("t1", "x")).await.unwrap();
+        let said: Vec<String> = rx
+            .try_iter()
+            .filter_map(|e| match e {
+                AgentEvent::SubagentActivity { text, .. } => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            said.iter().any(|t| t.contains("edit extra.txt")),
+            "{said:?}"
+        );
+        assert!(said.iter().any(|t| t.contains("reviewing")), "{said:?}");
     }
 
     #[test]

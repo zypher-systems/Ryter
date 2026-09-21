@@ -106,6 +106,12 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
                 started_ms: view.now_ms,
             });
         }
+        // Progress goes on the specialist's crew row, not into the chat.
+        AgentEvent::SubagentActivity { id, text, .. } => {
+            if let Some(row) = view.crew.iter_mut().find(|c| c.id == id.as_str()) {
+                row.status = wrap::truncate(text, 48);
+            }
+        }
         AgentEvent::SubagentFinished {
             id,
             role,
