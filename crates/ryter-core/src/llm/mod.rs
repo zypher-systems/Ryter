@@ -117,6 +117,13 @@ pub struct ModelInfo {
     /// Connection this row was listed from (crew picker).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<String>,
+    /// Release time (unix seconds), when the catalog says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<u64>,
+    /// Whether the model accepts tools, when the catalog says. A crew role
+    /// that cannot call tools cannot read a file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<bool>,
 }
 
 impl ModelInfo {
@@ -128,6 +135,8 @@ impl ModelInfo {
             input_per_million: None,
             output_per_million: None,
             connection: None,
+            created: None,
+            tools: None,
         }
     }
 }

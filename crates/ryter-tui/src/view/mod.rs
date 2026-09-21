@@ -553,6 +553,8 @@ fn model_row(id: &str, window: u64, input: f64, output: f64) -> ryter_core::Mode
         input_per_million: Some(input),
         output_per_million: Some(output),
         connection: None,
+        created: None,
+        tools: None,
     }
 }
 

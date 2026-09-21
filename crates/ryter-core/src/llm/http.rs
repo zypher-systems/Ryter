@@ -629,12 +629,19 @@ fn parse_models_json(text: &str) -> Result<Vec<ModelInfo>> {
                 .and_then(Value::as_str)
                 .and_then(|s| s.parse::<f64>().ok())
                 .map(|per_token| per_token * 1_000_000.0);
+            let created = m.get("created").and_then(Value::as_u64);
+            let tools = m
+                .get("supported_parameters")
+                .and_then(Value::as_array)
+                .map(|p| p.iter().any(|x| x.as_str() == Some("tools")));
             Some(ModelInfo {
                 id: id.to_string(),
                 context_length,
                 input_per_million,
                 output_per_million,
                 connection: None,
+                created,
+                tools,
             })
         })
         .collect())

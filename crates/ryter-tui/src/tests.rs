@@ -313,6 +313,52 @@ fn many_turns(n: usize) -> View {
 }
 
 #[test]
+fn crew_suggests_a_tiered_crew_and_applies_it_on_y() {
+    use crate::action::Action;
+    use crate::panel::{Notice, Outcome};
+    let mut view = with_panel(PanelId::Crew);
+    view.connection = "openrouter".into();
+    view.model = "deepseek/deepseek-v4.1-flash".into();
+    let key = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+    let mut crew = view.panels.stack.pop().unwrap();
+    assert!(matches!(
+        crew.key(key('s'), &mut view),
+        Outcome::Act(Action::ListCrewModels { .. })
+    ));
+    let row = |id: &str, i: f64, o: f64| ryter_core::ModelInfo {
+        id: id.into(),
+        context_length: Some(400_000),
+        input_per_million: Some(i),
+        output_per_million: Some(o),
+        connection: Some("openrouter".into()),
+        created: None,
+        tools: Some(true),
+    };
+    crew.on_notice(
+        &Notice::Models(vec![
+            row("deepseek/deepseek-v4.1-flash", 0.15, 0.6),
+            row("openai/gpt-5.5", 5.0, 30.0),
+        ]),
+        &mut view,
+    );
+    view.panels.stack.push(crew);
+    let frame = render_to_string(&view, 120, 40);
+    assert!(frame.contains("suggested crew"), "{frame}");
+    assert!(frame.contains("gpt-5.5"), "{frame}");
+    let mut crew = view.panels.stack.pop().unwrap();
+    match crew.key(key('y'), &mut view) {
+        Outcome::Act(Action::ApplyCrewTiering(rows)) => {
+            assert_eq!(rows["auditor"].model.as_deref(), Some("openai/gpt-5.5"));
+            assert_eq!(
+                rows["builder"].model.as_deref(),
+                Some("deepseek/deepseek-v4.1-flash")
+            );
+        }
+        _ => panic!("y must apply the suggestion"),
+    }
+}
+
+#[test]
 fn hint_bar_never_drops_cancel_or_quit() {
     // At 80 columns the streaming bar used to truncate its tail, losing `^c
     // quit` exactly when a turn was running (G-05).

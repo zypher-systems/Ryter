@@ -177,6 +177,8 @@ fn default_row(connection: &str) -> ModelInfo {
         input_per_million: None,
         output_per_million: None,
         connection: Some(connection.to_string()),
+        created: None,
+        tools: None,
     }
 }
 

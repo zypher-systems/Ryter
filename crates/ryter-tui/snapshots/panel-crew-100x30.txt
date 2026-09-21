@@ -15,7 +15,7 @@
                 │   no presets yet                                                 │
                 │                                                                  │
                 │ max concurrent specialists: 4 · change in /settings              │
-                ╰─ enter assign/load · r reset · d delete preset · esc ────────────╯
+                ╰─ enter assign · s suggest crew · r reset · d delete · esc ───────╯
 
 
 

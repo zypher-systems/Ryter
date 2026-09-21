@@ -134,7 +134,9 @@ pub enum Action {
     LoadCrewPreset(String),
     /// Delete a named crew preset.
     DeleteCrewPreset(String),
-    /// List models for a specialist assignment.
+    /// Apply a suggested tiered crew (`/crew` → `s`).
+    ApplyCrewTiering(std::collections::BTreeMap<String, ryter_core::RoleModel>),
+    /// List models for a specialist assignment (all connections).
     ListCrewModels {
         /// Role.
         role: String,

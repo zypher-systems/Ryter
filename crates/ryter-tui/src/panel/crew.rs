@@ -8,9 +8,13 @@ use crate::action::Action;
 use crate::theme::Theme;
 use crate::view::{CREW_ROLES, View, crew_role_label};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Mode {
     Browse,
+    /// Fetching every reachable catalog for a suggestion.
+    Suggesting,
+    /// A tiered crew to accept with `y`.
+    Suggested(ryter_core::tiering::Tiering),
     /// Composer holds the preset name.
     SaveName,
     /// Typed preset-name confirmation for delete.
@@ -56,7 +60,12 @@ impl Panel for Crew {
 
     fn legend(&self, _view: &View) -> String {
         match &self.mode {
-            Mode::Browse => "enter assign/load · r reset · d delete preset · esc".into(),
+            Mode::Browse => "enter assign · s suggest crew · r reset · d delete · esc".into(),
+            Mode::Suggesting => "reading every model catalog you can reach… · esc".into(),
+            Mode::Suggested(t) if t.auditor.is_some() => {
+                "y apply (current crew kept as a preset) · esc".into()
+            }
+            Mode::Suggested(_) => "no independent auditor available · esc".into(),
             Mode::SaveName => "type a preset name · enter save · esc cancel".into(),
             Mode::ConfirmDelete(n) => format!("type `{n}` to delete · enter · esc"),
         }
@@ -64,7 +73,7 @@ impl Panel for Crew {
 
     fn input(&self, _view: &View) -> Option<String> {
         match &self.mode {
-            Mode::Browse => None,
+            Mode::Browse | Mode::Suggesting | Mode::Suggested(_) => None,
             Mode::SaveName => Some("preset name".into()),
             Mode::ConfirmDelete(_) => Some("confirm".into()),
         }
@@ -77,6 +86,63 @@ impl Panel for Crew {
     fn render(&self, view: &View, width: u16, _height: u16, theme: Theme) -> Body {
         let w = usize::from(width);
         let mut lines: Vec<Line<'static>> = Vec::new();
+        match &self.mode {
+            Mode::Suggesting => {
+                lines.push(widgets::note("suggested crew", theme));
+                lines.push(widgets::note("  reading catalogs…", theme));
+                return Body {
+                    lines,
+                    scroll: None,
+                };
+            }
+            Mode::Suggested(t) => {
+                lines.push(widgets::note(
+                    "suggested crew — cheap builder, strong independent review",
+                    theme,
+                ));
+                lines.push(widgets::list_row(
+                    "●",
+                    "lead",
+                    crate::chat::short_model(&view.model),
+                    "unchanged",
+                    false,
+                    w,
+                    theme,
+                    None,
+                ));
+                for (role, pick) in [
+                    ("builder", &t.builder),
+                    ("auditor", &t.auditor),
+                    ("architect", &t.architect),
+                ] {
+                    let label = pick
+                        .as_ref()
+                        .map(|p| p.label())
+                        .unwrap_or_else(|| "(no suitable model)".into());
+                    lines.push(widgets::list_row(
+                        "●",
+                        role,
+                        &label,
+                        "",
+                        false,
+                        w,
+                        theme,
+                        Some(theme.role(role)),
+                    ));
+                }
+                lines.push(widgets::blank(theme));
+                for n in &t.notes {
+                    for l in crate::chat::wrap::wrap_plain(n, w.saturating_sub(4)) {
+                        lines.push(widgets::note(&format!("  {l}"), theme));
+                    }
+                }
+                return Body {
+                    lines,
+                    scroll: None,
+                };
+            }
+            _ => {}
+        }
         lines.push(widgets::note("roles", theme));
         for (i, role) in CREW_ROLES.iter().enumerate() {
             let label = crew_role_label(view, role);
@@ -183,6 +249,25 @@ impl Panel for Crew {
                     }
                 };
             }
+            Mode::Suggesting => {
+                if key.code == KeyCode::Esc {
+                    self.mode = Mode::Browse;
+                }
+                return Outcome::Stay;
+            }
+            Mode::Suggested(t) => {
+                return match key.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') if t.auditor.is_some() => {
+                        self.mode = Mode::Browse;
+                        Outcome::Act(Action::ApplyCrewTiering(t.as_specialists()))
+                    }
+                    KeyCode::Esc | KeyCode::Char('n') => {
+                        self.mode = Mode::Browse;
+                        Outcome::Stay
+                    }
+                    _ => Outcome::Stay,
+                };
+            }
             Mode::Browse => {}
         }
         let n = self.len();
@@ -213,6 +298,12 @@ impl Panel for Crew {
                     None => Outcome::Stay,
                 }
             }
+            KeyCode::Char('s') => {
+                self.mode = Mode::Suggesting;
+                Outcome::Act(Action::ListCrewModels {
+                    role: String::new(),
+                })
+            }
             KeyCode::Char('r') if self.selected < CREW_ROLES.len() => {
                 Outcome::Act(Action::ResetCrewRole(CREW_ROLES[self.selected].to_string()))
             }
@@ -228,10 +319,27 @@ impl Panel for Crew {
         }
     }
 
-    fn on_notice(&mut self, n: &super::Notice, _view: &mut View) {
-        if let super::Notice::PresetsChanged(list) = n {
-            self.presets = list.clone();
-            self.selected = self.selected.min(self.len().saturating_sub(1));
+    fn on_notice(&mut self, n: &super::Notice, view: &mut View) {
+        match n {
+            super::Notice::PresetsChanged(list) => {
+                self.presets = list.clone();
+                self.selected = self.selected.min(self.len().saturating_sub(1));
+            }
+            super::Notice::Models(models) if self.mode == Mode::Suggesting => {
+                let local = view
+                    .connections
+                    .iter()
+                    .filter(|c| c.kind == "local")
+                    .map(|c| c.name.clone())
+                    .collect();
+                self.mode = Mode::Suggested(ryter_core::tiering::suggest(
+                    &view.connection,
+                    &view.model,
+                    models,
+                    &local,
+                ));
+            }
+            _ => {}
         }
     }
 

@@ -25,6 +25,7 @@ pub mod sandbox;
 pub mod session;
 pub mod skill;
 pub mod spend;
+pub mod tiering;
 pub mod tools;
 pub mod trace;
 pub mod user_io;

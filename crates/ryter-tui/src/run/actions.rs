@@ -214,6 +214,20 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             }
             save_crew(view, cx);
         }
+        Action::ApplyCrewTiering(rows) => {
+            // Keep what was there, so a suggestion is one keypress to undo.
+            match config::save_crew_preset(&cx.home, "before-suggest", &view.specialists) {
+                Ok(()) => {
+                    view.specialists.extend(rows);
+                    save_crew(view, cx);
+                    view.system(
+                        "applied the suggested crew · your previous crew is the `before-suggest` preset",
+                    );
+                }
+                Err(e) => view.error(format!("not applied: could not save the current crew: {e}")),
+            }
+            cx.notice(Notice::PresetsChanged(config::list_crew_presets(&cx.home)));
+        }
         Action::ResetCrewRole(role) => {
             view.specialists.remove(&role);
             save_crew(view, cx);

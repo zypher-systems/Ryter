@@ -561,8 +561,9 @@ pub fn independence_problem(lead: &str, builder: &str, panel: &[Auditor]) -> Opt
             if same_model(&a.model, model) {
                 return Some(format!(
                     "the auditor ({}) is the same model as the {who} ({model}). Sign-off \
-                     must come from a different model: assign one with /crew → auditor \
-                     (another provider is best), or add seats under [[auditor.panel]]. \
+                     must come from a different model: press `s` in /crew (or run \
+                     `ryter crew suggest --apply`) for a tiered crew, assign one with \
+                     /crew → auditor, or add seats under [[auditor.panel]]. \
                      If you already assigned one, check its connection has a key: an \
                      unresolvable route falls back to the lead's model.",
                     a.model

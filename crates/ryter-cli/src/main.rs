@@ -120,6 +120,23 @@ enum Command {
         /// Connection name.
         connection: Option<String>,
     },
+    /// Crew model assignments.
+    Crew {
+        #[command(subcommand)]
+        cmd: CrewCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum CrewCmd {
+    /// Suggest a cost-tiered crew from every model you can reach: a cheap
+    /// builder, a strong auditor from another vendor, a strong architect.
+    Suggest {
+        /// Save it to ~/.ryter/crew.toml (the current crew is kept as the
+        /// `before-suggest` preset).
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -218,6 +235,15 @@ fn main() -> ExitCode {
             }
         },
         Some(Command::Connections { cmd }) => match connections_cmd(cmd) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(1)
+            }
+        },
+        Some(Command::Crew {
+            cmd: CrewCmd::Suggest { apply },
+        }) => match crew_suggest_cmd(apply) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("{e}");
@@ -532,6 +558,44 @@ fn connections_cmd(cmd: Option<ConnCmd>) -> ryter_core::Result<()> {
         }
         Some(ConnCmd::Test { name }) => models_cmd(Some(&name)),
     }
+}
+
+fn crew_suggest_cmd(apply: bool) -> ryter_core::Result<()> {
+    let cwd = std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?;
+    let trusted = config::is_trusted(&cwd);
+    let cfg = config::load(Some(&cwd), trusted)?;
+    let home = config::home_dir();
+    let last = config::load_last_route(&home);
+    let (lead_conn, lead_model) = config::resolve_route(&cfg, last.as_ref(), None, None);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Error::Io(e.to_string()))?;
+    let (models, failed) = rt.block_on(ryter_core::tiering::reachable_models(&cfg));
+    for f in &failed {
+        eprintln!("skipped {f}");
+    }
+    let t =
+        ryter_core::tiering::suggest(&lead_conn, &lead_model, &models, &cfg.local_connections());
+    println!("lead      {lead_model} on {lead_conn} (unchanged)");
+    print!("{}", t.render());
+    if !apply {
+        println!("\nRun `ryter crew suggest --apply` to use it, or assign roles in /crew.");
+        return Ok(());
+    }
+    if t.auditor.is_none() {
+        return Err(Error::Config(
+            "not applied: no model qualifies as an independent auditor".into(),
+        ));
+    }
+    config::save_crew_preset(&home, "before-suggest", &cfg.specialists)?;
+    let mut rows = cfg.specialists.clone();
+    rows.extend(t.as_specialists());
+    config::save_crew(&home, &rows)?;
+    println!(
+        "\nApplied to ~/.ryter/crew.toml. Your previous crew is the `before-suggest` preset in /crew."
+    );
+    Ok(())
 }
 
 fn models_cmd(connection: Option<&str>) -> ryter_core::Result<()> {
