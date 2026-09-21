@@ -53,6 +53,10 @@ pub struct Meter {
     /// Session spend log; each call is appended the moment it is charged, so
     /// a crash or kill mid-batch still leaves a record of what was spent.
     log: Option<std::path::PathBuf>,
+    /// Where each charge is shown as it happens (TUI, `--json`). Without it
+    /// the spend card sat still until a whole batch finished, while the
+    /// provider's dashboard moved.
+    sink: Option<std::sync::mpsc::Sender<crate::event::AgentEvent>>,
     lines: Mutex<Vec<SpendLine>>,
     /// How many lines the session has already recorded.
     recorded: Mutex<usize>,
@@ -102,6 +106,7 @@ impl Meter {
             caps,
             free: HashSet::new(),
             log: None,
+            sink: None,
             lines: Mutex::new(Vec::new()),
             recorded: Mutex::new(0),
         }
@@ -118,6 +123,18 @@ impl Meter {
     pub fn with_log(mut self, path: std::path::PathBuf) -> Self {
         self.log = Some(path);
         self
+    }
+
+    /// Report every charge to `sink` the moment it is made.
+    pub fn with_sink(mut self, sink: std::sync::mpsc::Sender<crate::event::AgentEvent>) -> Self {
+        self.sink = Some(sink);
+        self
+    }
+
+    /// Whether charges are already reported live, so a batch summary must
+    /// not report them again.
+    pub fn is_live(&self) -> bool {
+        self.sink.is_some()
     }
 
     /// Record one call and enforce the caps. `Error::Budget` stops the whole
@@ -156,6 +173,19 @@ impl Meter {
                     line.usd,
                 ),
             )?;
+        }
+        if let Some(sink) = &self.sink {
+            // Before the caps: the call that trips one was still paid for.
+            let _ = sink.send(crate::event::AgentEvent::Spend {
+                connection: line.connection.clone(),
+                model: line.model.clone(),
+                role: line.role,
+                subagent_id: None,
+                input_tokens: line.usage.input_tokens,
+                output_tokens: line.usage.output_tokens,
+                cached_tokens: line.usage.cached_tokens,
+                total_usd: line.usd,
+            });
         }
         let mut lines = self
             .lines

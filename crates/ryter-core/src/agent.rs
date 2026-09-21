@@ -435,11 +435,13 @@ impl Agent {
             .as_ref()
             .map(|c| c.local_connections())
             .unwrap_or_default();
-        let meter = Arc::new(
-            Meter::new(self.book.clone(), self.caps())
-                .with_free(free)
-                .with_log(self.session.spend_path()),
-        );
+        let mut meter = Meter::new(self.book.clone(), self.caps())
+            .with_free(free)
+            .with_log(self.session.spend_path());
+        if let Some(sink) = &self.sink {
+            meter = meter.with_sink(sink.clone());
+        }
+        let meter = Arc::new(meter);
         let mut reports: Vec<String> = Vec::new();
         let mut budget_hit: Option<Error> = None;
         let mut paused = false;
@@ -1225,7 +1227,7 @@ The auditor is off, so the patch stays on `{}`.
             };
         }
         for ((_, model, connection), (role, usage, usd)) in grouped {
-            self.emit(AgentEvent::Spend {
+            let ev = AgentEvent::Spend {
                 connection,
                 model,
                 role,
@@ -1234,7 +1236,14 @@ The auditor is off, so the patch stays on `{}`.
                 output_tokens: usage.output_tokens,
                 cached_tokens: usage.cached_tokens,
                 total_usd: usd,
-            })?;
+            };
+            // The watcher already saw each call as it was charged; showing
+            // the batch again would count it twice. The session log keeps it.
+            if meter.is_live() {
+                self.session.emit(&ev)?;
+            } else {
+                self.emit(ev)?;
+            }
         }
         Ok(())
     }
@@ -1776,6 +1785,53 @@ mod tests {
         assert_eq!(log.len(), 3, "{roles:?}");
         let total = agent.session.meta.spend_usd_total.unwrap_or(0.0);
         assert!((total - 0.10).abs() < 1e-9, "counted once: {total}");
+    }
+
+    /// A watcher sees each crew call as it is charged, once. Before, the
+    /// spend card sat still until the batch finished while the provider's
+    /// dashboard moved.
+    #[tokio::test]
+    async fn crew_spend_is_shown_as_it_is_charged_and_only_once() {
+        let usage = |t: &str| {
+            vec![
+                StreamDelta::Text(t.into()),
+                StreamDelta::Usage(Usage {
+                    input_tokens: 2_000,
+                    output_tokens: 100,
+                    cached_tokens: 0,
+                }),
+                StreamDelta::ReportedCost(0.05),
+                StreamDelta::Done,
+            ]
+        };
+        let p = ReplayProvider::scripted(vec![
+            write("a.txt", "a\n"),
+            usage("STATUS: DONE"),
+            usage("VERDICT: PASS"),
+        ]);
+        let (_home, _cwd, mut agent) = crew_setup(p);
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo(
+                &serde_json::json!({"items": [{"id": "t1", "title": "a", "files": ["a.txt"]}]}),
+            )
+            .unwrap();
+        agent.drain_crew().await.unwrap();
+        let shown: Vec<Option<f64>> = rx
+            .try_iter()
+            .filter_map(|e| match e {
+                AgentEvent::Spend { total_usd, .. } => Some(total_usd),
+                _ => None,
+            })
+            .collect();
+        // One per call (two builder rounds, one audit), none repeated.
+        assert_eq!(shown.len(), 3, "{shown:?}");
+        let sum: f64 = shown.iter().flatten().sum();
+        assert!((sum - 0.10).abs() < 1e-9, "shown once: {sum}");
     }
 
     /// A budget stop says what it left behind, and the lead hears about it
