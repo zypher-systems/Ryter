@@ -10,14 +10,17 @@ Living plan for Ryter. Orchestrator and specialists update this as work lands.
 
 ## Next
 
-Product direction and its reasoning: `docs/product-direction.md`. Crew contract: `crew.md`.
+Product direction: `docs/product-direction.md`. Crew contract: `crew.md`. Cost model: `docs/cost.md`.
 
-- **Make "tested and independently reviewed" true by default.** Checks auto-detect on first use (`Cargo.toml` → `cargo test`, `package.json` → its test script, `pyproject.toml` → `pytest`, `go.mod` → `go test`), written to `.ryter/config.toml` after the user confirms. First-run setup puts the auditor on a different model or provider from the builder; warn in `/crew` and `doctor` when they match.
+- **Tiered defaults in setup.** Independence now requires two models, so first run must ask for them. Default to a cheap builder and a strong auditor/architect from another provider — tiering is what makes a crew cheaper than a strong single agent (`docs/cost.md`).
+- **Task benchmark with cost per landed task.** The meter now records real per-task, per-role spend; the benchmark turns it into land rate and cost per landed task by tiering, and replaces the cost model's assumptions with measurements.
+- **Crew spend where people look.** Per-role lines (builder / auditor / architect) on the spend card and `/spend`; per-task cost on the crew review surface. A cost preview before a batch, with a threshold that asks.
+- **`/patch` surface.** Show the open patch (tasks, what it waits on), land now, drop it.
+- **Checks auto-detect** on first use (`Cargo.toml` → `cargo test`, `package.json` → its test script, `pyproject.toml` → `pytest`, `go.mod` → `go test`), written to `.ryter/config.toml` after the user confirms.
 - **Recorded wire fixtures + a live smoke test.** Tool calling was broken on two backends while 212 tests passed, because every test used idealized deltas. Record real SSE per provider (tool calls, parallel calls, truncation) and replay those; add one nightly live round trip per built-in provider.
 - **Crew review surface.** One panel for every task: state, diff, handback, checks, audit, cost; merge a waiting branch, retry with a note, reject, revert a merged task (`git revert -m 1`). The tasks card opens it.
 - **Cost per task and a cap per task.** A crew multiplies spend. Also: refuse unpriced models without an explicit opt-in, since `over_budget` cannot trip on unknown spend.
 - **Task benchmark.** ~20 real tasks in fixture repos, end to end: landed / rejected / conflicted, cost per landed task, wall time, per model pairing. Tune prompts and default pairings against it.
-- **Fast path for trivial edits.** Orchestrator proposes a small diff, applied on `y` (user approval is sign-off). Open question in `crew.md`.
 - **Streamed `bash` output**, and **reconcile the context gauge** with the provider's real `input_tokens` rather than bytes/4.
 - **`ryter run tasks.toml`** unattended, producing branches or PRs with the audit as the description.
 - **macOS without the sandbox**, labelled Linux-only.
@@ -36,6 +39,15 @@ Previously listed:
 - Session search across transcripts from `/sessions`
 
 ## Done
+
+### 0.2.0-patch — cost, patch, independent sign-off (2026-09-21)
+
+- Crew metered: every specialist round priced, attributed, logged, and counted against the budget; per-task USD and token caps
+- Scoped specialist context (~10k → ~1–2k tokens/round for builders on this repo); stable per-turn system prompt; rolling cache breakpoint on Anthropic routes; retry in place; per-role limits
+- Patch as the unit: tasks land on an integration branch; the user's branch gets one commit when every task is done and the combined checks pass
+- Auditors must differ from lead and builder; auditor panel with focus/paths, first FAIL stops
+- `propose_edit` fast path, approved by a person
+- `docs/cost.md` cost model
 
 ### 0.2.0-patch — crew rebuilt around sign-off (2026-09-21)
 

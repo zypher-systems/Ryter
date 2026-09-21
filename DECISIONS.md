@@ -2,7 +2,40 @@
 
 Why, not what. Specialists append when they make a non-obvious choice.
 
+### 2026-09-21 — The user receives one patch, not a stream of merges
+- **By:** user (product decision), orchestrator (design)
+- **Decision:** In Build, tasks land on an integration branch (`ryter/patch-<id>-<n>`). The patch lands on the user's branch as one `--no-ff` commit only when every task in it is done, after a final run of the checks on the combined tree. A blocked task holds the whole patch until it is retried or dropped; a fix task lands into the same patch. If the user committed meanwhile, their branch is integrated in the patch worktree and any resolution is re-audited.
+- **Chosen vs rejected:** Rejected landing each task on the user's branch as it passes (the previous design): the user saw a half-finished change and had to reason about partial states. Rejected pull requests as the default: more controlled, but the vision is that the user has nothing to act on until the whole change is in. PRs stay an option for teams.
+- **Why:** The unit the user asked for is the change, not the task. One commit is one thing to review and one `git revert -m 1` to undo, and the combined checks catch tasks that pass alone but break each other.
+- **Where:** `agent.rs` (`open_patch`, `try_land_patch`, `drain_crew`), `crew.rs` (`land_patch`), `session.rs` (`Patch`)
+- **Residual risk:** A patch can wait indefinitely on a blocked task until someone retries or drops it; there is no `/patch drop` yet. Tasks were each gated against the patch as it stood, so a late-landing task is re-checked but not re-audited against earlier ones (the combined checks cover interactions).
+
+### 2026-09-21 — Auditors must be different models from the lead and the builder
+- **By:** user (product decision), orchestrator (design)
+- **Decision:** Every auditor on the panel must be a different model from both the lead and the builder, compared after stripping the route (`x-ai/grok-4.6` = `grok-4.6` = `grok-4.6-latest`). Builds refuse before any builder runs and say how to fix it. `[[auditor.panel]]` seats all must pass, in order, stopping at the first FAIL; seats may have a focus and path globs, and at least one must cover every change.
+- **Chosen vs rejected:** The user asked for "different from the lead". It is also enforced against the builder, because the builder defaults to the lead's model and a builder overridden onto the auditor's model would make the auditor review its own work. Rejected a quorum for now; all-must-pass matches "must sign off".
+- **Why:** A pass from the model that wrote or directs the code is not a second opinion, and "a second model signs off" is the product's claim. Enforcing on resolved models also catches the silent fallback where an unresolvable auditor route becomes the lead's model.
+- **Where:** `crew.rs` (`same_model`, `independence_problem`, `sign_off`, `Auditor`), `agent.rs` (`auditor_panel`), `config.rs` (`AuditorSeatConfig`)
+- **Residual risk:** Model identity is by name. Two names for the same weights (a fine-tune, a vendor alias) pass the check.
+
+### 2026-09-21 — The crew is metered and capped; context is scoped per role
+- **By:** orchestrator
+- **Decision:** Every specialist round is priced and attributed to a task and role, logged, and counted against the session budget. Each task has a USD cap and a billable-token cap (`[spend] task_budget_usd = 1.0`, `task_max_tokens = 1_000_000`). Builders and auditors see `notes/architect.md` plus the DECISIONS entries naming their files; the architect sees all memory. The lead's system prompt is built once per turn; a cache breakpoint rolls onto the newest message on Anthropic routes. Rejected tasks retry in their own worktree. Auditors are limited to 12 rounds / 4k output.
+- **Chosen vs rejected:** Rejected batching audits across a patch (per-task review is what lets one bad task be rejected, and audits are the cheapest stage). Rejected caching the full memory instead of scoping it (scoping also shrinks what the model must attend to).
+- **Why:** Crew spend was not measured at all, so the budget stop saw only the lead. Modelled per task (`docs/cost.md`), the old design cost 2× a single agent on auto-caching providers and ~5× on Anthropic; now ~1.5× with one model everywhere, and 0.35–0.55× with a cheap builder and strong reviewers. Tiering is the design's economic premise; the other changes remove waste so tiering can pay off.
+- **Where:** `meter.rs`, `crew.rs` (`run_specialist`, `limits`, retry in place), `memory.rs` (`load_scoped_memory`), `llm/http.rs` (`mark_last_for_cache`), `agent.rs` (`turn_inner`, `record_crew_spend`), `docs/cost.md`
+- **Residual risk:** The cost model's round counts and growth rates are assumptions until the task benchmark measures them. Relevance filtering of DECISIONS is by path mention; a decision that matters but names no path is missed by builders.
+
+### 2026-09-21 — A fast path for trivial edits, approved by a person
+- **By:** user (product decision), orchestrator (design)
+- **Decision:** `propose_edit` lets the lead offer a replacement of at most 20 lines a side in one file. The user sees the diff and approves with `y`; that approval is the sign-off. `--always-approve` and the session-wide `a` do not apply, and headless it is refused.
+- **Chosen vs rejected:** Rejected letting the lead write source directly. Rejected routing trivial edits through the crew (a builder, checks, and an audit to fix a typo cost more than the edit is worth, and send people to other tools for small work).
+- **Why:** The rule "nothing merges without sign-off" is kept: a person seeing the exact diff is a stronger sign-off than a model.
+- **Where:** `tools/mod.rs` (`propose_edit`, `gated_execute`), `tools/policy.rs` (`decide_proposal`), `user_io.rs` (diff summary), `prompts/orchestrator.md`
+- **Residual risk:** The edit lands uncommitted in the user's tree; if it overlaps an open patch, the patch waits on it like any user edit.
+
 ### 2026-09-21 — Work lands only after checks and sign-off, integrated in the worktree
+- **Amended** the same day by "The user receives one patch": tasks now land on a patch branch, and the patch lands on the user's branch; rejected tasks retry in place rather than from a fresh branch.
 - **By:** orchestrator
 - **Decision:** A build task is builder → commit → merge the user's branch *into the worktree* → harness-run `[auditor] checks` → auditor `VERDICT: PASS` → serialized `--no-ff` land. With the auditor off nothing lands; the branch waits. A conflict is resolved by a builder in the worktree and the result is re-audited. If the target moves while a task is gated, it re-integrates and re-runs the checks; the auditor re-runs only if a resolver changed code. A dirty user tree blocks only when its dirty files overlap the task's changed files.
 - **Chosen vs rejected:** Rejected merging into the user's checkout and rebasing on conflict (the old path left the checkout mid-merge with markers when both failed). Rejected re-auditing after every clean re-integration (cost, and a clean merge of already-audited upstream work does not change what this builder wrote). Rejected letting the auditor decide whether to run tests.

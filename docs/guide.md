@@ -140,6 +140,14 @@ Each builder task:
 6. **Land**: one `--no-ff` merge commit (undo with `git revert -m 1`). If your branch moved meanwhile, it re-integrates and re-checks first. If you have uncommitted edits to the same files, it stops and keeps the branch
 7. Rejected → retry with the findings, up to `[auditor] max_retries`, then `blocked`
 
+In **build**, tasks land on a patch branch (`ryter/patch-…`), not yours. When every task in the patch is done and the combined checks pass, the patch lands on your branch as **one commit** (`git revert -m 1` undoes it all). A blocked task holds the patch until you retry or drop it; the orchestrator says what it is waiting on.
+
+Auditors must be different models from the orchestrator and the builder — otherwise builds refuse to start and say how to fix it. Assign one in `/crew`, or list a panel under `[[auditor.panel]]` (all must pass; cheapest first; seats may have a `focus` and `paths`).
+
+For a trivial change the orchestrator can `propose_edit`: you see the diff and press `y`. Only a person can approve it.
+
+Crew spend is metered per task and role and counts against `[spend] session_budget_usd`; each task also stops at `task_budget_usd` / `task_max_tokens`. See `docs/cost.md`.
+
 `/auditor on|off` is session-only unless you also change config. With the auditor off, **nothing merges**: finished work waits on its branch. After each batch the orchestrator gets the crew report, tells you what landed, and records builder decisions in `DECISIONS.md` — builders never write project memory themselves.
 
 The architect runs in-process (no worktree) and writes tasks straight into the queue builders read from. Nested subagents are not supported.

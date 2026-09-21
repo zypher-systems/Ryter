@@ -100,6 +100,8 @@ compare models, or claim trust without measuring real runs.
 
 ### 5. Cost per task, and a cap per task
 
+*Update 2026-09-21:* metering, per-task caps, scoped context, and caching are in; the per-task cost model is in `docs/cost.md`. What remains here is visibility and tiered defaults.
+
 A crew multiplies spend: builder + auditor + retries, times N in parallel. Show cost
 per task in the review surface, give tasks a budget like sessions have, and stop
 running unpriced models without an explicit opt-in. (Today an unpriced model has no
