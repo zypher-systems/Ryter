@@ -120,6 +120,26 @@ enum Command {
         /// Connection name.
         connection: Option<String>,
     },
+    /// Run the benchmark suite through the real crew: what lands, what passes
+    /// the hidden tests, and what it costs. Spends real money on your keys.
+    Bench {
+        /// Suite directory.
+        #[arg(long, default_value = "bench")]
+        suite: std::path::PathBuf,
+        /// Only these tasks (repeatable).
+        #[arg(long)]
+        only: Vec<String>,
+        /// Run with a saved crew preset instead of the current crew, to
+        /// compare tierings.
+        #[arg(long)]
+        crew: Option<String>,
+        /// Spend cap per task, in USD.
+        #[arg(long, default_value_t = 1.0)]
+        budget_usd: f64,
+        /// Run each task this many times (models vary run to run).
+        #[arg(long, default_value_t = 1)]
+        repeat: u32,
+    },
     /// Crew model assignments.
     Crew {
         #[command(subcommand)]
@@ -235,6 +255,19 @@ fn main() -> ExitCode {
             }
         },
         Some(Command::Connections { cmd }) => match connections_cmd(cmd) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(1)
+            }
+        },
+        Some(Command::Bench {
+            suite,
+            only,
+            crew,
+            budget_usd,
+            repeat,
+        }) => match bench_cmd(&suite, &only, crew.as_deref(), budget_usd, repeat) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("{e}");
@@ -558,6 +591,105 @@ fn connections_cmd(cmd: Option<ConnCmd>) -> ryter_core::Result<()> {
         }
         Some(ConnCmd::Test { name }) => models_cmd(Some(&name)),
     }
+}
+
+fn bench_cmd(
+    suite: &std::path::Path,
+    only: &[String],
+    crew: Option<&str>,
+    budget_usd: f64,
+    repeat: u32,
+) -> ryter_core::Result<()> {
+    use ryter_core::bench::{BenchEnv, Summary, load_suite, run_task};
+    let cwd = std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?;
+    let trusted = config::is_trusted(&cwd);
+    let mut cfg = config::load(Some(&cwd), trusted)?;
+    let home = config::home_dir();
+    if let Some(name) = crew {
+        config::load_crew_preset(&home, &mut cfg, name)?;
+    }
+    let mut tasks = load_suite(suite)?;
+    if !only.is_empty() {
+        tasks.retain(|t| only.contains(&t.name));
+    }
+    if tasks.is_empty() {
+        return Err(Error::Config(format!("no tasks in {}", suite.display())));
+    }
+    let last = config::load_last_route(&home);
+    let (connection, model) = config::resolve_route(&cfg, last.as_ref(), None, None);
+    let conn = cfg
+        .connections
+        .get(&connection)
+        .ok_or_else(|| Error::Config(format!("unknown connection {connection}")))?;
+    let key = resolve_secret(&cfg, &ConnectionId::new(&connection))?;
+    let provider: Arc<dyn ryter_core::Provider> = Arc::new(http_provider(conn, key));
+    let (_, builder) = cfg.route_for(Role::Builder);
+    let (_, auditor) = cfg.route_for(Role::Auditor);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let run_home = home.join("bench").join(stamp.to_string());
+    std::fs::create_dir_all(&run_home).map_err(|e| Error::Io(e.to_string()))?;
+    let results_path = run_home.join("results.jsonl");
+    println!("crew      lead {model} · builder {builder} · auditor {auditor}");
+    println!(
+        "running   {} task(s) × {repeat}, capped at ${budget_usd:.2} each — this spends real money",
+        tasks.len()
+    );
+    let env = BenchEnv {
+        cfg,
+        provider,
+        connection,
+        model: model.clone(),
+        home: run_home.clone(),
+        budget_usd,
+        accept_timeout: std::time::Duration::from_secs(600),
+    };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Error::Io(e.to_string()))?;
+    let mut results = Vec::new();
+    for task in &tasks {
+        for _ in 0..repeat {
+            // A real task takes minutes; say what is running.
+            print!("{:<24} running…\r", task.name);
+            let _ = io::stdout().flush();
+            let r = rt.block_on(run_task(task, &env));
+            let mark = match (r.landed, r.accepted) {
+                (true, true) => "accepted",
+                (true, false) => "FALSE PASS",
+                _ => "not landed",
+            };
+            let bound = if r.unpriced { "≥" } else { "" };
+            println!(
+                "{:<24} {mark:<11} {bound}${:.3}  {:>7} tok  {:>5.0}s  {}",
+                r.task, r.usd, r.billable_tokens, r.secs, r.outcome
+            );
+            let line = serde_json::json!({
+                "lead": model, "builder": builder, "auditor": auditor, "result": r,
+            });
+            use std::io::Write as _;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&results_path)
+            {
+                let _ = writeln!(f, "{line}");
+            }
+            let paused = r.outcome.starts_with("builds paused");
+            results.push(r);
+            if paused {
+                eprintln!("stopping: the crew cannot run until the auditor is a different model");
+                println!("\n{}", Summary::of(&results).render());
+                return Ok(());
+            }
+        }
+    }
+    println!("\n{}", Summary::of(&results).render());
+    println!("results   {}", results_path.display());
+    Ok(())
 }
 
 fn crew_suggest_cmd(apply: bool) -> ryter_core::Result<()> {

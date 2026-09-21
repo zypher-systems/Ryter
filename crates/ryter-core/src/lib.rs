@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod agent;
+pub mod bench;
 pub mod cancel;
 pub mod compact;
 pub mod config;

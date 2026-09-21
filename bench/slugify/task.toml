@@ -1,0 +1,12 @@
+title = "Add slugify() to textutil"
+brief = """
+Add `slugify(text)` to textutil.py:
+- lowercase ASCII letters and digits only; accented letters lose their accents
+  ("Café" -> "cafe"), anything else non-alphanumeric is a separator
+- each run of separators becomes a single "-"
+- no leading or trailing "-"; an empty or all-separator input returns ""
+Done when `python3 -m unittest -q test_textutil` passes.
+"""
+files = ["textutil.py"]
+checks = ["python3 -m unittest -q test_textutil"]
+accept = ["python3 -m unittest -q hidden_test_textutil"]
