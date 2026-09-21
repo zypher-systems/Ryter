@@ -402,13 +402,17 @@ impl Agent {
             Phase::Build => Role::Builder,
             Phase::Audit => Role::Auditor,
         };
+        // Outside Build, tasks an architect wrote are build work waiting for
+        // the build phase. Taking them now ran more architects to "design"
+        // each build task — on the strongest, most expensive model.
+        let eligible = move |t: &crate::queue::Task| phase == Phase::Build || t.by != "architect";
         let has_pending = self
             .queue
             .lock()
             .map_err(|e| Error::Config(e.to_string()))?
             .tasks
             .iter()
-            .any(|t| t.status == TaskStatus::Pending);
+            .any(|t| t.status == TaskStatus::Pending && eligible(t));
         if !has_pending && (role != Role::Builder || self.session.meta.patch.is_none()) {
             return Ok(String::new());
         }
@@ -459,7 +463,7 @@ impl Agent {
                     .queue
                     .lock()
                     .map_err(|e| Error::Config(e.to_string()))?;
-                q.take_pending(self.max_crew)
+                q.take_pending_where(self.max_crew, eligible)
             };
             if batch.is_empty() {
                 break;
@@ -921,6 +925,14 @@ impl Agent {
                 "the workspace is not a git repository".into(),
             ));
         }
+        if crate::git::head(&repo).is_err() {
+            return Err(Error::Config(
+                "the repository has no commits yet, so there is nothing for a patch to \
+                 branch from. Make a first commit (`git commit --allow-empty -m init`) and \
+                 say continue."
+                    .into(),
+            ));
+        }
         let target = crate::git::branch(&repo)?;
         if target == "HEAD" {
             return Err(Error::Config(
@@ -1379,6 +1391,71 @@ mod tests {
     }
 
     /// The crew's spend reaches the session log, so the budget sees it.
+    /// In plan mode the architect runs once. The build tasks it writes wait
+    /// for the build phase instead of being taken by more architect runs.
+    #[tokio::test]
+    async fn plan_mode_leaves_the_architects_tasks_for_build() {
+        let todo = serde_json::json!({"items": [
+            {"id": "design", "title": "design it", "status": "running"},
+            {"id": "b1", "title": "build a", "files": ["a.txt"]},
+            {"id": "b2", "title": "build b", "files": ["b.txt"]}
+        ]})
+        .to_string();
+        let p = ReplayProvider::scripted(vec![
+            vec![
+                StreamDelta::ToolCall {
+                    id: "t".into(),
+                    name: "todo_write".into(),
+                    arguments: todo,
+                },
+                StreamDelta::Done,
+            ],
+            say("two tasks, parallel"),
+        ]);
+        let (_home, _cwd, mut agent) = crew_setup(p);
+        agent.session.handoff(Phase::Plan, "", None).unwrap();
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo_as(
+                &serde_json::json!({"items": [{"id": "design", "title": "design it"}]}),
+                "orchestrator",
+            )
+            .unwrap();
+        agent.drain_crew().await.unwrap();
+        // Draining again in plan mode must not run the build tasks.
+        agent.drain_crew().await.unwrap();
+        let q = agent.queue.lock().unwrap();
+        let status = |id: &str| q.tasks.iter().find(|t| t.id == id).map(|t| t.status);
+        assert_eq!(status("design"), Some(TaskStatus::Done));
+        assert_eq!(status("b1"), Some(TaskStatus::Pending));
+        assert_eq!(status("b2"), Some(TaskStatus::Pending));
+        assert_eq!(
+            q.tasks.iter().find(|t| t.id == "b1").unwrap().by,
+            "architect"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repository_without_commits_says_what_to_do() {
+        let (_home, cwd, mut agent) = crew_setup(ReplayProvider::scripted(vec![]));
+        // Replace the fixture repo with a fresh, commitless one.
+        std::fs::remove_dir_all(cwd.path().join(".git")).unwrap();
+        crate::git::git(cwd.path(), &["init", "-q"]).unwrap();
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo(&serde_json::json!({"items": [{"id": "t1", "title": "x", "files": ["a"]}]}))
+            .unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert!(
+            report.contains("no commits yet") && report.contains("git commit --allow-empty"),
+            "{report}"
+        );
+    }
+
     #[tokio::test]
     async fn crew_spend_reaches_the_session() {
         let usage = |t: &str| {

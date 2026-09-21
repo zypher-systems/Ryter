@@ -371,7 +371,7 @@ fn todo_write(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         .queue
         .lock()
         .map_err(|e| crate::error::Error::Config(e.to_string()))?;
-    q.apply_todo(args)?;
+    q.apply_todo_as(args, ctx.role.as_str())?;
     let summary = q
         .tasks
         .iter()

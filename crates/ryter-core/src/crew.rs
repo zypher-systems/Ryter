@@ -620,6 +620,7 @@ pub async fn land_patch(job: &BuildJob<'_>, patch: &crate::session::Patch) -> Re
             patch.target
         ),
         files: Vec::new(),
+        by: "orchestrator".into(),
         status: TaskStatus::Running,
         retries: 0,
         findings: String::new(),
@@ -1235,6 +1236,7 @@ mod tests {
             title: title.into(),
             brief: String::new(),
             files: Vec::new(),
+            by: String::new(),
             status: TaskStatus::Running,
             retries: 0,
             findings: String::new(),

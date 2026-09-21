@@ -37,6 +37,10 @@ pub struct Task {
     /// run in parallel; overlapping or undeclared ones run one at a time.
     #[serde(default)]
     pub files: Vec<String>,
+    /// Who created it (`orchestrator`, `architect`). An architect's tasks are
+    /// build work: they must never be picked up by another architect run.
+    #[serde(default)]
+    pub by: String,
     /// Status.
     pub status: TaskStatus,
     /// Auditor retries used.
@@ -68,6 +72,11 @@ impl TaskQueue {
 
     /// Replace items from a `todo_write` payload.
     pub fn apply_todo(&mut self, args: &Value) -> Result<()> {
+        self.apply_todo_as(args, "")
+    }
+
+    /// Replace the list on behalf of `by`; new tasks remember their creator.
+    pub fn apply_todo_as(&mut self, args: &Value, by: &str) -> Result<()> {
         let items = args
             .get("items")
             .and_then(Value::as_array)
@@ -87,6 +96,7 @@ impl TaskQueue {
                     title,
                     brief,
                     files,
+                    by: old.by.clone(),
                     status: if status == TaskStatus::Pending && old.status == TaskStatus::Running {
                         old.status
                     } else {
@@ -101,6 +111,7 @@ impl TaskQueue {
                     title,
                     brief,
                     files,
+                    by: by.to_string(),
                     status,
                     retries: 0,
                     findings: String::new(),
@@ -121,6 +132,11 @@ impl TaskQueue {
 
     /// Pending items, up to `max`, marked running.
     pub fn take_pending(&mut self, max: u32) -> Vec<Task> {
+        self.take_pending_where(max, |_| true)
+    }
+
+    /// Like [`Self::take_pending`], but only tasks `eligible` accepts.
+    pub fn take_pending_where(&mut self, max: u32, eligible: impl Fn(&Task) -> bool) -> Vec<Task> {
         // Parallel builders merge into one branch, so two tasks editing the
         // same files would race to conflict. Take pending tasks in order and
         // skip any whose scope collides with one already in this batch; they
@@ -130,7 +146,7 @@ impl TaskQueue {
             if out.len() >= max as usize {
                 break;
             }
-            if t.status != TaskStatus::Pending {
+            if t.status != TaskStatus::Pending || !eligible(t) {
                 continue;
             }
             // An empty batch accepts anything, so an unscoped task at the head
