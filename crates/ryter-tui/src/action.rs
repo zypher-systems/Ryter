@@ -28,6 +28,8 @@ pub enum PanelId {
     Sessions(SessionsMode),
     /// `/spend`.
     Spend,
+    /// `/budget`.
+    Budget,
     /// `/settings`.
     Settings,
     /// `/theme`.
@@ -143,6 +145,15 @@ pub enum Action {
     /// Set the session budget in USD; `0` turns it off. Applies now and is
     /// saved as the default.
     SetBudget(f64),
+    /// Save everything the `/budget` panel edits.
+    SaveBudget {
+        /// Session cap; `0` is off.
+        usd: f64,
+        /// Warn threshold.
+        warn: f64,
+        /// Per-task cap.
+        task: f64,
+    },
     /// Kill a running specialist.
     KillAgent(String),
     /// Kill every running specialist.

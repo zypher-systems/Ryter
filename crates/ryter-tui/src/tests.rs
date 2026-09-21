@@ -193,13 +193,14 @@ fn snapshot_palette_open() {
 
 #[test]
 fn snapshot_every_panel() {
-    let panels: [(&str, PanelId); 16] = [
+    let panels: [(&str, PanelId); 17] = [
         ("providers", PanelId::Providers),
         ("models", PanelId::Models),
         ("crew", PanelId::Crew),
         ("agents", PanelId::Agents),
         ("sessions", PanelId::Sessions(SessionsMode::Browse)),
         ("spend", PanelId::Spend),
+        ("budget", PanelId::Budget),
         ("settings", PanelId::Settings),
         ("theme", PanelId::Theme),
         ("tools", PanelId::Tools),

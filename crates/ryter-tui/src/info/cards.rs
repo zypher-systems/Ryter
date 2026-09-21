@@ -194,57 +194,6 @@ pub fn spend(view: &View, w: usize, theme: Theme) -> Card {
     };
     rows.push(kv("session", &total, w, theme, total_style));
     let detail_from = rows.len();
-    if view.budget_usd > 0.0 {
-        // An unpriced turn has no known cost, so there is no honest bar to
-        // draw. A 0% gauge beside `$?.??` is the exact fiction the spend system
-        // exists to avoid (`RYTER.md`), and it reads as "plenty of budget left"
-        // when the truth is "no idea".
-        let cells = gauge_cells(w);
-        let mut spans = vec![s("bud ", theme.side_muted())];
-        match view.spend {
-            Some(spent) => {
-                let frac = spent / view.budget_usd;
-                let color = if spent >= view.budget_usd {
-                    theme.error
-                } else if spent >= view.warn_usd {
-                    theme.warn
-                } else {
-                    theme.success
-                };
-                spans.extend(bar(frac, cells, color, theme));
-                spans.push(s(
-                    format!(" {:>3}%", (frac * 100.0).round().min(999.0) as u32),
-                    Style::default().fg(color).bg(theme.sidebar_bg),
-                ));
-                rows.push(row(spans));
-                rows.push(row(vec![s(
-                    format!(
-                        "    {} of {}",
-                        format_usd(Some(spent)),
-                        format_usd(Some(view.budget_usd))
-                    ),
-                    theme.side_muted(),
-                )]));
-            }
-            None => {
-                spans.extend(bar(0.0, cells, theme.dim, theme));
-                spans.push(s("   ?%", theme.side_muted()));
-                rows.push(row(spans));
-                rows.push(row(vec![s(
-                    format!(
-                        "    {} of {}",
-                        format_usd(None),
-                        format_usd(Some(view.budget_usd))
-                    ),
-                    theme.side_muted(),
-                )]));
-            }
-        }
-    }
-    if view.budget_usd <= 0.0 {
-        // Say it: no gauge could mean "no cap" or "not loaded yet".
-        rows.push(kv("budget", "off", w, theme, theme.side_muted()));
-    }
     let mut by_role: Vec<(&String, &f64)> = view.spend_by_role.iter().collect();
     by_role.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
     let shown = by_role.iter().take(4);
@@ -282,6 +231,95 @@ fn task_rank(status: &str) -> u8 {
         "pending" => 1,
         "blocked" => 2,
         _ => 3,
+    }
+}
+
+/// `budget` card: the cap and how much of it is left, or that there is none.
+/// Clicking it opens `/budget`.
+pub fn budget(view: &View, w: usize, theme: Theme) -> Card {
+    let mut rows = Vec::new();
+    let counter: String;
+    if view.budget_usd <= 0.0 {
+        // Say it: no gauge could mean "no cap" or "not loaded yet".
+        rows.push(kv("cap", "off", w, theme, theme.side_muted()));
+        return Card {
+            id: CardId::Budget,
+            title: "budget".into(),
+            counter: "off".into(),
+            rows,
+            detail_from: 1,
+        };
+    }
+    let cells = gauge_cells(w);
+    match view.spend {
+        Some(spent) => {
+            // An unpriced turn has no known cost, so there is no honest bar:
+            // see the `None` arm.
+            let frac = spent / view.budget_usd;
+            let color = if spent >= view.budget_usd {
+                theme.error
+            } else if spent >= view.warn_usd && view.warn_usd > 0.0 {
+                theme.warn
+            } else {
+                theme.success
+            };
+            counter = format!("{}%", (frac * 100.0).round().min(999.0) as u32);
+            let mut spans = vec![s("    ", theme.side())];
+            spans.extend(bar(frac, cells, color, theme));
+            rows.push(row(spans));
+            rows.push(kv(
+                "used",
+                &format!(
+                    "{} of {}",
+                    format_usd(Some(spent)),
+                    format_usd(Some(view.budget_usd))
+                ),
+                w,
+                theme,
+                Style::default().fg(color).bg(theme.sidebar_bg),
+            ));
+            if spent >= view.budget_usd {
+                rows.push(kv(
+                    "reached",
+                    "/budget +2",
+                    w,
+                    theme,
+                    Style::default().fg(theme.error).bg(theme.sidebar_bg),
+                ));
+            } else {
+                rows.push(kv(
+                    "left",
+                    &format_usd(Some(view.budget_usd - spent)),
+                    w,
+                    theme,
+                    theme.side(),
+                ));
+            }
+        }
+        None => {
+            counter = "?%".into();
+            let mut spans = vec![s("    ", theme.side())];
+            spans.extend(bar(0.0, cells, theme.dim, theme));
+            rows.push(row(spans));
+            rows.push(kv(
+                "used",
+                &format!(
+                    "{} of {}",
+                    format_usd(None),
+                    format_usd(Some(view.budget_usd))
+                ),
+                w,
+                theme,
+                theme.side_muted(),
+            ));
+        }
+    }
+    Card {
+        id: CardId::Budget,
+        title: "budget".into(),
+        counter,
+        rows,
+        detail_from: 2,
     }
 }
 
@@ -470,7 +508,7 @@ mod tests {
 
     /// No gauge could mean "no cap" or "not loaded"; the card says which.
     #[test]
-    fn the_spend_card_says_when_there_is_no_budget() {
+    fn the_budget_card_says_where_the_cap_stands() {
         let theme = Theme::truecolor_dark();
         let mut v = View::new(
             ryter_core::Phase::Build,
@@ -480,10 +518,21 @@ mod tests {
         );
         v.spend = Some(1.25);
         v.budget_usd = 0.0;
-        let off = text(&spend(&v, 26, theme));
-        assert!(off.contains("budget") && off.contains("off"), "{off}");
+        let off = budget(&v, 26, theme);
+        assert_eq!(off.counter, "off");
+        assert!(text(&off).contains("off"));
         v.budget_usd = 5.0;
-        let on = text(&spend(&v, 26, theme));
-        assert!(on.contains("$1.25 of $5.00") && !on.contains("off"), "{on}");
+        let on = budget(&v, 26, theme);
+        assert_eq!(on.counter, "25%");
+        assert!(
+            text(&on).contains("$1.25 of $5.00") && text(&on).contains("$3.75"),
+            "{}",
+            text(&on)
+        );
+        // Reached: the card says how to raise it.
+        v.spend = Some(5.5);
+        assert!(text(&budget(&v, 26, theme)).contains("/budget +2"));
+        // The spend card no longer carries the gauge.
+        assert!(!text(&spend(&v, 26, theme)).contains("of $5.00"));
     }
 }

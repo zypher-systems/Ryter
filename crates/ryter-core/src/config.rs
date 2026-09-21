@@ -941,6 +941,8 @@ pub fn user_connection_names(home: &Path) -> Vec<String> {
 struct SettingsFile {
     session_budget_usd: Option<f64>,
     warn_usd: Option<f64>,
+    #[serde(default)]
+    task_budget_usd: Option<f64>,
     max: Option<u32>,
     sandbox: Option<String>,
     inbound: Option<bool>,
@@ -970,6 +972,9 @@ fn apply_settings_file(cfg: &mut Config, path: &Path) {
     if let Some(v) = file.warn_usd {
         cfg.spend.warn_usd = v;
     }
+    if let Some(v) = file.task_budget_usd {
+        cfg.spend.task_budget_usd = v;
+    }
     if let Some(v) = file.max {
         cfg.subagents.max = v;
     }
@@ -990,6 +995,7 @@ pub fn save_settings(home: &Path, cfg: &Config) -> Result<()> {
     let file = SettingsFile {
         session_budget_usd: Some(cfg.spend.session_budget_usd),
         warn_usd: Some(cfg.spend.warn_usd),
+        task_budget_usd: Some(cfg.spend.task_budget_usd),
         max: Some(cfg.subagents.max),
         sandbox: Some(cfg.sandbox.profile.clone()),
         inbound: Some(cfg.mcp.inbound),
@@ -1734,6 +1740,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.features.web = true;
         cfg.spend.session_budget_usd = 9.0;
+        cfg.spend.task_budget_usd = 2.5;
         cfg.subagents.max = 2;
         save_settings(dir.path(), &cfg).unwrap();
         let extra = connection_template("openai").unwrap();
@@ -1743,6 +1750,7 @@ mod tests {
         let live = load_at(dir.path(), None, false).unwrap();
         assert!(live.features.web);
         assert!((live.spend.session_budget_usd - 9.0).abs() < f64::EPSILON);
+        assert!((live.spend.task_budget_usd - 2.5).abs() < f64::EPSILON);
         assert_eq!(live.subagents.max, 2);
         assert_eq!(live.connections["local"].kind, "openai_compat");
         assert!(user_connection_names(dir.path()).contains(&"local".to_string()));

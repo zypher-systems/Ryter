@@ -22,6 +22,8 @@ pub enum CardId {
     Model,
     /// spend
     Spend,
+    /// budget
+    Budget,
     /// tasks
     Tasks,
     /// crew
@@ -36,6 +38,7 @@ impl CardId {
         match self {
             CardId::Model => Some(PanelId::Models),
             CardId::Spend => Some(PanelId::Spend),
+            CardId::Budget => Some(PanelId::Budget),
             CardId::Crew => Some(PanelId::Crew),
             CardId::Session => Some(PanelId::Sessions(crate::action::SessionsMode::Browse)),
             CardId::Mcp => Some(PanelId::Mcp),
@@ -81,6 +84,7 @@ pub fn cards(view: &View, inner_w: usize, theme: Theme) -> Vec<Card> {
         cards::session(view, inner_w, theme),
         cards::model(view, inner_w, theme),
         cards::spend(view, inner_w, theme),
+        cards::budget(view, inner_w, theme),
     ];
     // Cards that have nothing to say are absent, not empty (`R-PANEL-18`).
     v.extend(cards::tasks(view, inner_w, theme));
@@ -99,8 +103,8 @@ pub fn fit(mut cards: Vec<Card>, height: usize) -> Vec<Card> {
         }
         cards.retain(|c| c.id != id);
     }
-    // Spend detail rows, then session detail rows.
-    for id in [CardId::Spend, CardId::Session] {
+    // Spend and budget detail rows, then session detail rows.
+    for id in [CardId::Spend, CardId::Budget, CardId::Session] {
         if total(&cards) <= height {
             return cards;
         }

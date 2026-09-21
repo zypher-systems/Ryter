@@ -134,6 +134,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             cx.notice(Notice::SessionsChanged);
         }
         Action::SetBudget(usd) => set_budget(view, cx, usd),
+        Action::SaveBudget { usd, warn, task } => save_budget(view, cx, usd, warn, task),
         Action::KillAgent(id) => {
             if let Some(c) = view.crew.iter().find(|c| c.id == id) {
                 view.system(format!("killing {} · {}", c.role, c.label));
@@ -782,19 +783,34 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
     }
     cx.send(Work::SetSettings {
         budget_usd: view.budget_usd,
+        task_budget_usd: view.task_budget_usd,
         max_crew: view.max_crew,
         web: view.web,
     });
 }
 
 fn set_budget(view: &mut View, cx: &mut Ctx, usd: f64) {
+    let (warn, task) = (view.warn_usd, view.task_budget_usd);
+    save_budget(view, cx, usd, warn, task);
+}
+
+/// Apply spend limits to the running session and save them as the default.
+fn save_budget(view: &mut View, cx: &mut Ctx, usd: f64, warn: f64, task: f64) {
     view.budget_usd = usd;
+    if usd > 0.0 {
+        view.budget_last = usd;
+    }
+    view.warn_usd = warn;
+    view.task_budget_usd = task;
     cx.cfg.spend.session_budget_usd = usd;
+    cx.cfg.spend.warn_usd = warn;
+    cx.cfg.spend.task_budget_usd = task;
     if let Err(e) = config::save_settings(&cx.home, &cx.cfg) {
         view.error(e.to_string());
     }
     cx.send(Work::SetSettings {
         budget_usd: usd,
+        task_budget_usd: task,
         max_crew: view.max_crew,
         web: view.web,
     });
@@ -812,8 +828,9 @@ fn set_budget(view: &mut View, cx: &mut Ctx, usd: f64) {
         ));
     } else {
         view.system(format!(
-            "budget off · spent {} · nothing stops on cost now; each task is still capped at [spend] task_budget_usd",
-            format_usd(view.spend)
+            "budget off · spent {} · nothing stops on cost now; each task is still capped at {}",
+            format_usd(view.spend),
+            format_usd(Some(task))
         ));
     }
 }

@@ -64,6 +64,8 @@ pub enum Work {
     SetSettings {
         /// Budget cap.
         budget_usd: f64,
+        /// Per-task cap.
+        task_budget_usd: f64,
         /// Max parallel specialists.
         max_crew: u32,
         /// Web tools.
@@ -131,7 +133,7 @@ pub struct WorkerInit {
 /// Thread body.
 pub fn run(init: WorkerInit) {
     let WorkerInit {
-        cfg,
+        mut cfg,
         conn,
         key,
         session,
@@ -326,17 +328,25 @@ pub fn run(init: WorkerInit) {
             }
             Ok(Work::SetSettings {
                 budget_usd,
+                task_budget_usd,
                 max_crew,
                 web,
             }) => {
+                // The worker's copy too: an agent rebuilt later (a provider
+                // switch) starts from it, and used to lose live changes.
+                let apply = |c: &mut Config| {
+                    c.spend.session_budget_usd = budget_usd;
+                    c.spend.task_budget_usd = task_budget_usd;
+                    c.subagents.max = max_crew;
+                    c.features.web = web;
+                };
+                apply(&mut cfg);
                 if let Some(a) = &mut agent {
                     a.budget_usd = budget_usd;
                     a.max_crew = max_crew;
                     a.ctx.web = web;
                     if let Some(c) = &mut a.cfg {
-                        c.spend.session_budget_usd = budget_usd;
-                        c.subagents.max = max_crew;
-                        c.features.web = web;
+                        apply(c);
                     }
                 }
             }

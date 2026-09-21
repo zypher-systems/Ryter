@@ -166,14 +166,14 @@ A session budget is optional. With one, the crew stops when spend reaches it, sa
 
 | Command | Effect |
 | --- | --- |
-| `/budget` | where spend stands against the budget |
+| `/budget` | the budget panel: spend against the cap, on/off, the cap, the warning level, and the per-task cap (`^s` saves) |
 | `/budget 5` | cap this session at $5 |
 | `/budget +2` | raise the cap by $2, e.g. after hitting it |
 | `/budget off` | no cap |
 
-`/budget` applies at once and is saved as your default (`~/.ryter/settings.toml`, the same value as *budget usd* in `/settings`). A trusted project's `[spend] session_budget_usd` overrides your default in that project. The default is $5. Each task is still capped at `[spend] task_budget_usd` ($1), which catches one runaway task whether or not there is a session budget. `[spend] enabled = false` still counts in memory and prints a warning.
+The **budget** card on the right shows the cap, how much is used and left, or `off`; click it to open the panel. Changes apply at once and are saved as your default (`~/.ryter/settings.toml`, the same value as *budget usd* in `/settings`). A trusted project's `[spend] session_budget_usd` overrides your default in that project. The default is $5. Each task is still capped at `[spend] task_budget_usd` ($1), which catches one runaway task whether or not there is a session budget. `[spend] enabled = false` still counts in memory and prints a warning.
 
-`/spend` is a panel: session total, a budget gauge, and tables by role and by connection; `e` exports CSV. The info panel’s spend card shows the same total and gauge at all times. `ryter spend` prints the roll-up on the CLI.
+`/spend` is a panel: session total, a budget gauge, and tables by role and by connection; `e` exports CSV. The info panel’s spend card shows the total, and the budget card below it shows the cap. `ryter spend` prints the roll-up on the CLI.
 
 ## Slash commands
 

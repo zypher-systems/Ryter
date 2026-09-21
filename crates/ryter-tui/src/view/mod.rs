@@ -178,6 +178,10 @@ pub struct View {
     pub unpriced_calls: u32,
     /// Session budget cap (0 = none).
     pub budget_usd: f64,
+    /// The cap to restore when the budget is switched back on.
+    pub budget_last: f64,
+    /// `[spend] task_budget_usd`: one task's cap, budget or not.
+    pub task_budget_usd: f64,
     /// Warn threshold.
     pub warn_usd: f64,
     /// `[subagents] max`.
@@ -287,6 +291,8 @@ impl View {
             spend_rows_conn: BTreeMap::new(),
             unpriced_calls: 0,
             budget_usd: 5.0,
+            budget_last: 5.0,
+            task_budget_usd: 1.0,
             warn_usd: 1.0,
             max_crew: 4,
             sandbox_profile: "off".into(),

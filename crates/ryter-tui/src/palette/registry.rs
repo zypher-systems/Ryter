@@ -3,7 +3,6 @@
 use crate::action::{Action, PanelId, SessionsMode};
 use crate::panel::modal::Confirm;
 use crate::view::View;
-use ryter_core::format_usd;
 
 /// Palette category, in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -262,7 +261,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         Category::Context,
         "Cap this session's spend, raise the cap, or turn it off",
         Some("[amount|+amount|off]"),
-        false,
+        true,
         None,
         false,
         run_budget,
@@ -469,26 +468,12 @@ fn run_rename(_view: &mut View, rest: &str) -> Action {
     }
 }
 
-/// `/budget` shows where spend stands; `/budget 5`, `/budget +2`, and
-/// `/budget off` change the cap.
+/// `/budget` opens the panel; `/budget 5`, `/budget +2`, and `/budget off`
+/// change the cap directly.
 fn run_budget(view: &mut View, rest: &str) -> Action {
     let arg = rest.trim().trim_start_matches('$');
     if arg.is_empty() {
-        let spent = format_usd(view.spend);
-        let msg = if view.budget_usd > 0.0 {
-            format!(
-                "budget {} · spent {spent} · the crew stops when it is reached. \
-                 /budget <amount> changes it, /budget off removes it",
-                format_usd(Some(view.budget_usd))
-            )
-        } else {
-            format!(
-                "no budget · spent {spent} · nothing stops on cost; the spend card \
-                 keeps count. /budget <amount> sets a cap"
-            )
-        };
-        view.system(msg);
-        return Action::None;
+        return Action::OpenPanel(PanelId::Budget);
     }
     if matches!(arg, "off" | "none" | "0") {
         return Action::SetBudget(0.0);
@@ -673,14 +658,7 @@ mod tests {
         // With no cap, "+2" means two more than already spent.
         v.budget_usd = 0.0;
         assert_eq!(set(&mut v, "+2"), Some(7.2));
-        // Bare `/budget` reports; it changes nothing.
-        assert_eq!(set(&mut v, ""), None);
-        assert!(
-            v.messages
-                .last()
-                .unwrap()
-                .body
-                .starts_with("no budget · spent $5.20")
-        );
+        // Bare `/budget` opens the panel.
+        assert_eq!(run_budget(&mut v, ""), Action::OpenPanel(PanelId::Budget));
     }
 }

@@ -4,6 +4,7 @@
 //! framework draws the shared chrome, dims what is behind, and drops a shadow.
 
 pub mod agents;
+pub mod budget;
 pub mod chrome;
 pub mod context;
 pub mod crew;
@@ -298,6 +299,7 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
         PanelId::Agents => Box::new(agents::Agents::default()),
         PanelId::Sessions(mode) => Box::new(sessions::Sessions::new(view, env, mode)),
         PanelId::Spend => Box::new(spend::Spend::default()),
+        PanelId::Budget => Box::new(budget::Budget::new(view)),
         PanelId::Settings => Box::new(settings::Settings::new(view)),
         PanelId::Theme => Box::new(theme::ThemePicker::new(view)),
         PanelId::Tools => Box::new(toggles::Toggles::tools(view)),

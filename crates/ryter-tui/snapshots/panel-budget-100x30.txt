@@ -1,0 +1,30 @@
+ ryter  ·  lead                             grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ · system
+   welcome · /╭─ budget ──────────────────────────────────────────────── on · $5.00 ─╮
+              │ spent $?.?? of $5.00 · a price is unknown, so no percentage          │
+              │                                                                      │
+              │ SESSION                                                              │
+              │› cap spend     [ on ]                                        default │
+              │  cap usd       ‹ 5.00 ›                                      default │
+              │  warn at usd   ‹ 1.00 ›                                      default │
+              │                                                                      │
+              │ PER TASK                                                             │
+              │  task cap usd  ‹ 1.00 ›                                      default │
+              │                                                                      │
+              │ the crew stops when session spend reaches the cap, says what         │
+              │ finished and what didn't, and waits. raise the cap and tell the lead │
+              │ to continue.                                                         │
+              │                                                                      │
+              │                                                                      │
+              │                                                                      │
+              │                                                                      │
+              ╰─ ↑↓ move · space/←→ change · enter edit · ^s save · esc ─────────────╯
+
+
+
+
+╭─ dusty ──────────────────────────────────────────────────────────────────────────────────────────╮
+│› ask the lead, or / for commands                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move    enter select    tab next field    ? keys    esc back

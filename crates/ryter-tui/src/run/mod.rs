@@ -352,6 +352,10 @@ fn populate_view(
     view.auditor_on = cfg.auditor.enabled;
     view.specialists = cfg.specialists.clone();
     view.budget_usd = cfg.spend.session_budget_usd;
+    if view.budget_usd > 0.0 {
+        view.budget_last = view.budget_usd;
+    }
+    view.task_budget_usd = cfg.spend.task_budget_usd;
     view.warn_usd = cfg.spend.warn_usd;
     view.max_crew = cfg.subagents.max;
     view.sandbox_profile = cfg.sandbox.profile.clone();
