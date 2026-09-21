@@ -418,7 +418,11 @@ impl Agent {
             .as_ref()
             .map(|c| c.local_connections())
             .unwrap_or_default();
-        let meter = Arc::new(Meter::new(self.book.clone(), self.caps()).with_free(free));
+        let meter = Arc::new(
+            Meter::new(self.book.clone(), self.caps())
+                .with_free(free)
+                .with_log(self.session.spend_path()),
+        );
         let (builder_p, builder_m, builder_c) = self.specialist_stack(role);
         let auditors = if role == Role::Builder && self.session.meta.auditor_enabled {
             match self.auditor_panel() {
@@ -1051,7 +1055,9 @@ The auditor is off, so the patch stays on `{}`.
         let mut grouped: std::collections::BTreeMap<SpendKey, (Role, Usage, Option<f64>)> =
             std::collections::BTreeMap::new();
         for line in meter.unrecorded() {
-            self.session.record_spend(spend_record(
+            // Already in spend.jsonl: the meter writes as it charges. Only the
+            // running totals and the spend card need it now.
+            self.session.count_spend(&spend_record(
                 line.connection.clone(),
                 line.model.clone(),
                 line.role,
@@ -1409,7 +1415,11 @@ mod tests {
             roles.contains(&Role::Builder) && roles.contains(&Role::Auditor),
             "{roles:?}"
         );
-        assert!(agent.session.meta.spend_usd_total.unwrap_or(0.0) >= 0.10);
+        // Written once, as charged: two builder rounds and one audit, with no
+        // second copy when the batch is recorded.
+        assert_eq!(log.len(), 3, "{roles:?}");
+        let total = agent.session.meta.spend_usd_total.unwrap_or(0.0);
+        assert!((total - 0.10).abs() < 1e-9, "counted once: {total}");
     }
 
     #[tokio::test]

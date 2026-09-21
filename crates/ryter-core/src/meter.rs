@@ -50,6 +50,9 @@ pub struct Meter {
     caps: Caps,
     /// Connections with no API cost (local model servers).
     free: HashSet<String>,
+    /// Session spend log; each call is appended the moment it is charged, so
+    /// a crash or kill mid-batch still leaves a record of what was spent.
+    log: Option<std::path::PathBuf>,
     lines: Mutex<Vec<SpendLine>>,
     /// How many lines the session has already recorded.
     recorded: Mutex<usize>,
@@ -98,6 +101,7 @@ impl Meter {
             book,
             caps,
             free: HashSet::new(),
+            log: None,
             lines: Mutex::new(Vec::new()),
             recorded: Mutex::new(0),
         }
@@ -107,6 +111,12 @@ impl Meter {
     /// tokens still count, so the token cap still stops a runaway loop.
     pub fn with_free(mut self, connections: HashSet<String>) -> Self {
         self.free = connections;
+        self
+    }
+
+    /// Append every charge to this spend log as it happens.
+    pub fn with_log(mut self, path: std::path::PathBuf) -> Self {
+        self.log = Some(path);
         self
     }
 
@@ -135,6 +145,18 @@ impl Meter {
                 }
             }),
         };
+        if let Some(path) = &self.log {
+            crate::session::append_jsonl(
+                path,
+                &crate::session::spend_record(
+                    line.connection.clone(),
+                    line.model.clone(),
+                    line.role,
+                    line.usage,
+                    line.usd,
+                ),
+            )?;
+        }
         let mut lines = self
             .lines
             .lock()
@@ -318,6 +340,22 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, Error::TaskBudget(_)));
+    }
+
+    /// A run killed mid-batch must still leave a record of what it spent.
+    #[test]
+    fn every_charge_reaches_the_log_immediately() {
+        let d = tempfile::TempDir::new().unwrap();
+        let path = d.path().join("spend.jsonl");
+        let m = Meter::new(PriceBook::new(), Caps::default()).with_log(path.clone());
+        m.charge("t1", Role::Builder, "c", "m", usage(10, 1), Some(0.02))
+            .unwrap();
+        m.charge("t1", Role::Auditor, "c", "m", usage(10, 1), Some(0.01))
+            .unwrap();
+        // No batch finished and nothing was recorded by the agent, yet:
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text.lines().count(), 2);
+        assert!(text.contains("\"builder\"") && text.contains("\"auditor\""));
     }
 
     #[test]

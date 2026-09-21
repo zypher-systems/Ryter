@@ -286,15 +286,25 @@ impl Session {
 
     /// Record a priced (or unpriced) model call.
     pub fn record_spend(&mut self, rec: SpendRecord) -> Result<()> {
+        self.count_spend(&rec)?;
+        append_jsonl(&self.dir.join("spend.jsonl"), &rec)
+    }
+
+    /// Add a row to the totals only: the crew meter has already written it
+    /// to `spend.jsonl` the moment it was charged.
+    pub fn count_spend(&mut self, rec: &SpendRecord) -> Result<()> {
         match rec.total_usd {
             Some(v) => {
                 self.meta.spend_usd_total = Some(self.meta.spend_usd_total.unwrap_or(0.0) + v);
             }
             None => self.meta.spend_unknown = true,
         }
-        append_jsonl(&self.dir.join("spend.jsonl"), &rec)?;
-        self.write_meta()?;
-        Ok(())
+        self.write_meta()
+    }
+
+    /// Where spend rows are appended.
+    pub fn spend_path(&self) -> PathBuf {
+        self.dir.join("spend.jsonl")
     }
 
     /// All spend rows.
@@ -504,7 +514,7 @@ pub fn spend_record(
     }
 }
 
-fn append_jsonl<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+pub(crate) fn append_jsonl<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let mut f = OpenOptions::new()
         .create(true)
         .append(true)
