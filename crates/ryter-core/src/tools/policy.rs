@@ -385,6 +385,23 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
     }
 }
 
+/// Why a `bash` call was refused, when the refusal has a known way round.
+/// Models reach for `python -c` and heredocs to probe code; told only "outside
+/// policy", an auditor in a live run gave up and hand-traced instead.
+pub fn bash_hint(args: &Value) -> Option<&'static str> {
+    let cmd = args.get("command").and_then(Value::as_str)?;
+    segments(cmd)
+        .iter()
+        .map(|s| words(s))
+        .any(|w| program(&w).is_some_and(|p| INTERPRETERS.contains(&p)) && !runs_a_script(&w))
+        .then_some(
+            "Inline code (`-c`, `-e`, heredocs, stdin) is refused because the gate cannot \
+             read it. Write the code to a file inside the workspace (`printf '...' > \
+             probe.py`) and run that file (`python3 probe.py`, or \
+             `python3 -m unittest tests.test_probe`).",
+        )
+}
+
 /// True when an interpreter was given a script file to run rather than inline
 /// code. `-c`, `-e`, and a bare `-` all mean the code is not on disk.
 fn runs_a_script(words: &[String]) -> bool {

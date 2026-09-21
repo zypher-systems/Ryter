@@ -422,6 +422,13 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
             "denied: the {} role does not have the {name} tool",
             ctx.role
         ))),
+        Decision::Deny if name == "bash" && policy::bash_hint(args).is_some() => {
+            Ok(ToolOutput::err(format!(
+                "denied: bash {} — {}",
+                crate::user_io::summary_args(name, args),
+                policy::bash_hint(args).unwrap_or_default()
+            )))
+        }
         Decision::Deny => Ok(ToolOutput::err(format!(
             "denied: {name} {} — the arguments are outside policy (missing or \
              out-of-workspace path, a secret file, or a blocked command). \
@@ -776,6 +783,27 @@ mod tests {
             std::fs::read_to_string(dir.path().join("config.toml")).unwrap(),
             "retries = 3\n"
         );
+    }
+
+    /// Refused inline code names the route that works; the route really works.
+    #[test]
+    fn refused_inline_code_points_at_a_probe_file() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(Role::Auditor, dir.path());
+        for cmd in ["python3 -c 'print(1)'", "python3 - <<'EOF'"] {
+            let out = gated_execute("bash", &json!({ "command": cmd }), &c).unwrap();
+            assert!(out.is_error && out.text.contains("probe.py"), "{out:?}");
+        }
+        let out = gated_execute(
+            "bash",
+            &json!({ "command": "printf 'print(6*7)\\n' > probe.py && python3 probe.py" }),
+            &c,
+        )
+        .unwrap();
+        assert!(!out.is_error && out.text.contains("42"), "{out:?}");
+        // Other refusals keep the general wording.
+        let out = gated_execute("bash", &json!({ "command": "sudo ls" }), &c).unwrap();
+        assert!(out.text.contains("outside policy"), "{out:?}");
     }
 
     #[test]

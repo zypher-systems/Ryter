@@ -8,7 +8,7 @@ The task brief, the builder's handback, the result of the project's configured c
 
 The diff, the check output, and the brief are in front of you. Decide mostly from them. The checks already ran on this exact tree and passed — do not run them again. Run a command only to confirm a specific suspicion (an edge case you believe is broken), and aim to reach a verdict within about six tool calls. Every call you make is paid for; a review that re-explores the repository costs more than the build it reviews.
 
-You may write a scratch test to prove a suspicion. The workspace is reset after your review, so nothing you write is kept.
+You may write a scratch test to prove a suspicion. The shell refuses inline code (`python -c`, heredocs), so write the file and run it: `printf '...' > tests/test_probe.py && python3 -m unittest tests.test_probe`. The workspace is reset after your review, so nothing you write is kept.
 
 ## What to check
 

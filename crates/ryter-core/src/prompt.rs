@@ -91,6 +91,29 @@ pub fn load_project_instructions(project_root: Option<&Path>) -> Option<String> 
     None
 }
 
+/// `YYYY-MM-DD` in UTC, from the system clock.
+fn today_utc() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    civil_date(secs / 86_400)
+}
+
+/// Days since 1970-01-01 to a proleptic Gregorian date (Hinnant's algorithm).
+fn civil_date(days: u64) -> String {
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
 /// Orchestrator system prompt for this session: body + phase + pass notes.
 pub fn orchestrator_system(
     home: &Path,
@@ -102,6 +125,9 @@ pub fn orchestrator_system(
     // "current phase" line only confused the models about what they could do.
     let mut s = load(PromptKind::Orchestrator, home, project_root, trusted);
     s.push('\n');
+    // Without it the lead dated DECISIONS entries from its training data.
+    // Changes once a day, so it costs the prompt cache nothing within a day.
+    s.push_str(&format!("\nToday's date (UTC) is {}.\n", today_utc()));
     if let Some(root) = project_root {
         let _ = crate::memory::ensure_project_memory(root);
     }
@@ -209,6 +235,14 @@ mod tests {
     use crate::phase::Phase;
     use crate::session::Session;
     use tempfile::TempDir;
+
+    #[test]
+    fn civil_dates_are_right_across_leap_years() {
+        assert_eq!(civil_date(0), "1970-01-01");
+        assert_eq!(civil_date(11_016), "2000-02-29");
+        assert_eq!(civil_date(20_717), "2026-09-21");
+        assert_eq!(civil_date(20_819), "2027-01-01");
+    }
 
     #[test]
     fn shipped_orchestrator_forbids_writing_source() {

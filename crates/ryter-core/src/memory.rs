@@ -6,7 +6,7 @@ use std::path::Path;
 const ROADMAP_TEMPLATE: &str = "\
 # Roadmap
 
-Living plan for this repo. Orchestrator and specialists update this as work lands.
+Living plan for this repo. The lead updates this as work lands.
 Do not paste full chat logs here.
 
 ## Now
@@ -33,13 +33,13 @@ Do not paste full chat logs here.
 const DECISIONS_TEMPLATE: &str = "\
 # Decisions
 
-Why, not what. Each specialist appends when they make a non-obvious choice.
-The orchestrator reads this when the user asks why. Do not dump transcripts.
+Why, not what. The lead records non-obvious choices here, its own and the crew's.
+The lead reads this when the user asks why. Do not dump transcripts.
 
 ## Template
 
 ### YYYY-MM-DD — short title
-- **By:** planner | architect | builder | auditor | orchestrator
+- **By:** lead | architect | builder | auditor
 - **Decision:** …
 - **Chosen vs rejected:** …
 - **Why:** …
