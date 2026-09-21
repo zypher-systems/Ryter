@@ -53,17 +53,61 @@ pub struct ToolOutput {
     pub is_error: bool,
 }
 
+/// Ceiling on one tool result, in bytes (~8k tokens at the bytes/4 estimate).
+///
+/// Every result is appended to the transcript and re-billed on every later
+/// turn, so an uncapped `cat Cargo.lock` or `grep -r` costs for the rest of the
+/// session and can trigger a compaction that discards the conversation.
+pub const MAX_TOOL_OUTPUT_BYTES: usize = 32_000;
+
+/// Keep the head and tail of an oversized result and say what was dropped.
+///
+/// Both ends matter: the head carries the command and the first hits, the tail
+/// carries the summary line or the error a build ends with.
+pub fn cap_output(text: String) -> String {
+    if text.len() <= MAX_TOOL_OUTPUT_BYTES {
+        return text;
+    }
+    let keep = MAX_TOOL_OUTPUT_BYTES / 2;
+    let head_end = floor_boundary(&text, keep);
+    let tail_start = ceil_boundary(&text, text.len() - keep);
+    let dropped = tail_start - head_end;
+    format!(
+        "{}\n… {dropped} bytes elided; narrow the command or read a range …\n{}",
+        &text[..head_end],
+        &text[tail_start..]
+    )
+}
+
+/// Largest char boundary at or below `at`.
+fn floor_boundary(s: &str, at: usize) -> usize {
+    let mut i = at.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Smallest char boundary at or above `at`.
+fn ceil_boundary(s: &str, at: usize) -> usize {
+    let mut i = at.min(s.len());
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
 impl ToolOutput {
     fn ok(text: impl Into<String>) -> Self {
         Self {
-            text: text.into(),
+            text: cap_output(text.into()),
             is_error: false,
         }
     }
 
     fn err(text: impl Into<String>) -> Self {
         Self {
-            text: text.into(),
+            text: cap_output(text.into()),
             is_error: true,
         }
     }
@@ -98,8 +142,9 @@ pub fn specs_for_opts(role: Role, web: bool) -> Vec<ToolSpec> {
 fn spec(name: &str) -> Option<ToolSpec> {
     let (description, parameters) = match name {
         "read_file" => (
-            "Read a file. Path is relative to the workspace.",
-            json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+            "Read a file. Path is relative to the workspace. Long files come back \
+             truncated; pass offset (1-based line) and limit to page through one.",
+            json!({"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}),
         ),
         "list_dir" => (
             "List a directory.",
@@ -122,8 +167,9 @@ fn spec(name: &str) -> Option<ToolSpec> {
             json!({"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["path","old_string","new_string"]}),
         ),
         "bash" => (
-            "Run a shell command in the workspace.",
-            json!({"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}),
+            "Run a shell command in the workspace. Default timeout 120s; pass \
+             timeout_secs (max 600) for a long build or test run.",
+            json!({"type":"object","properties":{"command":{"type":"string"},"timeout_secs":{"type":"integer"}},"required":["command"]}),
         ),
         "todo_write" => (
             "Replace the task list. In Build, pending items become parallel builder jobs.",
@@ -508,6 +554,98 @@ mod tests {
         let out = execute("web_fetch", &json!({"url": "http://127.0.0.1/"}), &c).unwrap();
         assert!(out.is_error);
         assert!(out.text.contains("blocked"), "{out:?}");
+    }
+
+    /// No single result may dominate the window, and both ends survive.
+    #[test]
+    fn oversized_tool_output_is_capped_at_both_ends() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(Role::Builder, dir.path());
+        let big = "x".repeat(MAX_TOOL_OUTPUT_BYTES * 3);
+        std::fs::write(dir.path().join("big.txt"), &big).unwrap();
+        let out = execute("read_file", &json!({"path": "big.txt"}), &c).unwrap();
+        assert!(
+            out.text.len() < MAX_TOOL_OUTPUT_BYTES + 200,
+            "capped length, got {}",
+            out.text.len()
+        );
+        assert!(out.text.contains("elided"), "{}", out.text);
+    }
+
+    /// A multibyte file must not panic the head/tail split.
+    #[test]
+    fn capping_respects_char_boundaries() {
+        let text = "é".repeat(MAX_TOOL_OUTPUT_BYTES);
+        let capped = cap_output(text);
+        assert!(capped.contains("elided"));
+        assert!(capped.len() < MAX_TOOL_OUTPUT_BYTES + 200);
+    }
+
+    #[test]
+    fn read_file_pages_a_long_file() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(Role::Builder, dir.path());
+        let body: String = (1..=5_000).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(dir.path().join("long.txt"), body).unwrap();
+
+        let first = execute("read_file", &json!({"path": "long.txt"}), &c).unwrap();
+        assert!(first.text.contains("   1|line 1"));
+        assert!(first.text.contains("2000|line 2000"));
+        assert!(!first.text.contains("line 2001"));
+        assert!(
+            first.text.contains("offset 2001"),
+            "must say how to continue: {}",
+            first.text
+        );
+
+        let next = execute(
+            "read_file",
+            &json!({"path": "long.txt", "offset": 2001, "limit": 3}),
+            &c,
+        )
+        .unwrap();
+        assert!(next.text.contains("2001|line 2001"));
+        assert!(next.text.contains("2003|line 2003"));
+        assert!(!next.text.contains("line 2004"));
+
+        // A short file is returned whole, with no continuation note.
+        std::fs::write(dir.path().join("short.txt"), "a\nb\n").unwrap();
+        let short = execute("read_file", &json!({"path": "short.txt"}), &c).unwrap();
+        assert!(!short.text.contains("more lines"), "{}", short.text);
+    }
+
+    /// 30s was below a cold build, so the auditor could not run its own
+    /// allowlist. The ceiling is per-command and clamped.
+    #[test]
+    fn bash_timeout_is_raisable_and_clamped() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(Role::Builder, dir.path());
+        let out = execute(
+            "bash",
+            &json!({"command": "sleep 2", "timeout_secs": 1}),
+            &c,
+        )
+        .unwrap();
+        assert!(out.is_error);
+        assert!(out.text.contains("timed out after 1s"), "{}", out.text);
+        // A command inside the default budget is unaffected.
+        let ok = execute("bash", &json!({"command": "echo hi"}), &c).unwrap();
+        assert!(!ok.is_error);
+        assert_eq!(ok.text.trim(), "hi");
+    }
+
+    /// `-lc` sourced the user's profile on every call; `-c` does not.
+    #[test]
+    fn bash_is_not_a_login_shell() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(Role::Builder, dir.path());
+        let out = execute(
+            "bash",
+            &json!({"command": "shopt -q login_shell; echo $?"}),
+            &c,
+        )
+        .unwrap();
+        assert_eq!(out.text.trim(), "1", "should not be a login shell");
     }
 
     #[test]

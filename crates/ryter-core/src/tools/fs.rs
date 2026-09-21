@@ -9,16 +9,48 @@ use crate::error::{Error, Result};
 use crate::tools::policy::resolve;
 use crate::tools::{ToolContext, ToolOutput};
 
+/// Lines returned when the caller does not ask for a range.
+const DEFAULT_LINE_LIMIT: usize = 2_000;
+
 pub fn read_file(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     let path = require_path(args, ctx)?;
     let text = fs::read_to_string(&path).map_err(|e| Error::Config(e.to_string()))?;
-    let numbered: String = text
-        .lines()
+    // `offset` is 1-based to match the line numbers this prints.
+    let offset = args
+        .get("offset")
+        .and_then(Value::as_u64)
+        .map(|n| n.max(1) as usize - 1)
+        .unwrap_or(0);
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map(|n| n.max(1) as usize)
+        .unwrap_or(DEFAULT_LINE_LIMIT);
+    let all: Vec<&str> = text.lines().collect();
+    let total = all.len();
+    let end = offset.saturating_add(limit).min(total);
+    let mut out: String = all
+        .get(offset..end)
+        .unwrap_or_default()
+        .iter()
         .enumerate()
-        .map(|(i, l)| format!("{:>4}|{l}", i + 1))
+        .map(|(i, l)| format!("{:>4}|{l}", offset + i + 1))
         .collect::<Vec<_>>()
         .join("\n");
-    Ok(ToolOutput::ok(numbered))
+    if end < total {
+        out.push_str(&format!(
+            "\n… {} more lines; read again with offset {} …",
+            total - end,
+            end + 1
+        ));
+    }
+    if offset >= total && total > 0 {
+        out = format!(
+            "offset {} is past the end of the file ({total} lines)",
+            offset + 1
+        );
+    }
+    Ok(ToolOutput::ok(out))
 }
 
 pub fn write_file(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
