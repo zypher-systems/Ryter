@@ -238,25 +238,14 @@ pub const COMMANDS: &[CommandSpec] = &[
     ),
     spec(
         "plan",
-        &[],
+        &["architect", "design"],
         Category::Agents,
-        "Hand off to the planner",
+        "Plan: the architect designs and writes tasks; nothing touches source",
         None,
         false,
         None,
         false,
         |v, _| begin(v, Phase::Plan),
-    ),
-    spec(
-        "architect",
-        &[],
-        Category::Agents,
-        "Hand off to the architect",
-        None,
-        false,
-        None,
-        false,
-        |v, _| begin(v, Phase::Architect),
     ),
     spec(
         "build",
@@ -616,8 +605,7 @@ fn run_handoff(view: &mut View, rest: &str) -> Action {
 fn previous(phase: Phase) -> Option<Phase> {
     match phase {
         Phase::Plan => None,
-        Phase::Architect => Some(Phase::Plan),
-        Phase::Build => Some(Phase::Architect),
+        Phase::Build => Some(Phase::Plan),
         Phase::Audit => Some(Phase::Build),
     }
 }

@@ -292,6 +292,24 @@ impl Session {
     }
 
     /// Write a pass note (empty body is allowed).
+    /// Latest crew results, kept outside the repository so the orchestrator
+    /// sees them on later turns. Only the tail is kept.
+    pub fn write_crew_report(&self, body: &str) -> Result<()> {
+        const KEEP: usize = 16_000;
+        let start = body.len().saturating_sub(KEEP);
+        let start = (start..=body.len())
+            .find(|i| body.is_char_boundary(*i))
+            .unwrap_or(body.len());
+        fs::create_dir_all(self.notes_dir()).map_err(|e| Error::Io(e.to_string()))?;
+        fs::write(self.notes_dir().join("crew.md"), &body[start..])
+            .map_err(|e| Error::Io(e.to_string()))
+    }
+
+    /// Latest crew results, or empty.
+    pub fn read_crew_report(&self) -> String {
+        fs::read_to_string(self.notes_dir().join("crew.md")).unwrap_or_default()
+    }
+
     pub fn write_note(&self, phase: Phase, body: &str) -> Result<()> {
         fs::create_dir_all(self.dir.join("notes")).map_err(|e| Error::Io(e.to_string()))?;
         fs::write(self.note_path(phase), body).map_err(|e| Error::Io(e.to_string()))
@@ -333,8 +351,7 @@ impl Session {
     pub fn previous_phase(phase: Phase) -> Option<Phase> {
         match phase {
             Phase::Plan => None,
-            Phase::Architect => Some(Phase::Plan),
-            Phase::Build => Some(Phase::Architect),
+            Phase::Build => Some(Phase::Plan),
             Phase::Audit => Some(Phase::Build),
         }
     }
@@ -511,6 +528,16 @@ pub(crate) fn cwd_slug(cwd: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sessions_from_before_the_role_merge_still_load() {
+        use crate::phase::Phase;
+        use crate::role::Role;
+        let phase: Phase = serde_json::from_str("\"architect\"").unwrap();
+        assert_eq!(phase, Phase::Plan);
+        let role: Role = serde_json::from_str("\"planner\"").unwrap();
+        assert_eq!(role, Role::Architect);
+    }
+
     use super::*;
     use tempfile::TempDir;
 
@@ -587,13 +614,12 @@ mod tests {
             tool_calls: None,
         })
         .unwrap();
-        s.handoff(Phase::Architect, "", None).unwrap();
-        assert_eq!(s.meta.phase, Phase::Architect);
-        assert_eq!(s.transcript.len(), 1);
-        assert_eq!(s.transcript[0].content, "keep me");
         assert!(s.read_note(Phase::Plan).unwrap().is_empty());
         s.handoff(Phase::Build, "ship it", None).unwrap();
-        assert_eq!(s.read_note(Phase::Architect).unwrap(), "ship it");
+        assert_eq!(s.meta.phase, Phase::Build);
+        assert_eq!(s.transcript.len(), 1);
+        assert_eq!(s.transcript[0].content, "keep me");
+        assert_eq!(s.read_note(Phase::Plan).unwrap(), "ship it");
         assert_eq!(s.transcript.len(), 1);
     }
 }

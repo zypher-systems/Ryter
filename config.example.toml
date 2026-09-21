@@ -32,8 +32,14 @@ model = "grok-4.6"
 max = 4
 
 [auditor]
+# Work merges only after the checks pass and the auditor signs off.
+# With the auditor off, finished work is left on its branch for you to merge.
 enabled = true
 max_retries = 2
+# Run by Ryter in the builder's worktree before the auditor reviews. Set these
+# per project in `.ryter/config.toml` (trusted projects only).
+# checks = ["cargo test --workspace", "cargo clippy --workspace -- -D warnings"]
+# check_timeout_secs = 1200
 
 [spend]
 enabled = true

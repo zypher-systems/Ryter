@@ -37,7 +37,7 @@
 
 
 
-╭─ commands ───────────────────────────────────────────────── 4 of 28 ─╮
+╭─ commands ───────────────────────────────────────────────── 4 of 27 ─╮
 │ mo                                                                   │
 │›/models         Switch the orchestrator model                     ▸  │
 │ /tools          Tool permission mode                              ▸  │

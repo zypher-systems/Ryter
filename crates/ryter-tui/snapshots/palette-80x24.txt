@@ -11,7 +11,7 @@
                                                       │ price unknown          │
                                                       ╰────────────────────────╯
                                                       ╭─ spend ────────────────╮
-╭─ commands ────────────────────────────── 4 of 28 ─╮ │ session          $?.?? │
+╭─ commands ────────────────────────────── 4 of 27 ─╮ │ session          $?.?? │
 │ mo                                                │ │ bud ░░░░░░░░░░░░   ?%  │
 │›/models         Switch the orchestrator model  ▸  │ │     $?.?? of $5.00     │
 │ /tools          Tool permission mode           ▸  │ ╰────────────────────────╯

@@ -12,9 +12,10 @@ use crate::error::Error;
 pub enum Role {
     /// User-facing conversation. Reads, asks, delegates. Never writes `src/`.
     Orchestrator,
-    /// Read-only planning specialist.
-    Planner,
-    /// Read-only architecture specialist.
+    /// Plans and designs: scope, shape, risks, and the task list builders
+    /// run. Writes project memory, never product source. Absorbed the old
+    /// planner role; `planner` still parses, and old logs still load.
+    #[serde(alias = "planner")]
     Architect,
     /// Writes product code in its own git worktree.
     Builder,
@@ -32,7 +33,6 @@ impl Role {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Orchestrator => "orchestrator",
-            Self::Planner => "planner",
             Self::Architect => "architect",
             Self::Builder => "builder",
             Self::Auditor => "auditor",
@@ -52,8 +52,7 @@ impl FromStr for Role {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
             "orchestrator" => Ok(Self::Orchestrator),
-            "planner" | "plan" => Ok(Self::Planner),
-            "architect" => Ok(Self::Architect),
+            "architect" | "planner" | "plan" => Ok(Self::Architect),
             "builder" | "build" => Ok(Self::Builder),
             "auditor" | "audit" => Ok(Self::Auditor),
             other => Err(Error::Config(format!("unknown role {other:?}"))),
@@ -68,7 +67,7 @@ mod tests {
     #[test]
     fn only_builder_writes_source() {
         assert!(!Role::Orchestrator.writes_source());
-        assert!(!Role::Planner.writes_source());
+        assert!(!Role::Architect.writes_source());
         assert!(!Role::Architect.writes_source());
         assert!(Role::Builder.writes_source());
         assert!(!Role::Auditor.writes_source());

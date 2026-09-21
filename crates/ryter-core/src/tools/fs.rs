@@ -125,11 +125,23 @@ pub fn grep(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         )
         .build()
         .map_err(|e| Error::Config(e.to_string()))?;
+    // Optional root and file filter. The root goes through the same
+    // containment check as every other path argument.
+    let root = match args.get("path").and_then(Value::as_str) {
+        Some(p) if !p.is_empty() => crate::tools::policy::resolve(ctx, p)
+            .ok_or_else(|| Error::Config(format!("grep: {p} is outside the workspace")))?,
+        _ => ctx.workspace.clone(),
+    };
+    let mut builder = ignore::WalkBuilder::new(&root);
+    builder.hidden(false).git_ignore(true);
+    if let Some(include) = args.get("include").and_then(Value::as_str) {
+        let mut ov = ignore::overrides::OverrideBuilder::new(&root);
+        ov.add(include)
+            .map_err(|e| Error::Config(format!("grep include: {e}")))?;
+        builder.overrides(ov.build().map_err(|e| Error::Config(e.to_string()))?);
+    }
+    let walker = builder.build();
     let mut hits = Vec::new();
-    let walker = ignore::WalkBuilder::new(&ctx.workspace)
-        .hidden(false)
-        .git_ignore(true)
-        .build();
     for dent in walker.flatten() {
         let path = dent.path();
         if !path.is_file() {
@@ -154,7 +166,16 @@ pub fn grep(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
             break;
         }
     }
-    Ok(ToolOutput::ok(hits.join("\n")))
+    // An empty string reads as a tool failure to some models; say it plainly,
+    // and say when the list was cut short.
+    if hits.is_empty() {
+        return Ok(ToolOutput::ok("no matches"));
+    }
+    let mut out = hits.join("\n");
+    if hits.len() >= 200 {
+        out.push_str("\n… stopped at 200 matches; narrow with path or include");
+    }
+    Ok(ToolOutput::ok(out))
 }
 
 pub fn glob_files(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {

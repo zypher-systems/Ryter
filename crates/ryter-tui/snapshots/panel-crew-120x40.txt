@@ -9,8 +9,7 @@
 
                           ╭─ crew ─────────────────────────────────────── max concurrent: 4 ─╮
                           │ roles                                                            │
-                          │›● planner  default (grok-4.6)                                    │
-                          │ ● architect  default (grok-4.6)                                  │
+                          │›● architect  default (grok-4.6)                                  │
                           │ ● builder  default (grok-4.6)                                    │
                           │ ● auditor  default (grok-4.6)                                    │
                           │                                                                  │
@@ -20,6 +19,7 @@
                           │                                                                  │
                           │ max concurrent specialists: 4 · change in /settings              │
                           ╰─ enter assign/load · r reset · d delete preset · esc ────────────╯
+
 
 
 

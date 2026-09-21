@@ -231,10 +231,23 @@ pub struct AuditorConfig {
     /// Builder fix-turns after a failed audit.
     #[serde(default = "default_retries")]
     pub max_retries: u32,
+    /// Commands the harness runs in the builder's worktree before the auditor
+    /// sees the work (`["cargo test --workspace"]`). All must exit 0. Run by
+    /// the runtime, not chosen by a model, so passing does not depend on the
+    /// auditor deciding to test. Usually set per project in `.ryter/config.toml`.
+    #[serde(default)]
+    pub checks: Vec<String>,
+    /// Wall clock for each check.
+    #[serde(default = "default_check_timeout")]
+    pub check_timeout_secs: u64,
 }
 
 fn default_retries() -> u32 {
     2
+}
+
+fn default_check_timeout() -> u64 {
+    1200
 }
 
 impl Default for AuditorConfig {
@@ -242,6 +255,8 @@ impl Default for AuditorConfig {
         Self {
             enabled: true,
             max_retries: 2,
+            checks: Vec::new(),
+            check_timeout_secs: default_check_timeout(),
         }
     }
 }
@@ -467,12 +482,20 @@ impl Config {
     fn specialist_row(&self, role: crate::role::Role) -> RoleModel {
         let key = match role {
             crate::role::Role::Orchestrator => return self.orchestrator.clone(),
-            crate::role::Role::Planner => "planner",
             crate::role::Role::Architect => "architect",
             crate::role::Role::Builder => "builder",
             crate::role::Role::Auditor => "auditor",
         };
-        self.specialists.get(key).cloned().unwrap_or_default()
+        let row = self.specialists.get(key).cloned().unwrap_or_default();
+        // The planner folded into the architect. A crew saved before the merge
+        // may only have a `planner` row; honour it rather than silently
+        // dropping the user's model choice.
+        if role == crate::role::Role::Architect && !row.is_override() {
+            if let Some(old) = self.specialists.get("planner") {
+                return old.clone();
+            }
+        }
+        row
     }
 
     /// True when this role uses the live orchestrator provider and model.
@@ -564,7 +587,7 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
     Ok(cfg)
 }
 
-const CREW_ROLES: &[&str] = &["planner", "architect", "builder", "auditor"];
+const CREW_ROLES: &[&str] = &["architect", "builder", "auditor"];
 
 /// Live crew assignment file (`~/.ryter/crew.toml`).
 pub fn crew_path(home: &Path) -> PathBuf {
@@ -1527,7 +1550,6 @@ mod tests {
         let cfg = Config::default();
         let orch = cfg.route_for(crate::role::Role::Orchestrator);
         assert_eq!(orch, ("spacexai".into(), "grok-4.6".into()));
-        assert_eq!(cfg.route_for(crate::role::Role::Planner), orch);
         assert_eq!(cfg.route_for(crate::role::Role::Architect), orch);
         assert_eq!(cfg.route_for(crate::role::Role::Builder), orch);
         assert_eq!(cfg.route_for(crate::role::Role::Auditor), orch);
@@ -1542,9 +1564,24 @@ mod tests {
         let (conn, model) = cfg.route_for(crate::role::Role::Architect);
         assert_eq!(conn, "openrouter");
         assert_eq!(model, "anthropic/claude-sonnet-4.6");
-        assert_eq!(cfg.route_for(crate::role::Role::Planner), orch);
-        assert!(cfg.follows_orchestrator(crate::role::Role::Planner));
+        // Assigning one role leaves the others following the orchestrator.
+        assert_eq!(cfg.route_for(crate::role::Role::Builder), orch);
+        assert!(cfg.follows_orchestrator(crate::role::Role::Builder));
         assert!(!cfg.follows_orchestrator(crate::role::Role::Architect));
+    }
+
+    #[test]
+    fn a_saved_planner_row_routes_the_architect() {
+        let mut cfg = Config::default();
+        cfg.specialists.insert(
+            "planner".into(),
+            RoleModel {
+                connection: Some("openrouter".into()),
+                model: Some("anthropic/claude-sonnet-4.6".into()),
+            },
+        );
+        let (_, model) = cfg.route_for(crate::role::Role::Architect);
+        assert_eq!(model, "anthropic/claude-sonnet-4.6");
     }
 
     #[test]
@@ -1568,7 +1605,7 @@ mod tests {
                 .and_then(|r| r.model.clone()),
             Some("anthropic/claude-sonnet-4.6".into())
         );
-        assert!(live.follows_orchestrator(crate::role::Role::Planner));
+        assert!(live.follows_orchestrator(crate::role::Role::Architect));
         assert!(!live.follows_orchestrator(crate::role::Role::Builder));
     }
 

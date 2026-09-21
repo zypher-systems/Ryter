@@ -9,7 +9,6 @@ use crate::role::Role;
 use crate::session::Session;
 
 const ORCHESTRATOR: &str = include_str!("../../../prompts/orchestrator.md");
-const PLANNER: &str = include_str!("../../../prompts/planner.md");
 const ARCHITECT: &str = include_str!("../../../prompts/architect.md");
 const BUILDER: &str = include_str!("../../../prompts/builder.md");
 const AUDITOR: &str = include_str!("../../../prompts/auditor.md");
@@ -19,8 +18,6 @@ const AUDITOR: &str = include_str!("../../../prompts/auditor.md");
 pub enum PromptKind {
     /// User-facing orchestrator.
     Orchestrator,
-    /// Plan specialist.
-    Planner,
     /// Architect specialist.
     Architect,
     /// Build specialist.
@@ -34,7 +31,6 @@ impl PromptKind {
     pub fn file_stem(self) -> &'static str {
         match self {
             Self::Orchestrator => "orchestrator",
-            Self::Planner => "planner",
             Self::Architect => "architect",
             Self::Builder => "builder",
             Self::Auditor => "auditor",
@@ -45,7 +41,6 @@ impl PromptKind {
     pub fn shipped(self) -> &'static str {
         match self {
             Self::Orchestrator => ORCHESTRATOR,
-            Self::Planner => PLANNER,
             Self::Architect => ARCHITECT,
             Self::Builder => BUILDER,
             Self::Auditor => AUDITOR,
@@ -56,7 +51,6 @@ impl PromptKind {
     pub fn for_role(role: Role) -> Option<Self> {
         match role {
             Role::Orchestrator => Some(Self::Orchestrator),
-            Role::Planner => Some(Self::Planner),
             Role::Architect => Some(Self::Architect),
             Role::Builder => Some(Self::Builder),
             Role::Auditor => Some(Self::Auditor),
@@ -135,7 +129,7 @@ pub fn orchestrator_system(
     }
 
     let mut any = false;
-    for phase in [Phase::Plan, Phase::Architect, Phase::Build, Phase::Audit] {
+    for phase in [Phase::Plan, Phase::Build, Phase::Audit] {
         let note = session.read_note(phase)?;
         if note.is_empty() {
             continue;
@@ -149,6 +143,14 @@ pub fn orchestrator_system(
         s.push('\n');
         s.push_str(&note);
         if !note.ends_with('\n') {
+            s.push('\n');
+        }
+    }
+    let crew = session.read_crew_report();
+    if !crew.trim().is_empty() {
+        s.push_str("\n## Latest crew results\n");
+        s.push_str(&crew);
+        if !crew.ends_with('\n') {
             s.push('\n');
         }
     }
@@ -224,6 +226,25 @@ mod tests {
         );
     }
 
+    /// The runtime parses what these roles return. The auditor prompt once
+    /// said "return a clear pass or fail" while the parser wanted a first-line
+    /// PASS, so good work failed the gate on formatting.
+    #[test]
+    fn prompts_state_the_contracts_the_runtime_parses() {
+        let auditor = PromptKind::Auditor.shipped();
+        assert!(auditor.contains("VERDICT: PASS") && auditor.contains("VERDICT: FAIL"));
+        assert!(crate::crew::parse_verdict("- a.rs:3 nit\nVERDICT: PASS"));
+        assert!(!crate::crew::parse_verdict("- a.rs:3 bug\nVERDICT: FAIL"));
+        let builder = PromptKind::Builder.shipped();
+        for field in ["STATUS:", "FILES:", "DECISIONS:", "NOTES:"] {
+            assert!(builder.contains(field), "builder handback lost {field}");
+        }
+        // Builders are denied memory files; the prompt must not ask for them.
+        assert!(builder.contains("Do not commit"));
+        let orchestrator = PromptKind::Orchestrator.shipped();
+        assert!(orchestrator.contains("brief") && orchestrator.contains("files"));
+    }
+
     #[test]
     fn user_override_wins() {
         let home = TempDir::new().unwrap();
@@ -261,10 +282,10 @@ mod tests {
             "grok-4.6".into(),
         )
         .unwrap();
-        s.handoff(Phase::Architect, "we need auth", None).unwrap();
+        s.handoff(Phase::Build, "we need auth", None).unwrap();
         let sys = orchestrator_system(home.path(), None, false, &s).unwrap();
         assert!(sys.contains("## Current phase"));
-        assert!(sys.contains("architect"));
+        assert!(sys.contains("builder, auditor"));
         assert!(sys.contains("we need auth"));
         assert_eq!(s.transcript.len(), 0);
     }

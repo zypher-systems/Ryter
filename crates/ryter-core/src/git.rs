@@ -60,45 +60,179 @@ pub fn remove_worktree(repo: &Path, path: &Path, branch: &str) -> Result<()> {
     Ok(())
 }
 
-/// Combined diff (staged + unstaged) in `dir`.
-pub fn diff(dir: &Path) -> Result<String> {
-    let unstaged = git(dir, &["diff"])?;
-    let staged = git(dir, &["diff", "--cached"])?;
-    Ok(format!("{unstaged}{staged}"))
+/// Remove a worktree's directory but keep its branch, so work that passed
+/// (or needs a human) is still there to merge by hand.
+pub fn remove_worktree_keep_branch(repo: &Path, path: &Path) {
+    let _ = git(
+        repo,
+        &["worktree", "remove", "--force", &path.to_string_lossy()],
+    );
+    let _ = std::fs::remove_dir_all(path);
 }
 
-/// Merge `branch` into `repo` HEAD as one revertable commit.
-///
-/// `--no-ff` keeps the builder's work as a single merge commit rather than
-/// fast-forwarding it into the user's history, so `git revert -m 1` undoes the
-/// whole task.
-pub fn merge_branch(repo: &Path, branch: &str) -> Result<()> {
-    git(repo, &["merge", "--no-ff", "--no-edit", branch]).map(|_| ())
+/// Resolve a revision to a full sha.
+pub fn rev(dir: &Path, rev: &str) -> Result<String> {
+    Ok(git(dir, &["rev-parse", "--verify", rev])?
+        .trim()
+        .to_string())
 }
 
 /// Current commit, for the undo point recorded before an auto-merge.
 pub fn head(dir: &Path) -> Result<String> {
-    Ok(git(dir, &["rev-parse", "HEAD"])?.trim().to_string())
-}
-
-/// True when the tree has staged or unstaged changes.
-pub fn is_dirty(dir: &Path) -> bool {
-    !porcelain(dir).unwrap_or_default().trim().is_empty()
-}
-
-/// Rebase `worktree` onto `onto` (a ref in that repo).
-pub fn rebase(worktree: &Path, onto: &str) -> Result<()> {
-    git(worktree, &["rebase", onto]).map(|_| ())
-}
-
-/// Abort an in-progress rebase.
-pub fn rebase_abort(worktree: &Path) {
-    let _ = git(worktree, &["rebase", "--abort"]);
+    rev(dir, "HEAD")
 }
 
 /// `git status --porcelain`.
 pub fn porcelain(dir: &Path) -> Result<String> {
     git(dir, &["status", "--porcelain"])
+}
+
+/// Paths with staged or unstaged changes, including untracked files. Both
+/// sides of a rename are reported.
+pub fn dirty_paths(dir: &Path) -> Vec<String> {
+    let out = git(
+        dir,
+        &["status", "--porcelain", "-z", "--untracked-files=all"],
+    )
+    .unwrap_or_default();
+    let mut paths = Vec::new();
+    let mut fields = out.split('\0').filter(|f| !f.is_empty());
+    while let Some(entry) = fields.next() {
+        if entry.len() < 4 {
+            continue;
+        }
+        let (code, path) = entry.split_at(3);
+        paths.push(path.to_string());
+        // With `-z`, a rename's source path is the next field.
+        if code.starts_with('R') || code.starts_with('C') {
+            if let Some(src) = fields.next() {
+                paths.push(src.to_string());
+            }
+        }
+    }
+    paths
+}
+
+/// Paths that differ between two commits.
+pub fn changed_paths(dir: &Path, from: &str, to: &str) -> Vec<String> {
+    git(dir, &["diff", "--name-only", from, to])
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// What landing `to` onto `from` would change: a `--stat` summary, then the
+/// patch. The summary survives truncation, so a reviewer always sees scope.
+pub fn diff_range(dir: &Path, from: &str, to: &str) -> String {
+    let stat = git(dir, &["diff", "--stat", from, to]).unwrap_or_default();
+    let patch = git(dir, &["diff", from, to]).unwrap_or_default();
+    format!("{stat}\n{patch}")
+}
+
+/// Commit identity flags when the repository has none configured, so a
+/// builder's work is not silently left uncommitted on a fresh machine.
+fn identity(dir: &Path) -> Vec<String> {
+    let has = git(dir, &["config", "user.email"]).is_ok_and(|s| !s.trim().is_empty());
+    if has {
+        Vec::new()
+    } else {
+        vec![
+            "-c".into(),
+            "user.name=ryter".into(),
+            "-c".into(),
+            "user.email=ryter@localhost".into(),
+        ]
+    }
+}
+
+fn git_as(dir: &Path, args: &[&str]) -> Result<String> {
+    let id = identity(dir);
+    let mut all: Vec<&str> = id.iter().map(String::as_str).collect();
+    all.extend_from_slice(args);
+    git(dir, &all)
+}
+
+/// Stage everything and commit it. Returns whether a commit was made.
+pub fn commit_all(dir: &Path, message: &str) -> Result<bool> {
+    git(dir, &["add", "-A"])?;
+    if porcelain(dir)?.trim().is_empty() {
+        return Ok(false);
+    }
+    git_as(dir, &["commit", "--no-verify", "-m", message])?;
+    Ok(true)
+}
+
+/// Result of pulling the target branch into a builder's worktree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Integration {
+    /// Merged, or already up to date.
+    Clean,
+    /// Conflicted; markers are in these files, in the worktree only.
+    Conflict(Vec<String>),
+}
+
+/// Merge `onto` into the worktree's branch.
+///
+/// Conflicts are resolved here, in the builder's worktree, never in the user's
+/// checkout. Afterwards landing the branch onto `onto` cannot conflict.
+pub fn integrate(worktree: &Path, onto: &str) -> Result<Integration> {
+    match git_as(
+        worktree,
+        &[
+            "merge",
+            "--no-edit",
+            "-m",
+            &format!("ryter: integrate {onto}"),
+            onto,
+        ],
+    ) {
+        Ok(_) => Ok(Integration::Clean),
+        Err(e) => {
+            let files = unmerged(worktree);
+            if files.is_empty() {
+                let _ = git(worktree, &["merge", "--abort"]);
+                Err(e)
+            } else {
+                Ok(Integration::Conflict(files))
+            }
+        }
+    }
+}
+
+/// Files still carrying unresolved conflicts.
+pub fn unmerged(dir: &Path) -> Vec<String> {
+    git(dir, &["diff", "--name-only", "--diff-filter=U"])
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Abandon an in-progress merge.
+pub fn merge_abort(dir: &Path) {
+    let _ = git(dir, &["merge", "--abort"]);
+}
+
+/// Land `branch` onto `repo` HEAD as one revertable commit.
+///
+/// `--no-ff` keeps a task as a single merge commit rather than fast-forwarding
+/// it into the user's history, so `git revert -m 1` undoes the whole task. A
+/// failure is always aborted: a half-finished merge must never be left in the
+/// user's checkout.
+pub fn land(repo: &Path, branch: &str, message: &str) -> Result<()> {
+    match git_as(
+        repo,
+        &["merge", "--no-ff", "--no-edit", "-m", message, branch],
+    ) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            merge_abort(repo);
+            Err(e)
+        }
+    }
 }
 
 #[cfg(test)]

@@ -569,6 +569,8 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         queue,
         max_crew: b.cfg.subagents.max,
         max_retries: b.cfg.auditor.max_retries,
+        checks: b.cfg.auditor.checks.clone(),
+        check_timeout_secs: b.cfg.auditor.check_timeout_secs,
         context_window: 0,
         cfg: Some(b.cfg.clone()),
         running: Arc::new(Mutex::new(Vec::new())),

@@ -4,17 +4,17 @@
    welcome · /help for keys
 
 
+
                   ╭─ handoff to ─────────────────────────────────────────────────╮
                   │ ● plan                                                       │
-                  │   planner breaks the goal into a task list and open questions│
-                  │ ● architect                                                  │
-                  │   architect decides structure, interfaces, and trade-offs    │
+                  │   architect designs and writes tasks; no source changes      │
                   │›● build                                              current │
-                  │   builders implement tasks in parallel; auditor gates merges │
+                  │   parallel builders; checks + auditor sign-off gate merges   │
                   │ ● audit                                                      │
                   │   auditor reviews the work and reports findings              │
                   │                                                              │
                   ╰─ ↑↓ move · enter handoff · esc ──────────────────────────────╯
+
 
 
 

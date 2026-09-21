@@ -12,13 +12,51 @@ pub fn bash(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         .get("command")
         .and_then(Value::as_str)
         .ok_or_else(|| Error::Config("bash: missing command".into()))?;
+    let timeout = Duration::from_secs(timeout_secs(args));
+    Ok(
+        match run_command(cmd, &ctx.workspace, timeout, &ctx.cancel)? {
+            Run::Ok(text) => ToolOutput::ok(text),
+            Run::Failed(text) => ToolOutput::err(text),
+            Run::Cancelled => ToolOutput::err("cancelled"),
+            Run::TimedOut => ToolOutput::err(format!(
+                "bash: timed out after {}s; pass a larger timeout_secs if the \
+             command needs it",
+                timeout.as_secs()
+            )),
+        },
+    )
+}
+
+/// How a command ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Run {
+    /// Exit 0; combined output.
+    Ok(String),
+    /// Non-zero exit; combined output.
+    Failed(String),
+    /// Cancel was requested; the process group was killed.
+    Cancelled,
+    /// Ran past its deadline; the process group was killed.
+    TimedOut,
+}
+
+/// Run `cmd` under `bash -c` in `cwd`, in its own process group so cancel and
+/// timeout kill everything it started. Shared by the `bash` tool and by the
+/// merge gate's configured checks, which are not model-chosen and so do not go
+/// through the permission gate.
+pub fn run_command(
+    cmd: &str,
+    cwd: &std::path::Path,
+    timeout: Duration,
+    cancel: &crate::cancel::Cancel,
+) -> Result<Run> {
     let mut command = Command::new("bash");
     command
         // `-c`, not `-lc`: a login shell sources the user's profile on every
         // tool call, which is slow and lets a stray `echo` corrupt the output.
         .arg("-c")
         .arg(cmd)
-        .current_dir(&ctx.workspace)
+        .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -27,41 +65,36 @@ pub fn bash(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    if ctx.cancel.is_cancelled() {
-        return Ok(ToolOutput::err("cancelled"));
+    if cancel.is_cancelled() {
+        return Ok(Run::Cancelled);
     }
     let mut child = command.spawn().map_err(|e| Error::Config(e.to_string()))?;
     let pgid = child.id();
-    ctx.cancel.register_pgid(pgid);
-    let timeout = Duration::from_secs(timeout_secs(args));
+    cancel.register_pgid(pgid);
     let start = std::time::Instant::now();
     loop {
-        if ctx.cancel.is_cancelled() {
+        if cancel.is_cancelled() {
             kill_pgid(pgid);
             let _ = child.kill();
-            ctx.cancel.unregister_pgid(pgid);
-            return Ok(ToolOutput::err("cancelled"));
+            cancel.unregister_pgid(pgid);
+            return Ok(Run::Cancelled);
         }
         match child.try_wait() {
             Ok(Some(_)) => break,
             Ok(None) if start.elapsed() > timeout => {
                 kill_pgid(pgid);
                 let _ = child.kill();
-                ctx.cancel.unregister_pgid(pgid);
-                return Ok(ToolOutput::err(format!(
-                    "bash: timed out after {}s; pass a larger timeout_secs if the \
-                     command needs it",
-                    timeout.as_secs()
-                )));
+                cancel.unregister_pgid(pgid);
+                return Ok(Run::TimedOut);
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),
             Err(e) => {
-                ctx.cancel.unregister_pgid(pgid);
+                cancel.unregister_pgid(pgid);
                 return Err(Error::Config(e.to_string()));
             }
         }
     }
-    ctx.cancel.unregister_pgid(pgid);
+    cancel.unregister_pgid(pgid);
     let out = child
         .wait_with_output()
         .map_err(|e| Error::Config(e.to_string()))?;
@@ -72,10 +105,11 @@ pub fn bash(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         }
         text.push_str(&String::from_utf8_lossy(&out.stderr));
     }
-    if !out.status.success() {
-        return Ok(ToolOutput::err(text));
-    }
-    Ok(ToolOutput::ok(text))
+    Ok(if out.status.success() {
+        Run::Ok(text)
+    } else {
+        Run::Failed(text)
+    })
 }
 
 /// Default and ceiling for a command's wall clock.

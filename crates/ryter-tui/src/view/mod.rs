@@ -505,7 +505,7 @@ impl View {
 }
 
 /// Specialist kinds shown in `/crew`.
-pub const CREW_ROLES: &[&str] = &["planner", "architect", "builder", "auditor"];
+pub const CREW_ROLES: &[&str] = &["architect", "builder", "auditor"];
 
 /// Label under a crew role (`default (grok-4.6)` or a short model id).
 pub fn crew_role_label(view: &View, role: &str) -> String {
@@ -612,7 +612,7 @@ mod tests {
             "p".into(),
         );
         v.specialists.insert(
-            "planner".into(),
+            "architect".into(),
             RoleModel {
                 connection: Some("openrouter".into()),
                 model: Some("anthropic/claude-sonnet-4.6".into()),
@@ -626,7 +626,7 @@ mod tests {
             },
         );
         assert_eq!(
-            crew_role_label(&v, "planner"),
+            crew_role_label(&v, "architect"),
             "claude-sonnet-4.6 · openrouter"
         );
         assert_eq!(crew_role_label(&v, "builder"), "default (grok-4.6)");

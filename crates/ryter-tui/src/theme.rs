@@ -409,8 +409,8 @@ impl Theme {
     /// Accent for a phase / specialist kind.
     pub fn phase(self, phase: Phase) -> Color {
         match phase {
-            Phase::Plan => self.plan,
-            Phase::Architect => self.architect,
+            // The plan phase runs the architect; one colour for both.
+            Phase::Plan => self.architect,
             Phase::Build => self.build,
             Phase::Audit => self.audit,
         }

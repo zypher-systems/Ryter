@@ -88,8 +88,16 @@ fn decide_write(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
     if is_under(&resolved, &ctx.notes_dir) {
         return Decision::Allow;
     }
+    // Project memory has one writer at a time: the orchestrator and the
+    // architect, both in the user's tree. A builder's copy lives in a
+    // worktree, so N parallel builders editing ROADMAP.md / DECISIONS.md
+    // conflicted on every merge; their decisions come back in the handback.
     if crate::memory::is_memory_file(&ctx.workspace, &resolved) {
-        return Decision::Allow;
+        return if ctx.role == Role::Builder {
+            Decision::Deny
+        } else {
+            Decision::Allow
+        };
     }
     let _ = name;
     if ctx.role.writes_source() {
@@ -336,7 +344,7 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
                 Decision::Deny
             }
         }
-        Role::Orchestrator | Role::Planner | Role::Architect => {
+        Role::Orchestrator | Role::Architect => {
             if READ_ONLY.contains(&prog) && !path_escapes(&words, ctx) {
                 Decision::Allow
             } else {
@@ -387,7 +395,7 @@ fn decide_git(words: &[String], ctx: &ToolContext) -> Decision {
     }
     match ctx.role {
         Role::Builder => Decision::Allow,
-        Role::Auditor | Role::Orchestrator | Role::Planner | Role::Architect => {
+        Role::Auditor | Role::Orchestrator | Role::Architect => {
             if GIT_READ.contains(&sub) {
                 Decision::Allow
             } else {
@@ -882,7 +890,7 @@ mod tests {
     #[test]
     fn non_building_roles_have_no_shell() {
         let dir = TempDir::new().unwrap();
-        for role in [Role::Orchestrator, Role::Planner, Role::Architect] {
+        for role in [Role::Orchestrator, Role::Architect] {
             assert_eq!(
                 bash("git status", role, dir.path()),
                 Decision::Deny,
@@ -992,6 +1000,49 @@ mod tests {
         }
         assert!(resolve(&ctx, "src/main.rs").is_some());
         assert!(resolve(&ctx, "../outside/x").is_none());
+    }
+
+    /// Parallel builders editing shared memory files conflicted on every
+    /// merge; memory has one writer at a time.
+    #[test]
+    fn only_serial_roles_write_project_memory() {
+        let dir = TempDir::new().unwrap();
+        for path in ["ROADMAP.md", "DECISIONS.md"] {
+            assert_eq!(
+                decide(
+                    "write",
+                    &json!({"path": path}),
+                    &ctx_for(Role::Builder, dir.path())
+                ),
+                Decision::Deny,
+                "builder wrote {path}"
+            );
+            assert_eq!(
+                decide(
+                    "write",
+                    &json!({"path": path}),
+                    &ctx_for(Role::Orchestrator, dir.path())
+                ),
+                Decision::Allow
+            );
+            assert_eq!(
+                decide(
+                    "write",
+                    &json!({"path": path}),
+                    &ctx_for(Role::Architect, dir.path())
+                ),
+                Decision::Allow
+            );
+            // The auditor has no write tool at all now.
+            assert_eq!(
+                decide(
+                    "write",
+                    &json!({"path": path}),
+                    &ctx_for(Role::Auditor, dir.path())
+                ),
+                Decision::Deny
+            );
+        }
     }
 
     #[test]

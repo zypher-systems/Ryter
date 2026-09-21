@@ -44,7 +44,7 @@ struct Cli {
     #[arg(short = 'm', long)]
     model: Option<String>,
 
-    /// Phase: plan, architect, build, audit.
+    /// Phase: plan, build, audit (`architect` is accepted as plan).
     #[arg(long)]
     mode: Option<String>,
 
@@ -417,6 +417,8 @@ async fn run_prompt(
         queue,
         max_crew: cfg.subagents.max,
         max_retries: cfg.auditor.max_retries,
+        checks: cfg.auditor.checks.clone(),
+        check_timeout_secs: cfg.auditor.check_timeout_secs,
         context_window: 0,
         cfg: Some(cfg.clone()),
         running: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -708,6 +710,8 @@ fn mcp_serve() -> ryter_core::Result<()> {
         queue,
         max_crew: cfg.subagents.max,
         max_retries: cfg.auditor.max_retries,
+        checks: cfg.auditor.checks.clone(),
+        check_timeout_secs: cfg.auditor.check_timeout_secs,
         context_window: 0,
         cfg: Some(cfg.clone()),
         running: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -831,6 +835,8 @@ fn serve_host_from_config(
         queue,
         max_crew: cfg.subagents.max,
         max_retries: cfg.auditor.max_retries,
+        checks: cfg.auditor.checks.clone(),
+        check_timeout_secs: cfg.auditor.check_timeout_secs,
         context_window: 0,
         cfg: Some(cfg.clone()),
         running: Arc::new(std::sync::Mutex::new(Vec::new())),

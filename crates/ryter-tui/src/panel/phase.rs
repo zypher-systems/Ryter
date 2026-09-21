@@ -10,14 +10,13 @@ use crate::theme::Theme;
 use crate::view::View;
 
 /// All phases in display order.
-pub const PHASES: [Phase; 4] = [Phase::Plan, Phase::Architect, Phase::Build, Phase::Audit];
+pub const PHASES: [Phase; 3] = [Phase::Plan, Phase::Build, Phase::Audit];
 
 /// One-line description per phase.
 pub fn describe(p: Phase) -> &'static str {
     match p {
-        Phase::Plan => "planner breaks the goal into a task list and open questions",
-        Phase::Architect => "architect decides structure, interfaces, and trade-offs",
-        Phase::Build => "builders implement tasks in parallel; auditor gates merges",
+        Phase::Plan => "architect designs and writes tasks; no source changes",
+        Phase::Build => "parallel builders; checks + auditor sign-off gate merges",
         Phase::Audit => "auditor reviews the work and reports findings",
     }
 }

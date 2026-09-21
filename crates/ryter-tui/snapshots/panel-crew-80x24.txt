@@ -1,10 +1,10 @@
  ryter  ·  orchestrator  grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patc…
 ────────────────────────────────────────────────────────────────────────────────
  · system
-   wel╭─ crew ─────────────────────────────────────── max concurrent: 4 ─╮
+   welcome · /help for keys
+      ╭─ crew ─────────────────────────────────────── max concurrent: 4 ─╮
       │ roles                                                            │
-      │›● planner  default (grok-4.6)                                    │
-      │ ● architect  default (grok-4.6)                                  │
+      │›● architect  default (grok-4.6)                                  │
       │ ● builder  default (grok-4.6)                                    │
       │ ● auditor  default (grok-4.6)                                    │
       │                                                                  │

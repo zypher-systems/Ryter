@@ -2,7 +2,7 @@
 
 mod fs;
 mod policy;
-mod shell;
+pub(crate) mod shell;
 mod web;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -151,19 +151,30 @@ fn spec(name: &str) -> Option<ToolSpec> {
             json!({"type":"object","properties":{"path":{"type":"string"}}}),
         ),
         "grep" => (
-            "Search file contents.",
-            json!({"type":"object","properties":{"pattern":{"type":"string"}},"required":["pattern"]}),
+            "Search file contents with a regex. Respects .gitignore. Narrow with \
+             path (a directory) and include (a glob such as \"*.rs\"). Use this to \
+             find code before reading files, not bash grep.",
+            json!({"type":"object","properties":{
+                "pattern":{"type":"string","description":"Rust regex"},
+                "path":{"type":"string","description":"directory to search, relative to the workspace"},
+                "include":{"type":"string","description":"file glob, e.g. *.rs"},
+                "case_insensitive":{"type":"boolean"}
+            },"required":["pattern"]}),
         ),
         "glob" => (
-            "Find files by glob.",
+            "Find files by glob relative to the workspace (\"src/**/*.rs\").",
             json!({"type":"object","properties":{"pattern":{"type":"string"}},"required":["pattern"]}),
         ),
         "write" => (
-            "Write a file.",
+            "Create a new file, or replace one wholesale. To change part of an \
+             existing file use search_replace: it is cheaper and cannot clobber \
+             lines you did not mean to touch.",
             json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
         ),
         "search_replace" => (
-            "Replace a unique string in a file.",
+            "Edit a file by replacing old_string with new_string. old_string must \
+             match exactly once, so include enough surrounding lines to make it \
+             unique. Read the file first.",
             json!({"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["path","old_string","new_string"]}),
         ),
         "bash" => (
@@ -172,8 +183,23 @@ fn spec(name: &str) -> Option<ToolSpec> {
             json!({"type":"object","properties":{"command":{"type":"string"},"timeout_secs":{"type":"integer"}},"required":["command"]}),
         ),
         "todo_write" => (
-            "Replace the task list. In Build, pending items become parallel builder jobs.",
-            json!({"type":"object","properties":{"items":{"type":"array"}},"required":["items"]}),
+            "Replace the task list. In Build, pending items run as builders in \
+             parallel git worktrees, each gated by checks and an auditor before \
+             it merges. Each item's brief is the builder's entire spec: say what \
+             to change, the constraints, and how to know it is done. Declare the \
+             files each task owns: tasks with disjoint files run in parallel, \
+             overlapping or undeclared ones run one at a time.",
+            json!({"type":"object","properties":{"items":{"type":"array","items":{
+                "type":"object",
+                "properties":{
+                    "id":{"type":"string","description":"stable id; reuse it to update a task"},
+                    "title":{"type":"string","description":"one line, shown to the user"},
+                    "brief":{"type":"string","description":"the builder's full spec"},
+                    "files":{"type":"array","items":{"type":"string"},"description":"paths or directories this task owns"},
+                    "status":{"type":"string","enum":["pending","running","done","blocked"]}
+                },
+                "required":["title"]
+            }}},"required":["items"]}),
         ),
         "search_tool" => (
             "Search connected MCP servers for tools.",
@@ -221,7 +247,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "web_fetch",
             "web_search",
         ],
-        Role::Planner | Role::Architect => &[
+        Role::Architect => &[
             "read_file",
             "list_dir",
             "grep",
@@ -244,15 +270,9 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "web_fetch",
             "web_search",
         ],
-        Role::Auditor => &[
-            "read_file",
-            "list_dir",
-            "grep",
-            "glob",
-            "bash",
-            "write",
-            "search_replace",
-        ],
+        // Read-only. It reviews in a worktree that is discarded after the
+        // merge, so anything it wrote was lost; its findings are its reply.
+        Role::Auditor => &["read_file", "list_dir", "grep", "glob", "bash"],
     }
 }
 
@@ -357,9 +377,17 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
         Decision::Ask if ctx.always_approve || ctx.sticky_approve.load(Ordering::SeqCst) => {
             run_with_hooks(name, args, ctx)
         }
-        Decision::Deny => Ok(ToolOutput::err(format!(
-            "denied: {name} is not allowed for {}",
+        // Say which gate refused. "not allowed for <role>" on every denial
+        // taught models a tool was forbidden when only the arguments were.
+        Decision::Deny if !tools_for(ctx.role).contains(&name) => Ok(ToolOutput::err(format!(
+            "denied: the {} role does not have the {name} tool",
             ctx.role
+        ))),
+        Decision::Deny => Ok(ToolOutput::err(format!(
+            "denied: {name} {} — the arguments are outside policy (missing or \
+             out-of-workspace path, a secret file, or a blocked command). \
+             Adjust the arguments rather than retrying the same call.",
+            crate::user_io::summary_args(name, args)
         ))),
         Decision::Ask => match &ctx.user_io {
             Some(io) => {
@@ -479,7 +507,7 @@ mod tests {
     #[test]
     fn planner_can_write_notes_only() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Planner, dir.path());
+        let c = ctx(Role::Architect, dir.path());
         let note = c.notes_dir.join("plan.md");
         let args = json!({"path": note.to_string_lossy(), "content": "# plan\n"});
         assert_eq!(decide("write", &args, &c), Decision::Allow);
