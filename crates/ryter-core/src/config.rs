@@ -156,7 +156,8 @@ pub struct FeaturesConfig {
 /// One named LLM endpoint.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConnectionConfig {
-    /// Built-in kind: `spacexai`, `openrouter`, `openai_compat`, `anthropic`.
+    /// Built-in kind: `spacexai`, `openrouter`, `openai_compat`, `anthropic`,
+    /// or `local` (a model server on this machine: no key, no API cost).
     pub kind: String,
     /// API base URL.
     pub base_url: String,
@@ -178,6 +179,24 @@ pub struct ConnectionConfig {
     /// OpenRouter `X-Title`.
     #[serde(default)]
     pub x_title: Option<String>,
+}
+
+impl ConnectionConfig {
+    /// A model server on this machine: no key required, no API cost.
+    pub fn is_local(&self) -> bool {
+        self.kind == "local"
+    }
+}
+
+impl Config {
+    /// Connections whose calls cost nothing in API fees.
+    pub fn local_connections(&self) -> std::collections::HashSet<String> {
+        self.connections
+            .iter()
+            .filter(|(_, c)| c.is_local())
+            .map(|(n, _)| n.clone())
+            .collect()
+    }
 }
 
 impl std::fmt::Debug for ConnectionConfig {
@@ -231,10 +250,43 @@ pub struct AuditorConfig {
     /// Builder fix-turns after a failed audit.
     #[serde(default = "default_retries")]
     pub max_retries: u32,
+    /// Commands the harness runs in the builder's worktree before the auditor
+    /// sees the work (`["cargo test --workspace"]`). All must exit 0. Run by
+    /// the runtime, not chosen by a model, so passing does not depend on the
+    /// auditor deciding to test. Usually set per project in `.ryter/config.toml`.
+    #[serde(default)]
+    pub checks: Vec<String>,
+    /// Wall clock for each check.
+    #[serde(default = "default_check_timeout")]
+    pub check_timeout_secs: u64,
+    /// Auditors that must all sign off, in order. They stop at the first
+    /// FAIL, so put the cheapest first. Empty = one auditor from `/crew`.
+    #[serde(default)]
+    pub panel: Vec<AuditorSeatConfig>,
+}
+
+/// One seat on the auditor panel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuditorSeatConfig {
+    /// Connection name; the orchestrator's when omitted.
+    #[serde(default)]
+    pub connection: Option<String>,
+    /// Model id. Must differ from the lead's and the builder's.
+    pub model: String,
+    /// What this seat looks for, e.g. `"security"`. Empty = general review.
+    #[serde(default)]
+    pub focus: String,
+    /// Only review changes touching these globs. Empty = every change.
+    #[serde(default)]
+    pub paths: Vec<String>,
 }
 
 fn default_retries() -> u32 {
     2
+}
+
+fn default_check_timeout() -> u64 {
+    1200
 }
 
 impl Default for AuditorConfig {
@@ -242,6 +294,9 @@ impl Default for AuditorConfig {
         Self {
             enabled: true,
             max_retries: 2,
+            checks: Vec::new(),
+            check_timeout_secs: default_check_timeout(),
+            panel: Vec::new(),
         }
     }
 }
@@ -260,6 +315,24 @@ pub struct SpendConfig {
     /// Status-line warning threshold.
     #[serde(default)]
     pub warn_usd: f64,
+    /// USD cap per crew task, builder and auditors together (`0` = none).
+    #[serde(default = "default_task_usd")]
+    pub task_budget_usd: f64,
+    /// Billable-token cap per crew task: uncached input plus output. Unlike a
+    /// dollar cap it also stops unpriced models (`0` = none).
+    #[serde(default = "default_task_tokens")]
+    pub task_max_tokens: u64,
+}
+
+fn default_task_tokens() -> u64 {
+    1_000_000
+}
+
+/// One task's cap. With no session budget by default this is the only
+/// spending guard, so it must fit a normal task or design on a strong crew
+/// (a gpt-5.5 design is estimated at ~$1.04) while still stopping a runaway.
+fn default_task_usd() -> f64 {
+    3.0
 }
 
 fn usd() -> String {
@@ -370,8 +443,11 @@ impl Default for SpendConfig {
         Self {
             enabled: true,
             currency: usd(),
-            session_budget_usd: 5.0,
+            // Off: a budget is the user's choice (`/budget`, the crew builder).
+            session_budget_usd: 0.0,
             warn_usd: 1.0,
+            task_budget_usd: default_task_usd(),
+            task_max_tokens: default_task_tokens(),
         }
     }
 }
@@ -442,7 +518,8 @@ pub fn connection_template(kind: &str) -> Result<ConnectionConfig> {
         }),
         "anthropic" => Ok(ConnectionConfig {
             kind: "anthropic".into(),
-            base_url: "https://api.anthropic.com".into(),
+            // The API lives under /v1; the provider appends `/messages`.
+            base_url: "https://api.anthropic.com/v1".into(),
             api_backend: "messages".into(),
             env_key: Some("ANTHROPIC_API_KEY".into()),
             api_key: None,
@@ -450,8 +527,25 @@ pub fn connection_template(kind: &str) -> Result<ConnectionConfig> {
             http_referer: None,
             x_title: None,
         }),
+        // A model server on this machine, speaking the OpenAI API. No key and
+        // no API cost; a builder here costs tokens against the cap, not money.
+        "local" | "ollama" | "lmstudio" | "llamacpp" => Ok(ConnectionConfig {
+            kind: "local".into(),
+            base_url: match kind {
+                "lmstudio" => "http://localhost:1234/v1",
+                "llamacpp" => "http://localhost:8080/v1",
+                _ => "http://localhost:11434/v1",
+            }
+            .into(),
+            api_backend: "chat_completions".into(),
+            env_key: None,
+            api_key: None,
+            default_model: None,
+            http_referer: None,
+            x_title: None,
+        }),
         other => Err(Error::Config(format!(
-            "unknown kind {other:?} (spacexai, openrouter, openai, anthropic)"
+            "unknown kind {other:?} (spacexai, openrouter, openai, anthropic, local, ollama, lmstudio, llamacpp)"
         ))),
     }
 }
@@ -466,13 +560,24 @@ impl RoleModel {
 impl Config {
     fn specialist_row(&self, role: crate::role::Role) -> RoleModel {
         let key = match role {
-            crate::role::Role::Orchestrator => return self.orchestrator.clone(),
-            crate::role::Role::Planner => "planner",
+            crate::role::Role::Orchestrator
+            | crate::role::Role::SoloPlan
+            | crate::role::Role::SoloBuild
+            | crate::role::Role::SoloReview => return self.orchestrator.clone(),
             crate::role::Role::Architect => "architect",
             crate::role::Role::Builder => "builder",
             crate::role::Role::Auditor => "auditor",
         };
-        self.specialists.get(key).cloned().unwrap_or_default()
+        let row = self.specialists.get(key).cloned().unwrap_or_default();
+        // The planner folded into the architect. A crew saved before the merge
+        // may only have a `planner` row; honour it rather than silently
+        // dropping the user's model choice.
+        if role == crate::role::Role::Architect && !row.is_override() {
+            if let Some(old) = self.specialists.get("planner") {
+                return old.clone();
+            }
+        }
+        row
     }
 
     /// True when this role uses the live orchestrator provider and model.
@@ -546,6 +651,10 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
         merge_file(&mut cfg, &user_path)?;
         check_key_file_mode(&user_path, &cfg)?;
     }
+    // Your saved settings (`/settings`, `/budget`) are your defaults. A trusted
+    // project that sets its own value wins: applied last, a saved budget
+    // silently overrode every project's cap.
+    apply_settings_file(&mut cfg, &home.join("settings.toml"));
     if trusted {
         if let Some(root) = project_root {
             let project = root.join(".ryter").join("config.toml");
@@ -559,12 +668,17 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
     apply_mcp_file(&mut cfg, &home.join("mcp.toml"));
     apply_hooks_file(&mut cfg, &home.join("hooks.toml"));
     apply_connections_file(&mut cfg, &home.join("connections.toml"));
-    apply_settings_file(&mut cfg, &home.join("settings.toml"));
     validate(&cfg)?;
     Ok(cfg)
 }
 
-const CREW_ROLES: &[&str] = &["planner", "architect", "builder", "auditor"];
+const CREW_ROLES: &[&str] = &["architect", "builder", "auditor"];
+
+/// No crew was ever saved (no `crew.toml`) and none is configured in
+/// `[specialists]`: the first-launch crew builder should run.
+pub fn crew_unconfigured(home: &Path, cfg: &Config) -> bool {
+    !crew_path(home).exists() && cfg.specialists.is_empty()
+}
 
 /// Live crew assignment file (`~/.ryter/crew.toml`).
 pub fn crew_path(home: &Path) -> PathBuf {
@@ -840,6 +954,8 @@ pub fn user_connection_names(home: &Path) -> Vec<String> {
 struct SettingsFile {
     session_budget_usd: Option<f64>,
     warn_usd: Option<f64>,
+    #[serde(default)]
+    task_budget_usd: Option<f64>,
     max: Option<u32>,
     sandbox: Option<String>,
     inbound: Option<bool>,
@@ -869,6 +985,9 @@ fn apply_settings_file(cfg: &mut Config, path: &Path) {
     if let Some(v) = file.warn_usd {
         cfg.spend.warn_usd = v;
     }
+    if let Some(v) = file.task_budget_usd {
+        cfg.spend.task_budget_usd = v;
+    }
     if let Some(v) = file.max {
         cfg.subagents.max = v;
     }
@@ -889,6 +1008,7 @@ pub fn save_settings(home: &Path, cfg: &Config) -> Result<()> {
     let file = SettingsFile {
         session_budget_usd: Some(cfg.spend.session_budget_usd),
         warn_usd: Some(cfg.spend.warn_usd),
+        task_budget_usd: Some(cfg.spend.task_budget_usd),
         max: Some(cfg.subagents.max),
         sandbox: Some(cfg.sandbox.profile.clone()),
         inbound: Some(cfg.mcp.inbound),
@@ -944,6 +1064,22 @@ fn merge_file(cfg: &mut Config, path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Overlay the keys present in `overlay` onto `base`, keeping every other field.
+fn merge_table<T>(base: &T, overlay: toml::Value) -> std::result::Result<T, String>
+where
+    T: Serialize + serde::de::DeserializeOwned,
+{
+    let mut merged = toml::Value::try_from(base).map_err(|e| e.to_string())?;
+    if let (Some(into), toml::Value::Table(from)) = (merged.as_table_mut(), overlay) {
+        for (k, v) in from {
+            into.insert(k, v);
+        }
+    }
+    merged
+        .try_into()
+        .map_err(|e: toml::de::Error| e.to_string())
+}
+
 /// On-disk shape: all fields optional so files can be sparse.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -953,8 +1089,10 @@ struct ConfigFile {
     orchestrator: Option<RoleModel>,
     specialists: BTreeMap<String, RoleModel>,
     subagents: Option<SubagentsConfig>,
-    auditor: Option<AuditorConfig>,
-    spend: Option<SpendConfig>,
+    // Kept as raw tables and merged field by field: a project that sets only
+    // `[auditor] checks` must not need every other key, nor wipe the user's.
+    auditor: Option<toml::Value>,
+    spend: Option<toml::Value>,
     pricing: BTreeMap<String, PriceOverride>,
     mcp: Option<McpSettings>,
     mcp_servers: BTreeMap<String, McpServerConfig>,
@@ -1048,10 +1186,16 @@ impl ConfigFile {
             cfg.subagents = s;
         }
         if let Some(a) = self.auditor {
-            cfg.auditor = a;
+            match merge_table(&cfg.auditor, a) {
+                Ok(v) => cfg.auditor = v,
+                Err(e) => cfg.warnings.push(format!("[auditor] ignored: {e}")),
+            }
         }
         if let Some(s) = self.spend {
-            cfg.spend = s;
+            match merge_table(&cfg.spend, s) {
+                Ok(v) => cfg.spend = v,
+                Err(e) => cfg.warnings.push(format!("[spend] ignored: {e}")),
+            }
         }
         for (k, v) in self.pricing {
             cfg.pricing.insert(k, v);
@@ -1153,6 +1297,11 @@ pub fn resolve_secret_with(
     if let Some(k) = file_key(name) {
         return Ok(k);
     }
+    // A local server needs no key. A key set above still wins, for servers
+    // that are configured to require one.
+    if conn.is_local() {
+        return Ok(String::new());
+    }
     let fallback = match conn.kind.as_str() {
         "spacexai" => Some("XAI_API_KEY"),
         "openrouter" => Some("OPENROUTER_API_KEY"),
@@ -1193,24 +1342,62 @@ pub fn has_secret(cfg: &Config, connection: &str) -> bool {
     resolve_secret(cfg, &ConnectionId::new(connection)).is_ok()
 }
 
-/// Persist a secret: keyring if it works, else `home/keys/<name>` mode 0600.
-pub fn store_secret_at(home: &Path, connection: &str, secret: &str) -> Result<()> {
+/// Where a stored secret ended up, so the caller can tell the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecretStore {
+    /// OS keyring (Secret Service / kwallet).
+    Keyring,
+    /// `home/keys/<name>`, mode 0600, because the keyring was unavailable.
+    File,
+}
+
+impl std::fmt::Display for SecretStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Keyring => f.write_str("OS keyring"),
+            Self::File => f.write_str("~/.ryter/keys (mode 0600)"),
+        }
+    }
+}
+
+/// Persist a secret: the OS keyring when it works, otherwise
+/// `home/keys/<name>` at mode 0600.
+///
+/// The file is only written when the keyring genuinely failed. Writing both
+/// meant the keyring was decorative: a plaintext copy always landed on disk,
+/// where any tool call could read it.
+pub fn store_secret_at(home: &Path, connection: &str, secret: &str) -> Result<SecretStore> {
     let secret = secret.trim();
     if secret.is_empty() {
         return Err(Error::Config("empty API key".into()));
     }
-    let _ = keyring_set(connection, secret);
+    if keyring_set(connection, secret).is_ok() {
+        // A stale file would shadow nothing, but it is still a plaintext key.
+        let _ = fs::remove_file(home.join("keys").join(connection));
+        return Ok(SecretStore::Keyring);
+    }
     let dir = home.join("keys");
     fs::create_dir_all(&dir).map_err(|e| Error::Config(e.to_string()))?;
     let path = dir.join(connection);
-    fs::write(&path, secret).map_err(|e| Error::Config(e.to_string()))?;
+    // Create at 0600 rather than widening then narrowing: a write followed by
+    // chmod leaves the key readable for as long as the write takes.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| Error::Config(e.to_string()))?;
+        f.write_all(secret.as_bytes())
             .map_err(|e| Error::Config(e.to_string()))?;
     }
-    Ok(())
+    #[cfg(not(unix))]
+    fs::write(&path, secret).map_err(|e| Error::Config(e.to_string()))?;
+    Ok(SecretStore::File)
 }
 
 /// Last provider + model the user picked (TUI or CLI).
@@ -1489,7 +1676,6 @@ mod tests {
         let cfg = Config::default();
         let orch = cfg.route_for(crate::role::Role::Orchestrator);
         assert_eq!(orch, ("spacexai".into(), "grok-4.6".into()));
-        assert_eq!(cfg.route_for(crate::role::Role::Planner), orch);
         assert_eq!(cfg.route_for(crate::role::Role::Architect), orch);
         assert_eq!(cfg.route_for(crate::role::Role::Builder), orch);
         assert_eq!(cfg.route_for(crate::role::Role::Auditor), orch);
@@ -1504,9 +1690,24 @@ mod tests {
         let (conn, model) = cfg.route_for(crate::role::Role::Architect);
         assert_eq!(conn, "openrouter");
         assert_eq!(model, "anthropic/claude-sonnet-4.6");
-        assert_eq!(cfg.route_for(crate::role::Role::Planner), orch);
-        assert!(cfg.follows_orchestrator(crate::role::Role::Planner));
+        // Assigning one role leaves the others following the orchestrator.
+        assert_eq!(cfg.route_for(crate::role::Role::Builder), orch);
+        assert!(cfg.follows_orchestrator(crate::role::Role::Builder));
         assert!(!cfg.follows_orchestrator(crate::role::Role::Architect));
+    }
+
+    #[test]
+    fn a_saved_planner_row_routes_the_architect() {
+        let mut cfg = Config::default();
+        cfg.specialists.insert(
+            "planner".into(),
+            RoleModel {
+                connection: Some("openrouter".into()),
+                model: Some("anthropic/claude-sonnet-4.6".into()),
+            },
+        );
+        let (_, model) = cfg.route_for(crate::role::Role::Architect);
+        assert_eq!(model, "anthropic/claude-sonnet-4.6");
     }
 
     #[test]
@@ -1530,7 +1731,7 @@ mod tests {
                 .and_then(|r| r.model.clone()),
             Some("anthropic/claude-sonnet-4.6".into())
         );
-        assert!(live.follows_orchestrator(crate::role::Role::Planner));
+        assert!(live.follows_orchestrator(crate::role::Role::Architect));
         assert!(!live.follows_orchestrator(crate::role::Role::Builder));
     }
 
@@ -1552,6 +1753,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.features.web = true;
         cfg.spend.session_budget_usd = 9.0;
+        cfg.spend.task_budget_usd = 2.5;
         cfg.subagents.max = 2;
         save_settings(dir.path(), &cfg).unwrap();
         let extra = connection_template("openai").unwrap();
@@ -1561,6 +1763,7 @@ mod tests {
         let live = load_at(dir.path(), None, false).unwrap();
         assert!(live.features.web);
         assert!((live.spend.session_budget_usd - 9.0).abs() < f64::EPSILON);
+        assert!((live.spend.task_budget_usd - 2.5).abs() < f64::EPSILON);
         assert_eq!(live.subagents.max, 2);
         assert_eq!(live.connections["local"].kind, "openai_compat");
         assert!(user_connection_names(dir.path()).contains(&"local".to_string()));
@@ -1668,12 +1871,35 @@ mod tests {
         assert_eq!(cfg.default_connection, "spacexai");
     }
 
+    /// A key goes to exactly one place. The old code wrote the file even when
+    /// the keyring succeeded, so a plaintext copy always existed.
     #[test]
-    fn store_secret_file_fallback() {
+    fn store_secret_uses_one_store_only() {
         let dir = TempDir::new().unwrap();
-        store_secret_at(dir.path(), "ryter-test-conn", "xai-test-secret").unwrap();
-        let got = fs::read_to_string(dir.path().join("keys/ryter-test-conn")).unwrap();
-        assert_eq!(got.trim(), "xai-test-secret");
+        let path = dir.path().join("keys/ryter-test-conn");
+        let store = store_secret_at(dir.path(), "ryter-test-conn", "xai-test-secret").unwrap();
+        match store {
+            SecretStore::Keyring => assert!(
+                !path.exists(),
+                "keyring succeeded, so no plaintext file should remain"
+            ),
+            SecretStore::File => {
+                let got = fs::read_to_string(&path).unwrap();
+                assert_eq!(got.trim(), "xai-test-secret");
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+                    assert_eq!(mode, 0o600, "key file must not be group/world readable");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn store_secret_rejects_an_empty_key() {
+        let dir = TempDir::new().unwrap();
+        assert!(store_secret_at(dir.path(), "ryter-test-conn", "   ").is_err());
     }
 
     #[test]
@@ -1765,6 +1991,82 @@ mod tests {
         assert_eq!(cfg.hooks.len(), 1);
         assert_eq!(cfg.hooks[0].event, "PreToolUse");
         assert_eq!(cfg.hooks[0].matcher.as_deref(), Some("bash"));
+    }
+
+    /// A project sets its own checks with a sparse table — which is what the
+    /// docs tell people to write — without breaking config load or wiping the
+    /// user's other auditor and spend settings.
+    #[test]
+    fn a_sparse_project_auditor_table_merges_field_by_field() {
+        let home = TempDir::new().unwrap();
+        let proj = TempDir::new().unwrap();
+        fs::write(
+            home.path().join("config.toml"),
+            "[auditor]\nenabled = true\nmax_retries = 4\n[[auditor.panel]]\nmodel = \"claude-sonnet-4.6\"\n[spend]\nenabled = true\nsession_budget_usd = 9.0\n",
+        )
+        .unwrap();
+        fs::create_dir_all(proj.path().join(".ryter")).unwrap();
+        fs::write(
+            proj.path().join(".ryter/config.toml"),
+            "[auditor]\nchecks = [\"python3 -m unittest\"]\n[spend]\ntask_budget_usd = 0.25\n",
+        )
+        .unwrap();
+        let cfg = load_at(home.path(), Some(proj.path()), true).expect("a sparse table must load");
+        assert_eq!(cfg.auditor.checks, vec!["python3 -m unittest".to_string()]);
+        assert_eq!(cfg.auditor.max_retries, 4, "user setting survives");
+        assert_eq!(cfg.auditor.panel.len(), 1, "user panel survives");
+        assert_eq!(cfg.spend.task_budget_usd, 0.25);
+        assert_eq!(cfg.spend.session_budget_usd, 9.0, "user budget survives");
+    }
+
+    /// `/budget` saves a default; a project's own cap still applies there.
+    #[test]
+    fn a_project_budget_beats_the_saved_default() {
+        let home = TempDir::new().unwrap();
+        let proj = TempDir::new().unwrap();
+        let mut saved = Config::default();
+        saved.spend.session_budget_usd = 9.0;
+        save_settings(home.path(), &saved).unwrap();
+        fs::create_dir_all(proj.path().join(".ryter")).unwrap();
+        fs::write(
+            proj.path().join(".ryter/config.toml"),
+            "[spend]\nsession_budget_usd = 2.0\n",
+        )
+        .unwrap();
+        let cfg = load_at(home.path(), Some(proj.path()), true).unwrap();
+        assert_eq!(cfg.spend.session_budget_usd, 2.0);
+        // Elsewhere, the saved default holds.
+        let cfg = load_at(home.path(), None, false).unwrap();
+        assert_eq!(cfg.spend.session_budget_usd, 9.0);
+    }
+
+    #[test]
+    fn local_presets_need_no_key() {
+        for (kind, port) in [
+            ("ollama", 11434),
+            ("lmstudio", 1234),
+            ("llamacpp", 8080),
+            ("local", 11434),
+        ] {
+            let c = connection_template(kind).unwrap();
+            assert!(c.is_local(), "{kind}");
+            assert!(
+                c.base_url.contains(&format!(":{port}/v1")),
+                "{kind}: {}",
+                c.base_url
+            );
+            assert_eq!(c.env_key, None);
+        }
+        let mut cfg = Config::default();
+        cfg.connections
+            .insert("box".into(), connection_template("ollama").unwrap());
+        let key = resolve_secret_with(&cfg, &ConnectionId::new("box"), |_| None).unwrap();
+        assert_eq!(key, "", "keyless, not an error");
+        assert!(cfg.local_connections().contains("box"));
+        // A cloud connection still needs its key.
+        cfg.connections
+            .insert("cloud".into(), connection_template("openai").unwrap());
+        assert!(resolve_secret_with(&cfg, &ConnectionId::new("cloud"), |_| None).is_err());
     }
 
     #[test]

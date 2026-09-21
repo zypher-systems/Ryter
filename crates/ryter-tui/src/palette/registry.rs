@@ -1,9 +1,5 @@
 //! Commands as data (`R-PAL-19`). `/help` and the palette are generated from here.
 
-use std::str::FromStr;
-
-use ryter_core::Phase;
-
 use crate::action::{Action, PanelId, SessionsMode};
 use crate::panel::modal::Confirm;
 use crate::view::View;
@@ -173,7 +169,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "models",
         &["model"],
         Category::Model,
-        "Switch the orchestrator model",
+        "Switch the lead's model",
         Some("[id]"),
         true,
         None,
@@ -195,12 +191,67 @@ pub const COMMANDS: &[CommandSpec] = &[
         "crew",
         &[],
         Category::Model,
-        "Assign models per specialist role, save presets",
+        "Crew mode: a lead, an architect, parallel builders, independent auditors",
         None,
         true,
         None,
         false,
-        |_, _| Action::OpenPanel(PanelId::Crew),
+        run_crew,
+    ),
+    spec(
+        "solo",
+        &["normal"],
+        Category::Model,
+        "Leave crew mode: one model, Tab between build, plan, and review",
+        None,
+        false,
+        None,
+        false,
+        |_, _| Action::SetMode(ryter_core::Role::SoloBuild),
+    ),
+    spec(
+        "build",
+        &[],
+        Category::Model,
+        "Build hat: make changes in your files",
+        None,
+        false,
+        None,
+        false,
+        |_, _| Action::SetMode(ryter_core::Role::SoloBuild),
+    ),
+    spec(
+        "plan",
+        &[],
+        Category::Model,
+        "Plan hat: read and propose, change nothing",
+        None,
+        false,
+        None,
+        false,
+        |_, _| Action::SetMode(ryter_core::Role::SoloPlan),
+    ),
+    spec(
+        "review",
+        &[],
+        Category::Model,
+        "Review hat: run the tests and critique what changed",
+        None,
+        false,
+        None,
+        false,
+        |_, _| Action::SetMode(ryter_core::Role::SoloReview),
+    ),
+    spec(
+        "undo",
+        &[],
+        Category::Session,
+        "Put your files back as they were before the last build turn",
+        None,
+        false,
+        None,
+        false,
+        |_, _| Action::Undo,
     ),
     // Agents & phase
     spec(
@@ -213,72 +264,6 @@ pub const COMMANDS: &[CommandSpec] = &[
         None,
         false,
         |_, _| Action::OpenPanel(PanelId::Agents),
-    ),
-    spec(
-        "phase",
-        &[],
-        Category::Agents,
-        "Change the campaign phase",
-        None,
-        true,
-        None,
-        false,
-        |_, _| Action::OpenPanel(PanelId::Phase),
-    ),
-    spec(
-        "handoff",
-        &[],
-        Category::Agents,
-        "Hand off to a phase with a pass note",
-        Some("plan|architect|build|audit|back"),
-        true,
-        None,
-        false,
-        run_handoff,
-    ),
-    spec(
-        "plan",
-        &[],
-        Category::Agents,
-        "Hand off to the planner",
-        None,
-        false,
-        None,
-        false,
-        |v, _| begin(v, Phase::Plan),
-    ),
-    spec(
-        "architect",
-        &[],
-        Category::Agents,
-        "Hand off to the architect",
-        None,
-        false,
-        None,
-        false,
-        |v, _| begin(v, Phase::Architect),
-    ),
-    spec(
-        "build",
-        &[],
-        Category::Agents,
-        "Hand off to a builder",
-        None,
-        false,
-        None,
-        false,
-        |v, _| begin(v, Phase::Build),
-    ),
-    spec(
-        "audit",
-        &[],
-        Category::Agents,
-        "Hand off to the auditor",
-        None,
-        false,
-        None,
-        false,
-        |v, _| begin(v, Phase::Audit),
     ),
     spec(
         "cancel",
@@ -324,6 +309,17 @@ pub const COMMANDS: &[CommandSpec] = &[
         None,
         false,
         |_, _| Action::OpenPanel(PanelId::Spend),
+    ),
+    spec(
+        "budget",
+        &[],
+        Category::Context,
+        "Cap this session's spend, raise the cap, or turn it off",
+        Some("[amount|+amount|off]"),
+        true,
+        None,
+        false,
+        run_budget,
     ),
     // Configuration
     spec(
@@ -498,11 +494,6 @@ pub fn run_command(view: &mut View, raw: &str) -> Action {
     Action::None
 }
 
-fn begin(view: &mut View, to: Phase) -> Action {
-    view.begin_handoff(to);
-    Action::None
-}
-
 fn run_new(view: &mut View, _rest: &str) -> Action {
     if view.has_content() {
         view.panels.push(Box::new(Confirm::new(
@@ -524,11 +515,53 @@ fn run_sessions(_view: &mut View, rest: &str) -> Action {
     }
 }
 
+/// `/crew` enters crew mode (the crew builder the first time); in crew mode
+/// it opens the crew's settings.
+fn run_crew(view: &mut View, _rest: &str) -> Action {
+    if view.crew_mode() {
+        Action::OpenPanel(PanelId::Crew)
+    } else {
+        Action::EnterCrew
+    }
+}
+
 fn run_rename(_view: &mut View, rest: &str) -> Action {
     if rest.is_empty() {
         Action::OpenPanel(PanelId::Sessions(SessionsMode::Rename))
     } else {
         Action::RenameSession(rest.to_string())
+    }
+}
+
+/// `/budget` opens the panel; `/budget 5`, `/budget +2`, and `/budget off`
+/// change the cap directly.
+fn run_budget(view: &mut View, rest: &str) -> Action {
+    let arg = rest.trim().trim_start_matches('$');
+    if arg.is_empty() {
+        return Action::OpenPanel(PanelId::Budget);
+    }
+    if matches!(arg, "off" | "none" | "0") {
+        return Action::SetBudget(0.0);
+    }
+    let (add, num) = match arg.strip_prefix('+') {
+        Some(n) => (true, n.trim().trim_start_matches('$')),
+        None => (false, arg),
+    };
+    match num.parse::<f64>() {
+        Ok(v) if v.is_finite() && v > 0.0 => {
+            // Raising a cap you just hit: add to what's set, or to what's spent
+            // when nothing is.
+            let base = if view.budget_usd > 0.0 {
+                view.budget_usd
+            } else {
+                view.spend.unwrap_or(0.0)
+            };
+            Action::SetBudget(if add { base + v } else { v })
+        }
+        _ => {
+            view.warn("usage: /budget [amount|+amount|off]   e.g. /budget 5, /budget +2");
+            Action::None
+        }
     }
 }
 
@@ -587,38 +620,6 @@ fn run_provider(view: &mut View, rest: &str) -> Action {
             Action::None
         }
         other => Action::UseConnection(other.to_string()),
-    }
-}
-
-fn run_handoff(view: &mut View, rest: &str) -> Action {
-    let first = rest.split_whitespace().next().unwrap_or("");
-    if first.is_empty() {
-        return Action::OpenPanel(PanelId::Phase);
-    }
-    if first == "back" {
-        return match previous(view.phase) {
-            Some(p) => begin(view, p),
-            None => {
-                view.system("already at plan");
-                Action::None
-            }
-        };
-    }
-    match Phase::from_str(first) {
-        Ok(p) => begin(view, p),
-        Err(_) => {
-            view.warn("usage: /handoff plan|architect|build|audit|back");
-            Action::None
-        }
-    }
-}
-
-fn previous(phase: Phase) -> Option<Phase> {
-    match phase {
-        Phase::Plan => None,
-        Phase::Architect => Some(Phase::Plan),
-        Phase::Build => Some(Phase::Architect),
-        Phase::Audit => Some(Phase::Build),
     }
 }
 
@@ -696,5 +697,33 @@ mod tests {
             );
             assert!(find(c.name).is_some());
         }
+    }
+
+    #[test]
+    fn budget_sets_raises_and_turns_off() {
+        let mut v = View::new(
+            ryter_core::Phase::Build,
+            "c".into(),
+            "m".into(),
+            "/tmp".into(),
+        );
+        v.budget_usd = 5.0;
+        v.spend = Some(5.2);
+        let set = |v: &mut View, arg: &str| match run_budget(v, arg) {
+            Action::SetBudget(x) => Some(x),
+            _ => None,
+        };
+        assert_eq!(set(&mut v, "10"), Some(10.0));
+        assert_eq!(set(&mut v, "$2.50"), Some(2.5));
+        assert_eq!(set(&mut v, "+2"), Some(7.0), "raise the cap you hit");
+        assert_eq!(set(&mut v, "off"), Some(0.0));
+        assert_eq!(set(&mut v, "-3"), None);
+        assert_eq!(set(&mut v, "lots"), None);
+        assert!(v.messages.last().unwrap().body.contains("usage: /budget"));
+        // With no cap, "+2" means two more than already spent.
+        v.budget_usd = 0.0;
+        assert_eq!(set(&mut v, "+2"), Some(7.2));
+        // Bare `/budget` opens the panel.
+        assert_eq!(run_budget(&mut v, ""), Action::OpenPanel(PanelId::Budget));
     }
 }

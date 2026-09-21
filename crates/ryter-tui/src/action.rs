@@ -1,6 +1,6 @@
 //! Side effects the event loop performs on behalf of commands, keys, and panels.
 
-use ryter_core::{ConnectionConfig, Permission, Phase};
+use ryter_core::{ConnectionConfig, Permission};
 
 /// Session browser entry mode (`R-POP-38`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,12 +22,16 @@ pub enum PanelId {
     Models,
     /// `/crew`.
     Crew,
+    /// The crew builder (from `/crew`, or on first launch).
+    CrewBuilder,
     /// `/agents`.
     Agents,
     /// `/sessions`.
     Sessions(SessionsMode),
     /// `/spend`.
     Spend,
+    /// `/budget`.
+    Budget,
     /// `/settings`.
     Settings,
     /// `/theme`.
@@ -42,8 +46,6 @@ pub enum PanelId {
     Skills,
     /// `/hooks`.
     Hooks,
-    /// `/phase`.
-    Phase,
     /// `/context`.
     Context,
     /// `/help`.
@@ -61,19 +63,12 @@ pub enum Action {
     Quit,
     /// Clear and repaint the terminal (`Ctrl+L`).
     Redraw,
+    /// Release or re-grab the mouse (`Ctrl+G`).
+    ToggleMouse,
     /// Start a new session.
     New,
     /// Submit text to the orchestrator.
     Submit(String),
-    /// Phase handoff with pass note.
-    Handoff {
-        /// Target phase.
-        to: Phase,
-        /// Pass note.
-        note: String,
-    },
-    /// Put the composer into handoff note mode.
-    BeginHandoff(Phase),
     /// Toggle auditor gate.
     SetAuditor(bool),
     /// Switch and persist the theme.
@@ -132,7 +127,9 @@ pub enum Action {
     LoadCrewPreset(String),
     /// Delete a named crew preset.
     DeleteCrewPreset(String),
-    /// List models for a specialist assignment.
+    /// Apply a suggested tiered crew (`/crew` → `s`).
+    ApplyCrewTiering(std::collections::BTreeMap<String, ryter_core::RoleModel>),
+    /// List models for a specialist assignment (all connections).
     ListCrewModels {
         /// Role.
         role: String,
@@ -147,6 +144,39 @@ pub enum Action {
     DeleteSession(String),
     /// Set the current session title.
     RenameSession(String),
+    /// Set the session budget in USD; `0` turns it off. Applies now and is
+    /// saved as the default.
+    SetBudget(f64),
+    /// Switch hats (solo mode), or to the crew lead (`Orchestrator`).
+    SetMode(ryter_core::Role),
+    /// `/crew` from solo mode: the crew builder first time, then crew mode.
+    EnterCrew,
+    /// `/undo`: put files back as they were before the last build turn.
+    Undo,
+    /// Test that each `(connection, model)` answers a tiny request with a tool.
+    ProbeModels(Vec<(String, String)>),
+    /// Save what the crew builder chose: the lead's route, the crew, the budget.
+    SaveCrewSetup {
+        /// Lead connection.
+        lead_connection: String,
+        /// Lead model.
+        lead_model: String,
+        /// Architect, builder, auditor.
+        crew: std::collections::BTreeMap<String, ryter_core::RoleModel>,
+        /// Session budget; `0` is off.
+        budget: f64,
+        /// Per-task cap that fits this crew's normal work.
+        task_cap: f64,
+    },
+    /// Save everything the `/budget` panel edits.
+    SaveBudget {
+        /// Session cap; `0` is off.
+        usd: f64,
+        /// Warn threshold.
+        warn: f64,
+        /// Per-task cap.
+        task: f64,
+    },
     /// Kill a running specialist.
     KillAgent(String),
     /// Kill every running specialist.

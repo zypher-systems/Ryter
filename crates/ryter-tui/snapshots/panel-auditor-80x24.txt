@@ -1,24 +1,24 @@
- ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
- · system                                             ╭─ session ──────────────╮
-   welcome · /help for keys                           │ untitled               │
-                                                      │ 0193abcd         build │
-       ╭─ auditor gate ─────────────────────────────────────────────────╮ask   │
-       │›● on      current                                              │ ─────╯
-       │    every builder result is reviewed by an auditor before it    │ ─────╮
-       │    merges.                                                     │ -4.6 │
-       │                                                                │  5%  │
-       │ ○ off                                                          │      │
-       │    builder results merge as soon as they finish. faster,       │      │
-       │    unreviewed.                                                 │ ─────╯
-       ╰─ ↑↓ move · enter apply · esc  · changes apply immediately ─────╯ ─────╮
-                                                                          ?.?? │
-                                                      │ bud ░░░░░░░░░░░░   0%  │
-                                                      │     $0.00 of $5.00     │
-                                                      ╰────────────────────────╯
+ · system
+   welcome · /help for keys
+
+       ╭─ auditor gate ─────────────────────────────────────────────────╮
+       │›● on      current                                              │
+       │    every builder result is reviewed by an auditor before it    │
+       │    merges.                                                     │
+       │                                                                │
+       │ ○ off                                                          │
+       │    builder results merge as soon as they finish. faster,       │
+       │    unreviewed.                                                 │
+       ╰─ ↑↓ move · enter apply · esc  · changes apply immediately ─────╯
 
 
-╭─ dusty ────────────────────────────────────────────────────────────── build ─╮
-│› ask the orchestrator, or / for commands                                     │
+
+
+
+
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back

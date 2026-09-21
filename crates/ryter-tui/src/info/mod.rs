@@ -22,6 +22,8 @@ pub enum CardId {
     Model,
     /// spend
     Spend,
+    /// budget
+    Budget,
     /// tasks
     Tasks,
     /// crew
@@ -36,6 +38,7 @@ impl CardId {
         match self {
             CardId::Model => Some(PanelId::Models),
             CardId::Spend => Some(PanelId::Spend),
+            CardId::Budget => Some(PanelId::Budget),
             CardId::Crew => Some(PanelId::Crew),
             CardId::Session => Some(PanelId::Sessions(crate::action::SessionsMode::Browse)),
             CardId::Mcp => Some(PanelId::Mcp),
@@ -69,9 +72,9 @@ impl Card {
 pub fn width_for(total: u16) -> u16 {
     match total {
         0..=79 => 0,
-        80..=99 => 26,
-        100..=139 => 30,
-        _ => 34,
+        80..=99 => 28,
+        100..=139 => 36,
+        _ => 42,
     }
 }
 
@@ -81,12 +84,15 @@ pub fn cards(view: &View, inner_w: usize, theme: Theme) -> Vec<Card> {
         cards::session(view, inner_w, theme),
         cards::model(view, inner_w, theme),
         cards::spend(view, inner_w, theme),
-        cards::tasks(view, inner_w, theme),
-        cards::crew(view, inner_w, theme),
+        cards::budget(view, inner_w, theme),
     ];
-    if let Some(m) = cards::mcp(view, inner_w, theme) {
-        v.push(m);
+    // Cards that have nothing to say are absent, not empty (`R-PANEL-18`).
+    // The crew's cards belong to crew mode; solo mode has no crew.
+    if view.crew_mode() {
+        v.extend(cards::tasks(view, inner_w, theme));
+        v.extend(cards::crew(view, inner_w, theme));
     }
+    v.extend(cards::mcp(view, inner_w, theme));
     v
 }
 
@@ -100,8 +106,8 @@ pub fn fit(mut cards: Vec<Card>, height: usize) -> Vec<Card> {
         }
         cards.retain(|c| c.id != id);
     }
-    // Spend detail rows, then session detail rows.
-    for id in [CardId::Spend, CardId::Session] {
+    // Spend and budget detail rows, then session detail rows.
+    for id in [CardId::Spend, CardId::Budget, CardId::Session] {
         if total(&cards) <= height {
             return cards;
         }

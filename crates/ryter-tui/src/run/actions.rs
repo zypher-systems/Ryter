@@ -10,7 +10,9 @@ use ryter_core::ids::ConnectionId;
 use ryter_core::sandbox::SandboxProfile;
 use ryter_core::session::Session;
 use ryter_core::spend::PriceBook;
-use ryter_core::{Config, HookSet, InboundHost, Permission, Phase, Provider, load_catalog};
+use ryter_core::{
+    Config, HookSet, InboundHost, Permission, Phase, Provider, format_usd, load_catalog,
+};
 
 use super::worker::Work;
 use crate::action::{Action, PanelId};
@@ -44,6 +46,9 @@ pub struct Ctx {
     pub perm_reply: Option<mpsc::Sender<Permission>>,
     /// Pending `ask_user` reply.
     pub ask_reply: Option<mpsc::Sender<String>>,
+    /// Mouse capture currently held. Released to let the terminal select
+    /// text, since capture takes click-drag away from the user.
+    pub mouse_grabbed: bool,
     /// Active theme.
     pub theme: Theme,
     /// Theme to restore on `/theme` cancel.
@@ -91,6 +96,23 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         }
         Action::Quit => cx.want_quit = true,
         Action::Redraw => cx.want_redraw = true,
+        // Capture gives us wheel scroll and card clicks but takes the
+        // terminal's own click-drag selection away, and per-message copy is not
+        // built yet — so without this there is no way to get text out of Ryter.
+        Action::ToggleMouse => {
+            use crossterm::ExecutableCommand;
+            use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+            let mut out = std::io::stdout();
+            cx.mouse_grabbed = !cx.mouse_grabbed;
+            if cx.mouse_grabbed {
+                let _ = out.execute(EnableMouseCapture);
+                view.system("mouse grabbed — wheel scroll and card clicks active");
+            } else {
+                let _ = out.execute(DisableMouseCapture);
+                view.system("mouse released — select and copy with the terminal; ^g to grab");
+            }
+            cx.want_redraw = true;
+        }
         Action::Submit(text) => cx.send(Work::Turn { text, reply: None }),
         Action::Cancel => {
             if view.busy {
@@ -100,11 +122,6 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 view.system("cancelling…");
             }
         }
-        Action::Handoff { to, note } => {
-            view.composer.end_special();
-            cx.send(Work::Handoff { to, note });
-        }
-        Action::BeginHandoff(to) => view.begin_handoff(to),
         Action::New => new_session(view, cx),
         Action::OpenPanel(id) => open_panel(view, cx, id),
         Action::Resume(id) => resume(view, cx, &id),
@@ -116,6 +133,36 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             cx.send(Work::Rename(title));
             cx.notice(Notice::SessionsChanged);
         }
+        Action::SetBudget(usd) => set_budget(view, cx, usd),
+        Action::SaveBudget { usd, warn, task } => save_budget(view, cx, usd, warn, task),
+        Action::ProbeModels(seats) => probe_models(cx, seats),
+        Action::SetMode(role) => set_mode(view, cx, role),
+        Action::EnterCrew => {
+            if config::crew_unconfigured(&cx.home, &cx.cfg) && view.specialists.is_empty() {
+                // First time: build the crew, then drop into crew mode.
+                view.panels
+                    .push(Box::new(panel::crew_builder::CrewBuilder::new(view, true)));
+                panel::sync_composer(view);
+                cx.send(Work::ListCrewModels);
+            } else {
+                set_mode(view, cx, ryter_core::Role::Orchestrator);
+            }
+        }
+        Action::Undo => cx.send(Work::Undo),
+        Action::SaveCrewSetup {
+            lead_connection,
+            lead_model,
+            crew,
+            budget,
+            task_cap,
+        } => save_crew_setup(
+            view,
+            cx,
+            lead_connection,
+            lead_model,
+            crew,
+            (budget, task_cap),
+        ),
         Action::KillAgent(id) => {
             if let Some(c) = view.crew.iter().find(|c| c.id == id) {
                 view.system(format!("killing {} · {}", c.role, c.label));
@@ -193,6 +240,20 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 );
             }
             save_crew(view, cx);
+        }
+        Action::ApplyCrewTiering(rows) => {
+            // Keep what was there, so a suggestion is one keypress to undo.
+            match config::save_crew_preset(&cx.home, "before-suggest", &view.specialists) {
+                Ok(()) => {
+                    view.specialists.extend(rows);
+                    save_crew(view, cx);
+                    view.system(
+                        "applied the suggested crew · your previous crew is the `before-suggest` preset",
+                    );
+                }
+                Err(e) => view.error(format!("not applied: could not save the current crew: {e}")),
+            }
+            cx.notice(Notice::PresetsChanged(config::list_crew_presets(&cx.home)));
         }
         Action::ResetCrewRole(role) => {
             view.specialists.remove(&role);
@@ -339,6 +400,13 @@ fn open_panel(view: &mut View, cx: &mut Ctx, id: PanelId) {
     panel::sync_composer(view);
     match id {
         PanelId::Models => cx.send(Work::ListModels),
+        PanelId::CrewBuilder => cx.send(Work::ListCrewModels),
+        // The logs are the truth; replace the live running copy with them.
+        PanelId::Spend => {
+            if let Ok(p) = ryter_core::project::project_spend(&cx.home, &cx.workspace) {
+                view.project_spend = Some(p);
+            }
+        }
         PanelId::Theme => {
             cx.theme_before_preview = Some((view.theme_name.clone(), cx.theme));
         }
@@ -445,6 +513,7 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
     view.session_id = session.meta.id.to_string();
     view.session_title = session.meta.title.clone();
     view.phase = session.meta.phase;
+    view.mode = session.meta.mode.unwrap_or(ryter_core::Role::SoloBuild);
     view.spend = session.meta.spend_usd_total;
     view.spend_unknown = session.meta.spend_unknown;
     view.auditor_on = session.meta.auditor_enabled;
@@ -550,7 +619,22 @@ fn route_from_view(view: &View) -> config::LastRoute {
 }
 
 fn apply_pricing(view: &mut View, cfg: &Config, model: &str) {
-    let book = PriceBook::from_config(cfg);
+    let mut book = PriceBook::from_config(cfg);
+    // The picker showed a price from the provider's list; use it when the
+    // built-in book has none, rather than saying "price unknown".
+    if book.rates(model).is_none() {
+        if let Some(&(i, o)) = view.catalog_rates.get(model) {
+            book.ingest_model_info(&[ryter_core::ModelInfo {
+                id: model.to_string(),
+                context_length: None,
+                input_per_million: Some(i),
+                output_per_million: Some(o),
+                connection: None,
+                created: None,
+                tools: None,
+            }]);
+        }
+    }
     view.price_label = book.format_model_rates(model);
     match book.rates(model) {
         Some(r) => {
@@ -596,11 +680,13 @@ fn use_connection(view: &mut View, cx: &mut Ctx, name: &str) {
 
 fn set_key(view: &mut View, cx: &mut Ctx, name: &str, key: &str) {
     match config::store_secret_at(&cx.home, name, key) {
-        Ok(()) => {
+        // Say where it landed: a keyring failure used to be silent, leaving the
+        // user to assume the key was not on disk in plaintext.
+        Ok(store) => {
             if let Some(c) = view.connections.iter_mut().find(|c| c.name == name) {
                 c.has_key = true;
             }
-            view.system(format!("key saved for {name}"));
+            view.system(format!("key saved for {name} in {store}"));
             use_connection(view, cx, name);
         }
         Err(e) => view.error(e.to_string()),
@@ -623,6 +709,109 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
         }
         Err(_) => perform(view, cx, Action::BeginSetKey(view.connection.clone())),
     }
+}
+
+/// Switch hats, or between solo and crew mode. A switch while a turn runs
+/// applies to the next message.
+fn set_mode(view: &mut View, cx: &mut Ctx, role: ryter_core::Role) {
+    let entering_crew = role == ryter_core::Role::Orchestrator && !view.crew_mode();
+    let leaving_crew = role.is_solo() && view.crew_mode();
+    view.mode = role;
+    cx.send(Work::SetRole(role));
+    if entering_crew {
+        view.system(
+            "crew mode · your messages go to the lead, and the crew does the work · /crew for \
+             the crew's settings · /solo to go back",
+        );
+    } else if leaving_crew {
+        view.system("solo mode · Tab switches between build, plan, and review");
+    }
+}
+
+/// One tiny request per model, off the UI thread; results come back as a
+/// notice. Unknown connections and missing keys fail without a request.
+fn probe_models(cx: &mut Ctx, seats: Vec<(String, String)>) {
+    let tx = cx.notice_tx.clone();
+    let cfg = cx.cfg.clone();
+    std::thread::spawn(move || {
+        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        let results = rt.block_on(async {
+            let mut out = Vec::new();
+            for (conn, model) in seats {
+                let r = match (
+                    cfg.connections.get(&conn),
+                    resolve_secret(&cfg, &ConnectionId::new(&conn)),
+                ) {
+                    (Some(c), Ok(key)) => {
+                        let p = ryter_core::http_provider(c, key);
+                        ryter_core::tiering::probe(&p, &model).await
+                    }
+                    (None, _) => Err(format!("unknown connection {conn}")),
+                    (_, Err(_)) => Err(format!("no key for {conn}")),
+                };
+                out.push((conn, model, r));
+            }
+            out
+        });
+        let _ = tx.send(Notice::Probed(results));
+    });
+}
+
+/// Save the crew builder's choices: the crew (the old one kept as a preset),
+/// the lead's route, and the budget.
+fn save_crew_setup(
+    view: &mut View,
+    cx: &mut Ctx,
+    lead_connection: String,
+    lead_model: String,
+    crew: std::collections::BTreeMap<String, ryter_core::RoleModel>,
+    (budget, task_cap): (f64, f64),
+) {
+    if !view.specialists.is_empty() {
+        if let Err(e) = config::save_crew_preset(&cx.home, "before-builder", &view.specialists) {
+            view.error(format!("not saved: could not keep the current crew: {e}"));
+            return;
+        }
+    }
+    view.specialists = crew;
+    save_crew(view, cx);
+    if lead_connection != view.connection || lead_model != view.model {
+        match (
+            cx.cfg.connections.get(&lead_connection).cloned(),
+            resolve_secret(&cx.cfg, &ConnectionId::new(&lead_connection)),
+        ) {
+            (Some(_), Ok(key)) => {
+                view.connection = lead_connection.clone();
+                view.model = lead_model.clone();
+                view.has_key = true;
+                view.ctx_window = Some(ryter_core::window_for(&lead_model));
+                apply_pricing(view, &cx.cfg, &lead_model);
+                let _ = config::save_last_route(&cx.home, &route_from_view(view));
+                cx.send(Work::Reconnect {
+                    name: lead_connection,
+                    model: lead_model,
+                    key,
+                });
+            }
+            _ => view.error(format!("lead not changed: no key for {lead_connection}")),
+        }
+    }
+    let warn = view.warn_usd;
+    save_budget(view, cx, budget, warn, task_cap);
+    set_mode(view, cx, ryter_core::Role::Orchestrator);
+    cx.notice(Notice::PresetsChanged(config::list_crew_presets(&cx.home)));
+    view.system(format!(
+        "crew saved · lead {} · architect {} · builder {} · auditor {}",
+        view.model,
+        crate::view::crew_role_label(view, "architect"),
+        crate::view::crew_role_label(view, "builder"),
+        crate::view::crew_role_label(view, "auditor"),
+    ));
 }
 
 fn test_connection(view: &mut View, cx: &mut Ctx, name: &str) {
@@ -748,9 +937,56 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
     }
     cx.send(Work::SetSettings {
         budget_usd: view.budget_usd,
+        task_budget_usd: view.task_budget_usd,
         max_crew: view.max_crew,
         web: view.web,
     });
+}
+
+fn set_budget(view: &mut View, cx: &mut Ctx, usd: f64) {
+    let (warn, task) = (view.warn_usd, view.task_budget_usd);
+    save_budget(view, cx, usd, warn, task);
+}
+
+/// Apply spend limits to the running session and save them as the default.
+fn save_budget(view: &mut View, cx: &mut Ctx, usd: f64, warn: f64, task: f64) {
+    view.budget_usd = usd;
+    if usd > 0.0 {
+        view.budget_last = usd;
+    }
+    view.warn_usd = warn;
+    view.task_budget_usd = task;
+    cx.cfg.spend.session_budget_usd = usd;
+    cx.cfg.spend.warn_usd = warn;
+    cx.cfg.spend.task_budget_usd = task;
+    if let Err(e) = config::save_settings(&cx.home, &cx.cfg) {
+        view.error(e.to_string());
+    }
+    cx.send(Work::SetSettings {
+        budget_usd: usd,
+        task_budget_usd: task,
+        max_crew: view.max_crew,
+        web: view.web,
+    });
+    if usd > 0.0 {
+        let over = view.spend.is_some_and(|s| s >= usd);
+        view.system(format!(
+            "budget {} · spent {}{}",
+            format_usd(Some(usd)),
+            format_usd(view.spend),
+            if over {
+                " · already reached: raise it to keep working"
+            } else {
+                ""
+            }
+        ));
+    } else {
+        view.system(format!(
+            "budget off · spent {} · nothing stops on cost now; each task is still capped at {}",
+            format_usd(view.spend),
+            format_usd(Some(task))
+        ));
+    }
 }
 
 /// Load and degrade a theme; bump the render generation. Returns success.
@@ -864,4 +1100,30 @@ pub fn display_home_path(cwd: &Path) -> String {
 pub fn parse_phase(s: Option<&str>) -> ryter_core::Result<Option<Phase>> {
     use std::str::FromStr;
     s.map(Phase::from_str).transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The model picker shows a provider's price; the sidebar must use it
+    /// when the built-in book doesn't know the model.
+    #[test]
+    fn the_sidebar_uses_the_catalog_price() {
+        let mut v = View::new(
+            ryter_core::Phase::Build,
+            "openrouter".into(),
+            "vendor/new-model".into(),
+            "/tmp".into(),
+        );
+        let cfg = Config::default();
+        apply_pricing(&mut v, &cfg, "vendor/new-model");
+        assert_eq!(v.price_in, None, "unknown to the book and no catalog yet");
+        v.catalog_rates
+            .insert("vendor/new-model".into(), (0.15, 0.6));
+        apply_pricing(&mut v, &cfg, "vendor/new-model");
+        assert_eq!(v.price_in, Some(0.15));
+        assert_eq!(v.price_out, Some(0.6));
+        assert!(!v.price_label.contains('?'), "{}", v.price_label);
+    }
 }

@@ -1,30 +1,30 @@
- ryter  ·  orchestrator                                             ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build                            grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                             ╭─ session ──────────────────╮
-   welcome · /help for keys                                           │ untitled                   │
-                                                                      │ 0193abcd             build │
-             ╭─ mcp ───────────────────────────────────────────────────────── 0/0 up ─╮s ask       │
-             │›○ inbound  let other agents drive this sessi…enabled · restart to bind │ ───────────╯
-             │                                                                        │ ───────────╮
-             │ outbound servers                                                       │   grok-4.6 │
-             │   none configured                                                      │ ░░░░   5%  │
-             │ + add server  stdio command → ~/.ryter/mcp.toml                        │  tokens    │
-             │                                                                        │            │
-             │                                                                        │ ───────────╯
-             │                                                                        │ ───────────╮
-             │                                                                        │      $?.?? │
-             │                                                                        │ ░░░░   0%  │
-             │                                                                        │ 00         │
-             │                                                                        │ ───────────╯
-             ╰─ enter open/toggle · r reconnect · d remove · esc  · changes apply i… ─╯ ───────────╮
-                                                                                                   │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ crew ─────────────── 0/4 ─╮
-                                                                      │ no specialists running     │
-                                                                      ╰────────────────────────────╯
+ · system
+   welcome · /help for keys
+
+             ╭─ mcp ───────────────────────────────────────────────────────── 0/0 up ─╮
+             │›○ inbound  let other agents drive this sessi…enabled · restart to bind │
+             │                                                                        │
+             │ outbound servers                                                       │
+             │   none configured                                                      │
+             │ + add server  stdio command → ~/.ryter/mcp.toml                        │
+             │                                                                        │
+             │                                                                        │
+             │                                                                        │
+             │                                                                        │
+             │                                                                        │
+             │                                                                        │
+             │                                                                        │
+             ╰─ enter open/toggle · r reconnect · d remove · esc  · changes apply i… ─╯
 
 
-╭─ dusty ────────────────────────────────────────────────────────────────────────────────── build ─╮
-│› ask the orchestrator, or / for commands                                                         │
+
+
+
+
+
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back

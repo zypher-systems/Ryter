@@ -1,0 +1,10 @@
+title = "Rename calc_total to order_total"
+brief = """
+Rename `calc_total` to `order_total` in orders.py and update every caller
+(report.py). Do not keep the old name as an alias: nothing named calc_total
+should remain. Behaviour must not change.
+Done when `python3 -m unittest -q test_report` passes.
+"""
+files = ["orders.py", "report.py"]
+checks = ["python3 -m unittest -q test_report"]
+accept = ["python3 -m unittest -q hidden_test_rename"]

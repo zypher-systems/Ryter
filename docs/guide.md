@@ -94,7 +94,7 @@ Permission prompts, `ask_user` questions, and the first-run “trust this projec
 | `Ctrl+↑` / `Ctrl+↓` | previous / next turn |
 | `F1` | `/help` |
 
-Inside a panel: `↑↓` move, `PgUp`/`PgDn` page, `Enter` activate, `Tab` next field, `Space` or `←→` change a toggle/select, `^s` save, `Esc` back. Each panel’s legend line names its own extra keys (`t` test a connection, `d` remove, `c` compact, and so on).
+Inside a panel: `↑↓` move, `PgUp`/`PgDn` page, `Enter` activate, `Tab` next field, `Space` or `←→` change a toggle/select, `Esc` back. `Esc` on a form with changes (`/settings`, `/budget`) asks whether to save them; `^s` still saves at once. Each panel’s legend line names its own extra keys (`t` test a connection, `d` remove, `c` compact, and so on).
 
 Mouse: wheel scrolls the chat, clicking a card opens its panel, clicking the activity strip toggles the reasoning pane. Text selection uses your terminal’s own modifier (Shift+drag on most). `[ui] mouse = false` turns capture off entirely.
 
@@ -103,46 +103,100 @@ Without a tty, use headless:
 ```sh
 ryter -p "add a --json flag" --always-approve
 ryter -p "…" --json                  # NDJSON AgentEvent stream
-ryter --mode plan -p "what should we build?"
+ryter -c -p "continue"               # continue the latest session: transcript, tasks, open patch
 ```
 
 `--always-approve` treats Ask as Allow. Deny still wins.
 
-## Orchestrator, phases, handoff
+An empty folder, or one that is not a git repository, works as is. Before the crew's first build, Ryter runs `git init` (your `init.defaultBranch`, else `main`), writes a `.gitignore` for secrets and caches unless one exists, commits what is already there as the starting point, and says so in the chat. A repository with no commits gets just the first commit.
 
-The orchestrator prompt is `prompts/orchestrator.md` (overridable). It may read the repo, grep, glob, and call `todo_write`. It cannot write product source.
+## Solo mode and hats
 
-**Phase** only changes which specialist *kinds* may run. Default is **Build**.
+Ryter starts in solo mode: one model in your project. `Tab` switches its hat (build → plan → review), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. The header, the message box's badge, and its border all show the hat in its own color. A switch applies to your next message.
 
-| Command | Phase | Specialists |
+| Hat | May | May not |
 | --- | --- | --- |
-| `/plan` | Plan | planners |
-| `/architect` | Architect | architects |
-| `/build` | Build | builders + auditor gate |
-| `/audit` | Audit | extra reviewers |
+| **build** (default) | edit files and run commands; edits and commands that change things ask (or run with "allow all" / `--always-approve`); destructive commands always ask | read secrets, push, run inline interpreter code |
+| **plan** | read, search, run read-only commands, write `notes/` and project memory | edit source, run anything that changes the project |
+| **review** | read, run the tests and linters, read-only git | write anything, not even by redirect |
 
-`/handoff architect` (or `ryter handoff architect --note "…"`) writes a pass note for the current phase and switches. Empty notes are allowed. `/handoff back` goes to the previous phase. The orchestrator transcript is not cleared. Specialists get a **fresh window**: pass note + task + `RYTER.md` / `AGENTS.md`, not the chat history.
+Every hat shares one system prompt (`prompts/solo.md`) and one tool list. The hat is a one-line note in front of each message, and the permission gate enforces it, so switching never throws away the provider's prompt cache.
+
+Before each build turn, Ryter snapshots your files as a git object under `refs/ryter/undo/`. Your branch, staging area, and files aren't touched. `/undo` puts the files back as they were before the last build turn that changed them, deleting files it created. A folder that isn't a repository gets git set up first, and Ryter says so. It won't make one in your home folder or at the root.
+
+Headless, `ryter -p` runs in build; `--hat plan|review|crew` picks another. Headless nobody can approve an edit, so pass `--always-approve` to let build change files.
+
+## Crew mode
+
+`/crew` switches to crew mode. The first time, the crew builder opens (below); once a crew is saved, `/crew` switches straight to it, and in crew mode `/crew` opens the crew's settings. `/solo` goes back. In crew mode the right-hand panel adds the tasks and crew cards.
+
+## The lead
+
+In crew mode every message you send goes to the lead. You never talk to a specialist; they report back through the chat. The lead's prompt is `prompts/orchestrator.md` (overridable). It may read the repo, grep, glob, and call `todo_write`. It cannot write product source. For each request it does one of these:
+
+| The request | What the lead does |
+| --- | --- |
+| A question | answers it |
+| A trivial edit | `propose_edit`: you see the diff and press `y` |
+| A precise change | writes builder tasks itself |
+| Something that needs a design | queues an architect task; the architect's builder tasks run in the same pass |
+| "Design it, don't build yet" | the same, with `hold`: the design waits for your go-ahead |
+
+There is no mode to switch. Specialists get a **fresh window**: their task brief, `RYTER.md` / `AGENTS.md`, and the project memory scoped to their files, not the chat history.
 
 Project markdown is loaded from the working tree without a trust gate: `RYTER.md`, or `AGENTS.md` if `RYTER.md` is absent.
 
 ## Build workers, auditor, merge
 
-`todo_write` **is** the work queue. After an orchestrator turn with no remaining tool calls, Ryter drains pending tasks for the **current phase**, up to `[subagents] max` in parallel (must be ≥ 1). Plan → planners, Architect → architects, Build → builders + auditor, Audit → extra auditors.
+`todo_write` **is** the work queue. After a lead turn with no remaining tool calls, Ryter drains pending tasks, up to `[subagents] max` in parallel (must be ≥ 1). Each task names its role: architect tasks run first, then builders, each gated by checks and an auditor. Tasks declare the `files` they own; disjoint tasks run in parallel, overlapping or undeclared ones one at a time.
 
-Crew roles default to the orchestrator’s current provider and model. Assign a different model per role with `/crew` (Enter on a role, first picker row is `default`). That is also how you split providers. Optional `[specialists.*]` tables in `~/.ryter/config.toml` pin the same overrides.
+Crew roles default to the lead’s current provider and model. Assign a different model per role with `/crew` (Enter on a role, first picker row is `default`). That is also how you split providers. Optional `[specialists.*]` tables in `~/.ryter/config.toml` pin the same overrides.
 
-Each builder:
+Each builder task:
 
 1. `git worktree add` under `~/.ryter/worktrees/<session>/<task>/` on branch `ryter-<8hex>-<slug>`
-2. Implements the task with a builder prompt and a builder tool mask
-3. Commits
-4. Auditor (if enabled) sees the diff and replies `PASS` or `FAIL`
-5. Pass → merge into the session branch (rebase once on conflict; if that still fails, one extra builder turn in the worktree, then `blocked`). Fail → retry up to `[auditor] max_retries`, then `blocked` with no merge
-6. Worktree is removed
+2. The builder implements its brief and ends with a handback (`STATUS / FILES / DECISIONS / NOTES`)
+3. The runtime commits, then merges **your branch into the worktree**. Conflicts are resolved there by a builder — never in your checkout — and the resolution is re-audited
+4. **Checks**: `[auditor] checks` run in the worktree (set them per project in `.ryter/config.toml`). A failure rejects the work before any audit
+5. **Auditor**: reviews the brief, handback, check output, and full diff, and ends with `VERDICT: PASS` or `VERDICT: FAIL`
+6. **Land**: one `--no-ff` merge commit (undo with `git revert -m 1`). If your branch moved meanwhile, it re-integrates and re-checks first. If you have uncommitted edits to the same files, it stops and keeps the branch
+7. Rejected → retry with the findings, up to `[auditor] max_retries`, then `blocked`
 
-`/auditor on|off` is session-only unless you also change config. Status line shows the gate. `/auditor off` merges without review.
+Tasks land on a patch branch (`ryter/patch-…`), not yours. When every task in the patch is done and the combined checks pass, the patch lands on your branch as **one commit** (`git revert -m 1` undoes it all). A blocked task holds the patch until you retry or drop it; the lead says what it is waiting on.
 
-Planners and architects run in-process (no worktree). Nested subagents are not supported.
+Auditors must be different models from the lead and the builder — otherwise builds refuse to start and say how to fix it. Assign one in `/crew`, or list a panel under `[[auditor.panel]]` (all must pass; cheapest first; seats may have a `focus` and `paths`).
+
+For a trivial change the lead can `propose_edit`: you see the diff and press `y`. Only a person can approve it.
+
+**The crew builder** is where a crew is set up. It opens the first time you type `/crew`, and from the crew settings with `b`. When you save, you're in crew mode. It walks through seven steps:
+
+1. A starting point: skiff, schooner, galleon, or your current crew.
+2. The lead.
+3. The architect.
+4. The builder.
+5. The auditor.
+6. Budget: pick the job size (small, medium, or large) and see an estimate per task, per design, and for the whole job, with a suggested cap.
+7. Review.
+
+Each seat step says what the role does, puts a ★ recommendation first, and lists every model you can reach (type to filter). The auditor step refuses the lead's and builder's models. Review sends each model one tiny request with a tool (well under a cent) and saves only when all of them answer. That catches what no catalog shows: an OpenRouter data policy such as zero data retention that leaves a model no provider, missing tool support, a model you have no access to, or no credits. `ryter crew check` runs the same test on your saved crew. Esc on first launch means "later"; the builder doesn't come back on its own.
+
+The estimate uses token counts measured on paid runs (`crates/ryter-core/src/estimate.rs`). It is rough, and a job is usually larger than it looks.
+
+Three ready-made crews sit in `/crew`, picked from every model you can reach at today's prices, so they never name a model you can't use or one that has gone stale:
+
+| Crew | Cost | Builder | Architect and auditor |
+| --- | --- | --- | --- |
+| **skiff** | low | a budget model | the best of the budget models; the auditor is still a different model from another vendor |
+| **schooner** | balanced | a budget model | strong models (the default suggestion, `s` in `/crew`) |
+| **galleon** | high | a strong model | strong models, the auditor from another vendor |
+
+Enter on one previews it; `y` applies it and keeps your previous crew as the `before-suggest` preset. `ryter crew tiers` shows all three; `ryter crew suggest --tier galleon --apply` applies one from the shell. Strong seats prefer established vendors when one is close in price: price is the only signal before `ryter bench`, and on a live catalog it put an obscure model ahead of Claude Opus. None of the crews changes the lead. A local model server works as a connection with no key: `ryter connections add box --kind ollama --model qwen3-coder:30b`. `ryter bench` runs `bench/` through the crew and reports what landed, what passed hidden tests, and the cost per accepted task — it spends real money.
+
+Crew spend is metered per task and role and counts against `[spend] session_budget_usd`; each task also stops at `task_budget_usd` / `task_max_tokens`. See `docs/cost.md`.
+
+`/auditor on|off` is session-only unless you also change config. With the auditor off, **nothing merges**: finished work waits on its branch. After each batch the lead gets the crew report, tells you what landed, and records builder decisions in `DECISIONS.md` — builders never write project memory themselves.
+
+The architect runs in-process (no worktree) and writes tasks straight into the queue builders read from. Nested subagents are not supported.
 
 ## Spend
 
@@ -152,13 +206,24 @@ Sources, high wins: TOML `[pricing."<model>"]` → OpenRouter catalog (when inge
 
 Unknown rates show `$?.??` plus token counts. Ryter never invents `$0.00` for an unpriced model.
 
-`[spend] session_budget_usd` stops the loop (exit `3` in headless). `0` means no cap. `[spend] enabled = false` still counts in memory and prints a warning.
+A session budget is optional. With one, the crew stops when spend reaches it, says what finished and what didn't, and waits (exit `3` in headless). Without one, nothing stops on cost and you watch the spend card.
 
-`/spend` is a panel: session total, a budget gauge, and tables by role and by connection; `e` exports CSV. The info panel’s spend card shows the same total and gauge at all times. `ryter spend` prints the roll-up on the CLI.
+| Command | Effect |
+| --- | --- |
+| `/budget` | the budget panel: spend against the cap, on/off, the cap, the warning level, and the per-task cap (`^s` saves) |
+| `/budget 5` | cap this session at $5 |
+| `/budget +2` | raise the cap by $2, e.g. after hitting it |
+| `/budget off` | no cap |
+
+The **budget** card on the right shows the cap, how much is used and left, or `off`; click it to open the panel. Changes apply at once and are saved as your default (`~/.ryter/settings.toml`, the same value as *budget usd* in `/settings`). A trusted project's `[spend] session_budget_usd` overrides your default in that project. There is no session budget until you set one; the crew builder suggests one sized to the job. Each task is still capped at `[spend] task_budget_usd` ($3 by default; the crew builder raises it when your crew's normal design would not fit), which catches one runaway task whether or not there is a session budget. `[spend] enabled = false` still counts in memory and prints a warning.
+
+**Project cost.** A project is its git repository (the folder, outside one), so sessions started in any subfolder count toward it. The spend card shows `project` under the session total, and `p` in `/spend` switches to the project view: the total across sessions, this month, solo vs. crew, and breakdowns by role, model, and month. `ryter spend --project` prints the same. Nothing extra is recorded: every call is already in its session's `spend.jsonl`, and a running total in `~/.ryter/projects/` means only new lines are read. Calls with no known price are counted and shown (`$14.20+`), never added as $0.
+
+`/spend` is a panel: session total, a budget gauge, and tables by role and by connection; `p` switches to the project; `e` exports CSV. The info panel’s spend card shows the total, and the budget card below it shows the cap. `ryter spend` prints the roll-up on the CLI.
 
 ## Slash commands
 
-Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/crew` `/mcp` `/skills` `/hooks` `/sessions` `/agents` `/spend` `/theme` `/tools` `/auditor` `/phase` `/context` `/doctor` `/help`. Direct commands act immediately: `/new` `/rename <title>` `/handoff <phase>` `/plan` `/architect` `/build` `/audit` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
+Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/crew` `/mcp` `/skills` `/hooks` `/sessions` `/agents` `/spend` `/theme` `/tools` `/auditor` `/context` `/doctor` `/help`. Direct commands act immediately: `/new` `/rename <title>` `/budget [amount|+amount|off]` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
 
 User-invocable skills and `~/.ryter/commands/*.md` join the palette under **skills**. Built-ins win on a name clash.
 
@@ -175,7 +240,7 @@ User-invocable skills and `~/.ryter/commands/*.md` join the palette under **skil
 
 Enter on **token** creates or rotates a `ryt_…` secret stored in `~/.ryter/keys/mcp-inbound.toml` (mode 0600); it is masked until you press `v`. Enter on a link copies it into the chat so you can paste it. Live flags persist in `~/.ryter/mcp.toml` (does not rewrite `config.toml`).
 
-Another agent can also spawn `ryter mcp serve` (stdio), or `ryter serve --socket` / `--bind`. Tools: `ryter_prompt`, `ryter_status`, `ryter_spend`, `ryter_set_phase`, `ryter_cancel`. Resources: `ryter://session/transcript`, `ryter://session/spend`. Keys are never returned.
+Another agent can also spawn `ryter mcp serve` (stdio), or `ryter serve --socket` / `--bind`. Tools: `ryter_prompt`, `ryter_status`, `ryter_spend`, `ryter_cancel`. Resources: `ryter://session/transcript`, `ryter://session/spend`. Keys are never returned.
 
 TCP requires `--token` (or `RYTER_MCP_TOKEN`) on `initialize.params.token`. Binding `0.0.0.0` / `::` requires `--i-mean-it`.
 
@@ -215,17 +280,17 @@ Look at `git diff` and report findings.
 
 `ryter doctor` (and the `/doctor` panel, which runs the checks off-thread and can save the report with `c`) checks OS, tty, home, config, both built-in connections (key set/missing, never printed), spend catalog, git, Landlock, sandbox profile, and whether `.ryter/` is trusted. No network.
 
-`--sandbox workspace` Landlock-restricts the tool thread to the project tree (writable) plus `~/.ryter`. `--sandbox read-only` makes the project tree read-only. `--sandbox off` is the default. A non-off profile **refuses to start** if the kernel cannot enforce Landlock. `/tmp` itself is not granted; scratch is `~/.ryter/tmp`. Sandboxed runs use a current-thread tokio runtime.
+`--sandbox workspace` Landlock-restricts the tool thread to the project tree (writable) plus `~/.ryter/{tmp,logs,sessions}` — never `~/.ryter/keys`. The sandbox is filesystem-only; it does not restrict network. `--sandbox read-only` makes the project tree read-only. `--sandbox off` is the default. A non-off profile **refuses to start** if the kernel cannot enforce Landlock. `/tmp` itself is not granted; scratch is `~/.ryter/tmp`. Sandboxed runs use a current-thread tokio runtime.
 
 ## Safety
 
 - One gate: `decide(role, tool, args)` → Allow / Ask / Deny. Role masks omit tools the model should not see.
 - Orchestrator: read, list, grep, glob, `todo_write`, MCP. Cannot write `src/`.
-- Planner / architect: notes + read tools.
-- Builder: full tool set in its worktree.
-- Auditor: read + test/lint bash.
+- Architect: read tools, project memory, `todo_write`.
+- Builder: full tool set in its worktree; denied project memory files.
+- Auditor: read tools + test/lint/read-only-git bash; no write tools.
 - Denied even for builders: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files.
-- Destructive bash is Ask. In the TUI a permission modal shows the tool and its arguments: `y` allow this call, `n` deny, `a` allow for the rest of the session. Headless (no TUI) fail-closes.
+- Shell commands are judged per segment (`a && b` is two commands). Privilege escalation, disk writes, `git push`, and piping into a shell are denied; destroying files outside the worktree is Ask. In the TUI a permission modal shows the tool and its arguments: `y` allow this call, `n` deny, `a` allow for the rest of the session. Headless (no TUI) fail-closes.
 - `ask_user` lets the orchestrator ask a question; the TUI shows it as a modal (number keys pick a choice, or type free text).
 - `[features] web = true` offers `web_fetch` / `web_search`. Localhost and private IPs are blocked.
 - Hooks can still deny after the policy allows.
@@ -258,7 +323,7 @@ Orchestrator may write only these memory files, never `src/`.
   tasks.json
 ```
 
-No SQLite. `ryter spend` / `ryter handoff` use the latest session for this directory.
+No SQLite. `ryter spend` uses the latest session for this directory.
 
 ## Exit codes
 

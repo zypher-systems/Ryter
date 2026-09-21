@@ -9,16 +9,57 @@ use crate::error::{Error, Result};
 use crate::tools::policy::resolve;
 use crate::tools::{ToolContext, ToolOutput};
 
+/// Lines returned when the caller does not ask for a range.
+const DEFAULT_LINE_LIMIT: usize = 2_000;
+
 pub fn read_file(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     let path = require_path(args, ctx)?;
-    let text = fs::read_to_string(&path).map_err(|e| Error::Config(e.to_string()))?;
-    let numbered: String = text
-        .lines()
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+            return Ok(ToolOutput::err(format!(
+                "{} is not a text file (compiled or binary); read the source instead",
+                path.display()
+            )));
+        }
+        Err(e) => return Err(Error::Config(e.to_string())),
+    };
+    // `offset` is 1-based to match the line numbers this prints.
+    let offset = args
+        .get("offset")
+        .and_then(Value::as_u64)
+        .map(|n| n.max(1) as usize - 1)
+        .unwrap_or(0);
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map(|n| n.max(1) as usize)
+        .unwrap_or(DEFAULT_LINE_LIMIT);
+    let all: Vec<&str> = text.lines().collect();
+    let total = all.len();
+    let end = offset.saturating_add(limit).min(total);
+    let mut out: String = all
+        .get(offset..end)
+        .unwrap_or_default()
+        .iter()
         .enumerate()
-        .map(|(i, l)| format!("{:>4}|{l}", i + 1))
+        .map(|(i, l)| format!("{:>4}|{l}", offset + i + 1))
         .collect::<Vec<_>>()
         .join("\n");
-    Ok(ToolOutput::ok(numbered))
+    if end < total {
+        out.push_str(&format!(
+            "\n… {} more lines; read again with offset {} …",
+            total - end,
+            end + 1
+        ));
+    }
+    if offset >= total && total > 0 {
+        out = format!(
+            "offset {} is past the end of the file ({total} lines)",
+            offset + 1
+        );
+    }
+    Ok(ToolOutput::ok(out))
 }
 
 pub fn write_file(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
@@ -93,11 +134,23 @@ pub fn grep(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         )
         .build()
         .map_err(|e| Error::Config(e.to_string()))?;
+    // Optional root and file filter. The root goes through the same
+    // containment check as every other path argument.
+    let root = match args.get("path").and_then(Value::as_str) {
+        Some(p) if !p.is_empty() => crate::tools::policy::resolve(ctx, p)
+            .ok_or_else(|| Error::Config(format!("grep: {p} is outside the workspace")))?,
+        _ => ctx.workspace.clone(),
+    };
+    let mut builder = ignore::WalkBuilder::new(&root);
+    builder.hidden(false).git_ignore(true);
+    if let Some(include) = args.get("include").and_then(Value::as_str) {
+        let mut ov = ignore::overrides::OverrideBuilder::new(&root);
+        ov.add(include)
+            .map_err(|e| Error::Config(format!("grep include: {e}")))?;
+        builder.overrides(ov.build().map_err(|e| Error::Config(e.to_string()))?);
+    }
+    let walker = builder.build();
     let mut hits = Vec::new();
-    let walker = ignore::WalkBuilder::new(&ctx.workspace)
-        .hidden(false)
-        .git_ignore(true)
-        .build();
     for dent in walker.flatten() {
         let path = dent.path();
         if !path.is_file() {
@@ -122,7 +175,16 @@ pub fn grep(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
             break;
         }
     }
-    Ok(ToolOutput::ok(hits.join("\n")))
+    // An empty string reads as a tool failure to some models; say it plainly,
+    // and say when the list was cut short.
+    if hits.is_empty() {
+        return Ok(ToolOutput::ok("no matches"));
+    }
+    let mut out = hits.join("\n");
+    if hits.len() >= 200 {
+        out.push_str("\n… stopped at 200 matches; narrow with path or include");
+    }
+    Ok(ToolOutput::ok(out))
 }
 
 pub fn glob_files(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {

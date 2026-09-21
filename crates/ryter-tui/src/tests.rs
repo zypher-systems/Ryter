@@ -193,13 +193,15 @@ fn snapshot_palette_open() {
 
 #[test]
 fn snapshot_every_panel() {
-    let panels: [(&str, PanelId); 17] = [
+    let panels: [(&str, PanelId); 18] = [
         ("providers", PanelId::Providers),
         ("models", PanelId::Models),
         ("crew", PanelId::Crew),
+        ("crew-builder", PanelId::CrewBuilder),
         ("agents", PanelId::Agents),
         ("sessions", PanelId::Sessions(SessionsMode::Browse)),
         ("spend", PanelId::Spend),
+        ("budget", PanelId::Budget),
         ("settings", PanelId::Settings),
         ("theme", PanelId::Theme),
         ("tools", PanelId::Tools),
@@ -207,7 +209,6 @@ fn snapshot_every_panel() {
         ("mcp", PanelId::Mcp),
         ("skills", PanelId::Skills),
         ("hooks", PanelId::Hooks),
-        ("phase", PanelId::Phase),
         ("context", PanelId::Context),
         ("help", PanelId::Help),
         ("doctor", PanelId::Doctor),
@@ -313,12 +314,240 @@ fn many_turns(n: usize) -> View {
 }
 
 #[test]
+fn crew_suggests_a_tiered_crew_and_applies_it_on_y() {
+    use crate::action::Action;
+    use crate::panel::{Notice, Outcome};
+    let mut view = with_panel(PanelId::Crew);
+    view.connection = "openrouter".into();
+    view.model = "deepseek/deepseek-v4.1-flash".into();
+    let key = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+    let mut crew = view.panels.stack.pop().unwrap();
+    assert!(matches!(
+        crew.key(key('s'), &mut view),
+        Outcome::Act(Action::ListCrewModels { .. })
+    ));
+    let row = |id: &str, i: f64, o: f64| ryter_core::ModelInfo {
+        id: id.into(),
+        context_length: Some(400_000),
+        input_per_million: Some(i),
+        output_per_million: Some(o),
+        connection: Some("openrouter".into()),
+        created: None,
+        tools: Some(true),
+    };
+    crew.on_notice(
+        &Notice::Models(vec![
+            row("deepseek/deepseek-v4.1-flash", 0.15, 0.6),
+            row("openai/gpt-5.5", 5.0, 30.0),
+        ]),
+        &mut view,
+    );
+    view.panels.stack.push(crew);
+    let frame = render_to_string(&view, 120, 40);
+    assert!(frame.contains("schooner — balanced"), "{frame}");
+    assert!(frame.contains("gpt-5.5"), "{frame}");
+    let mut crew = view.panels.stack.pop().unwrap();
+    match crew.key(key('y'), &mut view) {
+        Outcome::Act(Action::ApplyCrewTiering(rows)) => {
+            assert_eq!(rows["auditor"].model.as_deref(), Some("openai/gpt-5.5"));
+            assert_eq!(
+                rows["builder"].model.as_deref(),
+                Some("deepseek/deepseek-v4.1-flash")
+            );
+        }
+        _ => panic!("y must apply the suggestion"),
+    }
+}
+
+/// The ready-made crews are rows in `/crew`; the galleon puts the strong
+/// model in the builder's seat.
+#[test]
+fn crew_offers_three_ready_made_crews() {
+    use crate::action::Action;
+    use crate::panel::{Notice, Outcome};
+    let mut view = with_panel(PanelId::Crew);
+    view.connection = "openrouter".into();
+    view.model = "deepseek/deepseek-v4.1-flash".into();
+    let frame = render_to_string(&view, 120, 40);
+    for name in ["skiff", "schooner", "galleon", "low cost", "high cost"] {
+        assert!(frame.contains(name), "{name} missing:\n{frame}");
+    }
+    let press = |c: KeyCode| KeyEvent::new(c, KeyModifiers::NONE);
+    let mut crew = view.panels.stack.pop().unwrap();
+    // Three roles, then skiff, schooner, galleon.
+    for _ in 0..5 {
+        crew.key(press(KeyCode::Down), &mut view);
+    }
+    assert!(matches!(
+        crew.key(press(KeyCode::Enter), &mut view),
+        Outcome::Act(Action::ListCrewModels { .. })
+    ));
+    let row = |id: &str, i: f64, o: f64| ryter_core::ModelInfo {
+        id: id.into(),
+        context_length: Some(400_000),
+        input_per_million: Some(i),
+        output_per_million: Some(o),
+        connection: Some("openrouter".into()),
+        created: None,
+        tools: Some(true),
+    };
+    crew.on_notice(
+        &Notice::Models(vec![
+            row("deepseek/deepseek-v4.1-flash", 0.15, 0.6),
+            row("openai/gpt-5.5", 5.0, 30.0),
+            row("anthropic/claude-opus-5", 5.0, 25.0),
+        ]),
+        &mut view,
+    );
+    match crew.key(press(KeyCode::Char('y')), &mut view) {
+        Outcome::Act(Action::ApplyCrewTiering(rows)) => {
+            assert_eq!(rows["builder"].model.as_deref(), Some("openai/gpt-5.5"));
+            assert_eq!(
+                rows["auditor"].model.as_deref(),
+                Some("anthropic/claude-opus-5")
+            );
+        }
+        _ => panic!("y must apply the galleon"),
+    }
+}
+
+/// The screen says who gets the next message: the hat in solo mode (its
+/// badge on the composer), the lead in crew mode. Never "orchestrator" or a
+/// phase.
+#[test]
+fn the_screen_shows_the_mode() {
+    for mode in [
+        ryter_core::Role::SoloBuild,
+        ryter_core::Role::SoloPlan,
+        ryter_core::Role::SoloReview,
+        ryter_core::Role::Orchestrator,
+    ] {
+        for base in [idle(), mid_stream(ActivityMode::Collapsed)] {
+            let mut view = base;
+            view.mode = mode;
+            for (w, h) in SIZES {
+                let frame = render_to_string(&view, w, h);
+                let badge = format!(" {} ", view.mode_label().to_ascii_uppercase());
+                assert!(frame.contains(&badge), "{w}x{h} no {badge:?}:\n{frame}");
+                if mode == ryter_core::Role::Orchestrator {
+                    assert!(frame.contains("crew · lead"), "{w}x{h}:\n{frame}");
+                }
+                for gone in ["orchestrator", "handoff", "phase"] {
+                    assert!(!frame.contains(gone), "{w}x{h} shows {gone:?}:\n{frame}");
+                }
+            }
+        }
+    }
+}
+
+/// Solo mode has no crew, so the crew's cards only appear in crew mode.
+#[test]
+fn crew_cards_only_in_crew_mode() {
+    let mut view = mid_stream(ActivityMode::Collapsed);
+    view.crew.push(crate::view::CrewRow {
+        id: "01".into(),
+        role: "builder".into(),
+        label: "add a flag".into(),
+        spend: None,
+        status: "working".into(),
+        started_ms: 0,
+    });
+    let frame = render_to_string(&view, 160, 50);
+    assert!(
+        !frame.contains("╭─ crew"),
+        "solo mode shows the crew card:\n{frame}"
+    );
+    view.mode = ryter_core::Role::Orchestrator;
+    let frame = render_to_string(&view, 160, 50);
+    assert!(
+        frame.contains("╭─ crew"),
+        "crew mode hides the crew card:\n{frame}"
+    );
+}
+
+#[test]
+fn hint_bar_never_drops_cancel_or_quit() {
+    // At 80 columns the streaming bar used to truncate its tail, losing `^c
+    // quit` exactly when a turn was running (G-05).
+    let view = mid_stream(ActivityMode::Collapsed);
+    for width in [80u16, 60, 48, 40, 32] {
+        let frame = render_to_string(&view, width, 24);
+        let hint = frame.lines().last().unwrap_or_default().to_string();
+        assert!(hint.contains("^c"), "width {width} lost quit: {hint:?}");
+        assert!(hint.contains("esc"), "width {width} lost cancel: {hint:?}");
+        assert!(
+            hint.chars().count() <= usize::from(width),
+            "width {width} overflowed: {hint:?}"
+        );
+    }
+}
+
+#[test]
+fn empty_cards_are_absent_not_blank() {
+    // Principle 1: the conversation gets the space. `no tasks yet` and
+    // `no specialists running` used to hold a column open to say nothing (G-03).
+    let view = idle();
+    for (w, h) in SIZES {
+        let frame = render_to_string(&view, w, h);
+        assert!(!frame.contains("no tasks yet"), "{w}x{h}: empty tasks card");
+        assert!(
+            !frame.contains("no specialists running"),
+            "{w}x{h}: empty crew card"
+        );
+    }
+}
+
+/// The raw session id is operator chrome; `/sessions` is where it belongs (G-07).
+#[test]
+fn session_card_leads_with_title_and_crew_state() {
+    let view = idle();
+    let frame = render_to_string(&view, 120, 40);
+    let card_line = frame
+        .lines()
+        .find(|l| l.contains("untitled"))
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        card_line.contains("build"),
+        "the mode shares the row: {card_line:?}"
+    );
+    assert!(
+        !frame.contains("0193abcd"),
+        "the uuid should not lead the column"
+    );
+}
+
+/// An open panel owns the body: no sidebar card survives underneath it to be
+/// sliced into fragments by its border (G-01, G-02, G-06).
+#[test]
+fn an_open_panel_leaves_no_card_fragments() {
+    for id in [PanelId::Help, PanelId::Settings, PanelId::Crew] {
+        let view = with_panel(id);
+        for (w, h) in SIZES {
+            let frame = render_to_string(&view, w, h);
+            for needle in [
+                "╭─ session",
+                "╭─ model",
+                "╭─ spend",
+                "auditor ✓",
+                "price unknown",
+            ] {
+                assert!(
+                    !frame.contains(needle),
+                    "{id:?} at {w}x{h} still shows {needle:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn composer_present_at_every_message_count() {
     for n in [0usize, 1, 5, 40, 200] {
         let v = many_turns(n);
         let s = render_to_string(&v, 100, 30);
         assert!(
-            s.contains("ask the orchestrator") || s.contains("you"),
+            s.contains("what should change") || s.contains("you"),
             "n={n}\n{s}"
         );
         assert!(s.contains('›'), "prompt glyph missing at n={n}");

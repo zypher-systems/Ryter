@@ -1,27 +1,23 @@
- ryter  ·  orchestrator                                                                 ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build                                                grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                                                 ╭─ session ──────────────────╮
-   welcome · /help for keys                                                               │ untitled                   │
-                                                                                          │ 0193abcd             build │
-                                                                                          │ auditor ✓  tools ask       │
-                                                                                          ╰────────────────────────────╯
-                                                                                          ╭─ model ────────────────────╮
-                                                                                          │ spacexai ●        grok-4.6 │
-                                                                                          │ ctx █░░░░░░░░░░░░░░░   5%  │
-                            ╭─ context ─────────────────────────────────────────────── 5% ─╮    12.4k / 256k tokens    │
-                            │ used █░░░░░░░░░░░░░░░░░░░░░  5%  12.4k / 256k tokens         │ rice unknown              │
-                            │ asking the agent…                                            │ ──────────────────────────╯
-                            │                                                              │ spend ────────────────────╮
-                            │ no breakdown yet · r to refresh                              │ ession              $?.?? │
-                            │                                                              │ ud ░░░░░░░░░░░░░░░░   0%  │
-                            │ c compact · summarizes older turns                           │    $0.00 of $5.00         │
-                            │                                                              │ ──────────────────────────╯
-                            │                                                              │ tasks ────────────────────╮
-                            ╰─ c compact · r refresh · esc ────────────────────────────────╯ o tasks yet               │
-                                                                                             ──────────────────────────╯
-                                                                                          ╭─ crew ─────────────── 0/4 ─╮
-                                                                                          │ no specialists running     │
-                                                                                          ╰────────────────────────────╯
+ · system
+   welcome · /help for keys
+
+
+
+
+
+
+                            ╭─ context ─────────────────────────────────────────────── 5% ─╮
+                            │ used █░░░░░░░░░░░░░░░░░░░░░  5%  12.4k / 256k tokens         │
+                            │ asking the agent…                                            │
+                            │                                                              │
+                            │ no breakdown yet · r to refresh                              │
+                            │                                                              │
+                            │ c compact · summarizes older turns                           │
+                            │                                                              │
+                            │                                                              │
+                            ╰─ c compact · r refresh · esc ────────────────────────────────╯
 
 
 
@@ -34,7 +30,11 @@
 
 
 
-╭─ dusty ────────────────────────────────────────────────────────────────────────────────────────────────────── build ─╮
-│› ask the orchestrator, or / for commands                                                                             │
+
+
+
+
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back

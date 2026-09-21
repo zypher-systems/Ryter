@@ -4,16 +4,17 @@
 //! framework draws the shared chrome, dims what is behind, and drops a shadow.
 
 pub mod agents;
+pub mod budget;
 pub mod chrome;
 pub mod context;
 pub mod crew;
+pub mod crew_builder;
 pub mod doctor;
 pub mod help;
 pub mod hooks;
 pub mod mcp;
 pub mod modal;
 pub mod models;
-pub mod phase;
 pub mod providers;
 pub mod sessions;
 pub mod settings;
@@ -87,6 +88,8 @@ pub enum Notice {
     Exported(String),
     /// Models arrived for a specific picker (`/models`, `/crew`).
     Models(Vec<ryter_core::ModelInfo>),
+    /// Results of [`Action::ProbeModels`](crate::action::Action::ProbeModels).
+    Probed(Vec<(String, String, Result<(), String>)>),
     /// Crew presets on disk changed.
     PresetsChanged(Vec<String>),
     /// Sessions list refreshed (after rename/delete).
@@ -296,9 +299,11 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
         PanelId::Providers => Box::new(providers::Providers::new(view)),
         PanelId::Models => Box::new(models::Models::new(view, None)),
         PanelId::Crew => Box::new(crew::Crew::new(env)),
+        PanelId::CrewBuilder => Box::new(crew_builder::CrewBuilder::new(view, false)),
         PanelId::Agents => Box::new(agents::Agents::default()),
         PanelId::Sessions(mode) => Box::new(sessions::Sessions::new(view, env, mode)),
         PanelId::Spend => Box::new(spend::Spend::default()),
+        PanelId::Budget => Box::new(budget::Budget::new(view)),
         PanelId::Settings => Box::new(settings::Settings::new(view)),
         PanelId::Theme => Box::new(theme::ThemePicker::new(view)),
         PanelId::Tools => Box::new(toggles::Toggles::tools(view)),
@@ -306,7 +311,6 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
         PanelId::Mcp => Box::new(mcp::Mcp::default()),
         PanelId::Skills => Box::new(skills::Skills::default()),
         PanelId::Hooks => Box::new(hooks::Hooks::default()),
-        PanelId::Phase => Box::new(phase::PhasePicker::new(view)),
         PanelId::Context => Box::new(context::Context::default()),
         PanelId::Help => Box::new(help::Help::default()),
         PanelId::Doctor => Box::new(doctor::Doctor::new(env)),
@@ -322,11 +326,11 @@ pub fn rect(full: Rect, body: Rect, pref_w: u16, content_rows: u16, modal: bool)
         return body;
     }
     let w = pref_w.clamp(40, full.width.saturating_sub(8));
-    let max_h = full
-        .height
-        .saturating_sub(10)
-        .min(body.height.saturating_sub(1))
-        .max(8);
+    // A panel may use the body it now owns. Reserving ten rows of the terminal
+    // meant `/help` got 20 rows for 40 rows of keybindings at 100x30 and
+    // clipped the first thing a new user reads; two rows of breathing room
+    // above and below is enough to still read as floating.
+    let max_h = body.height.saturating_sub(2).max(8);
     let h = (content_rows + 2).clamp(8, max_h);
     let x = body.x + body.width.saturating_sub(w) / 2;
     let y = body.y + body.height.saturating_sub(h) / if modal { 4 } else { 3 };

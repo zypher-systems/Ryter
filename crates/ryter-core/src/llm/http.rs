@@ -15,6 +15,59 @@ use crate::llm::{
     CompletionRequest, DeltaStream, ModelInfo, Provider, StreamDelta, ToolSpec, backend_for,
 };
 
+/// How long to wait for the connection itself.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Idle bound for a local model server, which may load weights first.
+const LOCAL_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
+/// How long a stream may go silent before it is considered dead.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+/// Attempts after the first for a retryable failure.
+const MAX_RETRIES: u32 = 3;
+/// First backoff step; doubles per attempt.
+const BACKOFF_BASE: Duration = Duration::from_millis(500);
+/// Ceiling on one backoff wait.
+const BACKOFF_CAP: Duration = Duration::from_secs(20);
+
+/// Statuses worth trying again: rate limits, overload, and gateway noise.
+/// A 400 or 401 will not change on a second attempt.
+fn is_retryable_status(code: u16) -> bool {
+    matches!(code, 408 | 425 | 429 | 500 | 502 | 503 | 504 | 529)
+}
+
+/// Transport failures that are worth another attempt.
+fn is_retryable_error(e: &reqwest::Error) -> bool {
+    e.is_timeout() || e.is_connect() || e.is_request()
+}
+
+/// `Retry-After` in seconds, when the provider sent one.
+fn retry_after(headers: &HeaderMap) -> Option<Duration> {
+    let v = headers.get("retry-after")?.to_str().ok()?;
+    v.trim()
+        .parse::<u64>()
+        .ok()
+        .map(|s| Duration::from_secs(s.min(BACKOFF_CAP.as_secs())))
+}
+
+/// Exponential backoff with a little jitter, so parallel specialists that hit
+/// the same rate limit do not retry in lockstep.
+fn backoff(attempt: u32) -> Duration {
+    let step = BACKOFF_BASE
+        .saturating_mul(1u32 << attempt.min(5))
+        .min(BACKOFF_CAP);
+    let jitter = Duration::from_millis(u64::from(jitter_ms()));
+    step.saturating_add(jitter)
+}
+
+/// Cheap jitter source; avoids taking a dependency on `rand` for 250ms.
+fn jitter_ms() -> u16 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    (nanos % 250) as u16
+}
+
 /// reqwest-backed provider for SpaceXAI, OpenRouter, and generic endpoints.
 pub struct HttpProvider {
     client: reqwest::Client,
@@ -29,12 +82,29 @@ pub struct HttpProvider {
 impl HttpProvider {
     /// New client. Does not touch the network until `stream` / `list_models`.
     pub fn new(conn: &ConnectionConfig, api_key: String) -> Self {
+        let mut base_url = conn.base_url.trim_end_matches('/').to_string();
+        // Connections saved from the old Anthropic template lack `/v1`, and
+        // `{base}/messages` then 404s.
+        if base_url == "https://api.anthropic.com" {
+            base_url.push_str("/v1");
+        }
+        // A local server may spend minutes loading a model before its first
+        // token; the idle bound is for dead sockets, not cold starts.
+        let idle = if conn.is_local() {
+            LOCAL_IDLE_TIMEOUT
+        } else {
+            IDLE_TIMEOUT
+        };
         Self {
             client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(600))
+                // A streamed turn has no useful total deadline: a long agentic
+                // turn is legitimate, a stalled socket is not. Bound the gap
+                // between chunks instead of the whole request.
+                .connect_timeout(CONNECT_TIMEOUT)
+                .read_timeout(idle)
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
-            base_url: conn.base_url.trim_end_matches('/').to_string(),
+            base_url,
             api_key,
             backend: backend_for(conn),
             kind: conn.kind.clone(),
@@ -53,6 +123,9 @@ impl HttpProvider {
                 h.insert("x-api-key", key);
                 h.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
             }
+            // A keyless local server gets no Authorization header rather than
+            // an empty `Bearer `, which some servers reject.
+            _ if self.api_key.is_empty() => {}
             _ => {
                 let auth = format!("Bearer {}", self.api_key);
                 h.insert(
@@ -97,22 +170,58 @@ impl HttpProvider {
 #[async_trait]
 impl Provider for HttpProvider {
     async fn stream(&self, req: CompletionRequest) -> Result<DeltaStream> {
-        let resp = self
-            .client
-            .post(self.endpoint())
-            .headers(self.headers()?)
-            .json(&self.body(&req))
-            .send()
-            .await
-            .map_err(|e| Error::Provider(e.to_string()))?;
-        let status = resp.status();
-        if !status.is_success() {
+        let headers = self.headers()?;
+        let body = self.body(&req);
+        let mut last = String::new();
+        // Only the opening request is retried. Once deltas have been handed to
+        // the caller, a retry would duplicate text they already have.
+        for attempt in 0..=MAX_RETRIES {
+            if attempt > 0 {
+                tokio::time::sleep(backoff(attempt - 1)).await;
+            }
+            let sent = self
+                .client
+                .post(self.endpoint())
+                .headers(headers.clone())
+                .json(&body)
+                .send()
+                .await;
+            let resp = match sent {
+                Ok(r) => r,
+                // A local server that refuses the connection is not running, and
+                // will not be in three seconds: fail at once, and say so.
+                Err(e) if e.is_connect() && self.kind == "local" => {
+                    return Err(Error::Provider(format!(
+                        "could not reach the local model server at {} — is it running? ({e})",
+                        self.base_url
+                    )));
+                }
+                Err(e) if is_retryable_error(&e) && attempt < MAX_RETRIES => {
+                    last = e.to_string();
+                    continue;
+                }
+                Err(e) => return Err(Error::Provider(e.to_string())),
+            };
+            let status = resp.status();
+            if status.is_success() {
+                return Ok(Box::pin(sse_delta_stream(
+                    self.backend,
+                    resp.bytes_stream(),
+                )));
+            }
+            let wait = retry_after(resp.headers());
             let text = resp.text().await.unwrap_or_default();
-            return Err(Error::Provider(format!("http {status}: {text}")));
+            last = format!("http {status}: {text}");
+            if !is_retryable_status(status.as_u16()) || attempt == MAX_RETRIES {
+                return Err(Error::Provider(last));
+            }
+            if let Some(w) = wait {
+                tokio::time::sleep(w).await;
+            }
         }
-        let backend = self.backend;
-        let byte_stream = resp.bytes_stream();
-        Ok(Box::pin(sse_delta_stream(backend, byte_stream)))
+        Err(Error::Provider(format!(
+            "{last} (after {MAX_RETRIES} retries)"
+        )))
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
@@ -243,6 +352,24 @@ fn chat_body(req: &CompletionRequest) -> Value {
         }
         messages.push(obj);
     }
+    if wants_cache_marks(&req.model) {
+        // System prompt, then the newest user/assistant message. Tool results
+        // stay plain strings: not every route accepts blocks in that role.
+        if let Some(first) = messages.first_mut() {
+            if first["role"] == "system" {
+                mark_last_for_cache(std::slice::from_mut(first));
+            }
+        }
+        if let Some(last) = messages
+            .iter_mut()
+            .rev()
+            .find(|m| m["role"] == "user" || m["role"] == "assistant")
+        {
+            if last["content"].as_str().is_some_and(|c| !c.is_empty()) {
+                mark_last_for_cache(std::slice::from_mut(last));
+            }
+        }
+    }
     let mut body = json!({
         "model": req.model,
         "messages": messages,
@@ -258,10 +385,35 @@ fn chat_body(req: &CompletionRequest) -> Value {
     body
 }
 
+/// Responses API body.
+///
+/// Tool calls and their results are their own `input` items (`function_call` /
+/// `function_call_output`), not fields on a message, and there is no `tool`
+/// role. Flattening them into `{role, content}` silently drops the agentic
+/// loop, so every call is emitted as an item keyed by `call_id`.
 fn responses_body(req: &CompletionRequest) -> Value {
     let mut input = Vec::new();
     for m in &req.messages {
-        input.push(json!({"role": m.role, "content": m.content}));
+        if m.role == "tool" {
+            input.push(json!({
+                "type": "function_call_output",
+                "call_id": m.tool_call_id.clone().unwrap_or_default(),
+                "output": m.content,
+            }));
+            continue;
+        }
+        // An assistant turn that only called tools carries no text.
+        if !m.content.is_empty() || m.role != "assistant" {
+            input.push(json!({"role": m.role, "content": m.content}));
+        }
+        for c in m.tool_calls.iter().flatten() {
+            input.push(json!({
+                "type": "function_call",
+                "call_id": c.id,
+                "name": c.name,
+                "arguments": c.arguments,
+            }));
+        }
     }
     let mut body = json!({
         "model": req.model,
@@ -275,32 +427,151 @@ fn responses_body(req: &CompletionRequest) -> Value {
         body["max_output_tokens"] = json!(max);
     }
     if !req.tools.is_empty() {
-        body["tools"] = json!(tools_openai(&req.tools));
+        body["tools"] = json!(tools_responses(&req.tools));
     }
     body
 }
 
+/// Anthropic Messages body.
+///
+/// Tool use and tool results are content blocks, not message fields: the call
+/// is a `tool_use` block on the assistant turn, the result is a `tool_result`
+/// block on a *user* turn. There is no `tool` role, `system` is top-level, and
+/// an empty content list is rejected.
 fn messages_body(req: &CompletionRequest) -> Value {
-    let mut messages = Vec::new();
+    let mut messages: Vec<Value> = Vec::new();
+    // Messages has no system role. Specialists carry their role prompt as a
+    // `system` message, so dropping those silently ran every specialist on
+    // this backend without its prompt. Fold them into the top-level field.
+    let mut system: Vec<&str> = req.system.iter().map(String::as_str).collect();
     for m in &req.messages {
-        if m.role == "system" {
-            continue;
+        match m.role.as_str() {
+            "system" => {
+                if !m.content.trim().is_empty() {
+                    system.push(&m.content);
+                }
+            }
+            "tool" => {
+                let block = json!({
+                    "type": "tool_result",
+                    "tool_use_id": m.tool_call_id.clone().unwrap_or_default(),
+                    "content": m.content,
+                });
+                // Results for one assistant turn share a single user turn.
+                match messages.last_mut() {
+                    Some(prev) if is_tool_result_turn(prev) => {
+                        if let Some(arr) = prev["content"].as_array_mut() {
+                            arr.push(block);
+                        }
+                    }
+                    _ => messages.push(json!({"role": "user", "content": [block]})),
+                }
+            }
+            "assistant" => {
+                let mut blocks = Vec::new();
+                if !m.content.is_empty() {
+                    blocks.push(json!({"type": "text", "text": m.content}));
+                }
+                for c in m.tool_calls.iter().flatten() {
+                    blocks.push(json!({
+                        "type": "tool_use",
+                        "id": c.id,
+                        "name": c.name,
+                        "input": serde_json::from_str::<Value>(&c.arguments)
+                            .unwrap_or_else(|_| json!({})),
+                    }));
+                }
+                if !blocks.is_empty() {
+                    messages.push(json!({"role": "assistant", "content": blocks}));
+                }
+            }
+            _ => messages.push(json!({"role": m.role, "content": m.content})),
         }
-        messages.push(json!({"role": m.role, "content": m.content}));
     }
+    mark_last_for_cache(&mut messages);
     let mut body = json!({
         "model": req.model,
         "messages": messages,
         "stream": true,
         "max_tokens": req.max_tokens.unwrap_or(8192),
     });
-    if let Some(sys) = &req.system {
-        body["system"] = json!(sys);
+    // The system prompt and tool schemas are byte-identical on every turn of an
+    // agent loop, so without a cache breakpoint they are re-billed each time.
+    // `cached_tokens` was already parsed and shown; nothing ever asked for it.
+    if !system.is_empty() {
+        body["system"] = json!([{
+            "type": "text",
+            "text": system.join("\n\n"),
+            "cache_control": { "type": "ephemeral" },
+        }]);
     }
     if !req.tools.is_empty() {
-        body["tools"] = json!(tools_anthropic(&req.tools));
+        let mut tools = tools_anthropic(&req.tools);
+        // One breakpoint covers everything before it, so it goes on the last
+        // tool: system + all tools become the cached prefix.
+        if let Some(last) = tools.as_array_mut().and_then(|a| a.last_mut()) {
+            last["cache_control"] = json!({ "type": "ephemeral" });
+        }
+        body["tools"] = tools;
     }
     body
+}
+
+/// Put a cache breakpoint on the newest message.
+///
+/// An agent loop resends the whole conversation every round. With the
+/// breakpoint rolling forward, everything up to the previous round is read
+/// from cache at a fraction of the input price; without it only the system
+/// prompt and tools were cached and the conversation was billed in full,
+/// every round. Uses one of the four breakpoints Anthropic allows (system,
+/// tools, and this).
+fn mark_last_for_cache(messages: &mut [Value]) {
+    let Some(last) = messages.last_mut() else {
+        return;
+    };
+    let content = &mut last["content"];
+    if let Some(text) = content.as_str().map(str::to_string) {
+        *content = json!([{ "type": "text", "text": text }]);
+    }
+    if let Some(block) = content.as_array_mut().and_then(|a| a.last_mut()) {
+        block["cache_control"] = json!({ "type": "ephemeral" });
+    }
+}
+
+/// Anthropic models reached through an OpenAI-compatible route (OpenRouter)
+/// cache only when a block is marked, the same as on the Messages API.
+fn wants_cache_marks(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.starts_with("anthropic/") || m.contains("claude")
+}
+
+/// True when `msg` is a user turn built only of `tool_result` blocks, so a
+/// sibling result from the same assistant turn can join it.
+fn is_tool_result_turn(msg: &Value) -> bool {
+    msg.get("role").and_then(Value::as_str) == Some("user")
+        && msg
+            .get("content")
+            .and_then(Value::as_array)
+            .is_some_and(|a| {
+                !a.is_empty()
+                    && a.iter()
+                        .all(|b| b.get("type").and_then(Value::as_str) == Some("tool_result"))
+            })
+}
+
+/// Responses advertises tools flat, not nested under `function`.
+fn tools_responses(tools: &[ToolSpec]) -> Value {
+    tools
+        .iter()
+        .map(|t| {
+            json!({
+                "type": "function",
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.parameters,
+            })
+        })
+        .collect()
 }
 
 fn tools_openai(tools: &[ToolSpec]) -> Value {
@@ -358,12 +629,19 @@ fn parse_models_json(text: &str) -> Result<Vec<ModelInfo>> {
                 .and_then(Value::as_str)
                 .and_then(|s| s.parse::<f64>().ok())
                 .map(|per_token| per_token * 1_000_000.0);
+            let created = m.get("created").and_then(Value::as_u64);
+            let tools = m
+                .get("supported_parameters")
+                .and_then(Value::as_array)
+                .map(|p| p.iter().any(|x| x.as_str() == Some("tools")));
             Some(ModelInfo {
                 id: id.to_string(),
                 context_length,
                 input_per_million,
                 output_per_million,
                 connection: None,
+                created,
+                tools,
             })
         })
         .collect())
@@ -372,6 +650,382 @@ fn parse_models_json(text: &str) -> Result<Vec<ModelInfo>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::llm::{AssistantToolCall, Message};
+
+    fn msg(role: &str, content: &str) -> Message {
+        Message {
+            role: role.into(),
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    fn call(id: &str, name: &str, arguments: &str) -> AssistantToolCall {
+        AssistantToolCall {
+            id: id.into(),
+            name: name.into(),
+            arguments: arguments.into(),
+        }
+    }
+
+    /// user → assistant(tool_call) → tool result → assistant(text).
+    fn tool_loop() -> CompletionRequest {
+        CompletionRequest {
+            model: "m".into(),
+            system: Some("sys".into()),
+            messages: vec![
+                msg("user", "read it"),
+                Message {
+                    tool_calls: Some(vec![call("call_1", "read_file", r#"{"path":"a.rs"}"#)]),
+                    ..msg("assistant", "")
+                },
+                Message {
+                    tool_call_id: Some("call_1".into()),
+                    ..msg("tool", "fn main() {}")
+                },
+                msg("assistant", "done"),
+            ],
+            tools: vec![ToolSpec {
+                name: "read_file".into(),
+                description: "read".into(),
+                parameters: json!({"type": "object"}),
+            }],
+            max_tokens: Some(64),
+        }
+    }
+
+    /// Every backend must round-trip the call id, name, arguments, and result.
+    /// Dropping any of them breaks the agent loop on the second iteration.
+    #[test]
+    fn every_backend_round_trips_a_tool_loop() {
+        let req = tool_loop();
+        for (label, body) in [
+            ("chat_completions", chat_body(&req)),
+            ("responses", responses_body(&req)),
+            ("messages", messages_body(&req)),
+        ] {
+            let wire = serde_json::to_string(&body).expect("serialize");
+            // Messages parses arguments into an object, so match on the
+            // argument's content rather than the raw JSON string.
+            for needle in ["call_1", "read_file", "path", "a.rs", "fn main() {}"] {
+                assert!(wire.contains(needle), "{label} lost {needle}: {wire}");
+            }
+        }
+    }
+
+    #[test]
+    fn responses_emits_call_items_and_flat_tools() {
+        let body = responses_body(&tool_loop());
+        let input = body["input"].as_array().expect("input array");
+        let kinds: Vec<&str> = input
+            .iter()
+            .map(|i| {
+                i.get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_else(|| i["role"].as_str().unwrap_or("?"))
+            })
+            .collect();
+        // The text-free assistant turn collapses into its `function_call`.
+        assert_eq!(
+            kinds,
+            ["user", "function_call", "function_call_output", "assistant"]
+        );
+        assert_eq!(input[1]["call_id"], "call_1");
+        assert_eq!(input[2]["call_id"], "call_1");
+        assert_eq!(input[2]["output"], "fn main() {}");
+        // Responses has no `tool` role and no nested `function` object.
+        assert!(!kinds.contains(&"tool"));
+        assert_eq!(body["tools"][0]["name"], "read_file");
+        assert!(body["tools"][0].get("function").is_none());
+    }
+
+    #[test]
+    fn messages_emits_tool_use_and_tool_result_blocks() {
+        let body = messages_body(&tool_loop());
+        let ms = body["messages"].as_array().expect("messages array");
+        let roles: Vec<&str> = ms.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        // The tool result becomes a user turn; there is no `tool` role.
+        assert_eq!(roles, ["user", "assistant", "user", "assistant"]);
+        assert_eq!(ms[1]["content"][0]["type"], "tool_use");
+        assert_eq!(ms[1]["content"][0]["id"], "call_1");
+        // `input` is an object, not the raw argument string.
+        assert_eq!(ms[1]["content"][0]["input"]["path"], "a.rs");
+        assert_eq!(ms[2]["content"][0]["type"], "tool_result");
+        assert_eq!(ms[2]["content"][0]["tool_use_id"], "call_1");
+        // System is a cacheable text block now, not a bare string.
+        assert_eq!(body["system"][0]["text"], "sys");
+        assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
+        // One breakpoint on the last tool covers system + every tool.
+        assert_eq!(
+            body["tools"].as_array().unwrap().last().unwrap()["cache_control"]["type"],
+            "ephemeral"
+        );
+    }
+
+    /// Parallel calls answer into one user turn (Anthropic rejects a bare
+    /// `tool_result` turn per result).
+    #[test]
+    fn messages_merges_parallel_tool_results() {
+        let req = CompletionRequest {
+            model: "m".into(),
+            system: None,
+            messages: vec![
+                msg("user", "both"),
+                Message {
+                    tool_calls: Some(vec![call("c1", "grep", "{}"), call("c2", "glob", "{}")]),
+                    ..msg("assistant", "")
+                },
+                Message {
+                    tool_call_id: Some("c1".into()),
+                    ..msg("tool", "hit one")
+                },
+                Message {
+                    tool_call_id: Some("c2".into()),
+                    ..msg("tool", "hit two")
+                },
+            ],
+            tools: vec![],
+            max_tokens: None,
+        };
+        let body = messages_body(&req);
+        let ms = body["messages"].as_array().unwrap();
+        assert_eq!(ms.len(), 3, "results should share one user turn: {ms:?}");
+        assert_eq!(ms[1]["content"].as_array().unwrap().len(), 2);
+        assert_eq!(ms[2]["content"].as_array().unwrap().len(), 2);
+        assert_eq!(ms[2]["content"][1]["tool_use_id"], "c2");
+    }
+
+    /// An empty content list is rejected by the API, and `system` is a
+    /// top-level field rather than a message.
+    #[test]
+    fn messages_drops_empty_assistant_and_lifts_system_messages() {
+        let req = CompletionRequest {
+            model: "m".into(),
+            system: None,
+            messages: vec![
+                msg("system", "You are a Ryter builder."),
+                msg("user", "hi"),
+                msg("assistant", ""),
+            ],
+            tools: vec![],
+            max_tokens: None,
+        };
+        let body = messages_body(&req);
+        let ms = body["messages"].as_array().unwrap();
+        assert_eq!(ms.len(), 1);
+        assert_eq!(ms[0]["role"], "user");
+        // The specialist's role prompt must survive, as the system field.
+        assert_eq!(body["system"][0]["text"], "You are a Ryter builder.");
+    }
+
+    /// Unparseable arguments must not abort the request.
+    #[test]
+    fn messages_tolerates_truncated_tool_arguments() {
+        let req = CompletionRequest {
+            model: "m".into(),
+            system: None,
+            messages: vec![Message {
+                tool_calls: Some(vec![call("c1", "grep", "{\"pattern\": ")]),
+                ..msg("assistant", "")
+            }],
+            tools: vec![],
+            max_tokens: None,
+        };
+        let body = messages_body(&req);
+        assert_eq!(body["messages"][0]["content"][0]["input"], json!({}));
+    }
+
+    /// A rate limit or an overloaded provider is the most common failure in a
+    /// BYOK harness; a client error is not worth a second attempt.
+    #[test]
+    fn retryable_statuses_are_the_transient_ones() {
+        for code in [408, 425, 429, 500, 502, 503, 504, 529] {
+            assert!(is_retryable_status(code), "{code} should retry");
+        }
+        for code in [200, 400, 401, 403, 404, 413, 422] {
+            assert!(!is_retryable_status(code), "{code} should not retry");
+        }
+    }
+
+    #[test]
+    fn backoff_grows_and_is_capped() {
+        let waits: Vec<Duration> = (0..8).map(backoff).collect();
+        assert!(waits[0] >= BACKOFF_BASE);
+        assert!(waits[3] > waits[0], "should grow: {waits:?}");
+        for w in &waits {
+            assert!(
+                *w <= BACKOFF_CAP + Duration::from_millis(250),
+                "capped, got {w:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn retry_after_header_is_honored_and_clamped() {
+        let mut h = HeaderMap::new();
+        h.insert("retry-after", HeaderValue::from_static("3"));
+        assert_eq!(retry_after(&h), Some(Duration::from_secs(3)));
+        // A hostile or absurd value must not park the turn for an hour.
+        let mut h = HeaderMap::new();
+        h.insert("retry-after", HeaderValue::from_static("99999"));
+        assert_eq!(retry_after(&h), Some(BACKOFF_CAP));
+        // A date form is not parsed; fall back to our own backoff.
+        let mut h = HeaderMap::new();
+        h.insert(
+            "retry-after",
+            HeaderValue::from_static("Wed, 21 Oct 2026 07:28:00 GMT"),
+        );
+        assert_eq!(retry_after(&h), None);
+        assert_eq!(retry_after(&HeaderMap::new()), None);
+    }
+
+    /// The conversation, not just the system prompt, must be cacheable: an
+    /// agent loop resends all of it every round.
+    #[test]
+    fn messages_rolls_a_cache_breakpoint_onto_the_newest_turn() {
+        let body = messages_body(&tool_loop());
+        let ms = body["messages"].as_array().unwrap();
+        let last = ms.last().unwrap();
+        let blocks = last["content"].as_array().unwrap();
+        assert_eq!(blocks.last().unwrap()["cache_control"]["type"], "ephemeral");
+        // Only the newest turn: earlier turns stay unmarked (4-breakpoint cap).
+        let marked = ms
+            .iter()
+            .filter(|m| serde_json::to_string(m).unwrap().contains("cache_control"))
+            .count();
+        assert_eq!(marked, 1);
+    }
+
+    #[test]
+    fn claude_over_openrouter_is_marked_and_others_are_not() {
+        let mut req = tool_loop();
+        req.model = "anthropic/claude-sonnet-4.6".into();
+        let wire = serde_json::to_string(&chat_body(&req)).unwrap();
+        assert!(wire.contains("cache_control"), "{wire}");
+        req.model = "x-ai/grok-4.6".into();
+        let wire = serde_json::to_string(&chat_body(&req)).unwrap();
+        assert!(
+            !wire.contains("cache_control"),
+            "providers that cache automatically get plain content"
+        );
+    }
+
+    /// A one-shot OpenAI-compatible server on a real socket. Returns its base
+    /// URL and a handle yielding the raw request it received.
+    fn fake_server(sse: &'static str) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = vec![0u8; 65_536];
+            let mut req = String::new();
+            loop {
+                let n = sock.read(&mut buf).unwrap();
+                req.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if let Some(h) = req.find("\r\n\r\n") {
+                    let len = req[..h]
+                        .lines()
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap_or(0);
+                    if req.len() >= h + 4 + len {
+                        break;
+                    }
+                }
+                if n == 0 {
+                    break;
+                }
+            }
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{sse}",
+                sse.len()
+            );
+            sock.write_all(resp.as_bytes()).unwrap();
+            req
+        });
+        (format!("http://{addr}/v1"), handle)
+    }
+
+    /// The whole HTTP path — headers, body, SSE, tool-call reassembly — against
+    /// a local, keyless server. Every earlier provider test skipped HTTP.
+    #[tokio::test]
+    async fn a_local_server_round_trips_a_streamed_tool_call() {
+        use futures_util::StreamExt;
+        let sse = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":50,\"completion_tokens\":7}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let (base, server) = fake_server(sse);
+        let mut conn = crate::config::connection_template("ollama").unwrap();
+        conn.base_url = base;
+        let p = HttpProvider::new(&conn, String::new());
+        let mut stream = p.stream(tool_loop()).await.unwrap();
+        let mut calls = crate::llm::ToolCallAccumulator::default();
+        let mut usage = None;
+        while let Some(d) = stream.next().await {
+            match d.unwrap() {
+                StreamDelta::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                } => calls.push(&id, &name, &arguments),
+                StreamDelta::Usage(u) => usage = Some(u),
+                _ => {}
+            }
+        }
+        let calls = calls.finish();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(calls[0].arguments, r#"{"path":"a.rs"}"#);
+        assert_eq!(usage.unwrap().input_tokens, 50);
+        let req = server.join().unwrap();
+        assert!(req.starts_with("POST /v1/chat/completions"), "{req}");
+        assert!(
+            !req.to_ascii_lowercase().contains("authorization:"),
+            "a keyless local server gets no auth header: {req}"
+        );
+        assert!(req.contains("\"call_1\"") || req.contains("\"c1\"") || req.contains("read_file"));
+    }
+
+    #[tokio::test]
+    async fn a_stopped_local_server_says_so() {
+        // Bind then drop: the port is closed, so the connect is refused.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut conn = crate::config::connection_template("ollama").unwrap();
+        conn.base_url = format!("http://127.0.0.1:{port}/v1");
+        let p = HttpProvider::new(&conn, String::new());
+        let err = match p.stream(tool_loop()).await {
+            Ok(_) => panic!("a closed port must not stream"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("is it running?"), "{err}");
+    }
+
+    #[test]
+    fn anthropic_endpoints_live_under_v1() {
+        let conn = crate::config::connection_template("anthropic").unwrap();
+        let p = HttpProvider::new(&conn, "k".into());
+        assert_eq!(p.endpoint(), "https://api.anthropic.com/v1/messages");
+        // A connection saved from the old template is corrected.
+        let mut old = conn.clone();
+        old.base_url = "https://api.anthropic.com".into();
+        assert_eq!(
+            HttpProvider::new(&old, "k".into()).endpoint(),
+            "https://api.anthropic.com/v1/messages"
+        );
+    }
 
     #[test]
     fn parse_openrouter_models_list() {

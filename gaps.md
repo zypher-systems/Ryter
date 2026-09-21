@@ -1,124 +1,148 @@
 # TUI redesign — review gaps
 
-Status: **open**
+Status: **resolved** (all G-01..G-07 landed)
 Against: `0.2.0-patch` (`60adb20` Implement 0.2.0 TUI redesign)
+Fixed in: `8e317d1` (G-01/G-02/G-04/G-06), `aa51ad0` (G-03/G-05/G-07)
 Evidence: golden snapshots under `crates/ryter-tui/snapshots/`
-Not a new design contract. `design.md` still wins on intent. This file is what is still wrong on screen.
+Not a new design contract. `design.md` still wins on intent.
 
-The 0.2 direction is right: conversation in the center, composer always on screen, command palette, one panel per config surface, activity strip for thinking, info cards instead of a flat key/value dump. These gaps are why it is not done.
-
----
-
-## G-01 — Panels do not sit in a layer
-
-**Severity:** high
-**Where:** `panel/chrome.rs` (and every panel/modal snapshot)
-
-Popouts are a rectangle painted over the live body. The right-hand cards show through the panel edge.
-
-| Snapshot | Leak |
-| --- | --- |
-| `panel-help-100x30.txt` | Sidebar shreds into the key list: `k-4.6`, `ns`, `$?.??` |
-| `panel-settings-80x24.txt` | `┃ d`, `┃ 6`, `──╯` through the form |
-| `panel-crew-120x40.txt` | `ce unknown`, `end ────`, `sks`, `ew 0/4` |
-| `modal-permission-80x24.txt` | Double pipe `│╭─ session`; `ld` / `──╯` in the interrupt |
-
-`design.md` retired the no-box rule so a floating panel would have a **hard edge** and read as modal. Structural chrome that you can read through is decoration that failed.
-
-**Done when:** A panel or interrupt fully covers or dims everything it sits on. No sidebar title, gauge, or border fragment is visible inside the panel. Snapshots at 80×24 and 100×30 for help, settings, crew, and permission are clean.
+The 0.2 direction is right: conversation in the center, composer always on screen, command palette, one panel per config surface, activity strip for thinking, info cards instead of a flat key/value dump. These were the gaps.
 
 ---
 
-## G-02 — Help is the least readable panel
+## G-01 — Panels do not sit in a layer — **fixed**
 
-**Severity:** high
-**Where:** `snapshots/panel-help-100x30.txt`
+**Was:** high · `panel/chrome.rs`, every panel/modal snapshot
 
-Help is the screen that should teach the product. At 100×30 it clips `welcome`, overruns the info column, and mixes keybindings with leftover card text. A first-run user opening `/help` or `F1` gets the worst frame in the suite.
+**Corrected diagnosis.** Nothing leaked *through* the panel edge: `chrome::draw_frame`
+already renders `Clear`, and the `┃` inside `panel-help` was that panel's own
+scrollbar. What actually happened is that `info::draw` kept painting the sidebar
+underneath a centred float, so the panel covered the cards' left half and left
+their tails beside its border (`k-4.6`, `ns`, `ew 0/4`, `┃ build`). Not a leak —
+an uncovered region.
 
-**Done when:** Help is a self-contained panel at 80×24 and 100×30. Body text is not clipped by the sidebar. The filter composer and hint bar still fit.
+`dim_region` only rewrites `fg`, so on a real terminal the cards *were* dimmed.
+The snapshot harness strips every style, which is why the captures looked worse
+than the product. See **S-01** below.
 
----
-
-## G-03 — Empty info cards keep the space the chat is supposed to own
-
-**Severity:** medium
-**Where:** `snapshots/idle-120x40.txt`, `idle-160x50.txt`
-
-Principle 1 in `design.md`: the conversation gets the space. At rest the chat is blank and the right column still stacks five cards, three of them empty (`no tasks yet`, `no specialists running`, `price unknown`). `idle-160x50.txt` is mostly empty air.
-
-Width already has a drop order (`< 80` hides the panel). There is no drop order for **empty content**. 80×24 dropping tasks/crew is the right idea; larger sizes should do the same until those cards have something to say.
-
-**Done when:** Tasks and crew cards are absent until they have rows. Idle 120×40 / 160×50 give the extra rows to chat (or to a quieter empty state), not to three vacant boxes.
+**Fixed by:** the sidebar is not painted while a panel is open (`draw.rs`), and
+the chat scrollbar is suppressed too — a panel owns the scroll keys, so a live
+scrollbar beside it was misleading as well as noisy. Regression test:
+`an_open_panel_leaves_no_card_fragments`.
 
 ---
 
-## G-04 — Spend prints `$0.00` next to `$?.??`
+## G-02 — Help is the least readable panel — **fixed**
 
-**Severity:** high (product rule, not taste)
-**Where:** every idle and most panel snapshots, spend card
+**Was:** high · `snapshots/panel-help-100x30.txt`
 
-```
-│ session          $?.?? │
-│ bud ░░░░░░░░░░░░   0%  │
-│     $0.00 of $5.00     │
-```
-
-`RYTER.md`: unknown rates are `$?.??`, never a fake `$0.00`. The session line is honest; the budget line is not. A 0% bar backed by `$0.00` while the session total is unknown is the exact lie the spend system was built to avoid.
-
-**Done when:** If session spend is unknown, the budget remainder does not render as `$0.00`. Use `$?.??` (or omit the dollar figure) until a priced turn exists. Snapshots no longer contain `$0.00` beside `$?.??`.
+Two causes: the cards stole the width (G-01), and `panel::rect` reserved ten
+rows of the terminal, giving Help 20 rows for ~40 rows of keybindings at 100×30.
+Now a panel may use the body it owns, with two rows of margin.
 
 ---
 
-## G-05 — Hint bar silently drops keys at 80 columns
+## G-03 — Empty info cards keep the space the chat is supposed to own — **fixed**
 
-**Severity:** medium
-**Where:** `snapshots/stream-collapsed-80x24.txt`
+**Was:** medium · `snapshots/idle-120x40.txt`, `idle-160x50.txt`
 
-Idle 80×24 shows `^c quit`. Streaming 80×24 ends at `^b panel` and drops quit. Context-sensitive hints that overflow by truncation lose the key you actually need (cancel/quit while a turn is running).
+`cards::tasks` / `cards::crew` return `Option<Card>`, as `cards::mcp` already
+did. Regression test: `empty_cards_are_absent_not_blank`.
 
-**Done when:** The 80-wide streaming hint bar still names cancel/quit, or uses a documented shorter form rather than chopping the right end.
-
----
-
-## G-06 — Permission interrupt still fights the sidebar at 80×24
-
-**Severity:** medium (subset of G-01, called out because it is safety UI)
-
-Destructive-tool Ask is the one overlay that must be unmistakable. `modal-permission-80x24.txt` is readable in the middle and noisy at the edges: session card pipes, `ld`, `━━━` colliding with chat. Heavy top edge (`┏`) is the right vocabulary; the collision is not.
-
-**Done when:** The permission modal is a single closed shape. No session/model/spend fragments inside it. `y` / `n` / `a` remain the only actions.
+**One correction to the original "done when".** Giving the rows "to chat" does
+not follow: chat is a *vertical* sibling of the sidebar, so dropping a card
+cannot lengthen it. `idle-160x50` still has blank rows because the transcript is
+top-anchored — `ChatScroll::resolve` offsets to `doc_rows - viewport` (zero when
+content is short) and `layout::frame` pads below. Whether a short transcript
+should sit *above* the composer like a terminal chat is a real design question,
+but it belongs in `design.md`, not here. Tracked in `ROADMAP.md` Next.
 
 ---
 
-## G-07 — Untitled session uuid is the first thing in the column
+## G-04 — Spend prints `$0.00` next to `$?.??` — **fixed**
 
-**Severity:** low
-**Where:** session card on every idle snapshot
+**Was:** high (product rule) · every idle and most panel snapshots
 
-`untitled` / `0193abcd` / `build` is operator chrome. Fine in `/sessions`. As the top card of an empty product it is a shrug. Title can stay “untitled” until the first user turn; the raw id does not need that slot.
+Unknown spend now renders `?%` and `$?.?? of $5.00` in both the sidebar card and
+the `/spend` panel, which had the same bug. The header carried it too: its
+`unwrap_or(0.0)` made unknown spend compare as *under* budget and colour itself
+safe. No snapshot contains `$0.00` any more.
 
-**Done when:** The session card leads with title + phase (and auditor/tools). The id is secondary, truncated, or only in `/sessions`.
+Worth keeping in view: with an unpriced model `over_budget` correctly never
+trips, so there is effectively **no cap at all**. The bar no longer claims
+otherwise, but the gap is real — see `ROADMAP.md`.
+
+---
+
+## G-05 — Hint bar silently drops keys at 80 columns — **fixed**
+
+**Was:** medium · `snapshots/stream-collapsed-80x24.txt`
+
+Hints carry a priority (`Hint::Essential/Useful/Optional`); overflow drops the
+optional ones first and never cancel, quit, or the permission answers. Also
+fixed an off-by-4: the first hint was charged for a separator it does not draw,
+which is why the 80-column bar overflowed in the first place. Regression test:
+`hint_bar_never_drops_cancel_or_quit`, down to 32 columns.
+
+---
+
+## G-06 — Permission interrupt still fights the sidebar at 80×24 — **fixed**
+
+**Was:** medium (safety UI) · subset of G-01
+
+Resolved with G-01; the modal is now a single closed shape with only transcript
+text behind it.
+
+**The "double pipe `│╭─ session`" was not a leak** — that is the chat gutter
+scrollbar next to the card border, by design. Chasing it would have wasted a
+pass.
+
+**What this review missed, and it was the more serious half:** the modal
+accepted `KeyCode::Enter` as an alias for allow. `Enter` is the send key in the
+composer, so a reflex press approved a destructive call on the one overlay that
+must be unmistakable — and the modal body never advertised it. Only `y` allows
+now (`c7d1a25`).
+
+---
+
+## G-07 — Untitled session uuid is the first thing in the column — **fixed**
+
+**Was:** low · session card on every idle snapshot
+
+Title and phase lead the card; the id stays in `/sessions`. Regression test:
+`session_card_leads_with_title_and_phase`.
+
+---
+
+## S-01 — The snapshot harness cannot see style — **open**
+
+**Severity:** medium · `draw.rs::buffer_to_string`
+
+The finding under G-01. `buffer_to_string` keeps symbols and discards every
+style, so:
+
+- `R-POP-04` ("dim everything behind a panel") is **unassertable**. `dim_region`
+  could regress to a no-op and every snapshot would still pass.
+- Judgments about "noise" are made against an artifact strictly uglier than the
+  product, which is how G-01 came to be described as a leak.
+
+**Done when:** a second dump mode emits a per-cell attribute map (or a
+fg-class character per cell) alongside the glyph capture, and at least one test
+asserts that cells behind an open panel are dimmed.
 
 ---
 
 ## Out of scope here
 
-These are already listed in `ROADMAP.md` Now / Next. Do not treat them as this review’s findings:
+Already in `ROADMAP.md` Now / Next:
 
 - O-01 `Spend` as the `busy` fallback until headless/MCP read `TurnFinished`
 - O-02 `ryter doctor --json`
 - O-03 `light` theme experimental
-- O-04 per-message copy / clipboard
+- O-04 per-message copy / clipboard — note `Ctrl+G` now releases the mouse so
+  the terminal's own selection works in the meantime
 
 ---
 
-## Suggested order
-
-1. G-01 + G-02 + G-06 (overlay layer — one fix, three screens)
-2. G-04 (spend honesty)
-3. G-03 (empty cards)
-4. G-05 (hint overflow)
-5. G-07 (session card)
-
-Regenerate snapshots with `UPDATE_SNAPSHOTS=1` only after the change is intended. Review the snapshot diff; do not accept leaks as golden.
+Regenerate snapshots with `UPDATE_SNAPSHOTS=1` only after the change is
+intended. Review the snapshot diff; do not accept leaks as golden.

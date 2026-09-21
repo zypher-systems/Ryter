@@ -121,6 +121,30 @@ pub fn summary_args(name: &str, args: &Value) -> String {
             .and_then(Value::as_str)
             .unwrap_or(name)
             .to_string(),
+        // The fast path shows the whole change: the person approving it is
+        // the sign-off, so they must see exactly what they are approving.
+        "propose_edit" => {
+            let path = args.get("path").and_then(Value::as_str).unwrap_or("?");
+            let why = args.get("reason").and_then(Value::as_str).unwrap_or("");
+            let mut s = format!("--- {path}  {why}\n");
+            for l in args
+                .get("old_string")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .lines()
+            {
+                s.push_str(&format!("-{l}\n"));
+            }
+            for l in args
+                .get("new_string")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .lines()
+            {
+                s.push_str(&format!("+{l}\n"));
+            }
+            s
+        }
         _ => name.to_string(),
     }
 }

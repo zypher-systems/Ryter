@@ -70,7 +70,7 @@ impl Panel for Agents {
         if view.crew.is_empty() {
             lines.push(widgets::note("no specialists running", theme));
             lines.push(widgets::note(
-                "the orchestrator spawns planners, architects, builders, and auditors as the phase allows",
+                "the lead starts architects, builders, and auditors as your requests need them",
                 theme,
             ));
         }

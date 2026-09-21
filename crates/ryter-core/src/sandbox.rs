@@ -142,7 +142,14 @@ fn apply_linux(profile: SandboxProfile, workspace: &Path, home: &Path) -> Result
     ]);
     // Do not allow `/tmp` itself: TempDir and other projects live there.
     // Scratch is `~/.ryter/tmp` (or `$RYTER_HOME/tmp`).
-    let rw = vec![home, canonicalize_or(&scratch)];
+    //
+    // Granting all of `~/.ryter` used to hand tools read/write on
+    // `~/.ryter/keys/<connection>`, so even the `read-only` profile let a
+    // builder's bash read every API key. Landlock has no negative rules, so the
+    // writable set is enumerated instead. Keys are resolved before `apply` runs,
+    // so nothing here needs them.
+    let rw = writable_set(&home);
+    let _ = &scratch;
     let status = created
         .set_compatibility(CompatLevel::BestEffort)
         .add_rules(path_beneath_rules(&ro, AccessFs::from_read(abi)))
@@ -162,6 +169,22 @@ fn apply_linux(profile: SandboxProfile, workspace: &Path, home: &Path) -> Result
     Ok(())
 }
 
+/// Directories a sandboxed thread may write, created if missing.
+///
+/// Enumerated rather than granting `~/.ryter` wholesale: Landlock has no
+/// negative rules, so any grant on the parent would re-expose `keys/`.
+#[cfg(target_os = "linux")]
+fn writable_set(home: &Path) -> Vec<std::path::PathBuf> {
+    ["tmp", "logs", "sessions"]
+        .iter()
+        .map(|sub| {
+            let p = home.join(sub);
+            let _ = std::fs::create_dir_all(&p);
+            canonicalize_or(&p)
+        })
+        .collect()
+}
+
 #[cfg(target_os = "linux")]
 fn canonicalize_or(p: &Path) -> std::path::PathBuf {
     std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
@@ -179,6 +202,31 @@ fn existing(paths: &[&str]) -> Vec<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The writable set must not include the plaintext key store.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sandbox_does_not_grant_the_key_store() {
+        use tempfile::TempDir;
+        let home = TempDir::new().unwrap();
+        let ws = TempDir::new().unwrap();
+        std::fs::create_dir_all(home.path().join("keys")).unwrap();
+        std::fs::write(home.path().join("keys/spacexai"), "xai-secret").unwrap();
+        // Landlock is applied to the calling thread and cannot be undone, so
+        // this asserts the rule set rather than applying it.
+        let rw = writable_set(home.path());
+        assert!(
+            !rw.iter().any(|p| p.ends_with("keys")),
+            "keys must never be writable: {rw:?}"
+        );
+        assert!(
+            !rw.iter().any(|p| p == home.path()),
+            "granting all of ~/.ryter re-exposes keys: {rw:?}"
+        );
+        assert!(rw.iter().any(|p| p.ends_with("sessions")), "{rw:?}");
+        assert!(rw.iter().any(|p| p.ends_with("tmp")), "{rw:?}");
+        let _ = ws;
+    }
 
     #[test]
     fn parse_profiles() {

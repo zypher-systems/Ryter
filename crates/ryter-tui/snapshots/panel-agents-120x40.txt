@@ -1,27 +1,21 @@
- ryter  ·  orchestrator                                                                 ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build                                                grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                                                 ╭─ session ──────────────────╮
-   welcome · /help for keys                                                               │ untitled                   │
-                                                                                          │ 0193abcd             build │
-                                                                                          │ auditor ✓  tools ask       │
-                                                                                          ╰────────────────────────────╯
-                                                                                          ╭─ model ────────────────────╮
-                                                                                          │ spacexai ●        grok-4.6 │
-                                                                                          │ ctx █░░░░░░░░░░░░░░░   5%  │
-                        ╭─ running specialists ────────────────────────────────────────── 0/4 ─╮12.4k / 256k tokens    │
-                        │ no specialists running                                               │  unknown              │
-                        │ the orchestrator spawns planners, architects, builders, and auditors │ ──────────────────────╯
-                        │                                                                      │ d ────────────────────╮
-                        │                                                                      │ on              $?.?? │
-                        │                                                                      │ ░░░░░░░░░░░░░░░   0%  │
-                        │                                                                      │ 0.00 of $5.00         │
-                        ╰─ ↑↓ move · enter/k kill · K kill all · esc ──────────────────────────╯ ──────────────────────╯
-                                                                                                 s ────────────────────╮
-                                                                                          │ no tasks yet               │
-                                                                                          ╰────────────────────────────╯
-                                                                                          ╭─ crew ─────────────── 0/4 ─╮
-                                                                                          │ no specialists running     │
-                                                                                          ╰────────────────────────────╯
+ · system
+   welcome · /help for keys
+
+
+
+
+
+
+                        ╭─ running specialists ────────────────────────────────────────── 0/4 ─╮
+                        │ no specialists running                                               │
+                        │ the lead starts architects, builders, and auditors as your requests n│
+                        │                                                                      │
+                        │                                                                      │
+                        │                                                                      │
+                        │                                                                      │
+                        ╰─ ↑↓ move · enter/k kill · K kill all · esc ──────────────────────────╯
 
 
 
@@ -34,7 +28,13 @@
 
 
 
-╭─ dusty ────────────────────────────────────────────────────────────────────────────────────────────────────── build ─╮
-│› ask the orchestrator, or / for commands                                                                             │
+
+
+
+
+
+
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back

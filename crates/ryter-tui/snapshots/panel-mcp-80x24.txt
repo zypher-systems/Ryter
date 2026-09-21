@@ -1,24 +1,24 @@
- ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
- · system                                             ╭─ session ──────────────╮
-   w╭─ mcp ─────────────────────────────────────────────────────── 0/0 up ─╮   │
-    │›○ inbound  let other agents drive this ses…enabled · restart to bind │ d │
-    │                                                                      │   │
-    │ outbound servers                                                     │ ──╯
-    │   none configured                                                    │ ──╮
-    │ + add server  stdio command → ~/.ryter/mcp.toml                      │ 6 │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │ ──╯
-    │                                                                      │ ──╮
-    │                                                                      │ ? │
-    │                                                                      │   │
-    ╰─ enter open/toggle · r reconnect · d remove · esc  · changes apply… ─╯   │
-                                                                             ──╯
+ · system
+   w╭─ mcp ─────────────────────────────────────────────────────── 0/0 up ─╮
+    │›○ inbound  let other agents drive this ses…enabled · restart to bind │
+    │                                                                      │
+    │ outbound servers                                                     │
+    │   none configured                                                    │
+    │ + add server  stdio command → ~/.ryter/mcp.toml                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    ╰─ enter open/toggle · r reconnect · d remove · esc  · changes apply… ─╯
 
 
-╭─ dusty ────────────────────────────────────────────────────────────── build ─╮
-│› ask the orchestrator, or / for commands                                     │
+
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back

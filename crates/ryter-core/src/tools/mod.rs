@@ -2,7 +2,7 @@
 
 mod fs;
 mod policy;
-mod shell;
+pub(crate) mod shell;
 mod web;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -53,17 +53,61 @@ pub struct ToolOutput {
     pub is_error: bool,
 }
 
+/// Ceiling on one tool result, in bytes (~8k tokens at the bytes/4 estimate).
+///
+/// Every result is appended to the transcript and re-billed on every later
+/// turn, so an uncapped `cat Cargo.lock` or `grep -r` costs for the rest of the
+/// session and can trigger a compaction that discards the conversation.
+pub const MAX_TOOL_OUTPUT_BYTES: usize = 32_000;
+
+/// Keep the head and tail of an oversized result and say what was dropped.
+///
+/// Both ends matter: the head carries the command and the first hits, the tail
+/// carries the summary line or the error a build ends with.
+pub fn cap_output(text: String) -> String {
+    if text.len() <= MAX_TOOL_OUTPUT_BYTES {
+        return text;
+    }
+    let keep = MAX_TOOL_OUTPUT_BYTES / 2;
+    let head_end = floor_boundary(&text, keep);
+    let tail_start = ceil_boundary(&text, text.len() - keep);
+    let dropped = tail_start - head_end;
+    format!(
+        "{}\n… {dropped} bytes elided; narrow the command or read a range …\n{}",
+        &text[..head_end],
+        &text[tail_start..]
+    )
+}
+
+/// Largest char boundary at or below `at`.
+fn floor_boundary(s: &str, at: usize) -> usize {
+    let mut i = at.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Smallest char boundary at or above `at`.
+fn ceil_boundary(s: &str, at: usize) -> usize {
+    let mut i = at.min(s.len());
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
 impl ToolOutput {
     fn ok(text: impl Into<String>) -> Self {
         Self {
-            text: text.into(),
+            text: cap_output(text.into()),
             is_error: false,
         }
     }
 
     fn err(text: impl Into<String>) -> Self {
         Self {
-            text: text.into(),
+            text: cap_output(text.into()),
             is_error: true,
         }
     }
@@ -98,36 +142,82 @@ pub fn specs_for_opts(role: Role, web: bool) -> Vec<ToolSpec> {
 fn spec(name: &str) -> Option<ToolSpec> {
     let (description, parameters) = match name {
         "read_file" => (
-            "Read a file. Path is relative to the workspace.",
-            json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+            "Read a file. Path is relative to the workspace. Long files come back \
+             truncated; pass offset (1-based line) and limit to page through one.",
+            json!({"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}),
         ),
         "list_dir" => (
             "List a directory.",
             json!({"type":"object","properties":{"path":{"type":"string"}}}),
         ),
         "grep" => (
-            "Search file contents.",
-            json!({"type":"object","properties":{"pattern":{"type":"string"}},"required":["pattern"]}),
+            "Search file contents with a regex. Respects .gitignore. Narrow with \
+             path (a directory) and include (a glob such as \"*.rs\"). Use this to \
+             find code before reading files, not bash grep.",
+            json!({"type":"object","properties":{
+                "pattern":{"type":"string","description":"Rust regex"},
+                "path":{"type":"string","description":"directory to search, relative to the workspace"},
+                "include":{"type":"string","description":"file glob, e.g. *.rs"},
+                "case_insensitive":{"type":"boolean"}
+            },"required":["pattern"]}),
         ),
         "glob" => (
-            "Find files by glob.",
+            "Find files by glob relative to the workspace (\"src/**/*.rs\").",
             json!({"type":"object","properties":{"pattern":{"type":"string"}},"required":["pattern"]}),
         ),
         "write" => (
-            "Write a file.",
+            "Create a new file, or replace one wholesale. To change part of an \
+             existing file use search_replace: it is cheaper and cannot clobber \
+             lines you did not mean to touch.",
             json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
         ),
         "search_replace" => (
-            "Replace a unique string in a file.",
+            "Edit a file by replacing old_string with new_string. old_string must \
+             match exactly once, so include enough surrounding lines to make it \
+             unique. Read the file first.",
             json!({"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["path","old_string","new_string"]}),
         ),
         "bash" => (
-            "Run a shell command in the workspace.",
-            json!({"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}),
+            "Run a shell command in the workspace. Default timeout 120s; pass \
+             timeout_secs (max 600) for a long build or test run.",
+            json!({"type":"object","properties":{"command":{"type":"string"},"timeout_secs":{"type":"integer"}},"required":["command"]}),
+        ),
+        "propose_edit" => (
+            "Fast path for a trivial change (a typo, a one-line fix, a config \
+             value): propose replacing old_string with new_string in one file. The \
+             user sees the diff and approves it with y — their approval is the \
+             sign-off, so it skips the crew. At most 20 lines on each side; \
+             anything larger is a task. Include enough context in old_string to \
+             make it unique.",
+            json!({"type":"object","properties":{
+                "path":{"type":"string"},
+                "old_string":{"type":"string"},
+                "new_string":{"type":"string"},
+                "reason":{"type":"string","description":"one line: why"}
+            },"required":["path","old_string","new_string","reason"]}),
         ),
         "todo_write" => (
-            "Replace the task list. In Build, pending items become parallel builder jobs.",
-            json!({"type":"object","properties":{"items":{"type":"array"}},"required":["items"]}),
+            "Queue work for the crew. Updates tasks by id and adds new ones; it \
+             never replaces the list (set status \"dropped\" to remove one). Each \
+             task names who does it: role \"architect\" designs and writes builder \
+             tasks; role \"builder\" (the default) implements one in a git \
+             worktree, gated by checks and auditors before it lands. The crew runs \
+             when your reply ends. A builder's brief is its entire spec: what to \
+             change, the constraints, how to know it is done. Declare the files each \
+             builder task owns: disjoint tasks run in parallel. On an architect task, \
+             hold: true keeps its builder tasks proposed until the user approves.",
+            json!({"type":"object","properties":{"items":{"type":"array","items":{
+                "type":"object",
+                "properties":{
+                    "id":{"type":"string","description":"stable id; reuse it to update a task"},
+                    "title":{"type":"string","description":"one line, shown to the user"},
+                    "brief":{"type":"string","description":"the full spec"},
+                    "role":{"type":"string","enum":["architect","builder"]},
+                    "files":{"type":"array","items":{"type":"string"},"description":"paths this builder task owns"},
+                    "hold":{"type":"boolean","description":"architect only: wait for approval before building"},
+                    "status":{"type":"string","enum":["pending","proposed","done","blocked","dropped"]}
+                }
+            }}},"required":["items"]}),
         ),
         "search_tool" => (
             "Search connected MCP servers for tools.",
@@ -161,7 +251,25 @@ fn spec(name: &str) -> Option<ToolSpec> {
 /// Tools this role may be offered at all.
 pub fn tools_for(role: Role) -> &'static [&'static str] {
     match role {
+        // One list for every hat, so switching hats never changes the tool
+        // definitions (and never throws away the prompt cache). The gate
+        // decides what each hat may run.
+        Role::SoloPlan | Role::SoloBuild | Role::SoloReview => &[
+            "read_file",
+            "list_dir",
+            "grep",
+            "glob",
+            "write",
+            "search_replace",
+            "bash",
+            "ask_user",
+            "search_tool",
+            "use_tool",
+            "web_fetch",
+            "web_search",
+        ],
         Role::Orchestrator => &[
+            "propose_edit",
             "read_file",
             "list_dir",
             "grep",
@@ -175,7 +283,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "web_fetch",
             "web_search",
         ],
-        Role::Planner | Role::Architect => &[
+        Role::Architect => &[
             "read_file",
             "list_dir",
             "grep",
@@ -198,15 +306,9 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "web_fetch",
             "web_search",
         ],
-        Role::Auditor => &[
-            "read_file",
-            "list_dir",
-            "grep",
-            "glob",
-            "bash",
-            "write",
-            "search_replace",
-        ],
+        // Read-only. It reviews in a worktree that is discarded after the
+        // merge, so anything it wrote was lost; its findings are its reply.
+        Role::Auditor => &["read_file", "list_dir", "grep", "glob", "bash"],
     }
 }
 
@@ -218,7 +320,7 @@ pub fn execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput
         "grep" => fs::grep(args, ctx),
         "glob" => fs::glob_files(args, ctx),
         "write" => fs::write_file(args, ctx),
-        "search_replace" => fs::search_replace(args, ctx),
+        "search_replace" | "propose_edit" => fs::search_replace(args, ctx),
         "bash" => shell::bash(args, ctx),
         "todo_write" => todo_write(args, ctx),
         "search_tool" => mcp_search(args, ctx),
@@ -290,7 +392,7 @@ fn todo_write(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         .queue
         .lock()
         .map_err(|e| crate::error::Error::Config(e.to_string()))?;
-    q.apply_todo(args)?;
+    q.apply_todo_as(args, ctx.role.as_str())?;
     let summary = q
         .tasks
         .iter()
@@ -308,12 +410,65 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
     }
     match decide(name, args, ctx) {
         Decision::Allow => run_with_hooks(name, args, ctx),
+        // A proposed edit skips the crew because a person approves it. No
+        // blanket approval stands in for that person: not --always-approve,
+        // not the session-wide `a`.
+        Decision::Ask if name == "propose_edit" => match &ctx.user_io {
+            Some(io) => {
+                let summary = crate::user_io::summary_args(name, args);
+                match io.permission(name, &summary) {
+                    crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
+                        run_with_hooks(name, args, ctx)
+                    }
+                    crate::user_io::Permission::Deny => Ok(ToolOutput::err(
+                        "the user declined the edit; ask what they want instead",
+                    )),
+                }
+            }
+            None => Ok(ToolOutput::err(
+                "a proposed edit needs a person to approve it and none is attached; \
+                 queue it as a task instead",
+            )),
+        },
         Decision::Ask if ctx.always_approve || ctx.sticky_approve.load(Ordering::SeqCst) => {
             run_with_hooks(name, args, ctx)
         }
-        Decision::Deny => Ok(ToolOutput::err(format!(
-            "denied: {name} is not allowed for {}",
+        // Say which gate refused. "not allowed for <role>" on every denial
+        // taught models a tool was forbidden when only the arguments were.
+        Decision::Deny if !tools_for(ctx.role).contains(&name) => Ok(ToolOutput::err(format!(
+            "denied: the {} role does not have the {name} tool",
             ctx.role
+        ))),
+        // A hat that can't do this: say which one can, so the model tells the
+        // user instead of hunting for a way round.
+        Decision::Deny
+            if matches!(ctx.role, Role::SoloPlan | Role::SoloReview)
+                && matches!(name, "write" | "search_replace" | "bash")
+                && !(name == "bash" && policy::bash_hint(args).is_some()) =>
+        {
+            Ok(ToolOutput::err(format!(
+                "denied: the {} hat can't {} — tell the user; they can press Tab to switch to \
+                 build",
+                ctx.role,
+                if name == "bash" {
+                    "run commands that change things"
+                } else {
+                    "edit files"
+                }
+            )))
+        }
+        Decision::Deny if name == "bash" && policy::bash_hint(args).is_some() => {
+            Ok(ToolOutput::err(format!(
+                "denied: bash {} — {}",
+                crate::user_io::summary_args(name, args),
+                policy::bash_hint(args).unwrap_or_default()
+            )))
+        }
+        Decision::Deny => Ok(ToolOutput::err(format!(
+            "denied: {name} {} — the arguments are outside policy (missing or \
+             out-of-workspace path, a secret file, or a blocked command). \
+             Adjust the arguments rather than retrying the same call.",
+            crate::user_io::summary_args(name, args)
         ))),
         Decision::Ask => match &ctx.user_io {
             Some(io) => {
@@ -330,7 +485,8 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
                 }
             }
             None => Ok(ToolOutput::err(format!(
-                "ask: {name} requires approval (no TUI)"
+                "ask: {name} needs approval and nobody can be asked (headless). Tell the user: \
+                 run with --always-approve to let it run, or use the TUI"
             ))),
         },
     }
@@ -344,7 +500,16 @@ fn run_with_hooks(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOut
             return Ok(ToolOutput::err(format!("hook denied: {msg}")));
         }
     }
-    let out = execute(name, args, ctx)?;
+    // A tool failing is information for the model — the file does not exist
+    // yet, the path is a directory, the bytes are not text — not a reason to
+    // end the task. On the first live crew run, builders reading a file they
+    // were about to create died with "No such file or directory". Only a
+    // cancel ends the task.
+    let out = match execute(name, args, ctx) {
+        Ok(o) => o,
+        Err(crate::error::Error::Cancelled) => return Err(crate::error::Error::Cancelled),
+        Err(e) => ToolOutput::err(format!("{name} failed: {e}")),
+    };
     if let Some(hooks) = &ctx.hooks {
         hooks.post_tool(name, args, &out.text, &ctx.workspace, ctx.role);
     }
@@ -433,7 +598,7 @@ mod tests {
     #[test]
     fn planner_can_write_notes_only() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Planner, dir.path());
+        let c = ctx(Role::Architect, dir.path());
         let note = c.notes_dir.join("plan.md");
         let args = json!({"path": note.to_string_lossy(), "content": "# plan\n"});
         assert_eq!(decide("write", &args, &c), Decision::Allow);
@@ -510,13 +675,232 @@ mod tests {
         assert!(out.text.contains("blocked"), "{out:?}");
     }
 
+    /// No single result may dominate the window, and both ends survive.
+    #[test]
+    fn oversized_tool_output_is_capped_at_both_ends() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(Role::Builder, dir.path());
+        let big = "x".repeat(MAX_TOOL_OUTPUT_BYTES * 3);
+        std::fs::write(dir.path().join("big.txt"), &big).unwrap();
+        let out = execute("read_file", &json!({"path": "big.txt"}), &c).unwrap();
+        assert!(
+            out.text.len() < MAX_TOOL_OUTPUT_BYTES + 200,
+            "capped length, got {}",
+            out.text.len()
+        );
+        assert!(out.text.contains("elided"), "{}", out.text);
+    }
+
+    /// A multibyte file must not panic the head/tail split.
+    #[test]
+    fn capping_respects_char_boundaries() {
+        let text = "é".repeat(MAX_TOOL_OUTPUT_BYTES);
+        let capped = cap_output(text);
+        assert!(capped.contains("elided"));
+        assert!(capped.len() < MAX_TOOL_OUTPUT_BYTES + 200);
+    }
+
+    #[test]
+    fn read_file_pages_a_long_file() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(Role::Builder, dir.path());
+        let body: String = (1..=5_000).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(dir.path().join("long.txt"), body).unwrap();
+
+        let first = execute("read_file", &json!({"path": "long.txt"}), &c).unwrap();
+        assert!(first.text.contains("   1|line 1"));
+        assert!(first.text.contains("2000|line 2000"));
+        assert!(!first.text.contains("line 2001"));
+        assert!(
+            first.text.contains("offset 2001"),
+            "must say how to continue: {}",
+            first.text
+        );
+
+        let next = execute(
+            "read_file",
+            &json!({"path": "long.txt", "offset": 2001, "limit": 3}),
+            &c,
+        )
+        .unwrap();
+        assert!(next.text.contains("2001|line 2001"));
+        assert!(next.text.contains("2003|line 2003"));
+        assert!(!next.text.contains("line 2004"));
+
+        // A short file is returned whole, with no continuation note.
+        std::fs::write(dir.path().join("short.txt"), "a\nb\n").unwrap();
+        let short = execute("read_file", &json!({"path": "short.txt"}), &c).unwrap();
+        assert!(!short.text.contains("more lines"), "{}", short.text);
+    }
+
+    /// 30s was below a cold build, so the auditor could not run its own
+    /// allowlist. The ceiling is per-command and clamped.
+    #[test]
+    fn bash_timeout_is_raisable_and_clamped() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(Role::Builder, dir.path());
+        let out = execute(
+            "bash",
+            &json!({"command": "sleep 2", "timeout_secs": 1}),
+            &c,
+        )
+        .unwrap();
+        assert!(out.is_error);
+        assert!(out.text.contains("timed out after 1s"), "{}", out.text);
+        // A command inside the default budget is unaffected.
+        let ok = execute("bash", &json!({"command": "echo hi"}), &c).unwrap();
+        assert!(!ok.is_error);
+        assert_eq!(ok.text.trim(), "hi");
+    }
+
+    /// `-lc` sourced the user's profile on every call; `-c` does not.
+    #[test]
+    fn bash_is_not_a_login_shell() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(Role::Builder, dir.path());
+        let out = execute(
+            "bash",
+            &json!({"command": "shopt -q login_shell; echo $?"}),
+            &c,
+        )
+        .unwrap();
+        assert_eq!(out.text.trim(), "1", "should not be a login shell");
+    }
+
+    fn propose(dir: &std::path::Path) -> Value {
+        std::fs::write(dir.join("config.toml"), "retries = 3\n").unwrap();
+        json!({"path": "config.toml", "old_string": "retries = 3", "new_string": "retries = 5", "reason": "user asked"})
+    }
+
+    /// The fast path: a person sees the diff and approves it.
+    #[test]
+    fn a_proposed_edit_applies_when_the_user_approves() {
+        let dir = TempDir::new().unwrap();
+        let args = propose(dir.path());
+        let (io, rx) = crate::user_io::UserIo::pair();
+        let mut c = ctx(Role::Orchestrator, dir.path());
+        c.user_io = Some(io);
+        let sticky = c.sticky_approve.clone();
+        let worker = std::thread::spawn(move || gated_execute("propose_edit", &args, &c).unwrap());
+        match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+            Ok(crate::user_io::UserRequest::Permission { summary, reply, .. }) => {
+                assert!(
+                    summary.contains("-retries = 3") && summary.contains("+retries = 5"),
+                    "{summary}"
+                );
+                reply.send(crate::user_io::Permission::Always).unwrap();
+            }
+            other => panic!("expected the diff for approval, got {other:?}"),
+        }
+        let out = worker.join().unwrap();
+        assert!(!out.is_error, "{out:?}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("config.toml")).unwrap(),
+            "retries = 5\n"
+        );
+        // "allow all" must not turn later proposals into silent writes.
+        assert!(!sticky.load(Ordering::SeqCst));
+    }
+
+    /// No person, no fast path — whatever blanket approval is configured.
+    #[test]
+    fn a_proposed_edit_is_refused_without_a_person() {
+        let dir = TempDir::new().unwrap();
+        let args = propose(dir.path());
+        let mut c = ctx(Role::Orchestrator, dir.path());
+        c.always_approve = true;
+        c.sticky_approve.store(true, Ordering::SeqCst);
+        let out = gated_execute("propose_edit", &args, &c).unwrap();
+        assert!(
+            out.is_error && out.text.contains("queue it as a task"),
+            "{out:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("config.toml")).unwrap(),
+            "retries = 3\n"
+        );
+    }
+
+    /// Refused inline code names the route that works; the route really works.
+    #[test]
+    fn refused_inline_code_points_at_a_probe_file() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(Role::Auditor, dir.path());
+        for cmd in ["python3 -c 'print(1)'", "python3 - <<'EOF'"] {
+            let out = gated_execute("bash", &json!({ "command": cmd }), &c).unwrap();
+            assert!(out.is_error && out.text.contains("probe.py"), "{out:?}");
+        }
+        let out = gated_execute(
+            "bash",
+            &json!({ "command": "printf 'print(6*7)\\n' > probe.py && python3 probe.py" }),
+            &c,
+        )
+        .unwrap();
+        assert!(!out.is_error && out.text.contains("42"), "{out:?}");
+        // Other refusals keep the general wording.
+        let out = gated_execute("bash", &json!({ "command": "sudo ls" }), &c).unwrap();
+        assert!(out.text.contains("outside policy"), "{out:?}");
+    }
+
+    #[test]
+    fn only_small_edits_take_the_fast_path() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("big.rs"), "x\n".repeat(50)).unwrap();
+        let big = "x\n".repeat(crate::tools::policy::FAST_PATH_MAX_LINES + 1);
+        let c = ctx(Role::Orchestrator, dir.path());
+        let d = decide(
+            "propose_edit",
+            &json!({"path": "big.rs", "old_string": big, "new_string": "y", "reason": "r"}),
+            &c,
+        );
+        assert_eq!(d, Decision::Deny);
+        std::fs::write(dir.path().join(".env"), "K=1").unwrap();
+        let d = decide(
+            "propose_edit",
+            &json!({"path": ".env", "old_string": "K=1", "new_string": "K=2", "reason": "r"}),
+            &c,
+        );
+        assert_eq!(d, Decision::Deny, "secrets never take the fast path");
+        // Builders have the crew's gate; the fast path is the lead's alone.
+        let b = ctx(Role::Builder, dir.path());
+        assert_eq!(
+            decide(
+                "propose_edit",
+                &json!({"path": "big.rs", "old_string": "x", "new_string": "y", "reason": "r"}),
+                &b
+            ),
+            Decision::Deny
+        );
+    }
+
+    /// Live run 2: a builder reading a file that did not exist yet, or a
+    /// compiled .pyc, ended its whole task. The model must see the error.
+    #[test]
+    fn a_failing_tool_is_an_error_result_not_a_dead_task() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(Role::Builder, dir.path());
+        let missing = gated_execute("read_file", &json!({"path": "not/yet.py"}), &c).unwrap();
+        assert!(missing.is_error, "{missing:?}");
+        std::fs::write(dir.path().join("x.pyc"), [0xff_u8, 0xfe, 0x00, 0x01]).unwrap();
+        let binary = gated_execute("read_file", &json!({"path": "x.pyc"}), &c).unwrap();
+        assert!(
+            binary.is_error && binary.text.contains("not a text file"),
+            "{binary:?}"
+        );
+    }
+
     #[test]
     fn ask_is_fail_closed_without_tui() {
         let dir = TempDir::new().unwrap();
         let c = ctx(Role::Builder, dir.path());
-        let out = gated_execute("bash", &json!({"command": "rm -rf doomed"}), &c).unwrap();
+        let out = gated_execute(
+            "bash",
+            &json!({"command": "rm -rf /nonexistent-ryter-ask-fixture"}),
+            &c,
+        )
+        .unwrap();
         assert!(out.is_error);
-        assert!(out.text.contains("no TUI"), "{out:?}");
+        assert!(out.text.contains("--always-approve"), "{out:?}");
     }
 
     #[test]
@@ -526,7 +910,12 @@ mod tests {
         let mut c = ctx(Role::Builder, dir.path());
         c.user_io = Some(io);
         let worker = std::thread::spawn(move || {
-            gated_execute("bash", &json!({"command": "rm -rf doomed"}), &c).unwrap()
+            gated_execute(
+                "bash",
+                &json!({"command": "rm -rf /nonexistent-ryter-ask-fixture"}),
+                &c,
+            )
+            .unwrap()
         });
         match rx.recv_timeout(std::time::Duration::from_secs(2)) {
             Ok(crate::user_io::UserRequest::Permission { reply, .. }) => {

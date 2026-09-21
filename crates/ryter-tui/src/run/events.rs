@@ -74,26 +74,29 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
         }
         AgentEvent::Spend {
             connection,
+            model,
             role,
             input_tokens,
             output_tokens,
             cached_tokens,
             total_usd,
             ..
-        } => on_spend(
-            view,
-            connection,
-            *role,
-            *input_tokens,
-            *output_tokens,
-            *cached_tokens,
-            *total_usd,
-        ),
+        } => {
+            if let Some(p) = &mut view.project_spend {
+                p.add(*role, model, *total_usd);
+            }
+            on_spend(
+                view,
+                connection,
+                *role,
+                *input_tokens,
+                *output_tokens,
+                *cached_tokens,
+                *total_usd,
+            );
+        }
         AgentEvent::PhaseChanged { phase } => {
             view.phase = *phase;
-            if view.handoff_to().is_some() {
-                view.composer.end_special();
-            }
         }
         AgentEvent::SubagentStarted {
             id,
@@ -108,6 +111,12 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
                 status: "running".into(),
                 started_ms: view.now_ms,
             });
+        }
+        // Progress goes on the specialist's crew row, not into the chat.
+        AgentEvent::SubagentActivity { id, text, .. } => {
+            if let Some(row) = view.crew.iter_mut().find(|c| c.id == id.as_str()) {
+                row.status = wrap::truncate(text, 48);
+            }
         }
         AgentEvent::SubagentFinished {
             id,
@@ -145,6 +154,7 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
             view.phase = *phase;
             view.session_title = title.clone();
         }
+        AgentEvent::Notice { message } => view.system(message.clone()),
         AgentEvent::Error { message } => {
             let was_busy = view.busy || view.activity.busy();
             view.busy = false;
@@ -199,6 +209,11 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
             );
         }
         AgentEvent::ModelsListed { models } => {
+            for m in models {
+                if let (Some(i), Some(o)) = (m.input_per_million, m.output_per_million) {
+                    view.catalog_rates.insert(m.id.clone(), (i, o));
+                }
+            }
             if let Some(m) = models.iter().find(|m| m.id == view.model) {
                 apply_model_catalog(view, m);
             }
@@ -231,7 +246,7 @@ fn on_tool_call(
     );
     m.meta.tool_id = Some(id.to_string());
     if !label.is_empty() {
-        m.meta.label = Some(if role == Role::Orchestrator {
+        m.meta.label = Some(if role == Role::Orchestrator || role.is_solo() {
             label.clone()
         } else {
             format!("{role} · {label}")
@@ -240,7 +255,7 @@ fn on_tool_call(
     if name == "todo_write" {
         view.todos = parse_todos(args);
     }
-    if view.activity.busy() && role == Role::Orchestrator {
+    if view.activity.busy() && (role == Role::Orchestrator || role.is_solo()) {
         view.activity.verb = Verb::Tool(name.to_string());
         view.activity.current = wrap::truncate(&label, 48);
         view.activity.tools += 1;
@@ -272,7 +287,8 @@ fn on_spend(
     cached_tokens: u64,
     total_usd: Option<f64>,
 ) {
-    let role_name = role.to_string();
+    // The user knows this role as the lead; logs keep `orchestrator`.
+    let role_name = crate::view::role_label(&role.to_string()).to_string();
     {
         let row = view.spend_rows_role.entry(role_name.clone()).or_default();
         row.calls += 1;
@@ -314,7 +330,7 @@ fn on_spend(
             view.unpriced_calls += 1;
         }
     }
-    if role == Role::Orchestrator {
+    if role == Role::Orchestrator || role.is_solo() {
         // Tokens this turn become exact once accounting lands (`R-ACT-07`).
         view.activity.tokens = output_tokens;
         view.activity.tokens_estimated = false;
@@ -489,7 +505,7 @@ mod tests {
         assert_eq!(v.activity.verb, Verb::Done);
         assert_eq!(v.activity.tools, 3);
         assert_eq!(v.spend, Some(0.01));
-        assert_eq!(v.spend_rows_role["orchestrator"].calls, 1);
+        assert_eq!(v.spend_rows_role["lead"].calls, 1);
     }
 
     #[test]

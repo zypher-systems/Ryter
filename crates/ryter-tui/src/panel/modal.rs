@@ -36,7 +36,7 @@ impl PermissionModal {
 fn lang_for(tool: &str, summary: &str) -> Option<String> {
     match tool {
         "bash" | "shell" | "run" => Some("bash".into()),
-        "search_replace" | "apply_patch" => Some("diff".into()),
+        "search_replace" | "apply_patch" | "propose_edit" => Some("diff".into()),
         _ => {
             let path = summary.split_whitespace().last().unwrap_or("");
             if path.contains('/') || path.contains('.') {
@@ -149,7 +149,10 @@ impl Panel for PermissionModal {
 
     fn key(&mut self, key: KeyEvent, _view: &mut View) -> Outcome {
         match key.code {
-            KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
+            // `Enter` is deliberately not an alias for allow: it is the send
+            // key in the composer, so a reflex press must never approve a
+            // destructive call. Only `y` allows (`R-POP-75`).
+            KeyCode::Char('y' | 'Y') => {
                 Outcome::CloseAct(Action::PermissionReply(Permission::Allow))
             }
             KeyCode::Char('n' | 'N') | KeyCode::Esc => {

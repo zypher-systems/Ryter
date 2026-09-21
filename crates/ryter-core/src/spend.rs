@@ -221,6 +221,9 @@ fn parse_per_token(raw: Option<&str>) -> crate::Result<Option<f64>> {
 /// Format a priced total for the status line. Unknown is `$?.??`, never `$0.00` unless the value is actually zero.
 pub fn format_usd(total: Option<f64>) -> String {
     match total {
+        // An empty f64 sum is -0.0, and a difference of totals can land a
+        // hair below zero; either printed as "$-0.00".
+        Some(v) if v.abs() < 0.005 => "$0.00".into(),
         Some(v) => format!("${v:.2}"),
         None => "$?.??".into(),
     }
@@ -271,6 +274,19 @@ struct OpenRouterPricing {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn zero_never_prints_negative() {
+        let empty: f64 = Vec::<f64>::new().into_iter().sum();
+        assert_eq!(format_usd(Some(empty)), "$0.00");
+        assert_eq!(format_usd(Some(1.25 - 1.25000000001)), "$0.00");
+        assert_eq!(
+            format_usd(Some(-2.0)),
+            "$-2.00",
+            "a real negative still shows"
+        );
+    }
+
     use super::*;
 
     #[test]

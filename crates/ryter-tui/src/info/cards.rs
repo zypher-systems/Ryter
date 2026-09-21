@@ -59,18 +59,23 @@ pub fn session(view: &View, w: usize, theme: Theme) -> Card {
     } else {
         view.session_title.clone()
     };
-    let short: String = view.session_id.chars().take(8).collect();
-    let mut rows = vec![row(vec![s(wrap::truncate(&title, w), theme.side())])];
-    let phase = view.phase.to_string();
-    rows.push(kv(
-        &short,
-        &phase,
+    // Title, then the mode: which hat, or what the crew is doing. The raw
+    // session id belongs in `/sessions`.
+    let (state, color) = if view.crew_mode() {
+        match view.crew.len() {
+            0 => ("crew · idle".to_string(), theme.mode(view.mode)),
+            n => (format!("crew · {n} working"), theme.mode(view.mode)),
+        }
+    } else {
+        (view.mode_label().to_string(), theme.mode(view.mode))
+    };
+    let mut rows = vec![kv(
+        &wrap::truncate(&title, w.saturating_sub(state.chars().count() + 2)),
+        &state,
         w,
         theme,
-        Style::default()
-            .fg(theme.phase(view.phase))
-            .bg(theme.sidebar_bg),
-    ));
+        Style::default().fg(color).bg(theme.sidebar_bg),
+    )];
     let detail_from = rows.len();
     let auditor = if view.auditor_on {
         "auditor ✓"
@@ -78,6 +83,9 @@ pub fn session(view: &View, w: usize, theme: Theme) -> Card {
         "auditor ✗"
     };
     let tools = format!("tools {}", view.perm_mode);
+    // The auditor is the crew's; in solo mode only the tool mode matters.
+    let auditor = if view.crew_mode() { auditor } else { "" };
+    let gap = if auditor.is_empty() { "" } else { "  " };
     rows.push(row(vec![
         s(
             auditor,
@@ -89,7 +97,7 @@ pub fn session(view: &View, w: usize, theme: Theme) -> Card {
                 })
                 .bg(theme.sidebar_bg),
         ),
-        s("  ", theme.side()),
+        s(gap, theme.side()),
         s(
             tools,
             Style::default()
@@ -192,34 +200,10 @@ pub fn spend(view: &View, w: usize, theme: Theme) -> Card {
         theme.side().add_modifier(Modifier::BOLD)
     };
     rows.push(kv("session", &total, w, theme, total_style));
-    let detail_from = rows.len();
-    if view.budget_usd > 0.0 {
-        let spent = view.spend.unwrap_or(0.0);
-        let frac = spent / view.budget_usd;
-        let color = if spent >= view.budget_usd {
-            theme.error
-        } else if spent >= view.warn_usd {
-            theme.warn
-        } else {
-            theme.success
-        };
-        let cells = gauge_cells(w);
-        let mut spans = vec![s("bud ", theme.side_muted())];
-        spans.extend(bar(frac, cells, color, theme));
-        spans.push(s(
-            format!(" {:>3}%", (frac * 100.0).round().min(999.0) as u32),
-            Style::default().fg(color).bg(theme.sidebar_bg),
-        ));
-        rows.push(row(spans));
-        rows.push(row(vec![s(
-            format!(
-                "    {} of {}",
-                format_usd(Some(spent)),
-                format_usd(Some(view.budget_usd))
-            ),
-            theme.side_muted(),
-        )]));
+    if let Some(p) = &view.project_spend {
+        rows.push(kv("project", &project_label(p), w, theme, theme.side()));
     }
+    let detail_from = rows.len();
     let mut by_role: Vec<(&String, &f64)> = view.spend_by_role.iter().collect();
     by_role.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
     let shown = by_role.iter().take(4);
@@ -260,8 +244,117 @@ fn task_rank(status: &str) -> u8 {
     }
 }
 
+/// `$14.20`, or `$14.20+` when some calls had no known price (never a
+/// silent undercount).
+pub fn project_label(p: &ryter_core::project::ProjectSpend) -> String {
+    if p.calls > 0 && p.calls == p.unpriced_calls {
+        "$?.??".into()
+    } else if p.unpriced_calls > 0 {
+        format!("{}+", format_usd(Some(p.total_usd)))
+    } else {
+        format_usd(Some(p.total_usd))
+    }
+}
+
+/// `budget` card: the cap and how much of it is left, or that there is none.
+/// Clicking it opens `/budget`.
+pub fn budget(view: &View, w: usize, theme: Theme) -> Card {
+    let mut rows = Vec::new();
+    let counter: String;
+    if view.budget_usd <= 0.0 {
+        // Say it: no gauge could mean "no cap" or "not loaded yet".
+        rows.push(kv("cap", "off", w, theme, theme.side_muted()));
+        return Card {
+            id: CardId::Budget,
+            title: "budget".into(),
+            counter: "off".into(),
+            rows,
+            detail_from: 1,
+        };
+    }
+    let cells = gauge_cells(w);
+    match view.spend {
+        Some(spent) => {
+            // An unpriced turn has no known cost, so there is no honest bar:
+            // see the `None` arm.
+            let frac = spent / view.budget_usd;
+            let color = if spent >= view.budget_usd {
+                theme.error
+            } else if spent >= view.warn_usd && view.warn_usd > 0.0 {
+                theme.warn
+            } else {
+                theme.success
+            };
+            counter = format!("{}%", (frac * 100.0).round().min(999.0) as u32);
+            let mut spans = vec![s("    ", theme.side())];
+            spans.extend(bar(frac, cells, color, theme));
+            rows.push(row(spans));
+            rows.push(kv(
+                "used",
+                &format!(
+                    "{} of {}",
+                    format_usd(Some(spent)),
+                    format_usd(Some(view.budget_usd))
+                ),
+                w,
+                theme,
+                Style::default().fg(color).bg(theme.sidebar_bg),
+            ));
+            if spent >= view.budget_usd {
+                rows.push(kv(
+                    "reached",
+                    "/budget +2",
+                    w,
+                    theme,
+                    Style::default().fg(theme.error).bg(theme.sidebar_bg),
+                ));
+            } else {
+                rows.push(kv(
+                    "left",
+                    &format_usd(Some(view.budget_usd - spent)),
+                    w,
+                    theme,
+                    theme.side(),
+                ));
+            }
+        }
+        None => {
+            counter = "?%".into();
+            let mut spans = vec![s("    ", theme.side())];
+            spans.extend(bar(0.0, cells, theme.dim, theme));
+            rows.push(row(spans));
+            rows.push(kv(
+                "used",
+                &format!(
+                    "{} of {}",
+                    format_usd(None),
+                    format_usd(Some(view.budget_usd))
+                ),
+                w,
+                theme,
+                theme.side_muted(),
+            ));
+        }
+    }
+    Card {
+        id: CardId::Budget,
+        title: "budget".into(),
+        counter,
+        rows,
+        detail_from: 2,
+    }
+}
+
 /// `tasks` card (`R-PANEL-08..11`).
-pub fn tasks(view: &View, w: usize, theme: Theme) -> Card {
+/// `tasks` card, or `None` until there is a task (`R-PANEL-18`).
+///
+/// Principle 1 is that the conversation gets the space. Three bordered boxes
+/// saying `no tasks yet` / `no specialists running` took a quarter of the width
+/// to say nothing.
+pub fn tasks(view: &View, w: usize, theme: Theme) -> Option<Card> {
+    if view.todos.is_empty() {
+        return None;
+    }
     let done = view
         .todos
         .iter()
@@ -270,9 +363,6 @@ pub fn tasks(view: &View, w: usize, theme: Theme) -> Card {
     let mut sorted: Vec<_> = view.todos.iter().collect();
     sorted.sort_by_key(|t| task_rank(&t.status));
     let mut rows = Vec::new();
-    if sorted.is_empty() {
-        rows.push(row(vec![s("no tasks yet", theme.side_muted())]));
-    }
     for t in sorted.iter().take(8) {
         let (glyph, color, strike) = match t.status.as_str() {
             "running" | "in_progress" => ("◐", theme.accent, false),
@@ -308,25 +398,22 @@ pub fn tasks(view: &View, w: usize, theme: Theme) -> Card {
             theme.side_muted(),
         )]));
     }
-    Card {
+    Some(Card {
         id: CardId::Tasks,
         title: "tasks".into(),
-        counter: if view.todos.is_empty() {
-            String::new()
-        } else {
-            format!("{done}/{}", view.todos.len())
-        },
+        counter: format!("{done}/{}", view.todos.len()),
         detail_from: rows.len(),
         rows,
-    }
+    })
 }
 
 /// `crew` card (`R-PANEL-12..15`).
-pub fn crew(view: &View, w: usize, theme: Theme) -> Card {
-    let mut rows = Vec::new();
+/// `crew` card, or `None` while no specialist is running.
+pub fn crew(view: &View, w: usize, theme: Theme) -> Option<Card> {
     if view.crew.is_empty() {
-        rows.push(row(vec![s("no specialists running", theme.side_muted())]));
+        return None;
     }
+    let mut rows = Vec::new();
     for c in &view.crew {
         let role_w = wrap::width(&c.role);
         let label = wrap::truncate(&c.label, w.saturating_sub(role_w + 2));
@@ -360,13 +447,13 @@ pub fn crew(view: &View, w: usize, theme: Theme) -> Card {
             s(right, theme.side_muted()),
         ]));
     }
-    Card {
+    Some(Card {
         id: CardId::Crew,
         title: "crew".into(),
         counter: format!("{}/{}", view.crew.len(), view.max_crew),
         detail_from: rows.len(),
         rows,
-    }
+    })
 }
 
 /// `mcp` card (`R-PANEL-16`), only when relevant.
@@ -422,4 +509,52 @@ pub fn mcp(view: &View, w: usize, theme: Theme) -> Option<Card> {
         detail_from: rows.len(),
         rows,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(card: &Card) -> String {
+        card.rows
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect()
+    }
+
+    /// No gauge could mean "no cap" or "not loaded"; the card says which.
+    #[test]
+    fn the_budget_card_says_where_the_cap_stands() {
+        let theme = Theme::truecolor_dark();
+        let mut v = View::new(
+            ryter_core::Phase::Build,
+            "c".into(),
+            "m".into(),
+            "/tmp".into(),
+        );
+        v.spend = Some(1.25);
+        v.budget_usd = 0.0;
+        let off = budget(&v, 26, theme);
+        assert_eq!(off.counter, "off");
+        assert!(text(&off).contains("off"));
+        v.budget_usd = 5.0;
+        let on = budget(&v, 26, theme);
+        assert_eq!(on.counter, "25%");
+        assert!(
+            text(&on).contains("$1.25 of $5.00") && text(&on).contains("$3.75"),
+            "{}",
+            text(&on)
+        );
+        // Reached: the card says how to raise it.
+        v.spend = Some(5.5);
+        assert!(text(&budget(&v, 26, theme)).contains("/budget +2"));
+        // The spend card no longer carries the gauge.
+        assert!(!text(&spend(&v, 26, theme)).contains("of $5.00"));
+    }
 }

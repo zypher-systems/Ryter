@@ -1,27 +1,23 @@
- ryter  ·  orchestrator                                                                 ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build                                                grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                                                 ╭─ session ──────────────────╮
-   welcome · /help for keys                                                               │ untitled                   │
-                                                                                          │ 0193abcd             build │
-                                                                                          │ auditor ✓  tools ask       │
-                                                                                          ╰────────────────────────────╯
-                                                                                          ╭─ model ────────────────────╮
-                                                                                          │ spacexai ●        grok-4.6 │
-                                                                                          │ ctx █░░░░░░░░░░░░░░░   5%  │
-                         ╭─ connections ────────────────────────────────────────────────── 2 ─╮ 12.4k / 256k tokens    │
-                         │›● spacexai  spacexai · grok-4.6                            key set │ e unknown              │
-                         │ ○ openrouter  openrouter · claude-sonnet-4.6                no key │ ───────────────────────╯
-                         │                                                                    │ nd ────────────────────╮
-                         │ + add connection                                                   │ ion              $?.?? │
-                         │ ⚙ test connection  live GET /models on the highlighted row         │ ░░░░░░░░░░░░░░░░   0%  │
-                         │                                                                    │ $0.00 of $5.00         │
-                         │                                                                    │ ───────────────────────╯
-                         │                                                                    │ ks ────────────────────╮
-                         ╰─ enter use · k set key · t test · d remove · esc ──────────────────╯ asks yet               │
-                                                                                                ───────────────────────╯
-                                                                                          ╭─ crew ─────────────── 0/4 ─╮
-                                                                                          │ no specialists running     │
-                                                                                          ╰────────────────────────────╯
+ · system
+   welcome · /help for keys
+
+
+
+
+
+
+                         ╭─ connections ────────────────────────────────────────────────── 2 ─╮
+                         │›● spacexai  spacexai · grok-4.6                            key set │
+                         │ ○ openrouter  openrouter · claude-sonnet-4.6                no key │
+                         │                                                                    │
+                         │ + add connection                                                   │
+                         │ ⚙ test connection  live GET /models on the highlighted row         │
+                         │                                                                    │
+                         │                                                                    │
+                         │                                                                    │
+                         ╰─ enter use · k set key · t test · d remove · esc ──────────────────╯
 
 
 
@@ -34,7 +30,11 @@
 
 
 
-╭─ dusty ────────────────────────────────────────────────────────────────────────────────────────────────────── build ─╮
-│› ask the orchestrator, or / for commands                                                                             │
+
+
+
+
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back

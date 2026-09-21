@@ -177,6 +177,8 @@ fn default_row(connection: &str) -> ModelInfo {
         input_per_million: None,
         output_per_million: None,
         connection: Some(connection.to_string()),
+        created: None,
+        tools: None,
     }
 }
 
@@ -229,7 +231,7 @@ impl Panel for Models {
             .map(|m| {
                 if m.id.is_empty() {
                     return vec![
-                        "default (follows orchestrator)".into(),
+                        "default (follows the lead)".into(),
                         String::new(),
                         String::new(),
                         String::new(),
@@ -281,10 +283,7 @@ impl Panel for Models {
         // Detail footer (R-POP-29).
         if let Some(m) = list.get(sel) {
             let text = if m.id.is_empty() {
-                format!(
-                    "follows the orchestrator: {} · {}",
-                    view.model, view.connection
-                )
+                format!("follows the lead: {} · {}", view.model, view.connection)
             } else {
                 let rates = match (m.input_per_million, m.output_per_million) {
                     (Some(i), Some(o)) => format_rates(Some(ryter_core::Rates::per_million(i, o))),

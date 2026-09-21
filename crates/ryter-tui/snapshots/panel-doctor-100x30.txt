@@ -1,30 +1,30 @@
- ryter  ·  orchestrator                                             ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build                            grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                             ╭─ session ──────────────────╮
-   welcome · /help for keys                                           │ untitled                   │
-                                                                      │ 0193abcd             build │
-                                                                      │ auditor ✓  tools ask       │
-                                                                      ╰────────────────────────────╯
-              ╭─ doctor ────────────────────────── running… · trusted · sandbox off ─╮─────────────╮
-              │ ⠋ running checks…                                                    │    grok-4.6 │
-              │                                                                      │ ░░░░░   5%  │
-              │                                                                      │ k tokens    │
-              │                                                                      │             │
-              │                                                                      │ ────────────╯
-              │                                                                      │ ────────────╮
-              │                                                                      │       $?.?? │
-              ╰─ ↑↓ move · enter details · c copy/save report · esc ─────────────────╯ ░░░░░   0%  │
-                                                                                       .00         │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ tasks ────────────────────╮
-                                                                      │ no tasks yet               │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ crew ─────────────── 0/4 ─╮
-                                                                      │ no specialists running     │
-                                                                      ╰────────────────────────────╯
+ · system
+   welcome · /help for keys
 
 
-╭─ dusty ────────────────────────────────────────────────────────────────────────────────── build ─╮
-│› ask the orchestrator, or / for commands                                                         │
+
+              ╭─ doctor ────────────────────────── running… · trusted · sandbox off ─╮
+              │ ⠋ running checks…                                                    │
+              │                                                                      │
+              │                                                                      │
+              │                                                                      │
+              │                                                                      │
+              │                                                                      │
+              │                                                                      │
+              ╰─ ↑↓ move · enter details · c copy/save report · esc ─────────────────╯
+
+
+
+
+
+
+
+
+
+
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back

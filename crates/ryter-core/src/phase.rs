@@ -11,10 +11,10 @@ use crate::role::Role;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Phase {
-    /// Spawn planners only.
+    /// Design before building: the architect may run, nothing writes
+    /// product source. The old separate `architect` phase folds in here.
+    #[serde(alias = "architect")]
     Plan,
-    /// Spawn architects only.
-    Architect,
     /// Spawn builders (and auditors as the merge gate).
     Build,
     /// Spawn extra review specialists.
@@ -28,8 +28,7 @@ impl Phase {
     /// Specialist roles this phase is allowed to run.
     pub fn allowed_roles(self) -> &'static [Role] {
         match self {
-            Self::Plan => &[Role::Planner],
-            Self::Architect => &[Role::Architect],
+            Self::Plan => &[Role::Architect],
             Self::Build => &[Role::Builder, Role::Auditor],
             Self::Audit => &[Role::Auditor],
         }
@@ -44,7 +43,6 @@ impl Phase {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Plan => "plan",
-            Self::Architect => "architect",
             Self::Build => "build",
             Self::Audit => "audit",
         }
@@ -68,8 +66,7 @@ impl FromStr for Phase {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "plan" => Ok(Self::Plan),
-            "architect" => Ok(Self::Architect),
+            "plan" | "architect" | "design" => Ok(Self::Plan),
             "build" => Ok(Self::Build),
             "audit" => Ok(Self::Audit),
             other => Err(Error::Config(format!("unknown phase {other:?}"))),
@@ -90,13 +87,14 @@ mod tests {
     fn build_allows_builders_and_auditors() {
         assert!(Phase::Build.allows(Role::Builder));
         assert!(Phase::Build.allows(Role::Auditor));
-        assert!(!Phase::Build.allows(Role::Planner));
+        assert!(!Phase::Build.allows(Role::Architect));
+        assert!(Phase::Plan.allows(Role::Architect));
         assert!(!Phase::Plan.allows(Role::Builder));
     }
 
     #[test]
     fn parse_round_trip() {
-        for phase in [Phase::Plan, Phase::Architect, Phase::Build, Phase::Audit] {
+        for phase in [Phase::Plan, Phase::Build, Phase::Audit] {
             assert_eq!(phase.as_str().parse::<Phase>().unwrap(), phase);
         }
     }

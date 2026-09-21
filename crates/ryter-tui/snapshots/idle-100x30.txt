@@ -1,30 +1,30 @@
- ryter  ·  orchestrator                                             ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build                                                    ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                             ╭─ session ──────────────────╮
-   welcome · /help for keys                                           │ untitled                   │
-                                                                      │ 0193abcd             build │
-                                                                      │ auditor ✓  tools ask       │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ model ────────────────────╮
-                                                                      │ spacexai ●        grok-4.6 │
-                                                                      │ ctx █░░░░░░░░░░░░░░░   5%  │
-                                                                      │     12.4k / 256k tokens    │
-                                                                      │ price unknown              │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ spend ────────────────────╮
-                                                                      │ session              $?.?? │
-                                                                      │ bud ░░░░░░░░░░░░░░░░   0%  │
-                                                                      │     $0.00 of $5.00         │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ tasks ────────────────────╮
-                                                                      │ no tasks yet               │
-                                                                      ╰────────────────────────────╯
-                                                                      ╭─ crew ─────────────── 0/4 ─╮
-                                                                      │ no specialists running     │
-                                                                      ╰────────────────────────────╯
+ · system                                                       ╭─ session ────────────────────────╮
+   welcome · /help for keys                                     │ untitled                   build │
+                                                                │ tools ask                        │
+                                                                ╰──────────────────────────────────╯
+                                                                ╭─ model ──────────────────────────╮
+                                                                │ spacexai ●              grok-4.6 │
+                                                                │ ctx █░░░░░░░░░░░░░░░░░░░   5%    │
+                                                                │     12.4k / 256k tokens          │
+                                                                │ price unknown                    │
+                                                                ╰──────────────────────────────────╯
+                                                                ╭─ spend ──────────────────────────╮
+                                                                │ session                    $?.?? │
+                                                                ╰──────────────────────────────────╯
+                                                                ╭─ budget ─────────────────── off ─╮
+                                                                │ cap                          off │
+                                                                ╰──────────────────────────────────╯
 
 
-╭─ dusty ────────────────────────────────────────────────────────────────────────────────── build ─╮
-│› ask the orchestrator, or / for commands                                                         │
+
+
+
+
+
+
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- enter send    ⇧enter newline    / commands    ^b panel    ^c quit
+ enter send    tab plan    ⇧enter newline    / commands    ^b panel    ^c quit

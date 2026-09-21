@@ -1,24 +1,24 @@
- ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
- · system                                             ╭─ session ──────────────╮
-   wel╭─ crew ─────────────────────────────────────── max concurrent: 4 ─╮     │
-      │ roles                                                            │ ild │
-      │›● planner  default (grok-4.6)                                    │ k   │
-      │ ● architect  default (grok-4.6)                                  │ ────╯
-      │ ● builder  default (grok-4.6)                                    │ ────╮
-      │ ● auditor  default (grok-4.6)                                    │ 4.6 │
-      │                                                                  │ 5%  │
-      │ presets                                                          │     │
-      │ + save preset  current assignment → ~/.ryter/crews/<name>.toml   │     │
-      │   no presets yet                                                 │ ────╯
-      │                                                                  │ ────╮
-      │ max concurrent specialists: 4 · change in /settings              │ .?? │
-      ╰─ enter assign/load · r reset · d delete preset · esc ────────────╯ 0%  │
-                                                                               │
-                                                      ╰────────────────────────╯
+ · sys╭─ crew ─────────────────────────────────────── max concurrent: 4 ─╮
+   wel│ roles · b opens the crew builder: every seat, with recommendation│
+      │›● architect  default (grok-4.6)                                  │
+      │ ● builder  default (grok-4.6)                                    │
+      │ ● auditor  default (grok-4.6)                                    │
+      │                                                                  │
+      │ ready-made crews · picked from the models you can reach          │
+      │ ▸ skiff  low cost                                  enter preview │
+      │ ▸ schooner  balanced                               enter preview │
+      │ ▸ galleon  high cost                               enter preview │
+      │                                                                  │
+      │ presets                                                          │
+      │ + save preset  current assignment → ~/.ryter/crews/<name>.toml   │
+      │   no presets yet                                                 │
+      │                                                                  │
+      ╰─ enter assign/apply · b crew builder · r reset · d delete · esc ─╯
 
 
-╭─ dusty ────────────────────────────────────────────────────────────── build ─╮
-│› ask the orchestrator, or / for commands                                     │
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back

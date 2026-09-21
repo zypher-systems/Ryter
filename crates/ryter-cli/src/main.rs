@@ -2,7 +2,6 @@
 
 use std::io::{self, IsTerminal, Write};
 use std::process::ExitCode;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::mpsc;
 
@@ -14,7 +13,7 @@ use ryter_core::sandbox::{self, SandboxProfile};
 use ryter_core::session::Session;
 use ryter_core::spend::{PriceBook, format_usd};
 use ryter_core::tools::ToolContext;
-use ryter_core::{Agent, AgentEvent, Error, HookDecision, HookSet, Phase, Provider, Role, VERSION};
+use ryter_core::{Agent, AgentEvent, Error, HookSet, Phase, Provider, Role, VERSION};
 
 #[derive(Parser)]
 #[command(
@@ -32,6 +31,16 @@ struct Cli {
     #[arg(long)]
     json: bool,
 
+    /// Continue the latest session in this directory (with `-p`): its
+    /// transcript, task queue, and open patch.
+    #[arg(short = 'c', long = "continue")]
+    resume: bool,
+
+    /// build | plan | review (one model), or crew (the lead and its crew).
+    /// Default: build, or the mode a continued session was left in.
+    #[arg(long)]
+    hat: Option<String>,
+
     /// Treat Ask as Allow. Deny still wins.
     #[arg(long)]
     always_approve: bool,
@@ -43,10 +52,6 @@ struct Cli {
     /// Model id.
     #[arg(short = 'm', long)]
     model: Option<String>,
-
-    /// Phase: plan, architect, build, audit.
-    #[arg(long)]
-    mode: Option<String>,
 
     /// Landlock profile: off, workspace, read-only. Default from config (`off`).
     #[arg(long)]
@@ -64,20 +69,9 @@ enum Command {
     Spend {
         /// Session id.
         session: Option<String>,
-    },
-    /// Write a pass note and switch phase (latest session in this directory).
-    Handoff {
-        /// Target phase, or `back`.
-        to: String,
-        /// Pass note body (empty is allowed).
+        /// This project (its git repository) across every session.
         #[arg(long)]
-        note: Option<String>,
-        /// Read the pass note from a file.
-        #[arg(long)]
-        note_file: Option<std::path::PathBuf>,
-        /// Reason when going `back`.
-        #[arg(long)]
-        reason: Option<String>,
+        project: bool,
     },
     /// MCP: inbound server or echo helper.
     Mcp {
@@ -120,6 +114,52 @@ enum Command {
         /// Connection name.
         connection: Option<String>,
     },
+    /// Run the benchmark suite through the real crew: what lands, what passes
+    /// the hidden tests, and what it costs. Spends real money on your keys.
+    Bench {
+        /// Suite directory.
+        #[arg(long, default_value = "bench")]
+        suite: std::path::PathBuf,
+        /// Only these tasks (repeatable).
+        #[arg(long)]
+        only: Vec<String>,
+        /// Run with a saved crew preset instead of the current crew, to
+        /// compare tierings.
+        #[arg(long)]
+        crew: Option<String>,
+        /// Spend cap per task, in USD.
+        #[arg(long, default_value_t = 1.0)]
+        budget_usd: f64,
+        /// Run each task this many times (models vary run to run).
+        #[arg(long, default_value_t = 1)]
+        repeat: u32,
+    },
+    /// Crew model assignments.
+    Crew {
+        #[command(subcommand)]
+        cmd: CrewCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum CrewCmd {
+    /// Suggest a crew from every model you can reach. Tiers: skiff (low
+    /// cost), schooner (balanced, the default), galleon (high cost).
+    Suggest {
+        /// skiff | schooner | galleon (or low | medium | high).
+        #[arg(long, default_value = "schooner")]
+        tier: String,
+        /// Save it to ~/.ryter/crew.toml (the current crew is kept as the
+        /// `before-suggest` preset).
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Show all three tiers side by side, from the models you can reach.
+    Tiers,
+    /// Send each crew model (and the lead) one tiny request with a tool, to
+    /// catch a data policy, missing tool support, access, or credits. Costs
+    /// well under a cent.
+    Check,
 }
 
 #[derive(Subcommand)]
@@ -133,7 +173,8 @@ enum ConnCmd {
     Add {
         /// Name (`local`, `work`, …).
         name: String,
-        /// Kind: spacexai, openrouter, openai, anthropic.
+        /// Kind: spacexai, openrouter, openai, anthropic, or a local server:
+        /// ollama, lmstudio, llamacpp (no key needed, no API cost).
         #[arg(long)]
         kind: String,
         /// Override the template base URL.
@@ -179,7 +220,7 @@ fn main() -> ExitCode {
                 always_approve: cli.always_approve,
                 connection: cli.connection,
                 model: cli.model,
-                phase: cli.mode,
+                phase: None,
                 sandbox: cli.sandbox,
                 session: None,
             }) {
@@ -190,7 +231,14 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Some(Command::Spend { session }) => match spend_cmd(session.as_deref()) {
+        Some(Command::Spend { project: true, .. }) => match project_spend_cmd() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(1)
+            }
+        },
+        Some(Command::Spend { session, .. }) => match spend_cmd(session.as_deref()) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("{e}");
@@ -223,6 +271,47 @@ fn main() -> ExitCode {
                 ExitCode::from(1)
             }
         },
+        Some(Command::Bench {
+            suite,
+            only,
+            crew,
+            budget_usd,
+            repeat,
+        }) => match bench_cmd(&suite, &only, crew.as_deref(), budget_usd, repeat) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(1)
+            }
+        },
+        Some(Command::Crew {
+            cmd: CrewCmd::Suggest { tier, apply },
+        }) => match crew_suggest_cmd(&tier, apply) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(1)
+            }
+        },
+        Some(Command::Crew {
+            cmd: CrewCmd::Check,
+        }) => match crew_check_cmd() {
+            Ok(true) => ExitCode::SUCCESS,
+            Ok(false) => ExitCode::from(1),
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(1)
+            }
+        },
+        Some(Command::Crew {
+            cmd: CrewCmd::Tiers,
+        }) => match crew_tiers_cmd() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(1)
+            }
+        },
         Some(Command::Models { connection }) => match models_cmd(connection.as_deref()) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
@@ -246,7 +335,7 @@ fn main() -> ExitCode {
                 always_approve: cli.always_approve,
                 connection: cli.connection,
                 model: cli.model,
-                phase: cli.mode,
+                phase: None,
                 sandbox: cli.sandbox,
                 session: Some(id.unwrap_or_else(|| "latest".into())),
             }) {
@@ -272,23 +361,6 @@ fn main() -> ExitCode {
                     ExitCode::from(1)
                 }
             }
-            Err(e) => {
-                eprintln!("{e}");
-                ExitCode::from(1)
-            }
-        },
-        Some(Command::Handoff {
-            to,
-            note,
-            note_file,
-            reason,
-        }) => match handoff_cmd(
-            &to,
-            note.as_deref(),
-            note_file.as_deref(),
-            reason.as_deref(),
-        ) {
-            Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("{e}");
                 ExitCode::from(1)
@@ -337,7 +409,6 @@ async fn run_prompt(
     let prompt = cli
         .prompt
         .ok_or_else(|| Error::Config("missing -p/--prompt".into()))?;
-    let _ = ryter_core::ensure_project_memory(&cwd);
     if !cfg.spend.enabled {
         eprintln!("warning: [spend] enabled = false; counters still increment");
     }
@@ -353,17 +424,19 @@ async fn run_prompt(
         .connections
         .get(&conn_name)
         .ok_or_else(|| Error::Config(format!("unknown connection {conn_name}")))?;
-    let phase = cli
-        .mode
-        .as_deref()
-        .map(Phase::from_str)
-        .transpose()?
-        .unwrap_or(Phase::Build);
+    // Sessions still record a phase for compatibility; nothing routes on it.
+    let phase = Phase::Build;
     let key = resolve_secret(&cfg, &ConnectionId::new(&conn_name))?;
     let provider = http_provider(conn, key);
     let _ = config::save_last_route(&home, &config::LastRoute::new(&conn_name, &model));
     let trusted = config::is_trusted(&cwd);
-    let mut session = Session::create(&home, &cwd, phase, conn_name.clone(), model.clone())?;
+    // A budget stop tells the user to continue; headless could only start over.
+    let mut session = if cli.resume {
+        Session::latest(&home, &cwd)?
+            .ok_or_else(|| Error::Config("no session in this directory to continue".into()))?
+    } else {
+        Session::create(&home, &cwd, phase, conn_name.clone(), model.clone())?
+    };
     session.set_auditor(cfg.auditor.enabled)?;
     sandbox::apply(profile, &cwd, &home)?;
     let notes = session.notes_dir();
@@ -381,9 +454,23 @@ async fn run_prompt(
             } else if let AgentEvent::Token { text } = ev {
                 let _ = io::stdout().write_all(text.as_bytes());
                 let _ = io::stdout().flush();
+            } else if let AgentEvent::Notice { message } = ev {
+                eprintln!("ryter: {message}");
             }
         }
     });
+    let role = match cli.hat.as_deref() {
+        Some(h) => match h.parse::<Role>() {
+            Ok(r) if r.is_solo() || r == Role::Orchestrator => r,
+            _ => {
+                return Err(Error::Config(format!(
+                    "unknown hat {h:?}: build, plan, review, or crew"
+                )));
+            }
+        },
+        None => session.meta.mode.unwrap_or(Role::SoloBuild),
+    };
+    let _ = session.set_mode(role);
     let mut agent = Agent {
         provider: Arc::new(provider),
         book: PriceBook::from_config(&cfg),
@@ -391,7 +478,7 @@ async fn run_prompt(
         ctx: ToolContext {
             workspace: cwd.clone(),
             notes_dir: notes,
-            role: Role::Orchestrator,
+            role,
             always_approve: cli.always_approve,
             queue: queue.clone(),
             mcp: None,
@@ -407,7 +494,7 @@ async fn run_prompt(
         },
         connection: conn_name,
         model,
-        role: Role::Orchestrator,
+        role,
         max_turns: 40,
         budget_usd: cfg.spend.session_budget_usd,
         sink: Some(tx),
@@ -417,6 +504,8 @@ async fn run_prompt(
         queue,
         max_crew: cfg.subagents.max,
         max_retries: cfg.auditor.max_retries,
+        checks: cfg.auditor.checks.clone(),
+        check_timeout_secs: cfg.auditor.check_timeout_secs,
         context_window: 0,
         cfg: Some(cfg.clone()),
         running: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -488,8 +577,8 @@ fn connections_cmd(cmd: Option<ConnCmd>) -> ryter_core::Result<()> {
             io::stdin()
                 .read_line(&mut line)
                 .map_err(|e| Error::Io(e.to_string()))?;
-            config::store_secret_at(&config::home_dir(), &name, line.trim())?;
-            println!("saved key for {name}");
+            let store = config::store_secret_at(&config::home_dir(), &name, line.trim())?;
+            println!("saved key for {name} in {store}");
             Ok(())
         }
         Some(ConnCmd::Add {
@@ -529,6 +618,268 @@ fn connections_cmd(cmd: Option<ConnCmd>) -> ryter_core::Result<()> {
         }
         Some(ConnCmd::Test { name }) => models_cmd(Some(&name)),
     }
+}
+
+fn bench_cmd(
+    suite: &std::path::Path,
+    only: &[String],
+    crew: Option<&str>,
+    budget_usd: f64,
+    repeat: u32,
+) -> ryter_core::Result<()> {
+    use ryter_core::bench::{BenchEnv, Summary, load_suite, run_task};
+    let cwd = std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?;
+    let trusted = config::is_trusted(&cwd);
+    let mut cfg = config::load(Some(&cwd), trusted)?;
+    let home = config::home_dir();
+    if let Some(name) = crew {
+        config::load_crew_preset(&home, &mut cfg, name)?;
+    }
+    let mut tasks = load_suite(suite)?;
+    if !only.is_empty() {
+        tasks.retain(|t| only.contains(&t.name));
+    }
+    if tasks.is_empty() {
+        return Err(Error::Config(format!("no tasks in {}", suite.display())));
+    }
+    let last = config::load_last_route(&home);
+    let (connection, model) = config::resolve_route(&cfg, last.as_ref(), None, None);
+    let conn = cfg
+        .connections
+        .get(&connection)
+        .ok_or_else(|| Error::Config(format!("unknown connection {connection}")))?;
+    let key = resolve_secret(&cfg, &ConnectionId::new(&connection))?;
+    let provider: Arc<dyn ryter_core::Provider> = Arc::new(http_provider(conn, key));
+    let (_, builder) = cfg.route_for(Role::Builder);
+    let (_, auditor) = cfg.route_for(Role::Auditor);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let run_home = home.join("bench").join(stamp.to_string());
+    std::fs::create_dir_all(&run_home).map_err(|e| Error::Io(e.to_string()))?;
+    let results_path = run_home.join("results.jsonl");
+    println!("crew      lead {model} · builder {builder} · auditor {auditor}");
+    println!(
+        "running   {} task(s) × {repeat}, capped at ${budget_usd:.2} each — this spends real money",
+        tasks.len()
+    );
+    let env = BenchEnv {
+        cfg,
+        provider,
+        connection,
+        model: model.clone(),
+        home: run_home.clone(),
+        budget_usd,
+        accept_timeout: std::time::Duration::from_secs(600),
+    };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Error::Io(e.to_string()))?;
+    let mut results = Vec::new();
+    for task in &tasks {
+        for _ in 0..repeat {
+            // A real task takes minutes; say what is running.
+            print!("{:<24} running…\r", task.name);
+            let _ = io::stdout().flush();
+            let r = rt.block_on(run_task(task, &env));
+            let mark = match (r.landed, r.accepted) {
+                (true, true) => "accepted",
+                (true, false) => "FALSE PASS",
+                _ => "not landed",
+            };
+            let bound = if r.unpriced { "≥" } else { "" };
+            println!(
+                "{:<24} {mark:<11} {bound}${:.3}  {:>7} tok  {:>5.0}s  {}",
+                r.task, r.usd, r.billable_tokens, r.secs, r.outcome
+            );
+            let line = serde_json::json!({
+                "lead": model, "builder": builder, "auditor": auditor, "result": r,
+            });
+            use std::io::Write as _;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&results_path)
+            {
+                let _ = writeln!(f, "{line}");
+            }
+            let paused = r.outcome.starts_with("builds paused");
+            results.push(r);
+            if paused {
+                eprintln!("stopping: the crew cannot run until the auditor is a different model");
+                println!("\n{}", Summary::of(&results).render());
+                return Ok(());
+            }
+        }
+    }
+    println!("\n{}", Summary::of(&results).render());
+    println!("results   {}", results_path.display());
+    Ok(())
+}
+
+/// The lead's route and every model the user can reach, for tier suggestions.
+struct Reach {
+    cfg: ryter_core::Config,
+    home: std::path::PathBuf,
+    lead_conn: String,
+    lead_model: String,
+    models: Vec<ryter_core::llm::ModelInfo>,
+}
+
+fn reach() -> ryter_core::Result<Reach> {
+    let cwd = std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?;
+    let trusted = config::is_trusted(&cwd);
+    let cfg = config::load(Some(&cwd), trusted)?;
+    let home = config::home_dir();
+    let last = config::load_last_route(&home);
+    let (lead_conn, lead_model) = config::resolve_route(&cfg, last.as_ref(), None, None);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Error::Io(e.to_string()))?;
+    let (models, failed) = rt.block_on(ryter_core::tiering::reachable_models(&cfg));
+    for f in &failed {
+        eprintln!("skipped {f}");
+    }
+    Ok(Reach {
+        cfg,
+        home,
+        lead_conn,
+        lead_model,
+        models,
+    })
+}
+
+/// Test the lead and every crew seat; true when all answered.
+fn crew_check_cmd() -> ryter_core::Result<bool> {
+    let cwd = std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?;
+    let trusted = config::is_trusted(&cwd);
+    let cfg = config::load(Some(&cwd), trusted)?;
+    let home = config::home_dir();
+    let last = config::load_last_route(&home);
+    let (lead_conn, lead_model) = config::resolve_route(&cfg, last.as_ref(), None, None);
+    let mut seats = vec![("lead".to_string(), lead_conn.clone(), lead_model.clone())];
+    for role in ["architect", "builder", "auditor"] {
+        let r = cfg.specialists.get(role);
+        let conn = r
+            .and_then(|r| r.connection.clone())
+            .unwrap_or_else(|| lead_conn.clone());
+        let model = r
+            .and_then(|r| r.model.clone())
+            .unwrap_or_else(|| lead_model.clone());
+        seats.push((role.to_string(), conn, model));
+    }
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Error::Io(e.to_string()))?;
+    let mut ok = true;
+    let mut seen: std::collections::HashMap<(String, String), Result<(), String>> =
+        std::collections::HashMap::new();
+    for (role, conn, model) in seats {
+        let key = (conn.clone(), model.clone());
+        if !seen.contains_key(&key) {
+            let r = match (
+                cfg.connections.get(&conn),
+                resolve_secret(&cfg, &ConnectionId::new(&conn)),
+            ) {
+                (Some(c), Ok(k)) => {
+                    rt.block_on(ryter_core::tiering::probe(&http_provider(c, k), &model))
+                }
+                (None, _) => Err(format!("unknown connection {conn}")),
+                (_, Err(_)) => Err(format!("no key for {conn}")),
+            };
+            seen.insert(key.clone(), r);
+        }
+        match &seen[&key] {
+            Ok(()) => println!("✓ {role:<10}{model} on {conn}"),
+            Err(e) => {
+                ok = false;
+                println!("✗ {role:<10}{model} on {conn}: {e}");
+            }
+        }
+    }
+    Ok(ok)
+}
+
+fn crew_tiers_cmd() -> ryter_core::Result<()> {
+    use ryter_core::tiering::{Tier, suggest_tier};
+    let r = reach()?;
+    println!(
+        "lead      {} on {} (unchanged by any tier)\n",
+        r.lead_model, r.lead_conn
+    );
+    for tier in Tier::ALL {
+        let t = suggest_tier(
+            tier,
+            &r.lead_conn,
+            &r.lead_model,
+            &r.models,
+            &r.cfg.local_connections(),
+        );
+        println!("{} — {}: {}", tier.name(), tier.cost(), tier.tagline());
+        for (role, p) in [
+            ("builder", &t.builder),
+            ("auditor", &t.auditor),
+            ("architect", &t.architect),
+        ] {
+            let label = p
+                .as_ref()
+                .map(ryter_core::tiering::Pick::label)
+                .unwrap_or_else(|| "(no suitable model)".into());
+            println!("  {role:<10}{label}");
+        }
+        println!();
+    }
+    println!("Use one: `ryter crew suggest --tier <name> --apply`, or pick it in /crew.");
+    Ok(())
+}
+
+fn crew_suggest_cmd(tier: &str, apply: bool) -> ryter_core::Result<()> {
+    let tier = ryter_core::tiering::Tier::parse(tier).ok_or_else(|| {
+        Error::Config(format!(
+            "unknown tier {tier:?}: skiff (low), schooner (balanced), galleon (high)"
+        ))
+    })?;
+    let Reach {
+        cfg,
+        home,
+        lead_conn,
+        lead_model,
+        models,
+    } = reach()?;
+    let t = ryter_core::tiering::suggest_tier(
+        tier,
+        &lead_conn,
+        &lead_model,
+        &models,
+        &cfg.local_connections(),
+    );
+    println!("{} — {}: {}", tier.name(), tier.cost(), tier.tagline());
+    println!("lead      {lead_model} on {lead_conn} (unchanged)");
+    print!("{}", t.render());
+    if !apply {
+        println!(
+            "\nRun `ryter crew suggest --tier {} --apply` to use it, or pick it in /crew.",
+            tier.name()
+        );
+        return Ok(());
+    }
+    if t.auditor.is_none() {
+        return Err(Error::Config(
+            "not applied: no model qualifies as an independent auditor".into(),
+        ));
+    }
+    config::save_crew_preset(&home, "before-suggest", &cfg.specialists)?;
+    let mut rows = cfg.specialists.clone();
+    rows.extend(t.as_specialists());
+    config::save_crew(&home, &rows)?;
+    println!(
+        "\nApplied to ~/.ryter/crew.toml. Your previous crew is the `before-suggest` preset in /crew."
+    );
+    Ok(())
 }
 
 fn models_cmd(connection: Option<&str>) -> ryter_core::Result<()> {
@@ -603,15 +954,12 @@ struct ServeHost {
 }
 
 impl ryter_core::InboundHost for ServeHost {
-    fn prompt(&self, text: &str, phase: Option<Phase>) -> ryter_core::Result<String> {
+    fn prompt(&self, text: &str) -> ryter_core::Result<String> {
         self.cancel.reset();
         let mut agent = self
             .agent
             .lock()
             .map_err(|e| Error::Config(e.to_string()))?;
-        if let Some(p) = phase {
-            agent.handoff(p, "", None)?;
-        }
         let rt = self.rt.lock().map_err(|e| Error::Config(e.to_string()))?;
         let r = rt.block_on(agent.turn(text))?;
         Ok(r.text)
@@ -620,7 +968,6 @@ impl ryter_core::InboundHost for ServeHost {
     fn status(&self) -> ryter_core::StatusSnapshot {
         let agent = self.agent.lock().expect("serve host");
         ryter_core::StatusSnapshot {
-            phase: agent.session.meta.phase.to_string(),
             model: agent.model.clone(),
             connection: agent.connection.clone(),
             session: agent.session.meta.id.to_string(),
@@ -631,14 +978,6 @@ impl ryter_core::InboundHost for ServeHost {
     fn spend(&self) -> String {
         let agent = self.agent.lock().expect("serve host");
         format_usd(agent.session.meta.spend_usd_total)
-    }
-
-    fn set_phase(&self, phase: Phase, note: &str) -> ryter_core::Result<()> {
-        let mut agent = self
-            .agent
-            .lock()
-            .map_err(|e| Error::Config(e.to_string()))?;
-        agent.handoff(phase, note, None)
     }
 
     fn cancel(&self) {
@@ -708,6 +1047,8 @@ fn mcp_serve() -> ryter_core::Result<()> {
         queue,
         max_crew: cfg.subagents.max,
         max_retries: cfg.auditor.max_retries,
+        checks: cfg.auditor.checks.clone(),
+        check_timeout_secs: cfg.auditor.check_timeout_secs,
         context_window: 0,
         cfg: Some(cfg.clone()),
         running: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -831,6 +1172,8 @@ fn serve_host_from_config(
         queue,
         max_crew: cfg.subagents.max,
         max_retries: cfg.auditor.max_retries,
+        checks: cfg.auditor.checks.clone(),
+        check_timeout_secs: cfg.auditor.check_timeout_secs,
         context_window: 0,
         cfg: Some(cfg.clone()),
         running: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -843,37 +1186,49 @@ fn serve_host_from_config(
     })
 }
 
-fn handoff_cmd(
-    to: &str,
-    note: Option<&str>,
-    note_file: Option<&std::path::Path>,
-    reason: Option<&str>,
-) -> ryter_core::Result<()> {
+fn project_spend_cmd() -> ryter_core::Result<()> {
     let cwd = std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?;
-    let home = config::home_dir();
-    let mut session = Session::latest(&home, &cwd)?
-        .ok_or_else(|| Error::Config("no session in this directory".into()))?;
-    let (target, back_reason) = if to.eq_ignore_ascii_case("back") {
-        let prev = Session::previous_phase(session.meta.phase)
-            .ok_or_else(|| Error::Config("already at plan; there is no previous phase".into()))?;
-        (prev, reason)
+    let p = ryter_core::project::project_spend(&config::home_dir(), &cwd)?;
+    let unpriced = if p.unpriced_calls > 0 {
+        format!(
+            "  ({} of {} calls unpriced, not included)",
+            p.unpriced_calls, p.calls
+        )
     } else {
-        (Phase::from_str(to)?, None)
+        String::new()
     };
-    let mut body = note.unwrap_or("").to_string();
-    if let Some(path) = note_file {
-        body = std::fs::read_to_string(path).map_err(|e| Error::Io(e.to_string()))?;
-    }
-    let from = session.meta.phase;
-    let trusted = config::is_trusted(&cwd);
-    if let Ok(cfg) = config::load(Some(&cwd), trusted) {
-        let hooks = HookSet::from_config(&cfg.hooks);
-        if let HookDecision::Deny(msg) = hooks.handoff(from, target, &body, &cwd) {
-            return Err(Error::Config(format!("handoff hook denied: {msg}")));
+    println!(
+        "project {}  total {}  sessions {}{unpriced}",
+        p.root.display(),
+        format_usd(Some(p.total_usd)),
+        p.sessions
+    );
+    println!(
+        "this month {}  solo {}  crew {}",
+        format_usd(Some(p.this_month())),
+        format_usd(Some(p.solo_usd())),
+        format_usd(Some(p.crew_usd()))
+    );
+    for (title, map) in [
+        ("role", &p.by_role),
+        ("model", &p.by_model),
+        ("month", &p.by_month),
+    ] {
+        let mut rows: Vec<_> = map.iter().collect();
+        if title == "month" {
+            rows.sort_by(|a, b| b.0.cmp(a.0));
+        } else {
+            rows.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
+        }
+        for (k, v) in rows {
+            let k = if k == "orchestrator" {
+                "lead"
+            } else {
+                k.as_str()
+            };
+            println!("  {title:<6} {k:<40} {}", format_usd(Some(*v)));
         }
     }
-    session.handoff(target, &body, back_reason)?;
-    println!("handoff {from} → {target}");
     Ok(())
 }
 

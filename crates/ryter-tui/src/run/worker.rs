@@ -28,13 +28,6 @@ pub enum Work {
         /// Optional reply channel.
         reply: Option<mpsc::Sender<String>>,
     },
-    /// Phase handoff.
-    Handoff {
-        /// Target.
-        to: Phase,
-        /// Pass note.
-        note: String,
-    },
     /// Fresh session.
     New,
     /// Auditor gate.
@@ -67,10 +60,16 @@ pub enum Work {
         /// Hooks.
         hooks: Vec<ryter_core::HookConfig>,
     },
+    /// Switch hats, or to the crew's lead.
+    SetRole(ryter_core::Role),
+    /// `/undo`.
+    Undo,
     /// Live settings knobs.
     SetSettings {
         /// Budget cap.
         budget_usd: f64,
+        /// Per-task cap.
+        task_budget_usd: f64,
         /// Max parallel specialists.
         max_crew: u32,
         /// Web tools.
@@ -138,7 +137,7 @@ pub struct WorkerInit {
 /// Thread body.
 pub fn run(init: WorkerInit) {
     let WorkerInit {
-        cfg,
+        mut cfg,
         conn,
         key,
         session,
@@ -217,17 +216,6 @@ pub fn run(init: WorkerInit) {
                     }
                 }
             }
-            Ok(Work::Handoff { to, note }) => {
-                if let Some(a) = &mut agent {
-                    if let Err(e) = a.handoff(to, &note, None) {
-                        send_err(&ev_tx, e.to_string());
-                    }
-                    refresh_live(a, &live_status, &live_spend);
-                } else if let Some(s) = &mut session_hold {
-                    let _ = s.handoff(to, &note, None);
-                    let _ = ev_tx.send(AgentEvent::PhaseChanged { phase: to });
-                }
-            }
             Ok(Work::SetAuditor(on)) => {
                 if let Some(a) = &mut agent {
                     let _ = a.session.set_auditor(on);
@@ -250,7 +238,9 @@ pub fn run(init: WorkerInit) {
                         a.connection.clone(),
                         a.model.clone(),
                     ) {
-                        Ok(s) => {
+                        Ok(mut s) => {
+                            // A new session stays in the mode the user is in.
+                            let _ = s.set_mode(a.role);
                             swap_session(a, s);
                             let _ = ev_tx.send(session_event(a));
                         }
@@ -262,7 +252,10 @@ pub fn run(init: WorkerInit) {
                 if let Some(a) = &mut agent {
                     match Session::find(&home, Some(&cwd), &id) {
                         Ok(s) => {
+                            let role = s.meta.mode.unwrap_or(Role::SoloBuild);
                             swap_session(a, s);
+                            a.role = role;
+                            a.ctx.role = role;
                             a.model = a.session.meta.model.clone();
                             a.connection = a.session.meta.connection.clone();
                             refresh_live(a, &live_status, &live_spend);
@@ -342,19 +335,41 @@ pub fn run(init: WorkerInit) {
                     };
                 }
             }
+            Ok(Work::SetRole(role)) => {
+                if let Some(a) = &mut agent {
+                    a.role = role;
+                    a.ctx.role = role;
+                    let _ = a.session.set_mode(role);
+                }
+            }
+            Ok(Work::Undo) => {
+                let message = match &mut agent {
+                    Some(a) => a.undo().unwrap_or_else(|e| format!("undo failed: {e}")),
+                    None => "nothing to undo yet".into(),
+                };
+                let _ = ev_tx.send(AgentEvent::Notice { message });
+            }
             Ok(Work::SetSettings {
                 budget_usd,
+                task_budget_usd,
                 max_crew,
                 web,
             }) => {
+                // The worker's copy too: an agent rebuilt later (a provider
+                // switch) starts from it, and used to lose live changes.
+                let apply = |c: &mut Config| {
+                    c.spend.session_budget_usd = budget_usd;
+                    c.spend.task_budget_usd = task_budget_usd;
+                    c.subagents.max = max_crew;
+                    c.features.web = web;
+                };
+                apply(&mut cfg);
                 if let Some(a) = &mut agent {
                     a.budget_usd = budget_usd;
                     a.max_crew = max_crew;
                     a.ctx.web = web;
                     if let Some(c) = &mut a.cfg {
-                        c.spend.session_budget_usd = budget_usd;
-                        c.subagents.max = max_crew;
-                        c.features.web = web;
+                        apply(c);
                     }
                 }
             }
@@ -373,6 +388,11 @@ pub fn run(init: WorkerInit) {
                             all.push(m);
                         }
                     }
+                }
+                // Price spend from the catalog too, for providers that don't
+                // report cost per call.
+                if let Some(a) = &mut agent {
+                    a.book.ingest_model_info(&all);
                 }
                 let _ = ev_tx.send(AgentEvent::ModelsListed { models: all });
             }
@@ -395,6 +415,9 @@ pub fn run(init: WorkerInit) {
                                 m
                             })
                             .collect();
+                        if let Some(a) = &mut agent {
+                            a.book.ingest_model_info(&models);
+                        }
                         let _ = ev_tx.send(AgentEvent::ModelsListed { models });
                     }
                     Err(e) => {
@@ -500,7 +523,6 @@ fn emit_mcp_status(a: &Agent, tx: &mpsc::Sender<AgentEvent>) {
 fn refresh_live(agent: &Agent, status: &Mutex<StatusSnapshot>, spend: &Mutex<String>) {
     if let Ok(mut s) = status.lock() {
         *s = StatusSnapshot {
-            phase: agent.session.meta.phase.to_string(),
             model: agent.model.clone(),
             connection: agent.connection.clone(),
             session: agent.session.meta.id.to_string(),
@@ -534,6 +556,8 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         b.session.dir.join("tasks.json"),
     )));
     let notes = b.session.notes_dir();
+    // Solo mode's build hat unless the session was left in another mode.
+    let role = b.session.meta.mode.unwrap_or(Role::SoloBuild);
     Agent {
         provider: Arc::new(provider),
         book: PriceBook::from_config(b.cfg),
@@ -541,7 +565,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         ctx: ToolContext {
             workspace: b.cwd.to_path_buf(),
             notes_dir: notes,
-            role: Role::Orchestrator,
+            role,
             always_approve: b.always_approve,
             queue: queue.clone(),
             mcp: ryter_core::McpHub::connect(&b.cfg.mcp_servers)
@@ -559,7 +583,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         },
         connection: b.conn_name,
         model: b.model,
-        role: Role::Orchestrator,
+        role,
         max_turns: 40,
         budget_usd: b.cfg.spend.session_budget_usd,
         sink: Some(b.ev_tx),
@@ -569,6 +593,8 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         queue,
         max_crew: b.cfg.subagents.max,
         max_retries: b.cfg.auditor.max_retries,
+        checks: b.cfg.auditor.checks.clone(),
+        check_timeout_secs: b.cfg.auditor.check_timeout_secs,
         context_window: 0,
         cfg: Some(b.cfg.clone()),
         running: Arc::new(Mutex::new(Vec::new())),

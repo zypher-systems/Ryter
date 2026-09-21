@@ -25,25 +25,19 @@ pub fn border_color(view: &View, theme: Theme) -> Color {
         return theme.error;
     }
     match &view.composer.mode {
-        Mode::Handoff(p) => return theme.phase(*p),
         Mode::Secret { .. } => return theme.warn,
         Mode::Field { .. } => return theme.accent,
         Mode::Normal => {}
     }
-    if view.busy {
-        theme.warn
-    } else if !view.composer.is_empty() {
-        theme.accent
-    } else {
-        theme.dim
-    }
+    // The mode's color, always: it is how the user knows, at the point of
+    // typing, which hat (or the crew) gets this message.
+    theme.mode(view.mode)
 }
 
 /// Border title per `R-COMP-02`.
 pub fn title(view: &View) -> String {
     match &view.composer.mode {
         Mode::Normal => view.username.clone(),
-        Mode::Handoff(p) => format!("→ {p}"),
         Mode::Secret { .. } => "api key".into(),
         Mode::Field { label } => label.clone(),
     }
@@ -52,7 +46,6 @@ pub fn title(view: &View) -> String {
 fn glyph(view: &View) -> &'static str {
     match view.composer.mode {
         Mode::Normal | Mode::Field { .. } => "›",
-        Mode::Handoff(_) => "→",
         Mode::Secret { .. } => "key",
     }
 }
@@ -60,8 +53,16 @@ fn glyph(view: &View) -> &'static str {
 fn placeholder(view: &View) -> String {
     match &view.composer.mode {
         Mode::Normal if view.busy => "type to queue the next message, / for commands".into(),
-        Mode::Normal => "ask the orchestrator, or / for commands".into(),
-        Mode::Handoff(p) => format!("pass note for {p}…"),
+        Mode::Normal => match view.mode {
+            ryter_core::Role::SoloBuild => {
+                "what should change? · Tab: plan · / for commands".into()
+            }
+            ryter_core::Role::SoloPlan => {
+                "what are we planning? nothing changes here · Tab: review".into()
+            }
+            ryter_core::Role::SoloReview => "what should be reviewed? · Tab: build".into(),
+            _ => "ask the lead; the crew does the work · /solo to leave".into(),
+        },
         Mode::Secret { connection } => format!("paste the API key for {connection}"),
         Mode::Field { label } => format!("type {label}…"),
     }
@@ -77,11 +78,10 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Option<
     let bs = Style::default().fg(border).bg(bg);
     let w = area.width as usize;
     frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
-    // Top border: ╭─ title ───── phase ─╮
+    // Top border: ╭─ title ──────── queued ─╮ (no phase: there are none).
     let t = format!(" {} ", wrap::truncate(&title(view), w.saturating_sub(12)));
-    let phase = view.phase.to_string();
-    let mut right = format!(" {phase} ");
-    let mut right_style = Style::default().fg(theme.phase(view.phase)).bg(bg);
+    let mut right = String::new();
+    let mut right_style = Style::default().fg(theme.dim).bg(bg);
     if view.queued_prompt.is_some() {
         right = " queued ".into();
         right_style = Style::default()
@@ -89,10 +89,23 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Option<
             .bg(bg)
             .add_modifier(Modifier::BOLD);
     }
-    let fill = w.saturating_sub(2 + 1 + wrap::width(&t) + wrap::width(&right) + 1);
+    let badge = if matches!(view.composer.mode, Mode::Normal) {
+        format!(" {} ", view.mode_label().to_ascii_uppercase())
+    } else {
+        String::new()
+    };
+    let fill =
+        w.saturating_sub(2 + 1 + wrap::width(&badge) + wrap::width(&t) + wrap::width(&right) + 1);
     let top = Line::from(vec![
         Span::styled("╭", bs),
         Span::styled("─", bs),
+        Span::styled(
+            badge,
+            Style::default()
+                .fg(theme.composer_bg)
+                .bg(theme.mode(view.mode))
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(
             t,
             Style::default()

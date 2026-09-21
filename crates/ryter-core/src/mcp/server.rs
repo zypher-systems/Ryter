@@ -7,13 +7,10 @@ use serde_json::{Value, json};
 use crate::VERSION;
 use crate::error::{Error, Result};
 use crate::mcp::rpc::{RpcRequest, RpcResponse};
-use crate::phase::Phase;
 
 /// Snapshot for `ryter_status`.
 #[derive(Debug, Clone, Default)]
 pub struct StatusSnapshot {
-    /// Phase name.
-    pub phase: String,
     /// Model id.
     pub model: String,
     /// Connection name.
@@ -24,16 +21,14 @@ pub struct StatusSnapshot {
     pub last_error: String,
 }
 
-/// Host the inbound tools talk to (session + orchestrator).
+/// Host the inbound tools talk to (session + lead).
 pub trait InboundHost: Send + Sync {
-    /// Run one user turn.
-    fn prompt(&self, text: &str, phase: Option<Phase>) -> Result<String>;
+    /// Run one user turn: a normal user message to the lead.
+    fn prompt(&self, text: &str) -> Result<String>;
     /// Status line.
     fn status(&self) -> StatusSnapshot;
     /// Spend summary (no secrets).
     fn spend(&self) -> String;
-    /// Switch phase.
-    fn set_phase(&self, phase: Phase, note: &str) -> Result<()>;
     /// Cancel in-flight work. Safe to call while [`prompt`](Self::prompt) is running.
     fn cancel(&self);
 }
@@ -52,7 +47,7 @@ impl EchoHost {
 }
 
 impl InboundHost for EchoHost {
-    fn prompt(&self, text: &str, _phase: Option<Phase>) -> Result<String> {
+    fn prompt(&self, text: &str) -> Result<String> {
         if let Ok(mut g) = self.last.lock() {
             *g = text.to_string();
         }
@@ -60,7 +55,6 @@ impl InboundHost for EchoHost {
     }
     fn status(&self) -> StatusSnapshot {
         StatusSnapshot {
-            phase: "build".into(),
             model: "echo".into(),
             connection: "echo".into(),
             session: "echo".into(),
@@ -69,9 +63,6 @@ impl InboundHost for EchoHost {
     }
     fn spend(&self) -> String {
         "$0.00".into()
-    }
-    fn set_phase(&self, _phase: Phase, _note: &str) -> Result<()> {
-        Ok(())
     }
     fn cancel(&self) {}
 }
@@ -148,37 +139,24 @@ fn inbound_tools() -> Value {
     json!([
         {
             "name": "ryter_prompt",
-            "description": "Send a user turn to the Ryter orchestrator.",
+            "description": "Send a user message to Ryter's lead.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "text": { "type": "string" },
-                    "phase": { "type": "string" }
+                    "text": { "type": "string" }
                 },
                 "required": ["text"]
             }
         },
         {
             "name": "ryter_status",
-            "description": "Phase, model, session id.",
+            "description": "Model, connection, session id.",
             "inputSchema": { "type": "object", "properties": {} }
         },
         {
             "name": "ryter_spend",
             "description": "Spend summary. Never includes API keys.",
             "inputSchema": { "type": "object", "properties": {} }
-        },
-        {
-            "name": "ryter_set_phase",
-            "description": "Switch orchestrator phase.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "phase": { "type": "string" },
-                    "note": { "type": "string" }
-                },
-                "required": ["phase"]
-            }
         },
         {
             "name": "ryter_cancel",
@@ -211,31 +189,16 @@ fn call_tool(host: &dyn InboundHost, params: &Value) -> Result<String> {
                 .get("text")
                 .and_then(Value::as_str)
                 .ok_or_else(|| Error::Config("ryter_prompt: missing text".into()))?;
-            let phase = args
-                .get("phase")
-                .and_then(Value::as_str)
-                .map(|s| s.parse())
-                .transpose()?;
-            host.prompt(text, phase)
+            host.prompt(text)
         }
         "ryter_status" => {
             let s = host.status();
             Ok(format!(
-                "phase={} model={} connection={} session={}",
-                s.phase, s.model, s.connection, s.session
+                "model={} connection={} session={}",
+                s.model, s.connection, s.session
             ))
         }
         "ryter_spend" => Ok(host.spend()),
-        "ryter_set_phase" => {
-            let phase: Phase = args
-                .get("phase")
-                .and_then(Value::as_str)
-                .ok_or_else(|| Error::Config("missing phase".into()))?
-                .parse()?;
-            let note = args.get("note").and_then(Value::as_str).unwrap_or("");
-            host.set_phase(phase, note)?;
-            Ok(format!("phase {phase}"))
-        }
         "ryter_cancel" => {
             host.cancel();
             Ok("cancelled".into())
@@ -249,6 +212,16 @@ pub fn serve_inbound(host: &dyn InboundHost) -> Result<()> {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     serve_session(stdin, stdout, host, &[])
+}
+
+/// Compare a bearer token without leaking its length or first difference
+/// through timing. Not a big win over a local socket, but it costs one line.
+fn token_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// One JSON-RPC line session. `ryter_prompt` runs on a helper thread so the same
@@ -296,7 +269,7 @@ where
                         .or_else(|| p.get("bearer"))
                         .and_then(Value::as_str)
                 });
-                let ok = got.is_some_and(|g| tokens.iter().any(|t| t == g));
+                let ok = got.is_some_and(|g| tokens.iter().any(|t| token_eq(t, g)));
                 if !ok {
                     if let Some(id) = req.id.clone() {
                         let resp = RpcResponse::err(id, -32001, "unauthorized");
@@ -335,14 +308,9 @@ where
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            let phase = args
-                .get("phase")
-                .and_then(Value::as_str)
-                .map(|s| s.parse::<Phase>().ok())
-                .unwrap_or(None);
             std::thread::scope(|s| {
                 s.spawn(|| {
-                    let r = host.prompt(&text, phase);
+                    let r = host.prompt(&text);
                     let _ = done_tx.send(r);
                 });
                 loop {
@@ -493,6 +461,7 @@ mod tests {
         .unwrap();
         let result = s.result.unwrap();
         let text = result["content"][0]["text"].as_str().unwrap();
-        assert!(text.contains("phase=build"));
+        assert!(text.contains("model=echo"));
+        assert!(!text.contains("phase"));
     }
 }

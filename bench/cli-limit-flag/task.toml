@@ -1,0 +1,11 @@
+title = "Add --limit to the lines CLI"
+brief = """
+cli.py prints every line of a file. Add `--limit N`: print only the first N
+lines. N must be a non-negative integer; a negative N is a usage error (exit
+status 2, as argparse does). `--limit 0` prints nothing. Without --limit,
+behaviour is unchanged. Keep `main(argv, out)`.
+Done when `python3 -m unittest -q test_cli` passes.
+"""
+files = ["cli.py"]
+checks = ["python3 -m unittest -q test_cli"]
+accept = ["python3 -m unittest -q hidden_test_cli"]

@@ -1,0 +1,10 @@
+title = "Fix paginate() so page 1 is the first page"
+brief = """
+`paginate(items, page, size)` in pager.py is off by one: page 1 returns the
+second page. Pages are 1-based. `page < 1` or `size < 1` must raise ValueError.
+A page past the end returns an empty list. Keep the signature.
+Done when `python3 -m unittest -q test_pager` passes.
+"""
+files = ["pager.py"]
+checks = ["python3 -m unittest -q test_pager"]
+accept = ["python3 -m unittest -q hidden_test_pager"]

@@ -40,6 +40,9 @@ pub enum StreamDelta {
     Usage(Usage),
     /// Provider-reported USD (OpenRouter generation cost). Wins over the price book.
     ReportedCost(f64),
+    /// The model ran into the output-token ceiling mid-answer. Without this a
+    /// truncated turn is indistinguishable from a finished one.
+    Truncated,
     /// Stream finished.
     Done,
 }
@@ -114,6 +117,13 @@ pub struct ModelInfo {
     /// Connection this row was listed from (crew picker).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<String>,
+    /// Release time (unix seconds), when the catalog says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<u64>,
+    /// Whether the model accepts tools, when the catalog says. A crew role
+    /// that cannot call tools cannot read a file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<bool>,
 }
 
 impl ModelInfo {
@@ -125,7 +135,62 @@ impl ModelInfo {
             input_per_million: None,
             output_per_million: None,
             connection: None,
+            created: None,
+            tools: None,
         }
+    }
+}
+
+/// Reassembles streamed tool calls.
+///
+/// Providers send a call's id and name once and then its arguments in
+/// fragments that carry no id (chat completions keys them by `index`, Messages
+/// by content-block index). An id-less fragment therefore continues the most
+/// recent call. Treating each one as a new call dropped every argument after
+/// the first fragment, so real tool calls arrived with empty arguments.
+#[derive(Debug, Default)]
+pub struct ToolCallAccumulator {
+    calls: Vec<AssistantToolCall>,
+}
+
+impl ToolCallAccumulator {
+    /// Fold one `StreamDelta::ToolCall` in.
+    pub fn push(&mut self, id: &str, name: &str, arguments: &str) {
+        let target = if id.is_empty() {
+            self.calls.last_mut()
+        } else {
+            self.calls.iter_mut().find(|c| c.id == id)
+        };
+        match target {
+            Some(call) => {
+                if !name.is_empty() {
+                    call.name = name.to_string();
+                }
+                call.arguments.push_str(arguments);
+            }
+            None => self.calls.push(AssistantToolCall {
+                id: if id.is_empty() {
+                    format!("call_{}", self.calls.len() + 1)
+                } else {
+                    id.to_string()
+                },
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            }),
+        }
+    }
+
+    /// Completed calls in arrival order. Nameless fragments are dropped.
+    pub fn finish(self) -> Vec<AssistantToolCall> {
+        self.calls
+            .into_iter()
+            .filter(|c| !c.name.is_empty())
+            .collect()
+    }
+
+    /// Nothing accumulated yet.
+    pub fn is_empty(&self) -> bool {
+        self.calls.is_empty()
     }
 }
 
@@ -280,6 +345,31 @@ mod tests {
             d,
             StreamDelta::Usage(u) if u.output_tokens == 2
         )));
+    }
+
+    #[test]
+    fn accumulator_continues_id_less_fragments() {
+        let mut a = ToolCallAccumulator::default();
+        a.push("c1", "read_file", "");
+        a.push("", "", "{\"path\":");
+        a.push("", "", "\"a.rs\"}");
+        a.push("c2", "grep", "{\"pattern\":\"x\"}");
+        let calls = a.finish();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].arguments, "{\"path\":\"a.rs\"}");
+        assert_eq!(calls[1].name, "grep");
+    }
+
+    #[test]
+    fn accumulator_merges_fragments_keyed_by_id() {
+        // Responses repeats the item id on every argument fragment.
+        let mut a = ToolCallAccumulator::default();
+        a.push("fc_1", "read_file", "");
+        a.push("fc_1", "", "{\"path\":");
+        a.push("fc_1", "", "\"a.rs\"}");
+        let calls = a.finish();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments, "{\"path\":\"a.rs\"}");
     }
 
     #[tokio::test]

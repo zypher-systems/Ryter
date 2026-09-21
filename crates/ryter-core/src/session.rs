@@ -41,6 +41,43 @@ pub struct Meta {
     /// Auditor gate for this session.
     #[serde(default = "default_auditor_on")]
     pub auditor_enabled: bool,
+    /// The open patch, if the crew is building one.
+    #[serde(default)]
+    pub patch: Option<Patch>,
+    /// Patches opened so far (names the next branch).
+    #[serde(default)]
+    pub patches_opened: u32,
+    /// Build-hat checkpoints, oldest first, for `/undo`.
+    #[serde(default)]
+    pub checkpoints: Vec<String>,
+    /// The mode the user left the session in: a hat, or the crew's lead.
+    /// `None` (sessions from before solo mode) means build.
+    #[serde(default)]
+    pub mode: Option<crate::role::Role>,
+}
+
+/// Several tasks' work collected on one integration branch. It lands on the
+/// user's branch as a single commit, and only once every task in it is done,
+/// so the user has nothing to act on until the whole change is in.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Patch {
+    /// Integration branch (`ryter/patch-<session>-<n>`).
+    pub branch: String,
+    /// Worktree where the integration branch is checked out.
+    pub worktree: PathBuf,
+    /// The user's branch it will land on.
+    pub target: String,
+    /// `target`'s commit when the patch opened.
+    pub base: String,
+    /// Tasks taken into this patch.
+    #[serde(default)]
+    pub tasks: Vec<String>,
+    /// Tasks whose work is on the integration branch.
+    #[serde(default)]
+    pub landed: Vec<String>,
+    /// Their titles, for the landing commit message.
+    #[serde(default)]
+    pub titles: Vec<String>,
 }
 
 fn default_auditor_on() -> bool {
@@ -108,6 +145,10 @@ impl Session {
             spend_usd_total: None,
             spend_unknown: false,
             auditor_enabled: true,
+            patch: None,
+            patches_opened: 0,
+            checkpoints: Vec::new(),
+            mode: None,
         };
         let s = Self {
             dir,
@@ -254,15 +295,39 @@ impl Session {
 
     /// Record a priced (or unpriced) model call.
     pub fn record_spend(&mut self, rec: SpendRecord) -> Result<()> {
+        self.count_spend(&rec)?;
+        append_jsonl(&self.dir.join("spend.jsonl"), &rec)
+    }
+
+    /// Add a row to the totals only: the crew meter has already written it
+    /// to `spend.jsonl` the moment it was charged.
+    pub fn count_spend(&mut self, rec: &SpendRecord) -> Result<()> {
         match rec.total_usd {
             Some(v) => {
                 self.meta.spend_usd_total = Some(self.meta.spend_usd_total.unwrap_or(0.0) + v);
             }
             None => self.meta.spend_unknown = true,
         }
-        append_jsonl(&self.dir.join("spend.jsonl"), &rec)?;
-        self.write_meta()?;
-        Ok(())
+        self.write_meta()
+    }
+
+    /// Where spend rows are appended.
+    pub fn spend_path(&self) -> PathBuf {
+        self.dir.join("spend.jsonl")
+    }
+
+    /// Keep a crew report the lead never saw, because the run stopped before
+    /// it could take another round. The next turn hands it over.
+    pub fn set_carry(&self, report: &str) -> Result<()> {
+        fs::write(self.dir.join("carry.md"), report).map_err(|e| Error::Io(e.to_string()))
+    }
+
+    /// The report kept by [`set_carry`](Self::set_carry), removed as it is read.
+    pub fn take_carry(&self) -> Option<String> {
+        let path = self.dir.join("carry.md");
+        let text = fs::read_to_string(&path).ok()?;
+        let _ = fs::remove_file(&path);
+        (!text.trim().is_empty()).then_some(text)
     }
 
     /// All spend rows.
@@ -292,6 +357,31 @@ impl Session {
     }
 
     /// Write a pass note (empty body is allowed).
+    /// Latest crew results, kept outside the repository so the orchestrator
+    /// sees them on later turns. Only the tail is kept.
+    pub fn write_crew_report(&self, body: &str) -> Result<()> {
+        // Appended, not overwritten: a turn can drain the crew more than once,
+        // and the last drain's report alone hid what the earlier ones did.
+        const KEEP: usize = 32_000;
+        let mut all = self.read_crew_report();
+        if !all.is_empty() {
+            all.push_str("\n---\n\n");
+        }
+        all.push_str(body);
+        let start = all.len().saturating_sub(KEEP);
+        let start = (start..=all.len())
+            .find(|i| all.is_char_boundary(*i))
+            .unwrap_or(all.len());
+        fs::create_dir_all(self.notes_dir()).map_err(|e| Error::Io(e.to_string()))?;
+        fs::write(self.notes_dir().join("crew.md"), &all[start..])
+            .map_err(|e| Error::Io(e.to_string()))
+    }
+
+    /// Latest crew results, or empty.
+    pub fn read_crew_report(&self) -> String {
+        fs::read_to_string(self.notes_dir().join("crew.md")).unwrap_or_default()
+    }
+
     pub fn write_note(&self, phase: Phase, body: &str) -> Result<()> {
         fs::create_dir_all(self.dir.join("notes")).map_err(|e| Error::Io(e.to_string()))?;
         fs::write(self.note_path(phase), body).map_err(|e| Error::Io(e.to_string()))
@@ -324,6 +414,35 @@ impl Session {
     }
 
     /// Enable or disable the auditor gate.
+    /// Replace the open patch.
+    pub fn set_patch(&mut self, patch: Option<Patch>) -> Result<()> {
+        self.meta.patch = patch;
+        self.touch()
+    }
+
+    /// Remember the mode for resume.
+    pub fn set_mode(&mut self, mode: crate::role::Role) -> Result<()> {
+        self.meta.mode = Some(mode);
+        self.touch()
+    }
+
+    /// Record a build-hat checkpoint (keeps the last 50).
+    pub fn push_checkpoint(&mut self, sha: String) -> Result<()> {
+        self.meta.checkpoints.push(sha);
+        let n = self.meta.checkpoints.len();
+        if n > 50 {
+            self.meta.checkpoints.drain(..n - 50);
+        }
+        self.touch()
+    }
+
+    /// Drop the newest checkpoint.
+    pub fn pop_checkpoint(&mut self) -> Result<Option<String>> {
+        let c = self.meta.checkpoints.pop();
+        self.touch()?;
+        Ok(c)
+    }
+
     pub fn set_auditor(&mut self, on: bool) -> Result<()> {
         self.meta.auditor_enabled = on;
         self.touch()
@@ -333,8 +452,7 @@ impl Session {
     pub fn previous_phase(phase: Phase) -> Option<Phase> {
         match phase {
             Phase::Plan => None,
-            Phase::Architect => Some(Phase::Plan),
-            Phase::Build => Some(Phase::Architect),
+            Phase::Build => Some(Phase::Plan),
             Phase::Audit => Some(Phase::Build),
         }
     }
@@ -449,7 +567,7 @@ pub fn spend_record(
     }
 }
 
-fn append_jsonl<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+pub(crate) fn append_jsonl<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let mut f = OpenOptions::new()
         .create(true)
         .append(true)
@@ -489,7 +607,7 @@ fn now_stamp() -> String {
     ms.to_string()
 }
 
-pub(crate) fn cwd_slug(cwd: &Path) -> String {
+pub fn cwd_slug(cwd: &Path) -> String {
     let raw = cwd.to_string_lossy();
     let mut enc = String::new();
     for b in raw.as_bytes() {
@@ -511,6 +629,16 @@ pub(crate) fn cwd_slug(cwd: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sessions_from_before_the_role_merge_still_load() {
+        use crate::phase::Phase;
+        use crate::role::Role;
+        let phase: Phase = serde_json::from_str("\"architect\"").unwrap();
+        assert_eq!(phase, Phase::Plan);
+        let role: Role = serde_json::from_str("\"planner\"").unwrap();
+        assert_eq!(role, Role::Architect);
+    }
+
     use super::*;
     use tempfile::TempDir;
 
@@ -587,13 +715,12 @@ mod tests {
             tool_calls: None,
         })
         .unwrap();
-        s.handoff(Phase::Architect, "", None).unwrap();
-        assert_eq!(s.meta.phase, Phase::Architect);
-        assert_eq!(s.transcript.len(), 1);
-        assert_eq!(s.transcript[0].content, "keep me");
         assert!(s.read_note(Phase::Plan).unwrap().is_empty());
         s.handoff(Phase::Build, "ship it", None).unwrap();
-        assert_eq!(s.read_note(Phase::Architect).unwrap(), "ship it");
+        assert_eq!(s.meta.phase, Phase::Build);
+        assert_eq!(s.transcript.len(), 1);
+        assert_eq!(s.transcript[0].content, "keep me");
+        assert_eq!(s.read_note(Phase::Plan).unwrap(), "ship it");
         assert_eq!(s.transcript.len(), 1);
     }
 }

@@ -54,7 +54,12 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         rows[0], rows[1], rows[2], rows[3], rows[4], rows[5], rows[6],
     );
 
-    let panel_w = if view.panel_visible {
+    // A popout owns the whole body (`R-POP-01`). The info cards used to keep
+    // their columns underneath it, so a centred panel covered their left half
+    // and left shredded tails beside its border (`k-4.6`, `ns`, `ew 0/4`).
+    // Dimming hid that in a real terminal but not on a monochrome capture, and
+    // it cost Help the width it needs to be readable at 100 columns.
+    let panel_w = if view.panel_visible && view.panels.is_empty() {
         info::width_for(full.width)
     } else {
         0
@@ -80,7 +85,12 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     draw_header(frame, header, view, theme, panel_w == 0);
     hairline(frame, hair1, theme);
     let cf = draw_chat(frame, chat, view, theme);
-    draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme);
+    // A panel owns the scroll keys, so a live transcript scrollbar beside it is
+    // both misleading and, next to a modal interrupt, visual noise on the one
+    // screen that has to read as a single closed shape (`R-POP-75`).
+    if view.panels.is_empty() {
+        draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme);
+    }
     let cards = if panel_w > 0 {
         info::draw(frame, cols[2], view, theme)
     } else {
@@ -129,13 +139,18 @@ fn draw_header(frame: &mut Frame, area: Rect, view: &View, theme: Theme, compact
         Span::styled(" ryter", theme.muted()),
         Span::styled("  ·  ", theme.muted()),
     ];
-    let speaker = match view.handoff_to() {
-        Some(p) => format!("orchestrator → {p}"),
-        None => "orchestrator".into(),
+    // Who the user is talking to: a hat in solo mode, the lead in crew mode.
+    let speaker = if view.crew_mode() {
+        "crew · lead".to_string()
+    } else {
+        view.mode_label().to_string()
     };
     left.push(Span::styled(
         speaker,
-        theme.body().add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(theme.mode(view.mode))
+            .bg(theme.bg)
+            .add_modifier(Modifier::BOLD),
     ));
     let left_w: usize = left.iter().map(|s| wrap::width(&s.content)).sum();
 
@@ -152,13 +167,17 @@ fn draw_header(frame: &mut Frame, area: Rect, view: &View, theme: Theme, compact
             theme.on_bg(crate::panel::widgets::gauge_color(view.ctx_frac(), theme)),
         ));
         right.push(Span::styled(" · ", theme.muted()));
-        let spent = view.spend.unwrap_or(0.0);
-        let (label, style) = if view.budget_usd > 0.0 && spent >= view.budget_usd {
-            (format!("!{}", view.spend_label()), theme.on_bg(theme.error))
-        } else if view.warn_usd > 0.0 && spent >= view.warn_usd {
-            (view.spend_label(), theme.on_bg(theme.warn))
-        } else {
-            (view.spend_label(), theme.body())
+        // Unknown spend is not "under budget"; it is unknown. Colouring it
+        // green because `unwrap_or(0.0)` compared below the cap said so.
+        let (label, style) = match view.spend {
+            Some(spent) if view.budget_usd > 0.0 && spent >= view.budget_usd => {
+                (format!("!{}", view.spend_label()), theme.on_bg(theme.error))
+            }
+            Some(spent) if view.warn_usd > 0.0 && spent >= view.warn_usd => {
+                (view.spend_label(), theme.on_bg(theme.warn))
+            }
+            Some(_) => (view.spend_label(), theme.body()),
+            None => (view.spend_label(), theme.muted()),
         };
         right.push(Span::styled(label, style));
         right.push(Span::styled("   ", theme.muted()));
@@ -285,6 +304,38 @@ fn draw_scrollbar(
 }
 
 /// Context-sensitive hint bar.
+/// How willing a hint is to be dropped when the bar does not fit.
+///
+/// The old bar truncated the tail, so the 80-column streaming frame lost `^c
+/// quit` — the one key you want while a turn is running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Hint {
+    /// Never dropped: cancel and quit.
+    Essential,
+    /// Dropped only after every optional hint has gone.
+    Useful,
+    /// First to go.
+    Optional,
+}
+
+/// Context hints with their priority.
+pub fn hints_ranked(view: &View) -> Vec<(&'static str, String, Hint)> {
+    hints(view)
+        .into_iter()
+        .map(|(k, l)| {
+            let rank = match k {
+                // Getting out: cancel, quit, and the permission answers.
+                "^c" | "esc" | "^d" | "y" | "n" | "a" => Hint::Essential,
+                // Discoverable without the bar, so first to go.
+                "⇧enter" | "^r" | "end" => Hint::Optional,
+                // `enter` included: everyone knows Enter sends.
+                _ => Hint::Useful,
+            };
+            (k, l, rank)
+        })
+        .collect()
+}
+
 pub fn hints(view: &View) -> Vec<(&'static str, String)> {
     if let Some(until) = view.quit_armed_until {
         if view.now_ms <= until {
@@ -310,24 +361,16 @@ pub fn hints(view: &View) -> Vec<(&'static str, String)> {
             ("esc", "close".into()),
         ];
     }
-    match &view.composer.mode {
-        ComposerMode::Handoff(p) => {
-            return vec![
-                ("enter", format!("hand off to {p}")),
-                ("⇧enter", "newline".into()),
-                ("esc", "cancel handoff".into()),
-            ];
-        }
-        ComposerMode::Secret { .. } => {
-            return vec![("enter", "save key".into()), ("esc", "cancel".into())];
-        }
-        _ => {}
+    if let ComposerMode::Secret { .. } = &view.composer.mode {
+        return vec![("enter", "save key".into()), ("esc", "cancel".into())];
     }
-    let mut v = vec![
-        ("enter", "send".to_string()),
-        ("⇧enter", "newline".into()),
-        ("/", "commands".into()),
-    ];
+    let mut v = vec![("enter", "send".to_string())];
+    // The one key that isn't discoverable any other way.
+    if !view.crew_mode() {
+        v.push(("tab", view.mode.next_hat().as_str().to_string()));
+    }
+    v.push(("⇧enter", "newline".into()));
+    v.push(("/", "commands".into()));
     if view.activity.has_history {
         v.push(("^r", "reasoning".into()));
     }
@@ -341,25 +384,46 @@ pub fn hints(view: &View) -> Vec<(&'static str, String)> {
     v
 }
 
+/// Width one hint occupies, including its leading separator.
+fn hint_width(key: &str, label: &str, first: bool) -> usize {
+    wrap::width(key) + 1 + wrap::width(label) + if first { 0 } else { 4 }
+}
+
 fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let w = area.width as usize;
-    let mut spans: Vec<Span<'static>> = vec![Span::styled(" ", theme.body())];
-    let mut used = 1;
-    for (i, (key, label)) in hints(view).into_iter().enumerate() {
-        let piece = wrap::width(key) + 1 + wrap::width(&label) + 4;
-        if used + piece > w {
+    let mut items = hints_ranked(view);
+    // Drop the least important hints until the rest fit, rather than chopping
+    // whatever happens to be last.
+    loop {
+        let mut used = 1;
+        for (i, (k, l, _)) in items.iter().enumerate() {
+            used += hint_width(k, l, i == 0);
+        }
+        if used <= w || items.len() <= 1 {
             break;
         }
+        let worst = items
+            .iter()
+            .enumerate()
+            .max_by_key(|(i, (_, _, rank))| (*rank, *i))
+            .map(|(i, _)| i);
+        match worst {
+            Some(i) => {
+                items.remove(i);
+            }
+            None => break,
+        }
+    }
+    let mut spans: Vec<Span<'static>> = vec![Span::styled(" ", theme.body())];
+    for (i, (key, label, _)) in items.iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled("    ", theme.body()));
-            used += 4;
         }
         spans.push(Span::styled(
-            key.to_string(),
+            (*key).to_string(),
             theme.body().add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(format!(" {label}"), theme.muted()));
-        used += piece - 4;
     }
     frame.render_widget(Paragraph::new(Line::from(spans)).style(theme.body()), area);
 }

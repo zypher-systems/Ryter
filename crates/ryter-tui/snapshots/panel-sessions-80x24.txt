@@ -1,24 +1,24 @@
- ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
- · system                                             ╭─ session ──────────────╮
-   welcome · /help for keys                           │ untitled               │
-                                                      │ 0193abcd         build │
-    ╭─ sessions ─────────────────────────────────────────────────────── 0 ─╮   │
-    │ no saved sessions in this directory                                  │ ──╯
-    │                                                                      │ ──╮
-    │                                                                      │ 6 │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │   │
-    ╰─ enter resume · r rename · d delete · n new · type to filter · esc ──╯ ──╯
-                                                                             ──╮
-                                                      │ session          $?.?? │
-                                                      │ bud ░░░░░░░░░░░░   0%  │
-                                                      │     $0.00 of $5.00     │
-                                                      ╰────────────────────────╯
+ · system
+   welcome · /help for keys
+
+    ╭─ sessions ─────────────────────────────────────────────────────── 0 ─╮
+    │ no saved sessions in this directory                                  │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    ╰─ enter resume · r rename · d delete · n new · type to filter · esc ──╯
 
 
-╭─ filter ───────────────────────────────────────────────────────────── build ─╮
+
+
+
+
+
+╭─ filter ─────────────────────────────────────────────────────────────────────╮
 │› type filter…                                                                │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back

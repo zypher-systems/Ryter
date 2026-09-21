@@ -1,40 +1,40 @@
- ryter  ·  orchestrator                                                                 ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build                                                grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                                                 ╭─ session ──────────────────╮
-   welcome · /help for keys                                                               │ untitled                   │
-                        ╭─ settings ───────────────────────────────────────────────────────────╮abcd             build │
-                        │ SPEND                                                                ┃ or ✓  tools ask       │
-                        │› session budget usd  ‹ 5.00 ›                                default ┃ ──────────────────────╯
-                        │  warn usd            ‹ 1.00 ›                                default ┃ l ────────────────────╮
-                        │                                                                      ┃ xai ●        grok-4.6 │
-                        │ AGENTS                                                               ┃ ░░░░░░░░░░░░░░░   5%  │
-                        │  subagents max       ‹ 4 ›                                   default ┃ 2.4k / 256k tokens    │
-                        │  auditor             [ on ]                                  default ┃  unknown              │
-                        │                                                                      ┃ ──────────────────────╯
-                        │ TOOLS                                                                ┃ d ────────────────────╮
-                        │  permission mode     ‹ ask ›                                 default ┃ on              $?.?? │
-                        │  features.web        [ off ]                                 default ┃ ░░░░░░░░░░░░░░░   0%  │
-                        │                                                                      ┃ 0.00 of $5.00         │
-                        │ SANDBOX                                                              ┃ ──────────────────────╯
-                        │  profile             ‹ off ›                                 default ┃ s ────────────────────╮
-                        │                                                                      ┃ sks yet               │
-                        │ MCP                                                                  ┃ ──────────────────────╯
-                        │  inbound             [ on ]                                  default ┃  ─────────────── 0/4 ─╮
-                        │  bind address                                                default ┃ ecialists running     │
-                        │                                                                      ┃ ──────────────────────╯
+ · system
+   welcome · /help for keys
+                        ╭─ settings ───────────────────────────────────────────────────────────╮
+                        │ SPEND                                                                ┃
+                        │› budget usd (0 = off)  ‹ 0.00 ›                              default ┃
+                        │  warn usd              ‹ 1.00 ›                              default ┃
+                        │                                                                      ┃
+                        │ AGENTS                                                               ┃
+                        │  subagents max         ‹ 4 ›                                 default ┃
+                        │  auditor               [ on ]                                default ┃
+                        │                                                                      ┃
+                        │ TOOLS                                                                ┃
+                        │  permission mode       ‹ ask ›                               default ┃
+                        │  features.web          [ off ]                               default ┃
+                        │                                                                      ┃
+                        │ SANDBOX                                                              ┃
+                        │  profile               ‹ off ›                               default ┃
+                        │                                                                      ┃
+                        │ MCP                                                                  ┃
+                        │  inbound               [ on ]                                default ┃
+                        │  bind address                                                default ┃
+                        │                                                                      ┃
                         │ UI                                                                   ┃
-                        │  theme               ‹ dark ›                                default ┃
+                        │  theme                 ‹ dark ›                              default ┃
                         │  username                                                    default ┃
-                        │  reasoning           ‹ collapsed ›                           default ┃
-                        │  mouse               [ on ]                                  default ┃
-                        │  panel               [ on ]                                  default ┃
-                        │  timestamps          [ off ]                                  config │
-                        ╰─ ↑↓ move · space/←→ change · enter edit · ^s save · esc ─────────────╯
+                        │  reasoning             ‹ collapsed ›                         default ┃
+                        │  mouse                 [ on ]                                default ┃
+                        │  panel                 [ on ]                                default ┃
+                        │  timestamps            [ off ]                                config │
+                        ╰─ ↑↓ move · space/←→ change · enter edit · esc done ──────────────────╯
 
 
 
 
-╭─ dusty ────────────────────────────────────────────────────────────────────────────────────────────────────── build ─╮
-│› ask the orchestrator, or / for commands                                                                             │
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back

@@ -1,24 +1,24 @@
- ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
- · system                                             ╭─ session ──────────────╮
-   welcome · /help for keys                           │ untitled               │
-    ╭─ skills & commands ────────────────────────── 0 skills · 0 commands ─╮ld │
-    │›+ new skill  SKILL.md with a body the model reads                    │   │
-    │ + new command  template with $ARGUMENTS                              │ ──╯
-    │                                                                      │ ──╮
-    │                                                                      │ 6 │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │   │
-    │                                                                      │ ──╯
-    ╰─ enter run · e edit in $EDITOR · d remove · esc ─────────────────────╯ ──╮
-                                                                             ? │
-                                                      │ bud ░░░░░░░░░░░░   0%  │
-                                                      │     $0.00 of $5.00     │
-                                                      ╰────────────────────────╯
+ · system
+   welcome · /help for keys
+    ╭─ skills & commands ────────────────────────── 0 skills · 0 commands ─╮
+    │›+ new skill  SKILL.md with a body the model reads                    │
+    │ + new command  template with $ARGUMENTS                              │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    ╰─ enter run · e edit in $EDITOR · d remove · esc ─────────────────────╯
 
 
-╭─ dusty ────────────────────────────────────────────────────────────── build ─╮
-│› ask the orchestrator, or / for commands                                     │
+
+
+
+
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back

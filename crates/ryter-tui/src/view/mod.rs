@@ -12,7 +12,7 @@ use crate::action::Action;
 use crate::activity::{Activity, Mode as ActivityMode};
 use crate::chat::cache::RenderCache;
 use crate::chat::{Message, MessageKind, MessageMeta, OffsetTimestamp, SystemLevel, ToolStatus};
-use crate::composer::{Composer, Mode as ComposerMode};
+use crate::composer::Composer;
 use crate::palette::Palette;
 use crate::panel::PanelStack;
 use history::History;
@@ -62,6 +62,9 @@ pub struct CrewRow {
 pub struct View {
     /// Current phase.
     pub phase: Phase,
+    /// Who the user is talking to: a hat in solo mode (build, plan,
+    /// review), or the crew's lead (`Orchestrator`) in crew mode.
+    pub mode: ryter_core::Role,
     /// Connection name.
     pub connection: String,
     /// Model id.
@@ -144,6 +147,14 @@ pub struct View {
     pub price_in: Option<f64>,
     /// Last known USD / million output.
     pub price_out: Option<f64>,
+    /// Prices from the model lists providers returned (`/models`, the crew
+    /// builder): the fallback when the built-in price book doesn't know a
+    /// model, which is most of OpenRouter's catalog.
+    pub catalog_rates: BTreeMap<String, (f64, f64)>,
+    /// What this project (its git repository) has cost across sessions.
+    /// Read from disk at startup and when `/spend` opens; live spend is added
+    /// as it happens.
+    pub project_spend: Option<ryter_core::project::ProjectSpend>,
     /// Live `[specialists.*]` assignment (edited by `/crew`).
     pub specialists: BTreeMap<String, ryter_core::RoleModel>,
     /// Unix socket path if inbound MCP is listening.
@@ -178,6 +189,10 @@ pub struct View {
     pub unpriced_calls: u32,
     /// Session budget cap (0 = none).
     pub budget_usd: f64,
+    /// The cap to restore when the budget is switched back on.
+    pub budget_last: f64,
+    /// `[spend] task_budget_usd`: one task's cap, budget or not.
+    pub task_budget_usd: f64,
     /// Warn threshold.
     pub warn_usd: f64,
     /// `[subagents] max`.
@@ -223,9 +238,24 @@ pub struct SpendRow {
 
 impl View {
     /// Empty session chrome for tests / startup.
+    /// In crew mode: messages go to the lead, and the crew does the work.
+    pub fn crew_mode(&self) -> bool {
+        self.mode == ryter_core::Role::Orchestrator
+    }
+
+    /// `build`, `plan`, `review`, or `crew`.
+    pub fn mode_label(&self) -> &'static str {
+        if self.crew_mode() {
+            "crew"
+        } else {
+            self.mode.as_str()
+        }
+    }
+
     pub fn new(phase: Phase, connection: String, model: String, cwd: String) -> Self {
         Self {
             phase,
+            mode: ryter_core::Role::SoloBuild,
             connection,
             model,
             spend: None,
@@ -269,6 +299,8 @@ impl View {
             ctx_breakdown: Vec::new(),
             price_label: String::new(),
             price_in: None,
+            catalog_rates: BTreeMap::new(),
+            project_spend: None,
             price_out: None,
             specialists: BTreeMap::new(),
             mcp_listen: None,
@@ -286,7 +318,9 @@ impl View {
             spend_rows_role: BTreeMap::new(),
             spend_rows_conn: BTreeMap::new(),
             unpriced_calls: 0,
-            budget_usd: 5.0,
+            budget_usd: 0.0,
+            budget_last: 5.0,
+            task_budget_usd: 3.0,
             warn_usd: 1.0,
             max_crew: 4,
             sandbox_profile: "off".into(),
@@ -466,22 +500,6 @@ impl View {
         self.recent_commands.truncate(10);
     }
 
-    /// Put the composer into handoff note mode (`R-COMP-02`).
-    pub fn begin_handoff(&mut self, to: Phase) {
-        self.composer.clear();
-        self.composer.mode = ComposerMode::Handoff(to);
-        self.palette = None;
-        self.system(format!("handoff → {to}  (edit note, Enter to accept)"));
-    }
-
-    /// Handoff target, if the composer is in note mode.
-    pub fn handoff_to(&self) -> Option<Phase> {
-        match self.composer.mode {
-            ComposerMode::Handoff(p) => Some(p),
-            _ => None,
-        }
-    }
-
     /// Spend label for the header / cards (`$?.??` when any turn was unpriced).
     pub fn spend_label(&self) -> String {
         if self.spend_unknown && self.spend.is_none() {
@@ -504,8 +522,17 @@ impl View {
     }
 }
 
+/// What a role is called on screen. The code and logs say `orchestrator`; the
+/// user talks to the lead.
+pub fn role_label(role: &str) -> &str {
+    match role {
+        "orchestrator" => "lead",
+        other => other,
+    }
+}
+
 /// Specialist kinds shown in `/crew`.
-pub const CREW_ROLES: &[&str] = &["planner", "architect", "builder", "auditor"];
+pub const CREW_ROLES: &[&str] = &["architect", "builder", "auditor"];
 
 /// Label under a crew role (`default (grok-4.6)` or a short model id).
 pub fn crew_role_label(view: &View, role: &str) -> String {
@@ -553,6 +580,8 @@ fn model_row(id: &str, window: u64, input: f64, output: f64) -> ryter_core::Mode
         input_per_million: Some(input),
         output_per_million: Some(output),
         connection: None,
+        created: None,
+        tools: None,
     }
 }
 
@@ -612,7 +641,7 @@ mod tests {
             "p".into(),
         );
         v.specialists.insert(
-            "planner".into(),
+            "architect".into(),
             RoleModel {
                 connection: Some("openrouter".into()),
                 model: Some("anthropic/claude-sonnet-4.6".into()),
@@ -626,7 +655,7 @@ mod tests {
             },
         );
         assert_eq!(
-            crew_role_label(&v, "planner"),
+            crew_role_label(&v, "architect"),
             "claude-sonnet-4.6 · openrouter"
         );
         assert_eq!(crew_role_label(&v, "builder"), "default (grok-4.6)");

@@ -1,24 +1,24 @@
- ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
- · system                                             ╭─ session ──────────────╮
-   welcome · /help for keys                           │ untitled               │
-                                                      │ 0193abcd         build │
-            ╭─ theme ────────────────────────────────────────── 3 ─╮ools ask   │
-            │›◆ dark  built-in                             current │ ──────────╯
-            │ ◆ light  built-in                                    │ ──────────╮
-            │ ◆ default-16  built-in                               │  grok-4.6 │
-            │                                                      │ ░░░   5%  │
-            │ ██████████████████████████  truecolor                │ 56k       │
-            │                                                      │           │
-            ╰─ ↑↓ preview · enter apply · esc revert ──────────────╯ ──────────╯
-                                                                     ──────────╮
-                                                      │ session          $?.?? │
-                                                      │ bud ░░░░░░░░░░░░   0%  │
-                                                      │     $0.00 of $5.00     │
-                                                      ╰────────────────────────╯
+ · system
+   welcome · /help for keys
+
+            ╭─ theme ────────────────────────────────────────── 3 ─╮
+            │›◆ dark  built-in                             current │
+            │ ◆ light  built-in                                    │
+            │ ◆ default-16  built-in                               │
+            │                                                      │
+            │ ██████████████████████████  truecolor                │
+            │                                                      │
+            ╰─ ↑↓ preview · enter apply · esc revert ──────────────╯
 
 
-╭─ dusty ────────────────────────────────────────────────────────────── build ─╮
-│› ask the orchestrator, or / for commands                                     │
+
+
+
+
+
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back

@@ -75,13 +75,7 @@ struct TuiAttach {
 }
 
 impl InboundHost for TuiAttach {
-    fn prompt(&self, text: &str, phase: Option<Phase>) -> ryter_core::Result<String> {
-        if let Some(p) = phase {
-            let _ = self.work.send(Work::Handoff {
-                to: p,
-                note: String::new(),
-            });
-        }
+    fn prompt(&self, text: &str) -> ryter_core::Result<String> {
         let (tx, rx) = mpsc::channel();
         self.work
             .send(Work::Turn {
@@ -100,15 +94,6 @@ impl InboundHost for TuiAttach {
         self.spend.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
-    fn set_phase(&self, phase: Phase, note: &str) -> ryter_core::Result<()> {
-        self.work
-            .send(Work::Handoff {
-                to: phase,
-                note: note.to_string(),
-            })
-            .map_err(|e| ryter_core::Error::Io(e.to_string()))
-    }
-
     fn cancel(&self) {
         self.cancel.cancel();
     }
@@ -121,7 +106,6 @@ fn io_err(e: impl std::fmt::Display) -> ryter_core::Error {
 /// Run the fullscreen TUI. Restores the terminal on exit.
 pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     let cwd = std::env::current_dir().map_err(io_err)?;
-    let _ = ryter_core::ensure_project_memory(&cwd);
     let trusted = config::is_trusted(&cwd);
     let cfg = config::load(Some(&cwd), trusted)?;
     let home = config::home_dir();
@@ -220,6 +204,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
             "no API key for {conn_name} — /provider set-key, or export XAI_API_KEY / OPENROUTER_API_KEY"
         ));
     }
+    view.project_spend = ryter_core::project::project_spend(&home, &cwd).ok();
     if cwd.join(".ryter").is_dir() && !trusted {
         view.panels.push(Box::new(TrustModal::default()));
     }
@@ -244,7 +229,6 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     let (notice_tx, notice_rx) = mpsc::channel::<Notice>();
     let cancel = Cancel::new();
     let live_status = Arc::new(Mutex::new(StatusSnapshot {
-        phase: phase.to_string(),
         model: model.clone(),
         connection: conn_name.clone(),
         session: session.meta.id.to_string(),
@@ -296,6 +280,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         mcp_host: attach_host,
         perm_reply: None,
         ask_reply: None,
+        mouse_grabbed: mouse,
         theme,
         theme_before_preview: None,
         color_mode,
@@ -315,7 +300,8 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         &prompt_rx,
         mouse,
     );
-    leave_terminal(mouse);
+    // The user may have released it mid-session (`Ctrl+G`).
+    leave_terminal(cx.mouse_grabbed);
     if let Some(p) = sock_path {
         let _ = std::fs::remove_file(p);
     }
@@ -366,6 +352,10 @@ fn populate_view(
     view.auditor_on = cfg.auditor.enabled;
     view.specialists = cfg.specialists.clone();
     view.budget_usd = cfg.spend.session_budget_usd;
+    if view.budget_usd > 0.0 {
+        view.budget_last = view.budget_usd;
+    }
+    view.task_budget_usd = cfg.spend.task_budget_usd;
     view.warn_usd = cfg.spend.warn_usd;
     view.max_crew = cfg.subagents.max;
     view.sandbox_profile = cfg.sandbox.profile.clone();

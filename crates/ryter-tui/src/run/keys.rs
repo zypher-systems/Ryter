@@ -21,6 +21,7 @@ pub fn handle(view: &mut View, key: KeyEvent) -> Action {
         match a {
             KeyAction::CtrlC => return ctrl_c(view),
             KeyAction::Redraw => return Action::Redraw,
+            KeyAction::ToggleMouse => return Action::ToggleMouse,
             KeyAction::TogglePanel => {
                 view.panel_visible = !view.panel_visible;
                 return Action::None;
@@ -141,13 +142,10 @@ fn esc(view: &mut View) -> Action {
         palette::close(view);
         return Action::None;
     }
-    match view.composer.mode {
-        ComposerMode::Handoff(_) | ComposerMode::Secret { .. } => {
-            view.composer.end_special();
-            view.system("cancelled");
-            return Action::None;
-        }
-        _ => {}
+    if let ComposerMode::Secret { .. } = view.composer.mode {
+        view.composer.end_special();
+        view.system("cancelled");
+        return Action::None;
     }
     if view.queued_prompt.take().is_some() {
         view.system("queued message dropped");
@@ -199,6 +197,21 @@ fn reasoning_scroll(view: &mut View, dir: i32) {
 
 /// Composer editing and submit (`R-COMP-09..13`).
 fn composer_key(view: &mut View, key: KeyEvent) -> Action {
+    // Tab switches hats in solo mode. In crew mode there is one speaker,
+    // the lead; say how to get back rather than doing nothing.
+    if matches!(view.composer.mode, crate::composer::Mode::Normal)
+        && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
+    {
+        if view.crew_mode() {
+            view.system("crew mode · /solo to go back to build, plan, and review");
+            return Action::None;
+        }
+        return Action::SetMode(if key.code == KeyCode::BackTab {
+            view.mode.prev_hat()
+        } else {
+            view.mode.next_hat()
+        });
+    }
     let action = keymap::lookup(Ctx::Composer, key);
     let mut edited = true;
     let result = match action {
@@ -301,11 +314,6 @@ fn composer_key(view: &mut View, key: KeyEvent) -> Action {
 fn submit(view: &mut View) -> Action {
     if view.palette.is_some() {
         return palette::run(view);
-    }
-    if let Some(to) = view.handoff_to() {
-        let note = view.composer.take().trim().to_string();
-        view.composer.end_special();
-        return Action::Handoff { to, note };
     }
     let text = view.composer.take();
     let trimmed = text.trim();

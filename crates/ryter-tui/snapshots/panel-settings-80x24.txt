@@ -1,24 +1,24 @@
- ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+ ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
- · system                                             ╭─ session ──────────────╮
-   w╭─ settings ───────────────────────────────────────────────────────────╮   │
-    │ SPEND                                                                ┃ d │
-    │› session budget usd  ‹ 5.00 ›                                default ┃   │
-    │  warn usd            ‹ 1.00 ›                                default ┃ ──╯
-    │                                                                      ┃ ──╮
-    │ AGENTS                                                               ┃ 6 │
-    │  subagents max       ‹ 4 ›                                   default │   │
-    │  auditor             [ on ]                                  default │   │
-    │                                                                      │   │
-    │ TOOLS                                                                │ ──╯
-    │  permission mode     ‹ ask ›                                 default │ ──╮
-    │  features.web        [ off ]                                 default │ ? │
-    │                                                                      │   │
-    ╰─ ↑↓ move · space/←→ change · enter edit · ^s save · esc ─────────────╯   │
-                                                                             ──╯
+ · s╭─ settings ───────────────────────────────────────────────────────────╮
+   w│ SPEND                                                                ┃
+    │› budget usd (0 = off)  ‹ 0.00 ›                              default ┃
+    │  warn usd              ‹ 1.00 ›                              default ┃
+    │                                                                      ┃
+    │ AGENTS                                                               ┃
+    │  subagents max         ‹ 4 ›                                 default ┃
+    │  auditor               [ on ]                                default ┃
+    │                                                                      │
+    │ TOOLS                                                                │
+    │  permission mode       ‹ ask ›                               default │
+    │  features.web          [ off ]                               default │
+    │                                                                      │
+    │ SANDBOX                                                              │
+    │  profile               ‹ off ›                               default │
+    ╰─ ↑↓ move · space/←→ change · enter edit · esc done ──────────────────╯
 
 
-╭─ dusty ────────────────────────────────────────────────────────────── build ─╮
-│› ask the orchestrator, or / for commands                                     │
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter select    tab next field    ? keys    esc back
