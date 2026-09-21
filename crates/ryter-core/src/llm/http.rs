@@ -258,10 +258,35 @@ fn chat_body(req: &CompletionRequest) -> Value {
     body
 }
 
+/// Responses API body.
+///
+/// Tool calls and their results are their own `input` items (`function_call` /
+/// `function_call_output`), not fields on a message, and there is no `tool`
+/// role. Flattening them into `{role, content}` silently drops the agentic
+/// loop, so every call is emitted as an item keyed by `call_id`.
 fn responses_body(req: &CompletionRequest) -> Value {
     let mut input = Vec::new();
     for m in &req.messages {
-        input.push(json!({"role": m.role, "content": m.content}));
+        if m.role == "tool" {
+            input.push(json!({
+                "type": "function_call_output",
+                "call_id": m.tool_call_id.clone().unwrap_or_default(),
+                "output": m.content,
+            }));
+            continue;
+        }
+        // An assistant turn that only called tools carries no text.
+        if !m.content.is_empty() || m.role != "assistant" {
+            input.push(json!({"role": m.role, "content": m.content}));
+        }
+        for c in m.tool_calls.iter().flatten() {
+            input.push(json!({
+                "type": "function_call",
+                "call_id": c.id,
+                "name": c.name,
+                "arguments": c.arguments,
+            }));
+        }
     }
     let mut body = json!({
         "model": req.model,
@@ -275,18 +300,58 @@ fn responses_body(req: &CompletionRequest) -> Value {
         body["max_output_tokens"] = json!(max);
     }
     if !req.tools.is_empty() {
-        body["tools"] = json!(tools_openai(&req.tools));
+        body["tools"] = json!(tools_responses(&req.tools));
     }
     body
 }
 
+/// Anthropic Messages body.
+///
+/// Tool use and tool results are content blocks, not message fields: the call
+/// is a `tool_use` block on the assistant turn, the result is a `tool_result`
+/// block on a *user* turn. There is no `tool` role, `system` is top-level, and
+/// an empty content list is rejected.
 fn messages_body(req: &CompletionRequest) -> Value {
-    let mut messages = Vec::new();
+    let mut messages: Vec<Value> = Vec::new();
     for m in &req.messages {
-        if m.role == "system" {
-            continue;
+        match m.role.as_str() {
+            "system" => continue,
+            "tool" => {
+                let block = json!({
+                    "type": "tool_result",
+                    "tool_use_id": m.tool_call_id.clone().unwrap_or_default(),
+                    "content": m.content,
+                });
+                // Results for one assistant turn share a single user turn.
+                match messages.last_mut() {
+                    Some(prev) if is_tool_result_turn(prev) => {
+                        if let Some(arr) = prev["content"].as_array_mut() {
+                            arr.push(block);
+                        }
+                    }
+                    _ => messages.push(json!({"role": "user", "content": [block]})),
+                }
+            }
+            "assistant" => {
+                let mut blocks = Vec::new();
+                if !m.content.is_empty() {
+                    blocks.push(json!({"type": "text", "text": m.content}));
+                }
+                for c in m.tool_calls.iter().flatten() {
+                    blocks.push(json!({
+                        "type": "tool_use",
+                        "id": c.id,
+                        "name": c.name,
+                        "input": serde_json::from_str::<Value>(&c.arguments)
+                            .unwrap_or_else(|_| json!({})),
+                    }));
+                }
+                if !blocks.is_empty() {
+                    messages.push(json!({"role": "assistant", "content": blocks}));
+                }
+            }
+            _ => messages.push(json!({"role": m.role, "content": m.content})),
         }
-        messages.push(json!({"role": m.role, "content": m.content}));
     }
     let mut body = json!({
         "model": req.model,
@@ -301,6 +366,35 @@ fn messages_body(req: &CompletionRequest) -> Value {
         body["tools"] = json!(tools_anthropic(&req.tools));
     }
     body
+}
+
+/// True when `msg` is a user turn built only of `tool_result` blocks, so a
+/// sibling result from the same assistant turn can join it.
+fn is_tool_result_turn(msg: &Value) -> bool {
+    msg.get("role").and_then(Value::as_str) == Some("user")
+        && msg
+            .get("content")
+            .and_then(Value::as_array)
+            .is_some_and(|a| {
+                !a.is_empty()
+                    && a.iter()
+                        .all(|b| b.get("type").and_then(Value::as_str) == Some("tool_result"))
+            })
+}
+
+/// Responses advertises tools flat, not nested under `function`.
+fn tools_responses(tools: &[ToolSpec]) -> Value {
+    tools
+        .iter()
+        .map(|t| {
+            json!({
+                "type": "function",
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.parameters,
+            })
+        })
+        .collect()
 }
 
 fn tools_openai(tools: &[ToolSpec]) -> Value {
@@ -372,6 +466,183 @@ fn parse_models_json(text: &str) -> Result<Vec<ModelInfo>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::llm::{AssistantToolCall, Message};
+
+    fn msg(role: &str, content: &str) -> Message {
+        Message {
+            role: role.into(),
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    fn call(id: &str, name: &str, arguments: &str) -> AssistantToolCall {
+        AssistantToolCall {
+            id: id.into(),
+            name: name.into(),
+            arguments: arguments.into(),
+        }
+    }
+
+    /// user → assistant(tool_call) → tool result → assistant(text).
+    fn tool_loop() -> CompletionRequest {
+        CompletionRequest {
+            model: "m".into(),
+            system: Some("sys".into()),
+            messages: vec![
+                msg("user", "read it"),
+                Message {
+                    tool_calls: Some(vec![call("call_1", "read_file", r#"{"path":"a.rs"}"#)]),
+                    ..msg("assistant", "")
+                },
+                Message {
+                    tool_call_id: Some("call_1".into()),
+                    ..msg("tool", "fn main() {}")
+                },
+                msg("assistant", "done"),
+            ],
+            tools: vec![ToolSpec {
+                name: "read_file".into(),
+                description: "read".into(),
+                parameters: json!({"type": "object"}),
+            }],
+            max_tokens: Some(64),
+        }
+    }
+
+    /// Every backend must round-trip the call id, name, arguments, and result.
+    /// Dropping any of them breaks the agent loop on the second iteration.
+    #[test]
+    fn every_backend_round_trips_a_tool_loop() {
+        let req = tool_loop();
+        for (label, body) in [
+            ("chat_completions", chat_body(&req)),
+            ("responses", responses_body(&req)),
+            ("messages", messages_body(&req)),
+        ] {
+            let wire = serde_json::to_string(&body).expect("serialize");
+            // Messages parses arguments into an object, so match on the
+            // argument's content rather than the raw JSON string.
+            for needle in ["call_1", "read_file", "path", "a.rs", "fn main() {}"] {
+                assert!(wire.contains(needle), "{label} lost {needle}: {wire}");
+            }
+        }
+    }
+
+    #[test]
+    fn responses_emits_call_items_and_flat_tools() {
+        let body = responses_body(&tool_loop());
+        let input = body["input"].as_array().expect("input array");
+        let kinds: Vec<&str> = input
+            .iter()
+            .map(|i| {
+                i.get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_else(|| i["role"].as_str().unwrap_or("?"))
+            })
+            .collect();
+        // The text-free assistant turn collapses into its `function_call`.
+        assert_eq!(
+            kinds,
+            ["user", "function_call", "function_call_output", "assistant"]
+        );
+        assert_eq!(input[1]["call_id"], "call_1");
+        assert_eq!(input[2]["call_id"], "call_1");
+        assert_eq!(input[2]["output"], "fn main() {}");
+        // Responses has no `tool` role and no nested `function` object.
+        assert!(!kinds.contains(&"tool"));
+        assert_eq!(body["tools"][0]["name"], "read_file");
+        assert!(body["tools"][0].get("function").is_none());
+    }
+
+    #[test]
+    fn messages_emits_tool_use_and_tool_result_blocks() {
+        let body = messages_body(&tool_loop());
+        let ms = body["messages"].as_array().expect("messages array");
+        let roles: Vec<&str> = ms.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        // The tool result becomes a user turn; there is no `tool` role.
+        assert_eq!(roles, ["user", "assistant", "user", "assistant"]);
+        assert_eq!(ms[1]["content"][0]["type"], "tool_use");
+        assert_eq!(ms[1]["content"][0]["id"], "call_1");
+        // `input` is an object, not the raw argument string.
+        assert_eq!(ms[1]["content"][0]["input"]["path"], "a.rs");
+        assert_eq!(ms[2]["content"][0]["type"], "tool_result");
+        assert_eq!(ms[2]["content"][0]["tool_use_id"], "call_1");
+        assert_eq!(body["system"], "sys");
+    }
+
+    /// Parallel calls answer into one user turn (Anthropic rejects a bare
+    /// `tool_result` turn per result).
+    #[test]
+    fn messages_merges_parallel_tool_results() {
+        let req = CompletionRequest {
+            model: "m".into(),
+            system: None,
+            messages: vec![
+                msg("user", "both"),
+                Message {
+                    tool_calls: Some(vec![call("c1", "grep", "{}"), call("c2", "glob", "{}")]),
+                    ..msg("assistant", "")
+                },
+                Message {
+                    tool_call_id: Some("c1".into()),
+                    ..msg("tool", "hit one")
+                },
+                Message {
+                    tool_call_id: Some("c2".into()),
+                    ..msg("tool", "hit two")
+                },
+            ],
+            tools: vec![],
+            max_tokens: None,
+        };
+        let body = messages_body(&req);
+        let ms = body["messages"].as_array().unwrap();
+        assert_eq!(ms.len(), 3, "results should share one user turn: {ms:?}");
+        assert_eq!(ms[1]["content"].as_array().unwrap().len(), 2);
+        assert_eq!(ms[2]["content"].as_array().unwrap().len(), 2);
+        assert_eq!(ms[2]["content"][1]["tool_use_id"], "c2");
+    }
+
+    /// An empty content list is rejected by the API, and `system` is a
+    /// top-level field rather than a message.
+    #[test]
+    fn messages_drops_empty_assistant_and_system_messages() {
+        let req = CompletionRequest {
+            model: "m".into(),
+            system: None,
+            messages: vec![
+                msg("system", "ignored"),
+                msg("user", "hi"),
+                msg("assistant", ""),
+            ],
+            tools: vec![],
+            max_tokens: None,
+        };
+        let ms = messages_body(&req)["messages"].clone();
+        let ms = ms.as_array().unwrap();
+        assert_eq!(ms.len(), 1);
+        assert_eq!(ms[0]["role"], "user");
+    }
+
+    /// Unparseable arguments must not abort the request.
+    #[test]
+    fn messages_tolerates_truncated_tool_arguments() {
+        let req = CompletionRequest {
+            model: "m".into(),
+            system: None,
+            messages: vec![Message {
+                tool_calls: Some(vec![call("c1", "grep", "{\"pattern\": ")]),
+                ..msg("assistant", "")
+            }],
+            tools: vec![],
+            max_tokens: None,
+        };
+        let body = messages_body(&req);
+        assert_eq!(body["messages"][0]["content"][0]["input"], json!({}));
+    }
 
     #[test]
     fn parse_openrouter_models_list() {
