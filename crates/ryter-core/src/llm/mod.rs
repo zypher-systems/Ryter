@@ -132,6 +132,59 @@ impl ModelInfo {
     }
 }
 
+/// Reassembles streamed tool calls.
+///
+/// Providers send a call's id and name once and then its arguments in
+/// fragments that carry no id (chat completions keys them by `index`, Messages
+/// by content-block index). An id-less fragment therefore continues the most
+/// recent call. Treating each one as a new call dropped every argument after
+/// the first fragment, so real tool calls arrived with empty arguments.
+#[derive(Debug, Default)]
+pub struct ToolCallAccumulator {
+    calls: Vec<AssistantToolCall>,
+}
+
+impl ToolCallAccumulator {
+    /// Fold one `StreamDelta::ToolCall` in.
+    pub fn push(&mut self, id: &str, name: &str, arguments: &str) {
+        let target = if id.is_empty() {
+            self.calls.last_mut()
+        } else {
+            self.calls.iter_mut().find(|c| c.id == id)
+        };
+        match target {
+            Some(call) => {
+                if !name.is_empty() {
+                    call.name = name.to_string();
+                }
+                call.arguments.push_str(arguments);
+            }
+            None => self.calls.push(AssistantToolCall {
+                id: if id.is_empty() {
+                    format!("call_{}", self.calls.len() + 1)
+                } else {
+                    id.to_string()
+                },
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            }),
+        }
+    }
+
+    /// Completed calls in arrival order. Nameless fragments are dropped.
+    pub fn finish(self) -> Vec<AssistantToolCall> {
+        self.calls
+            .into_iter()
+            .filter(|c| !c.name.is_empty())
+            .collect()
+    }
+
+    /// Nothing accumulated yet.
+    pub fn is_empty(&self) -> bool {
+        self.calls.is_empty()
+    }
+}
+
 /// Streaming inference backend.
 #[async_trait]
 pub trait Provider: Send + Sync {
@@ -283,6 +336,31 @@ mod tests {
             d,
             StreamDelta::Usage(u) if u.output_tokens == 2
         )));
+    }
+
+    #[test]
+    fn accumulator_continues_id_less_fragments() {
+        let mut a = ToolCallAccumulator::default();
+        a.push("c1", "read_file", "");
+        a.push("", "", "{\"path\":");
+        a.push("", "", "\"a.rs\"}");
+        a.push("c2", "grep", "{\"pattern\":\"x\"}");
+        let calls = a.finish();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].arguments, "{\"path\":\"a.rs\"}");
+        assert_eq!(calls[1].name, "grep");
+    }
+
+    #[test]
+    fn accumulator_merges_fragments_keyed_by_id() {
+        // Responses repeats the item id on every argument fragment.
+        let mut a = ToolCallAccumulator::default();
+        a.push("fc_1", "read_file", "");
+        a.push("fc_1", "", "{\"path\":");
+        a.push("fc_1", "", "\"a.rs\"}");
+        let calls = a.finish();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments, "{\"path\":\"a.rs\"}");
     }
 
     #[tokio::test]

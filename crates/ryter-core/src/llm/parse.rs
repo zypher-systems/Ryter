@@ -194,6 +194,27 @@ fn push_messages(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) ->
         .or_else(|| v.get("type").and_then(Value::as_str))
         .unwrap_or("");
     match ty {
+        // A tool call's id and name arrive here, once; the arguments follow as
+        // id-less `input_json_delta` fragments. Without this arm Anthropic
+        // models could never call a tool.
+        "content_block_start" => {
+            let block = &v["content_block"];
+            if block.get("type").and_then(Value::as_str) == Some("tool_use") {
+                out.push(StreamDelta::ToolCall {
+                    id: block
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    name: block
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    arguments: String::new(),
+                });
+            }
+        }
         "content_block_delta" => {
             let delta = &v["delta"];
             match delta.get("type").and_then(Value::as_str) {

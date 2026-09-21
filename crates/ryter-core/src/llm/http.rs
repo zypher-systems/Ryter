@@ -396,9 +396,17 @@ fn responses_body(req: &CompletionRequest) -> Value {
 /// an empty content list is rejected.
 fn messages_body(req: &CompletionRequest) -> Value {
     let mut messages: Vec<Value> = Vec::new();
+    // Messages has no system role. Specialists carry their role prompt as a
+    // `system` message, so dropping those silently ran every specialist on
+    // this backend without its prompt. Fold them into the top-level field.
+    let mut system: Vec<&str> = req.system.iter().map(String::as_str).collect();
     for m in &req.messages {
         match m.role.as_str() {
-            "system" => continue,
+            "system" => {
+                if !m.content.trim().is_empty() {
+                    system.push(&m.content);
+                }
+            }
             "tool" => {
                 let block = json!({
                     "type": "tool_result",
@@ -445,10 +453,10 @@ fn messages_body(req: &CompletionRequest) -> Value {
     // The system prompt and tool schemas are byte-identical on every turn of an
     // agent loop, so without a cache breakpoint they are re-billed each time.
     // `cached_tokens` was already parsed and shown; nothing ever asked for it.
-    if let Some(sys) = &req.system {
+    if !system.is_empty() {
         body["system"] = json!([{
             "type": "text",
-            "text": sys,
+            "text": system.join("\n\n"),
             "cache_control": { "type": "ephemeral" },
         }]);
     }
@@ -712,22 +720,24 @@ mod tests {
     /// An empty content list is rejected by the API, and `system` is a
     /// top-level field rather than a message.
     #[test]
-    fn messages_drops_empty_assistant_and_system_messages() {
+    fn messages_drops_empty_assistant_and_lifts_system_messages() {
         let req = CompletionRequest {
             model: "m".into(),
             system: None,
             messages: vec![
-                msg("system", "ignored"),
+                msg("system", "You are a Ryter builder."),
                 msg("user", "hi"),
                 msg("assistant", ""),
             ],
             tools: vec![],
             max_tokens: None,
         };
-        let ms = messages_body(&req)["messages"].clone();
-        let ms = ms.as_array().unwrap();
+        let body = messages_body(&req);
+        let ms = body["messages"].as_array().unwrap();
         assert_eq!(ms.len(), 1);
         assert_eq!(ms[0]["role"], "user");
+        // The specialist's role prompt must survive, as the system field.
+        assert_eq!(body["system"][0]["text"], "You are a Ryter builder.");
     }
 
     /// Unparseable arguments must not abort the request.
