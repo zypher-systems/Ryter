@@ -1042,6 +1042,22 @@ fn merge_file(cfg: &mut Config, path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Overlay the keys present in `overlay` onto `base`, keeping every other field.
+fn merge_table<T>(base: &T, overlay: toml::Value) -> std::result::Result<T, String>
+where
+    T: Serialize + serde::de::DeserializeOwned,
+{
+    let mut merged = toml::Value::try_from(base).map_err(|e| e.to_string())?;
+    if let (Some(into), toml::Value::Table(from)) = (merged.as_table_mut(), overlay) {
+        for (k, v) in from {
+            into.insert(k, v);
+        }
+    }
+    merged
+        .try_into()
+        .map_err(|e: toml::de::Error| e.to_string())
+}
+
 /// On-disk shape: all fields optional so files can be sparse.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -1051,8 +1067,10 @@ struct ConfigFile {
     orchestrator: Option<RoleModel>,
     specialists: BTreeMap<String, RoleModel>,
     subagents: Option<SubagentsConfig>,
-    auditor: Option<AuditorConfig>,
-    spend: Option<SpendConfig>,
+    // Kept as raw tables and merged field by field: a project that sets only
+    // `[auditor] checks` must not need every other key, nor wipe the user's.
+    auditor: Option<toml::Value>,
+    spend: Option<toml::Value>,
     pricing: BTreeMap<String, PriceOverride>,
     mcp: Option<McpSettings>,
     mcp_servers: BTreeMap<String, McpServerConfig>,
@@ -1146,10 +1164,16 @@ impl ConfigFile {
             cfg.subagents = s;
         }
         if let Some(a) = self.auditor {
-            cfg.auditor = a;
+            match merge_table(&cfg.auditor, a) {
+                Ok(v) => cfg.auditor = v,
+                Err(e) => cfg.warnings.push(format!("[auditor] ignored: {e}")),
+            }
         }
         if let Some(s) = self.spend {
-            cfg.spend = s;
+            match merge_table(&cfg.spend, s) {
+                Ok(v) => cfg.spend = v,
+                Err(e) => cfg.warnings.push(format!("[spend] ignored: {e}")),
+            }
         }
         for (k, v) in self.pricing {
             cfg.pricing.insert(k, v);
@@ -1943,6 +1967,32 @@ mod tests {
         assert_eq!(cfg.hooks.len(), 1);
         assert_eq!(cfg.hooks[0].event, "PreToolUse");
         assert_eq!(cfg.hooks[0].matcher.as_deref(), Some("bash"));
+    }
+
+    /// A project sets its own checks with a sparse table — which is what the
+    /// docs tell people to write — without breaking config load or wiping the
+    /// user's other auditor and spend settings.
+    #[test]
+    fn a_sparse_project_auditor_table_merges_field_by_field() {
+        let home = TempDir::new().unwrap();
+        let proj = TempDir::new().unwrap();
+        fs::write(
+            home.path().join("config.toml"),
+            "[auditor]\nenabled = true\nmax_retries = 4\n[[auditor.panel]]\nmodel = \"claude-sonnet-4.6\"\n[spend]\nenabled = true\nsession_budget_usd = 9.0\n",
+        )
+        .unwrap();
+        fs::create_dir_all(proj.path().join(".ryter")).unwrap();
+        fs::write(
+            proj.path().join(".ryter/config.toml"),
+            "[auditor]\nchecks = [\"python3 -m unittest\"]\n[spend]\ntask_budget_usd = 0.25\n",
+        )
+        .unwrap();
+        let cfg = load_at(home.path(), Some(proj.path()), true).expect("a sparse table must load");
+        assert_eq!(cfg.auditor.checks, vec!["python3 -m unittest".to_string()]);
+        assert_eq!(cfg.auditor.max_retries, 4, "user setting survives");
+        assert_eq!(cfg.auditor.panel.len(), 1, "user panel survives");
+        assert_eq!(cfg.spend.task_budget_usd, 0.25);
+        assert_eq!(cfg.spend.session_budget_usd, 9.0, "user budget survives");
     }
 
     #[test]
