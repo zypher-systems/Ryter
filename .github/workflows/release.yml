@@ -1,0 +1,96 @@
+name: release
+
+# Pushing a tag like v0.2.0 builds every binary and opens a *draft* release
+# with them attached; a person reviews and publishes it. Running the workflow
+# by hand (Actions → release → Run workflow) builds the same binaries as
+# downloadable artifacts, without a release: a dry run.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Static musl binaries: they run on any Linux, whatever its glibc.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            musl: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+            musl: true
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          # Intel Macs, cross-built on an Apple Silicon runner.
+          - target: x86_64-apple-darwin
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88.0"
+          targets: ${{ matrix.target }}
+      - name: musl tools
+        if: matrix.musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: build
+        run: cargo build --release --locked -p ryter-cli --target ${{ matrix.target }}
+      - name: smoke test
+        # The Intel Mac build can't run on this runner; the others can.
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: target/${{ matrix.target }}/release/ryter --version
+      - name: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="ryter-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/ryter" LICENSE README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          cd dist
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          else
+            shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ryter-${{ matrix.target }}
+          path: |
+            dist/ryter-${{ matrix.target }}.tar.gz
+            dist/ryter-${{ matrix.target }}.tar.gz.sha256
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          cat dist/*.sha256 > dist/SHA256SUMS
+          notes="docs/releases/${tag}.md"
+          if [ -f "$notes" ]; then
+            flag=(--notes-file "$notes")
+          else
+            flag=(--generate-notes)
+          fi
+          gh release create "$tag" --draft --title "Ryter ${tag}" "${flag[@]}" \
+            dist/*.tar.gz dist/SHA256SUMS

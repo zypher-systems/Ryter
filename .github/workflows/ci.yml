@@ -10,7 +10,12 @@ env:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # macOS too: releases ship Mac binaries, so a Mac-only break must fail here.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master

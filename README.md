@@ -6,15 +6,24 @@ Two ways to work, in one app. **Solo mode**: one model in your project, and `Tab
 
 Linux first. Apache-2.0.
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/zypher-systems/ryter/main/install.sh | sh
+```
+
+This installs a prebuilt binary to `~/.local/bin` for Linux (x86_64 and arm64, static, any distro) or macOS (Apple Silicon and Intel). The download is checked against the release's `SHA256SUMS` first. `RYTER_VERSION=v0.2.0` pins a version and `RYTER_INSTALL_DIR` picks the folder. Linux gets the full feature set; on macOS everything works except the Landlock sandbox, which is Linux-only.
+
+From source (Rust 1.88+): `cargo install --git https://github.com/zypher-systems/ryter ryter-cli`.
+
 ## Quick start
 
 ```sh
-# Rust 1.88+
-cargo build -p ryter-cli
-export XAI_API_KEY=...          # and/or OPENROUTER_API_KEY
-./target/debug/ryter doctor
-./target/debug/ryter            # TUI (tty)
-./target/debug/ryter -p "say hi" --always-approve
+export OPENROUTER_API_KEY=...   # or XAI_API_KEY, or a local model: see below
+cd your-project
+ryter doctor                    # checks keys, terminal, sandbox; no network
+ryter                           # the TUI, in solo mode's build hat
+ryter -p "say hi"               # one headless turn
 ```
 
 Copy `config.example.toml` to `~/.ryter/config.toml`. If you put `api_key` in that file, `chmod 600` it.
