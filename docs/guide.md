@@ -146,7 +146,15 @@ Auditors must be different models from the lead and the builder — otherwise bu
 
 For a trivial change the lead can `propose_edit`: you see the diff and press `y`. Only a person can approve it.
 
-`ryter crew suggest` (or `s` in `/crew`) proposes a cost-tiered crew from every model you can reach; `--apply` saves it and keeps your old crew as the `before-suggest` preset. A local model server works as a connection with no key: `ryter connections add box --kind ollama --model qwen3-coder:30b`. `ryter bench` runs `bench/` through the crew and reports what landed, what passed hidden tests, and the cost per accepted task — it spends real money.
+Three ready-made crews sit in `/crew`, picked from every model you can reach at today's prices, so they never name a model you can't use or one that has gone stale:
+
+| Crew | Cost | Builder | Architect and auditor |
+| --- | --- | --- | --- |
+| **skiff** | low | a budget model | the best of the budget models; the auditor is still a different model from another vendor |
+| **schooner** | balanced | a budget model | strong models (the default suggestion, `s` in `/crew`) |
+| **galleon** | high | a strong model | strong models, the auditor from another vendor |
+
+Enter on one previews it; `y` applies it and keeps your previous crew as the `before-suggest` preset. `ryter crew tiers` shows all three; `ryter crew suggest --tier galleon --apply` applies one from the shell. Strong seats prefer established vendors when one is close in price: price is the only signal before `ryter bench`, and on a live catalog it put an obscure model ahead of Claude Opus. None of the crews changes the lead. A local model server works as a connection with no key: `ryter connections add box --kind ollama --model qwen3-coder:30b`. `ryter bench` runs `bench/` through the crew and reports what landed, what passed hidden tests, and the cost per accepted task — it spends real money.
 
 Crew spend is metered per task and role and counts against `[spend] session_budget_usd`; each task also stops at `task_budget_usd` / `task_max_tokens`. See `docs/cost.md`.
 

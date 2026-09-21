@@ -135,14 +135,19 @@ enum Command {
 
 #[derive(Subcommand)]
 enum CrewCmd {
-    /// Suggest a cost-tiered crew from every model you can reach: a cheap
-    /// builder, a strong auditor from another vendor, a strong architect.
+    /// Suggest a crew from every model you can reach. Tiers: skiff (low
+    /// cost), schooner (balanced, the default), galleon (high cost).
     Suggest {
+        /// skiff | schooner | galleon (or low | medium | high).
+        #[arg(long, default_value = "schooner")]
+        tier: String,
         /// Save it to ~/.ryter/crew.toml (the current crew is kept as the
         /// `before-suggest` preset).
         #[arg(long)]
         apply: bool,
     },
+    /// Show all three tiers side by side, from the models you can reach.
+    Tiers,
 }
 
 #[derive(Subcommand)]
@@ -261,8 +266,17 @@ fn main() -> ExitCode {
             }
         },
         Some(Command::Crew {
-            cmd: CrewCmd::Suggest { apply },
-        }) => match crew_suggest_cmd(apply) {
+            cmd: CrewCmd::Suggest { tier, apply },
+        }) => match crew_suggest_cmd(&tier, apply) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(1)
+            }
+        },
+        Some(Command::Crew {
+            cmd: CrewCmd::Tiers,
+        }) => match crew_tiers_cmd() {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("{e}");
@@ -663,7 +677,16 @@ fn bench_cmd(
     Ok(())
 }
 
-fn crew_suggest_cmd(apply: bool) -> ryter_core::Result<()> {
+/// The lead's route and every model the user can reach, for tier suggestions.
+struct Reach {
+    cfg: ryter_core::Config,
+    home: std::path::PathBuf,
+    lead_conn: String,
+    lead_model: String,
+    models: Vec<ryter_core::llm::ModelInfo>,
+}
+
+fn reach() -> ryter_core::Result<Reach> {
     let cwd = std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?;
     let trusted = config::is_trusted(&cwd);
     let cfg = config::load(Some(&cwd), trusted)?;
@@ -678,12 +701,76 @@ fn crew_suggest_cmd(apply: bool) -> ryter_core::Result<()> {
     for f in &failed {
         eprintln!("skipped {f}");
     }
-    let t =
-        ryter_core::tiering::suggest(&lead_conn, &lead_model, &models, &cfg.local_connections());
+    Ok(Reach {
+        cfg,
+        home,
+        lead_conn,
+        lead_model,
+        models,
+    })
+}
+
+fn crew_tiers_cmd() -> ryter_core::Result<()> {
+    use ryter_core::tiering::{Tier, suggest_tier};
+    let r = reach()?;
+    println!(
+        "lead      {} on {} (unchanged by any tier)\n",
+        r.lead_model, r.lead_conn
+    );
+    for tier in Tier::ALL {
+        let t = suggest_tier(
+            tier,
+            &r.lead_conn,
+            &r.lead_model,
+            &r.models,
+            &r.cfg.local_connections(),
+        );
+        println!("{} — {}: {}", tier.name(), tier.cost(), tier.tagline());
+        for (role, p) in [
+            ("builder", &t.builder),
+            ("auditor", &t.auditor),
+            ("architect", &t.architect),
+        ] {
+            let label = p
+                .as_ref()
+                .map(ryter_core::tiering::Pick::label)
+                .unwrap_or_else(|| "(no suitable model)".into());
+            println!("  {role:<10}{label}");
+        }
+        println!();
+    }
+    println!("Use one: `ryter crew suggest --tier <name> --apply`, or pick it in /crew.");
+    Ok(())
+}
+
+fn crew_suggest_cmd(tier: &str, apply: bool) -> ryter_core::Result<()> {
+    let tier = ryter_core::tiering::Tier::parse(tier).ok_or_else(|| {
+        Error::Config(format!(
+            "unknown tier {tier:?}: skiff (low), schooner (balanced), galleon (high)"
+        ))
+    })?;
+    let Reach {
+        cfg,
+        home,
+        lead_conn,
+        lead_model,
+        models,
+    } = reach()?;
+    let t = ryter_core::tiering::suggest_tier(
+        tier,
+        &lead_conn,
+        &lead_model,
+        &models,
+        &cfg.local_connections(),
+    );
+    println!("{} — {}: {}", tier.name(), tier.cost(), tier.tagline());
     println!("lead      {lead_model} on {lead_conn} (unchanged)");
     print!("{}", t.render());
     if !apply {
-        println!("\nRun `ryter crew suggest --apply` to use it, or assign roles in /crew.");
+        println!(
+            "\nRun `ryter crew suggest --tier {} --apply` to use it, or pick it in /crew.",
+            tier.name()
+        );
         return Ok(());
     }
     if t.auditor.is_none() {

@@ -8,25 +8,25 @@
 
 
 
-
-
                                               ╭─ crew ─────────────────────────────────────── max concurrent: 4 ─╮
                                               │ roles                                                            │
                                               │›● architect  default (grok-4.6)                                  │
                                               │ ● builder  default (grok-4.6)                                    │
                                               │ ● auditor  default (grok-4.6)                                    │
                                               │                                                                  │
+                                              │ ready-made crews · picked from the models you can reach          │
+                                              │ ▸ skiff  low cost                                  enter preview │
+                                              │ ▸ schooner  balanced                               enter preview │
+                                              │ ▸ galleon  high cost                               enter preview │
+                                              │                                                                  │
                                               │ presets                                                          │
                                               │ + save preset  current assignment → ~/.ryter/crews/<name>.toml   │
                                               │   no presets yet                                                 │
                                               │                                                                  │
                                               │ max concurrent specialists: 4 · change in /settings              │
-                                              ╰─ enter assign · s suggest crew · r reset · d delete · esc ───────╯
-
-
-
-
-
+                                              │                                                                  │
+                                              │                                                                  │
+                                              ╰─ enter assign/apply · r reset · d delete · esc ──────────────────╯
 
 
 

@@ -197,9 +197,112 @@ pub fn family(connection: &str, model: &str) -> String {
         .unwrap_or_else(|| connection.to_string())
 }
 
+/// A ready-made crew by cost. Each is built from the models you can reach at
+/// their current prices, so it never names a model that went stale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Tier {
+    /// Low cost: cheap models in every seat, the auditor still from another
+    /// vendor.
+    Skiff,
+    /// Balanced: a cheap builder, a strong architect, a strong independent
+    /// auditor. The default suggestion.
+    Schooner,
+    /// High cost: strong models in every seat, the builder included.
+    Galleon,
+}
+
+impl Tier {
+    /// Every tier, cheapest first.
+    pub const ALL: [Tier; 3] = [Tier::Skiff, Tier::Schooner, Tier::Galleon];
+
+    /// Lowercase name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Tier::Skiff => "skiff",
+            Tier::Schooner => "schooner",
+            Tier::Galleon => "galleon",
+        }
+    }
+
+    /// `low cost`, `balanced`, `high cost`.
+    pub fn cost(self) -> &'static str {
+        match self {
+            Tier::Skiff => "low cost",
+            Tier::Schooner => "balanced",
+            Tier::Galleon => "high cost",
+        }
+    }
+
+    /// One line on what it is for.
+    pub fn tagline(self) -> &'static str {
+        match self {
+            Tier::Skiff => {
+                "light and cheap: budget models in every seat. small, well-specified jobs"
+            }
+            Tier::Schooner => {
+                "cheap hands, sharp eyes: a budget builder, a strong architect and auditor"
+            }
+            Tier::Galleon => "heavy and costly: strong models in every seat. large or subtle work",
+        }
+    }
+
+    /// Parse `skiff`, `low`, … .
+    pub fn parse(s: &str) -> Option<Tier> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "skiff" | "low" | "cheap" => Some(Tier::Skiff),
+            "schooner" | "medium" | "mid" | "balanced" => Some(Tier::Schooner),
+            "galleon" | "high" | "strong" => Some(Tier::Galleon),
+            _ => None,
+        }
+    }
+}
+
+/// Vendors whose flagship models are known to handle a crew seat. Price
+/// ranks within them first: on a live catalog, price alone put an obscure
+/// $10/M model in the galleon's auditor seat ahead of Claude Opus.
+const ESTABLISHED: &[&str] = &[
+    "anthropic",
+    "openai",
+    "google",
+    "x-ai",
+    "deepseek",
+    "qwen",
+    "z-ai",
+    "moonshotai",
+    "mistralai",
+    "meta-llama",
+    "meta",
+];
+
 struct Candidate {
     pick: Pick,
     family: String,
+    /// Release time, when the catalog says.
+    created: Option<u64>,
+}
+
+/// Price first; at the same price, the newer model (Opus 4.5 and Opus 5
+/// cost the same, and the order of the catalog decided).
+fn rank(a: &&Candidate, b: &&Candidate) -> std::cmp::Ordering {
+    a.pick
+        .blended
+        .total_cmp(&b.pick.blended)
+        .then(a.created.cmp(&b.created))
+}
+
+/// The priciest candidate, from an established vendor when one comes close:
+/// within half the price of the priciest. A far cheaper established model is
+/// not a stand-in for a strong one.
+fn strongest<'a>(pool: impl Iterator<Item = &'a Candidate>) -> Option<&'a Candidate> {
+    let pool: Vec<&Candidate> = pool.collect();
+    let top = pool.iter().map(|c| c.pick.blended).fold(0.0_f64, f64::max);
+    let known = pool
+        .iter()
+        .copied()
+        .filter(|c| ESTABLISHED.contains(&c.family.as_str()))
+        .filter(|c| c.pick.blended >= top / 2.0)
+        .max_by(rank);
+    known.or_else(|| pool.into_iter().max_by(rank))
 }
 
 /// Why a model can never fill a crew role, if it cannot.
@@ -210,6 +313,9 @@ fn ineligible(m: &ModelInfo, newest: Option<u64>, local: bool) -> bool {
         // listed plainly (`:batch` does not even stream). Local tags like
         // `qwen3-coder:30b` are the model's name.
         || (!local && id.contains(':'))
+        // Moving aliases (`gpt-chat-latest`, `grok-4.6-latest`): the model
+        // behind them changes without notice, and the plain id is listed.
+        || (!local && id.ends_with("-latest"))
         // Router meta-models pick a model per request, at a variable price.
         || id.starts_with("openrouter/")
 
@@ -223,7 +329,19 @@ fn ineligible(m: &ModelInfo, newest: Option<u64>, local: bool) -> bool {
 
 /// Suggest a builder, auditor, and architect for a crew led by
 /// `lead_model` on `lead_connection`, from every model the user can reach.
+/// The balanced crew, [`Tier::Schooner`].
 pub fn suggest(
+    lead_connection: &str,
+    lead_model: &str,
+    models: &[ModelInfo],
+    local: &HashSet<String>,
+) -> Tiering {
+    suggest_tier(Tier::Schooner, lead_connection, lead_model, models, local)
+}
+
+/// Suggest the crew for one [`Tier`].
+pub fn suggest_tier(
+    tier: Tier,
     lead_connection: &str,
     lead_model: &str,
     models: &[ModelInfo],
@@ -258,6 +376,7 @@ pub fn suggest(
         };
         cands.push(Candidate {
             family: family(&conn, &m.id),
+            created: m.created,
             pick: Pick {
                 connection: conn,
                 model: m.id.clone(),
@@ -274,13 +393,20 @@ pub fn suggest(
     }
 
     let strong = |c: &&Candidate| !c.pick.local && c.pick.blended <= STRONG_CEILING;
-    // Architect first: the strongest model sets the builder's price band.
-    t.architect = cands
+    // The strongest model sets the builder's price band, whatever the tier.
+    let top = cands
         .iter()
         .filter(strong)
-        .max_by(|a, b| a.pick.blended.total_cmp(&b.pick.blended))
-        .map(|c| c.pick.clone());
-    let top = t.architect.as_ref().map(|a| a.blended).unwrap_or(0.0);
+        .map(|c| c.pick.blended)
+        .fold(0.0_f64, f64::max);
+    // What a reviewer or designer may cost. A skiff keeps them in the
+    // builder's band: the best of the cheap models.
+    let seat_cap = match tier {
+        Tier::Skiff if top > 0.0 => top / 4.0,
+        _ => STRONG_CEILING,
+    };
+    let seat = |c: &&Candidate| !c.pick.local && c.pick.blended <= seat_cap;
+    t.architect = strongest(cands.iter().filter(seat)).map(|c| c.pick.clone());
 
     // Builder: a local model if there is one (free); otherwise the lead's own
     // model when it sits in the builder band — the user chose it — else the
@@ -308,6 +434,13 @@ pub fn suggest(
                 .filter(in_band)
                 .min_by(|a, b| a.pick.blended.total_cmp(&b.pick.blended))
         });
+    // A galleon pays for a strong builder: the strongest model, as the
+    // architect.
+    let builder = if tier == Tier::Galleon {
+        strongest(cands.iter().filter(strong))
+    } else {
+        builder
+    };
     // Nothing is a quarter the price of the strongest model (one provider's
     // catalog, typically): the cheapest above the floor is still the best
     // builder, but tiering saves little and the user should know.
@@ -316,7 +449,7 @@ pub fn suggest(
             .iter()
             .filter(|c| c.pick.blended >= top * BUILDER_FLOOR)
             .min_by(|a, b| a.pick.blended.total_cmp(&b.pick.blended));
-        if b.is_some() {
+        if b.is_some() && tier != Tier::Galleon {
             t.notes.push(
                 "No model you can reach is much cheaper than your strongest, so tiering saves \
                  little. A cheaper provider, or a local model, is where the savings are."
@@ -338,20 +471,21 @@ pub fn suggest(
     };
 
     // Auditor: strongest independent model, preferring another vendor.
-    let other_vendor = cands
-        .iter()
-        .filter(strong)
-        .filter(independent)
-        .filter(|c| c.family != lead_family && c.family != builder_family)
-        .max_by(|a, b| a.pick.blended.total_cmp(&b.pick.blended));
+    // A galleon's auditor is strong first: another vendor's budget model is
+    // not the review it paid for.
+    let strong_enough = |c: &&Candidate| tier != Tier::Galleon || c.pick.blended >= top / 4.0;
+    let other_vendor = strongest(
+        cands
+            .iter()
+            .filter(seat)
+            .filter(independent)
+            .filter(strong_enough)
+            .filter(|c| c.family != lead_family && c.family != builder_family),
+    );
     t.auditor = match other_vendor {
         Some(c) => Some(c.pick.clone()),
         None => {
-            let same_vendor = cands
-                .iter()
-                .filter(strong)
-                .filter(independent)
-                .max_by(|a, b| a.pick.blended.total_cmp(&b.pick.blended));
+            let same_vendor = strongest(cands.iter().filter(seat).filter(independent));
             if same_vendor.is_some() {
                 t.notes.push(
                     "The auditor is from the same vendor as the lead or builder: a different \
@@ -363,6 +497,24 @@ pub fn suggest(
             same_vendor.map(|c| c.pick.clone())
         }
     };
+    // A skiff with nothing independent in the cheap band still needs a
+    // sign-off: the cheapest independent model, another vendor's if any.
+    if t.auditor.is_none() && tier == Tier::Skiff {
+        let cheapest = |other: bool| {
+            cands
+                .iter()
+                .filter(strong)
+                .filter(independent)
+                .filter(|c| !other || (c.family != lead_family && c.family != builder_family))
+                .min_by(|a, b| a.pick.blended.total_cmp(&b.pick.blended))
+        };
+        t.auditor = cheapest(true)
+            .or_else(|| cheapest(false))
+            .map(|c| c.pick.clone());
+    }
+    if t.architect.is_none() {
+        t.architect = t.builder.clone();
+    }
     if t.auditor.is_none() {
         t.notes.push(
             "No model qualifies as an auditor: it must differ from the lead and the builder. \
@@ -437,7 +589,105 @@ mod tests {
             m("openrouter", "deepseek/deepseek-v4", 0.3, 1.2),
             m("openrouter", "openai/text-embedding-3", 0.02, 0.0),
             m("openrouter", "vendor/ultra-pro", 150.0, 600.0),
+            m("openrouter", "openai/gpt-chat-latest", 3.0, 15.0),
         ]
+    }
+
+    #[test]
+    fn the_three_tiers_climb_in_price() {
+        let cat = catalog();
+        let none = HashSet::new();
+        let crew = |tier| suggest_tier(tier, "spacexai", "grok-4.6", &cat, &none);
+        let price = |t: &Tiering| {
+            [&t.builder, &t.auditor, &t.architect]
+                .iter()
+                .map(|p| p.as_ref().map(|p| p.blended).unwrap_or(0.0))
+                .sum::<f64>()
+        };
+        let (low, mid, high) = (crew(Tier::Skiff), crew(Tier::Schooner), crew(Tier::Galleon));
+        assert!(price(&low) < price(&mid) && price(&mid) < price(&high));
+
+        // Skiff: cheap designer and builder; an auditor is still found and
+        // is still independent.
+        assert_eq!(low.builder.as_ref().unwrap().model, "deepseek/deepseek-v4");
+        assert_eq!(
+            low.architect.as_ref().unwrap().model,
+            "deepseek/deepseek-v4"
+        );
+        let a = low.auditor.clone().unwrap();
+        assert!(!same_model(&a.model, "grok-4.6") && !same_model(&a.model, "deepseek/deepseek-v4"));
+
+        // Galleon: the strongest model builds, and the auditor is strong too.
+        assert_eq!(
+            high.builder.as_ref().unwrap().model,
+            "anthropic/claude-sonnet-4.6"
+        );
+        let a = high.auditor.clone().unwrap();
+        assert!(a.blended >= 5.4 / 4.0, "{a:?}");
+        assert!(!same_model(&a.model, "anthropic/claude-sonnet-4.6"));
+        // Never the premium outlier, in any tier.
+        for t in [&low, &mid, &high] {
+            assert!(
+                t.as_specialists()
+                    .values()
+                    .all(|r| r.model.as_deref() != Some("vendor/ultra-pro"))
+            );
+        }
+    }
+
+    /// Price is a weak signal: an unknown vendor's pricey model does not
+    /// outrank an established flagship for a seat that decides quality.
+    #[test]
+    fn strong_seats_prefer_established_vendors() {
+        let mut cat = catalog();
+        cat.push(m("openrouter", "obscure/pricey-agent", 4.0, 12.0));
+        cat.push(m("openrouter", "openai/gpt-5", 1.25, 10.0));
+        let t = suggest_tier(Tier::Galleon, "spacexai", "grok-4.6", &cat, &HashSet::new());
+        let seats = t.as_specialists();
+        assert!(
+            seats
+                .values()
+                .all(|r| r.model.as_deref() != Some("obscure/pricey-agent")),
+            "{seats:?}"
+        );
+        // With nothing established left, it is still used.
+        let only = vec![
+            m("openrouter", "obscure/pricey-agent", 4.0, 12.0),
+            m("openrouter", "deepseek/deepseek-v4", 0.3, 1.2),
+        ];
+        let t = suggest_tier(
+            Tier::Schooner,
+            "openrouter",
+            "deepseek/deepseek-v4",
+            &only,
+            &HashSet::new(),
+        );
+        assert_eq!(t.architect.unwrap().model, "obscure/pricey-agent");
+    }
+
+    #[test]
+    fn a_price_tie_goes_to_the_newer_model() {
+        let mut old = m("openrouter", "anthropic/claude-opus-4.5", 5.0, 25.0);
+        old.created = Some(1_700_000_000);
+        let mut new = m("openrouter", "anthropic/claude-opus-5", 5.0, 25.0);
+        new.created = Some(1_780_000_000);
+        for cat in [vec![old.clone(), new.clone()], vec![new, old]] {
+            let t = suggest(
+                "openrouter",
+                "anthropic/claude-opus-5",
+                &cat,
+                &HashSet::new(),
+            );
+            assert_eq!(t.architect.unwrap().model, "anthropic/claude-opus-5");
+        }
+    }
+
+    #[test]
+    fn tiers_parse_by_name_or_cost() {
+        assert_eq!(Tier::parse("Galleon"), Some(Tier::Galleon));
+        assert_eq!(Tier::parse("low"), Some(Tier::Skiff));
+        assert_eq!(Tier::parse("medium"), Some(Tier::Schooner));
+        assert_eq!(Tier::parse("yacht"), None);
     }
 
     #[test]

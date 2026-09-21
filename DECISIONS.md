@@ -2,6 +2,14 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-21 — Three ready-made crews: skiff, schooner, galleon
+- **By:** lead
+- **Decision:** `/crew` offers three crews by cost: **skiff** (budget models in every seat, the auditor still independent), **schooner** (budget builder, strong architect and auditor; the old `crew suggest`), and **galleon** (strong models everywhere, the builder included). Each is computed from the models the user can reach at current prices. For the strong seats, established vendors win when one is within half the top price; a price tie goes to the newer model; cloud `-latest` aliases are never picked.
+- **Chosen vs rejected:** Rejected hard-coded model lists per tier: they go stale within months and name models the user may not have. Rejected pure price ranking for the strong seats: on the user's live OpenRouter catalog it seated `sakana/fugu-ultra` as the galleon auditor over Claude Opus, `claude-opus-4.5` over Opus 5 on a price tie, and then `openai/gpt-chat-latest`, a moving chat alias.
+- **Why:** A larger project ran through a $5 and then a $10 budget. Choosing a cost level should be one decision, not three model picks.
+- **Where:** `tiering.rs` (`Tier`, `suggest_tier`, `strongest`, `ESTABLISHED`), TUI `panel/crew.rs`, `ryter crew tiers`, `ryter crew suggest --tier`
+- **Residual risk:** Price is still the main quality signal; the established-vendor list is a judgment call. What each tier really costs per task is unmeasured until `ryter bench` runs against all three.
+
 ### 2026-09-21 — The session budget is optional and one command away
 - **By:** lead
 - **Decision:** `/budget` opens a panel like the other configurable tools: live spend against the cap, a cap on/off switch that remembers the amount, the cap, the warning level, and the per-task cap (now saved in `settings.toml`). A **budget** card on the right shows the cap, used and left, or `off`, and opens the panel on click; the gauge moved there from the spend card. `/budget <n>` sets the cap, `/budget +n` raises it, and `/budget off` removes it. Changes apply to the running session and are saved as your default. The spend card and `/spend` say "budget off" rather than dropping the gauge. The default stays $5. `settings.toml` is now applied before a trusted project's config, so a project's `[spend]` cap overrides your saved default.

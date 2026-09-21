@@ -343,7 +343,7 @@ fn crew_suggests_a_tiered_crew_and_applies_it_on_y() {
     );
     view.panels.stack.push(crew);
     let frame = render_to_string(&view, 120, 40);
-    assert!(frame.contains("suggested crew"), "{frame}");
+    assert!(frame.contains("schooner — balanced"), "{frame}");
     assert!(frame.contains("gpt-5.5"), "{frame}");
     let mut crew = view.panels.stack.pop().unwrap();
     match crew.key(key('y'), &mut view) {
@@ -355,6 +355,58 @@ fn crew_suggests_a_tiered_crew_and_applies_it_on_y() {
             );
         }
         _ => panic!("y must apply the suggestion"),
+    }
+}
+
+/// The ready-made crews are rows in `/crew`; the galleon puts the strong
+/// model in the builder's seat.
+#[test]
+fn crew_offers_three_ready_made_crews() {
+    use crate::action::Action;
+    use crate::panel::{Notice, Outcome};
+    let mut view = with_panel(PanelId::Crew);
+    view.connection = "openrouter".into();
+    view.model = "deepseek/deepseek-v4.1-flash".into();
+    let frame = render_to_string(&view, 120, 40);
+    for name in ["skiff", "schooner", "galleon", "low cost", "high cost"] {
+        assert!(frame.contains(name), "{name} missing:\n{frame}");
+    }
+    let press = |c: KeyCode| KeyEvent::new(c, KeyModifiers::NONE);
+    let mut crew = view.panels.stack.pop().unwrap();
+    // Three roles, then skiff, schooner, galleon.
+    for _ in 0..5 {
+        crew.key(press(KeyCode::Down), &mut view);
+    }
+    assert!(matches!(
+        crew.key(press(KeyCode::Enter), &mut view),
+        Outcome::Act(Action::ListCrewModels { .. })
+    ));
+    let row = |id: &str, i: f64, o: f64| ryter_core::ModelInfo {
+        id: id.into(),
+        context_length: Some(400_000),
+        input_per_million: Some(i),
+        output_per_million: Some(o),
+        connection: Some("openrouter".into()),
+        created: None,
+        tools: Some(true),
+    };
+    crew.on_notice(
+        &Notice::Models(vec![
+            row("deepseek/deepseek-v4.1-flash", 0.15, 0.6),
+            row("openai/gpt-5.5", 5.0, 30.0),
+            row("anthropic/claude-opus-5", 5.0, 25.0),
+        ]),
+        &mut view,
+    );
+    match crew.key(press(KeyCode::Char('y')), &mut view) {
+        Outcome::Act(Action::ApplyCrewTiering(rows)) => {
+            assert_eq!(rows["builder"].model.as_deref(), Some("openai/gpt-5.5"));
+            assert_eq!(
+                rows["auditor"].model.as_deref(),
+                Some("anthropic/claude-opus-5")
+            );
+        }
+        _ => panic!("y must apply the galleon"),
     }
 }
 
