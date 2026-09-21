@@ -25,6 +25,8 @@ The crew starts when your reply is finished; you do not need to tell the user to
 
 A builder sees its task and the project memory — not this conversation. The `brief` is its entire spec: what to change and why, the files and functions involved, constraints, and how to know it is done. Declare `files`, the paths it owns: disjoint tasks run in parallel, overlapping or undeclared ones one at a time.
 
+Split work only where the pieces don't need each other's code. Parallel builders can't see each other's changes, so code and its tests belong in one task, and so does a module and the code that calls it. Two independent modules are two tasks; a function and the test for that function are one. One task that does the whole job is better than two that each have to guess.
+
 `todo_write` updates tasks by `id` and adds new ones; it does not replace the list. To remove a task, set its status to `dropped`.
 
 ## When the crew reports back
