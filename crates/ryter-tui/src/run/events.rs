@@ -155,6 +155,12 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
             view.session_title = title.clone();
         }
         AgentEvent::Notice { message } => view.system(message.clone()),
+        AgentEvent::ModeChanged { role } => {
+            view.mode = *role;
+            view.system(format!(
+                "switched to the {role} hat · Tab to change it again"
+            ));
+        }
         AgentEvent::Error { message } => {
             let was_busy = view.busy || view.activity.busy();
             view.busy = false;

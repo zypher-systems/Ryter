@@ -1291,10 +1291,14 @@ pub fn resolve_secret_with(
             }
         }
     }
-    if let Some(k) = keyring_get(name) {
-        return Ok(k);
-    }
-    if let Some(k) = file_key(name) {
+    // Where keys are stored first: the keychain where it is durable, the
+    // file where it isn't.
+    let stored = if durable_keyring() {
+        keyring_get(name).or_else(|| file_key(name))
+    } else {
+        file_key(name).or_else(|| keyring_get(name))
+    };
+    if let Some(k) = stored {
         return Ok(k);
     }
     // A local server needs no key. A key set above still wins, for servers
@@ -1323,18 +1327,43 @@ pub fn resolve_secret_with(
     )))
 }
 
+/// Whether the OS keyring outlives a reboot. On Linux, Ryter's keyring is
+/// the kernel's key store, which is "completely in-memory and will not
+/// persist across reboots" (keyring docs). A key kept only there vanished at
+/// the next restart. macOS's keychain is durable.
+fn durable_keyring() -> bool {
+    cfg!(target_os = "macos")
+}
+
 fn keyring_get(connection: &str) -> Option<String> {
+    // Tests never touch the user's real keyring (one left an entry there).
+    if cfg!(test) {
+        return None;
+    }
     let entry = keyring::Entry::new(KEYRING_SERVICE, &format!("connection:{connection}")).ok()?;
     entry.get_password().ok().filter(|s| !s.is_empty())
 }
 
 /// Store a key in the OS keyring.
 pub fn keyring_set(connection: &str, secret: &str) -> Result<()> {
+    if cfg!(test) {
+        return Err(Error::Config("no keyring in tests".into()));
+    }
     let entry = keyring::Entry::new(KEYRING_SERVICE, &format!("connection:{connection}"))
         .map_err(|e| Error::Config(e.to_string()))?;
     entry
         .set_password(secret)
         .map_err(|e| Error::Config(e.to_string()))
+}
+
+/// Forget a key in the OS keyring, if there is one.
+fn keyring_delete(connection: &str) {
+    if cfg!(test) {
+        return;
+    }
+    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &format!("connection:{connection}")) {
+        let _ = entry.delete_credential();
+    }
 }
 
 /// Whether a connection has a resolvable key (never returns the secret).
@@ -1345,23 +1374,24 @@ pub fn has_secret(cfg: &Config, connection: &str) -> bool {
 /// Where a stored secret ended up, so the caller can tell the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecretStore {
-    /// OS keyring (Secret Service / kwallet).
+    /// The macOS keychain.
     Keyring,
-    /// `home/keys/<name>`, mode 0600, because the keyring was unavailable.
+    /// `home/keys/<name>`, mode 0600: on Linux always, since its keyring
+    /// doesn't survive a reboot; elsewhere when the keychain failed.
     File,
 }
 
 impl std::fmt::Display for SecretStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Keyring => f.write_str("OS keyring"),
+            Self::Keyring => f.write_str("the macOS keychain"),
             Self::File => f.write_str("~/.ryter/keys (mode 0600)"),
         }
     }
 }
 
-/// Persist a secret: the OS keyring when it works, otherwise
-/// `home/keys/<name>` at mode 0600.
+/// Persist a secret where it survives a restart: the macOS keychain when it
+/// works; otherwise, and always on Linux, `home/keys/<name>` at mode 0600.
 ///
 /// The file is only written when the keyring genuinely failed. Writing both
 /// meant the keyring was decorative: a plaintext copy always landed on disk,
@@ -1371,7 +1401,7 @@ pub fn store_secret_at(home: &Path, connection: &str, secret: &str) -> Result<Se
     if secret.is_empty() {
         return Err(Error::Config("empty API key".into()));
     }
-    if keyring_set(connection, secret).is_ok() {
+    if durable_keyring() && keyring_set(connection, secret).is_ok() {
         // A stale file would shadow nothing, but it is still a plaintext key.
         let _ = fs::remove_file(home.join("keys").join(connection));
         return Ok(SecretStore::Keyring);
@@ -1397,6 +1427,9 @@ pub fn store_secret_at(home: &Path, connection: &str, secret: &str) -> Result<Se
     }
     #[cfg(not(unix))]
     fs::write(&path, secret).map_err(|e| Error::Config(e.to_string()))?;
+    // An older copy in a non-durable keyring would otherwise answer first
+    // until the next reboot, with the old key.
+    keyring_delete(connection);
     Ok(SecretStore::File)
 }
 
@@ -1869,6 +1902,20 @@ mod tests {
         write_default_connection(dir.path(), "spacexai").unwrap();
         let cfg = load_at(dir.path(), None, false).unwrap();
         assert_eq!(cfg.default_connection, "spacexai");
+    }
+
+    /// On Linux a key must survive a reboot, so it goes to the 0600 file,
+    /// never only to the kernel's in-memory keyring.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_keys_go_to_the_file_that_survives_a_reboot() {
+        let dir = TempDir::new().unwrap();
+        let store = store_secret_at(dir.path(), "ryter-test-conn", "sk-or-test").unwrap();
+        assert_eq!(store, SecretStore::File);
+        assert_eq!(
+            fs::read_to_string(dir.path().join("keys/ryter-test-conn")).unwrap(),
+            "sk-or-test"
+        );
     }
 
     /// A key goes to exactly one place. The old code wrote the file even when

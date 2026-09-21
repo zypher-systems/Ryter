@@ -394,7 +394,11 @@ impl Agent {
                     self.checkpoint_before_build()?;
                     checkpointed = true;
                 }
-                let out = gated_execute(&call.name, &args, &self.ctx)?;
+                let out = if call.name == "request_hat" {
+                    self.request_hat(&args)?
+                } else {
+                    gated_execute(&call.name, &args, &self.ctx)?
+                };
                 self.emit(AgentEvent::ToolResult {
                     id: call.id.clone(),
                     output: out.text.clone(),
@@ -814,6 +818,70 @@ impl Agent {
             return Err(e);
         }
         Ok(report)
+    }
+
+    /// `request_hat`: ask the user, and on yes switch hats here, mid-turn, so
+    /// the model carries on in the new hat. A plan used to end with "want me
+    /// to switch to build?" that the user had no way to answer.
+    fn request_hat(&mut self, args: &Value) -> Result<crate::tools::ToolOutput> {
+        use crate::tools::ToolOutput;
+        let hat = args.get("hat").and_then(Value::as_str).unwrap_or("");
+        let reason = args
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let Ok(to) = hat.parse::<Role>() else {
+            return Ok(ToolOutput::err(format!(
+                "unknown hat {hat:?}: build, plan, or review"
+            )));
+        };
+        if !to.is_solo() || !self.role.is_solo() {
+            return Ok(ToolOutput::err(
+                "hats are solo mode's; crew mode is the user's to enter with /crew",
+            ));
+        }
+        if to == self.role {
+            return Ok(ToolOutput {
+                text: format!("already in the {to} hat"),
+                is_error: false,
+            });
+        }
+        let Some(io) = self.ctx.user_io.clone() else {
+            return Ok(ToolOutput::err(format!(
+                "nobody can answer here (headless). Tell the user to run again with --hat {to}"
+            )));
+        };
+        let summary = if reason.is_empty() {
+            format!("switch to the {to} hat")
+        } else {
+            format!("switch to the {to} hat: {reason}")
+        };
+        match io.permission("switch hat", &summary) {
+            crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
+                let from = self.role;
+                self.role = to;
+                self.ctx.role = to;
+                self.session.set_mode(to)?;
+                self.emit(AgentEvent::ModeChanged { role: to })?;
+                let now = match to {
+                    Role::SoloBuild => "you may now change files and run commands",
+                    Role::SoloPlan => "nothing may change now; read and plan",
+                    _ => "nothing may change now; review",
+                };
+                Ok(ToolOutput {
+                    text: format!(
+                        "the user said yes: you are in the {to} hat now (was {from}); {now}. \
+                         Carry on in this turn."
+                    ),
+                    is_error: false,
+                })
+            }
+            crate::user_io::Permission::Deny => Ok(ToolOutput::err(format!(
+                "the user said no: stay in the {} hat, and ask what they want instead",
+                self.role
+            ))),
+        }
     }
 
     /// Whether a tool call may change the user's files: an edit, or a command
@@ -1546,6 +1614,100 @@ mod tests {
             "no repository for a chat"
         );
         assert!(agent.session.meta.checkpoints.is_empty());
+    }
+
+    fn call(name: &str, args: serde_json::Value) -> Vec<StreamDelta> {
+        vec![
+            StreamDelta::ToolCall {
+                id: format!("{name}-1"),
+                name: name.into(),
+                arguments: args.to_string(),
+            },
+            StreamDelta::Done,
+        ]
+    }
+
+    /// Plan offers build with `request_hat`; the user answers `answer`.
+    async fn plan_then_offer_build(
+        answer: crate::user_io::Permission,
+    ) -> (TempDir, Agent, Vec<AgentEvent>, String) {
+        let p = ReplayProvider::scripted(vec![
+            call(
+                "request_hat",
+                serde_json::json!({"hat": "build", "reason": "carry out the plan"}),
+            ),
+            write("README.md", "built\n"),
+            say("done"),
+        ]);
+        let (_home, cwd, mut agent) = crew_setup(p);
+        agent.role = Role::SoloPlan;
+        agent.ctx.role = Role::SoloPlan;
+        agent.ctx.always_approve = true;
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        let asked = std::thread::spawn(move || {
+            let mut asked = String::new();
+            while let Ok(req) = rx.recv() {
+                if let crate::user_io::UserRequest::Permission {
+                    tool,
+                    summary,
+                    reply,
+                } = req
+                {
+                    asked = format!("{tool}: {summary}");
+                    let _ = reply.send(answer);
+                }
+            }
+            asked
+        });
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("plan the readme, then do it").await.unwrap();
+        agent.ctx.user_io = None;
+        let asked = asked.join().unwrap();
+        let _ = _home;
+        (cwd, agent, events.try_iter().collect(), asked)
+    }
+
+    /// "Want me to switch to build?" used to be a question the user couldn't
+    /// answer. Now it's a yes/no prompt, and yes carries on in build.
+    #[tokio::test]
+    async fn plan_can_ask_to_switch_to_build_and_carry_on() {
+        let (cwd, agent, events, asked) =
+            plan_then_offer_build(crate::user_io::Permission::Allow).await;
+        assert_eq!(
+            asked,
+            "switch hat: switch to the build hat: carry out the plan"
+        );
+        assert_eq!(agent.role, Role::SoloBuild);
+        assert_eq!(agent.session.meta.mode, Some(Role::SoloBuild));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::ModeChanged {
+                role: Role::SoloBuild
+            }
+        )));
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("README.md")).unwrap(),
+            "built\n",
+            "the edit happened in build, in the same turn"
+        );
+    }
+
+    /// No keeps the plan hat, and the plan hat still can't edit.
+    #[tokio::test]
+    async fn no_keeps_the_plan_hat() {
+        let (cwd, agent, events, _) = plan_then_offer_build(crate::user_io::Permission::Deny).await;
+        assert_eq!(agent.role, Role::SoloPlan);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::ModeChanged { .. }))
+        );
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("README.md")).unwrap(),
+            "repo\n"
+        );
     }
 
     /// Solo mode: the build hat edits the user's files directly, the hat
