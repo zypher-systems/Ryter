@@ -1,0 +1,24 @@
+ ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────
+ · system                                             ╭─ session ──────────────╮
+   welcome · /help for keys                           │ untitled               │
+        ╭─ handoff to ─────────────────────────────────────────────────╮ build │
+        │ ● plan                                                       │ ask   │
+        │   planner breaks the goal into a task list and open questions│ ──────╯
+        │ ● architect                                                  │ ──────╮
+        │   architect decides structure, interfaces, and trade-offs    │ k-4.6 │
+        │›● build                                              current │   5%  │
+        │   builders implement tasks in parallel; auditor gates merges │       │
+        │ ● audit                                                      │       │
+        │   auditor reviews the work and reports findings              │ ──────╯
+        │                                                              │ ──────╮
+        ╰─ ↑↓ move · enter handoff · esc ──────────────────────────────╯ $?.?? │
+                                                                           0%  │
+                                                      │     $0.00 of $5.00     │
+                                                      ╰────────────────────────╯
+
+
+╭─ dusty ────────────────────────────────────────────────────────────── build ─╮
+│› ask the orchestrator, or / for commands                                     │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move    enter select    tab next field    ? keys    esc back

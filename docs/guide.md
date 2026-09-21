@@ -58,9 +58,45 @@ ryter models [connection]
 
 ## Talking to Ryter
 
-`ryter` on a tty opens the TUI. The header is one line: phase, connection/model, spend. There is no outer box. Type a message, or `/` for slash commands.
+`ryter` on a tty opens the TUI. Top to bottom: a one-line header (`ryter · orchestrator`, project path, version), the chat transcript with a right-hand **info panel** of cards (session, model + context gauge, spend + budget gauge, tasks, crew, mcp), the **activity strip** while a turn runs, the bordered **composer**, and a hint bar showing the keys that matter right now. `^b` hides the info panel; it also drops automatically under 80 columns.
 
-`/resume` lists sessions for this directory (newest first). `/rename <title>` names the current one. `/delete` removes a session. `/agents` lists running specialists; Enter kills that one. `ryter sessions` and `ryter resume [id]` are the CLI equivalents.
+Every message is a left-aligned block under a speaker header — your name (from `[ui] username`, then `git user.name`, then `$USER`), the model name, `· system`, or a one-line tool row (`· read_file  path  0.1s`). Markdown renders with headings, lists, quotes, tables, and fenced code with syntax highlighting and a line-number gutter. Long model turns end with a summary line (`3 tools · 12.4k tok · 0:42 · $0.01`).
+
+Type a message and press `Enter`. `Shift+Enter` (or `Alt+Enter`) inserts a newline; paste is bracketed so multi-line text lands in one message. While a turn runs, `Enter` queues the next message. `↑`/`↓` on an empty composer walk prompt history.
+
+`/` (or `^p`) opens the **command palette**: fuzzy-matched, grouped by category, with a description and keybinding column. `Enter` runs the command, `→` opens its panel, `Tab` completes. Every configuration command opens a **panel** — a bordered popout with a title, status, and legend line — and panels stack: `/crew` → pick a role → `/models` opens on top; `Esc` closes one level.
+
+The **activity strip** shows what the model is doing (`⠙ writing · edit docs/guide.md · 0:34 · 1.2k tok`). Reasoning streams there as a one-line ticker; `^r` expands it to a scrollable pane (`Alt+PgUp`/`Alt+PgDn`). Reasoning is display-only — it is never saved or sent back to a model. `[ui] reasoning = "off"` hides it.
+
+**Scrolling.** The transcript follows the bottom until you scroll up (`PgUp`, `Shift+↑`, or the mouse wheel over the chat); then it holds still and the scrollbar turns amber. `Ctrl+End` reattaches. `Ctrl+↑`/`Ctrl+↓` jump between turns. While detached, a sticky header at the top of the chat keeps the in-flight user message in view.
+
+`/sessions` (alias `/resume`) is one browser for this directory’s sessions: `Enter` resumes, `r` renames, `d` deletes (type the short id to confirm), `n` starts a new one. `/agents` lists running specialists; `Enter` or `k` kills one, `K` kills all. `ryter sessions` and `ryter resume [id]` are the CLI equivalents.
+
+Permission prompts, `ask_user` questions, and the first-run “trust this project?” prompt are **modals** with a heavy top border. They block input until you answer (`y` / `n` / `a` for permissions, number keys or free text for questions), but the turn keeps streaming behind them.
+
+### Keys
+
+`/help` (or `F1`) lists every binding, filterable by typing. The essentials:
+
+| Key | Does |
+| --- | --- |
+| `Enter` / `Shift+Enter` | send / newline |
+| `/` or `^p` | command palette |
+| `Esc` | back one level: close panel → close palette → cancel turn |
+| `^c` | clear composer → cancel turn → quit (press twice within 2 s) |
+| `^d` | quit when the composer is empty |
+| `^r` | toggle the reasoning pane |
+| `^b` | toggle the info panel |
+| `^l` | redraw |
+| `PgUp` / `PgDn` | scroll the transcript one viewport |
+| `Shift+↑` / `Shift+↓` | scroll one row |
+| `Ctrl+Home` / `Ctrl+End` | top / bottom (re-engages follow) |
+| `Ctrl+↑` / `Ctrl+↓` | previous / next turn |
+| `F1` | `/help` |
+
+Inside a panel: `↑↓` move, `PgUp`/`PgDn` page, `Enter` activate, `Tab` next field, `Space` or `←→` change a toggle/select, `^s` save, `Esc` back. Each panel’s legend line names its own extra keys (`t` test a connection, `d` remove, `c` compact, and so on).
+
+Mouse: wheel scrolls the chat, clicking a card opens its panel, clicking the activity strip toggles the reasoning pane. Text selection uses your terminal’s own modifier (Shift+drag on most). `[ui] mouse = false` turns capture off entirely.
 
 Without a tty, use headless:
 
@@ -118,26 +154,26 @@ Unknown rates show `$?.??` plus token counts. Ryter never invents `$0.00` for an
 
 `[spend] session_budget_usd` stops the loop (exit `3` in headless). `0` means no cap. `[spend] enabled = false` still counts in memory and prints a warning.
 
-`/spend` is a floating table (session total, by role, by provider). `ryter spend` prints the same roll-up on the CLI.
+`/spend` is a panel: session total, a budget gauge, and tables by role and by connection; `e` exports CSV. The info panel’s spend card shows the same total and gauge at all times. `ryter spend` prints the roll-up on the CLI.
 
 ## Slash commands
 
-Built-ins: `/quit` `/new` `/resume` `/rename` `/delete` `/agents` `/spend` `/settings` `/provider` `/models` `/crew` `/handoff` `/plan` `/architect` `/build` `/audit` `/auditor` `/mcp` `/skills` `/hooks` `/theme` `/context` `/compact` `/doctor` `/cancel` `/help`.
+Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/crew` `/mcp` `/skills` `/hooks` `/sessions` `/agents` `/spend` `/theme` `/tools` `/auditor` `/phase` `/context` `/doctor` `/help`. Direct commands act immediately: `/new` `/rename <title>` `/handoff <phase>` `/plan` `/architect` `/build` `/audit` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
 
-User-invocable skills and `~/.ryter/commands/*.md` join the palette. Built-ins win on a name clash.
+User-invocable skills and `~/.ryter/commands/*.md` join the palette under **skills**. Built-ins win on a name clash.
 
 ## MCP
 
-**Outbound.** `[mcp_servers.<name>]` stdio children. The orchestrator discovers with `search_tool` and calls with `use_tool`. Child env does not inherit API keys unless that server’s `env` table asks. In the TUI, `/mcp` is a floating menu: add a server (name → command → args), Enter toggles it, Backspace removes it.
+**Outbound.** `[mcp_servers.<name>]` stdio children. The orchestrator discovers with `search_tool` and calls with `use_tool`. Child env does not inherit API keys unless that server’s `env` table asks. In the TUI, `/mcp` is a panel: `Enter` toggles a server, `r` reconnects, `d` removes it (type the name to confirm), and `Enter` on the trailing `+ add server` row walks name → command → args → review. Each server row shows its live status (`connected · 5 tools`, `error: …`, `disabled`).
 
-**Inbound.** `/mcp` → inbound shows the links a client needs:
+**Inbound.** `/mcp` → **inbound** shows the listener state and the links a client needs:
 
 - stdio: `ryter mcp serve`
 - unix attach (this TUI): `unix:///…/ryter.sock`
 - TCP: `127.0.0.1:8765` plus a bearer token (`initialize.params.token`)
 - snippet: `{"mcpServers":{"ryter":{"command":"ryter","args":["mcp","serve"]}}}`
 
-Enter on **token** creates or rotates a `ryt_…` secret stored in `~/.ryter/keys/mcp-inbound.toml` (mode 0600). Enter on a link copies it into the chat so you can paste it. Live flags persist in `~/.ryter/mcp.toml` (does not rewrite `config.toml`).
+Enter on **token** creates or rotates a `ryt_…` secret stored in `~/.ryter/keys/mcp-inbound.toml` (mode 0600); it is masked until you press `v`. Enter on a link copies it into the chat so you can paste it. Live flags persist in `~/.ryter/mcp.toml` (does not rewrite `config.toml`).
 
 Another agent can also spawn `ryter mcp serve` (stdio), or `ryter serve --socket` / `--bind`. Tools: `ryter_prompt`, `ryter_status`, `ryter_spend`, `ryter_set_phase`, `ryter_cancel`. Resources: `ryter://session/transcript`, `ryter://session/spend`. Keys are never returned.
 
@@ -152,10 +188,11 @@ TCP requires `--token` (or `RYTER_MCP_TOKEN`) on `initialize.params.token`. Bind
 | Kind | Where |
 | --- | --- |
 | Prompts | `prompts/*.md`; override `~/.ryter/prompts/` then trusted `.ryter/prompts/` |
-| Skills | `/skills` floating list. Files: `~/.ryter/skills/<name>/SKILL.md` (frontmatter `user-invocable`). Enter runs (optional args). Add writes a stub you edit. Backspace deletes a user skill (not a project overlay). |
+| Skills | `/skills` panel. Files: `~/.ryter/skills/<name>/SKILL.md` (frontmatter `user-invocable`). `Enter` runs (optional args), `e` opens the file in `$EDITOR`, `a` writes a stub, `d` deletes a user skill (not a project overlay). |
 | User slash | Same `/skills` list (`command` rows). `~/.ryter/commands/<name>.md` (`$ARGUMENTS`) |
-| Hooks | `/hooks` floating list. Add: event → command or URL → optional matcher. Backspace removes. Live list is `~/.ryter/hooks.toml` (does not rewrite `config.toml`). Command gets JSON on stdin; exit 2 or HTTP 403 denies. |
-| Themes | `/theme default-16` or `dark`, or `~/.ryter/themes/<name>.toml` |
+| Hooks | `/hooks` panel. `a` adds: event → command or URL → optional matcher. `d` removes. Live list is `~/.ryter/hooks.toml` (does not rewrite `config.toml`). Command gets JSON on stdin; exit 2 or HTTP 403 denies. |
+| Themes | `/theme` panel previews as you move: `dark`, `light`, `default-16`, or `~/.ryter/themes/<name>.toml`. `Enter` persists to `~/.ryter/settings.toml`. `NO_COLOR` or a 16-color `TERM` degrades automatically. |
+| UI | `[ui]` in `~/.ryter/config.toml`: `username`, `theme`, `reasoning`, `mouse`, `panel`, `colors`, `timestamps`, `line_numbers`. All optional; unknown keys warn once at startup. See `config.example.toml`. |
 
 Project `.ryter/` overlays apply only after `ryter trust` (cwd is recorded in `~/.ryter/trusted.json`). Untrusted projects still load `RYTER.md` / `AGENTS.md`.
 
@@ -172,11 +209,11 @@ Look at `git diff` and report findings.
 
 ## Context
 
-`/context` prints estimated tokens vs the model window (500k for `grok-4.6`, 200k otherwise). Auto-compact at 85%: older turns collapse to tools used, files touched, and the latest pass note; the last four user turns stay. `/compact` forces a pass. Resume reads the rewritten `transcript.jsonl`.
+`/context` opens a panel with estimated tokens vs the model window (500k for `grok-4.6`, 200k otherwise), a gauge, and a breakdown by contributor (system prompt, project files, transcript, tool output); `c` compacts. The info panel’s model card shows the same gauge. Auto-compact at 85%: older turns collapse to tools used, files touched, and the latest pass note; the last four user turns stay. `/compact` forces a pass. Resume reads the rewritten `transcript.jsonl`.
 
 ## Doctor and sandbox
 
-`ryter doctor` (and `/doctor`) checks OS, tty, home, config, both built-in connections (key set/missing, never printed), spend catalog, git, Landlock, sandbox profile, and whether `.ryter/` is trusted. No network.
+`ryter doctor` (and the `/doctor` panel, which runs the checks off-thread and can save the report with `c`) checks OS, tty, home, config, both built-in connections (key set/missing, never printed), spend catalog, git, Landlock, sandbox profile, and whether `.ryter/` is trusted. No network.
 
 `--sandbox workspace` Landlock-restricts the tool thread to the project tree (writable) plus `~/.ryter`. `--sandbox read-only` makes the project tree read-only. `--sandbox off` is the default. A non-off profile **refuses to start** if the kernel cannot enforce Landlock. `/tmp` itself is not granted; scratch is `~/.ryter/tmp`. Sandboxed runs use a current-thread tokio runtime.
 
@@ -188,8 +225,8 @@ Look at `git diff` and report findings.
 - Builder: full tool set in its worktree.
 - Auditor: read + test/lint bash.
 - Denied even for builders: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files.
-- Destructive bash is Ask. In the TUI: `y` allow this call, `n` deny, `a` allow for the rest of the session. Headless (no TUI) fail-closes.
-- `ask_user` lets the orchestrator ask a question (choices or free text).
+- Destructive bash is Ask. In the TUI a permission modal shows the tool and its arguments: `y` allow this call, `n` deny, `a` allow for the rest of the session. Headless (no TUI) fail-closes.
+- `ask_user` lets the orchestrator ask a question; the TUI shows it as a modal (number keys pick a choice, or type free text).
 - `[features] web = true` offers `web_fetch` / `web_search`. Localhost and private IPs are blocked.
 - Hooks can still deny after the policy allows.
 

@@ -1,0 +1,40 @@
+ ryter  ·  orchestrator                                                                 ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ · system                                                                                 ╭─ session ──────────────────╮
+   welcome · /help for keys                                                               │ untitled                   │
+                                                                                          │ 0193abcd             build │
+                                                                                          │ auditor ✓  tools ask       │
+                                                                                          ╰────────────────────────────╯
+                                                                                          ╭─ model ────────────────────╮
+                                                                                          │ spacexai ●        grok-4.6 │
+                            ╭─ handoff to ─────────────────────────────────────────────────╮ctx █░░░░░░░░░░░░░░░   5%  │
+                            │ ● plan                                                       │    12.4k / 256k tokens    │
+                            │   planner breaks the goal into a task list and open questions│ rice unknown              │
+                            │ ● architect                                                  │ ──────────────────────────╯
+                            │   architect decides structure, interfaces, and trade-offs    │ spend ────────────────────╮
+                            │›● build                                              current │ ession              $?.?? │
+                            │   builders implement tasks in parallel; auditor gates merges │ ud ░░░░░░░░░░░░░░░░   0%  │
+                            │ ● audit                                                      │    $0.00 of $5.00         │
+                            │   auditor reviews the work and reports findings              │ ──────────────────────────╯
+                            │                                                              │ tasks ────────────────────╮
+                            ╰─ ↑↓ move · enter handoff · esc ──────────────────────────────╯ o tasks yet               │
+                                                                                             ──────────────────────────╯
+                                                                                          ╭─ crew ─────────────── 0/4 ─╮
+                                                                                          │ no specialists running     │
+                                                                                          ╰────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+╭─ dusty ────────────────────────────────────────────────────────────────────────────────────────────────────── build ─╮
+│› ask the orchestrator, or / for commands                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move    enter select    tab next field    ? keys    esc back

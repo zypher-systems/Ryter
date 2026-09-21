@@ -41,6 +41,18 @@ currency = "USD"
 session_budget_usd = 5.00
 warn_usd = 1.00
 
+# TUI presentation. Every key is optional; defaults shown. Unknown keys warn once at
+# startup instead of failing. `/theme` persists its pick to ~/.ryter/settings.toml [ui].
+[ui]
+username = ""              # speaker name for your messages; "" → git user.name → $USER → "you"
+theme = "dark"             # dark | light | default-16 | <name> from ~/.ryter/themes/<name>.toml
+reasoning = "collapsed"    # collapsed | expanded | off — startup state of the thinking strip
+mouse = true               # false disables mouse capture (use the terminal's own selection)
+panel = true               # right-hand info panel visible at startup (^b toggles)
+colors = "auto"            # auto | truecolor | 256 | 16 ; NO_COLOR always wins
+timestamps = true          # HH:MM on speaker headers
+line_numbers = true        # gutter in code blocks
+
 [mcp]
 inbound = true
 allow_dangerous = false

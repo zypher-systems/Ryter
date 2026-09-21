@@ -1,0 +1,568 @@
+//! `AgentEvent` → `View` (§13.4). Terminal-free so it can be unit tested.
+
+use ryter_core::{AgentEvent, Role};
+
+use crate::activity::{self, Verb};
+use crate::chat::{MessageKind, SystemLevel, ToolStatus, humanize, wrap};
+use crate::panel::{self, Notice};
+use crate::view::{CrewRow, TodoRow, View};
+
+/// Cap on tool error text shown in the chat (`R-EVT-02`).
+const TOOL_ERROR_CHARS: usize = 600;
+
+/// Apply one event to the view and notify open panels.
+pub fn apply(view: &mut View, ev: AgentEvent) {
+    match &ev {
+        AgentEvent::Token { text } => view.on_token(text),
+        AgentEvent::Reasoning { text } => {
+            let turn = view.turn;
+            activity::push_reasoning(view, turn, text);
+            if view.activity.busy() {
+                view.activity.verb = Verb::Thinking;
+            }
+        }
+        AgentEvent::ToolCall {
+            id,
+            name,
+            args,
+            role,
+            summary,
+        } => on_tool_call(view, id, name, args, *role, summary.as_deref()),
+        AgentEvent::ToolResult {
+            id,
+            output,
+            is_error,
+            duration_ms,
+        } => {
+            view.finish_tool(id, *is_error, *duration_ms);
+            if *is_error {
+                let body = wrap::truncate(output.trim(), TOOL_ERROR_CHARS);
+                let body = if body.is_empty() {
+                    "tool error".to_string()
+                } else {
+                    body
+                };
+                view.error(body);
+            }
+            if view.activity.busy() {
+                view.activity.verb = Verb::Thinking;
+                view.activity.current.clear();
+            }
+        }
+        AgentEvent::TurnStarted { .. } => {
+            // `R-EVT-03`: authoritative busy signal. `submit_user` already
+            // started the strip for keyboard turns; MCP-driven turns land here.
+            view.busy = true;
+            view.cancelling = false;
+            if !view.activity.busy() {
+                let turn = view.turn;
+                let now = view.now_ms;
+                view.activity.start(turn, now);
+            }
+        }
+        AgentEvent::TurnFinished {
+            tools, duration_ms, ..
+        } => {
+            let verb = if view.cancelling {
+                Verb::Stopped
+            } else {
+                Verb::Done
+            };
+            view.busy = false;
+            view.cancelling = false;
+            view.activity.finish(verb, Some(*tools), Some(*duration_ms));
+        }
+        AgentEvent::Spend {
+            connection,
+            role,
+            input_tokens,
+            output_tokens,
+            cached_tokens,
+            total_usd,
+            ..
+        } => on_spend(
+            view,
+            connection,
+            *role,
+            *input_tokens,
+            *output_tokens,
+            *cached_tokens,
+            *total_usd,
+        ),
+        AgentEvent::PhaseChanged { phase } => {
+            view.phase = *phase;
+            if view.handoff_to().is_some() {
+                view.composer.end_special();
+            }
+        }
+        AgentEvent::SubagentStarted {
+            id,
+            role,
+            description,
+        } => {
+            view.crew.push(CrewRow {
+                id: id.to_string(),
+                role: role.to_string(),
+                label: description.clone(),
+                spend: None,
+                status: "running".into(),
+                started_ms: view.now_ms,
+            });
+        }
+        AgentEvent::SubagentFinished {
+            id,
+            role,
+            summary,
+            body,
+        } => {
+            let label = view
+                .crew
+                .iter()
+                .find(|c| c.id == id.as_str())
+                .map(|c| c.label.clone())
+                .unwrap_or_else(|| role.to_string());
+            if !body.trim().is_empty() {
+                let model = specialist_model(view, role.as_str());
+                let m = view.push(
+                    MessageKind::Specialist {
+                        role: role.as_str().to_string(),
+                        model,
+                    },
+                    body.clone(),
+                );
+                m.meta.label = Some(label.clone());
+            }
+            if *role == Role::Builder {
+                view.push(MessageKind::Merge, format!("{label} · {summary}"));
+                if view.activity.busy() {
+                    view.activity.verb = Verb::Merging;
+                }
+            }
+            view.crew.retain(|c| c.id != id.as_str());
+        }
+        AgentEvent::Session { id, phase, title } => {
+            view.session_id = id.clone();
+            view.phase = *phase;
+            view.session_title = title.clone();
+        }
+        AgentEvent::Error { message } => {
+            let was_busy = view.busy || view.activity.busy();
+            view.busy = false;
+            view.cancelling = false;
+            view.error(message.clone());
+            if was_busy {
+                view.activity.finish(Verb::Failed, None, None);
+            }
+        }
+        AgentEvent::Cancelled => {
+            view.busy = false;
+            view.cancelling = false;
+            view.crew.clear();
+            view.activity.finish(Verb::Stopped, None, None);
+            view.system("cancelled");
+        }
+        AgentEvent::Context {
+            tokens,
+            window,
+            pct,
+            messages,
+            breakdown,
+        } => {
+            view.ctx_pct = Some(*pct);
+            view.ctx_tokens = Some(*tokens);
+            view.ctx_window = Some(*window);
+            view.ctx_messages = Some(*messages);
+            view.ctx_breakdown = breakdown.clone();
+        }
+        AgentEvent::Compacted {
+            before,
+            after,
+            window,
+        } => {
+            let pct = if *window == 0 {
+                0
+            } else {
+                (after.saturating_mul(100) / window).min(100) as u8
+            };
+            view.ctx_pct = Some(pct);
+            view.ctx_tokens = Some(*after);
+            view.ctx_window = Some(*window);
+            view.push(
+                MessageKind::System {
+                    level: SystemLevel::Rule,
+                },
+                format!(
+                    "transcript compacted · {} → {} tokens",
+                    humanize(*before),
+                    humanize(*after)
+                ),
+            );
+        }
+        AgentEvent::ModelsListed { models } => {
+            if let Some(m) = models.iter().find(|m| m.id == view.model) {
+                apply_model_catalog(view, m);
+            }
+            panel::on_notice(view, &Notice::Models(models.clone()));
+        }
+        AgentEvent::McpStatus { servers } => {
+            view.mcp_status = servers.iter().cloned().collect();
+        }
+    }
+    panel::on_event(view, &ev);
+}
+
+fn on_tool_call(
+    view: &mut View,
+    id: &str,
+    name: &str,
+    args: &serde_json::Value,
+    role: Role,
+    summary: Option<&str>,
+) {
+    let label = summary
+        .map(str::to_string)
+        .unwrap_or_else(|| guess_summary(name, args));
+    let m = view.push(
+        MessageKind::Tool {
+            name: name.to_string(),
+            status: ToolStatus::Running,
+        },
+        String::new(),
+    );
+    m.meta.tool_id = Some(id.to_string());
+    if !label.is_empty() {
+        m.meta.label = Some(if role == Role::Orchestrator {
+            label.clone()
+        } else {
+            format!("{role} · {label}")
+        });
+    }
+    if name == "todo_write" {
+        view.todos = parse_todos(args);
+    }
+    if view.activity.busy() && role == Role::Orchestrator {
+        view.activity.verb = Verb::Tool(name.to_string());
+        view.activity.current = wrap::truncate(&label, 48);
+        view.activity.tools += 1;
+    }
+}
+
+/// `R-ACT-05`: the most identifying argument when the core sent no summary.
+fn guess_summary(name: &str, args: &serde_json::Value) -> String {
+    let pick = |keys: &[&str]| -> Option<String> {
+        keys.iter()
+            .find_map(|k| args.get(*k).and_then(|v| v.as_str()).map(str::to_string))
+    };
+    match name {
+        "bash" | "shell" | "run" => pick(&["command", "cmd"])
+            .map(|c| c.lines().next().unwrap_or("").chars().take(40).collect())
+            .unwrap_or_default(),
+        "web_search" => pick(&["query", "q"]).unwrap_or_default(),
+        _ => pick(&["path", "file", "file_path", "url", "pattern", "name"]).unwrap_or_default(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn on_spend(
+    view: &mut View,
+    connection: &str,
+    role: Role,
+    input_tokens: u64,
+    output_tokens: u64,
+    cached_tokens: u64,
+    total_usd: Option<f64>,
+) {
+    let role_name = role.to_string();
+    {
+        let row = view.spend_rows_role.entry(role_name.clone()).or_default();
+        row.calls += 1;
+        row.input += input_tokens;
+        row.output += output_tokens;
+        row.cached += cached_tokens;
+        if let Some(v) = total_usd {
+            row.usd += v;
+        } else {
+            row.unpriced = true;
+        }
+    }
+    {
+        let row = view
+            .spend_rows_conn
+            .entry(connection.to_string())
+            .or_default();
+        row.calls += 1;
+        row.input += input_tokens;
+        row.output += output_tokens;
+        row.cached += cached_tokens;
+        if let Some(v) = total_usd {
+            row.usd += v;
+        } else {
+            row.unpriced = true;
+        }
+    }
+    match total_usd {
+        Some(v) => {
+            view.spend = Some(view.spend.unwrap_or(0.0) + v);
+            *view.spend_by_role.entry(role_name).or_insert(0.0) += v;
+            *view
+                .spend_by_conn
+                .entry(connection.to_string())
+                .or_insert(0.0) += v;
+        }
+        None => {
+            view.spend_unknown = true;
+            view.unpriced_calls += 1;
+        }
+    }
+    if role == Role::Orchestrator {
+        // Tokens this turn become exact once accounting lands (`R-ACT-07`).
+        view.activity.tokens = output_tokens;
+        view.activity.tokens_estimated = false;
+        match total_usd {
+            Some(v) => view.activity.cost = Some(view.activity.cost.unwrap_or(0.0) + v),
+            None => view.activity.cost_unknown = true,
+        }
+        // Attach the cost to the assistant message this call produced.
+        if let Some(m) = view
+            .messages
+            .iter_mut()
+            .rev()
+            .find(|m| matches!(m.kind, MessageKind::Assistant { .. }))
+        {
+            if let Some(v) = total_usd {
+                m.meta.cost = Some(m.meta.cost.unwrap_or(0.0) + v);
+                m.touch();
+            }
+        }
+        let used = input_tokens.saturating_add(output_tokens);
+        view.ctx_tokens = Some(used.max(view.ctx_tokens.unwrap_or(0).min(used)));
+        let window = view.ctx_window_or_default();
+        view.ctx_window = Some(window);
+        view.ctx_pct = Some(((used.min(window) * 100) / window.max(1)) as u8);
+    } else if let Some(c) = view
+        .crew
+        .iter_mut()
+        .find(|c| c.role == role.to_string() && c.status == "running")
+    {
+        if let Some(v) = total_usd {
+            c.spend = Some(c.spend.unwrap_or(0.0) + v);
+        }
+    }
+}
+
+fn specialist_model(view: &View, role: &str) -> String {
+    view.specialists
+        .get(role)
+        .and_then(|rm| rm.model.clone())
+        .unwrap_or_else(|| view.model.clone())
+}
+
+/// Pull the picker row for the active model into the header / info cards.
+pub fn apply_model_catalog(view: &mut View, m: &ryter_core::ModelInfo) {
+    if let Some(w) = m.context_length {
+        view.ctx_window = Some(w);
+    }
+    if let (Some(i), Some(o)) = (m.input_per_million, m.output_per_million) {
+        view.price_in = Some(i);
+        view.price_out = Some(o);
+        view.price_label = ryter_core::format_rates(Some(ryter_core::Rates::per_million(i, o)));
+    }
+}
+
+/// `todo_write` arguments → info-panel rows.
+pub fn parse_todos(args: &serde_json::Value) -> Vec<TodoRow> {
+    let Some(items) = args.get("items").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .map(|item| {
+            if let Some(s) = item.as_str() {
+                TodoRow {
+                    title: s.to_string(),
+                    status: "pending".into(),
+                }
+            } else {
+                TodoRow {
+                    title: item
+                        .get("title")
+                        .or_else(|| item.get("content"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("task")
+                        .to_string(),
+                    status: item
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("pending")
+                        .to_string(),
+                }
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ryter_core::Phase;
+
+    fn view() -> View {
+        let mut v = View::new(
+            Phase::Build,
+            "spacexai".into(),
+            "grok-4.6".into(),
+            "~/p".into(),
+        );
+        let _ = v.submit_user("hi".into(), "hi".into());
+        v
+    }
+
+    #[test]
+    fn tool_error_shows_output_not_bare_label() {
+        let mut v = view();
+        apply(
+            &mut v,
+            AgentEvent::ToolCall {
+                id: "t1".into(),
+                name: "bash".into(),
+                args: serde_json::json!({"command": "cargo test --all"}),
+                role: Role::Orchestrator,
+                summary: None,
+            },
+        );
+        assert_eq!(v.activity.current, "cargo test --all");
+        apply(
+            &mut v,
+            AgentEvent::ToolResult {
+                id: "t1".into(),
+                output: "error[E0308]: mismatched types".into(),
+                is_error: true,
+                duration_ms: Some(1200),
+            },
+        );
+        let tool = v
+            .messages
+            .iter()
+            .find(|m| matches!(m.kind, MessageKind::Tool { .. }))
+            .unwrap();
+        assert!(matches!(
+            tool.kind,
+            MessageKind::Tool {
+                status: ToolStatus::Error,
+                ..
+            }
+        ));
+        assert_eq!(tool.meta.duration_ms, Some(1200));
+        assert!(v.messages.last().unwrap().body.contains("E0308"));
+    }
+
+    #[test]
+    fn turn_lifecycle_drives_busy_and_summary() {
+        let mut v = view();
+        assert!(v.busy);
+        apply(&mut v, AgentEvent::Reasoning { text: "hmm".into() });
+        assert_eq!(v.activity.verb, Verb::Thinking);
+        apply(&mut v, AgentEvent::Token { text: "ok".into() });
+        apply(
+            &mut v,
+            AgentEvent::Spend {
+                connection: "spacexai".into(),
+                model: "grok-4.6".into(),
+                role: Role::Orchestrator,
+                subagent_id: None,
+                input_tokens: 100,
+                output_tokens: 20,
+                cached_tokens: 0,
+                total_usd: Some(0.01),
+            },
+        );
+        assert!(v.busy, "spend alone does not end the turn");
+        apply(
+            &mut v,
+            AgentEvent::TurnFinished {
+                turn: 1,
+                tools: 3,
+                duration_ms: 41_000,
+            },
+        );
+        assert!(!v.busy);
+        assert_eq!(v.activity.verb, Verb::Done);
+        assert_eq!(v.activity.tools, 3);
+        assert_eq!(v.spend, Some(0.01));
+        assert_eq!(v.spend_rows_role["orchestrator"].calls, 1);
+    }
+
+    #[test]
+    fn unknown_price_never_prints_zero() {
+        let mut v = view();
+        apply(
+            &mut v,
+            AgentEvent::Spend {
+                connection: "x".into(),
+                model: "m".into(),
+                role: Role::Orchestrator,
+                subagent_id: None,
+                input_tokens: 1,
+                output_tokens: 1,
+                cached_tokens: 0,
+                total_usd: None,
+            },
+        );
+        assert!(v.spend_unknown);
+        assert_eq!(v.unpriced_calls, 1);
+        assert_eq!(v.spend_label(), "$?.??");
+    }
+
+    #[test]
+    fn compacted_leaves_a_rule_marker() {
+        let mut v = view();
+        apply(
+            &mut v,
+            AgentEvent::Compacted {
+                before: 180_000,
+                after: 42_000,
+                window: 256_000,
+            },
+        );
+        let last = v.messages.last().unwrap();
+        assert!(matches!(
+            last.kind,
+            MessageKind::System {
+                level: SystemLevel::Rule
+            }
+        ));
+        assert_eq!(last.body, "transcript compacted · 180k → 42k tokens");
+    }
+
+    #[test]
+    fn specialist_finish_posts_body_and_merge_row() {
+        let mut v = view();
+        let id = ryter_core::SubagentId::new("abc");
+        apply(
+            &mut v,
+            AgentEvent::SubagentStarted {
+                id: id.clone(),
+                role: Role::Builder,
+                description: "wire the loop".into(),
+            },
+        );
+        assert_eq!(v.crew.len(), 1);
+        apply(
+            &mut v,
+            AgentEvent::SubagentFinished {
+                id,
+                role: Role::Builder,
+                summary: "merged 3 files".into(),
+                body: "done.".into(),
+            },
+        );
+        assert!(v.crew.is_empty());
+        let kinds: Vec<_> = v.messages.iter().map(|m| &m.kind).collect();
+        assert!(
+            kinds
+                .iter()
+                .any(|k| matches!(k, MessageKind::Specialist { .. }))
+        );
+        assert!(kinds.iter().any(|k| matches!(k, MessageKind::Merge)));
+    }
+}

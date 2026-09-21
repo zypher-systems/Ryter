@@ -30,6 +30,9 @@ pub enum AgentEvent {
         args: serde_json::Value,
         /// Who issued the call.
         role: Role,
+        /// Short human label (`read Cargo.toml`), produced by the core.
+        #[serde(default)]
+        summary: Option<String>,
     },
     /// A tool call finished.
     ToolResult {
@@ -39,6 +42,23 @@ pub enum AgentEvent {
         output: String,
         /// True when the tool returned an error payload.
         is_error: bool,
+        /// Wall-clock duration of the call.
+        #[serde(default)]
+        duration_ms: Option<u64>,
+    },
+    /// A user turn began (orchestrator only).
+    TurnStarted {
+        /// Monotonic turn number within the process.
+        turn: u64,
+    },
+    /// A user turn ended, however it ended.
+    TurnFinished {
+        /// Turn number from [`AgentEvent::TurnStarted`].
+        turn: u64,
+        /// Tool calls made during the turn.
+        tools: u32,
+        /// Wall-clock duration.
+        duration_ms: u64,
     },
     /// Token and USD accounting for a completed model call.
     Spend {
@@ -101,6 +121,9 @@ pub enum AgentEvent {
         pct: u8,
         /// Transcript length.
         messages: usize,
+        /// Per-contributor token estimates (`system prompt`, `tool output`, …).
+        #[serde(default)]
+        breakdown: Vec<(String, u64)>,
     },
     /// Transcript was compacted.
     Compacted {
@@ -118,6 +141,12 @@ pub enum AgentEvent {
     },
     /// In-flight turn stopped because the user (or MCP) cancelled.
     Cancelled,
+    /// Outbound MCP servers (re)connected; per-server status text.
+    McpStatus {
+        /// `name → connected · N tools` or `error: …`.
+        #[serde(default)]
+        servers: Vec<(String, String)>,
+    },
     /// Active session changed (`/new`, `/resume`).
     Session {
         /// Session id.
@@ -145,5 +174,34 @@ mod tests {
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["kind"], "phase_changed");
         assert_eq!(v["phase"], "build");
+    }
+
+    #[test]
+    fn old_logs_without_new_fields_still_deserialize() {
+        let ev: AgentEvent = serde_json::from_str(
+            r#"{"kind":"tool_call","id":"c1","name":"bash","args":{},"role":"orchestrator"}"#,
+        )
+        .unwrap();
+        assert!(matches!(ev, AgentEvent::ToolCall { summary: None, .. }));
+        let ev: AgentEvent = serde_json::from_str(
+            r#"{"kind":"tool_result","id":"c1","output":"ok","is_error":false}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            ev,
+            AgentEvent::ToolResult {
+                duration_ms: None,
+                ..
+            }
+        ));
+        let ev: AgentEvent = serde_json::from_str(
+            r#"{"kind":"context","tokens":1,"window":2,"pct":50,"messages":3}"#,
+        )
+        .unwrap();
+        assert!(matches!(ev, AgentEvent::Context { breakdown, .. } if breakdown.is_empty()));
+        let ev: AgentEvent =
+            serde_json::from_str(r#"{"kind":"turn_finished","turn":1,"tools":2,"duration_ms":3}"#)
+                .unwrap();
+        assert!(matches!(ev, AgentEvent::TurnFinished { tools: 2, .. }));
     }
 }

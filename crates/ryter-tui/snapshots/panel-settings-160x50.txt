@@ -1,0 +1,50 @@
+ ryter  ·  orchestrator                                                                                                         ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ · system                                                                                                                     ╭─ session ──────────────────────╮
+   welcome · /help for keys                                                                                                   │ untitled                       │
+                                                                                                                              │ 0193abcd                 build │
+                                                                                                                              │ auditor ✓  tools ask           │
+                                                                                                                              ╰────────────────────────────────╯
+                                            ╭─ settings ───────────────────────────────────────────────────────────╮          ╭─ model ────────────────────────╮
+                                            │ SPEND                                                                ┃          │ spacexai ●            grok-4.6 │
+                                            │› session budget usd  ‹ 5.00 ›                                default ┃          │ ctx █░░░░░░░░░░░░░░░░░░░   5%  │
+                                            │  warn usd            ‹ 1.00 ›                                default ┃          │     12.4k / 256k tokens        │
+                                            │                                                                      ┃          │ price unknown                  │
+                                            │ AGENTS                                                               ┃          ╰────────────────────────────────╯
+                                            │  subagents max       ‹ 4 ›                                   default ┃          ╭─ spend ────────────────────────╮
+                                            │  auditor             [ on ]                                  default ┃          │ session                  $?.?? │
+                                            │                                                                      ┃          │ bud ░░░░░░░░░░░░░░░░░░░░   0%  │
+                                            │ TOOLS                                                                ┃          │     $0.00 of $5.00             │
+                                            │  permission mode     ‹ ask ›                                 default ┃          ╰────────────────────────────────╯
+                                            │  features.web        [ off ]                                 default ┃          ╭─ tasks ────────────────────────╮
+                                            │                                                                      ┃          │ no tasks yet                   │
+                                            │ SANDBOX                                                              ┃          ╰────────────────────────────────╯
+                                            │  profile             ‹ off ›                                 default ┃          ╭─ crew ─────────────────── 0/4 ─╮
+                                            │                                                                      ┃          │ no specialists running         │
+                                            │ MCP                                                                  ┃          ╰────────────────────────────────╯
+                                            │  inbound             [ on ]                                  default ┃
+                                            │  bind address                                                default ┃
+                                            │                                                                      ┃
+                                            │ UI                                                                   ┃
+                                            │  theme               ‹ dark ›                                default ┃
+                                            │  username                                                    default ┃
+                                            │  reasoning           ‹ collapsed ›                           default ┃
+                                            │  mouse               [ on ]                                  default ┃
+                                            │  panel               [ on ]                                  default ┃
+                                            │  timestamps          [ off ]                                  config │
+                                            ╰─ ↑↓ move · space/←→ change · enter edit · ^s save · esc ─────────────╯
+
+
+
+
+
+
+
+
+
+
+
+╭─ dusty ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── build ─╮
+│› ask the orchestrator, or / for commands                                                                                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move    enter select    tab next field    ? keys    esc back

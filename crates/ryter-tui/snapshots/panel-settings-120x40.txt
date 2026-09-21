@@ -1,0 +1,40 @@
+ ryter  ·  orchestrator                                                                 ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ · system                                                                                 ╭─ session ──────────────────╮
+   welcome · /help for keys                                                               │ untitled                   │
+                        ╭─ settings ───────────────────────────────────────────────────────────╮abcd             build │
+                        │ SPEND                                                                ┃ or ✓  tools ask       │
+                        │› session budget usd  ‹ 5.00 ›                                default ┃ ──────────────────────╯
+                        │  warn usd            ‹ 1.00 ›                                default ┃ l ────────────────────╮
+                        │                                                                      ┃ xai ●        grok-4.6 │
+                        │ AGENTS                                                               ┃ ░░░░░░░░░░░░░░░   5%  │
+                        │  subagents max       ‹ 4 ›                                   default ┃ 2.4k / 256k tokens    │
+                        │  auditor             [ on ]                                  default ┃  unknown              │
+                        │                                                                      ┃ ──────────────────────╯
+                        │ TOOLS                                                                ┃ d ────────────────────╮
+                        │  permission mode     ‹ ask ›                                 default ┃ on              $?.?? │
+                        │  features.web        [ off ]                                 default ┃ ░░░░░░░░░░░░░░░   0%  │
+                        │                                                                      ┃ 0.00 of $5.00         │
+                        │ SANDBOX                                                              ┃ ──────────────────────╯
+                        │  profile             ‹ off ›                                 default ┃ s ────────────────────╮
+                        │                                                                      ┃ sks yet               │
+                        │ MCP                                                                  ┃ ──────────────────────╯
+                        │  inbound             [ on ]                                  default ┃  ─────────────── 0/4 ─╮
+                        │  bind address                                                default ┃ ecialists running     │
+                        │                                                                      ┃ ──────────────────────╯
+                        │ UI                                                                   ┃
+                        │  theme               ‹ dark ›                                default ┃
+                        │  username                                                    default ┃
+                        │  reasoning           ‹ collapsed ›                           default ┃
+                        │  mouse               [ on ]                                  default ┃
+                        │  panel               [ on ]                                  default ┃
+                        │  timestamps          [ off ]                                  config │
+                        ╰─ ↑↓ move · space/←→ change · enter edit · ^s save · esc ─────────────╯
+
+
+
+
+╭─ dusty ────────────────────────────────────────────────────────────────────────────────────────────────────── build ─╮
+│› ask the orchestrator, or / for commands                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move    enter select    tab next field    ? keys    esc back

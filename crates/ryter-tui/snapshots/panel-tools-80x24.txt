@@ -1,0 +1,24 @@
+ ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────
+ · system                                             ╭─ session ──────────────╮
+   welcome · /help for keys                           │ untitled               │
+                                                      │ 0193abcd         build │
+       ╭─ tool permissions ─────────────────────────────────────────────╮ask   │
+       │›● ask     current                                              │ ─────╯
+       │    shell, write, and delete calls pause for a y/n before they  │ ─────╮
+       │    run.                                                        │ -4.6 │
+       │                                                                │  5%  │
+       │ ○ always                                                       │      │
+       │    tools run without asking, including destructive ones.       │      │
+       │                                                                │ ─────╯
+       ╰─ ↑↓ move · enter apply · esc  · changes apply immediately ─────╯ ─────╮
+                                                                          ?.?? │
+                                                      │ bud ░░░░░░░░░░░░   0%  │
+                                                      │     $0.00 of $5.00     │
+                                                      ╰────────────────────────╯
+
+
+╭─ dusty ────────────────────────────────────────────────────────────── build ─╮
+│› ask the orchestrator, or / for commands                                     │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move    enter select    tab next field    ? keys    esc back

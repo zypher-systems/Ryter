@@ -28,17 +28,18 @@ pub mod tools;
 pub mod trace;
 pub mod user_io;
 
-pub use agent::{Agent, ChildHandle, StopReason, TurnResult};
+pub use agent::{Agent, ChildHandle, StopReason, TurnResult, tool_summary};
 pub use cancel::Cancel;
 pub use compact::{ContextReport, format_context_used, format_tokens, window_for};
 pub use config::{
     AuditorConfig, Config, ConnectionConfig, FeaturesConfig, HookConfig, LastRoute,
     McpServerConfig, McpSettings, PriceOverride, RoleModel, SandboxConfig, SpendConfig,
-    SubagentsConfig, connection_template, has_secret, list_crew_presets, list_mcp_tokens, load,
-    load_at, load_crew_preset, load_last_route, load_user_connections, new_inbound_token,
-    resolve_route, resolve_secret, resolve_secret_with, save_crew, save_crew_preset, save_hooks,
-    save_last_route, save_mcp, save_mcp_tokens, save_settings, save_user_connections,
-    store_secret_at, user_connection_names, write_default_config, write_default_connection,
+    SubagentsConfig, UI_KEYS, UiConfig, connection_template, has_secret, list_crew_presets,
+    list_mcp_tokens, load, load_at, load_crew_preset, load_last_route, load_user_connections,
+    new_inbound_token, resolve_route, resolve_secret, resolve_secret_with, save_crew,
+    save_crew_preset, save_hooks, save_last_route, save_mcp, save_mcp_tokens, save_settings,
+    save_user_connections, store_secret_at, user_connection_names, write_default_config,
+    write_default_connection,
 };
 pub use doctor::Report as DoctorReport;
 pub use error::{Error, Result};

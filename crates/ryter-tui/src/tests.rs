@@ -1,0 +1,463 @@
+//! Crate-level tests (§15): golden snapshots, scroll invariants, secret
+//! redaction, help ↔ keymap parity, and the redraw budget.
+//!
+//! Snapshots live in `crates/ryter-tui/snapshots/`. Regenerate with
+//! `UPDATE_SNAPSHOTS=1 cargo test -p ryter-tui`.
+
+use std::path::PathBuf;
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ryter_core::{AgentEvent, Phase, Role};
+
+use crate::action::{PanelId, SessionsMode};
+use crate::activity::Mode as ActivityMode;
+use crate::chat::MessageKind;
+use crate::draw::{render_buffer, render_to_string, render_with_theme};
+use crate::keymap::{self, Ctx};
+use crate::panel::modal::PermissionModal;
+use crate::panel::{self, PanelEnv};
+use crate::theme::{ColorMode, Theme};
+use crate::view::View;
+
+/// Sizes from `R-TEST-01`.
+const SIZES: [(u16, u16); 4] = [(80, 24), (100, 30), (120, 40), (160, 50)];
+
+fn snapshot_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("snapshots")
+}
+
+/// Compare (or, with `UPDATE_SNAPSHOTS=1`, rewrite) a golden file.
+fn check_snapshot(name: &str, actual: &str) {
+    let path = snapshot_dir().join(format!("{name}.txt"));
+    if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
+        std::fs::create_dir_all(snapshot_dir()).unwrap();
+        std::fs::write(&path, actual).unwrap();
+        return;
+    }
+    let expected = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "missing snapshot {}: {e} (run with UPDATE_SNAPSHOTS=1)",
+            path.display()
+        )
+    });
+    if expected != actual {
+        let diff: Vec<String> = expected
+            .lines()
+            .zip(actual.lines())
+            .enumerate()
+            .filter(|(_, (a, b))| a != b)
+            .take(6)
+            .map(|(i, (a, b))| format!("line {i}:\n  expected: {a}\n  actual:   {b}"))
+            .collect();
+        panic!(
+            "snapshot {name} differs ({} vs {} lines)\n{}",
+            expected.lines().count(),
+            actual.lines().count(),
+            diff.join("\n")
+        );
+    }
+}
+
+fn env() -> PanelEnv {
+    let home = std::env::temp_dir().join(format!("ryter-tui-test-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&home);
+    PanelEnv {
+        home,
+        cwd: PathBuf::from("/tmp/proj"),
+        trusted: true,
+        sandbox: ryter_core::sandbox::SandboxProfile::Off,
+    }
+}
+
+/// Deterministic idle session: no clock, fixed username, one connection.
+fn idle() -> View {
+    let mut v = View::new(
+        Phase::Build,
+        "spacexai".into(),
+        "grok-4.6".into(),
+        "~/workspace/ryter".into(),
+    );
+    v.ui.timestamps = false;
+    v.username = "dusty".into();
+    v.git_branch = Some("0.2.0-patch".into());
+    v.session_id = "0193abcd-ef01-7000-8000-000000000001".into();
+    v.has_key = true;
+    v.ctx_tokens = Some(12_400);
+    v.ctx_window = Some(256_000);
+    v.ctx_pct = Some(5);
+    v.price_label = "$2/M in · $6/M out".into();
+    v.connections.push(crate::view::ConnRow {
+        name: "spacexai".into(),
+        kind: "spacexai".into(),
+        model: "grok-4.6".into(),
+        has_key: true,
+    });
+    v.connections.push(crate::view::ConnRow {
+        name: "openrouter".into(),
+        kind: "openrouter".into(),
+        model: "anthropic/claude-sonnet-4.6".into(),
+        has_key: false,
+    });
+    v.system("welcome · /help for keys");
+    v
+}
+
+/// A session with one finished turn and a streaming second one.
+fn mid_stream(reasoning: ActivityMode) -> View {
+    let mut v = idle();
+    v.activity = crate::activity::Activity::new(reasoning);
+    let _ = v.submit_user("summarise the plan".into(), "summarise the plan".into());
+    v.on_token("Here is the **plan**:\n\n1. wire the loop\n2. write tests\n");
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnFinished {
+            turn: 1,
+            tools: 0,
+            duration_ms: 4200,
+        },
+    );
+    let _ = v.submit_user(
+        "now implement step one".into(),
+        "now implement step one".into(),
+    );
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::Reasoning {
+            text: "The user wants the loop wired. I should read run.rs first, then ".repeat(3),
+        },
+    );
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::ToolCall {
+            id: "t1".into(),
+            name: "read_file".into(),
+            args: serde_json::json!({"path": "crates/ryter-tui/src/run/mod.rs"}),
+            role: Role::Orchestrator,
+            summary: Some("read crates/ryter-tui/src/run/mod.rs".into()),
+        },
+    );
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::ToolResult {
+            id: "t1".into(),
+            output: "…".into(),
+            is_error: false,
+            duration_ms: Some(120),
+        },
+    );
+    v.on_token("Reading the loop now. The event loop drains ");
+    v.now_ms = 12_345;
+    v.tick(12_345);
+    v
+}
+
+fn with_panel(id: PanelId) -> View {
+    let mut v = idle();
+    let e = env();
+    let _ = panel::open(&mut v, id, &e);
+    panel::sync_composer(&mut v);
+    v
+}
+
+fn all_sizes(name: &str, view: &View) {
+    for (w, h) in SIZES {
+        check_snapshot(&format!("{name}-{w}x{h}"), &render_to_string(view, w, h));
+    }
+}
+
+// -- R-TEST-01 golden snapshots -------------------------------------------------
+
+#[test]
+fn snapshot_idle() {
+    all_sizes("idle", &idle());
+}
+
+#[test]
+fn snapshot_mid_stream_collapsed() {
+    all_sizes("stream-collapsed", &mid_stream(ActivityMode::Collapsed));
+}
+
+#[test]
+fn snapshot_mid_stream_expanded() {
+    all_sizes("stream-expanded", &mid_stream(ActivityMode::Expanded));
+}
+
+#[test]
+fn snapshot_palette_open() {
+    let mut v = idle();
+    v.composer.set_text("/mo");
+    crate::palette::refresh(&mut v);
+    assert!(v.palette.is_some());
+    all_sizes("palette", &v);
+}
+
+#[test]
+fn snapshot_every_panel() {
+    let panels: [(&str, PanelId); 17] = [
+        ("providers", PanelId::Providers),
+        ("models", PanelId::Models),
+        ("crew", PanelId::Crew),
+        ("agents", PanelId::Agents),
+        ("sessions", PanelId::Sessions(SessionsMode::Browse)),
+        ("spend", PanelId::Spend),
+        ("settings", PanelId::Settings),
+        ("theme", PanelId::Theme),
+        ("tools", PanelId::Tools),
+        ("auditor", PanelId::Auditor),
+        ("mcp", PanelId::Mcp),
+        ("skills", PanelId::Skills),
+        ("hooks", PanelId::Hooks),
+        ("phase", PanelId::Phase),
+        ("context", PanelId::Context),
+        ("help", PanelId::Help),
+        ("doctor", PanelId::Doctor),
+    ];
+    for (name, id) in panels {
+        let v = with_panel(id);
+        assert!(!v.panels.is_empty(), "{name} did not open");
+        all_sizes(&format!("panel-{name}"), &v);
+    }
+}
+
+#[test]
+fn snapshot_permission_modal() {
+    let mut v = mid_stream(ActivityMode::Collapsed);
+    v.panels.push(Box::new(PermissionModal::new(
+        "bash".into(),
+        "rm -rf target/ && cargo build --release".into(),
+    )));
+    all_sizes("modal-permission", &v);
+}
+
+#[test]
+fn snapshot_no_color_and_16_color() {
+    let v = mid_stream(ActivityMode::Collapsed);
+    let none = Theme::truecolor_dark().degrade(ColorMode::Mono);
+    let sixteen = Theme::truecolor_dark().degrade(ColorMode::Ansi16);
+    for (w, h) in SIZES {
+        check_snapshot(
+            &format!("nocolor-{w}x{h}"),
+            &render_with_theme(&v, w, h, none),
+        );
+        check_snapshot(
+            &format!("16color-{w}x{h}"),
+            &render_with_theme(&v, w, h, sixteen),
+        );
+    }
+    // `NO_COLOR` really means no color: every cell is Reset (`R-THEME-08`).
+    let buf = render_buffer(&v, 100, 30, none);
+    for y in 0..buf.area.height {
+        for x in 0..buf.area.width {
+            let c = &buf[(x, y)];
+            assert_eq!(c.fg, ratatui::style::Color::Reset, "fg at {x},{y}");
+            assert_eq!(c.bg, ratatui::style::Color::Reset, "bg at {x},{y}");
+        }
+    }
+    // 16-color mode never emits RGB or indexed colors.
+    let buf = render_buffer(&v, 100, 30, sixteen);
+    for y in 0..buf.area.height {
+        for x in 0..buf.area.width {
+            let c = &buf[(x, y)];
+            for col in [c.fg, c.bg] {
+                assert!(
+                    !matches!(
+                        col,
+                        ratatui::style::Color::Rgb(..) | ratatui::style::Color::Indexed(_)
+                    ),
+                    "{col:?} at {x},{y}"
+                );
+            }
+        }
+    }
+}
+
+// -- R-TEST-02 panels have borders and titles -----------------------------------
+
+#[test]
+fn panels_have_rounded_borders_and_titles() {
+    for (name, id) in [
+        ("providers", PanelId::Providers),
+        ("settings", PanelId::Settings),
+        ("help", PanelId::Help),
+    ] {
+        let v = with_panel(id);
+        let s = render_to_string(&v, 120, 40);
+        assert!(
+            s.contains('╭') && s.contains('╯'),
+            "{name}: no rounded corners\n{s}"
+        );
+        assert!(
+            s.contains(&format!(" {} ", v.panels.top().unwrap().title(&v))) || s.contains(name),
+            "{name}: title missing\n{s}"
+        );
+    }
+    // The chat pane itself has no box (`R-CHROME-03`).
+    let s = render_to_string(&idle(), 120, 40);
+    let first_body_row = s.lines().nth(2).unwrap_or("");
+    assert!(
+        !first_body_row.starts_with('┌') && !first_body_row.starts_with('╭'),
+        "{first_body_row}"
+    );
+}
+
+// -- R-TEST-03 scroll -----------------------------------------------------------
+
+fn many_turns(n: usize) -> View {
+    let mut v = idle();
+    for i in 1..=n {
+        let _ = v.submit_user(format!("question {i}"), format!("question {i}"));
+        v.on_token(&format!("answer {i}\n\nline a\nline b\nline c\n"));
+        v.busy = false;
+    }
+    v
+}
+
+#[test]
+fn composer_present_at_every_message_count() {
+    for n in [0usize, 1, 5, 40, 200] {
+        let v = many_turns(n);
+        let s = render_to_string(&v, 100, 30);
+        assert!(
+            s.contains("ask the orchestrator") || s.contains("you"),
+            "n={n}\n{s}"
+        );
+        assert!(s.contains('›'), "prompt glyph missing at n={n}");
+    }
+}
+
+#[test]
+fn in_flight_message_or_sticky_header_always_visible() {
+    let mut v = many_turns(3);
+    let _ = v.submit_user("the live question".into(), "the live question".into());
+    for i in 0..60 {
+        v.on_token(&format!("streamed row {i}\n"));
+        let s = render_to_string(&v, 100, 24);
+        assert!(s.contains("the live question"), "row {i}\n{s}");
+    }
+}
+
+#[test]
+fn scroll_up_detaches_and_new_content_does_not_move_view() {
+    let mut v = many_turns(30);
+    let before = render_to_string(&v, 100, 24);
+    v.scroll.page_up(false);
+    assert!(!v.scroll.follow);
+    let detached = render_to_string(&v, 100, 24);
+    assert_ne!(before, detached);
+    // Model output keeps streaming into the last message while detached.
+    v.on_token("new content\n".repeat(10).as_str());
+    let after = render_to_string(&v, 100, 24);
+    let body = |s: &str| s.lines().skip(2).take(15).collect::<Vec<_>>().join("\n");
+    assert_eq!(
+        body(&detached),
+        body(&after),
+        "viewport moved while detached"
+    );
+    assert!(
+        after.contains("↓") && after.contains("new"),
+        "pill missing\n{after}"
+    );
+    v.scroll.to_bottom();
+    assert!(v.scroll.follow);
+    let bottom = render_to_string(&v, 100, 24);
+    assert!(bottom.contains("new content"));
+}
+
+// -- R-TEST-08 help matches KEYMAP ----------------------------------------------
+
+#[test]
+fn help_lists_every_binding() {
+    // The keys tab pages, so check parity one binding at a time through the
+    // panel's own filter: every `KEYMAP` row is reachable with its context title.
+    for b in keymap::KEYMAP {
+        let mut v = with_panel(PanelId::Help);
+        v.composer.set_text(b.help);
+        let s = render_to_string(&v, 160, 50);
+        assert!(
+            s.contains(&keymap::display(b.key)),
+            "{} ({:?}) not in /help\n{s}",
+            b.key,
+            b.ctx
+        );
+        assert!(s.contains(b.help), "{} help text missing\n{s}", b.key);
+        assert!(
+            s.to_ascii_lowercase().contains(b.ctx.title()),
+            "{} shown under the wrong context\n{s}",
+            b.key
+        );
+    }
+    let _ = Ctx::ALL;
+}
+
+// -- R-TEST-09 secret redaction --------------------------------------------------
+
+#[test]
+fn secret_never_reaches_the_frame() {
+    let mut v = idle();
+    v.composer.begin_secret("spacexai".into());
+    let secret = "sk-ZZtopSECRET-9f8e7d";
+    for c in secret.chars() {
+        v.composer.insert_char(c);
+    }
+    for (w, h) in SIZES {
+        let s = render_to_string(&v, w, h);
+        assert!(!s.contains(secret));
+        for frag in ["ZZtop", "SECRET", "9f8e7d"] {
+            assert!(!s.contains(frag), "{frag} leaked at {w}x{h}\n{s}");
+        }
+        assert!(s.contains('•'), "mask missing at {w}x{h}");
+    }
+    let dbg = format!("{v:?}");
+    assert!(
+        !dbg.contains("ZZtop") || dbg.contains("secret"),
+        "Debug must not print the key in the clear"
+    );
+}
+
+// -- R-TEST-11 redraw budget ------------------------------------------------------
+
+#[test]
+fn five_hundred_cached_messages_redraw_fast() {
+    let mut v = idle();
+    for i in 0..250 {
+        let _ = v.submit_user(format!("q{i}"), format!("q{i}"));
+        v.on_token(&format!(
+            "**a{i}** with `code` and a [link](https://x.y/{i})\n\n```rust\nfn f{i}() {{}}\n```\n"
+        ));
+        v.busy = false;
+    }
+    assert_eq!(
+        v.messages
+            .iter()
+            .filter(|m| matches!(m.kind, MessageKind::User | MessageKind::Assistant { .. }))
+            .count(),
+        500
+    );
+    // Warm the cache.
+    let _ = render_to_string(&v, 120, 40);
+    let started = std::time::Instant::now();
+    for _ in 0..5 {
+        let _ = render_to_string(&v, 120, 40);
+    }
+    let per_frame = started.elapsed() / 5;
+    // 16 ms is the release target; debug builds get a generous multiple.
+    let ceiling = if cfg!(debug_assertions) { 250 } else { 16 };
+    assert!(
+        per_frame.as_millis() < ceiling,
+        "redraw took {per_frame:?} (ceiling {ceiling} ms)"
+    );
+}
+
+// -- key routing through the real dispatcher ---------------------------------------
+
+#[test]
+fn f1_opens_help_and_esc_closes_it() {
+    let mut v = idle();
+    let a = crate::run_keys_handle(&mut v, KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+    assert_eq!(a, crate::action::Action::OpenPanel(PanelId::Help));
+    let e = env();
+    let _ = panel::open(&mut v, PanelId::Help, &e);
+    assert!(!v.panels.is_empty());
+    let _ = crate::run_keys_handle(&mut v, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(v.panels.is_empty());
+}

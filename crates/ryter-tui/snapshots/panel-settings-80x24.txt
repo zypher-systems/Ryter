@@ -1,0 +1,24 @@
+ ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────
+ · system                                             ╭─ session ──────────────╮
+   w╭─ settings ───────────────────────────────────────────────────────────╮   │
+    │ SPEND                                                                ┃ d │
+    │› session budget usd  ‹ 5.00 ›                                default ┃   │
+    │  warn usd            ‹ 1.00 ›                                default ┃ ──╯
+    │                                                                      ┃ ──╮
+    │ AGENTS                                                               ┃ 6 │
+    │  subagents max       ‹ 4 ›                                   default │   │
+    │  auditor             [ on ]                                  default │   │
+    │                                                                      │   │
+    │ TOOLS                                                                │ ──╯
+    │  permission mode     ‹ ask ›                                 default │ ──╮
+    │  features.web        [ off ]                                 default │ ? │
+    │                                                                      │   │
+    ╰─ ↑↓ move · space/←→ change · enter edit · ^s save · esc ─────────────╯   │
+                                                                             ──╯
+
+
+╭─ dusty ────────────────────────────────────────────────────────────── build ─╮
+│› ask the orchestrator, or / for commands                                     │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move    enter select    tab next field    ? keys    esc back

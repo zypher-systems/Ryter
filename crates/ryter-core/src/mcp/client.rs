@@ -30,6 +30,8 @@ pub struct McpHub {
     next_id: AtomicI64,
     servers: BTreeMap<String, LiveServer>,
     tools: Vec<RemoteTool>,
+    /// Per-server outcome of the last connect: `connected (N tools)` or the error text.
+    status: BTreeMap<String, String>,
 }
 
 struct LiveServer {
@@ -63,13 +65,26 @@ impl McpHub {
         let mut hub = Self::new();
         for (name, cfg) in servers {
             if !cfg.enabled {
+                hub.status.insert(name.clone(), "disabled".into());
                 continue;
             }
-            if let Err(e) = hub.spawn(name, cfg) {
-                eprintln!("mcp: skip {name}: {e}");
+            match hub.spawn(name, cfg) {
+                Ok(()) => {
+                    let n = hub.tools.iter().filter(|t| t.server == *name).count();
+                    hub.status
+                        .insert(name.clone(), format!("connected · {n} tools"));
+                }
+                Err(e) => {
+                    hub.status.insert(name.clone(), format!("error: {e}"));
+                }
             }
         }
         Ok(hub)
+    }
+
+    /// Per-server status text from the last connect (`R-POP-58`).
+    pub fn status(&self) -> &BTreeMap<String, String> {
+        &self.status
     }
 
     fn spawn(&mut self, name: &str, cfg: &McpServerConfig) -> Result<()> {

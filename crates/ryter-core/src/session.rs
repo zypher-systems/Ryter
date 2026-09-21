@@ -362,12 +362,19 @@ pub struct SessionInfo {
     pub meta: Meta,
     /// Title, or first user line, or `untitled`.
     pub preview: String,
+    /// Transcript length (user + assistant + tool rows).
+    pub messages: usize,
 }
 
 impl SessionInfo {
     /// Short id (first 8 hex-ish chars).
     pub fn short_id(&self) -> String {
         self.meta.id.as_str().chars().take(8).collect()
+    }
+
+    /// `updated_at` as unix milliseconds, if parseable.
+    pub fn updated_millis(&self) -> Option<u64> {
+        self.meta.updated_at.trim().parse().ok()
     }
 }
 
@@ -396,6 +403,7 @@ fn list_in(root: &Path) -> Result<Vec<SessionInfo>> {
         };
         out.push(SessionInfo {
             dir,
+            messages: s.transcript.len(),
             meta: s.meta,
             preview,
         });

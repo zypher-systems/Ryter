@@ -1,0 +1,40 @@
+ ryter  ·  orchestrator                                                                 ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ dusty                                                                                    ╭─ session ──────────────────╮
+ ▎ now implement step one                                                                 │ untitled                   │
+                                                                                          │ 0193abcd             build │
+ · read_file  read crates/ryter-tui/src/run/mod.rs                                  0.1s  │ auditor ✓  tools ask       │
+                                                                                          ╰────────────────────────────╯
+ grok-4.6                                                                                 ╭─ model ────────────────────╮
+   Reading the loop no┏━ permission · bash ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ai ●        grok-4.6 │
+                      │ tool  bash                                                               │ ░░░░░░░░░░░░░   5%  │
+                      │                                                                          │ 4k / 256k tokens    │
+                      │   rm -rf target/ && cargo build --release                                │ nknown              │
+                      │                                                                          │ ────────────────────╯
+                      │ y · allow   n · deny   a · allow all this session                        │ ────────────────────╮
+                      │                                                                          │               $?.?? │
+                      ╰─ y allow once · n deny · a allow all this session ───────────────────────╯ ░░░░░░░░░░░░░   0%  │
+                                                                                                   00 of $5.00         │
+                                                                                          ╰────────────────────────────╯
+                                                                                          ╭─ tasks ────────────────────╮
+                                                                                          │ no tasks yet               │
+                                                                                          ╰────────────────────────────╯
+                                                                                          ╭─ crew ─────────────── 0/4 ─╮
+                                                                                          │ no specialists running     │
+                                                                                          ╰────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+ ⠼ writing  ·  0:12  ·  ~11 tok                                                                        ^r  reasoning  ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+╭─ dusty ────────────────────────────────────────────────────────────────────────────────────────────────────── build ─╮
+│› type to queue the next message, / for commands                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move    enter select    tab next field    ? keys    esc back

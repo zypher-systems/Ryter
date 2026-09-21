@@ -1,0 +1,30 @@
+ ryter  ·  orchestrator                                             ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ · system                                                             ╭─ session ──────────────────╮
+   welcome · /help for keys                                           │ untitled                   │
+                                                                      │ 0193abcd             build │
+                                                                      │ auditor ✓  tools ask       │
+                                                                      ╰────────────────────────────╯
+                 ╭─ auditor gate ─────────────────────────────────────────────────╮────────────────╮
+                 │›● on      current                                              │       grok-4.6 │
+                 │    every builder result is reviewed by an auditor before it    │ ░░░░░░░░   5%  │
+                 │    merges.                                                     │ 256k tokens    │
+                 │                                                                │ n              │
+                 │ ○ off                                                          │ ───────────────╯
+                 │    builder results merge as soon as they finish. faster,       │ ───────────────╮
+                 │    unreviewed.                                                 │          $?.?? │
+                 ╰─ ↑↓ move · enter apply · esc  · changes apply immediately ─────╯ ░░░░░░░░   0%  │
+                                                                                     $5.00         │
+                                                                      ╰────────────────────────────╯
+                                                                      ╭─ tasks ────────────────────╮
+                                                                      │ no tasks yet               │
+                                                                      ╰────────────────────────────╯
+                                                                      ╭─ crew ─────────────── 0/4 ─╮
+                                                                      │ no specialists running     │
+                                                                      ╰────────────────────────────╯
+
+
+╭─ dusty ────────────────────────────────────────────────────────────────────────────────── build ─╮
+│› ask the orchestrator, or / for commands                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move    enter select    tab next field    ? keys    esc back

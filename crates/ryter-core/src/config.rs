@@ -49,6 +49,12 @@ pub struct Config {
     /// Optional tools (web fetch/search).
     #[serde(default)]
     pub features: FeaturesConfig,
+    /// TUI presentation knobs (`[ui]`).
+    #[serde(default)]
+    pub ui: UiConfig,
+    /// Non-fatal load warnings (unknown `[ui]` keys). Never serialized.
+    #[serde(skip)]
+    pub warnings: Vec<String>,
 }
 
 impl Default for Config {
@@ -70,8 +76,73 @@ impl Default for Config {
             hooks: Vec::new(),
             sandbox: SandboxConfig::default(),
             features: FeaturesConfig::default(),
+            ui: UiConfig::default(),
+            warnings: Vec::new(),
         }
     }
+}
+
+/// `[ui]` table. Every key is optional; see `config.example.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiConfig {
+    /// Speaker name for user messages. Empty → `git user.name` → `$USER` → `you`.
+    pub username: String,
+    /// Theme name (`dark`, `light`, `default-16`, or `~/.ryter/themes/<name>.toml`).
+    pub theme: String,
+    /// `collapsed` | `expanded` | `off` — startup state of the reasoning strip.
+    pub reasoning: String,
+    /// Enable mouse capture (wheel scroll, card clicks).
+    pub mouse: bool,
+    /// Info panel visible at startup.
+    pub panel: bool,
+    /// `auto` | `truecolor` | `256` | `16`.
+    pub colors: String,
+    /// Show `HH:MM` on speaker headers.
+    pub timestamps: bool,
+    /// Line-number gutter in code blocks.
+    pub line_numbers: bool,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            username: String::new(),
+            theme: "dark".into(),
+            reasoning: "collapsed".into(),
+            mouse: true,
+            panel: true,
+            colors: "auto".into(),
+            timestamps: true,
+            line_numbers: true,
+        }
+    }
+}
+
+/// Known `[ui]` keys, for the unknown-key warning.
+pub const UI_KEYS: &[&str] = &[
+    "username",
+    "theme",
+    "reasoning",
+    "mouse",
+    "panel",
+    "colors",
+    "timestamps",
+    "line_numbers",
+];
+
+/// Unknown keys under `[ui]` in a TOML document (empty when none).
+pub fn unknown_ui_keys(text: &str) -> Vec<String> {
+    let Ok(table) = toml::from_str::<toml::Table>(text) else {
+        return Vec::new();
+    };
+    let Some(ui) = table.get("ui").and_then(|v| v.as_table()) else {
+        return Vec::new();
+    };
+    ui.keys()
+        .filter(|k| !UI_KEYS.contains(&k.as_str()))
+        .cloned()
+        .collect()
 }
 
 /// Optional capabilities.
@@ -773,6 +844,10 @@ struct SettingsFile {
     sandbox: Option<String>,
     inbound: Option<bool>,
     web: Option<bool>,
+    #[serde(default)]
+    auditor: Option<bool>,
+    #[serde(default)]
+    ui: Option<UiFile>,
 }
 
 fn apply_settings_file(cfg: &mut Config, path: &Path) {
@@ -782,6 +857,12 @@ fn apply_settings_file(cfg: &mut Config, path: &Path) {
     let Ok(file) = toml::from_str::<SettingsFile>(&text) else {
         return;
     };
+    if let Some(v) = file.auditor {
+        cfg.auditor.enabled = v;
+    }
+    if let Some(ui) = file.ui {
+        ui.apply(&mut cfg.ui);
+    }
     if let Some(v) = file.session_budget_usd {
         cfg.spend.session_budget_usd = v;
     }
@@ -812,6 +893,8 @@ pub fn save_settings(home: &Path, cfg: &Config) -> Result<()> {
         sandbox: Some(cfg.sandbox.profile.clone()),
         inbound: Some(cfg.mcp.inbound),
         web: Some(cfg.features.web),
+        auditor: Some(cfg.auditor.enabled),
+        ui: Some(UiFile::from(&cfg.ui)),
     };
     let body = toml::to_string(&file).map_err(|e| Error::Config(e.to_string()))?;
     fs::write(home.join("settings.toml"), body).map_err(|e| Error::Config(e.to_string()))
@@ -851,6 +934,12 @@ fn merge_file(cfg: &mut Config, path: &Path) -> Result<()> {
     let text = fs::read_to_string(path).map_err(|e| Error::Config(format!("{path:?}: {e}")))?;
     let overlay: ConfigFile =
         toml::from_str(&text).map_err(|e| Error::Config(format!("{path:?}: {e}")))?;
+    for k in unknown_ui_keys(&text) {
+        cfg.warnings.push(format!(
+            "{}: unknown [ui] key `{k}` ignored",
+            path.display()
+        ));
+    }
     overlay.apply(cfg);
     Ok(())
 }
@@ -872,6 +961,73 @@ struct ConfigFile {
     hooks: Vec<HookConfig>,
     sandbox: Option<SandboxConfig>,
     features: Option<FeaturesConfig>,
+    ui: Option<UiFile>,
+}
+
+/// Sparse `[ui]` overlay: only keys present in the file win.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct UiFile {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    theme: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mouse: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    panel: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    colors: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timestamps: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    line_numbers: Option<bool>,
+}
+
+impl From<&UiConfig> for UiFile {
+    fn from(ui: &UiConfig) -> Self {
+        Self {
+            username: Some(ui.username.clone()),
+            theme: Some(ui.theme.clone()),
+            reasoning: Some(ui.reasoning.clone()),
+            mouse: Some(ui.mouse),
+            panel: Some(ui.panel),
+            colors: Some(ui.colors.clone()),
+            timestamps: Some(ui.timestamps),
+            line_numbers: Some(ui.line_numbers),
+        }
+    }
+}
+
+impl UiFile {
+    fn apply(self, ui: &mut UiConfig) {
+        if let Some(v) = self.username {
+            ui.username = v;
+        }
+        if let Some(v) = self.theme {
+            ui.theme = v;
+        }
+        if let Some(v) = self.reasoning {
+            ui.reasoning = v;
+        }
+        if let Some(v) = self.mouse {
+            ui.mouse = v;
+        }
+        if let Some(v) = self.panel {
+            ui.panel = v;
+        }
+        if let Some(v) = self.colors {
+            ui.colors = v;
+        }
+        if let Some(v) = self.timestamps {
+            ui.timestamps = v;
+        }
+        if let Some(v) = self.line_numbers {
+            ui.line_numbers = v;
+        }
+    }
 }
 
 impl ConfigFile {
@@ -912,6 +1068,9 @@ impl ConfigFile {
         }
         if let Some(f) = self.features {
             cfg.features = f;
+        }
+        if let Some(u) = self.ui {
+            u.apply(&mut cfg.ui);
         }
     }
 }
@@ -1243,6 +1402,37 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::TempDir;
+
+    #[test]
+    fn ui_section_is_optional_and_sparse() {
+        let home = TempDir::new().unwrap();
+        fs::write(
+            home.path().join("config.toml"),
+            "[ui]\nusername = \"Dusty\"\nreasoning = \"expanded\"\nbogus = 1\n",
+        )
+        .unwrap();
+        let cfg = load_at(home.path(), None, false).unwrap();
+        assert_eq!(cfg.ui.username, "Dusty");
+        assert_eq!(cfg.ui.reasoning, "expanded");
+        assert_eq!(cfg.ui.theme, "dark", "untouched keys keep defaults");
+        assert!(cfg.ui.mouse);
+        assert_eq!(cfg.warnings.len(), 1, "{:?}", cfg.warnings);
+        assert!(cfg.warnings[0].contains("bogus"));
+        // settings.toml persists the theme without clobbering config.toml keys.
+        let mut saved = cfg.clone();
+        saved.ui.theme = "light".into();
+        save_settings(home.path(), &saved).unwrap();
+        let again = load_at(home.path(), None, false).unwrap();
+        assert_eq!(again.ui.theme, "light");
+        assert_eq!(again.ui.username, "Dusty");
+    }
+
+    #[test]
+    fn unknown_ui_keys_lists_only_strangers() {
+        assert!(unknown_ui_keys("[ui]\ntheme = \"dark\"\n").is_empty());
+        assert_eq!(unknown_ui_keys("[ui]\nfoo = 1\n"), vec!["foo".to_string()]);
+        assert!(unknown_ui_keys("not toml [[").is_empty());
+    }
 
     #[test]
     fn defaults_include_spacexai_and_openrouter() {

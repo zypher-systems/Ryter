@@ -1,0 +1,40 @@
+ ryter  ·  orchestrator                                                                 ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ · system                                                                                 ╭─ session ──────────────────╮
+   welcome · /help╭─ help ───────────────────────────────────────────────────────── [keys] commands ─╮                 │
+                  │ GLOBAL                                                                           ┃           build │
+                  │  ^c         clear composer → cancel turn → quit (double-press)                   ┃ tools ask       │
+                  │  ^d         quit when the composer is empty                                      ┃ ────────────────╯
+                  │  ^p         open the command palette                                             ┃ ────────────────╮
+                  │  ^r         toggle the reasoning pane                                            ┃        grok-4.6 │
+                  │  ^b         toggle the info panel                                                ┃ ░░░░░░░░░   5%  │
+                  │  ^l         redraw                                                               ┃  256k tokens    │
+                  │  f1         open /help                                                           ┃ wn              │
+                  │  esc        back one level                                                       ┃ ────────────────╯
+                  │                                                                                  ┃ ────────────────╮
+                  │ CHAT SCROLL                                                                      ┃           $?.?? │
+                  │  pgup       scroll one viewport up                                               ┃ ░░░░░░░░░   0%  │
+                  │  pgdn       scroll one viewport down                                             │ f $5.00         │
+                  │  ⇧↑         scroll one row up                                                    │ ────────────────╯
+                  │  ⇧↓         scroll one row down                                                  │ ────────────────╮
+                  │  ^home      top of the transcript                                                │ t               │
+                  │  ^end       bottom (re-engages follow)                                           │ ────────────────╯
+                  │  ^↑         previous turn / jump to the sticky message                           │ ────────── 0/4 ─╮
+                  │  ^↓         next turn                                                            │ sts running     │
+                  │  ⌥pgup      reasoning pane up                                                    │ ────────────────╯
+                  │  ⌥pgdn      reasoning pane down                                                  │
+                  │                                                                                  │
+                  │ COMPOSER                                                                         │
+                  │  enter      send                                                                 │
+                  │  ⇧enter     newline                                                              │
+                  │  ⌥enter     newline                                                              │
+                  │  ←          move left                                                            │
+                  │  →          move right                                                           │
+                  ╰─ ←→ tab · ↑↓ pgup pgdn scroll · type to filter · esc ────────────────────────────╯
+
+
+
+╭─ filter ───────────────────────────────────────────────────────────────────────────────────────────────────── build ─╮
+│› type filter…                                                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move    enter select    tab next field    ? keys    esc back

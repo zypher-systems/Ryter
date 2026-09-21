@@ -88,6 +88,49 @@ pub fn estimate_tokens(system: &str, messages: &[Message]) -> u64 {
     u64::try_from(n).unwrap_or(u64::MAX).div_ceil(4)
 }
 
+/// Per-contributor token estimates for the `/context` inspector.
+///
+/// Rows: `system prompt`, `user messages`, `assistant text`, `tool calls`,
+/// `tool output`. Zero rows are omitted. Same bytes/4 heuristic as
+/// [`estimate_tokens`].
+pub fn breakdown(system: &str, messages: &[Message]) -> Vec<(String, u64)> {
+    let mut sys = system.len();
+    let mut user = 0usize;
+    let mut assistant = 0usize;
+    let mut calls = 0usize;
+    let mut tool_out = 0usize;
+    for m in messages {
+        match m.role.as_str() {
+            "user" => user += m.role.len() + m.content.len(),
+            "assistant" => assistant += m.role.len() + m.content.len(),
+            "tool" => {
+                tool_out += m.role.len() + m.content.len();
+                if let Some(id) = &m.tool_call_id {
+                    tool_out += id.len();
+                }
+            }
+            _ => sys += m.role.len() + m.content.len(),
+        }
+        if let Some(cs) = &m.tool_calls {
+            for c in cs {
+                calls += c.name.len() + c.arguments.len() + c.id.len();
+            }
+        }
+    }
+    let tok = |n: usize| u64::try_from(n).unwrap_or(u64::MAX).div_ceil(4);
+    [
+        ("system prompt", sys),
+        ("user messages", user),
+        ("assistant text", assistant),
+        ("tool calls", calls),
+        ("tool output", tool_out),
+    ]
+    .into_iter()
+    .filter(|(_, n)| *n > 0)
+    .map(|(k, n)| (k.to_string(), tok(n)))
+    .collect()
+}
+
 /// Build a report for `/context`.
 pub fn report(
     system: &str,
@@ -249,6 +292,37 @@ mod tests {
         let before = estimate_tokens("", &messages);
         let after = estimate_tokens("", &out);
         assert!(after < before, "{after} vs {before}");
+    }
+
+    #[test]
+    fn breakdown_sums_to_estimate() {
+        let messages = vec![
+            msg("user", "hello there"),
+            msg("assistant", "hi"),
+            Message {
+                role: "tool".into(),
+                content: "x".repeat(400),
+                tool_call_id: Some("c1".into()),
+                tool_calls: None,
+            },
+        ];
+        let rows = breakdown("sys", &messages);
+        let names: Vec<&str> = rows.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "system prompt",
+                "user messages",
+                "assistant text",
+                "tool output"
+            ]
+        );
+        let total: u64 = rows.iter().map(|(_, n)| n).sum();
+        let est = estimate_tokens("sys", &messages);
+        assert!(
+            total >= est && total <= est + rows.len() as u64,
+            "{total} vs {est}"
+        );
     }
 
     #[test]

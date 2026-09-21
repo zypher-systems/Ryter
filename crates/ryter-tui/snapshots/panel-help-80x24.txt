@@ -1,0 +1,24 @@
+ ryter  ·  orchestrator                         ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────
+ · system                                             ╭─ session ──────────────╮
+   w╭─ help ───────────────────────────────────────────── [keys] commands ─╮   │
+    │ GLOBAL                                                               ┃ d │
+    │  ^c         clear composer → cancel turn → quit (double-press)       ┃   │
+    │  ^d         quit when the composer is empty                          │ ──╯
+    │  ^p         open the command palette                                 │ ──╮
+    │  ^r         toggle the reasoning pane                                │ 6 │
+    │  ^b         toggle the info panel                                    │   │
+    │  ^l         redraw                                                   │   │
+    │  f1         open /help                                               │   │
+    │  esc        back one level                                           │ ──╯
+    │                                                                      │ ──╮
+    │ CHAT SCROLL                                                          │ ? │
+    │  pgup       scroll one viewport up                                   │   │
+    ╰─ ←→ tab · ↑↓ pgup pgdn scroll · type to filter · esc ────────────────╯   │
+                                                                             ──╯
+
+
+╭─ filter ───────────────────────────────────────────────────────────── build ─╮
+│› type filter…                                                                │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move    enter select    tab next field    ? keys    esc back

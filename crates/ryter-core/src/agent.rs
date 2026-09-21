@@ -96,9 +96,63 @@ pub struct ChildHandle {
     pub cancel: Arc<crate::cancel::Cancel>,
 }
 
+static TURN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Short human label for a tool call (`read Cargo.toml`, `bash cargo test`).
+pub fn tool_summary(name: &str, args: &Value) -> String {
+    let arg = match name {
+        "read_file" | "list_dir" | "write" | "search_replace" => args
+            .get("path")
+            .or_else(|| args.get("target_file"))
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+        "bash" => args.get("command").and_then(Value::as_str).unwrap_or(""),
+        "grep" | "glob" => args.get("pattern").and_then(Value::as_str).unwrap_or(""),
+        "web_search" | "search_tool" => args.get("query").and_then(Value::as_str).unwrap_or(""),
+        "web_fetch" => args.get("url").and_then(Value::as_str).unwrap_or(""),
+        "use_tool" => args.get("name").and_then(Value::as_str).unwrap_or(""),
+        "ask_user" => args.get("question").and_then(Value::as_str).unwrap_or(""),
+        _ => "",
+    };
+    let verb = match name {
+        "read_file" => "read",
+        "list_dir" => "list",
+        "write" | "search_replace" => "edit",
+        "todo_write" => "todo",
+        other => other,
+    };
+    let arg: String = arg.lines().next().unwrap_or("").chars().take(40).collect();
+    if arg.is_empty() {
+        verb.to_string()
+    } else {
+        format!("{verb} {arg}")
+    }
+}
+
 impl Agent {
     /// Run one user message to completion (or cap).
+    ///
+    /// Emits [`AgentEvent::TurnStarted`] first and [`AgentEvent::TurnFinished`]
+    /// last, whichever way the turn ends.
     pub async fn turn(&mut self, user: &str) -> Result<TurnResult> {
+        let turn = TURN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let started = std::time::Instant::now();
+        let mut tools = 0u32;
+        if self.role == Role::Orchestrator {
+            self.emit(AgentEvent::TurnStarted { turn })?;
+        }
+        let out = self.turn_inner(user, &mut tools).await;
+        if self.role == Role::Orchestrator {
+            let _ = self.emit(AgentEvent::TurnFinished {
+                turn,
+                tools,
+                duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            });
+        }
+        out
+    }
+
+    async fn turn_inner(&mut self, user: &str, tools: &mut u32) -> Result<TurnResult> {
         self.session.push_message(Message {
             role: "user".into(),
             content: user.to_string(),
@@ -264,17 +318,21 @@ impl Agent {
                     return self.finish_cancelled(last_text).await;
                 }
                 let args: Value = serde_json::from_str(&call.arguments).unwrap_or(Value::Null);
+                *tools += 1;
                 self.emit(AgentEvent::ToolCall {
                     id: call.id.clone(),
                     name: call.name.clone(),
                     args: args.clone(),
                     role: self.role,
+                    summary: Some(tool_summary(&call.name, &args)),
                 })?;
+                let t0 = std::time::Instant::now();
                 let out = gated_execute(&call.name, &args, &self.ctx)?;
                 self.emit(AgentEvent::ToolResult {
                     id: call.id.clone(),
                     output: out.text.clone(),
                     is_error: out.is_error,
+                    duration_ms: Some(u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX)),
                 })?;
                 self.session.push_message(Message {
                     role: "tool".into(),
@@ -516,11 +574,14 @@ impl Agent {
     /// Emit a [`AgentEvent::Context`] for the TUI / `--json`.
     pub fn emit_context(&mut self) -> Result<()> {
         let r = self.context_report()?;
+        let sys = self.system_prompt().unwrap_or_default();
+        let breakdown = crate::compact::breakdown(&sys, &self.session.transcript);
         self.emit(AgentEvent::Context {
             tokens: r.tokens,
             window: r.window,
             pct: r.pct,
             messages: r.messages,
+            breakdown,
         })
     }
 
