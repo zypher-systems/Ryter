@@ -218,5 +218,13 @@ fn require_path(args: &Value, ctx: &ToolContext) -> Result<std::path::PathBuf> {
 }
 
 fn require_resolved(ctx: &ToolContext, raw: &str) -> Result<std::path::PathBuf> {
-    resolve(ctx, raw).ok_or_else(|| Error::Config(format!("path escapes workspace: {raw}")))
+    resolve(ctx, raw)
+        // The build hat's outside writes reach here only after a person said
+        // yes to that exact path (policy: AskOutside).
+        .or_else(|| {
+            (ctx.role == crate::role::Role::SoloBuild)
+                .then(|| crate::tools::policy::resolve_outside(ctx, raw))
+                .flatten()
+        })
+        .ok_or_else(|| Error::Config(format!("path escapes workspace: {raw}")))
 }

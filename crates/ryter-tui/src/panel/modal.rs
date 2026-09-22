@@ -54,6 +54,11 @@ impl PermissionModal {
     fn is_hat(&self) -> bool {
         self.tool == "switch hat"
     }
+
+    /// A write outside the project: asked every time, so no "allow all".
+    fn is_outside(&self) -> bool {
+        self.tool.ends_with(ryter_core::tools::OUTSIDE)
+    }
 }
 
 impl Panel for PermissionModal {
@@ -72,6 +77,8 @@ impl Panel for PermissionModal {
     fn legend(&self, _view: &View) -> String {
         if self.is_hat() {
             "y switch · n stay".into()
+        } else if self.is_outside() {
+            "y allow once · n deny · asked every time".into()
         } else {
             "y allow once · n deny · a allow all this session".into()
         }
@@ -118,6 +125,13 @@ impl Panel for PermissionModal {
                 scroll: None,
             };
         }
+        if self.is_outside() {
+            lines.push(widgets::colored(
+                "outside the project: this reaches files elsewhere on your machine",
+                theme.warn,
+                theme,
+            ));
+        }
         lines.push(Line::from(vec![
             Span::styled(" tool  ", theme.panel_muted()),
             Span::styled(
@@ -151,7 +165,26 @@ impl Panel for PermissionModal {
             ));
         }
         lines.push(widgets::blank(theme));
-        if self.arm_always {
+        if self.is_outside() {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    " y ",
+                    Style::default()
+                        .fg(theme.success)
+                        .bg(theme.panel_bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("· allow once   ", theme.panel()),
+                Span::styled(
+                    "n ",
+                    Style::default()
+                        .fg(theme.error)
+                        .bg(theme.panel_bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("· deny", theme.panel()),
+            ]));
+        } else if self.arm_always {
             lines.push(widgets::colored(
                 "allow all: every further tool call this session runs without asking, including destructive ones. press a again to confirm.",
                 theme.warn,
@@ -202,7 +235,7 @@ impl Panel for PermissionModal {
             KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                 Outcome::CloseAct(Action::PermissionReply(Permission::Deny))
             }
-            KeyCode::Char('a' | 'A') if self.is_hat() => Outcome::Stay,
+            KeyCode::Char('a' | 'A') if self.is_hat() || self.is_outside() => Outcome::Stay,
             KeyCode::Char('a' | 'A') => {
                 if self.arm_always {
                     Outcome::CloseAct(Action::PermissionReply(Permission::Always))
@@ -566,6 +599,14 @@ mod tests {
             press(&mut m, 'y'),
             Outcome::CloseAct(Action::PermissionReply(Permission::Allow))
         ));
+        // Outside the project: once or not at all.
+        let mut o = PermissionModal::new(
+            format!("write {}", ryter_core::tools::OUTSIDE),
+            "/tmp/scratch.txt".into(),
+        );
+        assert!(!o.legend(&v).contains("allow all"));
+        assert!(matches!(press(&mut o, 'a'), Outcome::Stay));
+        assert!(matches!(press(&mut o, 'a'), Outcome::Stay));
         // Tool permissions keep allow-all.
         let mut t = PermissionModal::new("bash".into(), "rm -rf target".into());
         assert!(t.legend(&v).contains("allow all"));

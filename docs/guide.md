@@ -122,9 +122,17 @@ Ryter starts in solo mode: one model in your project. `Tab` switches its hat (bu
 
 | Hat | May | May not |
 | --- | --- | --- |
-| **build** (default) | edit files and run commands; edits and commands that change things ask (or run with "allow all" / `--always-approve`); destructive commands always ask | read secrets, push, run inline interpreter code |
+| **build** (default) | edit files and run commands; edits and commands that change things ask (or run with "allow all" / `--always-approve`); destructive commands always ask; outside the project, writes ask **every time** (see below) | read secrets, push, run inline interpreter code |
 | **plan** | read, search, run read-only commands, write `notes/` and project memory | edit source, run anything that changes the project |
 | **review** | read, run the tests and linters, read-only git | write anything, not even by redirect |
+
+**Outside the project.** The build hat can write elsewhere on your machine, such as `/tmp` or another folder, but only by asking each time. The prompt says "outside the project" and offers only `y` (allow once) or `n`. "Allow all" and `--always-approve` cover the project, not the rest of the machine, so headless refuses these writes.
+
+Some places are refused however they're asked for:
+- **Never read or written:** credentials (`~/.ryter`, `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config/gh`, and the like) and secret files.
+- **Never written:** shell startup files (`~/.bashrc`, `~/.zshrc`, `~/.profile`, …) and system folders (`/etc`, `/usr`, …).
+
+Reading outside the project is an ordinary question. Plan and review never write outside, and crew builders stay in their worktrees.
 
 Every hat shares one system prompt (`prompts/solo.md`) and one tool list. The hat is a one-line note in front of each message, and the permission gate enforces it, so switching never throws away the provider's prompt cache.
 

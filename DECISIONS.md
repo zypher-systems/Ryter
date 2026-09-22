@@ -2,6 +2,14 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-22 — The build hat asks, every time, to write outside the project
+- **By:** lead
+- **Decision:** A new gate decision, `AskOutside`, covers the build hat's writes outside the project: file tools, shell redirects, and commands with outside path arguments. It always prompts, marked "outside the project", with no "allow all"; `--always-approve` and a session's "allow all" don't satisfy it, so headless refuses. Refused whatever the prompt: credentials and secret files (read or write), and shell startup files, autostart entries, and system folders (write). `~`, `$HOME`, and `..` are resolved before judging. Reading outside is an ordinary ask. The file tools accept an approved outside path in the build hat only.
+- **Chosen vs rejected:** Rejected keeping outside writes refused: a scratch venv in `/tmp` is normal work, and a command could already create one after asking while the write tool could not; the user saw a refusal with no question. Rejected letting "allow all" cover outside writes: it was given for the project. Rejected refusing system reads: `cat /etc/os-release` is how a model checks its environment.
+- **Why:** In testing, the build hat's work in `/tmp` looked refused (the actual refusal was inline code, worded as if about location), and the user asked whether it could request to write outside the repo; it couldn't.
+- **Where:** `tools/policy.rs` (`AskOutside`, `resolve_outside`, `forbidden`, `outside_segment`, `outside_decision`), `tools/mod.rs` (`OUTSIDE`, prompt handling), `tools/fs.rs` (`require_resolved`), TUI `panel/modal.rs`
+- **Residual risk:** A script inside the project can still write anywhere when it runs. The gate judges commands, not what a program does, and the Landlock sandbox (`[sandbox] profile = "workspace"`) is the boundary for that.
+
 ### 2026-09-22 — Always send a reasoning effort to OpenRouter
 - **By:** lead
 - **Decision:** Every request to an OpenRouter connection carries `reasoning: {effort}`. The user sets a level per model with Tab in `/models`, `/crew`, or the crew builder (auto, low, medium, high, model's own), saved to `~/.ryter/reasoning.toml` and shown on the model card. The model's level wins wherever it runs. Auto falls back to `[reasoning_effort]` per role, then to the defaults: `high` for the plan hat and the architect, `medium` for every role that acts. Other providers get no field. The crew reads the choices from its meter.

@@ -19,6 +19,9 @@ pub enum Decision {
     Allow,
     /// Prompt the user (headless: fail closed).
     Ask,
+    /// Prompt the user even under "allow all" or `--always-approve`: the
+    /// build hat writing outside the project.
+    AskOutside,
     /// Do not run.
     Deny,
 }
@@ -29,7 +32,8 @@ impl Decision {
         match self {
             Self::Allow => 0,
             Self::Ask => 1,
-            Self::Deny => 2,
+            Self::AskOutside => 2,
+            Self::Deny => 3,
         }
     }
 
@@ -112,7 +116,12 @@ fn decide_write(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
         return Decision::Deny;
     };
     let Some(resolved) = resolve(ctx, &path) else {
-        return Decision::Deny;
+        // Outside the project: the build hat may ask; nobody else may.
+        return if ctx.role == Role::SoloBuild {
+            outside_decision(ctx, &path)
+        } else {
+            Decision::Deny
+        };
     };
     if is_secret(&resolved, ctx) {
         return Decision::Deny;
@@ -344,10 +353,24 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
     if NEVER.contains(&prog) || prog.starts_with("mkfs") {
         return Decision::Deny;
     }
-    // A redirection out of the workspace rewrites files no role may touch.
+    // The build hat may reach outside the project, but only by asking each
+    // time, and never into the places a person wouldn't hand over.
+    let outside = if ctx.role == Role::SoloBuild {
+        let d = outside_segment(prog, &words, ctx);
+        if d == Decision::Deny {
+            return Decision::Deny;
+        }
+        d
+    } else {
+        Decision::Allow
+    };
+    // A redirection out of the workspace rewrites files no role may touch;
+    // the build hat's outside redirects were judged just above. A secret
+    // inside the workspace is refused for everyone.
     if let Some(bad) = redirect_escapes(&words, ctx) {
-        let _ = bad;
-        return Decision::Deny;
+        if ctx.role != Role::SoloBuild || resolve(ctx, &bad).is_some() {
+            return Decision::Deny;
+        }
     }
     // The plan and review hats work in the user's own tree, where a
     // redirect is a write no worktree reset will undo.
@@ -376,7 +399,7 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
         }
         // In the user's own tree, destruction always asks.
         if ctx.role == Role::SoloBuild {
-            return Decision::Ask;
+            return Decision::Ask.and(outside);
         }
         if path_escapes(&words, ctx) {
             return Decision::Ask;
@@ -387,11 +410,12 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
         Role::Builder => Decision::Allow,
         // A normal agent in the user's tree: looking runs, doing asks.
         Role::SoloBuild => {
-            if READ_ONLY.contains(&prog) && !path_escapes(&words, ctx) {
+            let base = if READ_ONLY.contains(&prog) && !path_escapes(&words, ctx) {
                 Decision::Allow
             } else {
                 Decision::Ask
-            }
+            };
+            base.and(outside)
         }
         Role::Auditor | Role::SoloReview => {
             if AUDIT_OK.contains(&prog) || READ_ONLY.contains(&prog) {
@@ -421,9 +445,9 @@ pub fn bash_hint(args: &Value) -> Option<&'static str> {
         .any(|w| program(&w).is_some_and(|p| INTERPRETERS.contains(&p)) && !runs_a_script(&w))
         .then_some(
             "Inline code (`-c`, `-e`, heredocs, stdin) is refused because the gate cannot \
-             read it. Write the code to a file inside the workspace (`printf '...' > \
-             probe.py`) and run that file (`python3 probe.py`, or \
-             `python3 -m unittest tests.test_probe`).",
+             read it; this is about the code, not where it runs. Write the code to a file \
+             (`printf '...' > probe.py`, in the project) and run that file \
+             (`python3 probe.py`, or `python3 -m unittest tests.test_probe`).",
         )
 }
 
@@ -665,6 +689,204 @@ fn path_escapes(words: &[String], ctx: &ToolContext) -> bool {
     false
 }
 
+/// Where a path outside the workspace would land, with `~` and `$HOME`
+/// expanded so a refused location can't be reached by spelling it
+/// differently. `None` when a variable hides where it goes.
+pub(crate) fn resolve_outside(ctx: &ToolContext, raw: &str) -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let expanded = if raw == "~" {
+        home?
+    } else if let Some(rest) = raw.strip_prefix("~/") {
+        home?.join(rest)
+    } else if let Some(rest) = raw
+        .strip_prefix("$HOME/")
+        .or_else(|| raw.strip_prefix("${HOME}/"))
+    {
+        home?.join(rest)
+    } else if raw.contains('$') || raw.starts_with('~') {
+        return None;
+    } else {
+        let p = Path::new(raw);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            ctx.workspace.join(p)
+        }
+    };
+    Some(real_path(&expanded))
+}
+
+/// Places the build hat never writes, asked or not: Ryter's own keys, SSH
+/// and GPG keys, cloud and GitHub credentials, shell startup files (a
+/// command there runs in every future shell), and the system.
+fn forbidden_outside(path: &Path, ctx: &ToolContext) -> bool {
+    forbidden(path, ctx, true)
+}
+
+/// Reading outside is refused only for credentials; `ls /` and
+/// `cat /etc/os-release` are how a model checks its environment.
+fn forbidden_to_read(path: &Path, ctx: &ToolContext) -> bool {
+    forbidden(path, ctx, false)
+}
+
+fn forbidden(path: &Path, ctx: &ToolContext, writing: bool) -> bool {
+    if is_secret(path, ctx) || (writing && path == Path::new("/")) {
+        return true;
+    }
+    const SYSTEM: &[&str] = &[
+        "/etc",
+        "/usr",
+        "/bin",
+        "/sbin",
+        "/lib",
+        "/lib64",
+        "/boot",
+        "/sys",
+        "/proc",
+        "/dev",
+        "/root",
+        "/System",
+        "/Library",
+        "/private/etc",
+    ];
+    if writing
+        && SYSTEM
+            .iter()
+            .any(|s| path.starts_with(s) && path != Path::new("/dev/null"))
+    {
+        return true;
+    }
+    let Some(home) = std::env::var_os("HOME").map(|h| real_path(Path::new(&h))) else {
+        return false;
+    };
+    // Credentials: never read or written. Startup files and autostart:
+    // never written (a line there runs in every future shell or login).
+    const SECRETS: &[&str] = &[
+        ".ryter",
+        ".ssh",
+        ".gnupg",
+        ".aws",
+        ".azure",
+        ".kube",
+        ".docker",
+        ".netrc",
+        ".config/gh",
+        ".config/gcloud",
+        ".local/share/keyrings",
+    ];
+    if SECRETS.iter().any(|h| path.starts_with(home.join(h))) {
+        return true;
+    }
+    if !writing {
+        return false;
+    }
+    const HOME: &[&str] = &[
+        ".ryter",
+        ".ssh",
+        ".gnupg",
+        ".aws",
+        ".azure",
+        ".kube",
+        ".docker",
+        ".netrc",
+        ".config/gh",
+        ".config/gcloud",
+        ".bashrc",
+        ".bash_profile",
+        ".bash_login",
+        ".bash_logout",
+        ".profile",
+        ".zshrc",
+        ".zprofile",
+        ".zshenv",
+        ".zlogin",
+        ".config/fish",
+        ".config/autostart",
+        ".config/systemd",
+        ".local/share/keyrings",
+    ];
+    path == home || HOME.iter().any(|h| path.starts_with(home.join(h)))
+}
+
+/// The build hat writing to `raw`, outside the project: ask every time, or
+/// refuse a place from [`forbidden_outside`].
+fn outside_decision(ctx: &ToolContext, raw: &str) -> Decision {
+    match resolve_outside(ctx, raw) {
+        Some(p) if forbidden_outside(&p, ctx) => Decision::Deny,
+        Some(_) => Decision::AskOutside,
+        // A variable we can't see through: ask, showing it as written.
+        None => Decision::AskOutside,
+    }
+}
+
+/// What a build-hat shell segment's outside paths call for: nothing
+/// (`Allow`), a question every time, or a refusal. Reading outside the
+/// project is an ordinary question; writing there always asks.
+fn outside_segment(prog: &str, words: &[String], ctx: &ToolContext) -> Decision {
+    let mut outside = false;
+    let mut writes_outside = false;
+    let mut expect_redirect = false;
+    for w in words.iter().skip(1) {
+        let t = w.trim_start_matches(|c: char| c.is_ascii_digit());
+        if expect_redirect {
+            expect_redirect = false;
+            if w == "/dev/null" {
+                continue;
+            }
+            if resolve(ctx, w).is_none() {
+                if outside_decision(ctx, w) == Decision::Deny {
+                    return Decision::Deny;
+                }
+                writes_outside = true;
+            }
+            continue;
+        }
+        if t == ">" || t == ">>" || t == ">|" {
+            expect_redirect = true;
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix(">>").or_else(|| t.strip_prefix('>')) {
+            let rest = rest.trim_start_matches('|');
+            if !rest.is_empty()
+                && !rest.starts_with('&')
+                && rest != "/dev/null"
+                && resolve(ctx, rest).is_none()
+            {
+                if outside_decision(ctx, rest) == Decision::Deny {
+                    return Decision::Deny;
+                }
+                writes_outside = true;
+            }
+            continue;
+        }
+        if w.starts_with('-') {
+            continue;
+        }
+        let pathish = looks_like_path(w)
+            || w.starts_with('~')
+            || w.contains("$HOME")
+            || w.contains("${HOME}");
+        if !pathish || resolve(ctx, w).is_some() {
+            continue;
+        }
+        let read_only = READ_ONLY.contains(&prog) || READERS.contains(&prog);
+        match resolve_outside(ctx, w) {
+            // Even reading a key is refused; writing the system is too.
+            Some(p) if forbidden_to_read(&p, ctx) => return Decision::Deny,
+            Some(p) if !read_only && forbidden_outside(&p, ctx) => return Decision::Deny,
+            _ => outside = true,
+        }
+    }
+    let read_only = READ_ONLY.contains(&prog) || READERS.contains(&prog);
+    if writes_outside || (outside && !read_only) {
+        Decision::AskOutside
+    } else if outside {
+        Decision::Ask
+    } else {
+        Decision::Allow
+    }
+}
+
 /// A redirection target outside the workspace (`> /etc/hosts`).
 fn redirect_escapes(words: &[String], ctx: &ToolContext) -> Option<String> {
     let mut expect = false;
@@ -866,6 +1088,81 @@ mod tests {
             Decision::Deny,
             "secrets stay secret"
         );
+    }
+
+    /// The build hat may write outside the project only by asking every
+    /// time, and never into keys, credentials, shell startup files, or the
+    /// system, however the path is spelled.
+    #[test]
+    fn the_build_hat_asks_before_writing_outside_the_project() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        let write = |role, path: &str| {
+            decide(
+                "write",
+                &json!({"path": path, "content": "x"}),
+                &ctx_for(role, d),
+            )
+        };
+        assert_eq!(
+            write(Role::SoloBuild, "/tmp/ryter-scratch/notes.txt"),
+            Decision::AskOutside
+        );
+        for never in [
+            "~/.ssh/authorized_keys",
+            "$HOME/.ssh/config",
+            "~/.ryter/keys/openrouter",
+            "~/.bashrc",
+            "~/.config/gh/hosts.yml",
+            "/etc/hosts",
+            "/usr/local/bin/x",
+            "../../../../../../etc/passwd",
+        ] {
+            assert_eq!(write(Role::SoloBuild, never), Decision::Deny, "{never}");
+        }
+        // Inside stays an ordinary question.
+        assert_eq!(write(Role::SoloBuild, "src/a.rs"), Decision::Ask);
+        // No other role writes outside at all.
+        for role in [
+            Role::Builder,
+            Role::SoloPlan,
+            Role::SoloReview,
+            Role::Orchestrator,
+        ] {
+            assert_eq!(
+                write(role, "/tmp/ryter-scratch/notes.txt"),
+                Decision::Deny,
+                "{role:?}"
+            );
+        }
+        let sh = |cmd: &str| bash(cmd, Role::SoloBuild, d);
+        assert_eq!(sh("mkdir -p /tmp/ryter-scratch"), Decision::AskOutside);
+        assert_eq!(sh("python3 -m venv /tmp/ryter-venv"), Decision::AskOutside);
+        assert_eq!(sh("echo x > /tmp/ryter-scratch/f"), Decision::AskOutside);
+        assert_eq!(
+            sh("ls /tmp"),
+            Decision::Ask,
+            "reading outside is an ordinary question"
+        );
+        assert_eq!(
+            sh("cat /etc/os-release"),
+            Decision::Ask,
+            "reading the system is fine"
+        );
+        assert_eq!(sh("ls /"), Decision::Ask);
+        assert_eq!(sh("touch /etc/x"), Decision::Deny, "writing it is not");
+        assert_eq!(sh("echo x >> ~/.bashrc"), Decision::Deny);
+        assert_eq!(sh("cat ~/.ssh/id_rsa"), Decision::Deny);
+        assert_eq!(sh("cp key.pem ~/.ssh/"), Decision::Deny);
+        assert_eq!(sh("rm -rf /tmp/ryter-scratch"), Decision::AskOutside);
+        assert_eq!(
+            sh("cargo test 2>/dev/null"),
+            Decision::Ask,
+            "/dev/null is nowhere"
+        );
+        // Other roles: unchanged.
+        assert_eq!(bash("echo x > /tmp/f", Role::Auditor, d), Decision::Deny);
+        assert_eq!(bash("echo x > /tmp/f", Role::Builder, d), Decision::Deny);
     }
 
     /// Solo mode works in the user's own tree: build asks before changing
