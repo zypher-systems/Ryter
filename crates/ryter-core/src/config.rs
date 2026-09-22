@@ -57,6 +57,12 @@ pub struct Config {
     /// `auditor`), overriding [`reasoning_effort`]'s defaults.
     #[serde(default)]
     pub reasoning_effort: BTreeMap<String, String>,
+    /// `[model_reasoning]`: the user's reasoning level per model id, set in
+    /// the model picker, the crew builder, or `/crew` (saved to
+    /// `~/.ryter/reasoning.toml`). Wins over the role default wherever the
+    /// model is used.
+    #[serde(default)]
+    pub model_reasoning: BTreeMap<String, String>,
     /// Non-fatal load warnings (unknown `[ui]` keys). Never serialized.
     #[serde(skip)]
     pub warnings: Vec<String>,
@@ -83,6 +89,7 @@ impl Default for Config {
             features: FeaturesConfig::default(),
             ui: UiConfig::default(),
             reasoning_effort: BTreeMap::new(),
+            model_reasoning: BTreeMap::new(),
             warnings: Vec::new(),
         }
     }
@@ -674,6 +681,7 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
     apply_mcp_file(&mut cfg, &home.join("mcp.toml"));
     apply_hooks_file(&mut cfg, &home.join("hooks.toml"));
     apply_connections_file(&mut cfg, &home.join("connections.toml"));
+    apply_model_reasoning_file(&mut cfg, &model_reasoning_path(home));
     validate(&cfg)?;
     Ok(cfg)
 }
@@ -735,6 +743,63 @@ fn crew_overrides(specialists: &BTreeMap<String, RoleModel>) -> BTreeMap<String,
 }
 
 /// Persist the live crew assignment (does not rewrite `config.toml`).
+/// `~/.ryter/reasoning.toml`: reasoning level per model, set in the TUI.
+pub fn model_reasoning_path(home: &Path) -> PathBuf {
+    home.join("reasoning.toml")
+}
+
+fn apply_model_reasoning_file(cfg: &mut Config, path: &Path) {
+    let Ok(text) = fs::read_to_string(path) else {
+        return;
+    };
+    if let Ok(map) = toml::from_str::<BTreeMap<String, String>>(&text) {
+        cfg.model_reasoning.extend(map);
+    }
+}
+
+/// Save the per-model reasoning levels chosen in the TUI.
+pub fn save_model_reasoning(home: &Path, levels: &BTreeMap<String, String>) -> Result<()> {
+    fs::create_dir_all(home).map_err(|e| Error::Config(e.to_string()))?;
+    let body = toml::to_string(levels).map_err(|e| Error::Config(e.to_string()))?;
+    fs::write(model_reasoning_path(home), body).map_err(|e| Error::Config(e.to_string()))
+}
+
+/// The reasoning choices in the order `Tab` steps through them. `None` is
+/// "auto": Ryter picks by role.
+pub const REASONING_CYCLE: [Option<&str>; 5] = [
+    None,
+    Some("low"),
+    Some("medium"),
+    Some("high"),
+    Some("default"),
+];
+
+/// The next (`forward`) or previous choice after `current`.
+pub fn cycle_reasoning(current: Option<&str>, forward: bool) -> Option<String> {
+    let i = REASONING_CYCLE
+        .iter()
+        .position(|c| *c == current)
+        .unwrap_or(0);
+    let n = REASONING_CYCLE.len();
+    let j = if forward {
+        (i + 1) % n
+    } else {
+        (i + n - 1) % n
+    };
+    REASONING_CYCLE[j].map(str::to_string)
+}
+
+/// A choice for people: `auto`, `low`, `medium`, `high`, `model's own`.
+pub fn reasoning_label(choice: Option<&str>) -> &'static str {
+    match choice {
+        None => "auto",
+        Some("low") => "low",
+        Some("medium") => "medium",
+        Some("high") => "high",
+        Some(_) => "model's own",
+    }
+}
+
 pub fn save_crew(home: &Path, specialists: &BTreeMap<String, RoleModel>) -> Result<()> {
     fs::create_dir_all(home).map_err(|e| Error::Config(e.to_string()))?;
     let map = crew_overrides(specialists);
@@ -1107,6 +1172,7 @@ struct ConfigFile {
     features: Option<FeaturesConfig>,
     ui: Option<UiFile>,
     reasoning_effort: BTreeMap<String, String>,
+    model_reasoning: BTreeMap<String, String>,
 }
 
 /// Sparse `[ui]` overlay: only keys present in the file win.
@@ -1191,6 +1257,9 @@ impl ConfigFile {
         }
         for (k, v) in self.reasoning_effort {
             cfg.reasoning_effort.insert(k, v);
+        }
+        for (k, v) in self.model_reasoning {
+            cfg.model_reasoning.insert(k, v);
         }
         if let Some(s) = self.subagents {
             cfg.subagents = s;
@@ -1449,16 +1518,35 @@ pub fn store_secret_at(home: &Path, connection: &str, secret: &str) -> Result<Se
 /// tokens before the first tool call; `medium` took 7s, `high` 15s.
 /// Planning and design get `high`; everything that acts gets `medium`.
 /// `[reasoning_effort] <role> = "default"` sends nothing, as before.
-pub fn reasoning_effort(cfg: Option<&Config>, role: crate::role::Role) -> Option<String> {
-    effort_for(cfg.map(|c| &c.reasoning_effort), role)
+pub fn reasoning_effort(
+    cfg: Option<&Config>,
+    role: crate::role::Role,
+    model: &str,
+) -> Option<String> {
+    effort_for(
+        cfg.map(|c| &c.reasoning_effort),
+        cfg.map(|c| &c.model_reasoning),
+        role,
+        model,
+    )
 }
 
-/// [`reasoning_effort`] from the `[reasoning_effort]` table alone.
+/// [`reasoning_effort`] from the two tables. The user's level for this
+/// model wins; then a per-role override; then the role default.
 pub fn effort_for(
     overrides: Option<&BTreeMap<String, String>>,
+    models: Option<&BTreeMap<String, String>>,
     role: crate::role::Role,
+    model: &str,
 ) -> Option<String> {
     use crate::role::Role;
+    if let Some(v) = models.and_then(|m| m.get(model)) {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "default" | "none" | "off" => return None,
+            v @ ("low" | "medium" | "high") => return Some(v.to_string()),
+            _ => {}
+        }
+    }
     let key = match role {
         Role::Orchestrator => "lead",
         r => r.as_str(),
@@ -2138,12 +2226,24 @@ mod tests {
     #[test]
     fn reasoning_effort_by_role_with_overrides() {
         use crate::role::Role;
-        assert_eq!(effort_for(None, Role::SoloBuild).as_deref(), Some("medium"));
-        assert_eq!(effort_for(None, Role::SoloPlan).as_deref(), Some("high"));
-        assert_eq!(effort_for(None, Role::Architect).as_deref(), Some("high"));
-        assert_eq!(effort_for(None, Role::Builder).as_deref(), Some("medium"));
         assert_eq!(
-            effort_for(None, Role::Orchestrator).as_deref(),
+            effort_for(None, None, Role::SoloBuild, "m").as_deref(),
+            Some("medium")
+        );
+        assert_eq!(
+            effort_for(None, None, Role::SoloPlan, "m").as_deref(),
+            Some("high")
+        );
+        assert_eq!(
+            effort_for(None, None, Role::Architect, "m").as_deref(),
+            Some("high")
+        );
+        assert_eq!(
+            effort_for(None, None, Role::Builder, "m").as_deref(),
+            Some("medium")
+        );
+        assert_eq!(
+            effort_for(None, None, Role::Orchestrator, "m").as_deref(),
             Some("medium")
         );
         let mut m = BTreeMap::new();
@@ -2151,15 +2251,68 @@ mod tests {
         m.insert("lead".to_string(), "default".to_string());
         m.insert("review".to_string(), "bogus".to_string());
         assert_eq!(
-            effort_for(Some(&m), Role::SoloBuild).as_deref(),
+            effort_for(Some(&m), None, Role::SoloBuild, "m").as_deref(),
             Some("low")
         );
-        assert_eq!(effort_for(Some(&m), Role::Orchestrator), None);
+        assert_eq!(effort_for(Some(&m), None, Role::Orchestrator, "m"), None);
         assert_eq!(
-            effort_for(Some(&m), Role::SoloReview).as_deref(),
+            effort_for(Some(&m), None, Role::SoloReview, "m").as_deref(),
             Some("medium"),
             "an unknown value falls back to the default"
         );
+    }
+
+    /// The user's level for a model wins over the role, wherever the model
+    /// runs; "default" sends nothing; an unset model falls back to the role.
+    #[test]
+    fn a_models_reasoning_level_wins() {
+        use crate::role::Role;
+        let mut models = BTreeMap::new();
+        models.insert("z-ai/glm-5.3-flashx".to_string(), "low".to_string());
+        models.insert("anthropic/claude-opus-5".to_string(), "default".to_string());
+        let m = Some(&models);
+        assert_eq!(
+            effort_for(None, m, Role::SoloPlan, "z-ai/glm-5.3-flashx").as_deref(),
+            Some("low")
+        );
+        assert_eq!(
+            effort_for(None, m, Role::Architect, "anthropic/claude-opus-5"),
+            None
+        );
+        assert_eq!(
+            effort_for(None, m, Role::SoloPlan, "x-ai/grok-4.6").as_deref(),
+            Some("high")
+        );
+        let mut roles = BTreeMap::new();
+        roles.insert("build".to_string(), "high".to_string());
+        assert_eq!(
+            effort_for(Some(&roles), m, Role::SoloBuild, "z-ai/glm-5.3-flashx").as_deref(),
+            Some("low"),
+            "the model's level beats the role override"
+        );
+    }
+
+    #[test]
+    fn tab_cycles_every_reasoning_choice_and_back() {
+        let mut c: Option<String> = None;
+        let mut seen = Vec::new();
+        for _ in 0..REASONING_CYCLE.len() {
+            seen.push(reasoning_label(c.as_deref()));
+            c = cycle_reasoning(c.as_deref(), true);
+        }
+        assert_eq!(seen, ["auto", "low", "medium", "high", "model's own"]);
+        assert_eq!(c, None, "back to auto");
+        assert_eq!(cycle_reasoning(None, false).as_deref(), Some("default"));
+    }
+
+    #[test]
+    fn model_reasoning_is_saved_and_loaded() {
+        let dir = TempDir::new().unwrap();
+        let mut levels = BTreeMap::new();
+        levels.insert("z-ai/glm-5.3-flashx".to_string(), "medium".to_string());
+        save_model_reasoning(dir.path(), &levels).unwrap();
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(cfg.model_reasoning, levels);
     }
 
     #[test]

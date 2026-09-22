@@ -254,7 +254,11 @@ impl Agent {
                 // spent the whole budget drafting code in its reasoning and
                 // returned nothing.
                 max_tokens: Some(CONVERSATION_MAX_OUTPUT),
-                reasoning: crate::config::reasoning_effort(self.cfg.as_ref(), self.role),
+                reasoning: crate::config::reasoning_effort(
+                    self.cfg.as_ref(),
+                    self.role,
+                    &self.model,
+                ),
             };
 
             let mut stream = tokio::select! {
@@ -540,6 +544,10 @@ impl Agent {
                 self.cfg
                     .as_ref()
                     .map(|c| c.reasoning_effort.clone())
+                    .unwrap_or_default(),
+                self.cfg
+                    .as_ref()
+                    .map(|c| c.model_reasoning.clone())
                     .unwrap_or_default(),
             );
         if let Some(sink) = &self.sink {
@@ -1792,6 +1800,55 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(cwd.path().join("README.md")).unwrap(),
             "repo\n"
+        );
+    }
+
+    /// Records the reasoning level of every request it gets.
+    #[derive(Default)]
+    struct SeesReasoning {
+        seen: Mutex<Vec<Option<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for SeesReasoning {
+        async fn stream(&self, req: CompletionRequest) -> Result<crate::llm::DeltaStream> {
+            self.seen.lock().unwrap().push(req.reasoning.clone());
+            Ok(Box::pin(futures_util::stream::iter(
+                vec![StreamDelta::Text("ok".into()), StreamDelta::Done]
+                    .into_iter()
+                    .map(Ok),
+            )))
+        }
+        async fn list_models(&self) -> Result<Vec<crate::llm::ModelInfo>> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// The level the user picks for a model is what goes on the wire; with
+    /// none picked, the hat decides.
+    #[tokio::test]
+    async fn a_models_chosen_reasoning_reaches_the_request() {
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![]));
+        let p = Arc::new(SeesReasoning::default());
+        agent.provider = p.clone();
+        agent.role = Role::SoloPlan;
+        agent.ctx.role = Role::SoloPlan;
+        let mut cfg = crate::config::Config::default();
+        agent.cfg = Some(cfg.clone());
+        agent.turn("plan").await.unwrap();
+        cfg.model_reasoning
+            .insert(agent.model.clone(), "low".into());
+        agent.cfg = Some(cfg.clone());
+        agent.turn("plan again").await.unwrap();
+        cfg.model_reasoning
+            .insert(agent.model.clone(), "default".into());
+        agent.cfg = Some(cfg);
+        agent.turn("and again").await.unwrap();
+        let seen = p.seen.lock().unwrap().clone();
+        assert_eq!(
+            seen,
+            vec![Some("high".to_string()), Some("low".to_string()), None],
+            "auto (plan = high), the user's low, then the model's own"
         );
     }
 

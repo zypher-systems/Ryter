@@ -147,6 +147,13 @@ pub enum Action {
     /// Set the session budget in USD; `0` turns it off. Applies now and is
     /// saved as the default.
     SetBudget(f64),
+    /// Set a model's reasoning level (`None` is auto), wherever it runs.
+    SetModelReasoning {
+        /// Model id.
+        model: String,
+        /// `low` / `medium` / `high` / `default`, or `None` for auto.
+        level: Option<String>,
+    },
     /// Switch hats (solo mode), or to the crew lead (`Orchestrator`).
     SetMode(ryter_core::Role),
     /// `/crew` from solo mode: the crew builder first time, then crew mode.

@@ -54,6 +54,14 @@ impl Crew {
     }
 }
 
+/// The model a crew role runs on: its own, or the lead's by default.
+fn role_model(view: &View, role: &str) -> String {
+    view.specialists
+        .get(role)
+        .and_then(|r| r.model.clone())
+        .unwrap_or_else(|| view.model.clone())
+}
+
 impl Crew {
     /// Read every catalog, then show `tier`'s crew for `y`.
     fn preview(&mut self, tier: Tier) -> Outcome {
@@ -79,7 +87,10 @@ impl Panel for Crew {
 
     fn legend(&self, _view: &View) -> String {
         match &self.mode {
-            Mode::Browse => "enter assign/apply · b crew builder · r reset · d delete · esc".into(),
+            Mode::Browse => {
+                "enter assign/apply · tab reasoning · b crew builder · r reset · d delete · esc"
+                    .into()
+            }
             Mode::Suggesting(_) => "reading every model catalog you can reach… · esc".into(),
             Mode::Suggested(_, t) if t.auditor.is_some() => {
                 "y apply (current crew kept as a preset) · esc".into()
@@ -172,16 +183,17 @@ impl Panel for Crew {
         ));
         for (i, role) in CREW_ROLES.iter().enumerate() {
             let label = crew_role_label(view, role);
+            let reasoning = view.reasoning_label(&role_model(view, role));
             let status = if view.specialists.get(*role).is_some_and(|r| r.is_override()) {
-                "override"
+                format!("{reasoning} · override")
             } else {
-                ""
+                reasoning.to_string()
             };
             lines.push(widgets::list_row(
                 "●",
                 role,
                 &label,
-                status,
+                &status,
                 i == self.selected,
                 w,
                 theme,
@@ -356,6 +368,15 @@ impl Panel for Crew {
                     role: String::new(),
                 },
             ),
+            // How hard this role's model reasons, wherever it runs.
+            KeyCode::Tab | KeyCode::BackTab if self.selected < CREW_ROLES.len() => {
+                let model = role_model(view, CREW_ROLES[self.selected]);
+                let level = ryter_core::config::cycle_reasoning(
+                    view.model_reasoning.get(&model).map(String::as_str),
+                    key.code == KeyCode::Tab,
+                );
+                Outcome::Act(Action::SetModelReasoning { model, level })
+            }
             KeyCode::Char('r') if self.selected < CREW_ROLES.len() => {
                 Outcome::Act(Action::ResetCrewRole(CREW_ROLES[self.selected].to_string()))
             }

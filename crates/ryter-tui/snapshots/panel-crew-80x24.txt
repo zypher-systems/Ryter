@@ -2,9 +2,9 @@
 ────────────────────────────────────────────────────────────────────────────────
  · sys╭─ crew ─────────────────────────────────────── max concurrent: 4 ─╮
    wel│ roles · b opens the crew builder: every seat, with recommendation│
-      │›● architect  default (grok-4.6)                                  │
-      │ ● builder  default (grok-4.6)                                    │
-      │ ● auditor  default (grok-4.6)                                    │
+      │›● architect  default (grok-4.6)                             auto │
+      │ ● builder  default (grok-4.6)                               auto │
+      │ ● auditor  default (grok-4.6)                               auto │
       │                                                                  │
       │ ready-made crews · picked from the models you can reach          │
       │ ▸ skiff  low cost                                  enter preview │
@@ -15,7 +15,7 @@
       │ + save preset  current assignment → ~/.ryter/crews/<name>.toml   │
       │   no presets yet                                                 │
       │                                                                  │
-      ╰─ enter assign/apply · b crew builder · r reset · d delete · esc ─╯
+      ╰─ enter assign/apply · tab reasoning · b crew builder · r reset… ─╯
 
 
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
