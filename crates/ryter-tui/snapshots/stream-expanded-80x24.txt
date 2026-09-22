@@ -3,7 +3,7 @@
  dusty                                             │╭─ model ──────────────────╮
  ▎ now implement step one                          ││ spacexai ●      grok-4.6 │
                                                    ││ ctx █░░░░░░░░░░░░░   5%  │
- · read_file  read crates/ryter-tui/src/run…  0.1s ││     12.4k / 256k tokens  │
+ · read  crates/ryter-tui/src/run/mod.rs           ││     12.4k / 256k tokens  │
                                                    ││ price unknown            │
  grok-4.6                                          ┃│ reasoning  auto · medium │
    Reading the loop now. The event loop drains     ┃╰──────────────────────────╯

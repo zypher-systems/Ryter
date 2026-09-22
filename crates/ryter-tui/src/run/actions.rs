@@ -17,10 +17,11 @@ use ryter_core::{
 use super::worker::Work;
 use crate::action::{Action, PanelId};
 use crate::activity::Verb;
-use crate::chat::{MessageKind, ToolStatus};
+use crate::chat::MessageKind;
 use crate::panel::{self, Notice, PanelEnv};
 use crate::theme::{ColorMode, Theme};
 use crate::view::{ConnRow, TodoRow, View};
+use ryter_core::AgentEvent;
 
 /// Loop-owned state the actions need besides the view.
 pub struct Ctx {
@@ -523,6 +524,18 @@ fn delete_session(view: &mut View, cx: &mut Ctx, id: &str) {
 }
 
 /// Rebuild the transcript from a saved session (`/resume`, startup).
+/// The hat note Ryter puts in front of a solo message is for the model; the
+/// chat shows what the user typed.
+fn strip_hat_note(content: &str) -> String {
+    match content.strip_prefix("[hat: ") {
+        Some(rest) => match rest.split_once("]\n\n") {
+            Some((_, typed)) => typed.to_string(),
+            None => content.to_string(),
+        },
+        None => content.to_string(),
+    }
+}
+
 pub fn fill_view_from_session(view: &mut View, session: &Session) {
     view.reset_transcript();
     view.session_id = session.meta.id.to_string();
@@ -540,7 +553,7 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
         match m.role.as_str() {
             "user" if !m.content.trim().is_empty() => {
                 view.turn += 1;
-                view.push(MessageKind::User, m.content.clone());
+                view.push(MessageKind::User, strip_hat_note(&m.content));
             }
             "assistant" => {
                 if !m.content.trim().is_empty() {
@@ -551,27 +564,41 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
                         m.content.clone(),
                     );
                 }
+                // Replay through the live path, so a resumed session reads
+                // the same as it did.
                 if let Some(calls) = &m.tool_calls {
                     for c in calls {
-                        let row = view.push(
-                            MessageKind::Tool {
-                                name: c.name.clone(),
-                                status: ToolStatus::Ok,
-                            },
-                            String::new(),
-                        );
-                        row.meta.tool_id = Some(c.id.clone());
                         let args: serde_json::Value =
                             serde_json::from_str(&c.arguments).unwrap_or(serde_json::Value::Null);
-                        row.meta.label = Some(ryter_core::tool_summary(&c.name, &args));
+                        crate::run::events::apply(
+                            view,
+                            AgentEvent::ToolCall {
+                                id: c.id.clone(),
+                                name: c.name.clone(),
+                                summary: Some(ryter_core::tool_summary(&c.name, &args)),
+                                args,
+                                role: view.mode,
+                            },
+                        );
                     }
                 }
             }
             "tool" => {
                 if let Some(id) = &m.tool_call_id {
-                    let is_err = m.content.trim_start().starts_with("error")
+                    let c = m.content.trim_start();
+                    let is_err = c.starts_with("error")
+                        || c.starts_with("denied")
+                        || m.content.contains("[exit ")
                         || m.content.contains("\"error\"");
-                    view.finish_tool(id, is_err, None);
+                    crate::run::events::apply(
+                        view,
+                        AgentEvent::ToolResult {
+                            id: id.clone(),
+                            output: m.content.clone(),
+                            is_error: is_err,
+                            duration_ms: None,
+                        },
+                    );
                 }
             }
             _ => {}

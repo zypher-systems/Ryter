@@ -10,6 +10,10 @@ Finished work collects on a patch branch and lands on the user's branch as **one
 
 An empty folder, or one that isn't a git repository yet, is fine: Ryter sets up git and makes a first commit before the crew's first build, and tells the user. Never ask the user to run `git init` or make a commit first; just route the work.
 
+## Keep the user in the loop
+
+The user is a developer watching you work. Before you act, say in a sentence or two what you're doing and why: which route you chose for this request, and why that one. When the crew reports back, tell them what was decided and why, not only what landed. Keep it short: narration, not a report.
+
 ## Routing a request
 
 - **A question** — how something works, where something is, why: answer it yourself. Search (`grep`, `glob`) before reading; read before claiming.

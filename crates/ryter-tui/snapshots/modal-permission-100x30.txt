@@ -3,7 +3,7 @@
  dusty
  ▎ now implement step one
 
- · read_file┏━ permission · bash ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓      0.1s
+ · read  cra┏━ permission · bash ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
             │ tool  bash                                                               │
  grok-4.6   │                                                                          │
    Reading t│   rm -rf target/ && cargo build --release                                │

@@ -64,6 +64,11 @@ fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
     tops.clear();
     let mut last_hint: Option<String> = None;
     for (i, msg) in view.messages.iter().enumerate() {
+        // A model step that only called tools streams no text: nothing to
+        // show, not an empty header.
+        if matches!(msg.kind, MessageKind::Assistant { .. }) && msg.body.trim().is_empty() {
+            continue;
+        }
         let prev = i.checked_sub(1).map(|p| &view.messages[p]);
         let continuation = prev.is_some_and(|p| p.same_speaker(msg));
         let both_tools = prev.is_some_and(|p| {

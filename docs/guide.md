@@ -126,6 +126,8 @@ Ryter starts in solo mode: one model in your project. `Tab` switches its hat (bu
 | **plan** | read, search, run read-only commands, write `notes/` and project memory | edit source, run anything that changes the project |
 | **review** | read, run the tests and linters, read-only git | write anything, not even by redirect |
 
+**What the chat shows.** The model narrates as it works: what it's doing next and why, each choice between approaches with its reason, and what it thinks went wrong when something fails. Each tool step shows what came of it, measured by Ryter: `new · 48 lines`, `rewrote · 76 lines (was 89)`, an edit's changed lines, `✓ 13 passed`, or `✗ exit 1` with the cause. Reads fold into one line, and a divider closes each turn that did work (`6 files (3 new, 3 changed, +153 −15) · 9 commands (9 ok) · 2:41`).
+
 **Outside the project.** The build hat can write elsewhere on your machine, such as `/tmp` or another folder, but only by asking each time. The prompt says "outside the project" and offers only `y` (allow once) or `n`. "Allow all" and `--always-approve` cover the project, not the rest of the machine, so headless refuses these writes.
 
 Some places are refused however they're asked for:

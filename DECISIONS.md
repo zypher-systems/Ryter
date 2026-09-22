@@ -2,6 +2,14 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-22 — The chat narrates the work, and measures every step
+- **By:** lead
+- **Decision:** The solo prompt (and the lead's) asks for narration: what's next and why before each group of actions; each choice between approaches, and its reason, at the moment it's made; what went wrong and the next move after a failure. The chat shows each tool step with a verb and its measured outcome: `new · 48 lines`, `rewrote · 76 lines (was 89)`, an edit's changed lines, `✓ 13 passed`, or `✗ exit 1` with the cause line and tail inside the row. Lookups fold into one line, and a divider closes each working turn with files, commands, and time. The write, edit, and bash tools report what happened (created or rewrote, the lines that really changed, exit codes), so the model sees it too.
+- **Chosen vs rejected:** Rejected only richer tool rows (the first proposal): the user is a developer who wants the reasoning, not only the activity. Rejected asking the model to report files and commands: Ryter measures those exactly, so the model spends its words on why. Rejected showing an edit's quoted context as removed and re-added: in a real run `.gitignore` showed two unchanged lines as churn. Rejected the last lines of a failure alone: npm put its cause above four lines of boilerplate.
+- **Why:** "There was not much info returned in the chat… nothing more than wrote file." A 94-tool build had narration only at the end.
+- **Where:** TUI `chat/toolview.rs`, `run/events.rs` (`on_tool_call`, `on_tool_result`, turn divider), `chat/mod.rs`, `chat/layout.rs`, `run/actions.rs` (replay through the live path, `strip_hat_note`); core `tools/fs.rs` (`changed_lines`, results), `tools/shell.rs` (exit code); `prompts/solo.md`, `prompts/orchestrator.md`
+- **Residual risk:** Narration adds output tokens (a sentence or two per step). How well it's done depends on the model; test totals are recognised for common runners only.
+
 ### 2026-09-22 — The build hat asks, every time, to write outside the project
 - **By:** lead
 - **Decision:** A new gate decision, `AskOutside`, covers the build hat's writes outside the project: file tools, shell redirects, and commands with outside path arguments. It always prompts, marked "outside the project", with no "allow all"; `--always-approve` and a session's "allow all" don't satisfy it, so headless refuses. Refused whatever the prompt: credentials and secret files (read or write), and shell startup files, autostart entries, and system folders (write). `~`, `$HOME`, and `..` are resolved before judging. Reading outside is an ordinary ask. The file tools accept an approved outside path in the build hat only.

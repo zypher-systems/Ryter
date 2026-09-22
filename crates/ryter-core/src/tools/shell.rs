@@ -108,6 +108,15 @@ pub fn run_command(
     Ok(if out.status.success() {
         Run::Ok(text)
     } else {
+        // The exit code tells the model (and the chat) how it failed.
+        let how = match out.status.code() {
+            Some(c) => format!("[exit {c}]"),
+            None => "[killed by a signal]".into(),
+        };
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&how);
         Run::Failed(text)
     })
 }
