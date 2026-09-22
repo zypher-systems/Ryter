@@ -44,6 +44,10 @@ pub struct ToolContext {
     pub web: bool,
 }
 
+/// Marks a permission prompt for a write outside the project. The TUI shows
+/// such prompts with a warning and no "allow all".
+pub const OUTSIDE: &str = "· outside the project";
+
 /// Result of `execute`.
 #[derive(Debug, Clone)]
 pub struct ToolOutput {
@@ -443,6 +447,27 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
                  queue it as a task instead",
             )),
         },
+        // Outside the project: a person answers every time. "Allow all" and
+        // --always-approve cover the project, not the rest of the machine.
+        Decision::AskOutside => match &ctx.user_io {
+            Some(io) => {
+                let summary = crate::user_io::summary_args(name, args);
+                match io.permission(&format!("{name} {OUTSIDE}"), &summary) {
+                    crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
+                        run_with_hooks(name, args, ctx)
+                    }
+                    crate::user_io::Permission::Deny => Ok(ToolOutput::err(format!(
+                        "denied by user: {name} {summary} (outside the project). Work inside \
+                         the project instead, or ask the user where it should go"
+                    ))),
+                }
+            }
+            None => Ok(ToolOutput::err(format!(
+                "denied: {name} writes outside the project, which needs a person's yes each \
+                 time, and nobody can be asked here (headless). --always-approve covers the \
+                 project only. Work inside the project instead"
+            ))),
+        },
         Decision::Ask if ctx.always_approve || ctx.sticky_approve.load(Ordering::SeqCst) => {
             run_with_hooks(name, args, ctx)
         }
@@ -831,6 +856,41 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.path().join("config.toml")).unwrap(),
             "retries = 3\n"
+        );
+    }
+
+    /// "Allow all" and --always-approve don't reach outside the project:
+    /// headless says so; a person's yes writes exactly there.
+    #[test]
+    fn outside_writes_need_a_yes_every_time() {
+        let dir = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let target = outside.path().join("scratch.txt");
+        let args = json!({"path": target.to_string_lossy(), "content": "hi"});
+        let mut c = ctx(Role::SoloBuild, dir.path());
+        c.always_approve = true;
+        c.sticky_approve.store(true, Ordering::SeqCst);
+        let out = gated_execute("write", &args, &c).unwrap();
+        assert!(
+            out.is_error && out.text.contains("outside the project"),
+            "{out:?}"
+        );
+        assert!(!target.exists());
+        let (io, rx) = crate::user_io::UserIo::pair();
+        c.user_io = Some(io);
+        let asked = std::thread::spawn(move || match rx.recv().unwrap() {
+            crate::user_io::UserRequest::Permission { tool, reply, .. } => {
+                let _ = reply.send(crate::user_io::Permission::Allow);
+                tool
+            }
+            _ => String::new(),
+        });
+        let out = gated_execute("write", &args, &c).unwrap();
+        assert!(!out.is_error, "{out:?}");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "hi");
+        assert!(
+            asked.join().unwrap().ends_with(OUTSIDE),
+            "the prompt says where"
         );
     }
 
