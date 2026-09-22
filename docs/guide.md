@@ -30,6 +30,8 @@ SpaceXAI and OpenRouter are compiled in as equals. Other OpenAI-compatible or An
 
 Credential order per connection: TOML `api_key` → `env_key` → the stored key → well-known env (`OPENROUTER_API_KEY`, `XAI_API_KEY`).
 
+**Reasoning.** Requests to OpenRouter always carry a reasoning effort: `high` for the plan hat and the architect, `medium` for every role that acts. Without one, some models think for minutes before acting. `[reasoning_effort]` in `config.toml` overrides it per role (`build`, `plan`, `review`, `lead`, `architect`, `builder`, `auditor`) with `low`, `medium`, `high`, or `default` (send nothing).
+
 Where a saved key (`/provider` set-key, `ryter connections set-key`) is stored: on **Linux**, `~/.ryter/keys/<connection>`, readable only by you (mode 0600). Linux's kernel keyring is in memory and doesn't survive a reboot, so it isn't used to store keys. On **macOS**, the keychain (`service=ryter`, `account=connection:<name>`), falling back to the file if the keychain refuses.
 
 If `config.toml` contains `api_key` and is group/world-readable, Ryter refuses to start until the mode is `0600`.

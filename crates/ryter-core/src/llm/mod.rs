@@ -98,6 +98,11 @@ pub struct CompletionRequest {
     pub tools: Vec<ToolSpec>,
     /// Max output tokens.
     pub max_tokens: Option<u32>,
+    /// Reasoning effort (`low`, `medium`, `high`), sent to providers that
+    /// take it (OpenRouter). `None` sends nothing, and then some models
+    /// reason without limit: glm-5.3-flashx spent 191s and ~27k tokens
+    /// thinking before its first tool call.
+    pub reasoning: Option<String>,
 }
 
 /// An entry from `GET /models`.
@@ -383,6 +388,7 @@ mod tests {
                 messages: vec![],
                 tools: vec![],
                 max_tokens: None,
+                reasoning: None,
             })
             .await
             .unwrap();

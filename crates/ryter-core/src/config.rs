@@ -52,6 +52,11 @@ pub struct Config {
     /// TUI presentation knobs (`[ui]`).
     #[serde(default)]
     pub ui: UiConfig,
+    /// `[reasoning_effort]`: `low` / `medium` / `high` / `default` per role
+    /// (`build`, `plan`, `review`, `lead`, `architect`, `builder`,
+    /// `auditor`), overriding [`reasoning_effort`]'s defaults.
+    #[serde(default)]
+    pub reasoning_effort: BTreeMap<String, String>,
     /// Non-fatal load warnings (unknown `[ui]` keys). Never serialized.
     #[serde(skip)]
     pub warnings: Vec<String>,
@@ -77,6 +82,7 @@ impl Default for Config {
             sandbox: SandboxConfig::default(),
             features: FeaturesConfig::default(),
             ui: UiConfig::default(),
+            reasoning_effort: BTreeMap::new(),
             warnings: Vec::new(),
         }
     }
@@ -1100,6 +1106,7 @@ struct ConfigFile {
     sandbox: Option<SandboxConfig>,
     features: Option<FeaturesConfig>,
     ui: Option<UiFile>,
+    reasoning_effort: BTreeMap<String, String>,
 }
 
 /// Sparse `[ui]` overlay: only keys present in the file win.
@@ -1181,6 +1188,9 @@ impl ConfigFile {
         }
         for (k, v) in self.specialists {
             cfg.specialists.insert(k, v);
+        }
+        for (k, v) in self.reasoning_effort {
+            cfg.reasoning_effort.insert(k, v);
         }
         if let Some(s) = self.subagents {
             cfg.subagents = s;
@@ -1431,6 +1441,42 @@ pub fn store_secret_at(home: &Path, connection: &str, secret: &str) -> Result<Se
     // until the next reboot, with the old key.
     keyring_delete(connection);
     Ok(SecretStore::File)
+}
+
+/// How hard a role's model should reason before it acts. Always sent, since
+/// sending nothing lets some models reason without limit: measured on
+/// glm-5.3-flashx with a real plan, no setting took 191s and ~27k reasoning
+/// tokens before the first tool call; `medium` took 7s, `high` 15s.
+/// Planning and design get `high`; everything that acts gets `medium`.
+/// `[reasoning_effort] <role> = "default"` sends nothing, as before.
+pub fn reasoning_effort(cfg: Option<&Config>, role: crate::role::Role) -> Option<String> {
+    effort_for(cfg.map(|c| &c.reasoning_effort), role)
+}
+
+/// [`reasoning_effort`] from the `[reasoning_effort]` table alone.
+pub fn effort_for(
+    overrides: Option<&BTreeMap<String, String>>,
+    role: crate::role::Role,
+) -> Option<String> {
+    use crate::role::Role;
+    let key = match role {
+        Role::Orchestrator => "lead",
+        r => r.as_str(),
+    };
+    let chosen = overrides
+        .and_then(|m| m.get(key))
+        .map(|v| v.trim().to_ascii_lowercase());
+    match chosen.as_deref() {
+        Some("default" | "none" | "off" | "") => None,
+        Some(v @ ("low" | "medium" | "high")) => Some(v.to_string()),
+        _ => Some(
+            match role {
+                Role::SoloPlan | Role::Architect => "high",
+                _ => "medium",
+            }
+            .to_string(),
+        ),
+    }
 }
 
 /// Last provider + model the user picked (TUI or CLI).
@@ -2085,6 +2131,35 @@ mod tests {
         // Elsewhere, the saved default holds.
         let cfg = load_at(home.path(), None, false).unwrap();
         assert_eq!(cfg.spend.session_budget_usd, 9.0);
+    }
+
+    /// Planning reasons hard; acting reasons enough; "default" sends
+    /// nothing, as before.
+    #[test]
+    fn reasoning_effort_by_role_with_overrides() {
+        use crate::role::Role;
+        assert_eq!(effort_for(None, Role::SoloBuild).as_deref(), Some("medium"));
+        assert_eq!(effort_for(None, Role::SoloPlan).as_deref(), Some("high"));
+        assert_eq!(effort_for(None, Role::Architect).as_deref(), Some("high"));
+        assert_eq!(effort_for(None, Role::Builder).as_deref(), Some("medium"));
+        assert_eq!(
+            effort_for(None, Role::Orchestrator).as_deref(),
+            Some("medium")
+        );
+        let mut m = BTreeMap::new();
+        m.insert("build".to_string(), "Low".to_string());
+        m.insert("lead".to_string(), "default".to_string());
+        m.insert("review".to_string(), "bogus".to_string());
+        assert_eq!(
+            effort_for(Some(&m), Role::SoloBuild).as_deref(),
+            Some("low")
+        );
+        assert_eq!(effort_for(Some(&m), Role::Orchestrator), None);
+        assert_eq!(
+            effort_for(Some(&m), Role::SoloReview).as_deref(),
+            Some("medium"),
+            "an unknown value falls back to the default"
+        );
     }
 
     #[test]

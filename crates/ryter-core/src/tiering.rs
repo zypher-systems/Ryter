@@ -69,6 +69,7 @@ pub async fn probe(provider: &dyn crate::llm::Provider, model: &str) -> Result<(
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         }],
         max_tokens: Some(16),
+        reasoning: None,
     };
     let run = async {
         let mut stream = provider.stream(req).await.map_err(|e| e.to_string())?;

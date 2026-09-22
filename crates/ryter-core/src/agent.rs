@@ -254,6 +254,7 @@ impl Agent {
                 // spent the whole budget drafting code in its reasoning and
                 // returned nothing.
                 max_tokens: Some(CONVERSATION_MAX_OUTPUT),
+                reasoning: crate::config::reasoning_effort(self.cfg.as_ref(), self.role),
             };
 
             let mut stream = tokio::select! {
@@ -534,7 +535,13 @@ impl Agent {
             .unwrap_or_default();
         let mut meter = Meter::new(self.book.clone(), self.caps())
             .with_free(free)
-            .with_log(self.session.spend_path());
+            .with_log(self.session.spend_path())
+            .with_efforts(
+                self.cfg
+                    .as_ref()
+                    .map(|c| c.reasoning_effort.clone())
+                    .unwrap_or_default(),
+            );
         if let Some(sink) = &self.sink {
             meter = meter.with_sink(sink.clone());
         }

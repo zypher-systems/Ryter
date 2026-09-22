@@ -159,11 +159,19 @@ impl HttpProvider {
     }
 
     fn body(&self, req: &CompletionRequest) -> Value {
-        match self.backend {
+        let mut body = match self.backend {
             Backend::ChatCompletions => chat_body(req),
             Backend::Responses => responses_body(req),
             Backend::Messages => messages_body(req),
+        };
+        // OpenRouter normalizes one reasoning setting across its models.
+        // Other OpenAI-compatible servers may reject an unknown field.
+        if self.kind == "openrouter" {
+            if let Some(effort) = &req.reasoning {
+                body["reasoning"] = json!({ "effort": effort });
+            }
         }
+        body
     }
 }
 
@@ -649,6 +657,38 @@ fn parse_models_json(text: &str) -> Result<Vec<ModelInfo>> {
 
 #[cfg(test)]
 mod tests {
+
+    /// OpenRouter gets the reasoning setting; other servers never see a field
+    /// they may reject.
+    #[test]
+    fn reasoning_effort_goes_to_openrouter_only() {
+        let req = CompletionRequest {
+            model: "z-ai/glm-5.3-flashx".into(),
+            system: None,
+            messages: vec![],
+            tools: vec![],
+            max_tokens: Some(16),
+            reasoning: Some("medium".into()),
+        };
+        let or = crate::config::connection_template("openrouter").unwrap();
+        let body = HttpProvider::new(&or, "k".into()).body(&req);
+        assert_eq!(body["reasoning"]["effort"], "medium");
+        let local = crate::config::connection_template("ollama").unwrap();
+        let body = HttpProvider::new(&local, String::new()).body(&req);
+        assert!(body.get("reasoning").is_none(), "{body}");
+        // Nothing chosen, nothing sent.
+        let none = CompletionRequest {
+            reasoning: None,
+            ..req
+        };
+        assert!(
+            HttpProvider::new(&or, "k".into())
+                .body(&none)
+                .get("reasoning")
+                .is_none()
+        );
+    }
+
     use super::*;
 
     use crate::llm::{AssistantToolCall, Message};
@@ -693,6 +733,7 @@ mod tests {
                 parameters: json!({"type": "object"}),
             }],
             max_tokens: Some(64),
+            reasoning: None,
         }
     }
 
@@ -788,6 +829,7 @@ mod tests {
             ],
             tools: vec![],
             max_tokens: None,
+            reasoning: None,
         };
         let body = messages_body(&req);
         let ms = body["messages"].as_array().unwrap();
@@ -811,6 +853,7 @@ mod tests {
             ],
             tools: vec![],
             max_tokens: None,
+            reasoning: None,
         };
         let body = messages_body(&req);
         let ms = body["messages"].as_array().unwrap();
@@ -832,6 +875,7 @@ mod tests {
             }],
             tools: vec![],
             max_tokens: None,
+            reasoning: None,
         };
         let body = messages_body(&req);
         assert_eq!(body["messages"][0]["content"][0]["input"], json!({}));
