@@ -133,6 +133,13 @@ pub struct View {
     pub auditor_on: bool,
     /// Task list.
     pub todos: Vec<TodoRow>,
+    /// The chat's folded lookup row and what it has counted, while lookups
+    /// keep coming.
+    pub lookups: Option<(u64, crate::chat::toolview::Lookups)>,
+    /// What this turn has done, for its closing line.
+    pub tally: crate::chat::toolview::TurnTally,
+    /// Tool call id → (tool, target), for its result.
+    pub tool_calls: BTreeMap<String, (String, String)>,
     /// Last known token count.
     pub ctx_tokens: Option<u64>,
     /// Window used for the context bar.
@@ -307,6 +314,9 @@ impl View {
             has_key: false,
             auditor_on: true,
             todos: Vec::new(),
+            lookups: None,
+            tally: Default::default(),
+            tool_calls: BTreeMap::new(),
             ctx_tokens: None,
             ctx_window: None,
             ctx_messages: None,

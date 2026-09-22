@@ -7,6 +7,7 @@ pub mod cache;
 pub mod highlight;
 pub mod layout;
 pub mod markdown;
+pub mod toolview;
 pub mod wrap;
 
 use ratatui::style::{Color, Modifier, Style};
@@ -141,6 +142,8 @@ pub struct MessageMeta {
     pub cost: Option<f64>,
     /// Elapsed for tools / turns.
     pub duration_ms: Option<u64>,
+    /// What a tool step came to: `new · 48 lines`, `✓ 12 passed`, `✗ exit 1`.
+    pub detail: Option<String>,
     /// Secondary label: specialist task, tool summary.
     pub label: Option<String>,
     /// Provider tool-call id (to match `ToolResult`).
@@ -272,6 +275,9 @@ impl Message {
         let mut parts: Vec<String> = Vec::new();
         match &self.kind {
             MessageKind::Tool { .. } => {
+                if let Some(d) = self.meta.detail.as_ref().filter(|d| !d.is_empty()) {
+                    parts.push(d.clone());
+                }
                 if let Some(ms) = self.meta.duration_ms {
                     parts.push(fmt_duration(ms));
                 }
@@ -381,7 +387,27 @@ pub fn render_message(msg: &Message, opts: &RenderOpts, theme: Theme) -> Vec<Lin
             };
             markdown::render(&msg.body, &md, theme)
         }
-        MessageKind::Tool { .. } | MessageKind::System { .. } => {
+        // Tool bodies: `- ` removed, `+ ` added, `! ` failure output, else plain.
+        MessageKind::Tool { .. } => msg
+            .body
+            .lines()
+            .flat_map(|line| {
+                let (text, style) = if let Some(rest) = line.strip_prefix("! ") {
+                    (rest.to_string(), theme.on_bg(theme.error))
+                } else if line.starts_with("- ") {
+                    (line.to_string(), theme.on_bg(theme.error))
+                } else if line.starts_with("+ ") {
+                    (line.to_string(), theme.on_bg(theme.success))
+                } else {
+                    (line.to_string(), theme.muted())
+                };
+                wrap::wrap_plain(&text, inner)
+                    .into_iter()
+                    .map(move |l| Line::from(Span::styled(l, style)))
+                    .collect::<Vec<_>>()
+            })
+            .collect(),
+        MessageKind::System { .. } => {
             let style = match &msg.kind {
                 MessageKind::System {
                     level: SystemLevel::Error,

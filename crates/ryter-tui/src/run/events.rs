@@ -34,22 +34,15 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
             is_error,
             duration_ms,
         } => {
-            view.finish_tool(id, *is_error, *duration_ms);
-            if *is_error {
-                let body = wrap::truncate(output.trim(), TOOL_ERROR_CHARS);
-                let body = if body.is_empty() {
-                    "tool error".to_string()
-                } else {
-                    body
-                };
-                view.error(body);
-            }
+            on_tool_result(view, id, output, *is_error, *duration_ms);
             if view.activity.busy() {
                 view.activity.verb = Verb::Thinking;
                 view.activity.current.clear();
             }
         }
         AgentEvent::TurnStarted { .. } => {
+            view.tally = Default::default();
+            view.lookups = None;
             // `R-EVT-03`: authoritative busy signal. `submit_user` already
             // started the strip for keyboard turns; MCP-driven turns land here.
             view.busy = true;
@@ -71,6 +64,21 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
             view.busy = false;
             view.cancelling = false;
             view.activity.finish(verb, Some(*tools), Some(*duration_ms));
+            // What the turn did, measured, whatever the model said about it.
+            if !view.tally.is_empty() {
+                let line = format!(
+                    "{} · {}",
+                    view.tally.line(),
+                    crate::chat::fmt_duration(*duration_ms)
+                );
+                view.push(
+                    MessageKind::System {
+                        level: crate::chat::SystemLevel::Rule,
+                    },
+                    line,
+                );
+                view.tally = Default::default();
+            }
         }
         AgentEvent::Spend {
             connection,
@@ -240,23 +248,69 @@ fn on_tool_call(
     role: Role,
     summary: Option<&str>,
 ) {
+    use crate::chat::toolview;
     let label = summary
         .map(str::to_string)
         .unwrap_or_else(|| guess_summary(name, args));
-    let m = view.push(
-        MessageKind::Tool {
-            name: name.to_string(),
-            status: ToolStatus::Running,
-        },
-        String::new(),
-    );
-    m.meta.tool_id = Some(id.to_string());
-    if !label.is_empty() {
-        m.meta.label = Some(if role == Role::Orchestrator || role.is_solo() {
+    let target = toolview::target(name, args);
+    view.tool_calls
+        .insert(id.to_string(), (name.to_string(), target.clone()));
+    let speaker = role == Role::Orchestrator || role.is_solo();
+    // Reads and searches fold into one row while they keep coming; the
+    // chat is for the work.
+    if speaker && toolview::is_lookup(name) {
+        let last_id = view.messages.last().map(|m| m.id);
+        match &mut view.lookups {
+            Some((mid, l)) if Some(*mid) == last_id => {
+                l.add(name, &target);
+                let label = l.label();
+                let mid = *mid;
+                if let Some(m) = view.messages.iter_mut().rev().find(|m| m.id == mid) {
+                    m.meta.label = Some(label);
+                    if let MessageKind::Tool { name, .. } = &mut m.kind {
+                        *name = "look".into();
+                    }
+                    m.touch();
+                }
+            }
+            _ => {
+                let mut l = toolview::Lookups::default();
+                l.add(name, &target);
+                let label = l.label();
+                let m = view.push(
+                    MessageKind::Tool {
+                        name: toolview::verb(name).to_string(),
+                        status: ToolStatus::Ok,
+                    },
+                    String::new(),
+                );
+                m.meta.label = Some(label);
+                let mid = m.id;
+                view.lookups = Some((mid, l));
+            }
+        }
+    } else {
+        let shown = if target.is_empty() {
             label.clone()
         } else {
-            format!("{role} · {label}")
-        });
+            target.clone()
+        };
+        let m = view.push(
+            MessageKind::Tool {
+                name: toolview::verb(name).to_string(),
+                status: ToolStatus::Running,
+            },
+            toolview::edit_preview(name, args),
+        );
+        m.meta.tool_id = Some(id.to_string());
+        if !shown.is_empty() {
+            m.meta.label = Some(if speaker {
+                shown
+            } else {
+                format!("{role} · {shown}")
+            });
+        }
+        view.lookups = None;
     }
     if name == "todo_write" {
         view.todos = parse_todos(args);
@@ -266,6 +320,52 @@ fn on_tool_call(
         view.activity.current = wrap::truncate(&label, 48);
         view.activity.tools += 1;
     }
+}
+
+/// A tool finished: its row says what came of it (`new · 48 lines`,
+/// `✓ 12 passed`, `✗ exit 1` and the last lines of output), and the turn's
+/// tally counts it. A failed lookup, folded away, still shows its error.
+fn on_tool_result(
+    view: &mut View,
+    id: &str,
+    output: &str,
+    is_error: bool,
+    duration_ms: Option<u64>,
+) {
+    use crate::chat::toolview;
+    let (tool, target) = view.tool_calls.remove(id).unwrap_or_default();
+    if toolview::is_lookup(&tool) {
+        if is_error {
+            let body = wrap::truncate(output.trim(), TOOL_ERROR_CHARS);
+            view.error(if body.is_empty() {
+                "tool error".into()
+            } else {
+                body
+            });
+        }
+        return;
+    }
+    view.finish_tool(id, is_error, duration_ms);
+    let (detail, body) = toolview::result(&tool, output, is_error);
+    if let Some(m) = view
+        .messages
+        .iter_mut()
+        .rev()
+        .find(|m| m.meta.tool_id.as_deref() == Some(id))
+    {
+        m.meta.detail = Some(detail);
+        if !body.is_empty() {
+            let joined = if m.body.is_empty() {
+                body
+            } else {
+                format!("{}\n{body}", m.body)
+            };
+            m.set_body(joined);
+        } else {
+            m.touch();
+        }
+    }
+    view.tally.add(&tool, &target, output, is_error);
 }
 
 /// `R-ACT-05`: the most identifying argument when the core sent no summary.

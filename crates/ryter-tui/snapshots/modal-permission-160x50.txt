@@ -3,7 +3,7 @@
  dusty
  ▎ now implement step one
 
- · read_file  read crates/ryter-tui/src/run/mod.rs                                                                                                        0.1s
+ · read  crates/ryter-tui/src/run/mod.rs
 
  grok-4.6
    Reading the loop now. The event loop drains

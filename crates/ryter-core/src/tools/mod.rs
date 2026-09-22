@@ -15,6 +15,7 @@ use crate::llm::ToolSpec;
 use crate::queue::TaskQueue;
 use crate::role::Role;
 
+pub use fs::changed_lines;
 pub use policy::{Decision, decide};
 
 /// Runtime context for a tool call.

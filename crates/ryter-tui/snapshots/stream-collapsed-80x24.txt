@@ -3,7 +3,7 @@
  dusty                                             │╭─ session ────────────────╮
  ▎ now implement step one                          ││ untitled           build │
                                                    │╰──────────────────────────╯
- · read_file  read crates/ryter-tui/src/run…  0.1s ┃╭─ model ──────────────────╮
+ · read  crates/ryter-tui/src/run/mod.rs           ┃╭─ model ──────────────────╮
                                                    ┃│ spacexai ●      grok-4.6 │
  grok-4.6                                          ┃│ ctx █░░░░░░░░░░░░░   5%  │
    Reading the loop now. The event loop drains     ┃│     12.4k / 256k tokens  │

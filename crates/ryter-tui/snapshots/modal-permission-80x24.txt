@@ -3,7 +3,7 @@
  dusty
  ▎ now implement step one
     ┏━ permission · bash ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
- · r│ tool  bash                                                           │ s
+ · r│ tool  bash                                                           │
     │                                                                      │
  gro│   rm -rf target/ && cargo build --release                            │
    R│                                                                      │

@@ -71,10 +71,17 @@ pub fn write_file(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| Error::Config(e.to_string()))?;
     }
+    // Say what happened, for the model and the chat: a new file, or a
+    // rewrite and how big it was before.
+    let before = fs::read_to_string(&path).ok().map(|t| t.lines().count());
     let mut f = fs::File::create(&path).map_err(|e| Error::Config(e.to_string()))?;
     f.write_all(content.as_bytes())
         .map_err(|e| Error::Config(e.to_string()))?;
-    Ok(ToolOutput::ok(format!("wrote {}", path.display())))
+    let lines = content.lines().count();
+    Ok(ToolOutput::ok(match before {
+        None => format!("created {} · {lines} lines", path.display()),
+        Some(was) => format!("rewrote {} · {lines} lines (was {was})", path.display()),
+    }))
 }
 
 pub fn search_replace(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
@@ -99,7 +106,32 @@ pub fn search_replace(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     }
     let updated = text.replacen(old, new, 1);
     fs::write(&path, updated).map_err(|e| Error::Config(e.to_string()))?;
-    Ok(ToolOutput::ok(format!("updated {}", path.display())))
+    let (removed, added) = changed_lines(old, new);
+    Ok(ToolOutput::ok(format!(
+        "updated {} · −{} +{} lines",
+        path.display(),
+        removed.len(),
+        added.len()
+    )))
+}
+
+/// The lines an edit really changes: what's left of `old` and `new` once
+/// the lines they share at the start and end are set aside. Models quote
+/// unchanged lines around an edit for context; those aren't changes.
+pub fn changed_lines<'a>(old: &'a str, new: &'a str) -> (Vec<&'a str>, Vec<&'a str>) {
+    let a: Vec<&str> = old.lines().collect();
+    let b: Vec<&str> = new.lines().collect();
+    let head = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let tail = a[head..]
+        .iter()
+        .rev()
+        .zip(b[head..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    (
+        a[head..a.len() - tail].to_vec(),
+        b[head..b.len() - tail].to_vec(),
+    )
 }
 
 pub fn list_dir(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
@@ -227,4 +259,18 @@ fn require_resolved(ctx: &ToolContext, raw: &str) -> Result<std::path::PathBuf> 
                 .flatten()
         })
         .ok_or_else(|| Error::Config(format!("path escapes workspace: {raw}")))
+}
+
+#[cfg(test)]
+mod changed_tests {
+    use super::changed_lines;
+
+    #[test]
+    fn shared_context_is_not_a_change() {
+        let (r, a) = changed_lines("target/\n.DS_Store\n", "target/\n.DS_Store\ndata/\n");
+        assert!(r.is_empty());
+        assert_eq!(a, ["data/"]);
+        let (r, a) = changed_lines("fn a() {\n  old()\n}\n", "fn a() {\n  new()\n  more()\n}\n");
+        assert_eq!((r, a), (vec!["  old()"], vec!["  new()", "  more()"]));
+    }
 }
