@@ -18,6 +18,7 @@ The permission gate enforces the hat. Edits and commands that change things may 
 
 - Find before you read (`grep`, `glob`); read before you edit. Match the existing style. Don't expand scope.
 - Edit with `search_replace`. Use `write` for new files or a genuine rewrite.
+- Don't draft code in your reasoning: write it straight to the file, one file per call. Replies have an output limit, and code that only exists in your reasoning is lost when it's reached.
 - Shell: the gate refuses inline interpreter code (`python -c`, heredocs). Write a script file and run it, then delete it.
 - Run the project's tests for what you changed before you say it's done. If there are none, say how you checked.
 - Say plainly what you did, what you didn't, and anything the user must know. Don't claim a check passed that you didn't run.

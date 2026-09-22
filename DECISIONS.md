@@ -2,6 +2,13 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-21 — Solo turns end like lead turns; cut-off replies continue
+- **By:** lead
+- **Decision:** Turn start/finish events are sent for every conversation turn (the lead's and every solo hat's), decided once at the start so a mid-turn hat switch can't lose the end. The conversation's output ceiling is 32,768 tokens, the same as a crew builder's. A reply cut off at the ceiling keeps its complete tool calls, drops a half-written one, and gets a note telling the model to continue in smaller steps and write code to files rather than reasoning. Three cut-offs in a row end the turn with a notice. An empty cut-off reply is stored as a placeholder, since some providers reject empty assistant messages.
+- **Chosen vs rejected:** Rejected only raising the ceiling: a model that reasons a lot can use any ceiling, and the turn still has to survive it. Rejected a per-model ceiling: unused output isn't billed, so one generous ceiling costs nothing.
+- **Why:** In hands-on testing, glm-5.3-flashx switched from plan to build, wrote the app into its reasoning until the 8,192-token ceiling, and returned nothing. Solo turns never sent TurnFinished, so the screen kept saying "thinking".
+- **Where:** `agent.rs` (`turn`, `turn_inner`, `CONVERSATION_MAX_OUTPUT`, `MAX_CUTOFFS`), `prompts/solo.md`
+
 ### 2026-09-21 — On Linux, keys live in a 0600 file; the kernel keyring isn't storage
 - **By:** lead
 - **Decision:** Saving a key on Linux writes `~/.ryter/keys/<connection>` (mode 0600) and removes any kernel-keyring copy; lookups read the file before the keyring. macOS keeps the keychain, falling back to the file. Tests never touch the real keyring.
