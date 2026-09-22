@@ -125,6 +125,12 @@ pub struct ChildHandle {
     pub cancel: Arc<crate::cancel::Cancel>,
 }
 
+/// Output ceiling per round of the conversation (lead or solo hat): the
+/// same room a crew builder gets.
+const CONVERSATION_MAX_OUTPUT: u32 = 32_768;
+/// A reply cut off at the ceiling this many times in a row ends the turn.
+const MAX_CUTOFFS: usize = 3;
+
 static TURN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Short human label for a tool call (`read Cargo.toml`, `bash cargo test`).
@@ -167,11 +173,15 @@ impl Agent {
         let turn = TURN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         let started = std::time::Instant::now();
         let mut tools = 0u32;
-        if self.role == Role::Orchestrator {
+        // Decided once: a hat switch mid-turn (request_hat) must not lose the
+        // end of the turn. Solo turns never sent these, so a turn that ended
+        // on a cut-off reply left the screen saying "thinking".
+        let conversation = self.role == Role::Orchestrator || self.role.is_solo();
+        if conversation {
             self.emit(AgentEvent::TurnStarted { turn })?;
         }
         let out = self.turn_inner(user, &mut tools).await;
-        if self.role == Role::Orchestrator {
+        if conversation {
             let _ = self.emit(AgentEvent::TurnFinished {
                 turn,
                 tools,
@@ -185,6 +195,7 @@ impl Agent {
         // Set up git and snapshot the files only when this turn is about to
         // change something. "Are you there?" used to open with git work.
         let mut checkpointed = false;
+        let mut cutoffs = 0usize;
         // A run that stopped at the budget never showed the lead its crew
         // report; without it, "continue" reached a lead that didn't know what
         // had finished.
@@ -238,7 +249,11 @@ impl Agent {
                 system: Some(system.clone()),
                 messages: self.session.transcript.clone(),
                 tools: crate::tools::specs_for_opts(self.role, self.ctx.web),
-                max_tokens: Some(8192),
+                // Output is billed as generated, so a high ceiling costs
+                // nothing unused. At 8192 a reasoning model in the build hat
+                // spent the whole budget drafting code in its reasoning and
+                // returned nothing.
+                max_tokens: Some(CONVERSATION_MAX_OUTPUT),
             };
 
             let mut stream = tokio::select! {
@@ -327,8 +342,54 @@ impl Agent {
             }
 
             last_text = text.clone();
-            let call_list: Vec<AssistantToolCall> = calls.finish();
+            let mut call_list: Vec<AssistantToolCall> = calls.finish();
+            // Cut off at the output ceiling: keep the calls that arrived whole,
+            // drop a half-written one, and ask the model to carry on in
+            // smaller steps, as crew builders do. It used to end the turn with
+            // an empty reply.
+            let mut nudge: Option<String> = None;
+            if truncated {
+                cutoffs += 1;
+                let before = call_list.len();
+                call_list.retain(|c| {
+                    serde_json::from_str::<Value>(&c.arguments).is_ok_and(|v| v.is_object())
+                });
+                let dropped = before - call_list.len();
+                if cutoffs < MAX_CUTOFFS {
+                    self.emit(AgentEvent::Notice {
+                        message: "the reply hit the output limit; continuing in smaller steps"
+                            .into(),
+                    })?;
+                    nudge = Some(format!(
+                        "[Ryter] Your last reply was cut off at the output limit{}. Continue \
+                         from where you stopped, in smaller steps: think less before acting, \
+                         don't draft code in your reasoning, and write each file straight \
+                         to disk with `write` (one file per call; large files in parts).",
+                        if dropped > 0 {
+                            format!(", and {dropped} unfinished tool call(s) were discarded")
+                        } else {
+                            String::new()
+                        }
+                    ));
+                } else {
+                    self.emit(AgentEvent::Notice {
+                        message: format!(
+                            "stopped: the reply hit the output limit {cutoffs} times in a row. \
+                             Try a smaller request, or a model that reasons less."
+                        ),
+                    })?;
+                }
+            } else {
+                cutoffs = 0;
+            }
 
+            // An empty assistant message is rejected by some providers
+            // (Anthropic); a cut-off reply can be nothing but reasoning.
+            let text = if text.trim().is_empty() && call_list.is_empty() && truncated {
+                "(cut off at the output limit)".to_string()
+            } else {
+                text
+            };
             self.session.push_message(Message {
                 role: "assistant".into(),
                 content: text,
@@ -341,6 +402,15 @@ impl Agent {
             })?;
 
             if call_list.is_empty() {
+                if let Some(n) = nudge {
+                    self.session.push_message(Message {
+                        role: "user".into(),
+                        content: n,
+                        tool_call_id: None,
+                        tool_calls: None,
+                    })?;
+                    continue;
+                }
                 if self.role == Role::Orchestrator {
                     let report = self.drain_crew().await?;
                     // Hand the results back and take another round. Without this
@@ -409,6 +479,14 @@ impl Agent {
                     role: "tool".into(),
                     content: out.text,
                     tool_call_id: Some(call.id),
+                    tool_calls: None,
+                })?;
+            }
+            if let Some(n) = nudge {
+                self.session.push_message(Message {
+                    role: "user".into(),
+                    content: n,
+                    tool_call_id: None,
                     tool_calls: None,
                 })?;
             }
@@ -1708,6 +1786,90 @@ mod tests {
             std::fs::read_to_string(cwd.path().join("README.md")).unwrap(),
             "repo\n"
         );
+    }
+
+    /// A build reply that is all reasoning and hits the output limit used to
+    /// end the turn with nothing, and the screen was never told the turn was
+    /// over. Now the model is told to continue in smaller steps, and the turn
+    /// starts and finishes like any other.
+    #[tokio::test]
+    async fn a_cut_off_solo_reply_continues_and_the_turn_ends() {
+        let cut_off = vec![
+            StreamDelta::Reasoning("fn main() { /* drafting the whole app here…".into()),
+            StreamDelta::Truncated,
+            StreamDelta::Done,
+        ];
+        let p = ReplayProvider::scripted(vec![cut_off, write("README.md", "built\n"), say("done")]);
+        let (_home, cwd, mut agent) = crew_setup(p);
+        agent.role = Role::SoloBuild;
+        agent.ctx.role = Role::SoloBuild;
+        agent.ctx.always_approve = true;
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let r = agent.turn("build it").await.unwrap();
+        assert_eq!(r.reason, StopReason::Completed);
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("README.md")).unwrap(),
+            "built\n"
+        );
+        let events: Vec<AgentEvent> = rx.try_iter().collect();
+        assert!(matches!(
+            events.first(),
+            Some(AgentEvent::TurnStarted { .. })
+        ));
+        assert!(matches!(
+            events.last(),
+            Some(AgentEvent::TurnFinished { .. })
+        ));
+        assert!(events.iter().any(
+            |e| matches!(e, AgentEvent::Notice { message } if message.contains("output limit"))
+        ));
+        let nudge = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| {
+                m.role == "user" && m.content.starts_with("[Ryter] Your last reply was cut off")
+            })
+            .expect("the model is told it was cut off");
+        assert!(nudge.content.contains("don't draft code in your reasoning"));
+        // No empty assistant message goes back to the provider.
+        assert!(
+            agent
+                .session
+                .transcript
+                .iter()
+                .filter(|m| m.role == "assistant")
+                .all(|m| !m.content.is_empty() || m.tool_calls.is_some())
+        );
+    }
+
+    /// Three cut-offs in a row stop the turn, and say why.
+    #[tokio::test]
+    async fn repeated_cut_offs_stop_the_turn() {
+        let cut = || {
+            vec![
+                StreamDelta::Reasoning("…".into()),
+                StreamDelta::Truncated,
+                StreamDelta::Done,
+            ]
+        };
+        let p = ReplayProvider::scripted(vec![cut(), cut(), cut()]);
+        let (_home, _cwd, mut agent) = crew_setup(p);
+        agent.role = Role::SoloBuild;
+        agent.ctx.role = Role::SoloBuild;
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let r = agent.turn("build it").await.unwrap();
+        assert_eq!(r.reason, StopReason::Truncated);
+        let events: Vec<AgentEvent> = rx.try_iter().collect();
+        assert!(events.iter().any(
+            |e| matches!(e, AgentEvent::Notice { message } if message.starts_with("stopped"))
+        ));
+        assert!(matches!(
+            events.last(),
+            Some(AgentEvent::TurnFinished { .. })
+        ));
     }
 
     /// Solo mode: the build hat edits the user's files directly, the hat
