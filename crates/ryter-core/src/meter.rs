@@ -57,6 +57,10 @@ pub struct Meter {
     /// the spend card sat still until a whole batch finished, while the
     /// provider's dashboard moved.
     sink: Option<std::sync::mpsc::Sender<crate::event::AgentEvent>>,
+    /// `[reasoning_effort]` overrides, for every specialist this run bills.
+    efforts: BTreeMap<String, String>,
+    /// The user's reasoning level per model.
+    model_efforts: BTreeMap<String, String>,
     lines: Mutex<Vec<SpendLine>>,
     /// How many lines the session has already recorded.
     recorded: Mutex<usize>,
@@ -107,6 +111,8 @@ impl Meter {
             free: HashSet::new(),
             log: None,
             sink: None,
+            efforts: BTreeMap::new(),
+            model_efforts: BTreeMap::new(),
             lines: Mutex::new(Vec::new()),
             recorded: Mutex::new(0),
         }
@@ -123,6 +129,22 @@ impl Meter {
     pub fn with_log(mut self, path: std::path::PathBuf) -> Self {
         self.log = Some(path);
         self
+    }
+
+    /// Use the user's reasoning choices for this run: per role, and per model.
+    pub fn with_efforts(
+        mut self,
+        roles: BTreeMap<String, String>,
+        models: BTreeMap<String, String>,
+    ) -> Self {
+        self.efforts = roles;
+        self.model_efforts = models;
+        self
+    }
+
+    /// How hard `model`, in `role`, should reason on this run.
+    pub fn effort(&self, role: Role, model: &str) -> Option<String> {
+        crate::config::effort_for(Some(&self.efforts), Some(&self.model_efforts), role, model)
     }
 
     /// Report every charge to `sink` the moment it is made.

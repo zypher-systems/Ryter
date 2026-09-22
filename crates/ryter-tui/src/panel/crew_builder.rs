@@ -270,6 +270,15 @@ impl CrewBuilder {
             .models
             .iter()
             .filter(|m| m.tools != Some(false))
+            // A seat needs a model with a price and dependable tool use:
+            // OpenRouter's routers (openrouter/auto, …, listed at a price of
+            // -1) pick a model per request. They led the list as "cheapest".
+            .filter(|m| !m.id.starts_with("openrouter/"))
+            .filter(|m| {
+                [m.input_per_million, m.output_per_million]
+                    .iter()
+                    .all(|p| p.is_none_or(|p| p >= 0.0))
+            })
             .filter(|m| f.is_empty() || m.id.to_ascii_lowercase().contains(&f))
             .collect();
         let blended = |m: &ModelInfo| match (m.input_per_million, m.output_per_million) {
@@ -409,7 +418,9 @@ impl Panel for CrewBuilder {
                 "↑↓ move · enter choose · esc stay in solo mode".into()
             }
             Step::Start => "↑↓ move · enter choose · esc close".into(),
-            Step::Seat(_) => "type to filter · ↑↓ move · enter choose · esc back".into(),
+            Step::Seat(_) => {
+                "type to filter · ↑↓ move · tab reasoning · enter choose · esc back".into()
+            }
             Step::Budget => "↑↓ move · ←→ change · enter next · esc back".into(),
             Step::Review if self.all_tested() && self.problems().is_empty() => {
                 "enter save · esc back".into()
@@ -518,11 +529,15 @@ impl Panel for CrewBuilder {
                         )
                     })
                     .unwrap_or_else(|| "(none qualifies)".into());
+                let rec_status = match &rec {
+                    Some(p) => format!("{} · {}", view.reasoning_label(&p.model), self.tier.name()),
+                    None => self.tier.name().to_string(),
+                };
                 body.push(widgets::list_row(
                     "★",
                     "recommended",
                     &rec_label,
-                    self.tier.name(),
+                    &rec_status,
                     self.sel == 0,
                     w,
                     theme,
@@ -538,8 +553,8 @@ impl Panel for CrewBuilder {
                         .flatten();
                     let status = match (chosen, conflict) {
                         (_, Some(c)) => c.to_string(),
-                        (true, None) => "chosen".into(),
-                        _ => conn.clone(),
+                        (true, None) => format!("{} · chosen", view.reasoning_label(&m.id)),
+                        _ => format!("{} · {conn}", view.reasoning_label(&m.id)),
                     };
                     body.push(widgets::list_row(
                         if chosen { "●" } else { " " },
@@ -645,7 +660,12 @@ impl Panel for CrewBuilder {
                                 None => ("not tested".to_string(), theme.dim),
                             };
                             (
-                                format!("{} on {} · {price}", s.model, s.connection),
+                                format!(
+                                    "{} on {} · {price} · reasoning {}",
+                                    s.model,
+                                    s.connection,
+                                    view.reasoning_label(&s.model)
+                                ),
                                 st,
                                 Some(c),
                             )
@@ -795,6 +815,24 @@ impl Panel for CrewBuilder {
                             }
                         }
                         Outcome::Stay
+                    }
+                    // How hard the highlighted model reasons, wherever it runs.
+                    KeyCode::Tab | KeyCode::BackTab => {
+                        let model = if self.sel == 0 {
+                            self.recommendations(view)[i].clone().map(|p| p.model)
+                        } else {
+                            self.seat_rows(view, i)
+                                .get(self.sel - 1)
+                                .map(|m| m.id.clone())
+                        };
+                        let Some(model) = model else {
+                            return Outcome::Stay;
+                        };
+                        let level = ryter_core::config::cycle_reasoning(
+                            view.model_reasoning.get(&model).map(String::as_str),
+                            key.code == KeyCode::Tab,
+                        );
+                        Outcome::Act(Action::SetModelReasoning { model, level })
                     }
                     _ => {
                         if super::edit_field(&mut view.composer, key) {
@@ -1038,6 +1076,37 @@ mod tests {
             press(&mut b, &mut v, KeyCode::Enter),
             Outcome::Act(Action::ProbeModels(_))
         ));
+    }
+
+    /// OpenRouter's routers ("price" -1) led the cheapest-first seat lists.
+    #[test]
+    fn routers_and_negative_prices_are_not_seats() {
+        let (mut v, mut b) = setup();
+        let mut router = m("openrouter/auto", -1_000_000.0, -1_000_000.0);
+        router.context_length = Some(2_000_000);
+        b.on_notice(
+            &Notice::Models(vec![router, m("vendor/odd", -1.0, 2.0)]),
+            &mut v,
+        );
+        for seat in 0..SEATS.len() {
+            let ids: Vec<&str> = b
+                .seat_rows(&v, seat)
+                .iter()
+                .map(|m| m.id.as_str())
+                .collect();
+            assert!(
+                !ids.contains(&"openrouter/auto") && !ids.contains(&"vendor/odd"),
+                "{ids:?}"
+            );
+            assert_eq!(
+                ids.first().copied().filter(|_| seat == 0),
+                if seat == 0 {
+                    Some("deepseek/deepseek-v4.1-flash")
+                } else {
+                    None
+                }
+            );
+        }
     }
 
     /// The auditor can't be the lead's or the builder's model.

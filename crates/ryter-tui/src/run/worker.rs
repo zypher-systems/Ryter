@@ -62,6 +62,8 @@ pub enum Work {
     },
     /// Switch hats, or to the crew's lead.
     SetRole(ryter_core::Role),
+    /// The user's reasoning levels per model changed.
+    SetModelReasoning(std::collections::BTreeMap<String, String>),
     /// `/undo`.
     Undo,
     /// Live settings knobs.
@@ -333,6 +335,12 @@ pub fn run(init: WorkerInit) {
                     } else {
                         Some(Arc::new(HookSet::from_config(&hooks)))
                     };
+                }
+            }
+            Ok(Work::SetModelReasoning(levels)) => {
+                cfg.model_reasoning = levels.clone();
+                if let Some(c) = agent.as_mut().and_then(|a| a.cfg.as_mut()) {
+                    c.model_reasoning = levels;
                 }
             }
             Ok(Work::SetRole(role)) => {

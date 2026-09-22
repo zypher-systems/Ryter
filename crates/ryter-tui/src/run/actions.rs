@@ -137,6 +137,21 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         Action::SaveBudget { usd, warn, task } => save_budget(view, cx, usd, warn, task),
         Action::ProbeModels(seats) => probe_models(cx, seats),
         Action::SetMode(role) => set_mode(view, cx, role),
+        Action::SetModelReasoning { model, level } => {
+            match &level {
+                Some(l) => {
+                    view.model_reasoning.insert(model.clone(), l.clone());
+                }
+                None => {
+                    view.model_reasoning.remove(&model);
+                }
+            }
+            cx.cfg.model_reasoning = view.model_reasoning.clone();
+            if let Err(e) = config::save_model_reasoning(&cx.home, &view.model_reasoning) {
+                view.error(e.to_string());
+            }
+            cx.send(Work::SetModelReasoning(view.model_reasoning.clone()));
+        }
         Action::EnterCrew => {
             if config::crew_unconfigured(&cx.home, &cx.cfg) && view.specialists.is_empty() {
                 // First time: build the crew, then drop into crew mode.

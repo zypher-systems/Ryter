@@ -30,6 +30,10 @@ SpaceXAI and OpenRouter are compiled in as equals. Other OpenAI-compatible or An
 
 Credential order per connection: TOML `api_key` → `env_key` → the stored key → well-known env (`OPENROUTER_API_KEY`, `XAI_API_KEY`).
 
+**Reasoning.** Each model has a reasoning level you choose: **Tab** on a model in `/models`, on a role in `/crew`, or on a seat in the crew builder steps it through `auto → low → medium → high → model's own`. The model card shows the level in use (`reasoning  auto · medium`). The choice follows the model into every role that uses it, and is saved to `~/.ryter/reasoning.toml`; `[model_reasoning]` in `config.toml` does the same by hand, keyed by model id.
+
+**Auto** means Ryter picks by role: `high` for the plan hat and the architect, `medium` for every role that acts. `[reasoning_effort]` overrides that per role (`build`, `plan`, `review`, `lead`, `architect`, `builder`, `auditor`). **Model's own** sends nothing. Beware: with no setting, some models think for minutes before acting. The level is sent only to OpenRouter connections.
+
 Where a saved key (`/provider` set-key, `ryter connections set-key`) is stored: on **Linux**, `~/.ryter/keys/<connection>`, readable only by you (mode 0600). Linux's kernel keyring is in memory and doesn't survive a reboot, so it isn't used to store keys. On **macOS**, the keychain (`service=ryter`, `account=connection:<name>`), falling back to the file if the keychain refuses.
 
 If `config.toml` contains `api_key` and is group/world-readable, Ryter refuses to start until the mode is `0600`.

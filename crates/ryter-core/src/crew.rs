@@ -1202,6 +1202,7 @@ async fn run_specialist(
             messages: messages.clone(),
             tools: crate::tools::specs_for_opts(role, ctx.web),
             max_tokens: Some(max_tokens),
+            reasoning: bill.meter.effort(role, model),
         };
         let mut stream = tokio::select! {
             biased;

@@ -2,6 +2,14 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-22 — Always send a reasoning effort to OpenRouter
+- **By:** lead
+- **Decision:** Every request to an OpenRouter connection carries `reasoning: {effort}`. The user sets a level per model with Tab in `/models`, `/crew`, or the crew builder (auto, low, medium, high, model's own), saved to `~/.ryter/reasoning.toml` and shown on the model card. The model's level wins wherever it runs. Auto falls back to `[reasoning_effort]` per role, then to the defaults: `high` for the plan hat and the architect, `medium` for every role that acts. Other providers get no field. The crew reads the choices from its meter.
+- **Chosen vs rejected:** Rejected leaving the field out and letting each model choose: measured on glm-5.3-flashx with a real plan, no setting meant 191s and ~27k reasoning tokens before the first tool call (0.2.2 users saw "thinking" for minutes); `medium` took 7s, `high` 15s. Rejected raising the output ceiling further, as 0.2.2 did: the model filled it with reasoning. Rejected `low` for build: `medium` was as fast here, and it keeps some thinking for models that use it well. Checked that DeepSeek, Grok, Claude, GLM, GPT, and Qwen routes accept the field.
+- **Why:** The user's build turns kept "writing everything into the thinking block". The user asked for the level to be their choice per model, not a hidden default: the same level means different things per model (medium is no visible reasoning on flashx, a few hundred tokens on Grok). This time the fix was checked in the TUI before release: plan, the hat prompt, then build in a fresh folder, and the app it wrote works.
+- **Where:** `llm/mod.rs` (`CompletionRequest::reasoning`), `llm/http.rs` (`body`), `config.rs` (`reasoning_effort`, `effort_for`), `meter.rs` (`with_efforts`), `agent.rs`, `crew.rs`
+- **Residual risk:** "medium" means different things per model; the effort each model gets is a judgment call to revisit with `ryter bench`. Direct Anthropic and xAI connections still get no setting (Anthropic's thinking is off unless asked for; Grok's isn't configurable).
+
 ### 2026-09-21 — Solo turns end like lead turns; cut-off replies continue
 - **By:** lead
 - **Decision:** Turn start/finish events are sent for every conversation turn (the lead's and every solo hat's), decided once at the start so a mid-turn hat switch can't lose the end. The conversation's output ceiling is 32,768 tokens, the same as a crew builder's. A reply cut off at the ceiling keeps its complete tool calls, drops a half-written one, and gets a note telling the model to continue in smaller steps and write code to files rather than reasoning. Three cut-offs in a row end the turn with a notice. An empty cut-off reply is stored as a placeholder, since some providers reject empty assistant messages.

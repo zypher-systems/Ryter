@@ -166,6 +166,19 @@ pub fn model(view: &View, w: usize, theme: Theme) -> Card {
         )])),
         _ => rows.push(row(vec![s("price unknown", theme.side_muted())])),
     }
+    // How hard this model reasons in this mode: the user's choice, or what
+    // auto picks. Change it with Tab in /models.
+    let choice = view.reasoning_label(&view.model);
+    let role = if view.crew_mode() {
+        ryter_core::Role::Orchestrator
+    } else {
+        view.mode
+    };
+    let shown = match choice {
+        "auto" => format!("auto · {}", view.reasoning_effective(role, &view.model)),
+        c => c.to_string(),
+    };
+    rows.push(kv("reasoning", &shown, w, theme, theme.side()));
     if frac >= 0.85 {
         rows.push(row(vec![s(
             "/compact to reclaim",

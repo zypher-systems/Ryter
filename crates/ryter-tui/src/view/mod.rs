@@ -155,6 +155,9 @@ pub struct View {
     /// Read from disk at startup and when `/spend` opens; live spend is added
     /// as it happens.
     pub project_spend: Option<ryter_core::project::ProjectSpend>,
+    /// The user's reasoning level per model (`low` / `medium` / `high` /
+    /// `default`); a model not listed is "auto".
+    pub model_reasoning: BTreeMap<String, String>,
     /// Live `[specialists.*]` assignment (edited by `/crew`).
     pub specialists: BTreeMap<String, ryter_core::RoleModel>,
     /// Unix socket path if inbound MCP is listening.
@@ -252,6 +255,17 @@ impl View {
         }
     }
 
+    /// `model`'s reasoning choice for people: `auto`, `low`, … .
+    pub fn reasoning_label(&self, model: &str) -> &'static str {
+        ryter_core::config::reasoning_label(self.model_reasoning.get(model).map(String::as_str))
+    }
+
+    /// The level `model` actually gets in `role`, after auto picks one.
+    pub fn reasoning_effective(&self, role: ryter_core::Role, model: &str) -> String {
+        ryter_core::config::effort_for(None, Some(&self.model_reasoning), role, model)
+            .unwrap_or_else(|| "model's own".into())
+    }
+
     pub fn new(phase: Phase, connection: String, model: String, cwd: String) -> Self {
         Self {
             phase,
@@ -301,6 +315,7 @@ impl View {
             price_in: None,
             catalog_rates: BTreeMap::new(),
             project_spend: None,
+            model_reasoning: BTreeMap::new(),
             price_out: None,
             specialists: BTreeMap::new(),
             mcp_listen: None,

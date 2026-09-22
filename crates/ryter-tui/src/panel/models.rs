@@ -46,6 +46,9 @@ impl Sort {
 
 fn price(v: Option<f64>) -> String {
     match v {
+        // OpenRouter lists its routers (openrouter/auto, …) at -1: "varies".
+        // Shown raw it read "$-1000000" and sorted as the cheapest model.
+        Some(p) if p < 0.0 => "varies".into(),
         Some(p) => format!("${}", trim(p)),
         None => "?".into(),
     }
@@ -144,8 +147,10 @@ impl Models {
                 )
             }),
             Sort::Price => v.sort_by(|a, b| {
-                let pa = a.input_per_million.unwrap_or(f64::MAX);
-                let pb = b.input_per_million.unwrap_or(f64::MAX);
+                // Unknown and "varies" (negative) go last, not first.
+                let known = |p: Option<f64>| p.filter(|p| *p >= 0.0).unwrap_or(f64::MAX);
+                let pa = known(a.input_per_million);
+                let pb = known(b.input_per_million);
                 a.id.is_empty()
                     .cmp(&b.id.is_empty())
                     .reverse()
@@ -204,7 +209,7 @@ impl Panel for Models {
     }
 
     fn legend(&self, _view: &View) -> String {
-        "type to filter · ↑↓ move · enter select · s sort · esc".into()
+        "type to filter · ↑↓ move · enter select · tab reasoning · s sort · esc".into()
     }
 
     fn input(&self, _view: &View) -> Option<String> {
@@ -235,6 +240,7 @@ impl Panel for Models {
                         String::new(),
                         String::new(),
                         String::new(),
+                        String::new(),
                         m.connection.clone().unwrap_or_default(),
                     ];
                 }
@@ -249,6 +255,7 @@ impl Panel for Models {
                         .unwrap_or_else(|| "?".into()),
                     price(m.input_per_million),
                     price(m.output_per_million),
+                    view.reasoning_label(&m.id).to_string(),
                     m.connection
                         .clone()
                         .unwrap_or_else(|| view.connection.clone()),
@@ -256,13 +263,21 @@ impl Panel for Models {
             })
             .collect();
         let mut table = widgets::table(
-            &["model", "context", "in/M", "out/M", "connection"],
+            &[
+                "model",
+                "context",
+                "in/M",
+                "out/M",
+                "reasoning",
+                "connection",
+            ],
             &rows,
             &[
                 widgets::Al::L,
                 widgets::Al::R,
                 widgets::Al::R,
                 widgets::Al::R,
+                widgets::Al::L,
                 widgets::Al::L,
             ],
             Some(sel.saturating_sub(first)),
@@ -290,11 +305,19 @@ impl Panel for Models {
                     _ => "price unknown".into(),
                 };
                 format!(
-                    "{} · {} · {rates}",
+                    "{} · {} · {rates} · reasoning {}",
                     m.id,
                     m.context_length
                         .map(|c| format!("{} ctx", format_tokens(c)))
-                        .unwrap_or_else(|| "ctx ?".into())
+                        .unwrap_or_else(|| "ctx ?".into()),
+                    match view.reasoning_label(&m.id) {
+                        "auto" => format!(
+                            "auto ({} in {})",
+                            view.reasoning_effective(view.mode, &m.id),
+                            view.mode_label()
+                        ),
+                        l => l.to_string(),
+                    }
                 )
             };
             lines.truncate(h.saturating_sub(1));
@@ -335,6 +358,22 @@ impl Panel for Models {
             KeyCode::Char('s') if view.composer.is_empty() => {
                 self.sort = self.sort.next();
                 Outcome::Stay
+            }
+            // Tab / Shift+Tab: how hard this model reasons, wherever it runs.
+            KeyCode::Tab | KeyCode::BackTab => {
+                let Some(m) = self
+                    .filtered(view)
+                    .get(self.selected.min(n.saturating_sub(1)))
+                    .map(|m| m.id.clone())
+                    .filter(|id| !id.is_empty())
+                else {
+                    return Outcome::Stay;
+                };
+                let level = ryter_core::config::cycle_reasoning(
+                    view.model_reasoning.get(&m).map(String::as_str),
+                    key.code == KeyCode::Tab,
+                );
+                Outcome::Act(Action::SetModelReasoning { model: m, level })
             }
             KeyCode::Enter => {
                 let Some(m) = self
@@ -378,5 +417,71 @@ impl Panel for Models {
 
     fn box_clone(&self) -> Box<dyn Panel> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+
+    #[test]
+    fn a_varying_price_reads_varies_not_minus_a_million() {
+        assert_eq!(price(Some(-1_000_000.0)), "varies");
+        assert_eq!(price(Some(0.37)), "$0.37");
+        assert_eq!(price(None), "?");
+    }
+
+    /// Tab steps the highlighted model through the reasoning choices, and
+    /// the list shows each model's choice.
+    #[test]
+    fn tab_sets_the_highlighted_models_reasoning() {
+        let mut v = View::new(
+            ryter_core::Phase::Build,
+            "openrouter".into(),
+            "z-ai/glm-5.3-flashx".into(),
+            "/tmp".into(),
+        );
+        let mut p = Models::new(&mut v, None);
+        p.items = vec![ModelInfo {
+            id: "z-ai/glm-5.3-flashx".into(),
+            context_length: Some(1_000_000),
+            input_per_million: Some(0.37),
+            output_per_million: Some(1.25),
+            connection: Some("openrouter".into()),
+            created: None,
+            tools: Some(true),
+        }];
+        p.loading = false;
+        let tab = |p: &mut Models, v: &mut View| {
+            p.key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), v)
+        };
+        match tab(&mut p, &mut v) {
+            Outcome::Act(Action::SetModelReasoning { model, level }) => {
+                assert_eq!(model, "z-ai/glm-5.3-flashx");
+                assert_eq!(level.as_deref(), Some("low"), "auto → low");
+                v.model_reasoning.insert(model, "low".into());
+            }
+            _ => panic!("tab must set the reasoning level"),
+        }
+        match tab(&mut p, &mut v) {
+            Outcome::Act(Action::SetModelReasoning { level, .. }) => {
+                assert_eq!(level.as_deref(), Some("medium"))
+            }
+            _ => panic!("tab again"),
+        }
+        let text: String = p
+            .render(&v, 100, 12, Theme::truecolor_dark())
+            .lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect();
+        assert!(text.contains("reasoning") && text.contains("low"), "{text}");
     }
 }
