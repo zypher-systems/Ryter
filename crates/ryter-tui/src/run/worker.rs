@@ -66,6 +66,22 @@ pub enum Work {
     SetModelReasoning(std::collections::BTreeMap<String, String>),
     /// `/undo`.
     Undo,
+    /// `/changes`: put one file back as `base` had it.
+    Revert {
+        /// Commit to restore from.
+        base: String,
+        /// Repository-relative path.
+        path: String,
+    },
+    /// `/commit`: draft a message for these paths.
+    DraftCommit(Vec<String>),
+    /// `/commit`: commit these paths.
+    Commit {
+        /// Repository-relative paths.
+        paths: Vec<String>,
+        /// Full message, receipt included.
+        message: String,
+    },
     /// Live settings knobs.
     SetSettings {
         /// Budget cap.
@@ -191,6 +207,7 @@ pub fn run(init: WorkerInit) {
         }
         emit_mcp_status(&a, &ev_tx);
         refresh_live(&a, &live_status, &live_spend);
+        let _ = ev_tx.send(a.checkpoint_event());
         agent = Some(a);
     }
     loop {
@@ -245,6 +262,7 @@ pub fn run(init: WorkerInit) {
                             let _ = s.set_mode(a.role);
                             swap_session(a, s);
                             let _ = ev_tx.send(session_event(a));
+                            let _ = ev_tx.send(a.checkpoint_event());
                         }
                         Err(e) => send_err(&ev_tx, e.to_string()),
                     }
@@ -262,6 +280,7 @@ pub fn run(init: WorkerInit) {
                             a.connection = a.session.meta.connection.clone();
                             refresh_live(a, &live_status, &live_spend);
                             let _ = ev_tx.send(session_event(a));
+                            let _ = ev_tx.send(a.checkpoint_event());
                         }
                         Err(e) => send_err(&ev_tx, e.to_string()),
                     }
@@ -356,6 +375,36 @@ pub fn run(init: WorkerInit) {
                     None => "nothing to undo yet".into(),
                 };
                 let _ = ev_tx.send(AgentEvent::Notice { message });
+            }
+            Ok(Work::Revert { base, path }) => {
+                let result = match &mut agent {
+                    Some(a) => a.revert_file(&base, &path),
+                    None => ryter_core::review::revert_file(&cwd, &base, &path),
+                };
+                let _ = ev_tx.send(AgentEvent::Reverted {
+                    path,
+                    error: result.err().map(|e| e.to_string()),
+                });
+            }
+            Ok(Work::DraftCommit(paths)) => {
+                let (message, error) = match &mut agent {
+                    Some(a) => match rt.block_on(a.draft_commit(&paths)) {
+                        Ok(m) => (Some(m), None),
+                        Err(e) => (None, Some(e.to_string())),
+                    },
+                    None => (
+                        None,
+                        Some("no model connected; write the message yourself".into()),
+                    ),
+                };
+                let _ = ev_tx.send(AgentEvent::CommitDraft { message, error });
+            }
+            Ok(Work::Commit { paths, message }) => {
+                let (summary, error) = match ryter_core::review::commit(&cwd, &paths, &message) {
+                    Ok(s) => (Some(s), None),
+                    Err(e) => (None, Some(e.to_string())),
+                };
+                let _ = ev_tx.send(AgentEvent::Committed { summary, error });
             }
             Ok(Work::SetSettings {
                 budget_usd,
@@ -471,6 +520,7 @@ pub fn run(init: WorkerInit) {
                     }
                     emit_mcp_status(&a, &ev_tx);
                     refresh_live(&a, &live_status, &live_spend);
+                    let _ = ev_tx.send(a.checkpoint_event());
                     agent = Some(a);
                 }
             }

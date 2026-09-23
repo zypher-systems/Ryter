@@ -50,6 +50,10 @@ pub struct Meta {
     /// Build-hat checkpoints, oldest first, for `/undo`.
     #[serde(default)]
     pub checkpoints: Vec<String>,
+    /// The files as the latest build turn found them: what `/changes` calls
+    /// "last turn". Not moved by a file undone from `/changes`.
+    #[serde(default)]
+    pub turn_checkpoint: Option<String>,
     /// The mode the user left the session in: a hat, or the crew's lead.
     /// `None` (sessions from before solo mode) means build.
     #[serde(default)]
@@ -148,6 +152,7 @@ impl Session {
             patch: None,
             patches_opened: 0,
             checkpoints: Vec::new(),
+            turn_checkpoint: None,
             mode: None,
         };
         let s = Self {
@@ -433,6 +438,12 @@ impl Session {
         if n > 50 {
             self.meta.checkpoints.drain(..n - 50);
         }
+        self.touch()
+    }
+
+    /// Remember where the latest build turn started.
+    pub fn set_turn_checkpoint(&mut self, sha: Option<String>) -> Result<()> {
+        self.meta.turn_checkpoint = sha;
         self.touch()
     }
 

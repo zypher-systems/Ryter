@@ -193,7 +193,7 @@ fn snapshot_palette_open() {
 
 #[test]
 fn snapshot_every_panel() {
-    let panels: [(&str, PanelId); 18] = [
+    let panels: [(&str, PanelId); 20] = [
         ("providers", PanelId::Providers),
         ("models", PanelId::Models),
         ("crew", PanelId::Crew),
@@ -212,6 +212,8 @@ fn snapshot_every_panel() {
         ("context", PanelId::Context),
         ("help", PanelId::Help),
         ("doctor", PanelId::Doctor),
+        ("changes", PanelId::Changes),
+        ("commit", PanelId::Commit),
     ];
     for (name, id) in panels {
         let v = with_panel(id);

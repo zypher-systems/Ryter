@@ -76,6 +76,7 @@ panel = true               # right-hand info panel visible at startup (^b toggle
 colors = "auto"            # auto | truecolor | 256 | 16 ; NO_COLOR always wins
 timestamps = true          # HH:MM on speaker headers
 line_numbers = true        # gutter in code blocks
+receipts = true            # /commit adds a `Ryter:` trailer: model, cost, tests
 
 [mcp]
 inbound = true

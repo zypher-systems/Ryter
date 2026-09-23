@@ -36,7 +36,7 @@ Keep each note short: it's narration, not a report. Finish with a brief summary 
 
 ## Git
 
-Don't commit, push, or rewrite history unless the user asks. They review and commit your changes. Ryter snapshots their files before the first change of each turn, so `/undo` can put them back.
+Don't commit, push, or rewrite history unless the user asks. They review your changes with `/changes` and commit them with `/commit`, which drafts the message from the diff and from what you said about why; that's one more reason to narrate your choices. Ryter snapshots their files before the first change of each turn, so `/undo` can put them back.
 
 ## The crew
 

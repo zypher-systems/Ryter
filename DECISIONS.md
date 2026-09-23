@@ -2,6 +2,18 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-23 — Review and commit inside Ryter: `/changes`, `/commit`, and a receipt
+- **By:** lead
+- **Decision:** `/changes` diffs a fresh snapshot of the files (the undo checkpoint's private-index method, so new files show and the staging area is untouched) against `HEAD` ("uncommitted") or the checkpoint where the latest build turn started ("last turn"). `x` undoes one file after taking a checkpoint, so `/undo` reverses it. The session records the turn's starting checkpoint separately (`turn_checkpoint`), so undoing a file doesn't move "last turn". `/commit` commits only the ticked paths (`git add -A -- <paths>`, then `git commit --only -- <paths>`), with the user's identity and hooks. The message is drafted by one tool-less, low-reasoning call from the diff (capped at 24k characters), the last 8 commit subjects, and the conversation without tool traffic. The optional `Ryter:` trailer gives the models and the project's spend since `HEAD`'s commit time, summed from every session's `spend.jsonl`, plus the latest test result. That result becomes "not rerun after the last edit" if the model edited files after the run. Receipts are on by default, shown in the preview, toggled with `t`, and saved as `[ui] receipts`.
+- **Chosen vs rejected:** Rejected running git reads on the agent thread: a turn blocks that thread, and `/changes` should work mid-turn. Only writes (file undo, commit) wait for the turn. Rejected rename detection: a rename shows as a delete plus an add, so undoing one file stays one simple operation. Rejected the session's spend for the receipt: work spans sessions, and the logs already record every call with a timestamp. Rejected making the model commit through a tool: committing is the user's decision, and the harness does it exactly. Rejected receipts off by default: the preview shows the trailer before anything is committed, and it's one key to turn off.
+- **Why:** The user had to leave Ryter to see the changes and commit after every task. The receipt records in the history what a change cost and how it was checked, which nothing else does.
+- **Where:** `crates/ryter-core/src/review.rs`, `project.rs` (`spend_since`), `agent.rs` (`revert_file`, `draft_commit`, `one_shot`, `checkpoint_event`), `session.rs` (`turn_checkpoint`); TUI `panel/changes.rs`, `panel/commit.rs`, `run/worker.rs`, `run/events.rs` (latest test result); `prompts/solo.md`
+- **Residual risk:**
+  - The receipt's cost covers the project since the previous commit, so work thrown away in between is counted.
+  - Tests the user ran outside Ryter don't count, and edits made with shell commands don't mark the tests as stale.
+  - A binary file shows no diff.
+  - The panels snapshot the files every time they refresh, which may be slow in very large repositories.
+
 ### 2026-09-22 — A command returns when its shell exits; what it left running is stopped
 - **By:** lead
 - **Decision:** `run_command` reads stdout and stderr on their own threads while the command runs. When bash exits, anything still in its process group (a server started with `&`) is killed, and the output says so: `[stopped the background processes this command left running]`. A process that left the group (`setsid`) and still holds a pipe gets 500 ms, then the command returns with what arrived and a note. The bash tool's description tells the model to start, test, and stop a server in one command. Process groups are probed and killed with bash's builtin `kill` (`kill -0 -- -PGID`, `kill -KILL -- -PGID`), in the shell tool and on cancel.

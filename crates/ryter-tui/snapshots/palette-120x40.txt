@@ -26,7 +26,7 @@
 
 
 
-╭─ commands ───────────────────────────────────────────────── 5 of 28 ─╮
+╭─ commands ───────────────────────────────────────────────── 5 of 30 ─╮
 │ mo                                                                   │
 │›/models         Switch the lead's model                           ▸  │
 │ /tools          Tool permission mode                              ▸  │

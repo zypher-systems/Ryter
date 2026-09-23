@@ -171,6 +171,25 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
                 "switched to the {role} hat · Tab to change it again"
             ));
         }
+        AgentEvent::Checkpoint { sha } => view.last_checkpoint = sha.clone(),
+        // The commit panel shows the draft.
+        AgentEvent::CommitDraft { .. } => {}
+        AgentEvent::Committed { summary, error } => match (summary, error) {
+            (Some(s), _) => {
+                view.system(format!("committed {s}"));
+                view.last_tests = None;
+                view.tests_stale = false;
+                view.panels
+                    .stack
+                    .retain(|p| !matches!(p.kind(), "commit" | "changes"));
+            }
+            (None, Some(e)) => view.error(format!("commit failed: {e}")),
+            (None, None) => {}
+        },
+        AgentEvent::Reverted { path, error } => match error {
+            None => view.system(format!("put back {path} · /undo brings it back")),
+            Some(e) => view.error(format!("couldn't put back {path}: {e}")),
+        },
         AgentEvent::Error { message } => {
             let was_busy = view.busy || view.activity.busy();
             view.busy = false;
@@ -368,6 +387,21 @@ fn on_tool_result(
         }
     }
     view.tally.add(&tool, &target, output, is_error);
+    // For a commit receipt: the latest test result, and whether the model
+    // edited files after it.
+    match tool.as_str() {
+        "bash" => {
+            if let Some(s) = toolview::test_summary(output) {
+                let mark = if is_error { '✗' } else { '✓' };
+                view.last_tests = Some(format!("{mark} {s}"));
+                view.tests_stale = false;
+            }
+        }
+        "write" | "search_replace" if !is_error && view.last_tests.is_some() => {
+            view.tests_stale = true;
+        }
+        _ => {}
+    }
 }
 
 /// `R-ACT-05`: the most identifying argument when the core sent no summary.

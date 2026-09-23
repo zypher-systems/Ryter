@@ -52,6 +52,10 @@ pub enum PanelId {
     Help,
     /// `/doctor`.
     Doctor,
+    /// `/changes`.
+    Changes,
+    /// `/commit`.
+    Commit,
 }
 
 /// Everything the loop knows how to do.
@@ -160,6 +164,24 @@ pub enum Action {
     EnterCrew,
     /// `/undo`: put files back as they were before the last build turn.
     Undo,
+    /// `/changes` `x`: put one file back as `base` had it.
+    Revert {
+        /// Commit to restore from.
+        base: String,
+        /// Repository-relative path.
+        path: String,
+    },
+    /// `/commit`: draft a message for these paths.
+    DraftCommit(Vec<String>),
+    /// `/commit`: commit these paths with this message.
+    Commit {
+        /// Repository-relative paths.
+        paths: Vec<String>,
+        /// Full message, receipt included.
+        message: String,
+    },
+    /// Turn commit receipts on or off, and remember it.
+    SetReceipts(bool),
     /// Test that each `(connection, model)` answers a tiny request with a tool.
     ProbeModels(Vec<(String, String)>),
     /// Save what the crew builder chose: the lead's route, the crew, the budget.

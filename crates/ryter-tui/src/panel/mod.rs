@@ -5,7 +5,9 @@
 
 pub mod agents;
 pub mod budget;
+pub mod changes;
 pub mod chrome;
+pub mod commit;
 pub mod context;
 pub mod crew;
 pub mod crew_builder;
@@ -314,6 +316,12 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
         PanelId::Context => Box::new(context::Context::default()),
         PanelId::Help => Box::new(help::Help::default()),
         PanelId::Doctor => Box::new(doctor::Doctor::new(env)),
+        PanelId::Changes => Box::new(changes::Changes::new(view, env)),
+        PanelId::Commit => {
+            let (p, act) = commit::Commit::new(view, env);
+            view.panels.push(Box::new(p));
+            return act;
+        }
     };
     view.panels.push(p);
     Action::None

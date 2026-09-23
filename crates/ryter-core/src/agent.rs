@@ -1032,7 +1032,22 @@ impl Agent {
         if !same {
             self.session.push_checkpoint(sha)?;
         }
+        let start = self.session.meta.checkpoints.last().cloned();
+        self.session.set_turn_checkpoint(start)?;
+        self.emit(self.checkpoint_event())?;
         Ok(())
+    }
+
+    /// Where the latest build turn started, for `/changes`.
+    pub fn checkpoint_event(&self) -> AgentEvent {
+        AgentEvent::Checkpoint {
+            sha: self
+                .session
+                .meta
+                .turn_checkpoint
+                .clone()
+                .or_else(|| self.session.meta.checkpoints.last().cloned()),
+        }
     }
 
     /// Put the user's files back as they were before the last build turn that
@@ -1048,15 +1063,180 @@ impl Agent {
                 self.session.pop_checkpoint()?;
                 continue;
             }
-            let n = crate::git::restore_checkpoint(&dir, &last)?;
+            // Count from a diff of the files: restore's own count overstated.
+            let n = crate::review::changes(&dir, &last)
+                .map(|c| c.files.len())
+                .unwrap_or(0);
+            crate::git::restore_checkpoint(&dir, &last)?;
             self.session.pop_checkpoint()?;
+            // The files are back where that turn started; the turn before it
+            // is now the last one.
+            let prev = self.session.meta.checkpoints.last().cloned();
+            self.session.set_turn_checkpoint(prev)?;
+            self.emit(self.checkpoint_event())?;
             let left = self.session.meta.checkpoints.len();
+            let files = if n == 1 { "file" } else { "files" };
             return Ok(format!(
-                "undone: {n} file(s) put back as they were before the last build turn. \
-                 {left} earlier checkpoint(s) left."
+                "undone: put back {n} {files} as they were at the last checkpoint (before \
+                 the last build turn, or the last file undone in /changes). {left} earlier \
+                 checkpoint(s) left."
             ));
         }
         Ok("nothing to undo: no build turn has changed files in this session".into())
+    }
+
+    /// Put one file back as `base` had it, from `/changes`. Snapshots the
+    /// files first, so `/undo` brings the file back.
+    pub fn revert_file(&mut self, base: &str, path: &str) -> Result<()> {
+        let dir = self.ctx.workspace.clone();
+        let name = format!(
+            "{}-{}",
+            self.session.meta.id,
+            self.session.meta.checkpoints.len() + 1
+        );
+        // The snapshot is for `/undo`; "last turn" stays where the turn began.
+        if self.session.meta.turn_checkpoint.is_none() {
+            let start = self.session.meta.checkpoints.last().cloned();
+            self.session.set_turn_checkpoint(start)?;
+        }
+        if let Some(sha) = crate::git::checkpoint(&dir, &name)? {
+            self.session.push_checkpoint(sha)?;
+        }
+        crate::review::revert_file(&dir, base, path)
+    }
+
+    /// Draft a commit message for `paths` (changes since `HEAD`), from the
+    /// diff, the project's recent subjects, and this conversation's why.
+    pub async fn draft_commit(&mut self, paths: &[String]) -> Result<String> {
+        let dir = self.ctx.workspace.clone();
+        let changes = crate::review::changes(&dir, &crate::review::head_base(&dir))?;
+        let diff = crate::review::draft_diff(&dir, &changes, paths);
+        let subjects = crate::review::recent_subjects(&dir, 8);
+        let mut prompt = String::new();
+        if !subjects.is_empty() {
+            prompt.push_str("Recent commit subjects in this project:\n");
+            for s in &subjects {
+                prompt.push_str(&format!("- {s}\n"));
+            }
+            prompt.push('\n');
+        }
+        let talk = self.conversation_digest(8_000);
+        if !talk.is_empty() {
+            prompt.push_str("The conversation that made the change (latest last):\n");
+            prompt.push_str(&talk);
+            prompt.push_str("\n\n");
+        }
+        prompt.push_str("The change:\n");
+        prompt.push_str(&diff);
+        let text = self
+            .one_shot(crate::review::DRAFT_SYSTEM, &prompt, 4_096)
+            .await?;
+        // Some models fence the message anyway, sometimes with a language.
+        let text = text.trim();
+        let text = match text.strip_prefix("```") {
+            Some(rest) => rest.split_once('\n').map_or("", |(_, body)| body),
+            None => text,
+        };
+        let text = text
+            .trim_end()
+            .strip_suffix("```")
+            .unwrap_or(text)
+            .trim()
+            .to_string();
+        if text.is_empty() {
+            return Err(Error::Config("the model returned an empty message".into()));
+        }
+        Ok(text)
+    }
+
+    /// The user's requests and the model's replies, without tool traffic or
+    /// hat notes, keeping the latest `max` characters.
+    fn conversation_digest(&self, max: usize) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        for m in &self.session.transcript {
+            let body = m.content.trim();
+            if body.is_empty() {
+                continue;
+            }
+            match m.role.as_str() {
+                "user" => {
+                    let body = match body.strip_prefix("[hat:") {
+                        Some(rest) => rest.split_once("]\n\n").map_or(rest, |(_, b)| b),
+                        None => body,
+                    };
+                    parts.push(format!("User: {}", body.trim()));
+                }
+                "assistant" => parts.push(format!("Ryter: {body}")),
+                _ => {}
+            }
+        }
+        let all = parts.join("\n\n");
+        if all.len() <= max {
+            return all;
+        }
+        let start = (all.len() - max..all.len())
+            .find(|&i| all.is_char_boundary(i))
+            .unwrap_or(all.len());
+        format!("[earlier conversation left out]\n{}", &all[start..])
+    }
+
+    /// One model call outside a turn: no tools, low reasoning, spend recorded.
+    async fn one_shot(&mut self, system: &str, user: &str, max_tokens: u32) -> Result<String> {
+        let req = CompletionRequest {
+            model: self.model.clone(),
+            system: Some(system.to_string()),
+            messages: vec![Message {
+                role: "user".into(),
+                content: user.to_string(),
+                tool_call_id: None,
+                tool_calls: None,
+            }],
+            tools: Vec::new(),
+            max_tokens: Some(max_tokens),
+            reasoning: Some("low".into()),
+        };
+        let mut stream = self.provider.stream(req).await?;
+        let mut text = String::new();
+        let mut usage = Usage::default();
+        let mut reported_cost: Option<f64> = None;
+        while let Some(delta) = stream.next().await {
+            match delta? {
+                StreamDelta::Text(t) => text.push_str(&t),
+                StreamDelta::Usage(u) => usage = u,
+                StreamDelta::ReportedCost(c) => reported_cost = Some(c),
+                _ => {}
+            }
+        }
+        let local = self
+            .cfg
+            .as_ref()
+            .and_then(|c| c.connections.get(&self.connection))
+            .is_some_and(|c| c.is_local());
+        let total_usd = reported_cost.or_else(|| {
+            if local {
+                Some(0.0)
+            } else {
+                self.book.cost(&self.model, usage)
+            }
+        });
+        self.session.record_spend(spend_record(
+            self.connection.clone(),
+            self.model.clone(),
+            self.role,
+            usage,
+            total_usd,
+        ))?;
+        self.emit(AgentEvent::Spend {
+            connection: self.connection.clone(),
+            model: self.model.clone(),
+            role: self.role,
+            subagent_id: None,
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cached_tokens: usage.cached_tokens,
+            total_usd,
+        })?;
+        Ok(text)
     }
 
     /// What a budget stop left behind, written by the harness so it costs
@@ -1975,6 +2155,50 @@ mod tests {
         assert!(msg.starts_with("undone"), "{msg}");
         assert_eq!(std::fs::read_to_string(&readme).unwrap(), "repo\n");
         assert!(agent.undo().unwrap().starts_with("nothing to undo"));
+    }
+
+    /// `/changes` and `/commit`: undoing one file keeps "last turn" where the
+    /// turn began, `/undo` brings the file back and counts it right, and a
+    /// drafted message comes back without code fences.
+    #[tokio::test]
+    async fn one_file_undone_then_undo_then_a_drafted_message() {
+        let p = ReplayProvider::scripted(vec![
+            write("new.txt", "fresh\n"),
+            say("done"),
+            say("```text\nAdd new.txt\n\nIt was asked for.\n```"),
+        ]);
+        let (_home, cwd, mut agent) = crew_setup(p);
+        agent.role = Role::SoloBuild;
+        agent.ctx.role = Role::SoloBuild;
+        agent.ctx.always_approve = true;
+        agent.turn("add a file").await.unwrap();
+        let dir = cwd.path();
+        let turn_start = match agent.checkpoint_event() {
+            AgentEvent::Checkpoint { sha: Some(s) } => s,
+            other => panic!("{other:?}"),
+        };
+        let since_turn = crate::review::changes(dir, &turn_start).unwrap();
+        assert_eq!(since_turn.files.len(), 1);
+
+        agent.revert_file(&turn_start, "new.txt").unwrap();
+        assert!(!dir.join("new.txt").exists());
+        assert_eq!(
+            agent.checkpoint_event(),
+            AgentEvent::Checkpoint {
+                sha: Some(turn_start.clone())
+            },
+            "undoing a file must not move the last turn"
+        );
+
+        let msg = agent.undo().unwrap();
+        assert!(msg.starts_with("undone: put back 1 file "), "{msg}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("new.txt")).unwrap(),
+            "fresh\n"
+        );
+
+        let draft = agent.draft_commit(&["new.txt".into()]).await.unwrap();
+        assert_eq!(draft, "Add new.txt\n\nIt was asked for.");
     }
 
     fn first_parent_log(repo: &std::path::Path) -> Vec<String> {

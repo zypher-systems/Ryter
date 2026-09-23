@@ -165,6 +165,16 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             }
         }
         Action::Undo => cx.send(Work::Undo),
+        Action::Revert { base, path } => cx.send(Work::Revert { base, path }),
+        Action::DraftCommit(paths) => cx.send(Work::DraftCommit(paths)),
+        Action::Commit { paths, message } => cx.send(Work::Commit { paths, message }),
+        Action::SetReceipts(on) => {
+            view.ui.receipts = on;
+            cx.cfg.ui.receipts = on;
+            if let Err(e) = config::save_settings(&cx.home, &cx.cfg) {
+                view.error(e.to_string());
+            }
+        }
         Action::SaveCrewSetup {
             lead_connection,
             lead_model,
@@ -412,8 +422,11 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
 
 fn open_panel(view: &mut View, cx: &mut Ctx, id: PanelId) {
     let env = cx.env();
-    let _ = panel::open(view, id, &env);
+    let then = panel::open(view, id, &env);
     panel::sync_composer(view);
+    if then != Action::None {
+        perform(view, cx, then);
+    }
     match id {
         PanelId::Models => cx.send(Work::ListModels),
         PanelId::CrewBuilder => cx.send(Work::ListCrewModels),

@@ -253,6 +253,28 @@ pub const COMMANDS: &[CommandSpec] = &[
         false,
         |_, _| Action::Undo,
     ),
+    spec(
+        "changes",
+        &["diff"],
+        Category::Session,
+        "What changed, file by file, with diffs; undo one file",
+        None,
+        true,
+        None,
+        false,
+        |_, _| Action::OpenPanel(PanelId::Changes),
+    ),
+    spec(
+        "commit",
+        &[],
+        Category::Session,
+        "Commit your changes with a drafted message and a receipt",
+        None,
+        true,
+        None,
+        false,
+        |_, _| Action::OpenPanel(PanelId::Commit),
+    ),
     // Agents & phase
     spec(
         "agents",

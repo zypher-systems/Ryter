@@ -115,6 +115,8 @@ pub struct UiConfig {
     pub timestamps: bool,
     /// Line-number gutter in code blocks.
     pub line_numbers: bool,
+    /// `/commit` adds a `Ryter:` trailer: model, cost, tests.
+    pub receipts: bool,
 }
 
 impl Default for UiConfig {
@@ -128,6 +130,7 @@ impl Default for UiConfig {
             colors: "auto".into(),
             timestamps: true,
             line_numbers: true,
+            receipts: true,
         }
     }
 }
@@ -142,6 +145,7 @@ pub const UI_KEYS: &[&str] = &[
     "colors",
     "timestamps",
     "line_numbers",
+    "receipts",
 ];
 
 /// Unknown keys under `[ui]` in a TOML document (empty when none).
@@ -1195,6 +1199,8 @@ struct UiFile {
     timestamps: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     line_numbers: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receipts: Option<bool>,
 }
 
 impl From<&UiConfig> for UiFile {
@@ -1208,6 +1214,7 @@ impl From<&UiConfig> for UiFile {
             colors: Some(ui.colors.clone()),
             timestamps: Some(ui.timestamps),
             line_numbers: Some(ui.line_numbers),
+            receipts: Some(ui.receipts),
         }
     }
 }
@@ -1237,6 +1244,9 @@ impl UiFile {
         }
         if let Some(v) = self.line_numbers {
             ui.line_numbers = v;
+        }
+        if let Some(v) = self.receipts {
+            ui.receipts = v;
         }
     }
 }
