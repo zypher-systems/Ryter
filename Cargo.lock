@@ -1488,7 +1488,7 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "ryter-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "clap",
  "ryter-core",
@@ -1499,7 +1499,7 @@ dependencies = [
 
 [[package]]
 name = "ryter-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1522,7 +1522,7 @@ dependencies = [
 
 [[package]]
 name = "ryter-tui"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "crossterm",
  "ratatui",
