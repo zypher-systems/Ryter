@@ -205,11 +205,14 @@ fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> Drain {
     Drain { buf, done }
 }
 
-/// Whether any process is still in group `pgid`.
+/// Whether any process is still in group `pgid`. Bash's builtin `kill`, not
+/// `/usr/bin/kill`: procps-ng's `kill -0 -PGID` reports a dead group as alive
+/// and a live one as dead.
 fn group_alive(pgid: u32) -> bool {
     pgid != 0
-        && Command::new("kill")
-            .args(["-0", &format!("-{pgid}")])
+        && Command::new("bash")
+            .arg("-c")
+            .arg(format!("kill -0 -- -{pgid}"))
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
