@@ -56,10 +56,12 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
         AgentEvent::TurnFinished {
             tools, duration_ms, ..
         } => {
-            let verb = if view.cancelling {
-                Verb::Stopped
-            } else {
-                Verb::Done
+            // `Cancelled` and `Error` arrive first and end the strip; keep
+            // what they said rather than calling the turn done.
+            let verb = match view.activity.verb {
+                _ if view.cancelling => Verb::Stopped,
+                Verb::Stopped | Verb::Failed if !view.activity.busy() => view.activity.verb.clone(),
+                _ => Verb::Done,
             };
             view.busy = false;
             view.cancelling = false;
@@ -576,6 +578,22 @@ mod tests {
         ));
         assert_eq!(tool.meta.duration_ms, Some(1200));
         assert!(v.messages.last().unwrap().body.contains("E0308"));
+    }
+
+    #[test]
+    fn a_cancelled_turn_ends_stopped_not_done() {
+        let mut v = view();
+        apply(&mut v, AgentEvent::Cancelled);
+        apply(
+            &mut v,
+            AgentEvent::TurnFinished {
+                turn: 1,
+                tools: 1,
+                duration_ms: 8000,
+            },
+        );
+        assert_eq!(v.activity.verb, Verb::Stopped);
+        assert!(!v.busy);
     }
 
     #[test]
