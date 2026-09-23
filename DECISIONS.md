@@ -2,6 +2,25 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-23 — Read-only means the command's form, not just its name
+- **By:** lead
+- **Decision:**
+  - **More read-only tools.** The list now includes byte and checksum tools: `xxd`, `od`, `hexdump`, `strings`, `base64`, `tac`, `rev`, `comm`, `paste`, `sha256sum`, `sha1sum`, `md5sum`, `shasum`, `cksum`.
+  - **Output-file forms don't count as read-only.** `writes_output_file` refuses the forms of read-only commands that write a file:
+    - `sort -o` and `--output`, including inside a cluster like `-no`;
+    - `uniq in out`;
+    - `tree -o`;
+    - `xxd -r` and `xxd in out`;
+    - `base64 -o` (macOS);
+    - `find -fprint`, `-fprintf`, and `-fls`.
+  - **`find -okdir`** joins `-exec`, `-execdir`, `-ok`, and `-delete` as destructive.
+- **Chosen vs rejected:**
+  - Rejected leaving `xxd` off the list. Reviewers use it to check line endings and trailing newlines, and only its `-r` and two-file forms write.
+  - Rejected adding `awk` and `sed`. They can write files from inside their own scripts, which the gate can't read.
+- **Why:** In real use the review hat refused `tail -c 50 .gitignore | xxd`. Checking why showed that `sort -o`, `uniq in out`, `tree -o`, and `find -fprint` could already write files from plan and review, because the list judged a command by its name alone.
+- **Where:** `crates/ryter-core/src/tools/policy.rs` (`READ_ONLY`, `writes_output_file`, `read_only`, `deleting_find`)
+- **Residual risk:** Another tool with a write option that isn't listed here would get through. The list is maintained by hand.
+
 ### 2026-09-23 — `2>&1` is a redirect, and `cd` into the project is allowed where commands are read-only
 - **By:** lead
 - **Decision:**
