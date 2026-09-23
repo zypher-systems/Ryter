@@ -2,6 +2,14 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-22 — A command returns when its shell exits; what it left running is stopped
+- **By:** lead
+- **Decision:** `run_command` reads stdout and stderr on their own threads while the command runs. When bash exits, anything still in its process group (a server started with `&`) is killed, and the output says so: `[stopped the background processes this command left running]`. A process that left the group (`setsid`) and still holds a pipe gets 500 ms, then the command returns with what arrived and a note. The bash tool's description tells the model to start, test, and stop a server in one command. Process groups are probed and killed with bash's builtin `kill` (`kill -0 -- -PGID`, `kill -KILL -- -PGID`), in the shell tool and on cancel.
+- **Chosen vs rejected:** Rejected leaving background processes running: nothing tracks them, they keep ports busy, and the next run collides. Rejected waiting for the pipes to close, the old behavior: a server never closes them. Rejected a background-job tool for now: the reported need was checking a server, which one command covers.
+- **Why:** In a real solo build the model ran `(PORT=3210 node server.js &) && sleep 1.5 && curl …; pkill -f "PORT=3210"`. The `pkill` matched the command's own `bash -c` line, not the server. The server held the pipe, and Ryter waited on it past the timeout: the spinner never stopped. Separately, output over 64 KiB stalled every command until its timeout, because the pipes were only read after exit. On Ubuntu CI, procps-ng's `/usr/bin/kill -0 -PGID` called a dead group alive and a live one dead, and its group kill left a background process running.
+- **Where:** `crates/ryter-core/src/tools/shell.rs` (`run_command`, `drain`, `group_alive`), `crates/ryter-core/src/cancel.rs` (`kill_group`), `crates/ryter-core/src/tools/mod.rs` (bash description)
+- **Residual risk:** A server the model starts on purpose for the user is stopped too; the user starts long-running servers themselves. A reader thread stuck on a detached process's pipe lives until that process exits.
+
 ### 2026-09-22 — The chat narrates the work, and measures every step
 - **By:** lead
 - **Decision:** The solo prompt (and the lead's) asks for narration: what's next and why before each group of actions; each choice between approaches, and its reason, at the moment it's made; what went wrong and the next move after a failure. The chat shows each tool step with a verb and its measured outcome: `new · 48 lines`, `rewrote · 76 lines (was 89)`, an edit's changed lines, `✓ 13 passed`, or `✗ exit 1` with the cause line and tail inside the row. Lookups fold into one line, and a divider closes each working turn with files, commands, and time. The write, edit, and bash tools report what happened (created or rewrote, the lines that really changed, exit codes), so the model sees it too.

@@ -184,7 +184,9 @@ fn spec(name: &str) -> Option<ToolSpec> {
         ),
         "bash" => (
             "Run a shell command in the workspace. Default timeout 120s; pass \
-             timeout_secs (max 600) for a long build or test run.",
+             timeout_secs (max 600) for a long build or test run. Anything the \
+             command starts in the background is stopped when it returns: to \
+             check a server, start it, test it, and finish in the same command.",
             json!({"type":"object","properties":{"command":{"type":"string"},"timeout_secs":{"type":"integer"}},"required":["command"]}),
         ),
         "propose_edit" => (

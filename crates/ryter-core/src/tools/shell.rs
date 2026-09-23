@@ -4,6 +4,7 @@ use serde_json::Value;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use crate::cancel::kill_group;
 use crate::error::{Error, Result};
 use crate::tools::{ToolContext, ToolOutput};
 
@@ -71,18 +72,22 @@ pub fn run_command(
     let mut child = command.spawn().map_err(|e| Error::Config(e.to_string()))?;
     let pgid = child.id();
     cancel.register_pgid(pgid);
+    // Drain both pipes while the command runs: a command that prints more
+    // than the pipe buffer would otherwise block until the timeout.
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
     let start = std::time::Instant::now();
-    loop {
+    let status = loop {
         if cancel.is_cancelled() {
-            kill_pgid(pgid);
+            kill_group(pgid);
             let _ = child.kill();
             cancel.unregister_pgid(pgid);
             return Ok(Run::Cancelled);
         }
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) => break status,
             Ok(None) if start.elapsed() > timeout => {
-                kill_pgid(pgid);
+                kill_group(pgid);
                 let _ = child.kill();
                 cancel.unregister_pgid(pgid);
                 return Ok(Run::TimedOut);
@@ -93,23 +98,45 @@ pub fn run_command(
                 return Err(Error::Config(e.to_string()));
             }
         }
+    };
+    // The command is done. Anything it left running in the background (a
+    // server started with `&`) still holds the output pipes open, and waiting
+    // for them to close would wait forever: stop the group.
+    let left_running = group_alive(pgid);
+    if left_running {
+        kill_group(pgid);
     }
     cancel.unregister_pgid(pgid);
-    let out = child
-        .wait_with_output()
-        .map_err(|e| Error::Config(e.to_string()))?;
-    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
-    if !out.stderr.is_empty() {
+    // A process that left the group (`setsid`) can still hold a pipe; take
+    // what has arrived rather than wait on it.
+    let deadline = std::time::Instant::now() + PIPE_GRACE;
+    let (out_text, out_open) = stdout.collect(deadline);
+    let (err_text, err_open) = stderr.collect(deadline);
+    let mut text = out_text;
+    if !err_text.is_empty() {
         if !text.is_empty() {
             text.push('\n');
         }
-        text.push_str(&String::from_utf8_lossy(&out.stderr));
+        text.push_str(&err_text);
     }
-    Ok(if out.status.success() {
+    let mut note = |line: &str| {
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(line);
+        text.push('\n');
+    };
+    if left_running {
+        note("[stopped the background processes this command left running]");
+    }
+    if out_open || err_open {
+        note("[a detached background process still holds the output; stopped reading]");
+    }
+    Ok(if status.success() {
         Run::Ok(text)
     } else {
         // The exit code tells the model (and the chat) how it failed.
-        let how = match out.status.code() {
+        let how = match status.code() {
             Some(c) => format!("[exit {c}]"),
             None => "[killed by a signal]".into(),
         };
@@ -135,13 +162,62 @@ fn timeout_secs(args: &Value) -> u64 {
         .unwrap_or(DEFAULT_TIMEOUT_SECS)
 }
 
-fn kill_pgid(pgid: u32) {
-    if pgid == 0 {
-        return;
+/// How long to keep reading after the command exits, for output a detached
+/// process may still be holding.
+const PIPE_GRACE: Duration = Duration::from_millis(500);
+
+/// A pipe read to EOF on its own thread.
+struct Drain {
+    buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    done: std::sync::mpsc::Receiver<()>,
+}
+
+impl Drain {
+    /// What was read by `deadline`, and whether the pipe was still open.
+    fn collect(self, deadline: std::time::Instant) -> (String, bool) {
+        let wait = deadline.saturating_duration_since(std::time::Instant::now());
+        let open = self
+            .done
+            .recv_timeout(wait)
+            .is_err_and(|e| matches!(e, std::sync::mpsc::RecvTimeoutError::Timeout));
+        let bytes = self.buf.lock().map(|b| b.clone()).unwrap_or_default();
+        (String::from_utf8_lossy(&bytes).into_owned(), open)
     }
-    let _ = Command::new("kill")
-        .args(["-KILL", &format!("-{pgid}")])
-        .status();
+}
+
+fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> Drain {
+    let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (tx, done) = std::sync::mpsc::channel();
+    let sink = buf.clone();
+    std::thread::spawn(move || {
+        if let Some(mut pipe) = pipe {
+            let mut chunk = [0u8; 8192];
+            while let Ok(n) = pipe.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                if let Ok(mut b) = sink.lock() {
+                    b.extend_from_slice(&chunk[..n]);
+                }
+            }
+        }
+        let _ = tx.send(());
+    });
+    Drain { buf, done }
+}
+
+/// Whether any process is still in group `pgid`. Bash's builtin `kill`, not
+/// `/usr/bin/kill`: procps-ng's `kill -0 -PGID` reports a dead group as alive
+/// and a live one as dead.
+fn group_alive(pgid: u32) -> bool {
+    pgid != 0
+        && Command::new("bash")
+            .arg("-c")
+            .arg(format!("kill -0 -- -{pgid}"))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
 }
 
 #[cfg(test)]
@@ -187,5 +263,80 @@ mod tests {
             "sleep was not killed ({:?})",
             start.elapsed()
         );
+    }
+
+    fn run(cmd: &str, secs: u64) -> (Run, Duration) {
+        let dir = TempDir::new().unwrap();
+        let start = Instant::now();
+        let r = run_command(cmd, dir.path(), Duration::from_secs(secs), &Cancel::new()).unwrap();
+        (r, start.elapsed())
+    }
+
+    /// A server left running with `&` holds the output pipe open. The command
+    /// must still return, with its output, and the server must be stopped.
+    #[test]
+    fn a_background_process_does_not_hang_the_command() {
+        let marker = format!("ryter-bg-{}", std::process::id());
+        let cmd = format!("(exec -a {marker} sleep 30 &) && echo started");
+        let (r, took) = run(&cmd, 20);
+        assert!(took < Duration::from_secs(5), "hung for {took:?}");
+        match r {
+            Run::Ok(text) => {
+                assert!(text.starts_with("started\n"), "{text:?}");
+                assert!(text.contains("stopped the background"), "{text:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+        // SIGKILL is sent, not awaited: give the process a moment to go.
+        let gone = (0..100).any(|_| {
+            let alive = Command::new("pgrep")
+                .args(["-f", &marker])
+                .output()
+                .unwrap();
+            alive.stdout.is_empty() || {
+                std::thread::sleep(Duration::from_millis(20));
+                false
+            }
+        });
+        assert!(gone, "left running");
+    }
+
+    /// Output past the pipe buffer (64 KiB) must not stall until the timeout.
+    #[test]
+    fn large_output_does_not_block() {
+        let (r, took) = run("head -c 1000000 /dev/zero | tr '\\0' x", 20);
+        assert!(took < Duration::from_secs(5), "took {took:?}");
+        match r {
+            Run::Ok(text) => assert_eq!(text.len(), 1_000_000),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn ordinary_commands_are_unchanged() {
+        assert_eq!(run("echo hi", 5).0, Run::Ok("hi\n".into()));
+        match run("echo out; echo err >&2; exit 3", 5).0 {
+            Run::Failed(text) => assert_eq!(text, "out\n\nerr\n[exit 3]"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A process that leaves the group (`setsid`) can't be stopped with it;
+    /// the command still returns after a short grace, and says why.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_detached_process_holding_the_pipe_does_not_hang() {
+        let marker = format!("ryter-detached-{}", std::process::id());
+        let cmd = format!("setsid bash -c 'exec -a {marker} sleep 30' & echo detached");
+        let (r, took) = run(&cmd, 20);
+        let _ = Command::new("pkill").args(["-f", &marker]).status();
+        assert!(took < Duration::from_secs(5), "hung for {took:?}");
+        match r {
+            Run::Ok(text) => {
+                assert!(text.starts_with("detached\n"), "{text:?}");
+                assert!(text.contains("stopped reading"), "{text:?}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

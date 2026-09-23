@@ -77,12 +77,18 @@ impl Cancel {
     }
 }
 
-fn kill_group(pgid: u32) {
+/// SIGKILL every process in group `pgid`. Bash's builtin `kill`, which is
+/// `kill(2)` on every OS; procps-ng's `/usr/bin/kill` parses a negative pgid
+/// after a signal unreliably.
+pub(crate) fn kill_group(pgid: u32) {
     if pgid == 0 {
         return;
     }
-    let _ = std::process::Command::new("kill")
-        .args(["-KILL", &format!("-{pgid}")])
+    let _ = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(format!("kill -KILL -- -{pgid}"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status();
 }
 
