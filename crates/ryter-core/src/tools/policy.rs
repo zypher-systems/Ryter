@@ -214,11 +214,126 @@ const NEVER: &[&str] = &[
 
 /// Read-only shells for the roles that must not change the tree.
 const READ_ONLY: &[&str] = &[
-    "ls", "cat", "head", "tail", "wc", "file", "which", "type", "stat", "du", "df", "basename",
-    "dirname", "realpath", "readlink", "pwd", "echo", "printf", "true", "false", "date", "env",
-    "uname", "hostname", "whoami", "id", "sort", "uniq", "cut", "tr", "nl", "seq", "diff", "cmp",
-    "grep", "egrep", "fgrep", "rg", "fd", "find", "tree", "jq", "yq", "column", "column",
+    "ls",
+    "cat",
+    "head",
+    "tail",
+    "wc",
+    "file",
+    "which",
+    "type",
+    "stat",
+    "du",
+    "df",
+    "basename",
+    "dirname",
+    "realpath",
+    "readlink",
+    "pwd",
+    "echo",
+    "printf",
+    "true",
+    "false",
+    "date",
+    "env",
+    "uname",
+    "hostname",
+    "whoami",
+    "id",
+    "sort",
+    "uniq",
+    "cut",
+    "tr",
+    "nl",
+    "seq",
+    "diff",
+    "cmp",
+    "grep",
+    "egrep",
+    "fgrep",
+    "rg",
+    "fd",
+    "find",
+    "tree",
+    "jq",
+    "yq",
+    "column",
+    "tac",
+    "rev",
+    "comm",
+    "paste",
+    "strings",
+    "xxd",
+    "od",
+    "hexdump",
+    "base64",
+    "sha256sum",
+    "sha1sum",
+    "md5sum",
+    "shasum",
+    "cksum",
 ];
+
+/// A read-only command in a form that writes a file after all: `sort -o`,
+/// `uniq in out`, `tree -o`, `xxd -r` or `xxd in out`, `base64 -o` (macOS),
+/// `find -fprint`. The roles that must not change the tree refuse these; the
+/// build hat asks.
+fn writes_output_file(prog: &str, words: &[String]) -> bool {
+    let args: Vec<&str> = words
+        .iter()
+        .skip_while(|w| w.rsplit('/').next() != Some(prog))
+        .skip(1)
+        .map(String::as_str)
+        .collect();
+    // File arguments, skipping the value after an option that takes one
+    // (`xxd -l 32 f` has one file, not two).
+    let positional = |takes_value: &[&str]| {
+        let mut n = 0;
+        let mut skip = false;
+        for a in &args {
+            if skip {
+                skip = false;
+            } else if takes_value.contains(a) {
+                skip = true;
+            } else if !a.starts_with('-') {
+                n += 1;
+            }
+        }
+        n
+    };
+    // `-o`, `-ofile`, or `-o` inside a cluster (`sort -no out`); or the long
+    // spelling.
+    let flag = |short: char, long: &str| {
+        args.iter().any(|a| {
+            a.starts_with(long)
+                || (a.starts_with('-') && !a.starts_with("--") && {
+                    let letters: String = a[1..]
+                        .chars()
+                        .take_while(char::is_ascii_alphabetic)
+                        .collect();
+                    letters.len() <= 4 && letters.contains(short)
+                })
+        })
+    };
+    match prog {
+        "sort" | "tree" | "base64" => flag('o', "--output"),
+        "uniq" => positional(&["-f", "-s", "-w"]) > 1,
+        "xxd" => {
+            flag('r', "--revert")
+                || args.contains(&"-revert")
+                || positional(&["-l", "-s", "-c", "-g", "-o", "-n", "-len", "-seek", "-cols"]) > 1
+        }
+        "find" => args
+            .iter()
+            .any(|a| matches!(*a, "-fprint" | "-fprint0" | "-fprintf" | "-fls" | "-okdir")),
+        _ => false,
+    }
+}
+
+/// On the read-only list, and not in a form that writes a file.
+fn read_only(prog: &str, words: &[String]) -> bool {
+    READ_ONLY.contains(&prog) && !writes_output_file(prog, words)
+}
 
 /// Commands whose file arguments must not be a secret: they print contents.
 const READERS: &[&str] = &[
@@ -448,7 +563,7 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
         Role::Builder => Decision::Allow,
         // A normal agent in the user's tree: looking runs, doing asks.
         Role::SoloBuild => {
-            let base = if READ_ONLY.contains(&prog) && !path_escapes(&words, ctx) {
+            let base = if read_only(prog, &words) && !path_escapes(&words, ctx) {
                 Decision::Allow
             } else {
                 Decision::Ask
@@ -456,14 +571,14 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
             base.and(outside)
         }
         Role::Auditor | Role::SoloReview => {
-            if AUDIT_OK.contains(&prog) || READ_ONLY.contains(&prog) {
+            if AUDIT_OK.contains(&prog) || read_only(prog, &words) {
                 Decision::Allow
             } else {
                 Decision::Deny
             }
         }
         Role::Orchestrator | Role::Architect | Role::SoloPlan => {
-            if READ_ONLY.contains(&prog) && !path_escapes(&words, ctx) {
+            if read_only(prog, &words) && !path_escapes(&words, ctx) {
                 Decision::Allow
             } else {
                 Decision::Deny
@@ -620,9 +735,9 @@ fn redirect(word: &str, input: bool) -> Redir {
 /// `find … -delete` / `-exec rm` destroys without being named `rm`.
 fn deleting_find(prog: &str, words: &[String]) -> bool {
     prog == "find"
-        && words
-            .iter()
-            .any(|w| w == "-delete" || w == "-exec" || w == "-execdir" || w == "-ok")
+        && words.iter().any(|w| {
+            w == "-delete" || w == "-exec" || w == "-execdir" || w == "-ok" || w == "-okdir"
+        })
 }
 
 /// Split `cmd` the way a shell would, so each command is judged on its own.
@@ -1304,6 +1419,39 @@ mod tests {
             Decision::Deny
         );
         assert_eq!(bash("rm a.rs", Role::SoloReview, d), Decision::Deny);
+        // Looking at bytes and checksums is reading; the forms of read-only
+        // commands that write a file are not.
+        std::fs::write(d.join(".gitignore"), "x\n").unwrap();
+        for role in [Role::SoloReview, Role::SoloPlan] {
+            for ok in [
+                "tail -c 50 .gitignore | xxd",
+                "xxd -l 32 .gitignore",
+                "od -c .gitignore",
+                "strings .gitignore",
+                "sha256sum .gitignore",
+                "sort .gitignore | uniq -c",
+                "tac .gitignore",
+            ] {
+                assert_eq!(bash(ok, role, d), Decision::Allow, "{role:?}: {ok}");
+            }
+            for bad in [
+                "sort -o out.txt .gitignore",
+                "sort -no out.txt .gitignore",
+                "sort -oout.txt .gitignore",
+                "xxd -rp dump.hex",
+                "sort --output=out.txt .gitignore",
+                "uniq .gitignore out.txt",
+                "tree -o out.txt",
+                "xxd -r dump.hex",
+                "xxd .gitignore out.hex",
+                "base64 -o out.txt .gitignore",
+                "find . -fprint out.txt",
+                "find . -exec touch {} ;",
+                "find . -okdir touch {} ;",
+            ] {
+                assert_eq!(bash(bad, role, d), Decision::Deny, "{role:?}: {bad}");
+            }
+        }
         // Copying stderr to stdout writes nothing; `&>` and `>&` to a file do.
         for ok in [
             "cargo test 2>&1",
