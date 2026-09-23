@@ -373,19 +373,20 @@ impl Composer {
         let mut found = false;
         for line in self.text.split('\n') {
             let ranges = wrap::wrap_ranges(line, width);
-            let n = ranges.len();
-            for (i, (a, b)) in ranges.into_iter().enumerate() {
+            for (i, &(a, b)) in ranges.iter().enumerate() {
                 let (ga, gb) = (base + a, base + b);
-                let last_row_of_line = i + 1 == n;
-                if !found {
-                    let inside = self.cursor >= ga
-                        && (self.cursor < gb
-                            || (last_row_of_line && self.cursor <= base + line.len()));
-                    if inside {
-                        let col = wrap::width(&self.text[ga..self.cursor.min(gb).max(ga)]);
-                        cursor_rc = (rows.len(), col.min(width));
-                        found = true;
-                    }
+                // A row owns the spaces the wrap dropped after it, and the
+                // first row owns the start of its line (a line of only spaces
+                // wraps to an empty range at its end), so the cursor moves as
+                // spaces are typed.
+                let owned_from = if i == 0 { base } else { ga };
+                let owned_to = ranges
+                    .get(i + 1)
+                    .map_or(base + line.len() + 1, |&(next, _)| base + next);
+                if !found && self.cursor >= owned_from && self.cursor < owned_to {
+                    let col = wrap::width(&self.text[owned_from..self.cursor]);
+                    cursor_rc = (rows.len(), col.min(width));
+                    found = true;
                 }
                 rows.push((ga, gb));
             }
@@ -511,6 +512,34 @@ mod tests {
         assert_eq!((r, col), (0, 0));
         c.set_text("a\n\nb");
         assert_eq!(c.rows(20), 3);
+    }
+
+    /// Typed spaces move the cursor, though the wrap leaves them out of rows.
+    #[test]
+    fn the_cursor_advances_over_spaces() {
+        let col = |t: &str, w: usize| {
+            let mut c = Composer::new();
+            c.set_text(t);
+            c.layout(w).1
+        };
+        assert_eq!(col(" ", 20), (0, 1));
+        assert_eq!(col("   ", 20), (0, 3));
+        assert_eq!(col("hello ", 20), (0, 6));
+        assert_eq!(col("hello   ", 20), (0, 8));
+        assert_eq!(col("a\n  ", 20), (1, 2));
+        // At a wrap: the break space stays on the row it ends.
+        assert_eq!(col("hello ", 5), (0, 5));
+        assert_eq!(col("hello w", 5), (1, 1));
+        // Mid-text, on a break space: the end of the row before it.
+        let mut c = Composer::new();
+        c.set_text("hello world foo");
+        c.home();
+        for _ in 0..5 {
+            c.right();
+        }
+        assert_eq!(c.layout(5).1, (0, 5));
+        c.right();
+        assert_eq!(c.layout(5).1, (1, 0));
     }
 
     #[test]
