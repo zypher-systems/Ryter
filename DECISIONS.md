@@ -2,6 +2,21 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-23 — `2>&1` is a redirect, and `cd` into the project is allowed where commands are read-only
+- **By:** lead
+- **Decision:**
+  - **`&` next to `>` stays in the redirect.** The segment splitter no longer splits at an `&` touching a `>`, so `2>&1`, `>&2`, and `&>file` stay whole. `writes_via_redirect` and `redirect_escapes` now read words through one parser (`redirect`), which tells copying a descriptor (`2>&1`, `>&-`) from writing a file (`&>out`, `>&out`, `&>>log`).
+  - **`cd` into the project.** For roles that can't change files (plan, review, lead, architect, auditor), a `cd` into a folder inside the boundary is allowed. The rest of the chain is then judged from that folder, with it as the boundary.
+- **Chosen vs rejected:**
+  - Rejected putting `cd` on the read-only list. Later paths are checked from the project root, so `cd /etc && cat passwd`, or a symlink inside the new folder, would read past the check.
+  - Rejected keeping the project root as the boundary after a `cd`. Narrowing it to the folder is never looser, and it catches a symlink where the command really runs.
+  - The build hat keeps asking about `cd`, as before.
+- **Why:** In real use the review hat refused `cd app && npm test 2>&1 | tail -25`, the usual way to test an app in a subfolder. Two rules caused it. `cd` wasn't allowed at all. And the `&` in `2>&1` split off a "command" named `1`, which every read-only role refused, so `cargo test 2>&1` failed too. Crew auditors hit the same rules.
+- **Where:** `crates/ryter-core/src/tools/policy.rs` (`segments`, `decide_bash`, `cd_within`, `redirect`)
+- **Residual risk:**
+  - A `cd` inside a pipeline or subshell is treated as if it carries on to later commands. That's stricter than the shell, never looser.
+  - `pushd` is still refused.
+
 ### 2026-09-23 — Review and commit inside Ryter: `/changes`, `/commit`, and a receipt
 - **By:** lead
 - **Decision:** `/changes` diffs a fresh snapshot of the files (the undo checkpoint's private-index method, so new files show and the staging area is untouched) against `HEAD` ("uncommitted") or the checkpoint where the latest build turn started ("last turn"). `x` undoes one file after taking a checkpoint, so `/undo` reverses it. The session records the turn's starting checkpoint separately (`turn_checkpoint`), so undoing a file doesn't move "last turn". `/commit` commits only the ticked paths (`git add -A -- <paths>`, then `git commit --only -- <paths>`), with the user's identity and hooks. The message is drafted by one tool-less, low-reasoning call from the diff (capped at 24k characters), the last 8 commit subjects, and the conversation without tool traffic. The optional `Ryter:` trailer gives the models and the project's spend since `HEAD`'s commit time, summed from every session's `spend.jsonl`, plus the latest test result. That result becomes "not rerun after the last edit" if the model edited files after the run. Receipts are on by default, shown in the preview, toggled with `t`, and saved as `[ui] receipts`.

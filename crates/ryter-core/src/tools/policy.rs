@@ -338,9 +338,47 @@ fn decide_bash(args: &Value, ctx: &ToolContext) -> Decision {
     if segs.is_empty() {
         return Decision::Deny;
     }
-    segs.iter()
-        .map(|s| decide_segment(s, ctx))
-        .fold(Decision::Allow, Decision::and)
+    // `cd app && npm test`: after a `cd` into a folder of the project, the
+    // rest is judged from that folder, with it as the boundary. Stricter than
+    // the project root, never looser: a symlink in `app/` pointing outside
+    // is caught where the command really runs.
+    let mut here: Option<ToolContext> = None;
+    let mut decision = Decision::Allow;
+    for s in &segs {
+        let cx = here.as_ref().unwrap_or(ctx);
+        if let Some(dir) = cd_within(s, cx) {
+            here = Some(ToolContext {
+                workspace: dir,
+                ..cx.clone()
+            });
+            continue;
+        }
+        decision = decision.and(decide_segment(s, cx));
+    }
+    decision
+}
+
+/// The folder a `cd` segment moves to, when it's inside the boundary and the
+/// role can't change files (the build hat asks about `cd`, as before; a
+/// builder may run anything in its worktree). A `cd` anywhere else, or with
+/// no folder (which goes home), is left to the usual rules, which refuse it.
+fn cd_within(seg: &str, ctx: &ToolContext) -> Option<PathBuf> {
+    if matches!(ctx.role, Role::SoloBuild | Role::Builder) {
+        return None;
+    }
+    let words = words(seg);
+    if program(&words) != Some("cd") {
+        return None;
+    }
+    let args: Vec<&String> = words
+        .iter()
+        .skip(1)
+        .filter(|w| !w.starts_with('-'))
+        .collect();
+    let [dir] = args.as_slice() else {
+        return None;
+    };
+    resolve(ctx, dir).filter(|p| p.is_dir())
 }
 
 /// Judge one shell segment (no `;`, `&&`, `|`, or substitution inside).
@@ -529,17 +567,54 @@ fn writes_via_redirect(words: &[String]) -> bool {
             expect = false;
             continue;
         }
-        let t = w.trim_start_matches(|c: char| c.is_ascii_digit());
-        if t == ">" || t == ">>" || t == ">|" {
-            expect = true;
-        } else if let Some(rest) = t.strip_prefix(">>").or_else(|| t.strip_prefix('>')) {
-            let rest = rest.trim_start_matches('|');
-            if !rest.is_empty() && !rest.starts_with('&') && rest != "/dev/null" {
-                return true;
-            }
+        match redirect(w, false) {
+            Redir::Next => expect = true,
+            Redir::To(p) if p != "/dev/null" => return true,
+            _ => {}
         }
     }
     false
+}
+
+/// What one word says about redirection.
+#[derive(Debug, PartialEq)]
+enum Redir {
+    /// Not a redirect.
+    No,
+    /// A redirect whose target is the next word (`> out`).
+    Next,
+    /// A redirect with its target attached (`>out`, `&>out`, `>&out`).
+    To(String),
+    /// A descriptor copied to another (`2>&1`, `>&2`): writes no file.
+    Dup,
+}
+
+/// Read a word as a redirect. Output forms: `>`, `>>`, `>|`, each with an
+/// optional descriptor (`2>`) or `&` (`&>`, both streams). A target of `&N`
+/// or `&-` copies or closes a descriptor; `&` then a name is a file. With
+/// `input`, a lone `<` counts too (its target is read, not written).
+fn redirect(word: &str, input: bool) -> Redir {
+    let t = word.trim_start_matches(|c: char| c.is_ascii_digit());
+    let t = t.strip_prefix('&').unwrap_or(t);
+    if input && t == "<" {
+        return Redir::Next;
+    }
+    let Some(rest) = t.strip_prefix(">>").or_else(|| t.strip_prefix('>')) else {
+        return Redir::No;
+    };
+    let rest = rest.strip_prefix('|').unwrap_or(rest);
+    let rest = match rest.strip_prefix('&') {
+        Some(fd) if fd == "-" || (!fd.is_empty() && fd.chars().all(|c| c.is_ascii_digit())) => {
+            return Redir::Dup;
+        }
+        Some(file) => file,
+        None => rest,
+    };
+    if rest.is_empty() {
+        Redir::Next
+    } else {
+        Redir::To(rest.to_string())
+    }
 }
 
 /// `find … -delete` / `-exec rm` destroys without being named `rm`.
@@ -593,6 +668,9 @@ fn segments(cmd: &str) -> Vec<String> {
                 push(&mut cur, &mut out);
             }
             _ if double && subst == 0 => cur.push(c),
+            // `2>&1`, `>&2`, `&>file`: an `&` touching a `>` is part of a
+            // redirect, not a background or `&&` separator.
+            '&' if cur.ends_with('>') || chars.peek() == Some(&'>') => cur.push(c),
             ';' | '\n' | '|' | '&' | '(' | ')' | '{' | '}' => push(&mut cur, &mut out),
             _ => cur.push(c),
         }
@@ -902,19 +980,15 @@ fn redirect_escapes(words: &[String], ctx: &ToolContext) -> Option<String> {
             }
             continue;
         }
-        let trimmed = w.trim_start_matches(|c: char| c.is_ascii_digit());
-        if trimmed == ">" || trimmed == ">>" || trimmed == "<" || trimmed == ">|" {
-            expect = true;
-        } else if let Some(rest) = trimmed
-            .strip_prefix(">>")
-            .or_else(|| trimmed.strip_prefix('>'))
-        {
-            if !rest.is_empty() && !rest.starts_with('&') && rest != "/dev/null" {
-                let r = resolve(ctx, rest);
+        match redirect(w, true) {
+            Redir::Next => expect = true,
+            Redir::To(rest) if rest != "/dev/null" => {
+                let r = resolve(ctx, &rest);
                 if r.as_ref().is_none_or(|p| is_secret(p, ctx)) {
-                    return Some(rest.to_string());
+                    return Some(rest);
                 }
             }
+            _ => {}
         }
     }
     None
@@ -1230,6 +1304,46 @@ mod tests {
             Decision::Deny
         );
         assert_eq!(bash("rm a.rs", Role::SoloReview, d), Decision::Deny);
+        // Copying stderr to stdout writes nothing; `&>` and `>&` to a file do.
+        for ok in [
+            "cargo test 2>&1",
+            "cargo test 2>&1 | tail -5",
+            "cargo test >&2",
+            "cargo test &>/dev/null",
+        ] {
+            assert_eq!(bash(ok, Role::SoloReview, d), Decision::Allow, "{ok}");
+        }
+        for bad in [
+            "cargo test &>out.txt",
+            "cargo test >&out.txt",
+            "cargo test &>> log",
+            "cargo test 2>&1 >out.txt",
+        ] {
+            assert_eq!(bash(bad, Role::SoloReview, d), Decision::Deny, "{bad}");
+        }
+        // Into a folder of the project, then run the tests: what a reviewer
+        // does in a repository whose app lives in a subfolder.
+        std::fs::create_dir_all(d.join("app")).unwrap();
+        for role in [Role::SoloReview, Role::SoloPlan, Role::Auditor] {
+            let ok = if role == Role::SoloPlan {
+                "cd app && ls"
+            } else {
+                "cd app && npm test 2>&1 | tail -25"
+            };
+            assert_eq!(bash(ok, role, d), Decision::Allow, "{role:?}: {ok}");
+            for bad in [
+                "cd /etc && cat passwd",
+                "cd .. && ls",
+                "cd && ls",
+                "cd ~ && ls",
+                "cd $HOME && ls",
+                "cd missing && ls",
+                "cd app && cd ../.. && ls",
+                "cd app && rm x",
+            ] {
+                assert_eq!(bash(bad, role, d), Decision::Deny, "{role:?}: {bad}");
+            }
+        }
         // The auditor's worktree scratch probe is unchanged.
         assert_eq!(
             bash("printf x > probe.py", Role::Auditor, d),
