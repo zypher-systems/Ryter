@@ -4,6 +4,7 @@ use serde_json::Value;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use crate::cancel::kill_group;
 use crate::error::{Error, Result};
 use crate::tools::{ToolContext, ToolOutput};
 
@@ -78,7 +79,7 @@ pub fn run_command(
     let start = std::time::Instant::now();
     let status = loop {
         if cancel.is_cancelled() {
-            kill_pgid(pgid);
+            kill_group(pgid);
             let _ = child.kill();
             cancel.unregister_pgid(pgid);
             return Ok(Run::Cancelled);
@@ -86,7 +87,7 @@ pub fn run_command(
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if start.elapsed() > timeout => {
-                kill_pgid(pgid);
+                kill_group(pgid);
                 let _ = child.kill();
                 cancel.unregister_pgid(pgid);
                 return Ok(Run::TimedOut);
@@ -103,7 +104,7 @@ pub fn run_command(
     // for them to close would wait forever: stop the group.
     let left_running = group_alive(pgid);
     if left_running {
-        kill_pgid(pgid);
+        kill_group(pgid);
     }
     cancel.unregister_pgid(pgid);
     // A process that left the group (`setsid`) can still hold a pipe; take
@@ -217,15 +218,6 @@ fn group_alive(pgid: u32) -> bool {
             .stderr(Stdio::null())
             .status()
             .is_ok_and(|s| s.success())
-}
-
-fn kill_pgid(pgid: u32) {
-    if pgid == 0 {
-        return;
-    }
-    let _ = Command::new("kill")
-        .args(["-KILL", &format!("-{pgid}")])
-        .status();
 }
 
 #[cfg(test)]
