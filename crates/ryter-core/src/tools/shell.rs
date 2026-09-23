@@ -295,11 +295,18 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        let alive = Command::new("pgrep")
-            .args(["-f", &marker])
-            .output()
-            .unwrap();
-        assert!(alive.stdout.is_empty(), "left running: {:?}", alive.stdout);
+        // SIGKILL is sent, not awaited: give the process a moment to go.
+        let gone = (0..100).any(|_| {
+            let alive = Command::new("pgrep")
+                .args(["-f", &marker])
+                .output()
+                .unwrap();
+            alive.stdout.is_empty() || {
+                std::thread::sleep(Duration::from_millis(20));
+                false
+            }
+        });
+        assert!(gone, "left running");
     }
 
     /// Output past the pipe buffer (64 KiB) must not stall until the timeout.
