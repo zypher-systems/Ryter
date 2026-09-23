@@ -23,6 +23,7 @@ pub mod phase;
 pub mod project;
 pub mod prompt;
 pub mod queue;
+pub mod review;
 pub mod role;
 pub mod sandbox;
 pub mod session;

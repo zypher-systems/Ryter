@@ -154,6 +154,56 @@ pub fn project_spend(home: &Path, cwd: &Path) -> Result<ProjectSpend> {
     Ok(total)
 }
 
+/// What a project spent after a moment, and on which models.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SpendSince {
+    /// Priced spend, USD.
+    pub usd: f64,
+    /// Model calls counted.
+    pub calls: usize,
+    /// Calls with no known price, left out of `usd`.
+    pub unpriced: usize,
+    /// Spend per model, most first.
+    pub models: Vec<(String, f64)>,
+}
+
+/// What the project containing `cwd` spent after `since_ms` (unix millis),
+/// across every session in it. Reads the logs whole: it's for a commit
+/// receipt, not the live counter.
+pub fn spend_since(home: &Path, cwd: &Path, since_ms: u64) -> SpendSince {
+    let root = project_root(cwd);
+    let mut out = SpendSince::default();
+    let mut per: BTreeMap<String, f64> = BTreeMap::new();
+    for log in session_logs(home, &root) {
+        let Ok(text) = fs::read_to_string(&log) else {
+            continue;
+        };
+        for r in text
+            .lines()
+            .filter_map(|l| serde_json::from_str::<SpendRecord>(l).ok())
+        {
+            if r.ts.parse::<u64>().map_or(true, |t| t < since_ms) {
+                continue;
+            }
+            out.calls += 1;
+            match r.total_usd {
+                Some(usd) => {
+                    out.usd += usd;
+                    *per.entry(r.model).or_default() += usd;
+                }
+                None => {
+                    out.unpriced += 1;
+                    per.entry(r.model).or_default();
+                }
+            }
+        }
+    }
+    out.models = per.into_iter().collect();
+    out.models
+        .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    out
+}
+
 /// Every `spend.jsonl` of a session whose folder is `root` or inside it.
 fn session_logs(home: &Path, root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();

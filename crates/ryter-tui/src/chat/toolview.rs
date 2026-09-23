@@ -89,7 +89,7 @@ pub fn edit_preview(tool: &str, args: &Value) -> String {
 }
 
 /// Test-runner summaries worth lifting out of a command's output.
-fn test_summary(output: &str) -> Option<String> {
+pub fn test_summary(output: &str) -> Option<String> {
     // node:test prints TAP totals: `# pass 12` / `# fail 0`.
     let tap = |key: &str| {
         output.lines().rev().find_map(|l| {

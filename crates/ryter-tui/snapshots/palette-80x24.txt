@@ -10,7 +10,7 @@
                                                     │     12.4k / 256k tokens  │
                                                     │ price unknown            │
                                                     │ reasoning  auto · medium │
-╭─ commands ──────────────────────────── 5 of 28 ─╮ ╰──────────────────────────╯
+╭─ commands ──────────────────────────── 5 of 30 ─╮ ╰──────────────────────────╯
 │ mo                                              │ ╭─ spend ──────────────────╮
 │›/models         Switch the lead's model      ▸  │ │ session            $?.?? │
 │ /tools          Tool permission mode         ▸  │ ╰──────────────────────────╯

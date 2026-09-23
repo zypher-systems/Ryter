@@ -40,7 +40,7 @@ Full usage: [docs/guide.md](docs/guide.md).
 | **plan** | reads and proposes; changes nothing |
 | **review** | runs the tests and critiques what changed; changes nothing |
 
-Before each build turn Ryter checkpoints your files, and `/undo` puts them back. Nothing is committed for you.
+Before each build turn Ryter checkpoints your files, and `/undo` puts them back. `/changes` shows what changed, file by file with diffs, and can undo a single file. `/commit` drafts the message from the diff and from what the model said about why, and commits the files you choose. Its receipt trailer records the model, the cost, and the test result (`Ryter: deepseek-pro-latest · $0.34 · tests ✓ 13 passed`). Nothing is committed unless you commit it.
 
 **Crew mode**: type `/crew`. The first time, the crew builder walks you through choosing the lead, architect, builder, and auditor, with a recommendation for each, and a budget. `/solo` goes back. In crew mode you talk to the lead, which reads the repo, answers questions, and decides who does the work. It does **not** edit `src/`.
 

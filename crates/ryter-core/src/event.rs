@@ -127,6 +127,34 @@ pub enum AgentEvent {
         /// Human-readable message.
         message: String,
     },
+    /// The newest undo checkpoint changed (a build turn took one, `/undo`
+    /// or a file revert used one, a session loaded). `/changes` compares the
+    /// last turn against it.
+    Checkpoint {
+        /// Commit id, or `None` when the session has none.
+        sha: Option<String>,
+    },
+    /// A drafted commit message for `/commit`.
+    CommitDraft {
+        /// The message, when drafting worked.
+        message: Option<String>,
+        /// Why it didn't.
+        error: Option<String>,
+    },
+    /// `/commit` finished.
+    Committed {
+        /// `<short sha> <subject>` on success.
+        summary: Option<String>,
+        /// What went wrong (a hook refused, no identity, …).
+        error: Option<String>,
+    },
+    /// One file was put back from `/changes`.
+    Reverted {
+        /// The file.
+        path: String,
+        /// What went wrong, if it did.
+        error: Option<String>,
+    },
     /// Unrecoverable session error.
     Error {
         /// Human-readable message.

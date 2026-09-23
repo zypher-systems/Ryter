@@ -162,6 +162,12 @@ pub struct View {
     /// Read from disk at startup and when `/spend` opens; live spend is added
     /// as it happens.
     pub project_spend: Option<ryter_core::project::ProjectSpend>,
+    /// The newest undo checkpoint: `/changes` compares the last turn to it.
+    pub last_checkpoint: Option<String>,
+    /// The latest test run's result (`✓ 13 passed`), for a commit receipt.
+    pub last_tests: Option<String>,
+    /// The model edited files after that run.
+    pub tests_stale: bool,
     /// The user's reasoning level per model (`low` / `medium` / `high` /
     /// `default`); a model not listed is "auto".
     pub model_reasoning: BTreeMap<String, String>,
@@ -325,6 +331,9 @@ impl View {
             price_in: None,
             catalog_rates: BTreeMap::new(),
             project_spend: None,
+            last_checkpoint: None,
+            last_tests: None,
+            tests_stale: false,
             model_reasoning: BTreeMap::new(),
             price_out: None,
             specialists: BTreeMap::new(),
