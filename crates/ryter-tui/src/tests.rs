@@ -143,6 +143,7 @@ fn mid_stream(reasoning: ActivityMode) -> View {
             output: "…".into(),
             is_error: false,
             duration_ms: Some(120),
+            diff: None,
         },
     );
     v.on_token("Reading the loop now. The event loop drains ");
@@ -230,6 +231,23 @@ fn snapshot_permission_modal() {
         "rm -rf target/ && cargo build --release".into(),
     )));
     all_sizes("modal-permission", &v);
+}
+
+/// An edit asks with the change it would make, not just its path.
+#[test]
+fn snapshot_edit_permission_shows_the_change() {
+    let mut v = mid_stream(ActivityMode::Collapsed);
+    let old = "const app = express()\n\napp.get('/search', (req, res) => {\n  const q = req.query.q\n  res.json(find(q))\n})\n";
+    let new = old.replace(
+        "  const q = req.query.q\n",
+        "  const q = (req.query.q || '').trim()\n  if (!q) return res.json([])\n",
+    );
+    let diff = ryter_core::diff::FileDiff::new("app/server.js", Some(old), &new);
+    v.panels.push(Box::new(
+        PermissionModal::new("search_replace".into(), "app/server.js".into())
+            .with_preview(Some(Box::new(diff))),
+    ));
+    all_sizes("modal-permission-edit", &v);
 }
 
 #[test]
@@ -691,4 +709,106 @@ fn f1_opens_help_and_esc_closes_it() {
     assert!(!v.panels.is_empty());
     let _ = crate::run_keys_handle(&mut v, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(v.panels.is_empty());
+}
+
+/// A build turn that edits one file and creates another: the chat shows
+/// each edit as numbered rows with the file's own line numbers.
+fn edited() -> View {
+    let mut v = idle();
+    let _ = v.submit_user("trim the query".into(), "trim the query".into());
+    let old = "import express from 'express'\nconst app = express()\n\napp.get('/search', (req, res) => {\n  const q = req.query.q\n  res.json(find(q))\n})\n\napp.listen(3000)\n";
+    let new = old.replace(
+        "  const q = req.query.q\n",
+        "  const q = (req.query.q || '').trim()\n  if (!q) return res.json([])\n",
+    );
+    let edit = serde_json::json!({
+        "path": "app/server.js",
+        "old_string": "  const q = req.query.q\n",
+        "new_string": "  const q = (req.query.q || '').trim()\n  if (!q) return res.json([])\n",
+    });
+    let steps = [
+        ("e1", "search_replace", edit, "updated /tmp/proj/app/server.js · −1 +2 lines", Some(old), new),
+        (
+            "e2",
+            "write",
+            serde_json::json!({"path": "test/search.test.js", "content": "…"}),
+            "created /tmp/proj/test/search.test.js · 6 lines",
+            None,
+            "import { test } from 'node:test'\nimport assert from 'node:assert'\n\ntest('an empty query finds nothing', async () => {\n  assert.deepEqual(await search(''), [])\n})\n".to_string(),
+        ),
+    ];
+    for (id, name, args, out, before, after) in steps {
+        crate::run_events_apply(
+            &mut v,
+            AgentEvent::ToolCall {
+                id: id.into(),
+                name: name.into(),
+                args: args.clone(),
+                role: Role::SoloBuild,
+                summary: None,
+            },
+        );
+        let path = args["path"].as_str().unwrap();
+        crate::run_events_apply(
+            &mut v,
+            AgentEvent::ToolResult {
+                id: id.into(),
+                output: out.into(),
+                is_error: false,
+                duration_ms: Some(3),
+                diff: Some(Box::new(ryter_core::diff::FileDiff::new(
+                    path, before, &after,
+                ))),
+            },
+        );
+    }
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnFinished {
+            turn: 1,
+            tools: 2,
+            duration_ms: 2100,
+        },
+    );
+    v
+}
+
+#[test]
+fn snapshot_edit_diff() {
+    all_sizes("edit-diff", &edited());
+}
+
+/// `S-01` for diffs: the glyph snapshot can't see the tint, so check the
+/// cells. An added row is tinted green to the chat's right edge, a removed
+/// row red, and context not at all.
+#[test]
+fn edit_rows_are_tinted_to_the_edge() {
+    let t = Theme::truecolor_dark();
+    let buf = render_buffer(&edited(), 120, 40, t);
+    let row_of = |needle: &str| {
+        (0..buf.area.height)
+            .find(|y| {
+                let line: String = (0..buf.area.width)
+                    .map(|x| buf[(x, *y)].symbol().to_string())
+                    .collect();
+                line.contains(needle)
+            })
+            .unwrap_or_else(|| panic!("no row with {needle}"))
+    };
+    let bg_at = |x: u16, y: u16| buf[(x, y)].bg;
+    let added = row_of("+   if (!q)");
+    let removed = row_of("-   const q = req.query.q");
+    let context = row_of("app.get('/search'");
+    // Where the chat pane ends: the last column the added row tints.
+    let edge = (0..buf.area.width)
+        .rev()
+        .find(|x| bg_at(*x, added) == t.diff_add_bg)
+        .unwrap();
+    assert!(edge > 60, "tint stops at column {edge}");
+    for x in 4..=edge {
+        assert_eq!(bg_at(x, added), t.diff_add_bg, "added row, column {x}");
+        assert_eq!(bg_at(x, removed), t.diff_del_bg, "removed row, column {x}");
+        assert_ne!(bg_at(x, context), t.diff_add_bg);
+        assert_ne!(bg_at(x, context), t.diff_del_bg);
+    }
 }

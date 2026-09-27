@@ -944,7 +944,7 @@ fn render_code(
 }
 
 /// Byte-slice a row of chunks to `[start, end)` of its concatenated text.
-fn slice_chunks(row: &[Chunk], start: usize, end: usize) -> Vec<Chunk> {
+pub(crate) fn slice_chunks(row: &[Chunk], start: usize, end: usize) -> Vec<Chunk> {
     let mut out = Vec::new();
     let mut pos = 0usize;
     for c in row {

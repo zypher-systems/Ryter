@@ -73,10 +73,18 @@ pub struct TaskQueue {
 impl TaskQueue {
     /// Load or create empty.
     pub fn open(path: PathBuf) -> Self {
-        let tasks = fs::read_to_string(&path)
+        let mut tasks: Vec<Task> = fs::read_to_string(&path)
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_default();
+        // Nothing is running when a queue is opened: a task saved as
+        // running was interrupted (a quit or a kill mid-crew). Left as it
+        // was, nothing would ever take it, drop it, or land its patch.
+        for t in &mut tasks {
+            if t.status == TaskStatus::Running {
+                t.status = TaskStatus::Pending;
+            }
+        }
         Self { path, tasks }
     }
 

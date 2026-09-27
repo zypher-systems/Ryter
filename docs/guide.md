@@ -68,6 +68,8 @@ ryter models [connection]
 
 Every message is a left-aligned block under a speaker header — your name (from `[ui] username`, then `git user.name`, then `$USER`), the model name, `· system`, or a one-line tool row (`· read_file  path  0.1s`). Markdown renders with headings, lists, quotes, tables, and fenced code with syntax highlighting and a line-number gutter. Long model turns end with a summary line (`3 tools · 12.4k tok · 0:42 · $0.01`).
 
+**Edits show what changed.** A `write` or `search_replace` row shows the change itself: numbered lines with two lines of context, added lines on a green row and removed ones on a red row, highlighted like the file. The numbers are the file's own, measured by the tool against the file on disk. A long edit shows its first 12 rows and says how many more there are; `^o` shows every edit whole, and `/changes` has the full diff of the turn or of everything uncommitted. The turn's closing line counts the real lines added and removed. In 16 colors and `NO_COLOR` the text carries the color, or the `+`/`-` sign alone.
+
 Type a message and press `Enter`. `Shift+Enter` (or `Alt+Enter`) inserts a newline; paste is bracketed so multi-line text lands in one message. While a turn runs, `Enter` queues the next message. `↑`/`↓` on an empty composer walk prompt history.
 
 `/` (or `^p`) opens the **command palette**: fuzzy-matched, grouped by category, with a description and keybinding column. `Enter` runs the command, `→` opens its panel, `Tab` completes. Every configuration command opens a **panel** — a bordered popout with a title, status, and legend line — and panels stack: `/crew` → pick a role → `/models` opens on top; `Esc` closes one level.
@@ -78,7 +80,13 @@ The **activity strip** shows what the model is doing (`⠙ writing · edit docs/
 
 `/sessions` (alias `/resume`) is one browser for this directory’s sessions: `Enter` resumes, `r` renames, `d` deletes (type the short id to confirm), `n` starts a new one. `/agents` lists running specialists; `Enter` or `k` kills one, `K` kills all. `ryter sessions` and `ryter resume [id]` are the CLI equivalents.
 
-Permission prompts, `ask_user` questions, and the first-run “trust this project?” prompt are **modals** with a heavy top border. They block input until you answer (`y` / `n` / `a` for permissions, number keys or free text for questions), but the turn keeps streaming behind them.
+Permission prompts, `ask_user` questions, and the first-run “trust this project?” prompt are **modals** with a heavy top border. They block input until you answer (`y` / `n` / `a` for permissions, number keys or free text for questions), but the turn keeps streaming behind them. A prompt for an edit shows the change it would make, the same way the chat shows it once made. `^c` on a prompt while a turn runs stops the turn.
+
+**When a turn stops by itself**, the chat says why:
+- the model made the same call and got the same result five times (it is told at the third);
+- it used the 40 rounds one message may have (say “continue”);
+- the provider sent nothing but keep-alives for 5 minutes (15 for a local server), or reported an error mid-reply;
+- a reply was cut off at the output limit three times in a row.
 
 ### Keys
 
@@ -93,6 +101,7 @@ Permission prompts, `ask_user` questions, and the first-run “trust this projec
 | `^d` | quit when the composer is empty |
 | `^r` | toggle the reasoning pane |
 | `^b` | toggle the info panel |
+| `^o` | show every edit whole, or folded |
 | `^l` | redraw |
 | `PgUp` / `PgDn` | scroll the transcript one viewport |
 | `Shift+↑` / `Shift+↓` | scroll one row |
@@ -124,7 +133,7 @@ Ryter starts in solo mode: one model in your project. `Tab` switches its hat (bu
 | --- | --- | --- |
 | **build** (default) | edit files and run commands; edits and commands that change things ask (or run with "allow all" / `--always-approve`); destructive commands always ask; outside the project, writes ask **every time** (see below) | read secrets, push, run inline interpreter code |
 | **plan** | read, search, run read-only commands, write `notes/` and project memory | edit source, run anything that changes the project |
-| **review** | read, run the tests and linters, read-only git | write anything, not even by redirect |
+| **review** | read, run the tests and linters, read-only git | write anything, not even by redirect; install, format, or fix |
 
 **What the chat shows.** The model narrates as it works: what it's doing next and why, each choice between approaches with its reason, and what it thinks went wrong when something fails. Each tool step shows what came of it, measured by Ryter: `new · 48 lines`, `rewrote · 76 lines (was 89)`, an edit's changed lines, `✓ 13 passed`, or `✗ exit 1` with the cause. Reads fold into one line, and a divider closes each turn that did work (`6 files (3 new, 3 changed, +153 −15) · 9 commands (9 ok) · 2:41`).
 
@@ -135,6 +144,16 @@ Some places are refused however they're asked for:
 - **Never written:** shell startup files (`~/.bashrc`, `~/.zshrc`, `~/.profile`, …) and system folders (`/etc`, `/usr`, …).
 
 Reading outside the project is an ordinary question. Plan and review never write outside, and crew builders stay in their worktrees.
+
+**What review may run** is judged by the command's form, not the tool's name. `cargo test`, `cargo clippy`, `cargo fmt --check`, `npm test`, `npm run lint`, `npx vitest run`, `npx tsc --noEmit`, `npx prettier --check`, `pytest`, `ruff check`, `black --check`, `go test`, `go vet`, `make test`, and the like run. `cargo fmt`, `npm install`, `npm run format`, `npx <any package>`, `ruff --fix`, `make install`, and `python -m pip install` don't. Review may still run the project's own code, which is what tests do.
+
+**Commands the gate refuses in every hat:**
+- the never-run list (`sudo`, `ssh`, `dd`, `mkfs`, `systemctl`, `crontab`, …), however it's wrapped: `env -i sudo`, `timeout 5 sudo`, `nice dd`, `xargs ssh`, `find -exec sudo`, `busybox rm`, `s\udo`;
+- a command whose name comes from a variable or `$(…)`, and `eval`;
+- inline code for an interpreter (`python -c`, `node -e`, `deno eval`, heredocs): write it to a file and run the file;
+- `git -c` settings that name a program (`alias.x=!cmd`, `core.sshCommand`, `core.pager`, …) and `git --exec-path`.
+
+`env` alone, which prints every variable, is not read-only. Commands run without Ryter's own API keys in their environment.
 
 Every hat shares one system prompt (`prompts/solo.md`) and one tool list. The hat is a one-line note in front of each message, and the permission gate enforces it, so switching never throws away the provider's prompt cache.
 

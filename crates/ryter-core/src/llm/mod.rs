@@ -218,7 +218,7 @@ pub struct ReplayProvider {
     turns: Mutex<VecDeque<Vec<StreamDelta>>>,
     models: Vec<ModelInfo>,
     /// When true, the last remaining turn is cloned instead of consumed.
-    repeat_last: bool,
+    pub(crate) repeat_last: bool,
 }
 
 impl ReplayProvider {
@@ -350,6 +350,17 @@ mod tests {
             d,
             StreamDelta::Usage(u) if u.output_tokens == 2
         )));
+        // Input arrives first, output last; the round is priced on both.
+        let usage = deltas
+            .iter()
+            .fold(crate::spend::Usage::default(), |acc, d| match d {
+                StreamDelta::Usage(u) => acc.merge(*u),
+                _ => acc,
+            });
+        assert!(
+            usage.input_tokens > 0 && usage.output_tokens == 2,
+            "{usage:?}"
+        );
     }
 
     #[test]

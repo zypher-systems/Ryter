@@ -1,0 +1,24 @@
+ ryter  ·  build                                ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────
+ dusty  trim the query                        ↑ 5  │╭─ session ────────────────╮
+ ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥ ││ untitled           build │
+   5 +   const q = (req.query.q || '').trim()      │╰──────────────────────────╯
+   6 +   if (!q) return res.json([])               │╭─ model ──────────────────╮
+   7     res.json(find(q))                         ││ spacexai ●      grok-4.6 │
+   8   })                                          ││ ctx █░░░░░░░░░░░░░   5%  │
+ · write  test/search.test.js  new · 6 lines  0.0s ┃│     12.4k / 256k tokens  │
+   1 + import { test } from 'node:test'            ┃│ price unknown            │
+   2 + import assert from 'node:assert'            ┃│ reasoning  auto · medium │
+   3 +                                             ┃╰──────────────────────────╯
+   4 + test('an empty query finds nothing', async  ┃╭─ spend ──────────────────╮
+       () => {                                     ┃│ session            $?.?? │
+   5 +   assert.deepEqual(await search(''), [])    ┃╰──────────────────────────╯
+   6 + })                                          ┃╭─ budget ─────────── off ─╮
+                                                   ┃│ cap                  off │
+ ─── 2 files (1 new, 1 changed, +8 −1) · 2.1s ──── ┃╰──────────────────────────╯
+ · ✓ done · 2 tools · 0:02                                     ^r  reasoning  ▾
+────────────────────────────────────────────────────────────────────────────────
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ enter send    tab plan    ⇧enter newline    / commands    ^b panel    ^c quit

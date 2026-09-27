@@ -19,25 +19,74 @@ pub enum Backend {
 
 /// Parse a full SSE document into deltas.
 pub fn parse_sse(backend: Backend, body: &str) -> Result<Vec<StreamDelta>> {
+    let (mut out, _) = parse_blocks(backend, body)?;
+    out.push(StreamDelta::Done);
+    Ok(out)
+}
+
+/// Parse SSE blocks into deltas, and say whether the provider said the
+/// answer is over (`[DONE]`, `response.completed`, `message_stop`). Nothing
+/// after that point is read. An error the provider sends inside the stream
+/// is an `Err`: dropped, it ended the turn as a normal, empty reply.
+pub fn parse_blocks(backend: Backend, body: &str) -> Result<(Vec<StreamDelta>, bool)> {
     let mut out = Vec::new();
     for (event, data) in sse_blocks(body) {
         if data == "[DONE]" {
-            out.push(StreamDelta::Done);
-            continue;
+            return Ok((out, true));
         }
         if data.is_empty() {
             continue;
         }
-        match backend {
+        let terminal = match backend {
             Backend::ChatCompletions => push_chat(&mut out, &data)?,
             Backend::Responses => push_responses(&mut out, event.as_deref(), &data)?,
             Backend::Messages => push_messages(&mut out, event.as_deref(), &data)?,
+        };
+        if terminal {
+            return Ok((out, true));
         }
     }
-    if !out.iter().any(|d| matches!(d, StreamDelta::Done)) {
-        out.push(StreamDelta::Done);
+    Ok((out, false))
+}
+
+/// The provider's own words for an error object: `type: message`.
+fn error_text(e: &Value) -> String {
+    let msg = e
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| e.as_str())
+        .unwrap_or("");
+    let kind = e
+        .get("type")
+        .or_else(|| e.get("code"))
+        .map(|k| match k {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        })
+        .unwrap_or_default();
+    match (kind.is_empty(), msg.is_empty()) {
+        (false, false) => format!("{kind}: {msg}"),
+        (true, false) => msg.to_string(),
+        (false, true) => kind,
+        (true, true) => e.to_string(),
     }
-    Ok(out)
+}
+
+fn mid_stream(e: &Value) -> Error {
+    Error::Provider(format!("the provider failed mid-reply: {}", error_text(e)))
+}
+
+/// A finish that is neither done nor cut off at the output limit: the
+/// provider stopped the reply itself. Carrying on as if it had finished left
+/// the user a partial or empty answer with no reason given.
+fn refused(reason: &str) -> Error {
+    Error::Provider(match reason {
+        "model_context_window_exceeded" | "context_length_exceeded" => {
+            "the conversation is longer than the model's context window; /compact, then try again"
+                .into()
+        }
+        other => format!("the provider stopped the reply: {other}"),
+    })
 }
 
 fn sse_blocks(body: &str) -> Vec<(Option<String>, String)> {
@@ -67,9 +116,13 @@ fn sse_blocks(body: &str) -> Vec<(Option<String>, String)> {
     blocks
 }
 
-fn push_chat(out: &mut Vec<StreamDelta>, data: &str) -> Result<()> {
+fn push_chat(out: &mut Vec<StreamDelta>, data: &str) -> Result<bool> {
     let v: Value = serde_json::from_str(data)
         .map_err(|e| Error::Provider(format!("chat sse: {e}: {data}")))?;
+    // OpenRouter reports an upstream failure as a chunk with `error`.
+    if let Some(e) = v.get("error").filter(|e| !e.is_null()) {
+        return Err(mid_stream(e));
+    }
     if let Some(u) = usage_from(&v["usage"]) {
         out.push(StreamDelta::Usage(u));
     }
@@ -81,7 +134,7 @@ fn push_chat(out: &mut Vec<StreamDelta>, data: &str) -> Result<()> {
         .and_then(|c| c.as_array())
         .and_then(|c| c.first())
     else {
-        return Ok(());
+        return Ok(false);
     };
     let delta = &choice["delta"];
     if let Some(s) = delta.get("content").and_then(Value::as_str) {
@@ -98,26 +151,39 @@ fn push_chat(out: &mut Vec<StreamDelta>, data: &str) -> Result<()> {
             out.push(StreamDelta::Reasoning(s.to_string()));
         }
     }
-    if choice.get("finish_reason").and_then(Value::as_str) == Some("length") {
-        out.push(StreamDelta::Truncated);
+    match choice.get("finish_reason").and_then(Value::as_str) {
+        Some("length") => out.push(StreamDelta::Truncated),
+        Some("error") => {
+            return Err(mid_stream(choice.get("error").unwrap_or(&Value::Null)));
+        }
+        Some(r @ ("content_filter" | "refusal" | "context_length_exceeded")) => {
+            return Err(refused(r));
+        }
+        _ => {}
     }
     if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
         for call in calls {
             let id = call.get("id").and_then(Value::as_str).unwrap_or("");
             let func = &call["function"];
             let name = func.get("name").and_then(Value::as_str).unwrap_or("");
-            let arguments = func.get("arguments").and_then(Value::as_str).unwrap_or("");
+            // Some OpenAI-compatible servers send the arguments as an
+            // object, not a JSON string.
+            let arguments = match func.get("arguments") {
+                Some(Value::String(s)) => s.clone(),
+                Some(v @ Value::Object(_)) => v.to_string(),
+                _ => String::new(),
+            };
             out.push(StreamDelta::ToolCall {
                 id: id.to_string(),
                 name: name.to_string(),
-                arguments: arguments.to_string(),
+                arguments,
             });
         }
     }
-    Ok(())
+    Ok(false)
 }
 
-fn push_responses(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) -> Result<()> {
+fn push_responses(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) -> Result<bool> {
     let v: Value = serde_json::from_str(data)
         .map_err(|e| Error::Provider(format!("responses sse: {e}: {data}")))?;
     let ty = event
@@ -173,9 +239,18 @@ fn push_responses(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) -
             if let Some(u) = usage_from(&v["response"]["usage"]) {
                 out.push(StreamDelta::Usage(u));
             }
-            if v["response"]["incomplete_details"]["reason"].as_str() == Some("max_output_tokens") {
-                out.push(StreamDelta::Truncated);
+            match v["response"]["incomplete_details"]["reason"].as_str() {
+                Some("max_output_tokens") => out.push(StreamDelta::Truncated),
+                Some(r) if ty == "response.incomplete" => return Err(refused(r)),
+                _ => {}
             }
+            return Ok(true);
+        }
+        "response.failed" => {
+            return Err(mid_stream(&v["response"]["error"]));
+        }
+        "error" => {
+            return Err(mid_stream(v.get("error").unwrap_or(&v)));
         }
         _ => {
             if let Some(u) = usage_from(&v["response"]["usage"]).or_else(|| usage_from(&v["usage"]))
@@ -184,10 +259,10 @@ fn push_responses(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) -
             }
         }
     }
-    Ok(())
+    Ok(false)
 }
 
-fn push_messages(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) -> Result<()> {
+fn push_messages(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) -> Result<bool> {
     let v: Value = serde_json::from_str(data)
         .map_err(|e| Error::Provider(format!("messages sse: {e}: {data}")))?;
     let ty = event
@@ -255,13 +330,20 @@ fn push_messages(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) ->
             if let Some(u) = usage_from(&v["usage"]) {
                 out.push(StreamDelta::Usage(u));
             }
-            if v["delta"]["stop_reason"].as_str() == Some("max_tokens") {
-                out.push(StreamDelta::Truncated);
+            match v["delta"]["stop_reason"].as_str() {
+                Some("max_tokens") => out.push(StreamDelta::Truncated),
+                Some(r @ ("refusal" | "model_context_window_exceeded")) => {
+                    return Err(refused(r));
+                }
+                _ => {}
             }
         }
+        "message_stop" => return Ok(true),
+        // `overloaded_error` and friends, sent after the answer began.
+        "error" => return Err(mid_stream(v.get("error").unwrap_or(&v))),
         _ => {}
     }
-    Ok(())
+    Ok(false)
 }
 
 fn usage_from(v: &Value) -> Option<Usage> {

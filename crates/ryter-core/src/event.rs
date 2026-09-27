@@ -45,6 +45,9 @@ pub enum AgentEvent {
         /// Wall-clock duration of the call.
         #[serde(default)]
         duration_ms: Option<u64>,
+        /// What an edit did to the file, with line numbers.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        diff: Option<Box<crate::diff::FileDiff>>,
     },
     /// A user turn began (orchestrator only).
     TurnStarted {

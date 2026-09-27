@@ -2,6 +2,74 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-26 — The shell gate reads a command the way the shell will
+- **By:** lead
+- **Decision:**
+  - **Wrappers are parsed, not skipped.** `WRAPPERS` lists each wrapper's options that take a value and its plain arguments before the command: `timeout 5`, `taskset MASK`, `flock FILE`. The program is found after them, recursively. `env -S`, `flock -c`, and a one-string `watch` hide the command and are refused. `busybox` and `toybox` count as wrappers.
+  - **Words are read as the shell reads them:** `s\udo` is `sudo`.
+  - **A substitution stays in its command** as a `$(…)` placeholder, and is judged as a segment of its own, first.
+    - A program named by `$X` or `$(…)` is refused, and so is `eval`.
+    - A `$(…)` argument counts as an unreadable path, except to `echo` and `printf`.
+  - **Nested commands are judged:** `find -exec`, `fd -x`.
+  - **Arguments a check can't see ask:** `xargs rm`, and a builder's `cd` out of its worktree.
+  - **Git options are judged:** `-c` keys that name a program, and `--exec-path`, are refused. `-C`/`--git-dir`/`--work-tree` outside the project ask, or are refused for roles that can't write. `grep -O` is refused. `--output` asks.
+  - **Review and the auditor are allowed by form (`checks_only`), not by tool name.** The auditor alone may install from the lockfile (`npm ci`, `npm install` with no packages, `cargo fetch`).
+  - **Other read-only tools are judged by form too:** `sort --compress-program`, `rg --pre`, `fd -x`, `yq -i`.
+  - **`node`, `deno`, `bun`, `tsx`, and `ts-node` are interpreters:** their inline code is refused, as `python -c` already was. `env` is off the read-only list.
+- **Chosen vs rejected:**
+  - Rejected matching the never-run list against every word of a command. `rg at src/` and `grep init` would be refused (`at` and `init` are on the list).
+  - Rejected asking instead of refusing for `node -e` in the build hat. That would differ from `python -c`, and the reason is the same: the gate can't read the code.
+  - Kept `cargo run`, `go run`, and scripts runnable in review. Tests run project code too. What review may not do is run the tools whose job is to change the tree.
+- **Why:** The 2026-09-26 audit got `sudo`, `ssh`, and `dd` past the never-run list in every role, with wrapper options, escapes, and substitutions. It found that the review hat, in the user's own tree, ran `cargo fmt`, `npm install`, `npx <any package>`, and `node -e` code that writes files, without asking. A second pass by the lead found `find -exec sudo`, `git -c alias.x=!…`, `busybox rm`, `sort --compress-program`, `rg --pre`, and `fd -x`.
+- **Where:** `crates/ryter-core/src/tools/policy.rs` (`WRAPPERS`, `parse`, `segments`, `words`, `decide_segment`, `exec_commands`, `checks_only`, `decide_git`, `git_config_runs`, `runs_or_edits`, `inline_code`)
+- **Residual risk:**
+  - The never-run list is a speed bump for a builder, not a boundary. A builder can write a script, a Makefile, or a `build.rs` that runs anything, and `awk 'BEGIN{system(…)}'` and GNU `sed e` escape too. The Landlock sandbox is the boundary, and it is off by default.
+  - Shell reads can still reach secrets indirectly: `grep -r . .` reads `.env`, as does `ls -a | xargs cat`. Only direct paths are checked.
+  - `echo $SECRET` prints a variable, and project secrets in the environment (tokens, cloud keys) stay visible to commands.
+  - The option tables are kept by hand. A wrapper that isn't listed hides its command.
+  - An independent adversarial pass on the new gate was attempted and did not run. The tests cover every bypass found so far, not the ones nobody has found.
+
+### 2026-09-26 — Turns end by themselves, and say why
+- **By:** lead
+- **Decision:**
+  - **The stream ends when the provider says so.** `[DONE]`, `response.completed`/`incomplete`, and `message_stop` end it; so does an error event inside the stream (OpenRouter's `error` chunk, `response.failed`, Anthropic's `error`), which is now an error, not an empty "completed" reply. `content_filter`, `refusal`, and context-window stops are errors that say which.
+  - **A stall deadline that keep-alives don't reset:** 300 s without a real delta (900 s for a local server). Idle-read timeouts stay for dead sockets.
+  - **Bytes are decoded whole.** A character split across two chunks waits for its other half.
+  - **Repeats:** the same call with the same result in one turn is flagged at the 3rd time (appended to the tool result) and stops the turn at the 5th (`StopReason::Stuck`). A successful edit resets the count for other calls, since re-running a check after an edit is fair.
+  - **The lead drains the crew once per turn** unless it queues new work. The round cap now says so in the chat.
+  - **Every tool call gets an answer.** Esc, an error, or a stuck stop answers the calls left in the batch, and each turn first repairs a transcript an earlier stop left open.
+  - **Prompts give up on cancel** (polled every 100 ms), and `^c` on a prompt mid-turn cancels the turn.
+  - **Commands can't wait for a person:** `GIT_EDITOR`/`EDITOR`/`VISUAL=false`, pagers are `cat`, `GIT_TERMINAL_PROMPT=0`, and Ryter's own API keys are removed from the environment.
+- **Chosen vs rejected:**
+  - Rejected a total wall-clock bound per request: a long, legitimate reasoning turn looks the same as a stuck one from outside, until it sends a delta.
+  - Rejected stopping on the first repeat: a model may re-read a file after a failed build for good reason.
+  - Rejected `CI=1` and `NPM_CONFIG_YES` in the shell environment. The first changes how test runners behave; the second approves `npx` installs.
+  - Rejected `setsid` for commands, which would stop tools that read `/dev/tty` (ssh, gpg prompts) from hanging, because it breaks process-group kills on cancel.
+- **Why:** "Models keep spinning" had several causes, each proved with a test first:
+  - a waiting patch made the lead take all 40 rounds on every message, at a paid call each;
+  - OpenRouter's keep-alives kept a stuck request open for good;
+  - an Esc during a command left the session unusable (the next request was rejected by the provider);
+  - a failing edit was retried until the round cap.
+- **Where:** `crates/ryter-core/src/llm/http.rs` (`sse_delta_stream`, `take_utf8`), `llm/parse.rs` (`parse_blocks`), `agent.rs` (`turn_inner`, `answer_unrun`), `session.rs` (`repair_unanswered`), `user_io.rs` (`wait`), `tools/shell.rs` (`NON_INTERACTIVE`)
+- **Residual risk:**
+  - A model that thinks silently for more than 5 minutes behind a keep-alive is cut off.
+  - A program that reads `/dev/tty` still waits out the command timeout.
+  - The repeat count compares exact results, so a loop whose output changes each time (a timestamp) is caught only by the round cap.
+
+### 2026-09-26 — An edit's diff is measured by the tool and shown, never sent to the model
+- **By:** lead
+- **Decision:** `write` and `search_replace` diff the file before and after (the `similar` crate, Myers with a 250 ms deadline, 2 lines of context, hunks one or two lines apart joined) and put the `FileDiff` on the tool result event. The chat draws it as numbered rows tinted to the pane's edge; the permission prompt for an edit gets the same diff from a dry run. The transcript keeps its one-line summary.
+- **Chosen vs rejected:**
+  - Rejected rendering from the model's arguments (the old preview). It has no line numbers or context, and it shows nothing for a `write`.
+  - Rejected sending the diff to the model. It already knows what it wrote, and every later round would pay for it.
+  - Rejected a hand-rolled diff: rewrites need a real LCS, and `similar` is small and dependency-free.
+- **Why:** People asked to see what is changing as it changes. The permission prompt also truncated its summary at 160 characters, so a `propose_edit` sign-off showed about two lines of the change it approved.
+- **Where:** `crates/ryter-core/src/diff.rs`, `tools/fs.rs` (`preview`), `event.rs` (`ToolResult.diff`), `crates/ryter-tui/src/chat/diff.rs`, `panel/modal.rs`, `theme.rs` (`diff_add_bg`, `diff_del_bg`)
+- **Residual risk:**
+  - Edits made through `bash` (`sed -i`, codegen) show no diff; `/changes` still does.
+  - A resumed session shows the old argument preview for past edits, because the diff isn't in the transcript.
+  - Diffs are capped at 400 lines per event.
+
 ### 2026-09-23 — Read-only means the command's form, not just its name
 - **By:** lead
 - **Decision:**

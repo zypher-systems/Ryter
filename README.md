@@ -63,7 +63,7 @@ ryter --connection spacexai|openrouter
 ryter --sandbox off|workspace|read-only
 ryter spend [session]
 ryter spend --project         this repository, across sessions
-ryter connections [list|add|remove|test|set-key]
+ryter connections [add|remove|test|set-key]   (bare: list)
 ryter models [connection]
 ryter sessions
 ryter resume [id]

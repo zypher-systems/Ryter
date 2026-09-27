@@ -6,9 +6,12 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use crate::cancel::Cancel;
 use crate::tools::Decision;
 
 const TIMEOUT: Duration = Duration::from_secs(300);
+/// How often a waiting prompt checks whether the turn was cancelled.
+const POLL: Duration = Duration::from_millis(100);
 
 /// Reply to a destructive-tool prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +33,8 @@ pub enum UserRequest {
         tool: String,
         /// One-line summary (no secrets).
         summary: String,
+        /// For an edit: what it would do to the file, measured before asking.
+        preview: Option<Box<crate::diff::FileDiff>>,
         /// Reply channel.
         reply: mpsc::Sender<Permission>,
     },
@@ -68,25 +73,35 @@ impl UserIo {
         )
     }
 
-    /// Ask the TUI about a tool. Disconnected or timeout → Deny.
-    pub fn permission(&self, tool: &str, summary: &str) -> Permission {
+    /// Ask the TUI about a tool. Disconnected, timeout, or a cancelled turn
+    /// → Deny. The caller checks `cancel` to tell a cancel from a no.
+    pub fn permission(&self, tool: &str, summary: &str, cancel: &Cancel) -> Permission {
+        self.permission_with(tool, summary, None, cancel)
+    }
+
+    /// [`Self::permission`] for an edit, showing the change it would make.
+    pub fn permission_with(
+        &self,
+        tool: &str,
+        summary: &str,
+        preview: Option<crate::diff::FileDiff>,
+        cancel: &Cancel,
+    ) -> Permission {
         let (reply_tx, reply_rx) = mpsc::channel();
         let req = UserRequest::Permission {
             tool: tool.to_string(),
             summary: summary.chars().take(160).collect(),
+            preview: preview.map(Box::new),
             reply: reply_tx,
         };
         if self.send(req).is_err() {
             return Permission::Deny;
         }
-        match reply_rx.recv_timeout(TIMEOUT) {
-            Ok(p) => p,
-            Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => Permission::Deny,
-        }
+        wait(&reply_rx, cancel).unwrap_or(Permission::Deny)
     }
 
-    /// Ask the human. Empty string on timeout/disconnect.
-    pub fn ask(&self, question: &str, options: Vec<String>) -> String {
+    /// Ask the human. Empty string on timeout, disconnect, or cancel.
+    pub fn ask(&self, question: &str, options: Vec<String>, cancel: &Cancel) -> String {
         let (reply_tx, reply_rx) = mpsc::channel();
         let req = UserRequest::Question {
             question: question.to_string(),
@@ -96,12 +111,33 @@ impl UserIo {
         if self.send(req).is_err() {
             return String::new();
         }
-        reply_rx.recv_timeout(TIMEOUT).unwrap_or_default()
+        wait(&reply_rx, cancel).unwrap_or_default()
     }
 
     fn send(&self, req: UserRequest) -> Result<(), ()> {
         let tx = self.tx.lock().map_err(|_| ())?;
         tx.send(req).map_err(|_| ())
+    }
+}
+
+/// Wait for a reply, giving up at the timeout or as soon as the turn is
+/// cancelled. Esc used to leave the agent blocked here for five minutes
+/// while the screen said "cancelling…".
+fn wait<T>(rx: &mpsc::Receiver<T>, cancel: &Cancel) -> Option<T> {
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    loop {
+        if cancel.is_cancelled() {
+            return None;
+        }
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return None;
+        }
+        match rx.recv_timeout(left.min(POLL)) {
+            Ok(v) => return Some(v),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return None,
+        }
     }
 }
 
@@ -166,13 +202,32 @@ mod tests {
     fn timeout_without_tui_is_deny() {
         let (io, _rx) = UserIo::pair();
         drop(_rx);
-        assert_eq!(io.permission("bash", "rm -rf x"), Permission::Deny);
+        assert_eq!(
+            io.permission("bash", "rm -rf x", &Cancel::new()),
+            Permission::Deny
+        );
+    }
+
+    /// Esc while a prompt is open: the tool thread stops waiting at once.
+    #[test]
+    fn a_cancel_ends_the_wait() {
+        let (io, _rx) = UserIo::pair();
+        let cancel = Cancel::new();
+        let c = cancel.clone();
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            c.cancel();
+        });
+        let started = std::time::Instant::now();
+        assert_eq!(io.ask("which?", vec![], &cancel), "");
+        assert!(started.elapsed() < Duration::from_secs(2));
+        t.join().unwrap();
     }
 
     #[test]
     fn allow_reaches_the_tool_thread() {
         let (io, rx) = UserIo::pair();
-        let worker = std::thread::spawn(move || io.permission("bash", "rm"));
+        let worker = std::thread::spawn(move || io.permission("bash", "rm", &Cancel::new()));
         match rx.recv().unwrap() {
             UserRequest::Permission { reply, .. } => {
                 reply.send(Permission::Always).unwrap();

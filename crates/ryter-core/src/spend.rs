@@ -17,6 +17,21 @@ pub struct Usage {
     pub cached_tokens: u64,
 }
 
+impl Usage {
+    /// Fold a later usage report into this one. Anthropic reports input at
+    /// `message_start` and only output at `message_delta`; keeping just the
+    /// last report priced every Anthropic round at zero input tokens.
+    /// Counts are cumulative, so the larger of each wins.
+    #[must_use]
+    pub fn merge(self, later: Self) -> Self {
+        Self {
+            input_tokens: self.input_tokens.max(later.input_tokens),
+            output_tokens: self.output_tokens.max(later.output_tokens),
+            cached_tokens: self.cached_tokens.max(later.cached_tokens),
+        }
+    }
+}
+
 /// USD per million tokens for one model.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rates {

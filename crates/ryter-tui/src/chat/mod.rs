@@ -4,6 +4,7 @@
 //! header row; bodies are left-aligned for every kind (`R-CHAT-09`).
 
 pub mod cache;
+pub mod diff;
 pub mod highlight;
 pub mod layout;
 pub mod markdown;
@@ -148,6 +149,8 @@ pub struct MessageMeta {
     pub label: Option<String>,
     /// Provider tool-call id (to match `ToolResult`).
     pub tool_id: Option<String>,
+    /// What an edit did to its file, measured by the tool.
+    pub diff: Option<Box<ryter_core::diff::FileDiff>>,
 }
 
 /// One transcript entry.
@@ -344,6 +347,8 @@ pub struct RenderOpts {
     pub lang_hint: Option<String>,
     /// Omit the header (continuation of the same speaker).
     pub continuation: bool,
+    /// Diff rows shown under an edit; the rest fold into one line.
+    pub diff_rows: usize,
 }
 
 /// Render one message to rows. The first row is the speaker header unless
@@ -368,6 +373,14 @@ pub fn render_message(msg: &Message, opts: &RenderOpts, theme: Theme) -> Vec<Lin
         out.push(header_row(msg, opts, theme, width));
     }
     let is_tool = matches!(msg.kind, MessageKind::Tool { .. });
+    if let (true, Some(diff)) = (is_tool, msg.meta.diff.as_deref()) {
+        let inner = width.saturating_sub(2).max(8);
+        for row in diff::render(diff, opts.diff_rows, inner, theme) {
+            let mut spans = vec![Span::styled("  ", theme.body())];
+            spans.extend(row.spans);
+            out.push(Line::from(spans));
+        }
+    }
     if is_tool && msg.body.trim().is_empty() {
         return out;
     }
@@ -515,6 +528,7 @@ mod tests {
             username: "Dusty".into(),
             lang_hint: None,
             continuation: false,
+            diff_rows: diff::DEFAULT_ROWS,
         }
     }
 
@@ -600,6 +614,7 @@ mod tests {
             &a,
             &RenderOpts {
                 continuation: true,
+                diff_rows: diff::DEFAULT_ROWS,
                 ..opts(40)
             },
             Theme::truecolor_dark(),

@@ -30,6 +30,10 @@ pub fn handle(view: &mut View, key: KeyEvent) -> Action {
                 view.activity.toggle();
                 return Action::None;
             }
+            KeyAction::ToggleDiffs => {
+                view.diffs_expanded = !view.diffs_expanded;
+                return Action::None;
+            }
             KeyAction::Help if !view.panels.has_modal() => {
                 if view.panels.top().is_some_and(|p| p.kind() == "help") {
                     view.panels.pop();
@@ -121,9 +125,17 @@ fn ctrl_c(view: &mut View) -> Action {
         return Action::None;
     }
     if !view.panels.is_empty() {
+        // A permission or question open mid-turn: Ctrl+C means stop, not
+        // just "close this". Closing it alone left the turn waiting on an
+        // answer nobody could give.
+        let prompt = view.panels.has_modal();
         view.panels.clear();
         panel::sync_composer(view);
-        return Action::None;
+        return if prompt && view.busy {
+            Action::Cancel
+        } else {
+            Action::None
+        };
     }
     if view.busy {
         return Action::Cancel;

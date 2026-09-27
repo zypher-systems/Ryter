@@ -24,6 +24,7 @@ regex.workspace = true
 ignore.workspace = true
 glob.workspace = true
 uuid.workspace = true
+similar.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock.workspace = true

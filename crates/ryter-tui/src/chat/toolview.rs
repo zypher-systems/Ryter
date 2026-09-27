@@ -328,6 +328,8 @@ impl TurnTally {
                 .unwrap_or(0)
         };
         match tool {
+            // Stopped by the user: not a failure of the command.
+            "bash" if is_error && output.trim() == "cancelled" => {}
             "bash" if is_error => self.failed += 1,
             "bash" => self.ok += 1,
             "write" if !is_error => {
@@ -354,6 +356,19 @@ impl TurnTally {
             }
             _ => {}
         }
+    }
+
+    /// Count an edit from its measured diff: real line counts, where a
+    /// rewrite's own summary only gives the file's length before and after.
+    pub fn add_diff(&mut self, target: &str, diff: &ryter_core::diff::FileDiff) {
+        if diff.created && !self.seen.iter().any(|s| s == target) {
+            self.created += 1;
+            self.seen.push(target.to_string());
+        } else {
+            self.count_change(target);
+        }
+        self.plus += diff.added;
+        self.minus += diff.removed;
     }
 
     fn count_change(&mut self, target: &str) {

@@ -279,6 +279,19 @@ impl Session {
         Ok(())
     }
 
+    /// Answer every tool call the transcript left unanswered, so providers
+    /// accept it again. A turn stopped between an assistant's tool calls and
+    /// their results (Esc during a command, a crash, an older Ryter) left a
+    /// transcript every provider rejects, and every later message in the
+    /// session failed. Returns how many calls were answered here.
+    pub fn repair_unanswered(&mut self) -> Result<usize> {
+        let (fixed, n) = answer_unanswered(&self.transcript);
+        if n > 0 {
+            self.replace_transcript(fixed)?;
+        }
+        Ok(n)
+    }
+
     /// Rewrite `transcript.jsonl` after compaction. Events log is unchanged.
     pub fn replace_transcript(&mut self, messages: Vec<Message>) -> Result<()> {
         let path = self.dir.join("transcript.jsonl");
@@ -578,6 +591,42 @@ pub fn spend_record(
     }
 }
 
+/// What stands in for a result that never came.
+pub const UNANSWERED: &str = "not run: the turn was stopped before this call ran";
+
+/// `messages` with a stand-in result after every tool call that has none.
+fn answer_unanswered(messages: &[Message]) -> (Vec<Message>, usize) {
+    let mut out = Vec::with_capacity(messages.len());
+    let mut added = 0;
+    let mut i = 0;
+    while i < messages.len() {
+        let m = &messages[i];
+        out.push(m.clone());
+        i += 1;
+        let Some(calls) = m.tool_calls.as_ref().filter(|_| m.role == "assistant") else {
+            continue;
+        };
+        let mut answered = std::collections::HashSet::new();
+        while i < messages.len() && messages[i].role == "tool" {
+            if let Some(id) = &messages[i].tool_call_id {
+                answered.insert(id.clone());
+            }
+            out.push(messages[i].clone());
+            i += 1;
+        }
+        for c in calls.iter().filter(|c| !answered.contains(&c.id)) {
+            out.push(Message {
+                role: "tool".into(),
+                content: UNANSWERED.into(),
+                tool_call_id: Some(c.id.clone()),
+                tool_calls: None,
+            });
+            added += 1;
+        }
+    }
+    (out, added)
+}
+
 pub(crate) fn append_jsonl<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let mut f = OpenOptions::new()
         .create(true)
@@ -652,6 +701,47 @@ mod tests {
 
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn unanswered_calls_get_a_stand_in_result_where_providers_expect_it() {
+        let call = |id: &str| crate::llm::AssistantToolCall {
+            id: id.into(),
+            name: "bash".into(),
+            arguments: "{}".into(),
+        };
+        let msg = |role: &str,
+                   content: &str,
+                   id: Option<&str>,
+                   calls: Option<Vec<crate::llm::AssistantToolCall>>| Message {
+            role: role.into(),
+            content: content.into(),
+            tool_call_id: id.map(str::to_string),
+            tool_calls: calls,
+        };
+        let t = vec![
+            msg("user", "go", None, None),
+            msg("assistant", "", None, Some(vec![call("a"), call("b")])),
+            msg("tool", "ok", Some("a"), None),
+            msg("user", "hello?", None, None),
+        ];
+        let (fixed, n) = answer_unanswered(&t);
+        assert_eq!(n, 1);
+        let shape: Vec<(String, Option<String>)> = fixed
+            .iter()
+            .map(|m| (m.role.clone(), m.tool_call_id.clone()))
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                ("user".into(), None),
+                ("assistant".into(), None),
+                ("tool".into(), Some("a".into())),
+                ("tool".into(), Some("b".into())),
+                ("user".into(), None),
+            ]
+        );
+        assert_eq!(answer_unanswered(&fixed).1, 0);
+    }
 
     #[test]
     fn create_resume_and_spend() {
