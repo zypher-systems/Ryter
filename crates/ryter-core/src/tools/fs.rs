@@ -208,9 +208,13 @@ fn not_found(text: &str, old: &str) -> String {
     }
 }
 
-/// A path as the user knows it: relative inside the project.
+/// A path as the user knows it: relative inside the project. Resolved
+/// paths are canonical, so a workspace reached through a symlink (every temp
+/// folder on macOS: /var -> /private/var) is stripped in both spellings.
 fn shown(path: &std::path::Path, ctx: &ToolContext) -> String {
-    path.strip_prefix(&ctx.workspace)
+    let real = fs::canonicalize(&ctx.workspace).unwrap_or_else(|_| ctx.workspace.clone());
+    path.strip_prefix(&real)
+        .or_else(|_| path.strip_prefix(&ctx.workspace))
         .unwrap_or(path)
         .display()
         .to_string()

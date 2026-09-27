@@ -1134,4 +1134,17 @@ mod edit_tests {
         let d = out.diff.expect("an edit carries its diff");
         assert_eq!((d.added, d.removed, d.path.as_str()), (1, 1, "f.txt"));
     }
+
+    /// A project reached through a symlink still shows relative paths.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_project_shows_relative_paths() {
+        let real = tempfile::TempDir::new().unwrap();
+        let links = tempfile::TempDir::new().unwrap();
+        let link = links.path().join("ws");
+        std::os::unix::fs::symlink(real.path(), &link).unwrap();
+        std::fs::write(real.path().join("f.txt"), "a\n").unwrap();
+        let out = edit(&link, "a\n", "b\n");
+        assert_eq!(out.diff.expect("a diff").path, "f.txt");
+    }
 }
