@@ -1232,7 +1232,7 @@ async fn run_specialist(
                     name,
                     arguments,
                 } => calls.push(&id, &name, &arguments),
-                StreamDelta::Usage(u) => usage = u,
+                StreamDelta::Usage(u) => usage = usage.merge(u),
                 StreamDelta::ReportedCost(c) => reported = Some(c),
                 StreamDelta::Truncated => truncated = true,
                 _ => {}

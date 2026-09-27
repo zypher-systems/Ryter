@@ -7,6 +7,7 @@
         │  ^p         open the command palette                                             ┃
         │  ^r         toggle the reasoning pane                                            ┃
         │  ^b         toggle the info panel                                                ┃
+        │  ^o         show every edit whole, or folded                                     │
         │  ^l         redraw                                                               │
         │  ^g         release/grab the mouse (release it to select and copy text)          │
         │  f1         open /help                                                           │
@@ -20,7 +21,6 @@
         │  ^home      top of the transcript                                                │
         │  ^end       bottom (re-engages follow)                                           │
         │  ^↑         previous turn / jump to the sticky message                           │
-        │  ^↓         next turn                                                            │
         ╰─ ←→ tab · ↑↓ pgup pgdn scroll · type to filter · esc ────────────────────────────╯
 
 

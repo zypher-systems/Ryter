@@ -8,6 +8,7 @@ pub mod cancel;
 pub mod compact;
 pub mod config;
 pub mod crew;
+pub mod diff;
 pub mod doctor;
 pub mod error;
 pub mod estimate;

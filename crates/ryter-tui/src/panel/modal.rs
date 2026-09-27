@@ -18,6 +18,8 @@ pub struct PermissionModal {
     pub tool: String,
     /// Argument preview.
     pub summary: String,
+    /// For an edit: the change it would make, as tinted diff rows.
+    pub preview: Option<Box<ryter_core::diff::FileDiff>>,
     /// `a` pressed once; the warning is showing.
     arm_always: bool,
 }
@@ -28,8 +30,16 @@ impl PermissionModal {
         Self {
             tool,
             summary,
+            preview: None,
             arm_always: false,
         }
+    }
+
+    /// Show the change an edit would make, not just its path.
+    #[must_use]
+    pub fn with_preview(mut self, preview: Option<Box<ryter_core::diff::FileDiff>>) -> Self {
+        self.preview = preview;
+        self
     }
 }
 
@@ -85,6 +95,12 @@ impl Panel for PermissionModal {
     }
 
     fn size(&self, _view: &View) -> (u16, u16) {
+        if let Some(d) = self.preview.as_deref().filter(|d| !d.hunks.is_empty()) {
+            // Room for the change itself: code wants width, and a short
+            // edit should show whole.
+            let rows = (d.len() + d.hunks.len() - 1).clamp(1, 24) + 7;
+            return (110, rows as u16);
+        }
         let rows = self.summary.lines().count().clamp(1, 12) + 5;
         (76, rows as u16)
     }
@@ -140,10 +156,45 @@ impl Panel for PermissionModal {
             ),
         ]));
         lines.push(widgets::blank(theme));
-        let body: Vec<String> = self.summary.lines().map(str::to_string).collect();
+        let max_preview = h.saturating_sub(5).max(1);
+        if let Some(diff) = self.preview.as_deref().filter(|d| !d.hunks.is_empty()) {
+            // The change itself, as the chat will show it once it's made.
+            let what = if diff.created {
+                format!("new file · {} lines", diff.added)
+            } else {
+                format!("+{} −{}", diff.added, diff.removed)
+            };
+            lines.push(Line::from(vec![
+                Span::styled(" file  ", theme.panel_muted()),
+                Span::styled(diff.path.clone(), theme.panel()),
+                Span::styled(format!("  {what}"), theme.panel_muted()),
+            ]));
+            let on_panel = Theme {
+                bg: theme.panel_bg,
+                ..theme
+            };
+            // Tool, blank, file, the fold line, blank, keys: the rest is the diff.
+            let rows = h.saturating_sub(6).max(1);
+            let diff_rows = crate::chat::diff::render_folded(
+                diff,
+                rows,
+                w.saturating_sub(1),
+                on_panel,
+                "/changes shows it whole once it's made",
+            );
+            for row in diff_rows {
+                let mut spans = vec![Span::styled(" ", theme.panel())];
+                spans.extend(row.spans);
+                lines.push(Line::from(spans));
+            }
+        }
+        let body: Vec<String> = if self.preview.as_ref().is_some_and(|d| !d.hunks.is_empty()) {
+            Vec::new()
+        } else {
+            self.summary.lines().map(str::to_string).collect()
+        };
         let lang = lang_for(&self.tool, &self.summary);
         let hl = highlight::highlight(lang.as_deref(), None, &body, theme);
-        let max_preview = h.saturating_sub(5).max(1);
         for row in hl.rows.iter().take(max_preview) {
             let mut spans = vec![Span::styled("   ", Style::default().bg(theme.code_bg))];
             let mut used = 3;

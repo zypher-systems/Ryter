@@ -19,14 +19,33 @@ pub fn bash(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
             Run::Ok(text) => ToolOutput::ok(text),
             Run::Failed(text) => ToolOutput::err(text),
             Run::Cancelled => ToolOutput::err("cancelled"),
+            // "Pass a larger timeout" alone sent models back with the same
+            // interactive command and a ten-minute wait.
             Run::TimedOut => ToolOutput::err(format!(
-                "bash: timed out after {}s; pass a larger timeout_secs if the \
-             command needs it",
+                "bash: timed out after {}s. If it was waiting for something (input, an \
+                 editor, a pager, a server that never exits), run it so it doesn't: \
+                 non-interactive flags (-m, --yes, --no-pager, --watch=false), or start \
+                 servers in the background with output to a file and poll that. Pass a \
+                 larger timeout_secs only for work that is genuinely slow.",
                 timeout.as_secs()
             )),
         },
     )
 }
+
+/// Environment for commands nobody can interact with.
+const NON_INTERACTIVE: &[(&str, &str)] = &[
+    ("GIT_EDITOR", "false"),
+    ("GIT_SEQUENCE_EDITOR", "false"),
+    ("EDITOR", "false"),
+    ("VISUAL", "false"),
+    ("GIT_PAGER", "cat"),
+    ("PAGER", "cat"),
+    ("GIT_TERMINAL_PROMPT", "0"),
+    ("GCM_INTERACTIVE", "never"),
+    ("DEBIAN_FRONTEND", "noninteractive"),
+    ("PIP_NO_INPUT", "1"),
+];
 
 /// How a command ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +77,13 @@ pub fn run_command(
         .arg("-c")
         .arg(cmd)
         .current_dir(cwd)
+        // Nobody can answer a prompt: make the usual ones fail fast instead
+        // of waiting out the timeout. `git commit` without `-m` opened vi.
+        .envs(NON_INTERACTIVE.iter().copied())
+        // Ryter's own keys are not the project's business, and `env` would
+        // put them in the transcript.
+        .env_remove("XAI_API_KEY")
+        .env_remove("OPENROUTER_API_KEY")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -310,6 +336,29 @@ mod tests {
             Run::Ok(text) => assert_eq!(text.len(), 1_000_000),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn a_command_that_wants_an_editor_fails_fast_and_keys_stay_home() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let cancel = Cancel::new();
+        let run =
+            |cmd: &str| run_command(cmd, dir.path(), Duration::from_secs(20), &cancel).unwrap();
+        run(
+            "git init -q && git config user.email t@t && git config user.name t && touch a && git add a",
+        );
+        let started = std::time::Instant::now();
+        // No -m: git asks the editor for a message.
+        assert!(matches!(run("git commit -q"), Run::Failed(_)));
+        assert!(started.elapsed() < Duration::from_secs(10));
+        // Proves something where the key is set, as on a developer's machine
+        // (`OPENROUTER_API_KEY=x cargo test`); setting it here would need
+        // `unsafe`.
+        let out = match run("env | grep -c -e '^OPENROUTER_API_KEY=' -e '^XAI_API_KEY=' || true") {
+            Run::Ok(t) | Run::Failed(t) => t,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(out.trim(), "0");
     }
 
     #[test]

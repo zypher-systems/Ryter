@@ -33,6 +33,8 @@ pub enum StopReason {
     Cancelled,
     /// The model hit its output-token ceiling mid-answer. The text is partial.
     Truncated,
+    /// The model kept making the same call and getting the same result.
+    Stuck,
 }
 
 /// One user turn (may include many model/tool rounds).
@@ -130,8 +132,23 @@ pub struct ChildHandle {
 const CONVERSATION_MAX_OUTPUT: u32 = 32_768;
 /// A reply cut off at the ceiling this many times in a row ends the turn.
 const MAX_CUTOFFS: usize = 3;
+/// The same call with the same result this many times in a turn: tell the
+/// model it is going round in circles.
+const REPEAT_NUDGE: u32 = 3;
+/// …and this many times: stop the turn. Without either, a model retrying a
+/// failing edit ran every one of the turn's rounds.
+const REPEAT_STOP: u32 = 5;
 
 static TURN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn ordinal(n: u32) -> String {
+    match n {
+        1 => "1st".into(),
+        2 => "2nd".into(),
+        3 => "3rd".into(),
+        n => format!("{n}th"),
+    }
+}
 
 /// Short human label for a tool call (`read Cargo.toml`, `bash cargo test`).
 pub fn tool_summary(name: &str, args: &Value) -> String {
@@ -196,6 +213,20 @@ impl Agent {
         // change something. "Are you there?" used to open with git work.
         let mut checkpointed = false;
         let mut cutoffs = 0usize;
+        // Identical (call, result) pairs this turn, reset by a real edit.
+        let mut repeats: std::collections::HashMap<String, u32> = Default::default();
+        // The lead drains the crew once per turn unless it queues new work:
+        // a patch waiting on its checks used to be re-reported every round,
+        // and the lead answered it every round, to the round cap, paying for
+        // each one.
+        let mut drained = false;
+        let repaired = self.session.repair_unanswered()?;
+        if repaired > 0 {
+            crate::trace::log(
+                &self.home,
+                &format!("answered {repaired} tool call(s) a stopped turn left open"),
+            );
+        }
         // A run that stopped at the budget never showed the lead its crew
         // report; without it, "continue" reached a lead that didn't know what
         // had finished.
@@ -302,7 +333,7 @@ impl Agent {
                         name,
                         arguments,
                     } => calls.push(&id, &name, &arguments),
-                    StreamDelta::Usage(u) => usage = u,
+                    StreamDelta::Usage(u) => usage = usage.merge(u),
                     StreamDelta::ReportedCost(c) => reported_cost = Some(c),
                     StreamDelta::Truncated => truncated = true,
                     StreamDelta::Done => {}
@@ -416,7 +447,8 @@ impl Agent {
                     })?;
                     continue;
                 }
-                if self.role == Role::Orchestrator {
+                if self.role == Role::Orchestrator && (!drained || self.crew_has_pending()?) {
+                    drained = true;
                     let report = self.drain_crew().await?;
                     // Hand the results back and take another round. Without this
                     // the turn ended before the crew ran, so the orchestrator
@@ -448,11 +480,13 @@ impl Agent {
                 });
             }
 
-            for call in call_list {
+            for (i, call) in call_list.iter().enumerate() {
                 if self.ctx.cancel.is_cancelled() {
+                    self.answer_unrun(&call_list[i..], crate::session::UNANSWERED)?;
                     return self.finish_cancelled(last_text).await;
                 }
-                let args: Value = serde_json::from_str(&call.arguments).unwrap_or(Value::Null);
+                let parsed = serde_json::from_str::<Value>(&call.arguments);
+                let args = parsed.as_ref().cloned().unwrap_or(Value::Null);
                 *tools += 1;
                 self.emit(AgentEvent::ToolCall {
                     id: call.id.clone(),
@@ -469,23 +503,73 @@ impl Agent {
                     self.checkpoint_before_build()?;
                     checkpointed = true;
                 }
-                let out = if call.name == "request_hat" {
-                    self.request_hat(&args)?
-                } else {
-                    gated_execute(&call.name, &args, &self.ctx)?
+                let out = match &parsed {
+                    // Run with `null` arguments, the call was refused as
+                    // "outside policy" and the model resent the same JSON.
+                    Err(e) => Ok(crate::tools::ToolOutput::err(format!(
+                        "not run: the arguments were not valid JSON ({e}). Send the call \
+                         again with the arguments as one JSON object."
+                    ))),
+                    Ok(_) if call.name == "request_hat" => self.request_hat(&args),
+                    Ok(_) => gated_execute(&call.name, &args, &self.ctx),
                 };
+                let mut out = match out {
+                    Ok(o) => o,
+                    // Esc while a command ran. Every call still gets its
+                    // answer, or the provider rejects the transcript.
+                    Err(Error::Cancelled) => {
+                        self.answer_unrun(&call_list[i..], "cancelled by the user")?;
+                        return self.finish_cancelled(last_text).await;
+                    }
+                    Err(e) => {
+                        self.answer_unrun(&call_list[i..], &format!("not run: {e}"))?;
+                        return Err(e);
+                    }
+                };
+                let sig = format!("{}\u{0}{args}\u{0}{}", call.name, out.text);
+                if !out.is_error && matches!(call.name.as_str(), "write" | "search_replace") {
+                    // The files changed: running the same check again is
+                    // fair now. Writing the same thing again is not.
+                    repeats.retain(|k, _| *k == sig);
+                }
+                let seen = repeats.entry(sig).or_insert(0);
+                *seen += 1;
+                let stuck = *seen >= REPEAT_STOP;
+                if *seen >= REPEAT_NUDGE {
+                    out.text.push_str(&format!(
+                        "\n\n[Ryter] This is the {} time this turn you've made this exact call \
+                         and got this exact result. Doing it again won't change anything: try a \
+                         different approach, or stop and tell the user what is in the way.",
+                        ordinal(*seen)
+                    ));
+                }
                 self.emit(AgentEvent::ToolResult {
                     id: call.id.clone(),
                     output: out.text.clone(),
                     is_error: out.is_error,
                     duration_ms: Some(u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX)),
+                    diff: out.diff.clone().map(Box::new),
                 })?;
                 self.session.push_message(Message {
                     role: "tool".into(),
                     content: out.text,
-                    tool_call_id: Some(call.id),
+                    tool_call_id: Some(call.id.clone()),
                     tool_calls: None,
                 })?;
+                if stuck {
+                    self.answer_unrun(&call_list[i + 1..], "not run: the turn was stopped")?;
+                    self.emit(AgentEvent::Notice {
+                        message: format!(
+                            "stopped: the model made the same call ({}) {REPEAT_STOP} times and \
+                             got the same result each time. Tell it what to do differently.",
+                            tool_summary(&call.name, &args)
+                        ),
+                    })?;
+                    return Ok(TurnResult {
+                        reason: StopReason::Stuck,
+                        text: last_text,
+                    });
+                }
             }
             if let Some(n) = nudge {
                 self.session.push_message(Message {
@@ -497,10 +581,51 @@ impl Agent {
             }
         }
 
+        // Said out loud: the turn used to end here with no word, as if the
+        // model had finished.
+        self.emit(AgentEvent::Notice {
+            message: format!(
+                "stopped after {} rounds, the most one message may use. Say \"continue\" to \
+                 carry on.",
+                self.max_turns
+            ),
+        })?;
         Ok(TurnResult {
             reason: StopReason::MaxTurns,
             text: last_text,
         })
+    }
+
+    /// Answer calls that will not run, so the transcript stays one every
+    /// provider accepts, and the chat's rows for them stop spinning.
+    fn answer_unrun(&mut self, calls: &[AssistantToolCall], why: &str) -> Result<()> {
+        for c in calls {
+            let _ = self.emit(AgentEvent::ToolResult {
+                id: c.id.clone(),
+                output: why.to_string(),
+                is_error: true,
+                duration_ms: None,
+                diff: None,
+            });
+            self.session.push_message(Message {
+                role: "tool".into(),
+                content: why.to_string(),
+                tool_call_id: Some(c.id.clone()),
+                tool_calls: None,
+            })?;
+        }
+        Ok(())
+    }
+
+    /// The lead queued crew work that has not run yet.
+    fn crew_has_pending(&self) -> Result<bool> {
+        let q = self
+            .queue
+            .lock()
+            .map_err(|e| Error::Config(e.to_string()))?;
+        Ok(q.tasks.iter().any(|t| {
+            t.status == TaskStatus::Pending && (t.role == "architect" || t.role == "builder")
+        }))
     }
 
     /// Run pending queue items. Orchestrator only. Role follows the current phase.
@@ -938,6 +1063,7 @@ impl Agent {
             return Ok(ToolOutput {
                 text: format!("already in the {to} hat"),
                 is_error: false,
+                diff: None,
             });
         }
         let Some(io) = self.ctx.user_io.clone() else {
@@ -950,7 +1076,11 @@ impl Agent {
         } else {
             format!("switch to the {to} hat: {reason}")
         };
-        match io.permission("switch hat", &summary) {
+        let answer = io.permission("switch hat", &summary, &self.ctx.cancel);
+        if self.ctx.cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        match answer {
             crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
                 let from = self.role;
                 self.role = to;
@@ -968,6 +1098,7 @@ impl Agent {
                          Carry on in this turn."
                     ),
                     is_error: false,
+                    diff: None,
                 })
             }
             crate::user_io::Permission::Deny => Ok(ToolOutput::err(format!(
@@ -1195,14 +1326,26 @@ impl Agent {
             max_tokens: Some(max_tokens),
             reasoning: Some("low".into()),
         };
-        let mut stream = self.provider.stream(req).await?;
+        let mut stream = tokio::select! {
+            biased;
+            () = self.ctx.cancel.cancelled() => return Err(Error::Cancelled),
+            s = self.provider.stream(req) => s?,
+        };
         let mut text = String::new();
         let mut usage = Usage::default();
         let mut reported_cost: Option<f64> = None;
-        while let Some(delta) = stream.next().await {
+        loop {
+            // Drafting a commit message could otherwise wait on a stuck
+            // provider with no way to stop it.
+            let delta = tokio::select! {
+                biased;
+                () = self.ctx.cancel.cancelled() => return Err(Error::Cancelled),
+                d = stream.next() => d,
+            };
+            let Some(delta) = delta else { break };
             match delta? {
                 StreamDelta::Text(t) => text.push_str(&t),
-                StreamDelta::Usage(u) => usage = u,
+                StreamDelta::Usage(u) => usage = usage.merge(u),
                 StreamDelta::ReportedCost(c) => reported_cost = Some(c),
                 _ => {}
             }
@@ -1925,6 +2068,7 @@ mod tests {
                     tool,
                     summary,
                     reply,
+                    ..
                 } = req
                 {
                     asked = format!("{tool}: {summary}");
@@ -2316,6 +2460,176 @@ mod tests {
         assert!(report.contains("patch landed"), "{report}");
         assert!(cwd.path().join("a.txt").exists());
         assert!(!cwd.path().join("b.txt").exists());
+    }
+
+    /// A patch waiting on a blocked task is reported to the lead once per
+    /// message. It used to be re-reported after every reply, and the lead
+    /// answered every time, to the round cap: 40 paid calls for "status?".
+    #[tokio::test]
+    async fn a_waiting_patch_is_reported_to_the_lead_once_per_message() {
+        let p = ReplayProvider::scripted(vec![
+            say("Queued both."),
+            write("a.txt", "a\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: PASS"),
+            write("b.txt", "bad\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: FAIL\n- b.txt: wrong"),
+            say("t2 failed its audit; the patch waits on it."),
+            // "status?": one look at the patch, one answer, and done.
+            say("Let me check the patch."),
+            say("Still waiting on t2."),
+            say("(a reply the turn must not ask for)"),
+        ]);
+        let (_home, _cwd, mut agent) = crew_setup(p);
+        agent.max_crew = 1;
+        agent.max_retries = 0;
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo(&serde_json::json!({"items": [
+                {"id": "t1", "title": "add a", "files": ["a.txt"]},
+                {"id": "t2", "title": "add b", "files": ["b.txt"]}
+            ]}))
+            .unwrap();
+        let r = agent.turn("build both").await.unwrap();
+        assert_eq!(r.reason, StopReason::Completed);
+        let r = agent.turn("status?").await.unwrap();
+        assert_eq!(r.reason, StopReason::Completed);
+        assert_eq!(r.text, "Still waiting on t2.");
+        let reports = agent
+            .session
+            .transcript
+            .iter()
+            .filter(|m| m.role == "user" && m.content.contains("[crew report"))
+            .count();
+        assert_eq!(reports, 2, "one report per message");
+    }
+
+    fn failing_edit() -> Vec<StreamDelta> {
+        call(
+            "search_replace",
+            serde_json::json!({"path": "hello.txt", "old_string": "not there", "new_string": "x"}),
+        )
+    }
+
+    /// A model retrying the same failing edit is told, then stopped, long
+    /// before the round cap.
+    #[tokio::test]
+    async fn the_same_failing_call_is_flagged_then_stops_the_turn() {
+        let mut p = ReplayProvider::scripted(vec![failing_edit()]);
+        p.repeat_last = true;
+        let (_home, _cwd, mut agent) = setup(p);
+        agent.max_turns = 40;
+        agent.role = Role::SoloBuild;
+        agent.ctx.role = Role::SoloBuild;
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let r = agent.turn("fix hello").await.unwrap();
+        assert_eq!(r.reason, StopReason::Stuck);
+        let results: Vec<&str> = agent
+            .session
+            .transcript
+            .iter()
+            .filter(|m| m.role == "tool")
+            .map(|m| m.content.as_str())
+            .collect();
+        assert_eq!(results.len(), REPEAT_STOP as usize);
+        assert!(!results[1].contains("[Ryter]"));
+        assert!(results[2].contains("3rd time"), "{}", results[2]);
+        let events: Vec<AgentEvent> = events.try_iter().collect();
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::Notice { message } if message.starts_with("stopped: the model made the same call"))));
+    }
+
+    /// Hitting the round cap says so; it used to end like a finished turn.
+    #[tokio::test]
+    async fn the_round_cap_says_so() {
+        let reads: Vec<Vec<StreamDelta>> = (0..3)
+            .map(|i| call("list_dir", serde_json::json!({"path": format!("d{i}")})))
+            .collect();
+        let (_home, cwd, mut agent) = setup(ReplayProvider::scripted(reads));
+        for i in 0..3 {
+            std::fs::create_dir(cwd.path().join(format!("d{i}"))).unwrap();
+        }
+        agent.max_turns = 3;
+        agent.role = Role::SoloPlan;
+        agent.ctx.role = Role::SoloPlan;
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let r = agent.turn("look around").await.unwrap();
+        assert_eq!(r.reason, StopReason::MaxTurns);
+        assert!(events.try_iter().any(
+            |e| matches!(e, AgentEvent::Notice { message } if message.contains("after 3 rounds"))
+        ));
+    }
+
+    /// Esc while a command runs: that call and the ones after it are
+    /// answered, so the next message isn't rejected by the provider.
+    #[tokio::test]
+    async fn esc_during_a_command_leaves_every_call_answered() {
+        let two = vec![
+            StreamDelta::ToolCall {
+                id: "slow".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({"command": "sleep 20"}).to_string(),
+            },
+            StreamDelta::ToolCall {
+                id: "next".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({"command": "ls"}).to_string(),
+            },
+            StreamDelta::Done,
+        ];
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![two, say("hello")]));
+        agent.role = Role::SoloBuild;
+        agent.ctx.role = Role::SoloBuild;
+        let cancel = agent.ctx.cancel.clone();
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            cancel.cancel();
+        });
+        let started = std::time::Instant::now();
+        let r = agent.turn("run it").await.unwrap();
+        t.join().unwrap();
+        assert_eq!(r.reason, StopReason::Cancelled);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        let answered: Vec<Option<String>> = agent
+            .session
+            .transcript
+            .iter()
+            .filter(|m| m.role == "tool")
+            .map(|m| m.tool_call_id.clone())
+            .collect();
+        assert_eq!(answered, vec![Some("slow".into()), Some("next".into())]);
+        agent.ctx.cancel.reset();
+        let r = agent.turn("are you there?").await.unwrap();
+        assert_eq!(r.text, "hello");
+    }
+
+    /// Arguments that aren't JSON get a reply that says so, not a policy
+    /// refusal the model can't act on.
+    #[tokio::test]
+    async fn arguments_that_are_not_json_say_so() {
+        let bad = vec![
+            StreamDelta::ToolCall {
+                id: "b".into(),
+                name: "read_file".into(),
+                arguments: "{\"path\": \"hello.txt\"".into(),
+            },
+            StreamDelta::Done,
+        ];
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![bad, say("ok")]));
+        agent.role = Role::SoloPlan;
+        agent.ctx.role = Role::SoloPlan;
+        agent.turn("read it").await.unwrap();
+        let tool = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .unwrap();
+        assert!(tool.content.contains("not valid JSON"), "{}", tool.content);
     }
 
     /// The crew's spend reaches the session log, so the budget sees it.

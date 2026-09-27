@@ -109,6 +109,8 @@ pub struct View {
     pub busy: bool,
     /// Cancel requested.
     pub cancelling: bool,
+    /// `Ctrl+O`: every edit's diff shown whole instead of folded.
+    pub diffs_expanded: bool,
     /// Project path shown in the header (`~/workspace/ryter`).
     pub cwd: String,
     /// Current git branch, if any.
@@ -305,6 +307,7 @@ impl View {
             crew: Vec::new(),
             busy: false,
             cancelling: false,
+            diffs_expanded: false,
             cwd,
             git_branch: None,
             perm_mode: "ask".into(),

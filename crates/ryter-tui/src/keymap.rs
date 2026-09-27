@@ -52,6 +52,8 @@ pub enum KeyAction {
     ToggleReasoning,
     /// Toggle the info panel.
     TogglePanel,
+    /// Show every edit's diff whole, or folded.
+    ToggleDiffs,
     /// Redraw.
     Redraw,
     /// Release the mouse so the terminal can select text.
@@ -182,6 +184,12 @@ pub const KEYMAP: &[Binding] = &[
         "Ctrl+B",
         KeyAction::TogglePanel,
         "toggle the info panel",
+    ),
+    b(
+        Ctx::Global,
+        "Ctrl+O",
+        KeyAction::ToggleDiffs,
+        "show every edit whole, or folded",
     ),
     b(Ctx::Global, "Ctrl+L", KeyAction::Redraw, "redraw"),
     b(

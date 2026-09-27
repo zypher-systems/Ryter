@@ -97,6 +97,10 @@ pub struct Theme {
     pub success: Color,
     /// Errors, over-budget, diff `-`.
     pub error: Color,
+    /// Row tint behind an added line. Equal to `bg` where tints can't show.
+    pub diff_add_bg: Color,
+    /// Row tint behind a removed line.
+    pub diff_del_bg: Color,
     /// Popout and card background.
     pub panel_bg: Color,
     /// Popout and card border.
@@ -159,6 +163,8 @@ struct ThemeFile {
     accent: Option<String>,
     success: Option<String>,
     error: Option<String>,
+    diff_add_bg: Option<String>,
+    diff_del_bg: Option<String>,
     panel_bg: Option<String>,
     panel_border: Option<String>,
     panel_title: Option<String>,
@@ -209,6 +215,10 @@ impl Theme {
         t.panel_bg = Color::Black;
         t.sticky_bg = Color::Black;
         t.link = Color::LightBlue;
+        // Sixteen colors have no subtle tint: the sign and the text color
+        // carry an edit instead.
+        t.diff_add_bg = t.bg;
+        t.diff_del_bg = t.bg;
         // Six syntax slots (`R-SYN-05`): comment, string, keyword, type, function, default.
         t.syn_number = t.code_fg;
         t.syn_variable = t.code_fg;
@@ -242,6 +252,8 @@ impl Theme {
         };
         let mut t = derive(base, &ThemeFile::default()).unwrap_or_else(|_| unreachable());
         t.error = rgb(0xb3, 0x1d, 0x1d);
+        t.diff_add_bg = rgb(0xdc, 0xf0, 0xdc);
+        t.diff_del_bg = rgb(0xf8, 0xdd, 0xdb);
         t.code_bg = rgb(0xee, 0xee, 0xe9);
         t.sticky_bg = rgb(0xef, 0xef, 0xea);
         t.selection_bg = rgb(0xd6, 0xe6, 0xf2);
@@ -314,7 +326,22 @@ impl Theme {
     pub fn degrade(self, mode: ColorMode) -> Self {
         match mode {
             ColorMode::TrueColor => Self { mode, ..self },
-            ColorMode::Ansi256 => self.map_colors(quantize_256, mode),
+            ColorMode::Ansi256 => {
+                // A subtle tint quantizes to gray, and then an added row
+                // looks like a removed one: use the palette's own greens
+                // and reds.
+                let light = luminance(self.bg).is_some_and(|l| l > 0.5);
+                let tinted = self.diff_add_bg != self.bg;
+                let mut t = self.map_colors(quantize_256, mode);
+                if tinted {
+                    (t.diff_add_bg, t.diff_del_bg) = if light {
+                        (Color::Indexed(194), Color::Indexed(224))
+                    } else {
+                        (Color::Indexed(22), Color::Indexed(52))
+                    };
+                }
+                t
+            }
             ColorMode::Ansi16 => Self {
                 generation: self.generation,
                 ..Self::default_16()
@@ -342,6 +369,8 @@ impl Theme {
             accent: f(self.accent),
             success: f(self.success),
             error: f(self.error),
+            diff_add_bg: f(self.diff_add_bg),
+            diff_del_bg: f(self.diff_del_bg),
             panel_bg: f(self.panel_bg),
             panel_border: f(self.panel_border),
             panel_title: f(self.panel_title),
@@ -385,6 +414,8 @@ impl Theme {
             self.accent,
             self.success,
             self.error,
+            self.diff_add_bg,
+            self.diff_del_bg,
             self.panel_bg,
             self.panel_border,
             self.panel_title,
@@ -551,6 +582,8 @@ fn derive(base: Base, file: &ThemeFile) -> Result<Theme, String> {
     let accent = pick(&file.accent, base.plan)?;
     let success = pick(&file.success, base.build)?;
     let error = pick(&file.error, shift_red(base.warn))?;
+    let diff_add_bg = pick(&file.diff_add_bg, tint(base.bg, success, 0.18))?;
+    let diff_del_bg = pick(&file.diff_del_bg, tint(base.bg, error, 0.18))?;
     let panel_bg = pick(&file.panel_bg, base.sidebar_bg)?;
     let panel_border = pick(&file.panel_border, base.dim)?;
     let panel_title = pick(&file.panel_title, base.fg)?;
@@ -578,6 +611,8 @@ fn derive(base: Base, file: &ThemeFile) -> Result<Theme, String> {
         accent,
         success,
         error,
+        diff_add_bg,
+        diff_del_bg,
         panel_bg,
         panel_border,
         panel_title,
@@ -751,6 +786,16 @@ fn blend(a: Color, b: Color, t: f64) -> Color {
     }
 }
 
+/// `c` laid thinly over `bg`, or no tint when either isn't RGB (a named
+/// color has no shade to blend toward).
+fn tint(bg: Color, c: Color, t: f64) -> Color {
+    if matches!((bg, c), (Color::Rgb(..), Color::Rgb(..))) {
+        blend(bg, c, t)
+    } else {
+        bg
+    }
+}
+
 /// Push a warning hue toward red for the `error` slot.
 fn shift_red(c: Color) -> Color {
     match c {
@@ -799,7 +844,6 @@ fn parse_color(s: &str) -> Result<Color, String> {
 }
 
 /// WCAG relative luminance.
-#[cfg(test)]
 fn luminance(c: Color) -> Option<f64> {
     let (r, g, b) = to_rgb(c)?;
     let lin = |v: u8| -> f64 {
@@ -874,6 +918,13 @@ mod tests {
             }
             let ratio = contrast_ratio(t.fg, t.panel_bg).unwrap();
             assert!(ratio >= 4.5, "{name}: fg on panel_bg is {ratio:.2}:1");
+            for (label, bg) in [
+                ("diff_add_bg", t.diff_add_bg),
+                ("diff_del_bg", t.diff_del_bg),
+            ] {
+                let ratio = contrast_ratio(t.code_fg, bg).unwrap();
+                assert!(ratio >= 4.5, "{name}: code_fg on {label} is {ratio:.2}:1");
+            }
         }
     }
 

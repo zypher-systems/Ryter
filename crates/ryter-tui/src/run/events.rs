@@ -33,8 +33,9 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
             output,
             is_error,
             duration_ms,
+            diff,
         } => {
-            on_tool_result(view, id, output, *is_error, *duration_ms);
+            on_tool_result(view, id, output, *is_error, *duration_ms, diff.as_deref());
             if view.activity.busy() {
                 view.activity.verb = Verb::Thinking;
                 view.activity.current.clear();
@@ -352,6 +353,7 @@ fn on_tool_result(
     output: &str,
     is_error: bool,
     duration_ms: Option<u64>,
+    diff: Option<&ryter_core::diff::FileDiff>,
 ) {
     use crate::chat::toolview;
     let (tool, target) = view.tool_calls.remove(id).unwrap_or_default();
@@ -375,7 +377,17 @@ fn on_tool_result(
         .find(|m| m.meta.tool_id.as_deref() == Some(id))
     {
         m.meta.detail = Some(detail);
-        if !body.is_empty() {
+        // The measured diff replaces the preview drawn from the model's
+        // arguments: same lines, now with the file's numbers and context.
+        if let Some(d) = diff.filter(|d| !is_error && !d.is_empty()) {
+            m.meta.detail = Some(if d.created {
+                format!("new · {} lines", d.added)
+            } else {
+                format!("+{} −{}", d.added, d.removed)
+            });
+            m.meta.diff = Some(Box::new(d.clone()));
+            m.set_body(String::new());
+        } else if !body.is_empty() {
             let joined = if m.body.is_empty() {
                 body
             } else {
@@ -386,7 +398,10 @@ fn on_tool_result(
             m.touch();
         }
     }
-    view.tally.add(&tool, &target, output, is_error);
+    match diff.filter(|_| !is_error) {
+        Some(d) => view.tally.add_diff(&target, d),
+        None => view.tally.add(&tool, &target, output, is_error),
+    }
     // For a commit receipt: the latest test result, and whether the model
     // edited files after it.
     match tool.as_str() {
@@ -596,6 +611,7 @@ mod tests {
                 output: "error[E0308]: mismatched types".into(),
                 is_error: true,
                 duration_ms: Some(1200),
+                diff: None,
             },
         );
         let tool = v

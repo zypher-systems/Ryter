@@ -42,6 +42,9 @@ fn flags(opts: &RenderOpts) -> u64 {
     if opts.continuation {
         f |= 4;
     }
+    if opts.diff_rows == usize::MAX {
+        f |= 8;
+    }
     if let Some(h) = &opts.lang_hint {
         let mut hash: u64 = 1469;
         for b in h.bytes() {
@@ -95,6 +98,11 @@ fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
             username: view.username.clone(),
             lang_hint: last_hint.clone(),
             continuation,
+            diff_rows: if view.diffs_expanded {
+                usize::MAX
+            } else {
+                super::diff::DEFAULT_ROWS
+            },
         };
         let key = Key {
             id: msg.id,

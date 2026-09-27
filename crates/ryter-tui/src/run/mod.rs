@@ -670,11 +670,13 @@ fn drain_user_prompts(
         UserRequest::Permission {
             tool,
             summary,
+            preview,
             reply,
         } => {
             cx.perm_reply = Some(reply);
-            view.panels
-                .push(Box::new(PermissionModal::new(tool, summary)));
+            view.panels.push(Box::new(
+                PermissionModal::new(tool, summary).with_preview(preview),
+            ));
         }
         UserRequest::Question {
             question,

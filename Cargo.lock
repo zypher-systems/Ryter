@@ -1488,7 +1488,7 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "ryter-cli"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "clap",
  "ryter-core",
@@ -1499,7 +1499,7 @@ dependencies = [
 
 [[package]]
 name = "ryter-core"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1513,6 +1513,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "similar",
  "tempfile",
  "thiserror",
  "tokio",
@@ -1522,7 +1523,7 @@ dependencies = [
 
 [[package]]
 name = "ryter-tui"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "crossterm",
  "ratatui",
@@ -1700,6 +1701,12 @@ name = "simd-adler32"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
+
+[[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "slab"

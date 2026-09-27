@@ -118,6 +118,15 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         Action::Cancel => {
             if view.busy {
                 cx.cancel.cancel();
+                // Answer any open prompt, so nothing waits on it.
+                if let Some(tx) = cx.perm_reply.take() {
+                    let _ = tx.send(Permission::Deny);
+                }
+                cx.ask_reply = None;
+                while view.panels.has_modal() {
+                    view.panels.pop();
+                }
+                panel::sync_composer(view);
                 view.cancelling = true;
                 view.activity.verb = Verb::Cancelling;
                 view.system("cancelling…");
@@ -610,6 +619,7 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
                             output: m.content.clone(),
                             is_error: is_err,
                             duration_ms: None,
+                            diff: None,
                         },
                     );
                 }

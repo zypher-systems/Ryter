@@ -5,6 +5,7 @@ use serde_json::Value;
 use std::fs;
 use std::io::Write;
 
+use crate::diff::FileDiff;
 use crate::error::{Error, Result};
 use crate::tools::policy::resolve;
 use crate::tools::{ToolContext, ToolOutput};
@@ -73,15 +74,18 @@ pub fn write_file(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     }
     // Say what happened, for the model and the chat: a new file, or a
     // rewrite and how big it was before.
-    let before = fs::read_to_string(&path).ok().map(|t| t.lines().count());
+    let old = fs::read_to_string(&path).ok();
+    let before = old.as_deref().map(|t| t.lines().count());
     let mut f = fs::File::create(&path).map_err(|e| Error::Config(e.to_string()))?;
     f.write_all(content.as_bytes())
         .map_err(|e| Error::Config(e.to_string()))?;
     let lines = content.lines().count();
+    let diff = FileDiff::new(shown(&path, ctx), old.as_deref(), content);
     Ok(ToolOutput::ok(match before {
         None => format!("created {} · {lines} lines", path.display()),
         Some(was) => format!("rewrote {} · {lines} lines (was {was})", path.display()),
-    }))
+    })
+    .with_diff(diff))
 }
 
 pub fn search_replace(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
@@ -95,24 +99,125 @@ pub fn search_replace(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         .and_then(Value::as_str)
         .ok_or_else(|| Error::Config("search_replace: missing new_string".into()))?;
     let text = fs::read_to_string(&path).map_err(|e| Error::Config(e.to_string()))?;
+    if old.is_empty() {
+        return Ok(ToolOutput::err(
+            "old_string is empty; quote the lines to replace (or use write for a new file)",
+        ));
+    }
+    if old == new {
+        return Ok(ToolOutput::err(
+            "old_string and new_string are the same, so nothing would change",
+        ));
+    }
+    // `read_file` shows lines without their `\r`, so a multi-line quote of
+    // a CRLF file never matched, and the model tried again forever.
+    let crlf = |t: &str| t.replace("\r\n", "\n").replace('\n', "\r\n");
+    let (old, new) = if !text.contains(old) && text.contains("\r\n") && text.contains(&crlf(old)) {
+        (crlf(old), crlf(new))
+    } else {
+        (old.to_string(), new.to_string())
+    };
+    let (old, new) = (old.as_str(), new.as_str());
     let count = text.matches(old).count();
     if count == 0 {
-        return Ok(ToolOutput::err("old_string not found"));
+        return Ok(ToolOutput::err(not_found(&text, old)));
     }
     if count > 1 {
+        let at: Vec<String> = text
+            .match_indices(old)
+            .take(6)
+            .map(|(i, _)| (text[..i].matches('\n').count() + 1).to_string())
+            .collect();
         return Ok(ToolOutput::err(format!(
-            "old_string matched {count} times; must be unique"
+            "old_string matched {count} times (lines {}); quote enough of the lines around \
+             the one you mean to make it unique",
+            at.join(", ")
         )));
     }
     let updated = text.replacen(old, new, 1);
-    fs::write(&path, updated).map_err(|e| Error::Config(e.to_string()))?;
+    fs::write(&path, &updated).map_err(|e| Error::Config(e.to_string()))?;
     let (removed, added) = changed_lines(old, new);
+    let diff = FileDiff::new(shown(&path, ctx), Some(&text), &updated);
     Ok(ToolOutput::ok(format!(
         "updated {} · −{} +{} lines",
         path.display(),
         removed.len(),
         added.len()
-    )))
+    ))
+    .with_diff(diff))
+}
+
+/// What an edit would do, measured without doing it, for the person asked
+/// to approve it. `None` when it wouldn't apply (the tool will say why).
+pub fn preview(name: &str, args: &Value, ctx: &ToolContext) -> Option<FileDiff> {
+    let path = require_path(args, ctx).ok()?;
+    let old = fs::read_to_string(&path).ok();
+    let new = match name {
+        "write" => args.get("content")?.as_str()?.to_string(),
+        "search_replace" | "propose_edit" => {
+            let text = old.as_deref()?;
+            let from = args.get("old_string")?.as_str()?;
+            let to = args.get("new_string")?.as_str()?;
+            if from.is_empty() || text.matches(from).count() != 1 {
+                return None;
+            }
+            text.replacen(from, to, 1)
+        }
+        _ => return None,
+    };
+    Some(FileDiff::new(shown(&path, ctx), old.as_deref(), &new))
+}
+
+/// Why `old` isn't in `text`, and where to look. "old_string not found"
+/// alone gave the model nothing to go on, and it sent the same edit again.
+fn not_found(text: &str, old: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let first = old
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let near: Vec<usize> = if first.is_empty() {
+        Vec::new()
+    } else {
+        lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.trim() == first || (first.len() >= 12 && l.contains(first)))
+            .map(|(i, _)| i + 1)
+            .take(3)
+            .collect()
+    };
+    match near.as_slice() {
+        [] => format!(
+            "old_string not found, and its first line isn't in the file either ({} lines). \
+             The file may have changed since you read it: read it again and quote it exactly.",
+            lines.len()
+        ),
+        [n, ..] => format!(
+            "old_string not found as written, but its first line is at line {}. Read lines \
+             {}–{} again and quote them exactly: indentation, blank lines and trailing spaces \
+             count.",
+            near.iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            n.saturating_sub(3).max(1),
+            n + old.lines().count() + 3
+        ),
+    }
+}
+
+/// A path as the user knows it: relative inside the project. Resolved
+/// paths are canonical, so a workspace reached through a symlink (every temp
+/// folder on macOS: /var -> /private/var) is stripped in both spellings.
+fn shown(path: &std::path::Path, ctx: &ToolContext) -> String {
+    let real = fs::canonicalize(&ctx.workspace).unwrap_or_else(|_| ctx.workspace.clone());
+    path.strip_prefix(&real)
+        .or_else(|_| path.strip_prefix(&ctx.workspace))
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 /// The lines an edit really changes: what's left of `old` and `new` once

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use crate::config::ConnectionConfig;
 use crate::error::{Error, Result};
-use crate::llm::parse::{Backend, parse_sse};
+use crate::llm::parse::Backend;
 use crate::llm::{
     CompletionRequest, DeltaStream, ModelInfo, Provider, StreamDelta, ToolSpec, backend_for,
 };
@@ -21,6 +21,14 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const LOCAL_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
 /// How long a stream may go silent before it is considered dead.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+/// Longest a stream may go without a real delta. Keep-alive comments
+/// (OpenRouter's `: OPENROUTER PROCESSING`, Anthropic's `ping`) reset the
+/// socket's read timeout, so a request stuck in a provider's queue never
+/// tripped it and the turn spun for good. Long enough for a model that
+/// reasons silently.
+const STALL_TIMEOUT: Duration = Duration::from_secs(300);
+/// The same bound for a local server, which may load a model first.
+const LOCAL_STALL_TIMEOUT: Duration = Duration::from_secs(900);
 /// Attempts after the first for a retryable failure.
 const MAX_RETRIES: u32 = 3;
 /// First backoff step; doubles per attempt.
@@ -212,9 +220,15 @@ impl Provider for HttpProvider {
             };
             let status = resp.status();
             if status.is_success() {
+                let stall = if self.kind == "local" {
+                    LOCAL_STALL_TIMEOUT
+                } else {
+                    STALL_TIMEOUT
+                };
                 return Ok(Box::pin(sse_delta_stream(
                     self.backend,
                     resp.bytes_stream(),
+                    stall,
                 )));
             }
             let wait = retry_after(resp.headers());
@@ -253,37 +267,70 @@ impl Provider for HttpProvider {
     }
 }
 
-fn sse_delta_stream(
+fn sse_delta_stream<E: std::fmt::Display>(
     backend: Backend,
-    byte_stream: impl Stream<Item = std::result::Result<Bytes, reqwest::Error>> + Send + Unpin + 'static,
+    byte_stream: impl Stream<Item = std::result::Result<Bytes, E>> + Send + Unpin + 'static,
+    stall: Duration,
 ) -> impl Stream<Item = Result<StreamDelta>> + Send {
     futures_util::stream::unfold(
         StreamState {
             backend,
             byte_stream,
+            raw: Vec::new(),
             buf: String::new(),
             pending: VecDeque::new(),
             done: false,
+            stall,
+            progress: tokio::time::Instant::now(),
         },
         |mut st| async move {
             loop {
                 if let Some(d) = st.pending.pop_front() {
+                    if d.is_err() {
+                        st.done = true;
+                        st.pending.clear();
+                    }
                     return Some((d, st));
                 }
                 if st.done {
                     return None;
                 }
-                match st.byte_stream.next().await {
+                let next =
+                    tokio::time::timeout_at(st.progress + st.stall, st.byte_stream.next()).await;
+                let Ok(next) = next else {
+                    st.done = true;
+                    return Some((
+                        Err(Error::Provider(format!(
+                            "the provider sent nothing but keep-alives for {}s; the request \
+                             looks stuck on its side. Try again, or another model.",
+                            st.stall.as_secs()
+                        ))),
+                        st,
+                    ));
+                };
+                match next {
                     Some(Ok(chunk)) => {
-                        st.buf
-                            .push_str(&String::from_utf8_lossy(&chunk).replace("\r\n", "\n"));
+                        st.raw.extend_from_slice(&chunk);
+                        let text = take_utf8(&mut st.raw);
+                        st.buf.push_str(&text.replace("\r\n", "\n"));
                         drain_sse(&mut st);
                     }
                     Some(Err(e)) => {
                         st.done = true;
-                        return Some((Err(Error::Provider(e.to_string())), st));
+                        let msg = e.to_string();
+                        // reqwest says "error decoding response body" when the
+                        // read timeout fires between chunks.
+                        let msg = if msg.contains("decoding response body") {
+                            format!("the provider's stream went silent ({msg})")
+                        } else {
+                            msg
+                        };
+                        return Some((Err(Error::Provider(msg)), st));
                     }
                     None => {
+                        let rest =
+                            String::from_utf8_lossy(&std::mem::take(&mut st.raw)).into_owned();
+                        st.buf.push_str(&rest);
                         if !st.buf.trim().is_empty() {
                             drain_rest(&mut st);
                         }
@@ -302,13 +349,49 @@ fn sse_delta_stream(
 struct StreamState<S> {
     backend: Backend,
     byte_stream: S,
+    /// Bytes not yet decoded: a character split across two chunks waits
+    /// here for its other half.
+    raw: Vec<u8>,
     buf: String,
     pending: VecDeque<Result<StreamDelta>>,
     done: bool,
+    /// Longest wait for a real delta.
+    stall: Duration,
+    /// When the last real delta arrived.
+    progress: tokio::time::Instant,
+}
+
+/// Decode the whole characters at the front of `raw`, leaving an incomplete
+/// one at the end for the next chunk. Decoding each chunk alone turned a
+/// character split across two chunks into `��`, in replies and in the
+/// arguments of file writes.
+fn take_utf8(raw: &mut Vec<u8>) -> String {
+    match std::str::from_utf8(raw) {
+        Ok(s) => {
+            let s = s.to_string();
+            raw.clear();
+            s
+        }
+        // Cut short at the end: keep the tail for the next chunk.
+        Err(e) if e.error_len().is_none() => {
+            let tail = raw.split_off(e.valid_up_to());
+            let s = String::from_utf8_lossy(raw).into_owned();
+            *raw = tail;
+            s
+        }
+        // Really invalid: nothing to wait for.
+        Err(_) => {
+            let s = String::from_utf8_lossy(raw).into_owned();
+            raw.clear();
+            s
+        }
+    }
 }
 
 fn drain_sse<S>(st: &mut StreamState<S>) {
-    while let Some(idx) = st.buf.find("\n\n") {
+    while !st.done
+        && let Some(idx) = st.buf.find("\n\n")
+    {
         let block = st.buf[..idx + 2].to_string();
         st.buf = st.buf[idx + 2..].to_string();
         push_block(st, &block);
@@ -323,13 +406,21 @@ fn drain_rest<S>(st: &mut StreamState<S>) {
 }
 
 fn push_block<S>(st: &mut StreamState<S>, block: &str) {
-    match parse_sse(st.backend, block) {
-        Ok(mut ds) => {
-            if matches!(ds.last(), Some(StreamDelta::Done)) {
-                ds.pop();
+    match super::parse::parse_blocks(st.backend, block) {
+        Ok((ds, terminal)) => {
+            if !ds.is_empty() {
+                st.progress = tokio::time::Instant::now();
             }
             for d in ds {
                 st.pending.push_back(Ok(d));
+            }
+            // `[DONE]`, `response.completed`, `message_stop`: the answer is
+            // whole. Waiting for the socket to close instead spun until the
+            // idle timeout on servers that keep it open, then failed a
+            // finished turn.
+            if terminal {
+                st.pending.push_back(Ok(StreamDelta::Done));
+                st.done = true;
             }
         }
         Err(e) => st.pending.push_back(Err(e)),
@@ -657,6 +748,160 @@ fn parse_models_json(text: &str) -> Result<Vec<ModelInfo>> {
 
 #[cfg(test)]
 mod tests {
+
+    mod stream {
+        use super::super::*;
+        use futures_util::stream;
+
+        type Chunk = std::result::Result<Bytes, std::io::Error>;
+
+        fn chunks(parts: &[&[u8]]) -> Vec<Chunk> {
+            parts
+                .iter()
+                .map(|p| Ok(Bytes::copy_from_slice(p)))
+                .collect()
+        }
+
+        /// Everything the stream yields until it ends, or `None` if it was
+        /// still waiting after `wait`.
+        async fn collect(
+            s: impl Stream<Item = Result<StreamDelta>> + Send,
+            wait: Duration,
+        ) -> Option<Vec<std::result::Result<StreamDelta, String>>> {
+            let all = s.map(|d| d.map_err(|e| e.to_string())).collect::<Vec<_>>();
+            tokio::time::timeout(wait, all).await.ok()
+        }
+
+        /// The provider said it was done, and the socket stayed open: the
+        /// stream ends at the provider's word, not at a timeout.
+        #[tokio::test]
+        async fn a_finished_answer_ends_without_waiting_for_the_socket() {
+            let cases: [(Backend, &[u8]); 3] = [
+                (
+                    Backend::ChatCompletions,
+                    b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n",
+                ),
+                (
+                    Backend::Responses,
+                    b"event: response.output_text.delta\ndata: {\"delta\":\"hi\"}\n\nevent: response.completed\ndata: {\"response\":{}}\n\n",
+                ),
+                (
+                    Backend::Messages,
+                    b"event: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\nevent: message_stop\ndata: {}\n\n",
+                ),
+            ];
+            for (backend, body) in cases {
+                let open = stream::iter(chunks(&[body])).chain(stream::pending());
+                let got = collect(
+                    sse_delta_stream(backend, Box::pin(open), Duration::from_secs(60)),
+                    Duration::from_secs(2),
+                )
+                .await
+                .unwrap_or_else(|| panic!("{backend:?} waited for the socket"));
+                assert_eq!(
+                    got,
+                    vec![Ok(StreamDelta::Text("hi".into())), Ok(StreamDelta::Done)],
+                    "{backend:?}"
+                );
+            }
+        }
+
+        /// Keep-alive comments are not progress. A request stuck in the
+        /// provider's queue ends with an error that says so.
+        #[tokio::test]
+        async fn keep_alives_alone_hit_the_stall_deadline() {
+            let pings = stream::unfold((), |()| async {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                Some((
+                    Ok::<_, std::io::Error>(Bytes::from_static(b": OPENROUTER PROCESSING\n\n")),
+                    (),
+                ))
+            });
+            let got = collect(
+                sse_delta_stream(
+                    Backend::ChatCompletions,
+                    Box::pin(pings),
+                    Duration::from_millis(300),
+                ),
+                Duration::from_secs(3),
+            )
+            .await
+            .expect("the stall deadline never fired");
+            assert_eq!(got.len(), 1);
+            let err = got[0].as_ref().unwrap_err();
+            assert!(err.contains("keep-alives"), "{err}");
+        }
+
+        /// Errors inside the stream end the turn as errors, on every backend.
+        #[tokio::test]
+        async fn errors_sent_mid_stream_are_errors() {
+            let cases: [(Backend, &[u8], &str); 4] = [
+                (
+                    Backend::ChatCompletions,
+                    b"data: {\"choices\":[{\"delta\":{\"content\":\"par\"}}]}\n\ndata: {\"error\":{\"code\":502,\"message\":\"upstream died\"}}\n\n",
+                    "upstream died",
+                ),
+                (
+                    Backend::Responses,
+                    b"event: response.failed\ndata: {\"response\":{\"error\":{\"code\":\"server_error\",\"message\":\"boom\"}}}\n\n",
+                    "server_error: boom",
+                ),
+                (
+                    Backend::Messages,
+                    b"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n",
+                    "overloaded_error: Overloaded",
+                ),
+                (
+                    Backend::ChatCompletions,
+                    b"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"content_filter\"}]}\n\n",
+                    "content_filter",
+                ),
+            ];
+            for (backend, body, want) in cases {
+                let open = stream::iter(chunks(&[body])).chain(stream::pending());
+                let got = collect(
+                    sse_delta_stream(backend, Box::pin(open), Duration::from_secs(60)),
+                    Duration::from_secs(2),
+                )
+                .await
+                .unwrap_or_else(|| panic!("{backend:?} hung on an error"));
+                let err = got.last().unwrap().as_ref().unwrap_err();
+                assert!(err.contains(want), "{backend:?}: {err}");
+            }
+        }
+
+        /// A character split between two network chunks arrives whole.
+        #[tokio::test]
+        async fn a_character_split_across_chunks_arrives_whole() {
+            let body =
+                "data: {\"choices\":[{\"delta\":{\"content\":\"café 日本\"}}]}\n\ndata: [DONE]\n\n";
+            let bytes = body.as_bytes();
+            let cut = body.find('é').unwrap() + 1;
+            let cut2 = body.find('本').unwrap() + 2;
+            let parts = chunks(&[&bytes[..cut], &bytes[cut..cut2], &bytes[cut2..]]);
+            let got = collect(
+                sse_delta_stream(
+                    Backend::ChatCompletions,
+                    Box::pin(stream::iter(parts)),
+                    Duration::from_secs(60),
+                ),
+                Duration::from_secs(2),
+            )
+            .await
+            .unwrap();
+            assert_eq!(got[0], Ok(StreamDelta::Text("café 日本".into())));
+        }
+
+        #[test]
+        fn tool_arguments_sent_as_an_object_are_kept() {
+            let sse = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"c1\",\"function\":{\"name\":\"read_file\",\"arguments\":{\"path\":\"a.rs\"}}}]}}]}\n\n";
+            let d = crate::llm::parse_sse(Backend::ChatCompletions, sse).unwrap();
+            assert!(
+                matches!(&d[0], StreamDelta::ToolCall { arguments, .. } if arguments == "{\"path\":\"a.rs\"}"),
+                "{d:?}"
+            );
+        }
+    }
 
     /// OpenRouter gets the reasoning setting; other servers never see a field
     /// they may reject.

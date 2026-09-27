@@ -4,6 +4,46 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.4.0 (`feat/0.4.0`, notes in `docs/releases/v0.4.0.md`) — turns that end, and edits you can see** (2026-09-26; see the two DECISIONS entries of that date). Fixed, each with a test that failed first:
+  - a waiting patch looped the lead to the round cap on every message;
+  - keep-alives held a stuck stream open for good;
+  - the stream waited for socket EOF after `[DONE]`;
+  - errors sent mid-stream became empty "completed" replies;
+  - characters split across chunks were corrupted;
+  - Anthropic input tokens were dropped from spend;
+  - Esc mid-command left the session unusable, and nothing repaired it;
+  - the same failing call ran to the round cap;
+  - the round cap stopped silently;
+  - prompts ignored Esc and `^c`;
+  - `git commit` without `-m` waited on vi;
+  - `search_replace` misses gave no location, and CRLF files never matched;
+  - an interrupted task stayed `running` for good;
+  - the permission prompt cut a `propose_edit` to 160 characters.
+
+  New: inline diffs in the chat, `^o`, and diff previews on edit prompts.
+- **0.4.0 — the shell gate reads a command the way the shell will** (2026-09-26; DECISIONS entry of that date). Closed, each with a test:
+  - the never-run list was bypassed through wrappers (`env -i sudo`, `timeout 5 sudo`, `nice dd`, `xargs ssh`), escapes (`s\udo`), computed names (`$(echo sudo) ls`, `$X`), `eval`, `find -exec`, `fd -x`, `busybox`, and `git -c alias.x=!…`;
+  - the review hat ran `cargo fmt`, `npm install`, `npx <pkg>`, `make install`, and `node -e`;
+  - read-only tools ran programs (`sort --compress-program`, `rg --pre`, `git grep -O`) or wrote (`yq -i`, `git diff --output`);
+  - bare `env` was read-only.
+- **Security, still open:** the never-run list doesn't bind a builder that writes a script (Landlock is the boundary, and it's off by default); shell reads can reach `.env` indirectly (`grep -r`, `xargs cat`); environment secrets other than Ryter's keys are visible to commands; no independent adversarial pass of the new gate yet.
+- **Audit findings still open** (verified 2026-09-26, not yet fixed):
+  - **`/undo`:**
+    - It restores the whole checkpoint, so edits the user made between turns are lost.
+    - Gitignored files aren't in the checkpoint, so an overwrite of one can't be undone.
+  - **Spend:**
+    - The budget never trips on an unpriced model, and the lead and solo hats have no token cap.
+    - The per-task cap resets on every drain.
+    - Anthropic `cache_creation_input_tokens` aren't counted, and `input − cached` is wrong for Anthropic, whose `input_tokens` already excludes cache reads.
+  - **Headless:** `ryter -p` exits 0 on `MaxTurns`, `Truncated`, and `Stuck`, and `TurnFinished` carries no stop reason.
+  - **MCP:** `use_tool` reads with no timeout while holding the hub lock, and takes the first line as the reply without matching its id. A notification shifts every later result by one.
+  - **Streams:**
+    - Tool-call fragments are keyed by id, not `index`, so interleaved parallel calls merge.
+    - A stream dropped mid-reply loses the partial text.
+    - A `Retry-After` wait is followed by the backoff wait as well.
+  - **Shell:** programs that read `/dev/tty` (ssh or gpg prompts) wait out the command timeout.
+  - **Compaction:** it can't shrink a single long turn, because it keeps at least four user turns.
+
 - 0.2.0 TUI redesign (`design.md`) — all seven phases landed on `0.2.0-patch`; PR to `dev` for outside review, then `dev` → `main`
 - `gaps.md` review closed: G-01..G-07 all fixed. One new item opened there — S-01, the snapshot harness cannot see style, so `R-POP-04` (dim behind a panel) is unassertable
 - Resolve `design.md` open items in review: O-01 drop `Spend` as the `busy` fallback once headless/MCP consumers read `TurnFinished`; O-02 `ryter doctor --json` (CLI, not the panel); O-03 `light` theme shipped but marked experimental; O-04 per-message copy deferred with the clipboard question (mitigated: `Ctrl+G` releases the mouse so terminal selection works)

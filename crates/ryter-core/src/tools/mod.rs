@@ -56,6 +56,8 @@ pub struct ToolOutput {
     pub text: String,
     /// True when the tool failed.
     pub is_error: bool,
+    /// What an edit did to the file, for the chat. Never sent to the model.
+    pub diff: Option<crate::diff::FileDiff>,
 }
 
 /// Ceiling on one tool result, in bytes (~8k tokens at the bytes/4 estimate).
@@ -107,13 +109,20 @@ impl ToolOutput {
         Self {
             text: cap_output(text.into()),
             is_error: false,
+            diff: None,
         }
+    }
+
+    fn with_diff(mut self, diff: crate::diff::FileDiff) -> Self {
+        self.diff = Some(diff);
+        self
     }
 
     pub(crate) fn err(text: impl Into<String>) -> Self {
         Self {
             text: cap_output(text.into()),
             is_error: true,
+            diff: None,
         }
     }
 }
@@ -400,9 +409,16 @@ fn ask_user(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     let Some(io) = &ctx.user_io else {
         return Ok(ToolOutput::err("ask_user needs the TUI"));
     };
-    let answer = io.ask(q, options);
+    let answer = io.ask(q, options, &ctx.cancel);
+    if ctx.cancel.is_cancelled() {
+        return Err(crate::error::Error::Cancelled);
+    }
     if answer.trim().is_empty() {
-        return Ok(ToolOutput::err("ask_user: no answer"));
+        // "no answer" read as a glitch, and models asked again.
+        return Ok(ToolOutput::err(
+            "the user closed the question without answering. Don't ask it again: finish \
+             what you can without it, or stop and wait for their next message",
+        ));
     }
     Ok(ToolOutput::ok(answer))
 }
@@ -436,9 +452,13 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
         Decision::Ask if name == "propose_edit" => match &ctx.user_io {
             Some(io) => {
                 let summary = crate::user_io::summary_args(name, args);
-                match io.permission(name, &summary) {
+                match io.permission_with(name, &summary, fs::preview(name, args, ctx), &ctx.cancel)
+                {
                     crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
                         run_with_hooks(name, args, ctx)
+                    }
+                    crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
+                        Err(crate::error::Error::Cancelled)
                     }
                     crate::user_io::Permission::Deny => Ok(ToolOutput::err(
                         "the user declined the edit; ask what they want instead",
@@ -455,9 +475,17 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
         Decision::AskOutside => match &ctx.user_io {
             Some(io) => {
                 let summary = crate::user_io::summary_args(name, args);
-                match io.permission(&format!("{name} {OUTSIDE}"), &summary) {
+                match io.permission_with(
+                    &format!("{name} {OUTSIDE}"),
+                    &summary,
+                    fs::preview(name, args, ctx),
+                    &ctx.cancel,
+                ) {
                     crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
                         run_with_hooks(name, args, ctx)
+                    }
+                    crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
+                        Err(crate::error::Error::Cancelled)
                     }
                     crate::user_io::Permission::Deny => Ok(ToolOutput::err(format!(
                         "denied by user: {name} {summary} (outside the project). Work inside \
@@ -514,15 +542,21 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
         Decision::Ask => match &ctx.user_io {
             Some(io) => {
                 let summary = crate::user_io::summary_args(name, args);
-                match io.permission(name, &summary) {
+                match io.permission_with(name, &summary, fs::preview(name, args, ctx), &ctx.cancel)
+                {
                     crate::user_io::Permission::Allow => run_with_hooks(name, args, ctx),
                     crate::user_io::Permission::Always => {
                         ctx.sticky_approve.store(true, Ordering::SeqCst);
                         run_with_hooks(name, args, ctx)
                     }
-                    crate::user_io::Permission::Deny => {
-                        Ok(ToolOutput::err(format!("denied by user: {name} {summary}")))
+                    crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
+                        Err(crate::error::Error::Cancelled)
                     }
+                    // Said so the model doesn't ask again in other words.
+                    crate::user_io::Permission::Deny => Ok(ToolOutput::err(format!(
+                        "denied by user: {name} {summary}. Don't retry it or a variant of it: \
+                         carry on without it, or ask the user what they'd like instead"
+                    ))),
                 }
             }
             None => Ok(ToolOutput::err(format!(
@@ -563,7 +597,7 @@ mod tests {
     use serde_json::json;
     use tempfile::TempDir;
 
-    fn ctx(role: Role, root: &std::path::Path) -> ToolContext {
+    pub(super) fn ctx(role: Role, root: &std::path::Path) -> ToolContext {
         let notes = root.join(".ryter-notes");
         std::fs::create_dir_all(&notes).unwrap();
         ToolContext {
@@ -1010,5 +1044,107 @@ mod tests {
         let out = gated_execute("ask_user", &json!({"question": "ok?"}), &c).unwrap();
         assert!(out.is_error);
         assert!(out.text.contains("TUI"), "{out:?}");
+    }
+}
+
+#[cfg(test)]
+mod edit_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn edit(root: &std::path::Path, old: &str, new: &str) -> ToolOutput {
+        let c = tests::ctx(Role::SoloBuild, root);
+        execute(
+            "search_replace",
+            &json!({"path": "f.txt", "old_string": old, "new_string": new}),
+            &c,
+        )
+        .unwrap()
+    }
+
+    /// A miss says where to look, a repeat says which lines, a no-op is
+    /// refused: each gives the model a way forward instead of a retry.
+    #[test]
+    fn edits_that_cannot_apply_say_why_and_where() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let f = dir.path().join("f.txt");
+        std::fs::write(&f, "fn a() {\n    one();\n}\nfn b() {\n    one();\n}\n").unwrap();
+        let out = edit(dir.path(), "fn a() {\n  one();\n}", "fn a() {}");
+        assert!(out.is_error);
+        assert!(out.text.contains("first line is at line 1"), "{}", out.text);
+        let out = edit(dir.path(), "    one();", "    two();");
+        assert!(
+            out.text.contains("matched 2 times (lines 2, 5)"),
+            "{}",
+            out.text
+        );
+        let out = edit(dir.path(), "fn b()", "fn b()");
+        assert!(
+            out.is_error && out.text.contains("the same"),
+            "{}",
+            out.text
+        );
+        let out = edit(dir.path(), "nothing like this", "x");
+        assert!(out.text.contains("read it again"), "{}", out.text);
+    }
+
+    /// The person approving an edit sees the change it would make, whole:
+    /// the prompt's one-line summary is cut at 160 characters.
+    #[test]
+    fn an_edit_asks_with_the_change_it_would_make() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("f.txt"), "keep\nold\n").unwrap();
+        let mut c = tests::ctx(Role::SoloBuild, dir.path());
+        let (io, rx) = crate::user_io::UserIo::pair();
+        c.user_io = Some(io);
+        let long: String = (0..40)
+            .map(|i| format!("line {i} of the new text\n"))
+            .collect();
+        let args = json!({"path": "f.txt", "old_string": "old\n", "new_string": long});
+        let t = std::thread::spawn(move || match rx.recv().unwrap() {
+            crate::user_io::UserRequest::Permission { preview, reply, .. } => {
+                let _ = reply.send(crate::user_io::Permission::Deny);
+                preview
+            }
+            crate::user_io::UserRequest::Question { .. } => None,
+        });
+        let out = gated_execute("search_replace", &args, &c).unwrap();
+        assert!(out.is_error, "denied");
+        let d = t.join().unwrap().expect("a preview");
+        assert_eq!((d.added, d.removed), (40, 1));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+            "keep\nold\n"
+        );
+    }
+
+    /// `read_file` shows a CRLF file without its `\r`; an edit quoting what
+    /// it showed still applies, and the file keeps its line endings.
+    #[test]
+    fn an_edit_quoted_from_a_crlf_file_applies_and_keeps_crlf() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let f = dir.path().join("f.txt");
+        std::fs::write(&f, "one\r\ntwo\r\nthree\r\n").unwrap();
+        let out = edit(dir.path(), "one\ntwo\n", "one\n2\n");
+        assert!(!out.is_error, "{}", out.text);
+        assert_eq!(
+            std::fs::read_to_string(&f).unwrap(),
+            "one\r\n2\r\nthree\r\n"
+        );
+        let d = out.diff.expect("an edit carries its diff");
+        assert_eq!((d.added, d.removed, d.path.as_str()), (1, 1, "f.txt"));
+    }
+
+    /// A project reached through a symlink still shows relative paths.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_project_shows_relative_paths() {
+        let real = tempfile::TempDir::new().unwrap();
+        let links = tempfile::TempDir::new().unwrap();
+        let link = links.path().join("ws");
+        std::os::unix::fs::symlink(real.path(), &link).unwrap();
+        std::fs::write(real.path().join("f.txt"), "a\n").unwrap();
+        let out = edit(&link, "a\n", "b\n");
+        assert_eq!(out.diff.expect("a diff").path, "f.txt");
     }
 }

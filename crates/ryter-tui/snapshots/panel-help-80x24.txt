@@ -3,10 +3,11 @@
  · s╭─ help ───────────────────────────────────────────── [keys] commands ─╮
    w│ GLOBAL                                                               ┃
     │  ^c         clear composer → cancel turn → quit (double-press)       ┃
-    │  ^d         quit when the composer is empty                          ┃
+    │  ^d         quit when the composer is empty                          │
     │  ^p         open the command palette                                 │
     │  ^r         toggle the reasoning pane                                │
     │  ^b         toggle the info panel                                    │
+    │  ^o         show every edit whole, or folded                         │
     │  ^l         redraw                                                   │
     │  ^g         release/grab the mouse (release it to select and copy t… │
     │  f1         open /help                                               │
@@ -14,7 +15,6 @@
     │                                                                      │
     │ CHAT SCROLL                                                          │
     │  pgup       scroll one viewport up                                   │
-    │  pgdn       scroll one viewport down                                 │
     ╰─ ←→ tab · ↑↓ pgup pgdn scroll · type to filter · esc ────────────────╯
 
 

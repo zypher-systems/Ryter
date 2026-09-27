@@ -89,7 +89,8 @@ meets the auditor rule on their first build.
   since the last checkpoint (or `git diff`), does it do what was asked, is it
   tested, what's risky. It ends with findings, blocking ones first.
 - **Tools:** read, search, the auditor's command allow-list (tests, linters,
-  read-only git). No edits.
+  read-only git), judged by form: `cargo fmt --check` runs, `cargo fmt`
+  doesn't. No edits, installs, or fixes.
 - **Second opinion (optional):** if an auditor model is configured, review can
   run on that model instead of the current one, one keypress in the review
   hat. That keeps the crew's best idea, independent review, in solo mode, at
