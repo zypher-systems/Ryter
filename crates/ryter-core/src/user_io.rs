@@ -35,6 +35,10 @@ pub enum UserRequest {
         summary: String,
         /// For an edit: what it would do to the file, measured before asking.
         preview: Option<Box<crate::diff::FileDiff>>,
+        /// Only `y` answers yes: destruction an undo may not reach.
+        strict: bool,
+        /// What `a` would allow for the session, in words; `None`: no `a`.
+        scope: Option<String>,
         /// Reply channel.
         reply: mpsc::Sender<Permission>,
     },
@@ -47,6 +51,21 @@ pub enum UserRequest {
         /// Reply channel.
         reply: mpsc::Sender<String>,
     },
+}
+
+/// A tool call to ask about, and how the prompt may be answered.
+#[derive(Debug, Clone, Default)]
+pub struct ToolAsk {
+    /// Tool name.
+    pub tool: String,
+    /// One-line summary.
+    pub summary: String,
+    /// For an edit: the change it would make.
+    pub preview: Option<crate::diff::FileDiff>,
+    /// Only `y` answers yes.
+    pub strict: bool,
+    /// What `a` would allow for the session; `None`: no `a`.
+    pub scope: Option<String>,
 }
 
 /// Handle held by [`crate::tools::ToolContext`].
@@ -87,13 +106,29 @@ impl UserIo {
         preview: Option<crate::diff::FileDiff>,
         cancel: &Cancel,
     ) -> Permission {
+        self.ask_tool(
+            ToolAsk {
+                tool: tool.to_string(),
+                summary: summary.to_string(),
+                preview,
+                strict: false,
+                scope: None,
+            },
+            cancel,
+        )
+    }
+
+    /// Ask about a tool call.
+    pub fn ask_tool(&self, ask: ToolAsk, cancel: &Cancel) -> Permission {
         let (reply_tx, reply_rx) = mpsc::channel();
         let req = UserRequest::Permission {
-            tool: tool.to_string(),
+            tool: ask.tool,
             // Wrapped in the prompt; the cap keeps a pasted blob from
             // filling it. An edit's whole change rides in `preview`.
-            summary: summary.chars().take(400).collect(),
-            preview: preview.map(Box::new),
+            summary: ask.summary.chars().take(400).collect(),
+            preview: ask.preview.map(Box::new),
+            strict: ask.strict,
+            scope: ask.scope,
             reply: reply_tx,
         };
         if self.send(req).is_err() {

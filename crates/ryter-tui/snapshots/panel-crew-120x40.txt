@@ -4,7 +4,6 @@
    welcome · /help for keys
 
 
-
                           ╭─ crew ─────────────────────────────────────── max concurrent: 4 ─╮
                           │ roles · b opens the crew builder: every seat, with recommendation│
                           │›● architect  default (grok-4.6)                             auto │
@@ -23,7 +22,8 @@
                           │ max concurrent specialists: 4 · change in /settings              │
                           │                                                                  │
                           │                                                                  │
-                          ╰─ enter assign/apply · tab reasoning · b crew builder · r reset… ─╯
+                          │ enter assign/apply   tab reasoning   b crew builder   r reset    │
+                          ╰──────────────────────────────────────────────────────────────────╯
 
 
 
@@ -37,4 +37,4 @@
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · / for commands                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ enter assign/apply    tab reasoning    b crew builder    r reset    d delete    esc

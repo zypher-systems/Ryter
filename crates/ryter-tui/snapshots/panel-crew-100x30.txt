@@ -19,12 +19,12 @@
                 │ max concurrent specialists: 4 · change in /settings              │
                 │                                                                  │
                 │                                                                  │
-                ╰─ enter assign/apply · tab reasoning · b crew builder · r reset… ─╯
-
+                │ enter assign/apply   tab reasoning   b crew builder   r reset    │
+                ╰──────────────────────────────────────────────────────────────────╯
 
 
 
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · / for commands                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ enter assign/apply    tab reasoning    b crew builder    r reset    d delete    esc

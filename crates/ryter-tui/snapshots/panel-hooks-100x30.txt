@@ -13,8 +13,8 @@
            │                                                                            │
            │                                                                            │
            │                                                                            │
-           ╰─ enter details · a add · d remove · esc ───────────────────────────────────╯
-
+           │ enter details   a add   d remove   esc                                     │
+           ╰────────────────────────────────────────────────────────────────────────────╯
 
 
 
@@ -27,4 +27,4 @@
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · / for commands                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ enter details    a add    d remove    esc

@@ -80,7 +80,21 @@ The **activity strip** shows what the model is doing (`⠙ writing · edit docs/
 
 `/sessions` (alias `/resume`) is one browser for this directory’s sessions: `Enter` resumes, `r` renames, `d` deletes (type the short id to confirm), `n` starts a new one. `/agents` lists running specialists; `Enter` or `k` kills one, `K` kills all. `ryter sessions` and `ryter resume [id]` are the CLI equivalents.
 
-Permission prompts, `ask_user` questions, and the first-run “trust this project?” prompt are **modals** with a heavy top border. They block input until you answer (`y` / `n` / `a` for permissions, number keys or free text for questions), but the turn keeps streaming behind them. A prompt for an edit shows the change it would make, the same way the chat shows it once made. `^c` on a prompt while a turn runs stops the turn.
+**Approving.** When the build hat needs your yes, a card opens just above the message box, with the chat still readable behind it. It has these rows:
+- **what** the call does (`edit stats.js`, `run cargo test`);
+- **why**: the model's own words just before it asked;
+- **risk** in plain words, including whether `/undo` can put it back;
+- **the change**: the diff for an edit, or the command.
+
+The keys are on the card's last row:
+- **`⏎`** allows this call. An Enter pressed in the first half-second after the card opens is ignored, since it may have been meant to send a message.
+- **`a`** allows the kind of action the card names for the rest of the session: "edits to files in the project", or "`cargo test` commands". Anything else still asks.
+- **`n`** or **`Esc`** denies.
+- **Commands that delete, move, or discard files** (`rm`, `mv`, `git reset --hard`, `git clean`, deleting a branch) and **writes outside the project** take only **`y`**. Enter says so instead of approving, and there's no `a` for them.
+
+`ask_user` questions and the first-run “trust this project?” prompt are modals with a heavy top border. `^c` on a prompt while a turn runs stops the turn.
+
+**Pickers.** In `/models` and `/help`, typing filters the list from a search row at the top of the panel. The model picker opens on the model you're using, and dims models that can't use tools.
 
 **When a turn stops by itself**, the chat says why:
 - the model made the same call and got the same result five times (it is told at the third);
@@ -131,7 +145,7 @@ Ryter starts in solo mode: one model in your project. `Tab` switches its hat (bu
 
 | Hat | May | May not |
 | --- | --- | --- |
-| **build** (default) | edit files and run commands; edits and commands that change things ask (or run with "allow all" / `--always-approve`); destructive commands always ask; outside the project, writes ask **every time** (see below) | read secrets, push, run inline interpreter code |
+| **build** (default) | edit files and run commands; edits and commands that change things ask (or run with `a` for that kind of action / `--always-approve`); destructive commands always ask; outside the project, writes ask **every time** (see below) | read secrets, push, run inline interpreter code |
 | **plan** | read, search, run read-only commands, write `notes/` and project memory | edit source, run anything that changes the project |
 | **review** | read, run the tests and linters, read-only git | write anything, not even by redirect; install, format, or fix |
 
@@ -369,7 +383,7 @@ Look at `git diff` and report findings.
 - Builder: full tool set in its worktree; denied project memory files.
 - Auditor: read tools + test/lint/read-only-git bash; no write tools.
 - Denied even for builders: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files.
-- Shell commands are judged per segment (`a && b` is two commands). Privilege escalation, disk writes, `git push`, and piping into a shell are denied; destroying files outside the worktree is Ask. In the TUI a permission modal shows the tool and its arguments: `y` allow this call, `n` deny, `a` allow for the rest of the session. Headless (no TUI) fail-closes.
+- Shell commands are judged per segment (`a && b` is two commands). Privilege escalation, disk writes, `git push`, and piping into a shell are denied; destroying files outside the worktree is Ask. In the TUI a permission modal shows the tool and its arguments: `⏎` or `y` allow this call, `n` deny, `a` allow that kind of action for the rest of the session; destructive commands and writes outside the project take only `y` (see [Approving](#talking-to-ryter)). Headless (no TUI) fail-closes.
 - `ask_user` lets the orchestrator ask a question; the TUI shows it as a modal (number keys pick a choice, or type free text).
 - `[features] web = true` offers `web_fetch` / `web_search`. Localhost and private IPs are blocked.
 - Hooks can still deny after the policy allows.

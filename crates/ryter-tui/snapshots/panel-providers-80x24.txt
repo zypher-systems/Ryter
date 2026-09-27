@@ -11,8 +11,8 @@
      │                                                                    │
      │                                                                    │
      │                                                                    │
-     ╰─ enter use · k set key · t test · d remove · esc ──────────────────╯
-
+     │ enter use   k set key   t test   d remove   esc                    │
+     ╰────────────────────────────────────────────────────────────────────╯
 
 
 
@@ -21,4 +21,4 @@
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ enter use    k set key    t test    d remove    esc

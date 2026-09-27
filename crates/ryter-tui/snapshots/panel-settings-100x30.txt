@@ -14,17 +14,17 @@
               │  features.web          [ off ]                               default ┃
               │                                                                      ┃
               │ SANDBOX                                                              ┃
-              │  profile               ‹ off ›                               default ┃
+              │  profile               ‹ off ›                               default │
               │                                                                      │
               │ MCP                                                                  │
               │  inbound               [ on ]                                default │
               │  bind address                                                default │
               │                                                                      │
-              │ UI                                                                   │
-              ╰─ ↑↓ move · space/←→ change · enter edit · esc done ──────────────────╯
+              │ ↑↓ move   space/←→ change   enter edit   esc done                    │
+              ╰──────────────────────────────────────────────────────────────────────╯
 
 
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · / for commands                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ ↑↓ move    space/←→ change    enter edit    esc done

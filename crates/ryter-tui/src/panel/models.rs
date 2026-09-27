@@ -120,7 +120,7 @@ impl Models {
             items.extend(crate::view::fallback_models(&kind, &view.model));
         }
         view.composer.clear();
-        Self {
+        let mut p = Self {
             items,
             loading: true,
             assign_role,
@@ -128,7 +128,9 @@ impl Models {
             refusal: None,
             selected: 0,
             sort: Sort::Relevance,
-        }
+        };
+        p.select_current(view);
+        p
     }
 
     /// Open to choose the second-opinion reviewer, from every connection
@@ -234,6 +236,18 @@ impl Models {
             self.selected = self.selected.min(self.items.len().saturating_sub(1));
         }
         self.loading = false;
+        self.select_current(view);
+    }
+
+    /// Put the cursor on the model in use, as the list opens: with hundreds
+    /// in a catalog, starting at the top meant scrolling to find it.
+    fn select_current(&mut self, view: &View) {
+        if self.review.is_some() || self.assign_role.is_some() || !view.composer.text().is_empty() {
+            return;
+        }
+        if let Some(i) = self.filtered(view).iter().position(|m| m.id == view.model) {
+            self.selected = i;
+        }
     }
 }
 
@@ -282,9 +296,13 @@ impl Panel for Models {
             Some(ReviewPick {
                 chosen: Some(_), ..
             }) => "type dollars · enter save · esc back".into(),
-            Some(_) => "type to filter · ↑↓ move · enter choose · s sort · esc".into(),
-            None => "type to filter · ↑↓ move · enter select · tab reasoning · s sort · esc".into(),
+            Some(_) => "↑↓ move · enter choose · s sort · esc close".into(),
+            None => "↑↓ move · enter select · tab reasoning · s sort · esc close".into(),
         }
+    }
+
+    fn inline_input(&self) -> bool {
+        true
     }
 
     fn input(&self, _view: &View) -> Option<String> {
@@ -341,6 +359,14 @@ impl Panel for Models {
                 ]
             })
             .collect();
+        // Models that can't call tools can't read a file or run a test:
+        // listed, but dimmed.
+        let toolless: Vec<bool> = list
+            .iter()
+            .skip(first)
+            .take(rows_h)
+            .map(|m| m.tools == Some(false))
+            .collect();
         let mut table = widgets::table(
             &[
                 "model",
@@ -363,6 +389,15 @@ impl Panel for Models {
             w,
             theme,
         );
+        for (i, off) in toolless.iter().enumerate() {
+            if *off && i != sel.saturating_sub(first) {
+                if let Some(line) = table.get_mut(i + 1) {
+                    for span in &mut line.spans {
+                        span.style = span.style.fg(theme.dim);
+                    }
+                }
+            }
+        }
         if self.loading && n <= 1 {
             let frame = SPINNER[(view.now_ms / 80) as usize % SPINNER.len()];
             table.push(Line::from(vec![
@@ -380,6 +415,9 @@ impl Panel for Models {
                 format!("follows the lead: {} · {}", view.model, view.connection)
             } else {
                 let rates = match (m.input_per_million, m.output_per_million) {
+                    // A router's price varies by where it routes (listed as
+                    // -1): it read "$-1000000/M input".
+                    (Some(i), Some(o)) if i < 0.0 || o < 0.0 => "price varies by route".into(),
                     (Some(i), Some(o)) => format_rates(Some(ryter_core::Rates::per_million(i, o))),
                     _ => "price unknown".into(),
                 };

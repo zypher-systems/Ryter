@@ -475,6 +475,26 @@ impl View {
         Action::Submit(expanded)
     }
 
+    /// What the model said last in this turn, before it asked: its last
+    /// paragraph, on one line, for the "why" on a permission prompt.
+    pub fn last_words(&self) -> Option<String> {
+        let m = self
+            .messages
+            .iter()
+            .rev()
+            .take_while(|m| m.turn == self.turn)
+            .find(|m| {
+                matches!(m.kind, MessageKind::Assistant { .. }) && !m.body.trim().is_empty()
+            })?;
+        let para = m
+            .body
+            .rsplit("\n\n")
+            .map(str::trim)
+            .find(|p| !p.is_empty())?;
+        let flat = para.split_whitespace().collect::<Vec<_>>().join(" ");
+        Some(crate::chat::wrap::truncate(&flat, 160))
+    }
+
     /// Anything in the transcript worth confirming before `/new`.
     pub fn has_content(&self) -> bool {
         self.messages

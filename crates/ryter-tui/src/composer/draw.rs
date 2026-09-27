@@ -179,6 +179,19 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Option<
             Span::styled(" ".repeat(gw + 1), Style::default().bg(bg))
         }
     };
+    // Typing goes to the search row inside the panel: say so, rather than
+    // echo it a screen away from the list it filters.
+    if view.panels.inline_input(view) {
+        let line = Line::from(vec![
+            prefix(true),
+            Span::styled(
+                "typing goes to the search in the panel above",
+                Style::default().fg(theme.dim).bg(bg),
+            ),
+        ]);
+        frame.render_widget(Paragraph::new(line), Rect { height: 1, ..inner });
+        return None;
+    }
     // Secret mode: bullets only (R-COMP-07).
     if matches!(view.composer.mode, Mode::Secret { .. }) {
         let n = view.composer.secret_len();

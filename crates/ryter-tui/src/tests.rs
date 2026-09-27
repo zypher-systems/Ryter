@@ -932,3 +932,126 @@ fn an_audit_reads_as_the_audit_and_folds() {
     v.diffs_expanded = true;
     assert!(!render_to_string(&v, 120, 80).contains("more lines · ^O"));
 }
+
+/// Not a test: renders preview scenes in the themes named by
+/// `RYTER_PREVIEW_THEMES` (`name=path.toml,…`; `dark` is built in) as ANSI
+/// files in `RYTER_PREVIEW_OUT`, for comparing looks side by side.
+#[test]
+#[ignore]
+fn render_theme_preview() {
+    let Ok(out) = std::env::var("RYTER_PREVIEW_OUT") else {
+        return;
+    };
+    let themes = std::env::var("RYTER_PREVIEW_THEMES").unwrap_or_default();
+    let ansi = |buf: &ratatui::buffer::Buffer| {
+        use ratatui::style::{Color, Modifier};
+        let rgb = |c: Color| crate::theme::to_rgb(c);
+        let mut s = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                let cell = &buf[(x, y)];
+                s.push_str("\x1b[0m");
+                if let Some((r, g, b)) = rgb(cell.fg) {
+                    s.push_str(&format!("\x1b[38;2;{r};{g};{b}m"));
+                }
+                if let Some((r, g, b)) = rgb(cell.bg) {
+                    s.push_str(&format!("\x1b[48;2;{r};{g};{b}m"));
+                }
+                if cell.modifier.contains(Modifier::BOLD) {
+                    s.push_str("\x1b[1m");
+                }
+                s.push_str(cell.symbol());
+            }
+            s.push_str("\x1b[0m\n");
+        }
+        s
+    };
+    type Scene = (&'static str, Box<dyn Fn() -> View>);
+    let scenes: Vec<Scene> = vec![
+        (
+            "chat",
+            Box::new(|| {
+                let mut v = edited();
+                crate::run_events_apply(&mut v, AgentEvent::TurnStarted { turn: 2 });
+                crate::run_events_apply(&mut v, AgentEvent::SecondOpinion {
+                model: "z-ai/glm-5.3".into(),
+                connection: "openrouter".into(),
+                verdict: Some(true),
+                body: "- **note** `app/server.js:6`: an empty query returns `[]`; the test covers it.\n\nVERDICT: PASS".into(),
+                total_usd: Some(0.01),
+            });
+                crate::run_events_apply(
+                    &mut v,
+                    AgentEvent::TurnFinished {
+                        turn: 2,
+                        tools: 0,
+                        duration_ms: 3000,
+                    },
+                );
+                v
+            }),
+        ),
+        (
+            "models",
+            Box::new(|| {
+                let mut v = edited();
+                let m = |id: &str, i: f64, o: f64| ryter_core::ModelInfo {
+                    id: id.into(),
+                    context_length: Some(256_000),
+                    input_per_million: Some(i),
+                    output_per_million: Some(o),
+                    connection: Some("openrouter".into()),
+                    created: None,
+                    tools: Some(true),
+                };
+                let mut p = crate::panel::models::Models::new(&mut v, None);
+                p.set_models(
+                    &v,
+                    &[
+                        m("anthropic/claude-opus-5.5", 5.0, 25.0),
+                        m("deepseek/deepseek-v4.1-flash", 0.04, 0.29),
+                        m("openai/gpt-5.5", 5.0, 15.0),
+                        m("x-ai/grok-4.7", 1.6, 4.8),
+                        m("z-ai/glm-5.3", 0.4, 1.6),
+                        m("moonshotai/kimi-k3", 1.0, 4.0),
+                    ],
+                );
+                v.panels.push(Box::new(p));
+                crate::panel::sync_composer(&mut v);
+                v
+            }),
+        ),
+        (
+            "permission",
+            Box::new(|| {
+                let mut v = edited();
+                let old = "app.get('/search', (req, res) => {\n  const q = req.query.q\n  res.json(find(q))\n})\n";
+                let new = old.replace(
+                    "  const q = req.query.q\n",
+                    "  const q = (req.query.q || '').trim()\n  if (!q) return res.json([])\n",
+                );
+                v.panels.push(Box::new(
+                    PermissionModal::new("search_replace".into(), "app/server.js".into())
+                        .with_preview(Some(Box::new(ryter_core::diff::FileDiff::new(
+                            "app/server.js",
+                            Some(old),
+                            &new,
+                        )))),
+                ));
+                v
+            }),
+        ),
+    ];
+    for spec in std::iter::once("dark=").chain(themes.split(',').filter(|s| !s.is_empty())) {
+        let (name, path) = spec.split_once('=').unwrap();
+        let theme = if path.is_empty() {
+            Theme::truecolor_dark()
+        } else {
+            Theme::from_file(std::path::Path::new(path)).unwrap()
+        };
+        for (scene, make) in &scenes {
+            let buf = render_buffer(&make(), 120, 34, theme);
+            std::fs::write(format!("{out}/{scene}-{name}.ansi"), ansi(&buf)).unwrap();
+        }
+    }
+}

@@ -193,7 +193,7 @@ async fn run_inner(task: &BenchTask, env: &BenchEnv, result: &mut BenchResult) -
             hooks: None,
             cancel: crate::cancel::Cancel::new(),
             user_io: None,
-            sticky_approve: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            allowed: Default::default(),
             web: false,
         },
         session,

@@ -32,11 +32,12 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ryter_core::{AgentEvent, SandboxProfile};
 
 use crate::action::{Action, PanelId};
+use crate::chat::wrap;
 use crate::theme::Theme;
 use crate::view::View;
 
@@ -108,13 +109,23 @@ pub trait Panel {
     fn status(&self, _view: &View) -> String {
         String::new()
     }
-    /// Key legend in the bottom border.
+    /// Key legend, drawn as the panel's last row: `key label · key label`.
     fn legend(&self, view: &View) -> String;
     /// `(preferred width, content rows)`.
     fn size(&self, view: &View) -> (u16, u16);
     /// When `Some`, the composer is this panel's input field (`R-COMP-17`).
     fn input(&self, _view: &View) -> Option<String> {
         None
+    }
+    /// Draw the input field as the panel's first row, where the list it
+    /// filters is, instead of in the composer at the foot of the screen.
+    fn inline_input(&self) -> bool {
+        false
+    }
+    /// Sit just above the composer, full width, over an undimmed chat,
+    /// instead of floating in the middle: for prompts that interrupt a turn.
+    fn docked(&self) -> bool {
+        false
     }
     /// Render the body for `width × height`.
     fn render(&self, view: &View, width: u16, height: u16, theme: Theme) -> Body;
@@ -200,6 +211,12 @@ impl PanelStack {
     /// True when the focused panel owns the composer.
     pub fn wants_input(&self, view: &View) -> Option<String> {
         self.top().and_then(|p| p.input(view))
+    }
+
+    /// The focused panel draws its own input row.
+    pub fn inline_input(&self, view: &View) -> bool {
+        self.top()
+            .is_some_and(|p| p.inline_input() && p.input(view).is_some())
     }
 }
 
@@ -392,27 +409,94 @@ pub fn shadow(frame: &mut Frame, area: Rect, theme: Theme) {
     }
 }
 
-/// Draw the focused panel (and the ones beneath it, dimmed) over `body`.
-pub fn draw(frame: &mut Frame, full: Rect, body: Rect, view: &View, theme: Theme) {
-    if view.panels.is_empty() {
-        return;
+/// Where a docked panel sits: the bottom of `body`, full width.
+fn docked_rect(body: Rect, content_rows: u16) -> Rect {
+    let max_h = body.height.saturating_sub(2).max(6);
+    let h = (content_rows + 2).clamp(6, max_h);
+    Rect {
+        x: body.x,
+        y: body.y + body.height.saturating_sub(h),
+        width: body.width,
+        height: h,
     }
-    dim_region(frame, body, theme);
+}
+
+/// Draw the focused panel (and the ones beneath it, dimmed) over `body`.
+/// Returns where the terminal cursor goes when the panel draws its own
+/// input row.
+pub fn draw(
+    frame: &mut Frame,
+    full: Rect,
+    body: Rect,
+    view: &View,
+    theme: Theme,
+) -> Option<(u16, u16)> {
+    if view.panels.is_empty() {
+        return None;
+    }
     let n = view.panels.stack.len();
+    // A docked prompt leaves the chat readable: it is what's being approved.
+    let top_docked = view.panels.top().is_some_and(|p| p.docked());
+    if !top_docked {
+        dim_region(frame, body, theme);
+    }
+    let mut cursor = None;
     for (i, p) in view.panels.stack.iter().enumerate() {
         let focused = i + 1 == n;
         let (pw, rows) = p.size(view);
+        let extra = u16::from(!p.legend(view).is_empty())
+            + u16::from(p.inline_input() && p.input(view).is_some());
         let modal = p.modal();
-        let area = rect(full, body, pw, rows, modal.is_some());
+        let area = if p.docked() {
+            docked_rect(body, rows + extra)
+        } else {
+            rect(full, body, pw, rows + extra, modal.is_some())
+        };
         if !focused {
             // Under-panels render dimmed with no shadow.
             draw_one(frame, area, p.as_ref(), view, theme, false);
             dim_region(frame, area, theme);
             continue;
         }
-        shadow(frame, area, theme);
-        draw_one(frame, area, p.as_ref(), view, theme, true);
+        if !p.docked() {
+            shadow(frame, area, theme);
+        }
+        cursor = draw_one(frame, area, p.as_ref(), view, theme, true);
     }
+    cursor
+}
+
+/// A legend as styled spans: each `key label` pair with the key in color.
+fn legend_line(legend: &str, width: usize, theme: Theme) -> Line<'static> {
+    let mut spans = vec![Span::styled(" ", theme.panel())];
+    let mut used = 1;
+    for (i, item) in legend.split(" · ").enumerate() {
+        let (key, label) = item.split_once(' ').unwrap_or((item, ""));
+        let color = match key {
+            "⏎" | "y" | "enter" => theme.success,
+            "n" | "esc" => theme.error,
+            _ => theme.accent,
+        };
+        let piece = wrap::width(key) + wrap::width(label) + 1 + if i > 0 { 3 } else { 0 };
+        if used + piece > width {
+            break;
+        }
+        if i > 0 {
+            spans.push(Span::styled("   ", theme.panel()));
+        }
+        spans.push(Span::styled(
+            key.to_string(),
+            Style::default()
+                .fg(color)
+                .bg(theme.panel_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        if !label.is_empty() {
+            spans.push(Span::styled(format!(" {label}"), theme.panel_muted()));
+        }
+        used += piece;
+    }
+    Line::from(spans)
 }
 
 fn draw_one(
@@ -422,7 +506,7 @@ fn draw_one(
     view: &View,
     theme: Theme,
     focused: bool,
-) {
+) -> Option<(u16, u16)> {
     let border: Color = match p.modal() {
         Some(ModalKind::Permission) => theme.warn,
         Some(ModalKind::Ask) => theme.accent,
@@ -438,16 +522,94 @@ fn draw_one(
     let ch = chrome::Chrome {
         title: p.title(view),
         status: p.status(view),
-        legend,
+        legend: String::new(),
         border,
         heavy: p.modal().is_some(),
     };
-    let inner = chrome::draw_frame(frame, area, &ch, theme);
+    let mut inner = chrome::draw_frame(frame, area, &ch, theme);
+    // The keys, as the panel's last row: in color, where the eye reads,
+    // rather than dim text in the border.
+    if !legend.is_empty() && inner.height > 2 {
+        let row = Rect {
+            y: inner.y + inner.height - 1,
+            height: 1,
+            ..inner
+        };
+        frame.render_widget(
+            Paragraph::new(legend_line(&legend, usize::from(row.width), theme))
+                .style(theme.panel()),
+            row,
+        );
+        inner.height -= 1;
+    }
+    // The search row, inside the panel it filters.
+    let mut cursor = None;
+    if let (true, Some(label)) = (p.inline_input(), p.input(view)) {
+        if inner.height > 2 {
+            let row = Rect { height: 1, ..inner };
+            let (line, cx) = input_row(view, &label, usize::from(row.width), theme);
+            frame.render_widget(Paragraph::new(line), row);
+            if focused {
+                cursor = Some((row.x + cx.min(row.width.saturating_sub(1)), row.y));
+            }
+            inner.y += 1;
+            inner.height -= 1;
+        }
+    }
     let body = p.render(view, inner.width, inner.height, theme);
     frame.render_widget(Paragraph::new(body.lines).style(theme.panel()), inner);
     if let Some((first, total)) = body.scroll {
         chrome::scrollbar(frame, area, first, total, inner.height as usize, theme);
     }
+    cursor
+}
+
+/// `⌕ query▏` (or `label: value`) on the input's own ground, and the
+/// cursor's column within it.
+fn input_row(view: &View, label: &str, width: usize, theme: Theme) -> (Line<'static>, u16) {
+    let bg = theme.composer_bg;
+    let lead = if label == "filter" {
+        " ⌕ ".to_string()
+    } else {
+        format!(" {label}: ")
+    };
+    let text = view.composer.text().to_string();
+    let before: String = text.chars().take(view.composer.cursor()).collect();
+    let mut spans = vec![Span::styled(
+        lead.clone(),
+        Style::default()
+            .fg(theme.accent)
+            .bg(bg)
+            .add_modifier(Modifier::BOLD),
+    )];
+    let used = wrap::width(&lead);
+    if text.is_empty() {
+        let hint = if label == "filter" {
+            "type to filter"
+        } else {
+            "type a value"
+        };
+        spans.push(Span::styled(
+            hint.to_string(),
+            Style::default().fg(theme.dim).bg(bg),
+        ));
+    } else {
+        spans.push(Span::styled(
+            wrap::truncate(&text, width.saturating_sub(used + 1)),
+            Style::default().fg(theme.fg).bg(bg),
+        ));
+    }
+    let shown = if text.is_empty() {
+        0
+    } else {
+        wrap::width(&wrap::truncate(&text, width.saturating_sub(used + 1)))
+    };
+    spans.push(Span::styled(
+        " ".repeat(width.saturating_sub(used + shown.max(if text.is_empty() { 14 } else { 0 }))),
+        Style::default().bg(bg),
+    ));
+    let cx = used + wrap::width(&before).min(shown);
+    (Line::from(spans), u16::try_from(cx).unwrap_or(0))
 }
 
 /// Route an editing key into the composer while a panel owns it (`R-COMP-17`).

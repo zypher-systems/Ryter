@@ -2,6 +2,31 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-27 — Enter approves again, with a guard; `a` allows one kind of action
+- **By:** lead
+- **Supersedes:** "`Enter` is never an alias for allow" (2026-09-21), for ordinary prompts.
+- **Decision:**
+  - **The prompt is a card docked above the composer** (`Panel::docked`), over an undimmed chat, with labeled rows: what, why (the model's last paragraph this turn, `View::last_words`), risk (in plain words, including what `/undo` reaches), and the change.
+  - **`⏎` allows,** except within `ENTER_GUARD_MS` (500 ms) of the card opening: a press that arrived with the card is ignored.
+  - **`a` allows the kind of action the card names for the session:** edits to project files, one command's program and subcommand, or a chain's exact text (`tools::allow_scope`). It's one press, stored in `ToolContext.allowed`, and replaces the blanket `sticky_approve`.
+  - **Strict prompts take only `y`:** commands that delete, move, or discard files (`policy::destructive_command`: `rm`, `mv`, `find -delete`, `git reset --hard`, `git clean`, `git restore`, `git checkout -- .`, deleting a branch or tag, force-pushing), and writes outside the project. Enter explains instead, and there is no `a`.
+- **Chosen vs rejected:**
+  - Rejected keeping Enter off everywhere: the user found Reeve's `⏎ / a / n` better to work with.
+  - The 2026-09-21 risk (a habit approves `rm -rf`) is met two ways instead. Destruction never takes Enter. And the guard stops the actual failure, a send-key press landing on a card that opened under it.
+  - Rejected a blanket `a`. It approved every later call, destructive ones included, which is why it needed a second press.
+- **Why:** faster, clearer approvals, modeled on Reeve's card, without giving up the reason Enter was removed.
+- **Where:** `crates/ryter-tui/src/panel/modal.rs`, `panel/mod.rs` (docking, legend row), `crates/ryter-core/src/tools/mod.rs` (`allow_scope`, `strict_prompt`, `allowed`), `tools/policy.rs` (`command_scope`, `destructive_command`), `user_io.rs` (`ToolAsk`)
+- **Residual risk:**
+  - A command's scope is a heuristic, program plus first plain argument, so `a` on `npm install` also allows `npm install left-pad`.
+  - The destructive list is kept by hand.
+  - An Enter pressed more than half a second after a card opens approves it, typed or not.
+
+### 2026-09-27 — Panel keys on the panel's last row; search inside pickers
+- **By:** lead
+- **Decision:** Every panel draws its legend as its last inner row, keys colored and labels dim (`panel::legend_line`), not as dim text in the bottom border. While a panel is open, the hint bar echoes that panel's keys. Pickers that opt in (`Panel::inline_input`: models, help) draw their filter as the panel's first row, with the cursor there; the composer says typing goes to the panel. The model picker opens on the current model and dims models without tool support.
+- **Why:** from comparing Reeve's menus. Border text was hard to read. The filter typed at the foot of the screen was a screen away from the list it filtered. The hint bar showed form keys (`tab next field`) on a permission prompt. And the picker opened at the top of 458 models.
+- **Where:** `crates/ryter-tui/src/panel/mod.rs`, `draw.rs` (`hints`), `composer/draw.rs`, `panel/models.rs`, `panel/help.rs`
+
 ### 2026-09-27 — `/undo` puts back what the turn changed, not the whole tree
 - **By:** lead
 - **Decision:**
@@ -416,7 +441,7 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
 - **Where:** `crates/ryter-core/src/tools/policy.rs` (`segments`, `program`, `decide_segment`, `decide_git`)
 - **Residual risk:** Still a heuristic. A builder that writes a script and runs it defeats the analysis by design — that is visible in the transcript, which is the trade. `program()` sees through `env`/`time`/`VAR=`, but an unusual wrapper could hide a command. `git` is judged by subcommand, so a new destructive verb needs adding to `GIT_NEVER`.
 
-### 2026-09-21 — `Enter` is never an alias for allow
+### 2026-09-21 — `Enter` is never an alias for allow (superseded 2026-09-27: Enter allows ordinary prompts after a 500 ms guard; destructive ones still take only `y`)
 - **By:** orchestrator
 - **Decision:** The permission modal accepts only `y` to allow. `Esc` and `n` deny; `a` still needs a second press.
 - **Chosen vs rejected:** Rejected keeping `Enter` as a convenience accelerator.

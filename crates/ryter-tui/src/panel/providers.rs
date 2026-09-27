@@ -183,9 +183,17 @@ impl Panel for Providers {
                     let dot = if active { "●" } else { "○" };
                     let color = if c.has_key { theme.success } else { theme.warn };
                     let mut secondary = c.kind.clone();
-                    if !c.model.is_empty() {
+                    // The active connection shows the model in use, not the
+                    // connection's default: it read `claude-sonnet-4.6`
+                    // while the session ran on `deepseek-v4.1-flash`.
+                    let model = if active && !view.model.is_empty() {
+                        view.model.as_str()
+                    } else {
+                        c.model.as_str()
+                    };
+                    if !model.is_empty() {
                         secondary.push_str(" · ");
-                        secondary.push_str(crate::chat::short_model(&c.model));
+                        secondary.push_str(crate::chat::short_model(model));
                     }
                     let mut status = if c.has_key {
                         "key set".to_string()

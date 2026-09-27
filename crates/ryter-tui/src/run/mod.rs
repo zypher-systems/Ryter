@@ -677,11 +677,18 @@ fn drain_user_prompts(
             tool,
             summary,
             preview,
+            strict,
+            scope,
             reply,
         } => {
             cx.perm_reply = Some(reply);
+            let why = view.last_words();
+            let opened = view.now_ms;
             view.panels.push(Box::new(
-                PermissionModal::new(tool, summary).with_preview(preview),
+                PermissionModal::new(tool, summary)
+                    .with_preview(preview)
+                    .with_answers(strict, scope)
+                    .with_context(why, opened),
             ));
         }
         UserRequest::Question {

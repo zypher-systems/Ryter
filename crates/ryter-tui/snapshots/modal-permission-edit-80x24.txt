@@ -1,24 +1,24 @@
  ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
- dus┏━ permission · search_replace ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
- ▎ n│ tool  search_replace                                                 │
-    │                                                                      │
- · r│ file  app/server.js  +2 −1                                           │
-    │ 2                                                                    │
- gro│ 3   app.get('/search', (req, res) => {                               │
-   R│ 4 -   const q = req.query.q                                          │
-    │ 4 +   const q = (req.query.q || '').trim()                           │
-    │ 5 +   if (!q) return res.json([])                                    │
-    │ 6     res.json(find(q))                                              │
-    │ … 1 more line · /changes shows it whole once it's made               │
-    │                                                                      │
-    │ y · allow   n · deny   a · allow all this session                    │
-    ╰─ y allow once · n deny · a allow all this session ───────────────────╯
+ dusty
+ ▎ now implement step one
 
-
+┏━ approve? ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│ what    edit  app/server.js                                                  │
+│ risk    changes a file in your project · /undo puts it back                  │
+│ change  app/server.js  +2 −1                                                 │
+│ 2                                                                            │
+│ 3   app.get('/search', (req, res) => {                                       │
+│ 4 -   const q = req.query.q                                                  │
+│ 4 +   const q = (req.query.q || '').trim()                                   │
+│ 5 +   if (!q) return res.json([])                                            │
+│ 6     res.json(find(q))                                                      │
+│ … 1 more line · /changes shows it whole once it's made                       │
+│ ⏎ allow   n deny                                                             │
+╰──────────────────────────────────────────────────────────────────────────────╯
  ⠼ writing  ·  0:12  ·  ~11 tok                                ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
 │› type to queue the next message, / for commands                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ ⏎ allow    n deny

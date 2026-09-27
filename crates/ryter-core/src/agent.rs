@@ -2194,7 +2194,7 @@ mod tests {
             hooks: None,
             cancel: crate::cancel::Cancel::new(),
             user_io: None,
-            sticky_approve: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            allowed: Default::default(),
             web: false,
         };
         let agent = Agent {
