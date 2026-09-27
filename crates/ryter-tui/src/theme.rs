@@ -462,7 +462,7 @@ impl Theme {
         match role {
             "planner" => self.plan,
             "architect" => self.architect,
-            "auditor" => self.audit,
+            "auditor" | "audit" => self.audit,
             _ => self.build,
         }
     }

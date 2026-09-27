@@ -12,6 +12,7 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
 - **Chosen vs rejected:**
   - Rejected having the model offer, through a new tool or a prompt rule. Ryter knows for certain whether files changed and what the audit would cost. A model offers inconsistently, and a new tool changes the tool list and the prompt cache.
   - Rejected auditing automatically without asking: each audit spends money.
+- **Also:** an audit in the chat carries a rule in the auditor's color on every row, and folds after 14 rows when four or more are left (`chat::AUDIT_ROWS`; `^o` unfolds, as for edits). Unmarked and unfolded, a long audit filled the pane, its header scrolled off, and it read as the builder talking.
 - **Why:** typing `/second` after every change was cumbersome, and "second" didn't say what it did.
 - **Where:** `crates/ryter-core/src/second.rs` (`offer_audit`, `audit`, `run_audit`), `crates/ryter-tui/src/run/worker.rs` (the trigger), `panel/modal.rs` (`is_offer`), `config.rs` (`offer_audit`)
 - **Residual risk:**
