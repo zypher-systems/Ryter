@@ -166,8 +166,11 @@ pub enum Action {
     Undo,
     /// `/second`: a second model reviews the uncommitted work.
     SecondOpinion,
-    /// `/second model`: choose the reviewer and its limit again.
+    /// `/audit model`: choose the reviewer and its limit again.
     ChooseReviewer,
+    /// `s` on an audit offer: no more offers after build turns (the offer
+    /// itself is answered no).
+    StopAuditOffers,
     /// The reviewer the user chose, and the most one review may spend.
     SetReviewer {
         /// Connection name.

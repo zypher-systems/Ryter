@@ -6,9 +6,9 @@
  · edit  app/server.js                                                                                                                             +2 −1  0.0s
    3
    4   app.get('/search', (req, res) => {
-   5 -   const q = req.query.q  ╭─ second opinion · who reviews? ───────────────────────────────────────────── 5 · sort price ─╮
-   5 +   const q = (req.query.q │ Choose who gives second opinions. Nothing is preselected: prices are for this review.        │
-   6 +   if (!q) return res.json│ model                 this review  in/M  out/M  connection                                   │
+   5 -   const q = req.query.q  ╭─ audit · who audits? ─────────────────────────────────────────────────────── 5 · sort price ─╮
+   5 +   const q = (req.query.q │ Choose who audits your work. Nothing is preselected: prices are for this audit.              │
+   6 +   if (!q) return res.json│ model                  this audit  in/M  out/M  connection                                   │
    7     res.json(find(q))      │›z-ai/glm-5.3          $0.01–$0.11  $0.4   $1.6  openrouter                                   │
    8   })                       │ moonshotai/kimi-k3    $0.02–$0.26    $1     $4  openrouter                                   │
  · write  test/search.test.js   │ x-ai/grok-4.7         $0.08–$0.86    $3    $15  openrouter                                   │           new · 6 lines  0.0s

@@ -2652,8 +2652,23 @@ mod tests {
         rates: Option<(f64, f64)>,
         limit_usd: f64,
     ) -> (TempDir, TempDir, Agent, Vec<AgentEvent>, String) {
+        audit_run(answer, reviewer, rates, Some(limit_usd), false, true).await
+    }
+
+    /// The general case: a reviewer chosen (`limit`) or not, asked for
+    /// (`/audit`) or `offered` after a build turn, with offers on or off.
+    async fn audit_run(
+        answer: crate::user_io::Permission,
+        reviewer: Vec<Vec<StreamDelta>>,
+        rates: Option<(f64, f64)>,
+        limit: Option<f64>,
+        offered: bool,
+        offers_on: bool,
+    ) -> (TempDir, TempDir, Agent, Vec<AgentEvent>, String) {
         let (home, cwd, mut agent) = crew_setup(ReplayProvider::scripted(reviewer));
-        agent.cfg.as_mut().unwrap().reviewer = Some(crate::config::ReviewerConfig {
+        let cfg = agent.cfg.as_mut().unwrap();
+        cfg.ui.offer_audit = offers_on;
+        cfg.reviewer = limit.map(|limit_usd| crate::config::ReviewerConfig {
             connection: "spacexai".into(),
             model: "claude-auditor".into(),
             limit_usd,
@@ -2692,10 +2707,106 @@ mod tests {
         });
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
-        agent.second_opinion().await.unwrap();
+        if offered {
+            agent.offer_audit().await.unwrap();
+        } else {
+            agent.second_opinion().await.unwrap();
+        }
         agent.ctx.user_io = None;
         let asked = asked.join().unwrap();
         (home, cwd, agent, events.try_iter().collect(), asked)
+    }
+
+    /// After a build turn: Ryter offers the audit with its cost, and yes runs
+    /// it, with no second question.
+    #[tokio::test]
+    async fn an_offered_audit_asks_once_and_runs() {
+        let (_home, _cwd, _agent, events, asked) = audit_run(
+            crate::user_io::Permission::Allow,
+            vec![say("VERDICT: PASS")],
+            Some((3.0, 15.0)),
+            Some(5.0),
+            true,
+            true,
+        )
+        .await;
+        assert!(
+            asked.starts_with("audit offer: Audit this work before you commit?\nclaude-auditor"),
+            "{asked}"
+        );
+        assert!(asked.contains("of your $5.00 limit"), "{asked}");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::SecondOpinion { .. }))
+        );
+    }
+
+    /// A declined offer is silent, and no turn starts, so the build turn's
+    /// summary stays on screen.
+    #[tokio::test]
+    async fn a_declined_offer_leaves_no_trace() {
+        let (_home, _cwd, agent, events, asked) = audit_run(
+            crate::user_io::Permission::Deny,
+            vec![say("VERDICT: PASS")],
+            Some((3.0, 15.0)),
+            Some(5.0),
+            true,
+            true,
+        )
+        .await;
+        assert!(asked.starts_with("audit offer:"), "{asked}");
+        assert!(events.is_empty(), "{events:?}");
+        assert!(agent.session.spend_log().unwrap().is_empty());
+    }
+
+    /// Offers turned off: nothing is asked.
+    #[tokio::test]
+    async fn offers_turned_off_ask_nothing() {
+        let (_home, _cwd, _agent, events, asked) = audit_run(
+            crate::user_io::Permission::Allow,
+            vec![say("VERDICT: PASS")],
+            Some((3.0, 15.0)),
+            Some(5.0),
+            true,
+            false,
+        )
+        .await;
+        assert!(asked.is_empty() && events.is_empty(), "{asked} {events:?}");
+    }
+
+    /// Offered before anyone is chosen to audit: it asks whether to choose,
+    /// and only a yes opens the chooser.
+    #[tokio::test]
+    async fn an_offer_with_no_auditor_asks_whether_to_choose_one() {
+        for (answer, opens) in [
+            (crate::user_io::Permission::Allow, true),
+            (crate::user_io::Permission::Deny, false),
+        ] {
+            let (_home, _cwd, _agent, events, asked) =
+                audit_run(answer, vec![], None, None, true, true).await;
+            assert!(asked.contains("nobody is chosen to audit yet"), "{asked}");
+            assert_eq!(
+                events
+                    .iter()
+                    .any(|e| matches!(e, AgentEvent::ReviewerNeeded { then_run: true, .. })),
+                opens
+            );
+        }
+    }
+
+    /// Nothing uncommitted: no offer.
+    #[tokio::test]
+    async fn no_changes_no_offer() {
+        let (_home, _cwd, mut agent) = crew_setup(ReplayProvider::scripted(vec![]));
+        agent.role = Role::SoloBuild;
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.offer_audit().await.unwrap();
+        assert!(rx.try_recv().is_err(), "nothing asked");
+        assert!(events.try_iter().next().is_none());
     }
 
     async fn second_opinion_with(
@@ -2714,7 +2825,7 @@ mod tests {
         let (_home, _cwd, mut agent, events, asked) =
             second_opinion_with(crate::user_io::Permission::Allow, vec![review]).await;
         assert!(
-            asked.starts_with("second opinion: claude-auditor on spacexai (your choice)"),
+            asked.starts_with("audit: claude-auditor on spacexai (your choice)"),
             "{asked}"
         );
         assert!(
@@ -2896,7 +3007,7 @@ mod tests {
         assert!(
             events.iter().any(|e| matches!(
                 e,
-                AgentEvent::Notice { message } if message.starts_with("no review: the next step")
+                AgentEvent::Notice { message } if message.starts_with("no audit: the next step")
             )),
             "{events:?}"
         );
@@ -2913,9 +3024,11 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, AgentEvent::SecondOpinion { .. }))
         );
-        assert!(events.iter().any(
-            |e| matches!(e, AgentEvent::Notice { message } if message == "second opinion not run")
-        ));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::Notice { message } if message == "audit not run"))
+        );
         assert!(agent.session.spend_log().unwrap().is_empty());
     }
 

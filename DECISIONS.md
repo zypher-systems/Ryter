@@ -2,6 +2,22 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-27 — Audits are offered after changes, by Ryter, and `/second` is `/audit`
+- **By:** lead
+- **Decision:**
+  - The command is `/audit`, with `/second` kept as an alias. `/audit model` changes the choice.
+  - When a build turn ends `Completed` and made a checkpoint (it changed files), and there is uncommitted work, Ryter offers an audit (`Agent::offer_audit`). The offer is the same yes/no prompt with the cost. `y` runs it, with no second question; `n` passes; `s` sets `[ui] offer_audit = false`.
+  - With nobody chosen, the offer asks whether to choose, and only a yes opens the chooser.
+  - An audit becomes a turn (busy, `Esc`) only once it's accepted, so a declined offer leaves the build turn's summary on screen.
+- **Chosen vs rejected:**
+  - Rejected having the model offer, through a new tool or a prompt rule. Ryter knows for certain whether files changed and what the audit would cost. A model offers inconsistently, and a new tool changes the tool list and the prompt cache.
+  - Rejected auditing automatically without asking: each audit spends money.
+- **Why:** typing `/second` after every change was cumbersome, and "second" didn't say what it did.
+- **Where:** `crates/ryter-core/src/second.rs` (`offer_audit`, `audit`, `run_audit`), `crates/ryter-tui/src/run/worker.rs` (the trigger), `panel/modal.rs` (`is_offer`), `config.rs` (`offer_audit`)
+- **Residual risk:**
+  - A turn whose only "change" was a command that asks (not a file edit) also makes a checkpoint, and gets an offer if anything is uncommitted.
+  - The trigger in the worker has no automated test; it was tried live.
+
 ### 2026-09-27 — Independent review comes to solo as `/second`; the user chooses the model and the limit
 - **By:** lead
 - **Decision:**

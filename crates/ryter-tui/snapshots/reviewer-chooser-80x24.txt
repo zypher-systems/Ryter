@@ -1,8 +1,8 @@
  ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
- dus╭─ second opinion · who reviews? ───────────────────── 5 · sort price ─╮4
- ‥‥‥│ Choose who gives second opinions. Nothing is preselected: prices ar… │ ‥
-   5│ model                 this review  in/M  out/M  connection           │
+ dus╭─ audit · who audits? ─────────────────────────────── 5 · sort price ─╮4
+ ‥‥‥│ Choose who audits your work. Nothing is preselected: prices are for… │ ‥
+   5│ model                  this audit  in/M  out/M  connection           │
    5│›z-ai/glm-5.3          $0.01–$0.11  $0.4   $1.6  openrouter           │
    6│ moonshotai/kimi-k3    $0.02–$0.26    $1     $4  openrouter           │
    7│ x-ai/grok-4.7         $0.08–$0.86    $3    $15  openrouter           │

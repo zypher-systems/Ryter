@@ -66,9 +66,15 @@ impl PermissionModal {
     fn question(&self) -> Option<(&'static str, &'static str, &'static str)> {
         match self.tool.as_str() {
             "switch hat" => Some(("switch hat?", "switch", "stay")),
-            "second opinion" => Some(("second opinion?", "ask it", "not now")),
+            "audit" => Some(("audit?", "audit", "not now")),
+            "audit offer" => Some(("audit this work?", "audit", "not now")),
             _ => None,
         }
+    }
+
+    /// Ryter offering an audit after a build turn: `s` stops the offers.
+    fn is_offer(&self) -> bool {
+        self.tool == "audit offer"
     }
 
     fn is_hat(&self) -> bool {
@@ -96,7 +102,11 @@ impl Panel for PermissionModal {
 
     fn legend(&self, _view: &View) -> String {
         if let Some((_, yes, no)) = self.question() {
-            format!("y {yes} · n {no}")
+            if self.is_offer() {
+                format!("y {yes} · n {no} · s stop offering")
+            } else {
+                format!("y {yes} · n {no}")
+            }
         } else if self.is_outside() {
             "y allow once · n deny · asked every time".into()
         } else {
@@ -149,6 +159,21 @@ impl Panel for PermissionModal {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(format!("· {no}"), theme.panel()),
+                Span::styled(
+                    if self.is_offer() { "   s " } else { "" },
+                    Style::default()
+                        .fg(theme.dim)
+                        .bg(theme.panel_bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    if self.is_offer() {
+                        "· stop offering"
+                    } else {
+                        ""
+                    },
+                    theme.panel(),
+                ),
             ]));
             return Body {
                 lines,
@@ -299,6 +324,9 @@ impl Panel for PermissionModal {
             }
             KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                 Outcome::CloseAct(Action::PermissionReply(Permission::Deny))
+            }
+            KeyCode::Char('s' | 'S') if self.is_offer() => {
+                Outcome::CloseAct(Action::StopAuditOffers)
             }
             KeyCode::Char('a' | 'A') if self.is_hat() || self.is_outside() => Outcome::Stay,
             KeyCode::Char('a' | 'A') => {
@@ -626,6 +654,32 @@ impl Panel for TrustModal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Ryter's offer of an audit: `s` stops the offers; `a` (allow all)
+    /// means nothing, since each audit spends money.
+    #[test]
+    fn an_audit_offer_can_stop_the_offers_and_has_no_allow_all() {
+        use crossterm::event::{KeyEvent, KeyModifiers};
+        let mut v = crate::view::View::new(
+            ryter_core::Phase::Build,
+            "openrouter".into(),
+            "m".into(),
+            "/tmp".into(),
+        );
+        let mut m = PermissionModal::new("audit offer".into(), "Audit this work?".into());
+        assert!(m.legend(&v).contains("s stop offering"));
+        let press = |m: &mut PermissionModal, v: &mut crate::view::View, c: char| {
+            m.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE), v)
+        };
+        assert!(matches!(press(&mut m, &mut v, 'a'), Outcome::Stay));
+        assert!(matches!(
+            press(&mut m, &mut v, 's'),
+            Outcome::CloseAct(Action::StopAuditOffers)
+        ));
+        let mut asked = PermissionModal::new("audit".into(), "x".into());
+        assert!(!asked.legend(&v).contains("stop offering"));
+        assert!(matches!(press(&mut asked, &mut v, 's'), Outcome::Stay));
+    }
     use crossterm::event::KeyModifiers;
 
     fn view() -> View {

@@ -175,10 +175,22 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         }
         Action::Undo => cx.send(Work::Undo),
         Action::SecondOpinion if view.busy => {
-            view.warn("a second opinion reads the finished work: wait for this turn to end");
+            view.warn("an audit reads the finished work: wait for this turn to end");
         }
         Action::SecondOpinion => cx.send(Work::SecondOpinion),
         Action::ChooseReviewer => cx.send(Work::ChooseReviewer),
+        Action::StopAuditOffers => {
+            if let Some(tx) = cx.perm_reply.take() {
+                let _ = tx.send(Permission::Deny);
+            }
+            view.ui.offer_audit = false;
+            cx.cfg.ui.offer_audit = false;
+            if let Err(e) = config::save_settings(&cx.home, &cx.cfg) {
+                view.error(e.to_string());
+            }
+            cx.send(Work::SetOfferAudit(false));
+            view.system("no more audit offers · /audit still works · /settings turns them back on");
+        }
         Action::SetReviewer {
             connection,
             model,
@@ -1024,6 +1036,7 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
         max_crew: view.max_crew,
         web: view.web,
     });
+    cx.send(Work::SetOfferAudit(view.ui.offer_audit));
 }
 
 fn set_budget(view: &mut View, cx: &mut Ctx, usd: f64) {

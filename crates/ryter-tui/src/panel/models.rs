@@ -261,8 +261,8 @@ impl Panel for Models {
                     chosen: Some(_), ..
                 }),
                 _,
-            ) => "second opinion · your limit".into(),
-            (Some(_), _) => "second opinion · who reviews?".into(),
+            ) => "audit · your limit".into(),
+            (Some(_), _) => "audit · who audits?".into(),
             (None, Some(r)) => format!("model for {r}"),
             (None, None) => "models".into(),
         }
@@ -534,13 +534,13 @@ impl Models {
                 .unwrap_or_else(|| "$?.??".into());
             for t in [
                 format!("{model} on {connection}"),
-                format!("this review: about {price}"),
+                format!("this audit: about {price}"),
                 String::new(),
-                "The most one review may spend, in dollars. Each review asks before it".into(),
-                "runs and shows its estimate against this. Near the limit the reviewer".into(),
+                "The most one audit may spend, in dollars. Each audit asks before it".into(),
+                "runs and shows its estimate against this. Near the limit the auditor".into(),
                 "writes up what it has; a step that would pass it is never sent.".into(),
                 String::new(),
-                "A large change reviewed by a strong model can cost $20 or more.".into(),
+                "A large change audited by a strong model can cost $20 or more.".into(),
             ] {
                 lines.push(widgets::text(
                     &wrap::truncate(&t, w.saturating_sub(2)),
@@ -557,9 +557,9 @@ impl Models {
             };
         }
         let intro = if r.then_run {
-            "Choose who gives second opinions. Nothing is preselected: prices are for this review."
+            "Choose who audits your work. Nothing is preselected: prices are for this audit."
         } else {
-            "Choose again. Prices are for the work there is to review now."
+            "Choose again. Prices are for the work there is to audit now."
         };
         lines.push(widgets::note(
             &wrap::truncate(intro, w.saturating_sub(2)),
@@ -592,7 +592,7 @@ impl Models {
             })
             .collect();
         lines.extend(widgets::table(
-            &["model", "this review", "in/M", "out/M", "connection"],
+            &["model", "this audit", "in/M", "out/M", "connection"],
             &rows,
             &[
                 widgets::Al::L,
@@ -792,7 +792,7 @@ mod tests {
         };
         let shown = text(&p, &v);
         assert!(
-            shown.contains("this review") && shown.contains("$0."),
+            shown.contains("this audit") && shown.contains("$0."),
             "{shown}"
         );
         assert!(shown.contains("price unknown"), "{shown}");

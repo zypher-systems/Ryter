@@ -61,7 +61,7 @@ fn placeholder(view: &View) -> String {
                 "what are we planning? nothing changes here · Tab: review".into()
             }
             ryter_core::Role::SoloReview => {
-                "what should be reviewed? · /second: ask another model · Tab: build".into()
+                "what should be reviewed? · /audit: a second model reviews · Tab: build".into()
             }
             _ => "ask the lead; the crew does the work · /solo to leave".into(),
         },

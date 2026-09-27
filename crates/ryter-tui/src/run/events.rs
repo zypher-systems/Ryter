@@ -151,7 +151,7 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
         } => {
             let m = view.push(
                 MessageKind::Specialist {
-                    role: "second opinion".into(),
+                    role: "audit".into(),
                     model: model.clone(),
                 },
                 body.clone(),

@@ -2,17 +2,17 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  dusty
  ▎ trim the query
-            ┏━ second opinion? ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
- · edit  app│ x-ai/grok-4.7 on openrouter (your choice)                                │  −1  0.0s
-   3        │ reviews 2 files, +8 −1, read-only                                        │
-   4   app.g│ about $0.02–$0.31 of your $5.00 limit                                    │
-   5 -   con│ your last 4 reviews with it cost $0.03–$0.19                             │
-   5 +   con│                                                                          │
-   6 +   if │ y · ask it   n · not now                                                 │
+            ┏━ permission · second opinion ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+ · edit  app│ tool  second opinion                                                     │  −1  0.0s
+   3        │                                                                          │
+   4   app.g│   x-ai/grok-4.7 on openrouter (your choice)                              │
+   5 -   con│   reviews 2 files, +8 −1, read-only                                      │
+   5 +   con│   about $0.02–$0.31 of your $5.00 limit                                  │
+   6 +   if │   your last 4 reviews with it cost $0.03–$0.19                           │
    7     res│                                                                          │
-   8   })   │                                                                          │
+   8   })   │ y · allow   n · deny   a · allow all this session                        │
  · write  te│                                                                          │ nes  0.0s
-   1 + impor╰─ y ask it · n not now ───────────────────────────────────────────────────╯
+   1 + impor╰─ y allow once · n deny · a allow all this session ───────────────────────╯
    2 + import
    3 +
    4 + test('an empty query finds nothing', async () => {
