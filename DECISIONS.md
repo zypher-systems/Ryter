@@ -2,6 +2,20 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-27 — Model lists show only models that can chat
+- **By:** lead
+- **Decision:** `parse_models_json` drops catalog rows that can't hold a conversation here (`http::converses`), so `/models`, the `/audit` chooser, `ryter models`, and crew suggestions never list them:
+  - `:batch` routes, which queue a request and answer later without streaming;
+  - models whose output types include image or audio;
+  - for catalogs that don't give output types, ids naming embeddings, speech, transcription, images, moderation, realtime, or reranking (`NOT_CHAT`).
+- **Chosen vs rejected:**
+  - Rejected dimming them the way tool-less models are dimmed. A tool-less model can still answer; these can't be used in a chat at all.
+  - Router models (`openrouter/…`) are kept although their catalog rows claim image output: they list every output of the models they may route to.
+  - `:free` and local tags (`qwen3-coder:30b`) are kept.
+- **Why:** the user found batch and image-generation models in the picker. Out of 458 OpenRouter models, 85 were of that kind.
+- **Where:** `crates/ryter-core/src/llm/http.rs`
+- **Residual risk:** the id patterns are a heuristic for catalogs without output types, so a chat model whose id contains `image` or `audio` would be hidden there. A model id set by hand is still used as given.
+
 ### 2026-09-27 — Enter approves again, with a guard; `a` allows one kind of action
 - **By:** lead
 - **Supersedes:** "`Enter` is never an alias for allow" (2026-09-21), for ordinary prompts.

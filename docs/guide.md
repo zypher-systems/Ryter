@@ -94,7 +94,7 @@ The keys are on the card's last row:
 
 `ask_user` questions and the first-run “trust this project?” prompt are modals with a heavy top border. `^c` on a prompt while a turn runs stops the turn.
 
-**Pickers.** In `/models` and `/help`, typing filters the list from a search row at the top of the panel. The model picker opens on the model you're using, and dims models that can't use tools.
+**Pickers.** In `/models` and `/help`, typing filters the list from a search row at the top of the panel. The model picker opens on the model you're using, and dims models that can't use tools. Model lists leave out what can't hold a conversation in a terminal: batch routes (`:batch`, which answer hours later without streaming) and models that make images or audio. A model id you type into `config.toml` or `--model` is used as given.
 
 **When a turn stops by itself**, the chat says why:
 - the model made the same call and got the same result five times (it is told at the third);

@@ -4,6 +4,7 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.5.4 (`fix/0.5.4`) — model lists show only models that can chat.** `:batch` routes and image or audio models are left out of `/models`, the `/audit` chooser, and `ryter models`, read from the catalog's output types (id patterns where a catalog gives none); router models such as `openrouter/auto` stay.
 - **0.5.3 (`fix/0.5.3`) — approving like Reeve, clearer menus.** The approval card docks above the composer (what, why, risk, change); `⏎` allows after a 500 ms guard, `a` allows one named kind of action for the session, `n` denies, destructive commands take only `y`. Panel keys on the panel's last row in color; search inside the model picker and help; the picker opens on the current model. Fixed: the picker's `$-1000000/M` footer for routers, `/provider` showing a connection's default model instead of the one in use, and form keys in the hint bar during a prompt. The look (palette) is still to decide: options on the comparison page, Copper proposed.
 
 - **0.5.2 (`fix/0.5.2`) — `/undo` puts back what the turn changed, and only that.** The user's own edits since stay; `/undo` refuses over them unless forced; `/redo` reverses an undo; gitignored files the model writes are saved first.
