@@ -713,6 +713,9 @@ fn parse_models_json(text: &str) -> Result<Vec<ModelInfo>> {
         .iter()
         .filter_map(|m| {
             let id = m.get("id").and_then(Value::as_str)?;
+            if !converses(id, m) {
+                return None;
+            }
             let context_length = m
                 .get("context_length")
                 .or_else(|| m.get("context_window"))
@@ -744,6 +747,43 @@ fn parse_models_json(text: &str) -> Result<Vec<ModelInfo>> {
             })
         })
         .collect())
+}
+
+/// Ids of models that cannot hold a conversation: they embed, speak,
+/// transcribe, draw, or rank. Catalogs that say what a model outputs are
+/// read for that instead; these are for the ones that do not.
+const NOT_CHAT: &[&str] = &[
+    "embed",
+    "whisper",
+    "tts",
+    "dall-e",
+    "image",
+    "audio",
+    "moderation",
+    "transcribe",
+    "realtime",
+    "rerank",
+];
+
+/// Whether a catalog row is a model you can chat with here. Batch routes
+/// (`:batch`) queue a request and answer hours later without streaming, and a
+/// model whose output is an image or audio has nothing a terminal can show.
+fn converses(id: &str, m: &Value) -> bool {
+    let lower = id.to_ascii_lowercase();
+    if lower.ends_with(":batch") {
+        return false;
+    }
+    let outputs = m
+        .get("architecture")
+        .and_then(|a| a.get("output_modalities"))
+        .and_then(Value::as_array);
+    match outputs {
+        // A router (`openrouter/auto`) lists every output of the models it
+        // may route to; it is a chat model all the same.
+        Some(_) if lower.starts_with("openrouter/") => true,
+        Some(o) => o.iter().all(|x| x.as_str() == Some("text")),
+        None => !NOT_CHAT.iter().any(|x| lower.contains(x)),
+    }
 }
 
 #[cfg(test)]
@@ -1322,6 +1362,44 @@ mod tests {
         let models = parse_models_json(json).unwrap();
         assert_eq!(models[0].id, "anthropic/claude-sonnet-4.6");
         assert_eq!(models[0].context_length, Some(200000));
+    }
+
+    /// The model picker lists what can chat: not batch routes, which answer
+    /// hours later, and not models that draw or speak.
+    #[test]
+    fn only_models_that_converse_are_listed() {
+        let json = r#"{"data":[
+            {"id":"deepseek/deepseek-v4.1-flash","architecture":{"output_modalities":["text"]}},
+            {"id":"deepseek/deepseek-v4.1-flash:batch","architecture":{"output_modalities":["text"]}},
+            {"id":"google/gemini-3-pro-image","architecture":{"output_modalities":["image","text"]}},
+            {"id":"openai/gpt-audio","architecture":{"output_modalities":["text","audio"]}},
+            {"id":"openrouter/auto","architecture":{"output_modalities":["text","image"]}},
+            {"id":"vendor/tiny:free","architecture":{"output_modalities":["text"]}},
+            {"id":"gpt-5.4"},
+            {"id":"gpt-image-1"},
+            {"id":"dall-e-3"},
+            {"id":"text-embedding-3-small"},
+            {"id":"whisper-1"},
+            {"id":"tts-1"},
+            {"id":"gpt-realtime"},
+            {"id":"omni-moderation-latest"},
+            {"id":"qwen3-coder:30b"}
+        ]}"#;
+        let ids: Vec<String> = parse_models_json(json)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                "deepseek/deepseek-v4.1-flash",
+                "openrouter/auto",
+                "vendor/tiny:free",
+                "gpt-5.4",
+                "qwen3-coder:30b"
+            ]
+        );
     }
 
     #[tokio::test]
