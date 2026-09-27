@@ -15,11 +15,11 @@
                                                                 │ session                    $?.?? │
                                                                 ╰──────────────────────────────────╯
                                                                 ╭─ budget ─────────────────── off ─╮
-                                                                │ cap                          off │
-╭─ commands ──────────────────────────────────────── 5 of 30 ─╮ ╰──────────────────────────────────╯
-│ mo                                                          │
+╭─ commands ──────────────────────────────────────── 6 of 31 ─╮ │ cap                          off │
+│ mo                                                          │ ╰──────────────────────────────────╯
 │›/models         Switch the lead's model                  ▸  │
 │ /tools          Tool permission mode                     ▸  │
+│ /second         A different model reviews your uncommitt…   │
 │ /crew           Crew mode: a lead, an architect, parall… ▸  │
 │ /solo           Leave crew mode: one model, Tab between …   │
 │ /skills         Browse, run, create, and remove skills … ▸  │

@@ -77,7 +77,7 @@ impl Ctx {
         }
     }
 
-    fn send(&self, w: Work) {
+    pub(super) fn send(&self, w: Work) {
         let _ = self.work_tx.send(w);
     }
 
@@ -174,6 +174,24 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             }
         }
         Action::Undo => cx.send(Work::Undo),
+        Action::SecondOpinion if view.busy => {
+            view.warn("a second opinion reads the finished work: wait for this turn to end");
+        }
+        Action::SecondOpinion => cx.send(Work::SecondOpinion),
+        Action::ChooseReviewer => cx.send(Work::ChooseReviewer),
+        Action::SetReviewer {
+            connection,
+            model,
+            limit_usd,
+            then_run,
+        } => cx.send(Work::SetReviewer(
+            ryter_core::config::ReviewerConfig {
+                connection,
+                model,
+                limit_usd,
+            },
+            then_run,
+        )),
         Action::Revert { base, path } => cx.send(Work::Revert { base, path }),
         Action::DraftCommit(paths) => cx.send(Work::DraftCommit(paths)),
         Action::Commit { paths, message } => cx.send(Work::Commit { paths, message }),

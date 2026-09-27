@@ -141,6 +141,11 @@ const REPEAT_STOP: u32 = 5;
 
 static TURN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// The next turn number, for [`AgentEvent::TurnStarted`].
+pub(crate) fn next_turn() -> u64 {
+    TURN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+}
+
 fn ordinal(n: u32) -> String {
     match n {
         1 => "1st".into(),
@@ -187,7 +192,7 @@ impl Agent {
     /// Emits [`AgentEvent::TurnStarted`] first and [`AgentEvent::TurnFinished`]
     /// last, whichever way the turn ends.
     pub async fn turn(&mut self, user: &str) -> Result<TurnResult> {
-        let turn = TURN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let turn = next_turn();
         let started = std::time::Instant::now();
         let mut tools = 0u32;
         // Decided once: a hat switch mid-turn (request_hat) must not lose the
@@ -233,6 +238,12 @@ impl Agent {
         let content = match self.session.take_carry() {
             Some(report) => format!("{}\n\n---\n\n{user}", crew_report_message(&report)),
             None => user.to_string(),
+        };
+        // A second opinion the user asked for since the last message: the
+        // model reads it before the user's words about it ("fix those").
+        let content = match self.session.take_second_opinion() {
+            Some(review) => format!("{review}\n\n---\n\n{content}"),
+            None => content,
         };
         // Solo mode: say which hat this message is in, per message, so a
         // Tab never changes the system prompt or the tools (or the cache).
@@ -1282,7 +1293,7 @@ impl Agent {
 
     /// The user's requests and the model's replies, without tool traffic or
     /// hat notes, keeping the latest `max` characters.
-    fn conversation_digest(&self, max: usize) -> String {
+    pub(crate) fn conversation_digest(&self, max: usize) -> String {
         let mut parts: Vec<String> = Vec::new();
         for m in &self.session.transcript {
             let body = m.content.trim();
@@ -1519,7 +1530,7 @@ impl Agent {
     }
 
     /// Provider, model, and connection for a crew role.
-    fn specialist_stack(&self, role: Role) -> (Arc<dyn Provider>, String, String) {
+    pub(crate) fn specialist_stack(&self, role: Role) -> (Arc<dyn Provider>, String, String) {
         let lead = || {
             (
                 self.provider.clone(),
@@ -1567,7 +1578,7 @@ impl Agent {
     }
 
     /// Caps for a crew run from config and the session's spend so far.
-    fn caps(&self) -> Caps {
+    pub(crate) fn caps(&self) -> Caps {
         let spend = self
             .cfg
             .as_ref()
@@ -1777,7 +1788,7 @@ The auditor is off, so the patch stays on `{}`.
     }
 
     /// Write the crew's new spend to the session log and the spend card.
-    fn record_crew_spend(&mut self, meter: &Meter) -> Result<()> {
+    pub(crate) fn record_crew_spend(&mut self, meter: &Meter) -> Result<()> {
         // One event per role and model, not per round.
         let mut grouped: std::collections::BTreeMap<SpendKey, (Role, Usage, Option<f64>)> =
             std::collections::BTreeMap::new();
@@ -1886,7 +1897,7 @@ The auditor is off, so the patch stays on `{}`.
             .is_some_and(|s| s >= self.budget_usd)
     }
 
-    fn emit(&mut self, ev: AgentEvent) -> Result<()> {
+    pub(crate) fn emit(&mut self, ev: AgentEvent) -> Result<()> {
         self.session.emit(&ev)?;
         if let Some(s) = &self.sink {
             let _ = s.send(ev);
@@ -2630,6 +2641,338 @@ mod tests {
             .find(|m| m.role == "tool")
             .unwrap();
         assert!(tool.content.contains("not valid JSON"), "{}", tool.content);
+    }
+
+    /// An uncommitted change in a git workspace, reviewed by the model the
+    /// user chose (`claude-auditor`, priced at `rates`), with the user
+    /// answering the cost prompt `answer`.
+    async fn second_opinion_priced(
+        answer: crate::user_io::Permission,
+        reviewer: Vec<Vec<StreamDelta>>,
+        rates: Option<(f64, f64)>,
+        limit_usd: f64,
+    ) -> (TempDir, TempDir, Agent, Vec<AgentEvent>, String) {
+        let (home, cwd, mut agent) = crew_setup(ReplayProvider::scripted(reviewer));
+        agent.cfg.as_mut().unwrap().reviewer = Some(crate::config::ReviewerConfig {
+            connection: "spacexai".into(),
+            model: "claude-auditor".into(),
+            limit_usd,
+        });
+        if let Some((i, o)) = rates {
+            agent.book.ingest_model_info(&[crate::llm::ModelInfo {
+                id: "claude-auditor".into(),
+                context_length: None,
+                input_per_million: Some(i),
+                output_per_million: Some(o),
+                connection: None,
+                created: None,
+                tools: None,
+            }]);
+        }
+        agent.role = Role::SoloBuild;
+        agent.ctx.role = Role::SoloBuild;
+        std::fs::write(cwd.path().join("hello.txt"), "hi there\nand more\n").unwrap();
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        let asked = std::thread::spawn(move || {
+            let mut asked = String::new();
+            while let Ok(req) = rx.recv() {
+                if let crate::user_io::UserRequest::Permission {
+                    tool,
+                    summary,
+                    reply,
+                    ..
+                } = req
+                {
+                    asked = format!("{tool}: {summary}");
+                    let _ = reply.send(answer);
+                }
+            }
+            asked
+        });
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.second_opinion().await.unwrap();
+        agent.ctx.user_io = None;
+        let asked = asked.join().unwrap();
+        (home, cwd, agent, events.try_iter().collect(), asked)
+    }
+
+    async fn second_opinion_with(
+        answer: crate::user_io::Permission,
+        reviewer: Vec<Vec<StreamDelta>>,
+    ) -> (TempDir, TempDir, Agent, Vec<AgentEvent>, String) {
+        second_opinion_priced(answer, reviewer, Some((3.0, 15.0)), 5.0).await
+    }
+
+    /// `/second`: the user sees their reviewer, what it will read, and a
+    /// cost range against their limit, says yes, and the review lands in the
+    /// chat and in the next message.
+    #[tokio::test]
+    async fn a_second_opinion_asks_first_then_reviews_and_carries_over() {
+        let review = say("- hello.txt:2 new line has no test (note)\n\nVERDICT: PASS");
+        let (_home, _cwd, mut agent, events, asked) =
+            second_opinion_with(crate::user_io::Permission::Allow, vec![review]).await;
+        assert!(
+            asked.starts_with("second opinion: claude-auditor on spacexai (your choice)"),
+            "{asked}"
+        );
+        assert!(
+            asked.contains("reviews 1 file, +2 −1, read-only"),
+            "{asked}"
+        );
+        assert!(asked.contains("of your $5.00 limit"), "{asked}");
+        assert!(asked.contains('–'), "a range, not one number: {asked}");
+        let got = events.iter().find_map(|e| match e {
+            AgentEvent::SecondOpinion {
+                model,
+                verdict,
+                body,
+                total_usd,
+                ..
+            } => Some((model.clone(), *verdict, body.clone(), *total_usd)),
+            _ => None,
+        });
+        let (model, verdict, body, cost) = got.expect("a second opinion event");
+        assert_eq!((model.as_str(), verdict), ("claude-auditor", Some(true)));
+        assert!(body.contains("hello.txt:2"));
+        assert!(cost.is_some(), "priced");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::TurnStarted { .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::TurnFinished { .. }))
+        );
+        assert!(
+            agent
+                .session
+                .spend_log()
+                .unwrap()
+                .iter()
+                .any(|r| r.model == "claude-auditor")
+        );
+        // The working model reads it with the user's next message.
+        let (tx, _rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.provider = Arc::new(ReplayProvider::scripted(vec![say("fixing")]));
+        agent.turn("fix that").await.unwrap();
+        let sent = agent
+            .session
+            .transcript
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")
+            .unwrap();
+        assert!(
+            sent.content.contains("[second opinion from claude-auditor"),
+            "{}",
+            sent.content
+        );
+        assert!(sent.content.ends_with("fix that"));
+    }
+
+    /// A second opinion leaves nothing in the project: no memory files,
+    /// which it would otherwise have created and then been asked to review.
+    #[tokio::test]
+    async fn a_second_opinion_creates_no_files() {
+        let (_home, cwd, _agent, _events, asked) = second_opinion_with(
+            crate::user_io::Permission::Allow,
+            vec![say("VERDICT: PASS")],
+        )
+        .await;
+        for f in ["ROADMAP.md", "DECISIONS.md", "notes"] {
+            assert!(!cwd.path().join(f).exists(), "{f} was created");
+        }
+        assert!(asked.contains("reviews 1 file"), "{asked}");
+    }
+
+    /// No choice yet: the user is asked to choose, and nothing runs. Ryter
+    /// never picks a model that spends the user's money.
+    #[tokio::test]
+    async fn with_no_reviewer_chosen_the_user_is_asked_to_choose() {
+        let (_home, cwd, mut agent) = crew_setup(ReplayProvider::scripted(vec![say("x")]));
+        agent.role = Role::SoloBuild;
+        std::fs::write(cwd.path().join("hello.txt"), "changed\n").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.second_opinion().await.unwrap();
+        let events: Vec<AgentEvent> = rx.try_iter().collect();
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::ReviewerNeeded { then_run: true, reason, context_tokens } if reason.is_empty() && *context_tokens > 0
+        )));
+        assert!(!events.iter().any(|e| matches!(e, AgentEvent::Spend { .. })));
+    }
+
+    /// A model with no known price can't be held to a dollar limit: back to
+    /// the chooser, saying why, with nothing spent.
+    #[tokio::test]
+    async fn an_unpriced_reviewer_is_sent_back_to_the_chooser() {
+        let (_home, _cwd, agent, events, asked) = second_opinion_priced(
+            crate::user_io::Permission::Allow,
+            vec![say("VERDICT: PASS")],
+            None,
+            5.0,
+        )
+        .await;
+        assert!(asked.is_empty(), "never asked to spend: {asked}");
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::ReviewerNeeded { reason, .. } if reason.contains("no price is known")
+        )));
+        assert!(agent.session.spend_log().unwrap().is_empty());
+    }
+
+    /// Near the limit the reviewer is told to write up, with no more tools,
+    /// and what it writes is the review.
+    #[tokio::test]
+    async fn near_the_limit_the_reviewer_writes_up_what_it_has() {
+        // One step that used $0.75 of a $1.00 limit.
+        let explored = vec![
+            StreamDelta::ToolCall {
+                id: "r".into(),
+                name: "read_file".into(),
+                arguments: serde_json::json!({"path": "hello.txt"}).to_string(),
+            },
+            StreamDelta::Usage(Usage {
+                input_tokens: 250_000,
+                output_tokens: 0,
+                cached_tokens: 0,
+            }),
+            StreamDelta::Done,
+        ];
+        let (_home, _cwd, _agent, events, _) = second_opinion_priced(
+            crate::user_io::Permission::Allow,
+            vec![
+                explored,
+                say("- hello.txt:2 unchecked (note); didn't get to the tests\n\nVERDICT: PASS"),
+            ],
+            Some((3.0, 15.0)),
+            1.0,
+        )
+        .await;
+        let body = events
+            .iter()
+            .find_map(|e| match e {
+                AgentEvent::SecondOpinion { body, .. } => Some(body.clone()),
+                _ => None,
+            })
+            .expect("a review despite the limit");
+        assert!(body.contains("didn't get to the tests"), "{body}");
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::SubagentActivity { text, .. } if text.contains("writing up")
+        )));
+        let spent: f64 = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::Spend { total_usd, .. } => *total_usd,
+                _ => None,
+            })
+            .sum();
+        assert!(spent <= 1.0, "never past the limit: ${spent}");
+    }
+
+    /// A limit smaller than one step: nothing is sent, and the chat says
+    /// why, with nothing spent.
+    #[tokio::test]
+    async fn a_step_that_would_pass_the_limit_is_not_sent() {
+        let (_home, _cwd, agent, events, _) = second_opinion_priced(
+            crate::user_io::Permission::Allow,
+            vec![say("VERDICT: PASS")],
+            Some((3.0, 15.0)),
+            0.01,
+        )
+        .await;
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::SecondOpinion { .. }))
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                AgentEvent::Notice { message } if message.starts_with("no review: the next step")
+            )),
+            "{events:?}"
+        );
+        assert!(agent.session.spend_log().unwrap().is_empty());
+    }
+
+    /// "Not now" spends nothing.
+    #[tokio::test]
+    async fn a_declined_second_opinion_spends_nothing() {
+        let (_home, _cwd, agent, events, _) =
+            second_opinion_with(crate::user_io::Permission::Deny, vec![say("VERDICT: PASS")]).await;
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::SecondOpinion { .. }))
+        );
+        assert!(events.iter().any(
+            |e| matches!(e, AgentEvent::Notice { message } if message == "second opinion not run")
+        ));
+        assert!(agent.session.spend_log().unwrap().is_empty());
+    }
+
+    /// The reviewer works in the user's tree under the review hat's gate: it
+    /// can't change a file, even when it tries.
+    #[tokio::test]
+    async fn a_second_opinion_cannot_change_files() {
+        let (_home, cwd, _agent, events, _) = second_opinion_with(
+            crate::user_io::Permission::Allow,
+            vec![
+                write("hello.txt", "rewritten by the reviewer\n"),
+                call("bash", serde_json::json!({"command": "rm hello.txt"})),
+                say("VERDICT: FAIL"),
+            ],
+        )
+        .await;
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("hello.txt")).unwrap(),
+            "hi there\nand more\n"
+        );
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::SecondOpinion {
+                verdict: Some(false),
+                ..
+            }
+        )));
+    }
+
+    /// Nothing to review: said, and nothing is spent. A reviewer that is the
+    /// model itself is not a second opinion.
+    #[tokio::test]
+    async fn a_second_opinion_needs_changes_and_another_model() {
+        let (_home, _cwd, mut agent) = crew_setup(ReplayProvider::scripted(vec![]));
+        agent.role = Role::SoloBuild;
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.second_opinion().await.unwrap();
+        assert!(rx.try_iter().any(|e| matches!(e, AgentEvent::Notice { message } if message == "nothing uncommitted to review")));
+        let (_home, _cwd, _agent, events, _) = {
+            let (home, cwd, mut agent) = crew_setup(ReplayProvider::scripted(vec![]));
+            agent.cfg.as_mut().unwrap().reviewer = Some(crate::config::ReviewerConfig {
+                connection: "spacexai".into(),
+                model: "grok-4.6".into(),
+                limit_usd: 1.0,
+            });
+            agent.role = Role::SoloBuild;
+            std::fs::write(cwd.path().join("hello.txt"), "x\n").unwrap();
+            let (tx, rx) = std::sync::mpsc::channel();
+            agent.sink = Some(tx);
+            agent.second_opinion().await.unwrap();
+            (home, cwd, agent, rx.try_iter().collect::<Vec<_>>(), ())
+        };
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::ReviewerNeeded { reason, .. } if reason.contains("model doing the work")
+        )));
     }
 
     /// The crew's spend reaches the session log, so the budget sees it.

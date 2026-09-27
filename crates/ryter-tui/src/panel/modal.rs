@@ -59,10 +59,20 @@ fn lang_for(tool: &str, summary: &str) -> Option<String> {
 }
 
 impl PermissionModal {
-    /// The model asking to switch hats (`request_hat`): a yes/no question,
-    /// with no "allow all", which would approve every later tool call.
+    /// A yes/no question, with no "allow all", which would approve every
+    /// later tool call: the model asking to switch hats (`request_hat`), or
+    /// Ryter asking before a second opinion spends money. Its title and the
+    /// words for yes and no.
+    fn question(&self) -> Option<(&'static str, &'static str, &'static str)> {
+        match self.tool.as_str() {
+            "switch hat" => Some(("switch hat?", "switch", "stay")),
+            "second opinion" => Some(("second opinion?", "ask it", "not now")),
+            _ => None,
+        }
+    }
+
     fn is_hat(&self) -> bool {
-        self.tool == "switch hat"
+        self.question().is_some()
     }
 
     /// A write outside the project: asked every time, so no "allow all".
@@ -77,16 +87,16 @@ impl Panel for PermissionModal {
     }
 
     fn title(&self, _view: &View) -> String {
-        if self.is_hat() {
-            "switch hat?".into()
+        if let Some((title, _, _)) = self.question() {
+            title.into()
         } else {
             format!("permission · {}", self.tool)
         }
     }
 
     fn legend(&self, _view: &View) -> String {
-        if self.is_hat() {
-            "y switch · n stay".into()
+        if let Some((_, yes, no)) = self.question() {
+            format!("y {yes} · n {no}")
         } else if self.is_outside() {
             "y allow once · n deny · asked every time".into()
         } else {
@@ -113,8 +123,12 @@ impl Panel for PermissionModal {
         let w = usize::from(width);
         let h = usize::from(height).max(3);
         let mut lines: Vec<Line<'static>> = Vec::new();
-        if self.is_hat() {
-            for row in wrap::wrap_plain(&self.summary, w.saturating_sub(2)) {
+        if let Some((_, yes, no)) = self.question() {
+            for row in self
+                .summary
+                .lines()
+                .flat_map(|l| wrap::wrap_plain(l, w.saturating_sub(2)))
+            {
                 lines.push(widgets::text(&row, theme));
             }
             lines.push(widgets::blank(theme));
@@ -126,7 +140,7 @@ impl Panel for PermissionModal {
                         .bg(theme.panel_bg)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("· switch   ", theme.panel()),
+                Span::styled(format!("· {yes}   "), theme.panel()),
                 Span::styled(
                     "n ",
                     Style::default()
@@ -134,7 +148,7 @@ impl Panel for PermissionModal {
                         .bg(theme.panel_bg)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("· stay", theme.panel()),
+                Span::styled(format!("· {no}"), theme.panel()),
             ]));
             return Body {
                 lines,

@@ -348,6 +348,21 @@ impl Session {
         (!text.trim().is_empty()).then_some(text)
     }
 
+    /// Keep a second opinion for the next message, so the model working in
+    /// the project reads it before the user's reply to it.
+    pub fn set_second_opinion(&self, review: &str) -> Result<()> {
+        fs::write(self.dir.join("second.md"), review).map_err(|e| Error::Io(e.to_string()))
+    }
+
+    /// The review kept by [`set_second_opinion`](Self::set_second_opinion),
+    /// removed as it is read.
+    pub fn take_second_opinion(&self) -> Option<String> {
+        let path = self.dir.join("second.md");
+        let text = fs::read_to_string(&path).ok()?;
+        let _ = fs::remove_file(&path);
+        (!text.trim().is_empty()).then_some(text)
+    }
+
     /// All spend rows.
     pub fn spend_log(&self) -> Result<Vec<SpendRecord>> {
         read_jsonl(&self.dir.join("spend.jsonl"))

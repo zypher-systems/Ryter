@@ -254,6 +254,23 @@ pub const COMMANDS: &[CommandSpec] = &[
         |_, _| Action::Undo,
     ),
     spec(
+        "second",
+        &["second-opinion", "opinion"],
+        Category::Session,
+        "A different model reviews your uncommitted changes; you choose it and its limit",
+        Some("/second [model]"),
+        false,
+        None,
+        false,
+        |_, args| {
+            if args.trim() == "model" {
+                Action::ChooseReviewer
+            } else {
+                Action::SecondOpinion
+            }
+        },
+    ),
+    spec(
         "changes",
         &["diff"],
         Category::Session,

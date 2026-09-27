@@ -27,6 +27,7 @@ pub mod queue;
 pub mod review;
 pub mod role;
 pub mod sandbox;
+pub mod second;
 pub mod session;
 pub mod skill;
 pub mod spend;

@@ -66,6 +66,12 @@ pub enum Work {
     SetModelReasoning(std::collections::BTreeMap<String, String>),
     /// `/undo`.
     Undo,
+    /// `/second`: another model reviews the uncommitted work.
+    SecondOpinion,
+    /// `/second model`: ask the user to choose the reviewer again.
+    ChooseReviewer,
+    /// Save the user's reviewer choice; run the review when `then_run`.
+    SetReviewer(ryter_core::config::ReviewerConfig, bool),
     /// `/changes`: put one file back as `base` had it.
     Revert {
         /// Commit to restore from.
@@ -367,6 +373,48 @@ pub fn run(init: WorkerInit) {
                     a.role = role;
                     a.ctx.role = role;
                     let _ = a.session.set_mode(role);
+                }
+            }
+            Ok(Work::ChooseReviewer) => {
+                if let Some(a) = &mut agent {
+                    if let Err(e) = a.choose_reviewer() {
+                        send_err(&ev_tx, e.to_string());
+                    }
+                }
+            }
+            Ok(Work::SetReviewer(choice, then_run)) => {
+                if let Err(e) = ryter_core::config::save_reviewer(&home, &choice) {
+                    send_err(&ev_tx, e.to_string());
+                }
+                let _ = ev_tx.send(AgentEvent::Notice {
+                    message: format!(
+                        "second opinions: {} on {}, up to ${:.2} a review · /second model changes it",
+                        choice.model, choice.connection, choice.limit_usd
+                    ),
+                });
+                cfg.reviewer = Some(choice.clone());
+                if let Some(a) = &mut agent {
+                    if let Some(c) = a.cfg.as_mut() {
+                        c.reviewer = Some(choice);
+                    }
+                    if then_run {
+                        a.ctx.cancel.reset();
+                        if let Err(e) = rt.block_on(a.second_opinion()) {
+                            send_err(&ev_tx, e.to_string());
+                        }
+                        refresh_live(a, &live_status, &live_spend);
+                    }
+                }
+            }
+            Ok(Work::SecondOpinion) => {
+                if let Some(a) = &mut agent {
+                    a.ctx.cancel.reset();
+                    if let Err(e) = rt.block_on(a.second_opinion()) {
+                        send_err(&ev_tx, e.to_string());
+                    }
+                    refresh_live(a, &live_status, &live_spend);
+                } else {
+                    send_err(&ev_tx, "no API key — /provider set-key".into());
                 }
             }
             Ok(Work::Undo) => {

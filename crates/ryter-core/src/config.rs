@@ -66,6 +66,42 @@ pub struct Config {
     /// Non-fatal load warnings (unknown `[ui]` keys). Never serialized.
     #[serde(skip)]
     pub warnings: Vec<String>,
+    /// Who gives second opinions (`/second`), chosen by the user; saved to
+    /// `~/.ryter/review.toml`, never in `config.toml`.
+    #[serde(skip)]
+    pub reviewer: Option<ReviewerConfig>,
+}
+
+/// The user's choice for `/second`: a model, and how much one review may
+/// spend. Ryter never picks either: models change too fast to curate, and a
+/// model Ryter chose is a bill Ryter chose.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReviewerConfig {
+    /// Connection name.
+    pub connection: String,
+    /// Model id.
+    pub model: String,
+    /// Most one review may spend, in USD.
+    pub limit_usd: f64,
+}
+
+/// `~/.ryter/review.toml`.
+pub fn review_path(home: &Path) -> PathBuf {
+    home.join("review.toml")
+}
+
+/// Save the reviewer choice.
+pub fn save_reviewer(home: &Path, r: &ReviewerConfig) -> Result<()> {
+    fs::create_dir_all(home).map_err(|e| Error::Config(e.to_string()))?;
+    let body = toml::to_string(r).map_err(|e| Error::Config(e.to_string()))?;
+    fs::write(review_path(home), body).map_err(|e| Error::Config(e.to_string()))
+}
+
+fn apply_review_file(cfg: &mut Config, path: &Path) {
+    cfg.reviewer = fs::read_to_string(path)
+        .ok()
+        .and_then(|t| toml::from_str::<ReviewerConfig>(&t).ok())
+        .filter(|r| r.limit_usd > 0.0 && !r.model.is_empty());
 }
 
 impl Default for Config {
@@ -91,6 +127,7 @@ impl Default for Config {
             reasoning_effort: BTreeMap::new(),
             model_reasoning: BTreeMap::new(),
             warnings: Vec::new(),
+            reviewer: None,
         }
     }
 }
@@ -686,6 +723,7 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
     apply_hooks_file(&mut cfg, &home.join("hooks.toml"));
     apply_connections_file(&mut cfg, &home.join("connections.toml"));
     apply_model_reasoning_file(&mut cfg, &model_reasoning_path(home));
+    apply_review_file(&mut cfg, &review_path(home));
     validate(&cfg)?;
     Ok(cfg)
 }

@@ -13,6 +13,7 @@ const ARCHITECT: &str = include_str!("../../../prompts/architect.md");
 const BUILDER: &str = include_str!("../../../prompts/builder.md");
 const AUDITOR: &str = include_str!("../../../prompts/auditor.md");
 const SOLO: &str = include_str!("../../../prompts/solo.md");
+const SECOND: &str = include_str!("../../../prompts/second.md");
 
 /// Which prompt file to load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +28,8 @@ pub enum PromptKind {
     Auditor,
     /// Solo mode: one model, three hats.
     Solo,
+    /// A second model reviewing solo work, on the user's request.
+    Second,
 }
 
 impl PromptKind {
@@ -38,6 +41,7 @@ impl PromptKind {
             Self::Builder => "builder",
             Self::Auditor => "auditor",
             Self::Solo => "solo",
+            Self::Second => "second",
         }
     }
 
@@ -49,6 +53,7 @@ impl PromptKind {
             Self::Builder => BUILDER,
             Self::Auditor => AUDITOR,
             Self::Solo => SOLO,
+            Self::Second => SECOND,
         }
     }
 
@@ -206,12 +211,28 @@ pub fn specialist_messages(
     task: &str,
     scope: &[String],
 ) -> Vec<crate::llm::Message> {
-    let kind = PromptKind::for_role(role).unwrap_or(PromptKind::Builder);
-    let system = load(kind, home, project_root, trusted);
-    let mut user = String::new();
+    // The crew keeps its memory in the project.
     if let Some(root) = project_root {
         let _ = crate::memory::ensure_project_memory(root);
     }
+    reading_messages(home, project_root, trusted, role, pass_note, task, scope)
+}
+
+/// [`specialist_messages`] without creating project memory: for a reader
+/// in the user's own tree (`/second`), which must not leave files behind,
+/// least of all ones it would then review.
+pub fn reading_messages(
+    home: &Path,
+    project_root: Option<&Path>,
+    trusted: bool,
+    role: Role,
+    pass_note: &str,
+    task: &str,
+    scope: &[String],
+) -> Vec<crate::llm::Message> {
+    let kind = PromptKind::for_role(role).unwrap_or(PromptKind::Builder);
+    let system = load(kind, home, project_root, trusted);
+    let mut user = String::new();
     if let Some(inst) = load_project_instructions(project_root) {
         user.push_str("Project instructions:\n");
         user.push_str(&inst);

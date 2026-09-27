@@ -135,6 +135,14 @@ Ryter starts in solo mode: one model in your project. `Tab` switches its hat (bu
 | **plan** | read, search, run read-only commands, write `notes/` and project memory | edit source, run anything that changes the project |
 | **review** | read, run the tests and linters, read-only git | write anything, not even by redirect; install, format, or fix |
 
+**A second opinion.** `/second` asks a different model to review your uncommitted changes before you commit. You choose the model and how much one review may spend; Ryter never chooses either.
+
+- **The first time,** `/second` opens a chooser. It lists every model from every connection you have a key for, from the live catalog, each with what *this* review should cost in dollars. The model doing the work isn't offered, and neither are models that can't use tools. A model from the same vendor is marked as less independent, and one with no known price can't be chosen, since no limit could hold it. Then you type your limit per review, in dollars; there's no preset. The choice is saved in `~/.ryter/review.toml`, and `/second model` changes it.
+- **Every review asks first,** with the model, what it will read, and a cost range against your limit. After a few reviews it also shows what your last ones with that model cost. `n` spends nothing.
+- **It keeps to your limit before spending, not after.** Each step is priced before it's sent. A step that would pass the limit isn't sent. When about one step's room is left, or three quarters of the limit is spent, the reviewer is told to stop exploring and write up what it has. Either way you get what it found, marked if it was cut short.
+- **It can't change anything.** It reads the diff and the conversation, and may read files and run the tests, under the review hat's rules. It creates no files. Findings come marked **blocking** or **note**, with a verdict and the cost, and the model you work with gets them with your next message, so "fix those" works.
+- **A saved reviewer that disappears** (retired, or no longer priced) brings the chooser back. Ryter never falls back to another model on its own.
+
 **What the chat shows.** The model narrates as it works: what it's doing next and why, each choice between approaches with its reason, and what it thinks went wrong when something fails. Each tool step shows what came of it, measured by Ryter: `new · 48 lines`, `rewrote · 76 lines (was 89)`, an edit's changed lines, `✓ 13 passed`, or `✗ exit 1` with the cause. Reads fold into one line, and a divider closes each turn that did work (`6 files (3 new, 3 changed, +153 −15) · 9 commands (9 ok) · 2:41`).
 
 **Outside the project.** The build hat can write elsewhere on your machine, such as `/tmp` or another folder, but only by asking each time. The prompt says "outside the project" and offers only `y` (allow once) or `n`. "Allow all" and `--always-approve` cover the project, not the rest of the machine, so headless refuses these writes.

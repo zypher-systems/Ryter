@@ -164,6 +164,21 @@ pub enum Action {
     EnterCrew,
     /// `/undo`: put files back as they were before the last build turn.
     Undo,
+    /// `/second`: a second model reviews the uncommitted work.
+    SecondOpinion,
+    /// `/second model`: choose the reviewer and its limit again.
+    ChooseReviewer,
+    /// The reviewer the user chose, and the most one review may spend.
+    SetReviewer {
+        /// Connection name.
+        connection: String,
+        /// Model id.
+        model: String,
+        /// USD per review.
+        limit_usd: f64,
+        /// Run the review now.
+        then_run: bool,
+    },
     /// `/changes` `x`: put one file back as `base` had it.
     Revert {
         /// Commit to restore from.

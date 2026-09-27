@@ -241,6 +241,8 @@ async fn build_inner(
         task: &task.id,
         connection: job.connection,
         progress: job.progress.as_ref(),
+        wrap_up_usd: None,
+        last_text: None,
     };
     let ctx = ToolContext {
         workspace: wt.to_path_buf(),
@@ -655,6 +657,8 @@ pub async fn land_patch(job: &BuildJob<'_>, patch: &crate::session::Patch) -> Re
         task: &task.id,
         connection: job.connection,
         progress: job.progress.as_ref(),
+        wrap_up_usd: None,
+        last_text: None,
     };
     let mut gate = Gate::default();
     let user_head = git::rev(user, &patch.target)?;
@@ -883,6 +887,8 @@ async fn audit(
         task: &task.id,
         connection: &seat.connection,
         progress: job.progress.as_ref(),
+        wrap_up_usd: None,
+        last_text: None,
     };
     run_specialist(
         seat.provider.as_ref(),
@@ -1053,6 +1059,8 @@ pub async fn run_note_task(
         task: &task.id,
         connection,
         progress: progress.as_ref(),
+        wrap_up_usd: None,
+        last_text: None,
     };
     let wrote =
         |q: &crate::queue::TaskQueue| q.tasks.iter().filter(|t| t.by == "architect").count();
@@ -1142,6 +1150,15 @@ pub struct Bill<'a> {
     pub connection: &'a str,
     /// Progress events, when someone is watching.
     pub progress: Option<&'a Progress>,
+    /// The most the task may spend, enforced before each step, not after:
+    /// a step that would pass it isn't sent, and when about one step's room
+    /// is left (or [`WRAP_UP_SHARE`] of it is spent) the specialist is told
+    /// to write its answer now, with no more tools. A cap that only stops
+    /// after a step has passed it leaves the user paying for nothing.
+    pub wrap_up_usd: Option<f64>,
+    /// The specialist's latest text, kept as it goes, so a stop at the cap
+    /// still has something to show.
+    pub last_text: Option<&'a std::sync::Mutex<String>>,
 }
 
 /// Where a specialist's activity is reported.
@@ -1154,7 +1171,7 @@ pub struct Progress {
 }
 
 impl Progress {
-    fn say(&self, role: Role, text: impl Into<String>) {
+    pub(crate) fn say(&self, role: Role, text: impl Into<String>) {
         let _ = self.sink.send(AgentEvent::SubagentActivity {
             id: self.id.clone(),
             role,
@@ -1178,10 +1195,31 @@ fn limits(role: Role) -> (usize, u32) {
     }
 }
 
+/// Share of [`Bill::wrap_up_usd`] after which the specialist writes up.
+pub const WRAP_UP_SHARE: f64 = 0.75;
+
+/// Output a step is priced at before it is sent.
+const STEP_OUTPUT: u64 = 4_000;
+
+/// Tokens a request of `messages` will be billed for, roughly (4 bytes a
+/// token), with room for the tool list.
+fn request_tokens(messages: &[crate::llm::Message]) -> u64 {
+    let bytes: usize = messages
+        .iter()
+        .map(|m| {
+            m.content.len()
+                + m.tool_calls
+                    .as_ref()
+                    .map_or(0, |c| c.iter().map(|c| c.arguments.len() + 32).sum())
+        })
+        .sum();
+    bytes as u64 / 4 + 1_500
+}
+
 /// A reply cut off at the output limit this many times in a row ends the task.
 const MAX_TRUNCATIONS: usize = 3;
 
-async fn run_specialist(
+pub(crate) async fn run_specialist(
     provider: &dyn Provider,
     model: &str,
     role: Role,
@@ -1192,15 +1230,66 @@ async fn run_specialist(
     let (rounds, max_tokens) = limits(role);
     let mut last = String::new();
     let mut cutoffs = 0usize;
-    for _ in 0..rounds {
+    let mut wrapping = false;
+    let mut told = false;
+    for round in 0..rounds {
         if ctx.cancel.is_cancelled() {
             return Err(Error::Cancelled);
+        }
+        // A limit is kept before each step: price the step from what will
+        // be sent, stop if it doesn't fit, and write up while one still does.
+        if let Some(limit) = bill.wrap_up_usd {
+            let spent = bill.meter.task(bill.task).usd;
+            let step = bill
+                .meter
+                .price(
+                    bill.connection,
+                    model,
+                    crate::spend::Usage {
+                        input_tokens: request_tokens(&messages),
+                        output_tokens: STEP_OUTPUT,
+                        cached_tokens: 0,
+                    },
+                )
+                .unwrap_or(0.0);
+            if spent + step > limit {
+                return Err(Error::TaskBudget(format!(
+                    "the next step (about ${step:.2}) would pass the ${limit:.2} limit \
+                     (${spent:.2} spent)"
+                )));
+            }
+            if !wrapping
+                && (round + 1 == rounds
+                    || spent >= limit * WRAP_UP_SHARE
+                    || spent + 2.0 * step > limit)
+            {
+                wrapping = true;
+            }
+        }
+        if wrapping && !told {
+            told = true;
+            if let Some(p) = bill.progress {
+                p.say(role, "near the limit: writing up");
+            }
+            messages.push(crate::llm::Message {
+                role: "user".into(),
+                content: "[Ryter] You are near the spending limit the user set for this. \
+                          Stop now: use no more tools, and write your answer from what you \
+                          have, saying what you didn't get to check."
+                    .into(),
+                tool_call_id: None,
+                tool_calls: None,
+            });
         }
         let req = CompletionRequest {
             model: model.to_string(),
             system: None,
             messages: messages.clone(),
-            tools: crate::tools::specs_for_opts(role, ctx.web),
+            tools: if wrapping {
+                Vec::new()
+            } else {
+                crate::tools::specs_for_opts(role, ctx.web)
+            },
             max_tokens: Some(max_tokens),
             reasoning: bill.meter.effort(role, model),
         };
@@ -1236,6 +1325,13 @@ async fn run_specialist(
                 StreamDelta::ReportedCost(c) => reported = Some(c),
                 StreamDelta::Truncated => truncated = true,
                 _ => {}
+            }
+        }
+        if let Some(keep) = bill.last_text {
+            if !text.trim().is_empty() {
+                if let Ok(mut k) = keep.lock() {
+                    k.clone_from(&text);
+                }
             }
         }
         // Charged every round, so a cap stops a runaway loop mid-task rather
@@ -1301,7 +1397,8 @@ async fn run_specialist(
             continue;
         }
         cutoffs = 0;
-        if calls.is_empty() {
+        // Wrapping up: whatever it asked to run, this is the answer.
+        if calls.is_empty() || (wrapping && !last.trim().is_empty()) {
             return Ok(last);
         }
         messages.push(crate::llm::Message {

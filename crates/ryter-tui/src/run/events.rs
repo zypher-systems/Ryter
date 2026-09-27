@@ -123,11 +123,49 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
                 started_ms: view.now_ms,
             });
         }
-        // Progress goes on the specialist's crew row, not into the chat.
+        // Progress goes on the specialist's crew row, not into the chat. A
+        // second opinion has no crew row: it shows on the activity strip.
         AgentEvent::SubagentActivity { id, text, .. } => {
             if let Some(row) = view.crew.iter_mut().find(|c| c.id == id.as_str()) {
                 row.status = wrap::truncate(text, 48);
+            } else if view.activity.busy() {
+                view.activity.current = wrap::truncate(text, 48);
             }
+        }
+        AgentEvent::ReviewerNeeded {
+            context_tokens,
+            then_run,
+            reason,
+        } => {
+            if !reason.is_empty() {
+                view.warn(format!("{reason}: choose who reviews"));
+            }
+            view.reviewer_ask = Some((*context_tokens, *then_run));
+        }
+        AgentEvent::SecondOpinion {
+            model,
+            verdict,
+            body,
+            total_usd,
+            ..
+        } => {
+            let m = view.push(
+                MessageKind::Specialist {
+                    role: "second opinion".into(),
+                    model: model.clone(),
+                },
+                body.clone(),
+            );
+            m.meta.label = Some(format!(
+                "{} · {}",
+                crate::chat::short_model(model),
+                match verdict {
+                    Some(true) => "✓ no blocking problems",
+                    Some(false) => "✗ blocking problems",
+                    None => "no verdict",
+                }
+            ));
+            m.meta.cost = *total_usd;
         }
         AgentEvent::SubagentFinished {
             id,

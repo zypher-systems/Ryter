@@ -1,0 +1,24 @@
+ ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────
+ dus╭─ second opinion · who reviews? ───────────────────── 5 · sort price ─╮4
+ ‥‥‥│ Choose who gives second opinions. Nothing is preselected: prices ar… │ ‥
+   5│ model                 this review  in/M  out/M  connection           │
+   5│›z-ai/glm-5.3          $0.01–$0.11  $0.4   $1.6  openrouter           │
+   6│ moonshotai/kimi-k3    $0.02–$0.26    $1     $4  openrouter           │
+   7│ x-ai/grok-4.7         $0.08–$0.86    $3    $15  openrouter           │
+   8│ openai/gpt-5.5        $0.11–$1.20    $5    $15  openrouter           │
+ · w│ vendor/no-price     price unknown     ?      ?  openrouter           │ s
+   1│                                                                      │
+   2│                                                                      │
+   3│                                                                      │
+   4│                                                                      │
+   5│ z-ai/glm-5.3: a different vendor from grok-4.6                       │
+   6╰─ type to filter · ↑↓ move · enter choose · s sort · esc ─────────────╯
+
+ ───────────────── 2 files (1 new, 1 changed, +8 −1) · 2.1s ──────────────────
+ · ✓ done · 2 tools · 0:02                                     ^r  reasoning  ▾
+────────────────────────────────────────────────────────────────────────────────
+╭─ filter ─────────────────────────────────────────────────────────────────────╮
+│› type filter…                                                                │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move    enter select    tab next field    ? keys    esc back

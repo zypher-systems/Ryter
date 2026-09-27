@@ -90,7 +90,9 @@ impl UserIo {
         let (reply_tx, reply_rx) = mpsc::channel();
         let req = UserRequest::Permission {
             tool: tool.to_string(),
-            summary: summary.chars().take(160).collect(),
+            // Wrapped in the prompt; the cap keeps a pasted blob from
+            // filling it. An edit's whole change rides in `preview`.
+            summary: summary.chars().take(400).collect(),
             preview: preview.map(Box::new),
             reply: reply_tx,
         };
