@@ -14,6 +14,46 @@ use crate::phase::Phase;
 use crate::role::Role;
 use crate::spend::Usage;
 
+/// What a build turn left, for an undo of only its files.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TurnRecord {
+    /// A snapshot of the files when the turn ended.
+    #[serde(default)]
+    pub after: Option<String>,
+    /// Gitignored files the turn wrote, which snapshots skip.
+    #[serde(default)]
+    pub ignored: Vec<SavedFile>,
+}
+
+/// One file's content before and after, as saved git objects (`None`: no
+/// file).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SavedFile {
+    /// Path in the project.
+    pub path: String,
+    /// Content before.
+    pub before: Option<String>,
+    /// Content after.
+    pub after: Option<String>,
+}
+
+/// An undo, kept so `/redo` can reverse it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Redo {
+    /// The checkpoint the undo popped, and its record.
+    pub checkpoint: String,
+    /// Its record.
+    pub record: TurnRecord,
+    /// The files just before the undo.
+    pub files: String,
+    /// The files just after it.
+    pub undone: String,
+    /// What the undo put back.
+    pub paths: Vec<String>,
+    /// Ignored files the undo put back: `before` is what the undo replaced.
+    pub ignored: Vec<SavedFile>,
+}
+
 /// Session index row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Meta {
@@ -50,6 +90,13 @@ pub struct Meta {
     /// Build-hat checkpoints, oldest first, for `/undo`.
     #[serde(default)]
     pub checkpoints: Vec<String>,
+    /// What each build turn changed, by the checkpoint it started from, so
+    /// `/undo` puts back that turn's files and nothing else.
+    #[serde(default)]
+    pub turn_records: std::collections::BTreeMap<String, TurnRecord>,
+    /// Undos `/redo` can reverse, newest last. A new build turn clears them.
+    #[serde(default)]
+    pub redo: Vec<Redo>,
     /// The files as the latest build turn found them: what `/changes` calls
     /// "last turn". Not moved by a file undone from `/changes`.
     #[serde(default)]
@@ -152,6 +199,8 @@ impl Session {
             patch: None,
             patches_opened: 0,
             checkpoints: Vec::new(),
+            turn_records: Default::default(),
+            redo: Vec::new(),
             turn_checkpoint: None,
             mode: None,
         };
@@ -472,6 +521,43 @@ impl Session {
     /// Remember where the latest build turn started.
     pub fn set_turn_checkpoint(&mut self, sha: Option<String>) -> Result<()> {
         self.meta.turn_checkpoint = sha;
+        self.touch()
+    }
+
+    /// Record what the turn from checkpoint `sha` changed.
+    pub fn set_turn_record(&mut self, sha: &str, record: TurnRecord) -> Result<()> {
+        self.meta.turn_records.insert(sha.to_string(), record);
+        // Only live checkpoints need a record.
+        let live: std::collections::HashSet<&String> = self.meta.checkpoints.iter().collect();
+        self.meta
+            .turn_records
+            .retain(|k, _| live.contains(k) || k == sha);
+        self.touch()
+    }
+
+    /// Keep an undo for `/redo`.
+    pub fn push_redo(&mut self, redo: Redo) -> Result<()> {
+        self.meta.redo.push(redo);
+        let n = self.meta.redo.len();
+        if n > 20 {
+            self.meta.redo.drain(..n - 20);
+        }
+        self.touch()
+    }
+
+    /// The newest undo, removed.
+    pub fn pop_redo(&mut self) -> Result<Option<Redo>> {
+        let r = self.meta.redo.pop();
+        self.touch()?;
+        Ok(r)
+    }
+
+    /// Forget what `/redo` could reverse: the files moved on.
+    pub fn clear_redo(&mut self) -> Result<()> {
+        if self.meta.redo.is_empty() {
+            return Ok(());
+        }
+        self.meta.redo.clear();
         self.touch()
     }
 

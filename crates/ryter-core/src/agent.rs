@@ -146,6 +146,16 @@ pub(crate) fn next_turn() -> u64 {
     TURN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
 }
 
+/// `a.rs`, `a.rs and b.rs`, `a.rs, b.rs and 3 more files`.
+fn list(paths: &[String]) -> String {
+    match paths {
+        [] => "nothing".into(),
+        [a] => a.clone(),
+        [a, b] => format!("{a} and {b}"),
+        [a, b, rest @ ..] => format!("{a}, {b} and {} more files", rest.len()),
+    }
+}
+
 fn ordinal(n: u32) -> String {
     match n {
         1 => "1st".into(),
@@ -203,6 +213,11 @@ impl Agent {
             self.emit(AgentEvent::TurnStarted { turn })?;
         }
         let out = self.turn_inner(user, &mut tools).await;
+        // However the turn ended (done, cancelled, failed), record what it
+        // left for `/undo`.
+        if let Err(e) = self.finish_turn_record() {
+            crate::trace::log(&self.home, &format!("undo record: {e}"));
+        }
         if conversation {
             let _ = self.emit(AgentEvent::TurnFinished {
                 turn,
@@ -513,6 +528,9 @@ impl Agent {
                 {
                     self.checkpoint_before_build()?;
                     checkpointed = true;
+                }
+                if self.role == Role::SoloBuild && checkpointed && parsed.is_ok() {
+                    self.save_ignored(&call.name, &args)?;
                 }
                 let out = match &parsed {
                     // Run with `null` arguments, the call was refused as
@@ -1175,9 +1193,81 @@ impl Agent {
             self.session.push_checkpoint(sha)?;
         }
         let start = self.session.meta.checkpoints.last().cloned();
-        self.session.set_turn_checkpoint(start)?;
+        self.session.set_turn_checkpoint(start.clone())?;
+        // This turn's record, finished when the turn ends; and the files are
+        // moving on, so what `/redo` could reverse no longer applies.
+        if let Some(start) = start {
+            self.session
+                .set_turn_record(&start, crate::session::TurnRecord::default())?;
+        }
+        self.session.clear_redo()?;
         self.emit(self.checkpoint_event())?;
         Ok(())
+    }
+
+    /// Before the build hat writes a gitignored file: save what it held.
+    /// Snapshots skip ignored files, so without this `/undo` couldn't put
+    /// the file back.
+    fn save_ignored(&mut self, name: &str, args: &Value) -> Result<()> {
+        if !matches!(name, "write" | "search_replace") {
+            return Ok(());
+        }
+        let Some(start) = self.session.meta.turn_checkpoint.clone() else {
+            return Ok(());
+        };
+        let Some(raw) = args.get("path").and_then(Value::as_str) else {
+            return Ok(());
+        };
+        let Some(abs) = crate::tools::resolve(&self.ctx, raw) else {
+            return Ok(());
+        };
+        let dir = self.ctx.workspace.clone();
+        let root = std::fs::canonicalize(&dir).unwrap_or(dir.clone());
+        let Ok(rel) = abs.strip_prefix(&root).or_else(|_| abs.strip_prefix(&dir)) else {
+            return Ok(());
+        };
+        let rel = rel.to_string_lossy().to_string();
+        let mut record = self
+            .session
+            .meta
+            .turn_records
+            .get(&start)
+            .cloned()
+            .unwrap_or_default();
+        if record.ignored.iter().any(|f| f.path == rel) || !crate::git::is_ignored(&dir, &rel) {
+            return Ok(());
+        }
+        record.ignored.push(crate::session::SavedFile {
+            before: crate::git::save_blob(&dir, &rel)?,
+            path: rel,
+            after: None,
+        });
+        self.session.set_turn_record(&start, record)
+    }
+
+    /// The turn is over: snapshot what it left, so `/undo` knows which
+    /// files were its own.
+    fn finish_turn_record(&mut self) -> Result<()> {
+        let Some(start) = self.session.meta.turn_checkpoint.clone() else {
+            return Ok(());
+        };
+        let Some(mut record) = self.session.meta.turn_records.get(&start).cloned() else {
+            return Ok(());
+        };
+        if record.after.is_some() {
+            return Ok(());
+        }
+        let dir = self.ctx.workspace.clone();
+        let name = format!(
+            "{}-after-{}",
+            self.session.meta.id,
+            &start[..start.len().min(12)]
+        );
+        record.after = crate::git::checkpoint(&dir, &name)?;
+        for f in &mut record.ignored {
+            f.after = crate::git::save_blob(&dir, &f.path)?;
+        }
+        self.session.set_turn_record(&start, record)
     }
 
     /// Where the latest build turn started, for `/changes`.
@@ -1192,39 +1282,170 @@ impl Agent {
         }
     }
 
-    /// Put the user's files back as they were before the last build turn that
-    /// changed them. Returns what happened, for the user.
+    /// `/undo`: put back what the last build turn changed, and only that.
+    /// Refuses when the user has since edited a file that turn changed;
+    /// [`Self::undo_force`] goes ahead, and `/redo` reverses either.
     pub fn undo(&mut self) -> Result<String> {
+        self.undo_with(false)
+    }
+
+    /// `/undo force`: undo even over the user's later edits to those files.
+    pub fn undo_force(&mut self) -> Result<String> {
+        self.undo_with(true)
+    }
+
+    fn undo_with(&mut self, force: bool) -> Result<String> {
         let dir = self.ctx.workspace.clone();
-        let now = crate::git::checkpoint(&dir, "now")?;
-        let now_tree = now.and_then(|s| crate::git::checkpoint_tree(&dir, &s).ok());
-        // Skip checkpoints the files already match: undo means "go back
-        // before the last change", not "restore what's already there".
+        let id = self.session.meta.id.to_string();
+        let redo_name = format!("{id}-redo-{}", self.session.meta.redo.len() + 1);
+        let Some(now) = crate::git::checkpoint(&dir, &redo_name)? else {
+            return Ok("nothing to undo: this folder has no repository to undo from".into());
+        };
+        let now_tree = crate::git::checkpoint_tree(&dir, &now).ok();
         while let Some(last) = self.session.meta.checkpoints.last().cloned() {
-            if crate::git::checkpoint_tree(&dir, &last).ok() == now_tree {
+            let record = self
+                .session
+                .meta
+                .turn_records
+                .get(&last)
+                .cloned()
+                .unwrap_or_default();
+            // Skip checkpoints the files already match: undo means "go back
+            // before the last change", not "restore what's already there".
+            if record.ignored.is_empty()
+                && crate::git::checkpoint_tree(&dir, &last).ok() == now_tree
+            {
                 self.session.pop_checkpoint()?;
                 continue;
             }
-            // Count from a diff of the files: restore's own count overstated.
-            let n = crate::review::changes(&dir, &last)
-                .map(|c| c.files.len())
-                .unwrap_or(0);
-            crate::git::restore_checkpoint(&dir, &last)?;
+            // What the turn changed: its snapshot at the start against its
+            // snapshot at the end. Sessions from before 0.5.2 have no end
+            // snapshot: everything since the checkpoint, as undo did then.
+            let end = record.after.clone().unwrap_or_else(|| now.clone());
+            let paths = crate::git::paths_between(&dir, &last, &end)?;
+            let since: std::collections::HashSet<String> =
+                crate::git::paths_between(&dir, &end, &now)?
+                    .into_iter()
+                    .collect();
+            let mut clash: Vec<String> = paths
+                .iter()
+                .filter(|p| since.contains(*p))
+                .cloned()
+                .collect();
+            for f in &record.ignored {
+                if crate::git::save_blob(&dir, &f.path)? != f.after {
+                    clash.push(f.path.clone());
+                }
+            }
+            if !clash.is_empty() && !force {
+                return Ok(format!(
+                    "not undone: you changed {} since that turn, and undoing it would \
+                     lose your edits. `/undo force` undoes it anyway (`/redo` brings \
+                     your version back); `/changes` shows the diff.",
+                    list(&clash)
+                ));
+            }
+            let mut saved = Vec::new();
+            for f in &record.ignored {
+                saved.push(crate::session::SavedFile {
+                    path: f.path.clone(),
+                    before: crate::git::save_blob(&dir, &f.path)?,
+                    after: f.before.clone(),
+                });
+                crate::git::put_blob(&dir, &f.path, f.before.as_deref())?;
+            }
+            crate::git::restore_paths(&dir, &last, &paths)?;
+            let undone_name = format!("{id}-undone-{}", self.session.meta.redo.len() + 1);
+            let undone = crate::git::checkpoint(&dir, &undone_name)?.unwrap_or_default();
             self.session.pop_checkpoint()?;
-            // The files are back where that turn started; the turn before it
-            // is now the last one.
+            self.session.push_redo(crate::session::Redo {
+                checkpoint: last,
+                record,
+                files: now.clone(),
+                undone,
+                paths: paths.clone(),
+                ignored: saved.clone(),
+            })?;
             let prev = self.session.meta.checkpoints.last().cloned();
             self.session.set_turn_checkpoint(prev)?;
             self.emit(self.checkpoint_event())?;
+            let mut put: Vec<String> = paths;
+            put.extend(saved.into_iter().map(|f| f.path));
             let left = self.session.meta.checkpoints.len();
-            let files = if n == 1 { "file" } else { "files" };
+            let n = put.len();
             return Ok(format!(
-                "undone: put back {n} {files} as they were at the last checkpoint (before \
-                 the last build turn, or the last file undone in /changes). {left} earlier \
-                 checkpoint(s) left."
+                "undone: put back {n} file{} ({}) as {} before the last build turn{}. \
+                 `/redo` reverses this. {left} earlier checkpoint(s) left.",
+                if n == 1 { "" } else { "s" },
+                list(&put),
+                if n == 1 { "it was" } else { "they were" },
+                if clash.is_empty() {
+                    String::new()
+                } else {
+                    format!(", over your edits to {}", list(&clash))
+                }
             ));
         }
         Ok("nothing to undo: no build turn has changed files in this session".into())
+    }
+
+    /// `/redo`: reverse the last undo. Refuses when the user has since
+    /// edited a file it put back; [`Self::redo_force`] goes ahead.
+    pub fn redo(&mut self) -> Result<String> {
+        self.redo_with(false)
+    }
+
+    /// `/redo force`.
+    pub fn redo_force(&mut self) -> Result<String> {
+        self.redo_with(true)
+    }
+
+    fn redo_with(&mut self, force: bool) -> Result<String> {
+        let Some(r) = self.session.meta.redo.last().cloned() else {
+            return Ok("nothing to redo".into());
+        };
+        let dir = self.ctx.workspace.clone();
+        let Some(now) = crate::git::checkpoint(&dir, "now")? else {
+            return Ok("nothing to redo".into());
+        };
+        let since: std::collections::HashSet<String> =
+            crate::git::paths_between(&dir, &r.undone, &now)?
+                .into_iter()
+                .collect();
+        let mut clash: Vec<String> = r
+            .paths
+            .iter()
+            .filter(|p| since.contains(*p))
+            .cloned()
+            .collect();
+        for f in &r.ignored {
+            if crate::git::save_blob(&dir, &f.path)? != f.after {
+                clash.push(f.path.clone());
+            }
+        }
+        if !clash.is_empty() && !force {
+            return Ok(format!(
+                "not redone: you changed {} since the undo. `/redo force` redoes it anyway.",
+                list(&clash)
+            ));
+        }
+        crate::git::restore_paths(&dir, &r.files, &r.paths)?;
+        for f in &r.ignored {
+            crate::git::put_blob(&dir, &f.path, f.before.as_deref())?;
+        }
+        self.session.pop_redo()?;
+        self.session.push_checkpoint(r.checkpoint.clone())?;
+        self.session
+            .set_turn_record(&r.checkpoint, r.record.clone())?;
+        self.session.set_turn_checkpoint(Some(r.checkpoint))?;
+        self.emit(self.checkpoint_event())?;
+        let mut put = r.paths;
+        put.extend(r.ignored.into_iter().map(|f| f.path));
+        Ok(format!(
+            "redone: {} as the build turn left {}.",
+            list(&put),
+            if put.len() == 1 { "it" } else { "them" }
+        ))
     }
 
     /// Put one file back as `base` had it, from `/changes`. Snapshots the
@@ -1241,10 +1462,25 @@ impl Agent {
             let start = self.session.meta.checkpoints.last().cloned();
             self.session.set_turn_checkpoint(start)?;
         }
-        if let Some(sha) = crate::git::checkpoint(&dir, &name)? {
-            self.session.push_checkpoint(sha)?;
+        let sha = crate::git::checkpoint(&dir, &name)?;
+        if let Some(sha) = &sha {
+            self.session.push_checkpoint(sha.clone())?;
         }
-        crate::review::revert_file(&dir, base, path)
+        crate::review::revert_file(&dir, base, path)?;
+        // Recorded like a turn, so `/undo` brings back this one file and
+        // nothing the user changed around it.
+        if let Some(sha) = sha {
+            let after = crate::git::checkpoint(&dir, &format!("{name}-after"))?;
+            self.session.set_turn_record(
+                &sha,
+                crate::session::TurnRecord {
+                    after,
+                    ignored: Vec::new(),
+                },
+            )?;
+            self.session.clear_redo()?;
+        }
+        Ok(())
     }
 
     /// Draft a commit message for `paths` (changes since `HEAD`), from the
@@ -2310,6 +2546,130 @@ mod tests {
         assert!(msg.starts_with("undone"), "{msg}");
         assert_eq!(std::fs::read_to_string(&readme).unwrap(), "repo\n");
         assert!(agent.undo().unwrap().starts_with("nothing to undo"));
+    }
+
+    fn build_agent(turns: Vec<Vec<StreamDelta>>) -> (TempDir, TempDir, Agent) {
+        let (home, cwd, mut agent) = crew_setup(ReplayProvider::scripted(turns));
+        agent.role = Role::SoloBuild;
+        agent.ctx.role = Role::SoloBuild;
+        agent.ctx.always_approve = true;
+        (home, cwd, agent)
+    }
+
+    /// `/undo` puts back what the turn changed, and only that. Edits the
+    /// user made after the turn stay: it used to reset the whole project to
+    /// the snapshot, deleting their new files and reverting their edits.
+    #[tokio::test]
+    async fn undo_keeps_the_users_own_edits() {
+        let (_home, cwd, mut agent) =
+            build_agent(vec![write("README.md", "by the model\n"), say("done")]);
+        agent.turn("rewrite the readme").await.unwrap();
+        let d = cwd.path();
+        // The user, between messages, in their editor.
+        std::fs::write(d.join("hello.txt"), "edited by me").unwrap();
+        std::fs::write(d.join("mine.txt"), "my new file").unwrap();
+        let msg = agent.undo().unwrap();
+        assert!(msg.starts_with("undone"), "{msg}");
+        assert_eq!(
+            std::fs::read_to_string(d.join("README.md")).unwrap(),
+            "repo\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.join("hello.txt")).unwrap(),
+            "edited by me"
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.join("mine.txt")).unwrap(),
+            "my new file"
+        );
+    }
+
+    /// An undo that would lose the user's edits to the same file refuses and
+    /// says so; `force` goes ahead; `/redo` brings the user's version back.
+    #[tokio::test]
+    async fn undo_over_the_users_own_edit_asks_for_force_and_redo_reverses() {
+        let (_home, cwd, mut agent) =
+            build_agent(vec![write("README.md", "by the model\n"), say("done")]);
+        agent.turn("rewrite the readme").await.unwrap();
+        let readme = cwd.path().join("README.md");
+        std::fs::write(&readme, "by the model\nand then by me\n").unwrap();
+        let msg = agent.undo().unwrap();
+        assert!(
+            msg.starts_with("not undone: you changed README.md"),
+            "{msg}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&readme).unwrap(),
+            "by the model\nand then by me\n"
+        );
+        let msg = agent.undo_force().unwrap();
+        assert!(msg.contains("over your edits to README.md"), "{msg}");
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), "repo\n");
+        let msg = agent.redo().unwrap();
+        assert!(msg.starts_with("redone: README.md"), "{msg}");
+        assert_eq!(
+            std::fs::read_to_string(&readme).unwrap(),
+            "by the model\nand then by me\n"
+        );
+        assert_eq!(agent.redo().unwrap(), "nothing to redo");
+    }
+
+    /// Undo, redo, undo again: each reverses the other, and a new build turn
+    /// ends what `/redo` could reverse.
+    #[tokio::test]
+    async fn undo_and_redo_reverse_each_other_until_the_next_turn() {
+        let (_home, cwd, mut agent) = build_agent(vec![
+            write("new.txt", "from the model\n"),
+            say("done"),
+            write("other.txt", "x\n"),
+            say("done"),
+        ]);
+        agent.turn("add a file").await.unwrap();
+        let new = cwd.path().join("new.txt");
+        assert!(agent.undo().unwrap().starts_with("undone"));
+        assert!(!new.exists());
+        assert!(agent.redo().unwrap().starts_with("redone"));
+        assert!(new.exists());
+        assert!(agent.undo().unwrap().starts_with("undone"));
+        assert!(!new.exists());
+        agent.turn("add another").await.unwrap();
+        assert_eq!(agent.redo().unwrap(), "nothing to redo");
+    }
+
+    /// A gitignored file the model overwrote comes back too: snapshots skip
+    /// ignored files, so undo used to say "nothing to undo" and leave it.
+    #[tokio::test]
+    async fn undo_restores_an_ignored_file_the_model_wrote() {
+        let (_home, cwd, mut agent) =
+            build_agent(vec![write("local.cfg", "clobbered\n"), say("done")]);
+        let d = cwd.path();
+        std::fs::write(d.join(".gitignore"), "local.cfg\n").unwrap();
+        crate::git::git(d, &["add", ".gitignore"]).unwrap();
+        crate::git::git(
+            d,
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-qm",
+                "ignore",
+            ],
+        )
+        .unwrap();
+        std::fs::write(d.join("local.cfg"), "mine\n").unwrap();
+        agent.turn("set the config").await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(d.join("local.cfg")).unwrap(),
+            "clobbered\n"
+        );
+        let msg = agent.undo().unwrap();
+        assert!(msg.starts_with("undone"), "{msg}");
+        assert_eq!(
+            std::fs::read_to_string(d.join("local.cfg")).unwrap(),
+            "mine\n"
+        );
     }
 
     /// `/changes` and `/commit`: undoing one file keeps "last turn" where the

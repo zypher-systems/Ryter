@@ -2,6 +2,25 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-27 — `/undo` puts back what the turn changed, not the whole tree
+- **By:** lead
+- **Decision:**
+  - A build turn now records a snapshot when it ends as well as when it starts (`TurnRecord.after`, set by `finish_turn_record` however the turn ends). `/undo` restores only the paths that differ between the two (`git::paths_between`, `git::restore_paths`).
+  - When the user has since changed any of those paths, `/undo` refuses and names them. `/undo force` goes ahead.
+  - Each undo keeps the files as they were just before it, and just after it, as refs. `/redo` reverses it, with the same refusal for edits since the undo, and `/redo force`. A new build turn, or a `/changes` revert, clears what `/redo` could reverse.
+  - Before the build hat writes a gitignored file with `write` or `search_replace`, its content is saved as a git object (`TurnRecord.ignored`, `git::save_blob` / `put_blob`), because snapshots skip ignored files.
+  - A `/changes` single-file revert is recorded like a turn, so `/undo` brings back that one file.
+- **Chosen vs rejected:**
+  - Rejected a partial undo when some files clash. Half a turn undone can leave code that doesn't build, so the user decides with `force`.
+  - Rejected asking in a prompt. `/undo` is a direct command, and a refusal that names the files plus a `force` form keep it that way.
+  - Rejected snapshotting ignored files for shell commands. The gate can't know what a command will write.
+- **Why:** `/undo` reset the whole project to the snapshot, so a file the user created between turns was deleted and their own edits were reverted. The only copy left was an internal ref `/undo` couldn't reach. A gitignored file the model overwrote couldn't be undone at all ("nothing to undo"). Both were found in the 2026-09-26 audit and reproduced by tests before the fix.
+- **Where:** `crates/ryter-core/src/agent.rs` (`undo_with`, `redo_with`, `save_ignored`, `finish_turn_record`, `revert_file`), `git.rs`, `session.rs` (`TurnRecord`, `SavedFile`, `Redo`)
+- **Residual risk:**
+  - Sessions from before 0.5.2 have no end snapshot for their older checkpoints. Undoing one of those still restores everything since, as before, though `/redo` now reverses it.
+  - Ignored files changed by a shell command aren't saved.
+  - The `refs/ryter/undo/` refs accumulate per session, as before.
+
 ### 2026-09-27 — Audits are offered after changes, by Ryter, and `/second` is `/audit`
 - **By:** lead
 - **Decision:**
