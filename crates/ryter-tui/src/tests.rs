@@ -812,3 +812,65 @@ fn edit_rows_are_tinted_to_the_edge() {
         assert_ne!(bg_at(x, context), t.diff_del_bg);
     }
 }
+
+/// `/second`: the cost prompt, then the review in the chat with its verdict
+/// and cost.
+#[test]
+fn snapshot_second_opinion() {
+    let mut v = edited();
+    v.panels.push(Box::new(PermissionModal::new(
+        "second opinion".into(),
+        "x-ai/grok-4.7 on openrouter (your choice)\nreviews 2 files, +8 −1, read-only\nabout $0.02–$0.31 of your $5.00 limit\nyour last 4 reviews with it cost $0.03–$0.19".into(),
+    )));
+    all_sizes("modal-second-opinion", &v);
+    let mut v = edited();
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::SecondOpinion {
+            model: "anthropic/claude-opus-5.5".into(),
+            connection: "openrouter".into(),
+            verdict: Some(false),
+            body: "- **blocking** `app/server.js:6`: an empty query returns early, but `find` still runs on `undefined` when `q` is missing.\n- note: the test covers `\"\"` only.\n\nVERDICT: FAIL".into(),
+            total_usd: Some(0.04),
+        },
+    );
+    all_sizes("second-opinion", &v);
+}
+
+/// Choosing who gives second opinions: the catalog priced for this review,
+/// then the user's limit.
+#[test]
+fn snapshot_reviewer_chooser() {
+    let catalog = |id: &str, i: Option<f64>, o: Option<f64>| ryter_core::ModelInfo {
+        id: id.into(),
+        context_length: Some(256_000),
+        input_per_million: i,
+        output_per_million: o,
+        connection: Some("openrouter".into()),
+        created: None,
+        tools: Some(true),
+    };
+    let models = vec![
+        catalog("openai/gpt-5.5", Some(5.0), Some(15.0)),
+        catalog("x-ai/grok-4.7", Some(3.0), Some(15.0)),
+        catalog("z-ai/glm-5.3", Some(0.4), Some(1.6)),
+        catalog("moonshotai/kimi-k3", Some(1.0), Some(4.0)),
+        catalog("vendor/no-price", None, None),
+    ];
+    let mut v = edited();
+    let mut chooser = crate::panel::models::Models::for_review(&mut v, 18_000, true);
+    chooser.set_models(&v, &models);
+    v.panels.push(Box::new(chooser.clone()));
+    crate::panel::sync_composer(&mut v);
+    all_sizes("reviewer-chooser", &v);
+    let mut v = edited();
+    let mut c = chooser;
+    let _ = crate::panel::Panel::key(
+        &mut c,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &mut v,
+    );
+    v.panels.push(Box::new(c));
+    crate::panel::sync_composer(&mut v);
+    all_sizes("reviewer-limit", &v);
+}

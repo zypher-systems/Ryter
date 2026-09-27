@@ -25,11 +25,11 @@
 
 
 
-
-╭─ commands ───────────────────────────────────────────────── 5 of 30 ─╮
+╭─ commands ───────────────────────────────────────────────── 6 of 31 ─╮
 │ mo                                                                   │
 │›/models         Switch the lead's model                           ▸  │
 │ /tools          Tool permission mode                              ▸  │
+│ /second         A different model reviews your uncommitted change…   │
 │ /crew           Crew mode: a lead, an architect, parallel builde… ▸  │
 │ /solo           Leave crew mode: one model, Tab between build, pl…   │
 │ /skills         Browse, run, create, and remove skills and user … ▸  │

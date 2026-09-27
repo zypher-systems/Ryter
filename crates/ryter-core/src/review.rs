@@ -247,6 +247,18 @@ pub fn recent_subjects(dir: &Path, n: usize) -> Vec<String> {
 /// The diff of `paths`, file by file, capped for a model's context. The stat
 /// comes first, so a cut never hides the scope.
 pub fn draft_diff(dir: &Path, c: &Changes, paths: &[String]) -> String {
+    diff_within(dir, c, paths, DRAFT_DIFF_CHARS, DRAFT_FILE_CHARS)
+}
+
+/// The file list, then each file's diff, cut at `per_file` characters each
+/// and `total` in all.
+pub fn diff_within(
+    dir: &Path,
+    c: &Changes,
+    paths: &[String],
+    total: usize,
+    per_file: usize,
+) -> String {
     let mut out = String::new();
     for f in c.files.iter().filter(|f| paths.contains(&f.path)) {
         out.push_str(&format!(
@@ -259,13 +271,13 @@ pub fn draft_diff(dir: &Path, c: &Changes, paths: &[String]) -> String {
     }
     out.push('\n');
     for f in c.files.iter().filter(|f| paths.contains(&f.path)) {
-        if out.len() >= DRAFT_DIFF_CHARS {
+        if out.len() >= total {
             out.push_str("[more files' diffs left out]\n");
             break;
         }
         let d = file_diff(dir, c, &f.path);
-        if d.len() > DRAFT_FILE_CHARS {
-            let cut = (0..=DRAFT_FILE_CHARS)
+        if d.len() > per_file {
+            let cut = (0..=per_file)
                 .rev()
                 .find(|&i| d.is_char_boundary(i))
                 .unwrap_or(0);

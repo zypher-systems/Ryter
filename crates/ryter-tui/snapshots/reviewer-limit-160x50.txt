@@ -1,0 +1,50 @@
+ ryter  ·  build                                                                                        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ dusty
+ ▎ trim the query
+
+ · edit  app/server.js                                                                                                                             +2 −1  0.0s
+   3
+   4   app.get('/search', (req, res) => {
+   5 -   const q = req.query.q  ╭─ second opinion · your limit ─────────────────────────────────────────────── 5 · sort price ─╮
+   5 +   const q = (req.query.q │ z-ai/glm-5.3 on openrouter                                                                   │
+   6 +   if (!q) return res.json│ this review: about $0.01–$0.11                                                               │
+   7     res.json(find(q))      │                                                                                              │
+   8   })                       │ The most one review may spend, in dollars. Each review asks before it                        │
+ · write  test/search.test.js   │ runs and shows its estimate against this. Near the limit the reviewer                        │           new · 6 lines  0.0s
+   1 + import { test } from 'nod│ writes up what it has; a step that would pass it is never sent.                              │
+   2 + import assert from 'node:│                                                                                              │
+   3 +                          │ A large change reviewed by a strong model can cost $20 or more.                              │
+   4 + test('an empty query find│                                                                                              │
+   5 +   assert.deepEqual(await │                                                                                              │
+   6 + })                       │                                                                                              │
+                                │                                                                                              │
+ ───────────────────────────────│                                                                                              │ ─────────────────────────────
+                                │                                                                                              │
+                                │                                                                                              │
+                                │                                                                                              │
+                                │                                                                                              │
+                                │                                                                                              │
+                                │                                                                                              │
+                                │                                                                                              │
+                                ╰─ type dollars · enter save · esc back ───────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ · ✓ done · 2 tools · 0:02                                                                                                                     ^r  reasoning  ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+╭─ limit in dollars ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│› type limit in dollars…                                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move    enter select    tab next field    ? keys    esc back

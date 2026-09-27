@@ -106,6 +106,33 @@ pub enum AgentEvent {
         /// Short description.
         text: String,
     },
+    /// `/second` needs the user to choose who reviews and how much one
+    /// review may spend: nobody chose yet, the choice can't be used, or the
+    /// user asked to change it.
+    ReviewerNeeded {
+        /// Tokens the reviewer would start with, to price each model.
+        context_tokens: u64,
+        /// Run the review once a reviewer is chosen.
+        then_run: bool,
+        /// Why the choice is being asked for, when it isn't the first time.
+        #[serde(default)]
+        reason: String,
+    },
+    /// A second model reviewed the uncommitted work (`/second`).
+    SecondOpinion {
+        /// Reviewer model id.
+        model: String,
+        /// Its connection.
+        connection: String,
+        /// `Some(true)` for `VERDICT: PASS`, `Some(false)` for FAIL, `None`
+        /// when it gave neither.
+        verdict: Option<bool>,
+        /// The review, for the chat.
+        body: String,
+        /// What it cost; `None` when unpriced.
+        #[serde(default)]
+        total_usd: Option<f64>,
+    },
     /// A specialist finished.
     SubagentFinished {
         /// Child id.

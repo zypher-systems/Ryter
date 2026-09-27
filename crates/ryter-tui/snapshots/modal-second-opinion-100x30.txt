@@ -1,0 +1,30 @@
+ ryter  ·  build                            grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ dusty
+ ▎ trim the query
+            ┏━ second opinion? ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+ · edit  app│ x-ai/grok-4.7 on openrouter (your choice)                                │  −1  0.0s
+   3        │ reviews 2 files, +8 −1, read-only                                        │
+   4   app.g│ about $0.02–$0.31 of your $5.00 limit                                    │
+   5 -   con│ your last 4 reviews with it cost $0.03–$0.19                             │
+   5 +   con│                                                                          │
+   6 +   if │ y · ask it   n · not now                                                 │
+   7     res│                                                                          │
+   8   })   │                                                                          │
+ · write  te│                                                                          │ nes  0.0s
+   1 + impor╰─ y ask it · n not now ───────────────────────────────────────────────────╯
+   2 + import
+   3 +
+   4 + test('an empty query finds nothing', async () => {
+   5 +   assert.deepEqual(await search(''), [])
+   6 + })
+
+ ─────────────────────────── 2 files (1 new, 1 changed, +8 −1) · 2.1s ────────────────────────────
+
+
+ · ✓ done · 2 tools · 0:02                                                         ^r  reasoning  ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: plan · / for commands                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move    enter select    tab next field    ? keys    esc back

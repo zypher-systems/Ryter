@@ -506,6 +506,12 @@ fn loop_ui(
         // Drain everything that arrived since the last frame (`R-EVT-05`).
         while let Ok(ev) = ev_rx.try_recv() {
             events::apply(view, ev);
+            if let Some((tokens, then_run)) = view.reviewer_ask.take() {
+                let chooser = crate::panel::models::Models::for_review(view, tokens, then_run);
+                view.panels.push(Box::new(chooser));
+                crate::panel::sync_composer(view);
+                cx.send(crate::run::worker::Work::ListCrewModels);
+            }
             dirty = true;
         }
         while let Ok(n) = notice_rx.try_recv() {

@@ -91,10 +91,11 @@ meets the auditor rule on their first build.
 - **Tools:** read, search, the auditor's command allow-list (tests, linters,
   read-only git), judged by form: `cargo fmt --check` runs, `cargo fmt`
   doesn't. No edits, installs, or fixes.
-- **Second opinion (optional):** if an auditor model is configured, review can
-  run on that model instead of the current one, one keypress in the review
-  hat. That keeps the crew's best idea, independent review, in solo mode, at
-  the price of one review.
+- **Second opinion:** built as `/second`, in any solo hat. The user chooses
+  the reviewer from the live catalog, with each model priced for the review,
+  and sets a dollar limit per review. Every review asks first, and the limit
+  is kept before each step. It is the crew's best idea, independent review,
+  at the price of one review.
 
 ### crew
 - Exactly today's flow: the lead routes, the architect designs, builders run

@@ -2,6 +2,30 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-27 — Independent review comes to solo as `/second`; the user chooses the model and the limit
+- **By:** lead
+- **Decision:**
+  - `/second` has another model review the uncommitted diff and the conversation, under the review hat's gate, with its own prompt (`prompts/second.md`), through the crew's specialist loop (`crew::run_specialist`).
+  - **The user chooses the reviewer and a dollar limit per review,** in the models panel's review mode. Rows come from the live catalog of every connection with a key, each with a price range for this review. Excluded: the working model, and models without tools. Marked: same vendor. Refused: unpriced. Nothing is preset. The choice is saved in `~/.ryter/review.toml`.
+  - Every review asks first, with a range: one round at best, six exploring rounds at worst. Once there are two or more past reviews with the model, it also shows what those cost (`~/.ryter/reviews.jsonl`).
+  - **The limit is kept before each step** (`Bill::wrap_up_usd`). A step is priced from what it will send and isn't sent if it would pass the limit. With about one step's room left, or 75% spent, the reviewer gets no more tools and is told to write up. A stop keeps the text written so far (`Bill::last_text`).
+  - Reviews reason at `medium` unless the user set a level for the model. The diff given up front is larger than a commit draft's (60k characters in all, 16k per file).
+  - A saved reviewer that is gone, retired, or unpriced brings the chooser back. There is never a fallback.
+  - The review creates no files: `prompt::reading_messages` builds the prompt without creating project memory.
+- **Chosen vs rejected:**
+  - **Rejected auto-picking a reviewer** (`crew suggest`'s "strongest other vendor"), and **rejected tiers** ("thorough / balanced / light"). Models change too fast to curate. Ryter can't judge quality, only price. And any model Ryter picks is a bill Ryter picked: whoever didn't expect it blames the tool.
+  - **Rejected a fixed cap ($1.00).** Real reviews the user has run cost $25 (kimi-k3) and $90 (gpt-5.6-sol). A cap below the job cuts it off and leaves the user paying for nothing.
+  - **Rejected enforcing the limit after each call**, as the crew's task caps do. One expensive step would pass it with nothing to show.
+  - Rejected the model triggering reviews itself.
+  - Rejected building more crew setup first. The user found they don't reach for crew themselves.
+- **Why:** crew mode's value is unproven, and its setup is where people stop. What people want from it is "a second model signs off", which needs none of the crew.
+- **Where:** `crates/ryter-core/src/second.rs`, `crew.rs` (`Bill`, `run_specialist`), `meter.rs` (`price`), `config.rs` (`ReviewerConfig`), `prompt.rs` (`reading_messages`), `prompts/second.md`, `crates/ryter-tui/src/panel/models.rs` (`for_review`), `panel/modal.rs` (`question`)
+- **Residual risk:**
+  - Step prices are estimates: bytes ÷ 4, and output assumed at 4k. A model that writes far more in one step can pass the limit by that step's overage.
+  - Cost ranges are rough until there is history.
+  - Only uncommitted work can be reviewed.
+  - A price sort puts free models first, which is visible but still a nudge.
+
 ### 2026-09-26 — The shell gate reads a command the way the shell will
 - **By:** lead
 - **Decision:**

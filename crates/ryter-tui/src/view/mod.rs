@@ -111,6 +111,9 @@ pub struct View {
     pub cancelling: bool,
     /// `Ctrl+O`: every edit's diff shown whole instead of folded.
     pub diffs_expanded: bool,
+    /// `/second` needs a reviewer chosen: tokens to price for, and whether
+    /// to run once chosen. The run loop opens the chooser.
+    pub reviewer_ask: Option<(u64, bool)>,
     /// Project path shown in the header (`~/workspace/ryter`).
     pub cwd: String,
     /// Current git branch, if any.
@@ -308,6 +311,7 @@ impl View {
             busy: false,
             cancelling: false,
             diffs_expanded: false,
+            reviewer_ask: None,
             cwd,
             git_branch: None,
             perm_mode: "ask".into(),

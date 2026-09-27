@@ -246,6 +246,15 @@ impl Meter {
         Ok(())
     }
 
+    /// What `usage` of `model` would cost on `connection`; `None` when
+    /// unpriced.
+    pub fn price(&self, connection: &str, model: &str, usage: Usage) -> Option<f64> {
+        if self.free.contains(connection) {
+            return Some(0.0);
+        }
+        self.book.cost(model, usage)
+    }
+
     /// Totals for one task.
     pub fn task(&self, task: &str) -> Tally {
         let mut t = Tally::default();
