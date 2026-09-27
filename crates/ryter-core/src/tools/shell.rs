@@ -272,7 +272,7 @@ mod tests {
             hooks: None,
             cancel: cancel.clone(),
             user_io: None,
-            sticky_approve: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            allowed: Default::default(),
             web: false,
         };
         let waiter = cancel.clone();

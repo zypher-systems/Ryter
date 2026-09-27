@@ -7,15 +7,15 @@
    3
    4   app.get('/search', (req, res) => {
    5 -   const q = req.query.q  ╭─ audit · your limit ──────────────────────────────────────────────────────── 5 · sort price ─╮
-   5 +   const q = (req.query.q │ z-ai/glm-5.3 on openrouter                                                                   │
-   6 +   if (!q) return res.json│ this audit: about $0.01–$0.11                                                                │
-   7     res.json(find(q))      │                                                                                              │
-   8   })                       │ The most one audit may spend, in dollars. Each audit asks before it                          │
- · write  test/search.test.js   │ runs and shows its estimate against this. Near the limit the auditor                         │           new · 6 lines  0.0s
-   1 + import { test } from 'nod│ writes up what it has; a step that would pass it is never sent.                              │
-   2 + import assert from 'node:│                                                                                              │
-   3 +                          │ A large change audited by a strong model can cost $20 or more.                               │
-   4 + test('an empty query find│                                                                                              │
+   5 +   const q = (req.query.q │ limit in dollars: type a value                                                               │
+   6 +   if (!q) return res.json│ z-ai/glm-5.3 on openrouter                                                                   │
+   7     res.json(find(q))      │ this audit: about $0.01–$0.11                                                                │
+   8   })                       │                                                                                              │
+ · write  test/search.test.js   │ The most one audit may spend, in dollars. Each audit asks before it                          │           new · 6 lines  0.0s
+   1 + import { test } from 'nod│ runs and shows its estimate against this. Near the limit the auditor                         │
+   2 + import assert from 'node:│ writes up what it has; a step that would pass it is never sent.                              │
+   3 +                          │                                                                                              │
+   4 + test('an empty query find│ A large change audited by a strong model can cost $20 or more.                               │
    5 +   assert.deepEqual(await │                                                                                              │
    6 + })                       │                                                                                              │
                                 │                                                                                              │
@@ -27,9 +27,9 @@
                                 │                                                                                              │
                                 │                                                                                              │
                                 │                                                                                              │
-                                ╰─ type dollars · enter save · esc back ───────────────────────────────────────────────────────╯
-
-
+                                │                                                                                              │
+                                │ type dollars   enter save   esc back                                                         │
+                                ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 
 
 
@@ -45,6 +45,6 @@
  · ✓ done · 2 tools · 0:02                                                                                                                     ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ╭─ limit in dollars ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│› type limit in dollars…                                                                                                                                      │
+│› typing goes to the search in the panel above                                                                                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ type dollars    enter save    esc back

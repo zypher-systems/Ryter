@@ -14,11 +14,11 @@
     │                                                                      │
     │                                                                      │
     │                                                                      │
-    ╰─ enter open/toggle · r reconnect · d remove · esc  · changes apply… ─╯
-
+    │ enter open/toggle   r reconnect   d remove   esc                     │
+    ╰──────────────────────────────────────────────────────────────────────╯
 
 
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ enter open/toggle    r reconnect    d remove    esc

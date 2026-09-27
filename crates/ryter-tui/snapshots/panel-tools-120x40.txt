@@ -16,8 +16,8 @@
                            │ ○ always                                                       │
                            │    tools run without asking, including destructive ones.       │
                            │                                                                │
-                           ╰─ ↑↓ move · enter apply · esc  · changes apply immediately ─────╯
-
+                           │ ↑↓ move   enter apply   esc   changes apply immediately        │
+                           ╰────────────────────────────────────────────────────────────────╯
 
 
 
@@ -37,4 +37,4 @@
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · / for commands                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ ↑↓ move    enter apply    esc     changes apply immediately

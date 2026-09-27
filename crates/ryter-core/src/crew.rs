@@ -256,7 +256,7 @@ async fn build_inner(
         hooks: job.hooks.clone(),
         cancel: job.cancel.clone(),
         user_io: None,
-        sticky_approve: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        allowed: Default::default(),
         web: job.web,
     };
 
@@ -649,7 +649,7 @@ pub async fn land_patch(job: &BuildJob<'_>, patch: &crate::session::Patch) -> Re
         hooks: job.hooks.clone(),
         cancel: job.cancel.clone(),
         user_io: None,
-        sticky_approve: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        allowed: Default::default(),
         web: job.web,
     };
     let bill = Bill {
@@ -1042,7 +1042,7 @@ pub async fn run_note_task(
         hooks,
         cancel,
         user_io: None,
-        sticky_approve: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        allowed: Default::default(),
         web,
     };
     let msgs = specialist_messages(

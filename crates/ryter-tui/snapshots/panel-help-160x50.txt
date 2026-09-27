@@ -5,6 +5,7 @@
 
 
                                       ╭─ help ───────────────────────────────────────────────────────── [keys] commands ─╮
+                                      │ ⌕ type to filter                                                                 ┃
                                       │ GLOBAL                                                                           ┃
                                       │  ^c         clear composer → cancel turn → quit (double-press)                   ┃
                                       │  ^d         quit when the composer is empty                                      ┃
@@ -33,9 +34,8 @@
                                       │  enter      send                                                                 │
                                       │  ⇧enter     newline                                                              │
                                       │  ⌥enter     newline                                                              │
-                                      ╰─ ←→ tab · ↑↓ pgup pgdn scroll · type to filter · esc ────────────────────────────╯
-
-
+                                      │ ←→ section   ↑↓ scroll   pgup pgdn page   esc close                              │
+                                      ╰──────────────────────────────────────────────────────────────────────────────────╯
 
 
 
@@ -45,6 +45,6 @@
 
 
 ╭─ filter ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│› type filter…                                                                                                                                                │
+│› typing goes to the search in the panel above                                                                                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ ←→ section    ↑↓ scroll    pgup pgdn page    esc close

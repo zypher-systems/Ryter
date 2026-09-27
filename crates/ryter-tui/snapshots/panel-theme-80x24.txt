@@ -10,8 +10,8 @@
             │                                                      │
             │ ██████████████████████████  truecolor                │
             │                                                      │
-            ╰─ ↑↓ preview · enter apply · esc revert ──────────────╯
-
+            │ ↑↓ preview   enter apply   esc revert                │
+            ╰──────────────────────────────────────────────────────╯
 
 
 
@@ -21,4 +21,4 @@
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ ↑↓ preview    enter apply    esc revert

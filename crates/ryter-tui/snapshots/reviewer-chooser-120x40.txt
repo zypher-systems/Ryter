@@ -2,8 +2,8 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  dusty
  ▎ trim the query
-
- · edit  app╭─ audit · who audits? ─────────────────────────────────────────────────────── 5 · sort price ─╮2 −1  0.0s
+            ╭─ audit · who audits? ─────────────────────────────────────────────────────── 5 · sort price ─╮
+ · edit  app│ ⌕ type to filter                                                                             │  −1  0.0s
    3        │ Choose who audits your work. Nothing is preselected: prices are for this audit.              │
    4   app.g│ model                  this audit  in/M  out/M  connection                                   │
    5 -   con│›z-ai/glm-5.3          $0.01–$0.11  $0.4   $1.6  openrouter                                   │
@@ -24,8 +24,8 @@
             │                                                                                              │
             │                                                                                              │
             │ z-ai/glm-5.3: a different vendor from grok-4.6                                               │
-            ╰─ type to filter · ↑↓ move · enter choose · s sort · esc ─────────────────────────────────────╯
-
+            │ ↑↓ move   enter choose   s sort   esc close                                                  │
+            ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 
 
 
@@ -35,6 +35,6 @@
  · ✓ done · 2 tools · 0:02                                                                             ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ╭─ filter ─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│› type filter…                                                                                                        │
+│› typing goes to the search in the panel above                                                                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ ↑↓ move    enter choose    s sort    esc close

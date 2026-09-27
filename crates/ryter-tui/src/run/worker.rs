@@ -728,7 +728,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
             },
             cancel: b.cancel,
             user_io: Some(b.user_io),
-            sticky_approve: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            allowed: Default::default(),
             web: b.cfg.features.web,
         },
         connection: b.conn_name,

@@ -14,11 +14,11 @@
     │ ▸ galleon  high cost                                                 │
     │     heavy and costly: strong models in every seat. large or subtle   │
     │     work                                                             │
-    │ ◇ my current crew  start from what is set now                        │
-    ╰─ ↑↓ move · enter choose · esc close ─────────────────────────────────╯
+    │ ↑↓ move   enter choose   esc close                                   │
+    ╰──────────────────────────────────────────────────────────────────────╯
 
 
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ ↑↓ move    enter choose    esc close

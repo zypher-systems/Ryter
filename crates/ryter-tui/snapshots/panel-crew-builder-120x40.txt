@@ -1,8 +1,7 @@
  ryter  ·  build                                                grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  · system
-   welcome · /help for keys
-                  ╭─ crew builder ────────────────────────────────────────────────────────── 1 of 7 ─╮
+   welcome · /help╭─ crew builder ────────────────────────────────────────────────────────── 1 of 7 ─╮
                   │ step 1 of 7  starting point                                                      │
                   │  pick a starting point. you choose every seat next, with a recommendation beside │
                   │  each.                                                                           │
@@ -29,7 +28,8 @@
                   │                                                                                  │
                   │                                                                                  │
                   │                                                                                  │
-                  ╰─ ↑↓ move · enter choose · esc close ─────────────────────────────────────────────╯
+                  │ ↑↓ move   enter choose   esc close                                               │
+                  ╰──────────────────────────────────────────────────────────────────────────────────╯
 
 
 
@@ -37,4 +37,4 @@
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · / for commands                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ ↑↓ move    enter choose    esc close

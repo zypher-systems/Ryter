@@ -1,24 +1,24 @@
  ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  dus╭─ audit · your limit ──────────────────────────────── 5 · sort price ─╮4
- ‥‥‥│ z-ai/glm-5.3 on openrouter                                           │ ‥
+ ‥‥‥│ limit in dollars: type a value                                       │ ‥
+   5│ z-ai/glm-5.3 on openrouter                                           │
    5│ this audit: about $0.01–$0.11                                        │
-   5│                                                                      │
-   6│ The most one audit may spend, in dollars. Each audit asks before it  │
-   7│ runs and shows its estimate against this. Near the limit the auditor │
-   8│ writes up what it has; a step that would pass it is never sent.      │
- · w│                                                                      │ s
-   1│ A large change audited by a strong model can cost $20 or more.       │
-   2│                                                                      │
+   6│                                                                      │
+   7│ The most one audit may spend, in dollars. Each audit asks before it  │
+   8│ runs and shows its estimate against this. Near the limit the auditor │
+ · w│ writes up what it has; a step that would pass it is never sent.      │ s
+   1│                                                                      │
+   2│ A large change audited by a strong model can cost $20 or more.       │
    3│                                                                      │
    4│                                                                      │
-   5│                                                                      │
-   6╰─ type dollars · enter save · esc back ───────────────────────────────╯
+   5│ type dollars   enter save   esc back                                 │
+   6╰──────────────────────────────────────────────────────────────────────╯
 
  ───────────────── 2 files (1 new, 1 changed, +8 −1) · 2.1s ──────────────────
  · ✓ done · 2 tools · 0:02                                     ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────
 ╭─ limit in dollars ───────────────────────────────────────────────────────────╮
-│› type limit in dollars…                                                      │
+│› typing goes to the search in the panel above                                │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ type dollars    enter save    esc back

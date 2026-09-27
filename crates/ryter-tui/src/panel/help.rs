@@ -98,7 +98,11 @@ impl Panel for Help {
     }
 
     fn legend(&self, _view: &View) -> String {
-        "←→ tab · ↑↓ pgup pgdn scroll · type to filter · esc".into()
+        "←→ section · ↑↓ scroll · pgup pgdn page · esc close".into()
+    }
+
+    fn inline_input(&self) -> bool {
+        true
     }
 
     fn input(&self, _view: &View) -> Option<String> {

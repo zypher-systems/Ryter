@@ -14,11 +14,11 @@
       │ presets                                                          │
       │ + save preset  current assignment → ~/.ryter/crews/<name>.toml   │
       │   no presets yet                                                 │
-      │                                                                  │
-      ╰─ enter assign/apply · tab reasoning · b crew builder · r reset… ─╯
+      │ enter assign/apply   tab reasoning   b crew builder   r reset    │
+      ╰──────────────────────────────────────────────────────────────────╯
 
 
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ enter assign/apply    tab reasoning    b crew builder    r reset    esc

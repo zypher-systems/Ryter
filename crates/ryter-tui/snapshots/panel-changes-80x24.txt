@@ -9,8 +9,8 @@
     │ not a git repository                                                 │
     │                                                                      │
     │                                                                      │
-    │                                                                      │
-    ╰─ ↑↓ file · pgup/pgdn diff · tab scope · x undo file · c commit · r… ─╯
+    │ ↑↓ file   pgup/pgdn diff   tab scope   x undo file   c commit        │
+    ╰──────────────────────────────────────────────────────────────────────╯
 
 
 
@@ -21,4 +21,4 @@
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ ↑↓ file    pgup/pgdn diff    tab scope    x undo file    c commit    esc

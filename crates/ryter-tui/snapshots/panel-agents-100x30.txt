@@ -11,8 +11,8 @@
               │                                                                      │
               │                                                                      │
               │                                                                      │
-              │                                                                      │
-              ╰─ ↑↓ move · enter/k kill · K kill all · esc ──────────────────────────╯
+              │ ↑↓ move   enter/k kill   K kill all   esc                            │
+              ╰──────────────────────────────────────────────────────────────────────╯
 
 
 
@@ -27,4 +27,4 @@
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · / for commands                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ ↑↓ move    enter/k kill    K kill all    esc

@@ -1,24 +1,24 @@
  ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  dusty  trim the query                                                    ↑ 4
- ‥‥‥┏━ permission · second opinion ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓‥‥
-   5│ tool  second opinion                                                 │
-   5│                                                                      │
-   6│   x-ai/grok-4.7 on openrouter (your choice)                          │
-   7│   reviews 2 files, +8 −1, read-only                                  │
-   8│   about $0.02–$0.31 of your $5.00 limit                              │
- · w│   your last 4 reviews with it cost $0.03–$0.19                       │ s
-   1│                                                                      │
-   2│ y · allow   n · deny   a · allow all this session                    │
-   3│                                                                      │
-   4╰─ y allow once · n deny · a allow all this session ───────────────────╯
-   5
-   6 + })
-
- ───────────────── 2 files (1 new, 1 changed, +8 −1) · 2.1s ──────────────────
+ ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
+   5 -   const q = req.query.q
+   5 +   const q = (req.query.q || '').trim()
+   6 +   if (!q) return res.json([])
+   7     res.json(find(q))
+┏━ approve? ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│ what    second opinion  x-ai/grok-4.7 on openrouter (your choice)            │
+│   x-ai/grok-4.7 on openrouter (your choice)                                  │
+│   reviews 2 files, +8 −1, read-only                                          │
+│   about $0.02–$0.31 of your $5.00 limit                                      │
+│   your last 4 reviews with it cost $0.03–$0.19                               │
+│                                                                              │
+│                                                                              │
+│ ⏎ allow   n deny                                                             │
+╰──────────────────────────────────────────────────────────────────────────────╯
  · ✓ done · 2 tools · 0:02                                     ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ ⏎ allow    n deny

@@ -1,12 +1,13 @@
  ryter  ·  build                            grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  · syste╭─ help ───────────────────────────────────────────────────────── [keys] commands ─╮
-   welco│ GLOBAL                                                                           ┃
+   welco│ ⌕ type to filter                                                                 ┃
+        │ GLOBAL                                                                           ┃
         │  ^c         clear composer → cancel turn → quit (double-press)                   ┃
         │  ^d         quit when the composer is empty                                      ┃
         │  ^p         open the command palette                                             ┃
-        │  ^r         toggle the reasoning pane                                            ┃
-        │  ^b         toggle the info panel                                                ┃
+        │  ^r         toggle the reasoning pane                                            │
+        │  ^b         toggle the info panel                                                │
         │  ^o         show every edit and audit whole, or folded                           │
         │  ^l         redraw                                                               │
         │  ^g         release/grab the mouse (release it to select and copy text)          │
@@ -19,12 +20,11 @@
         │  ⇧↑         scroll one row up                                                    │
         │  ⇧↓         scroll one row down                                                  │
         │  ^home      top of the transcript                                                │
-        │  ^end       bottom (re-engages follow)                                           │
-        │  ^↑         previous turn / jump to the sticky message                           │
-        ╰─ ←→ tab · ↑↓ pgup pgdn scroll · type to filter · esc ────────────────────────────╯
+        │ ←→ section   ↑↓ scroll   pgup pgdn page   esc close                              │
+        ╰──────────────────────────────────────────────────────────────────────────────────╯
 
 
 ╭─ filter ─────────────────────────────────────────────────────────────────────────────────────────╮
-│› type filter…                                                                                    │
+│› typing goes to the search in the panel above                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ ←→ section    ↑↓ scroll    pgup pgdn page    esc close

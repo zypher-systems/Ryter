@@ -7,14 +7,14 @@
    3
    4   app.get('/search', (req, res) => {
    5 -   const q = req.query.q  ╭─ audit · who audits? ─────────────────────────────────────────────────────── 5 · sort price ─╮
-   5 +   const q = (req.query.q │ Choose who audits your work. Nothing is preselected: prices are for this audit.              │
-   6 +   if (!q) return res.json│ model                  this audit  in/M  out/M  connection                                   │
-   7     res.json(find(q))      │›z-ai/glm-5.3          $0.01–$0.11  $0.4   $1.6  openrouter                                   │
-   8   })                       │ moonshotai/kimi-k3    $0.02–$0.26    $1     $4  openrouter                                   │
- · write  test/search.test.js   │ x-ai/grok-4.7         $0.08–$0.86    $3    $15  openrouter                                   │           new · 6 lines  0.0s
-   1 + import { test } from 'nod│ openai/gpt-5.5        $0.11–$1.20    $5    $15  openrouter                                   │
-   2 + import assert from 'node:│ vendor/no-price     price unknown     ?      ?  openrouter                                   │
-   3 +                          │                                                                                              │
+   5 +   const q = (req.query.q │ ⌕ type to filter                                                                             │
+   6 +   if (!q) return res.json│ Choose who audits your work. Nothing is preselected: prices are for this audit.              │
+   7     res.json(find(q))      │ model                  this audit  in/M  out/M  connection                                   │
+   8   })                       │›z-ai/glm-5.3          $0.01–$0.11  $0.4   $1.6  openrouter                                   │
+ · write  test/search.test.js   │ moonshotai/kimi-k3    $0.02–$0.26    $1     $4  openrouter                                   │           new · 6 lines  0.0s
+   1 + import { test } from 'nod│ x-ai/grok-4.7         $0.08–$0.86    $3    $15  openrouter                                   │
+   2 + import assert from 'node:│ openai/gpt-5.5        $0.11–$1.20    $5    $15  openrouter                                   │
+   3 +                          │ vendor/no-price     price unknown     ?      ?  openrouter                                   │
    4 + test('an empty query find│                                                                                              │
    5 +   assert.deepEqual(await │                                                                                              │
    6 + })                       │                                                                                              │
@@ -26,10 +26,10 @@
                                 │                                                                                              │
                                 │                                                                                              │
                                 │                                                                                              │
+                                │                                                                                              │
                                 │ z-ai/glm-5.3: a different vendor from grok-4.6                                               │
-                                ╰─ type to filter · ↑↓ move · enter choose · s sort · esc ─────────────────────────────────────╯
-
-
+                                │ ↑↓ move   enter choose   s sort   esc close                                                  │
+                                ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 
 
 
@@ -45,6 +45,6 @@
  · ✓ done · 2 tools · 0:02                                                                                                                     ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ╭─ filter ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│› type filter…                                                                                                                                                │
+│› typing goes to the search in the panel above                                                                                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ ↑↓ move    enter choose    s sort    esc close

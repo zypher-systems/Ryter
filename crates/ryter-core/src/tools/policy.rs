@@ -889,6 +889,62 @@ fn cd_escapes(words: &[String], ctx: &ToolContext) -> bool {
     }
 }
 
+/// What `a` ("allow for this session") on a prompt for this command would
+/// cover: its program and subcommand (`cargo test`) for one command, the
+/// exact text for a chain. `None` when there is no command.
+pub(crate) fn command_scope(cmd: &str) -> Option<String> {
+    let segs = segments(cmd);
+    match segs.as_slice() {
+        [] => None,
+        [one] => {
+            let w = words(one);
+            let p = parse(&w);
+            let prog = p.prog?;
+            let sub = w[p.args.min(w.len())..]
+                .iter()
+                .find(|a| !a.starts_with('-') && !a.contains('=') && !a.contains('/'));
+            Some(match sub {
+                Some(s) => format!("{prog} {s}"),
+                None => prog.to_string(),
+            })
+        }
+        _ => Some(cmd.trim().to_string()),
+    }
+}
+
+/// A command whose damage an undo may not reach: it deletes, moves, or
+/// discards work (`rm`, `mv`, `find -delete`, `git reset --hard`, `git
+/// clean`, deleting a branch). Its prompt takes `y`, never a reflex Enter,
+/// and never "allow for this session".
+pub(crate) fn destructive_command(cmd: &str) -> bool {
+    segments(cmd).iter().any(|s| {
+        let w = words(s);
+        let p = parse(&w);
+        let Some(prog) = p.prog else { return false };
+        let args = &w[p.args.min(w.len())..];
+        let has = |f: &str| args.iter().any(|a| a == f);
+        if DESTRUCTIVE.contains(&prog) || deleting_find(prog, &w) {
+            return true;
+        }
+        if prog == "git" {
+            let sub = args
+                .iter()
+                .find(|a| !a.starts_with('-'))
+                .map(String::as_str);
+            return match sub {
+                Some("reset") => has("--hard") || has("--merge") || has("--keep"),
+                Some("clean") | Some("restore") => true,
+                Some("checkout") => has("--") || has(".") || has("-f") || has("--force"),
+                Some("stash") => has("drop") || has("clear"),
+                Some("branch") | Some("tag") => has("-d") || has("-D") || has("--delete"),
+                Some("push") => has("--force") || has("-f") || has("--delete"),
+                _ => false,
+            };
+        }
+        false
+    })
+}
+
 /// Why a `bash` call was refused, when the refusal has a known way round.
 /// Models reach for `python -c` and heredocs to probe code; told only "outside
 /// policy", an auditor in a live run gave up and hand-traced instead.
@@ -1918,7 +1974,6 @@ mod tests {
     use crate::cancel::Cancel;
     use crate::queue::TaskQueue;
     use serde_json::json;
-    use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
 
@@ -1933,7 +1988,7 @@ mod tests {
             hooks: None,
             cancel: Cancel::new(),
             user_io: None,
-            sticky_approve: Arc::new(AtomicBool::new(false)),
+            allowed: Default::default(),
             web: false,
         }
     }
@@ -2272,6 +2327,43 @@ mod tests {
         ];
         for (input, want) in cases {
             assert_eq!(program(&words(input)).unwrap(), *want, "program({input:?})");
+        }
+    }
+
+    #[test]
+    fn allow_for_the_session_names_a_kind_of_command_and_destruction_is_marked() {
+        assert_eq!(
+            command_scope("cargo test --workspace").as_deref(),
+            Some("cargo test")
+        );
+        assert_eq!(
+            command_scope("RUST_LOG=1 cargo build").as_deref(),
+            Some("cargo build")
+        );
+        assert_eq!(command_scope("ls").as_deref(), Some("ls"));
+        assert_eq!(
+            command_scope("npm ci && npm test").as_deref(),
+            Some("npm ci && npm test")
+        );
+        for d in [
+            "rm -rf target",
+            "mv a b",
+            "find . -name '*.o' -delete",
+            "git reset --hard HEAD~1",
+            "git clean -fdx",
+            "git checkout -- .",
+            "git branch -D old",
+            "cargo test && rm x",
+        ] {
+            assert!(destructive_command(d), "{d}");
+        }
+        for ok in [
+            "cargo test",
+            "git commit -m x",
+            "git checkout main",
+            "npm install",
+        ] {
+            assert!(!destructive_command(ok), "{ok}");
         }
     }
 

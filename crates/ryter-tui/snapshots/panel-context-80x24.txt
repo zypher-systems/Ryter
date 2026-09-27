@@ -11,8 +11,8 @@
         │ c compact · summarizes older turns                           │
         │                                                              │
         │                                                              │
-        ╰─ c compact · r refresh · esc ────────────────────────────────╯
-
+        │ c compact   r refresh   esc                                  │
+        ╰──────────────────────────────────────────────────────────────╯
 
 
 
@@ -21,4 +21,4 @@
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab next field    ? keys    esc back
+ c compact    r refresh    esc

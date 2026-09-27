@@ -5,7 +5,6 @@ mod policy;
 pub(crate) mod shell;
 mod web;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
@@ -17,6 +16,39 @@ use crate::role::Role;
 
 pub use fs::changed_lines;
 pub(crate) use policy::resolve;
+
+/// What `a` ("allow for this session") on this call's prompt would cover:
+/// a key, and the words for it. `None` when the prompt must not offer it.
+pub fn allow_scope(name: &str, args: &Value) -> Option<(String, String)> {
+    match name {
+        "write" | "search_replace" => Some(("edit".into(), "edits to files in the project".into())),
+        "bash" => {
+            let cmd = args.get("command").and_then(Value::as_str)?;
+            if policy::destructive_command(cmd) {
+                return None;
+            }
+            let scope = policy::command_scope(cmd)?;
+            let label = if scope.contains("&&") || scope.contains(';') || scope.contains('|') {
+                "this exact command".to_string()
+            } else {
+                format!("`{scope}` commands")
+            };
+            Some((format!("bash:{scope}"), label))
+        }
+        "propose_edit" => None,
+        other => Some((other.to_string(), format!("{other} calls"))),
+    }
+}
+
+/// A prompt a reflex key must not answer: destruction the undo may not
+/// reach. The TUI takes only `y` for these.
+pub fn strict_prompt(name: &str, args: &Value) -> bool {
+    name == "bash"
+        && args
+            .get("command")
+            .and_then(Value::as_str)
+            .is_some_and(policy::destructive_command)
+}
 pub use policy::{Decision, decide};
 
 /// Runtime context for a tool call.
@@ -40,8 +72,9 @@ pub struct ToolContext {
     pub cancel: Arc<crate::cancel::Cancel>,
     /// TUI permission / ask_user prompts. Headless is `None` (Ask fails closed).
     pub user_io: Option<crate::user_io::UserIo>,
-    /// Session-sticky Ask→Allow (`a` in the TUI).
-    pub sticky_approve: Arc<AtomicBool>,
+    /// Kinds of action the user allowed for this session with `a` (edits
+    /// to project files, `cargo test`, …); see [`allow_scope`].
+    pub allowed: Arc<Mutex<std::collections::HashSet<String>>>,
     /// `[features] web`.
     pub web: bool,
 }
@@ -500,7 +533,11 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
                  project only. Work inside the project instead"
             ))),
         },
-        Decision::Ask if ctx.always_approve || ctx.sticky_approve.load(Ordering::SeqCst) => {
+        Decision::Ask
+            if ctx.always_approve
+                || allow_scope(name, args)
+                    .is_some_and(|(key, _)| ctx.allowed.lock().is_ok_and(|a| a.contains(&key))) =>
+        {
             run_with_hooks(name, args, ctx)
         }
         // Say which gate refused. "not allowed for <role>" on every denial
@@ -543,11 +580,25 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
         Decision::Ask => match &ctx.user_io {
             Some(io) => {
                 let summary = crate::user_io::summary_args(name, args);
-                match io.permission_with(name, &summary, fs::preview(name, args, ctx), &ctx.cancel)
-                {
+                let scope = allow_scope(name, args);
+                let answer = io.ask_tool(
+                    crate::user_io::ToolAsk {
+                        tool: name.to_string(),
+                        summary: summary.clone(),
+                        preview: fs::preview(name, args, ctx),
+                        strict: strict_prompt(name, args),
+                        scope: scope.as_ref().map(|(_, label)| label.clone()),
+                    },
+                    &ctx.cancel,
+                );
+                match answer {
                     crate::user_io::Permission::Allow => run_with_hooks(name, args, ctx),
+                    // `a`: this kind of action, for the session. It used to
+                    // allow everything, which is why it took two presses.
                     crate::user_io::Permission::Always => {
-                        ctx.sticky_approve.store(true, Ordering::SeqCst);
+                        if let (Some((key, _)), Ok(mut a)) = (scope, ctx.allowed.lock()) {
+                            a.insert(key);
+                        }
                         run_with_hooks(name, args, ctx)
                     }
                     crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
@@ -613,7 +664,7 @@ mod tests {
             hooks: None,
             cancel: crate::cancel::Cancel::new(),
             user_io: None,
-            sticky_approve: Arc::new(AtomicBool::new(false)),
+            allowed: Default::default(),
             web: false,
         }
     }
@@ -856,7 +907,7 @@ mod tests {
         let (io, rx) = crate::user_io::UserIo::pair();
         let mut c = ctx(Role::Orchestrator, dir.path());
         c.user_io = Some(io);
-        let sticky = c.sticky_approve.clone();
+        let allowed = c.allowed.clone();
         let worker = std::thread::spawn(move || gated_execute("propose_edit", &args, &c).unwrap());
         match rx.recv_timeout(std::time::Duration::from_secs(2)) {
             Ok(crate::user_io::UserRequest::Permission { summary, reply, .. }) => {
@@ -874,8 +925,9 @@ mod tests {
             std::fs::read_to_string(dir.path().join("config.toml")).unwrap(),
             "retries = 5\n"
         );
-        // "allow all" must not turn later proposals into silent writes.
-        assert!(!sticky.load(Ordering::SeqCst));
+        // "allow for the session" must not turn later proposals into
+        // silent writes: a proposal has no scope to allow.
+        assert!(allowed.lock().unwrap().is_empty());
     }
 
     /// No person, no fast path — whatever blanket approval is configured.
@@ -885,7 +937,7 @@ mod tests {
         let args = propose(dir.path());
         let mut c = ctx(Role::Orchestrator, dir.path());
         c.always_approve = true;
-        c.sticky_approve.store(true, Ordering::SeqCst);
+        c.allowed.lock().unwrap().insert("edit".into());
         let out = gated_execute("propose_edit", &args, &c).unwrap();
         assert!(
             out.is_error && out.text.contains("queue it as a task"),
@@ -907,7 +959,7 @@ mod tests {
         let args = json!({"path": target.to_string_lossy(), "content": "hi"});
         let mut c = ctx(Role::SoloBuild, dir.path());
         c.always_approve = true;
-        c.sticky_approve.store(true, Ordering::SeqCst);
+        c.allowed.lock().unwrap().insert("edit".into());
         let out = gated_execute("write", &args, &c).unwrap();
         assert!(
             out.is_error && out.text.contains("outside the project"),
@@ -1147,5 +1199,78 @@ mod edit_tests {
         std::fs::write(real.path().join("f.txt"), "a\n").unwrap();
         let out = edit(&link, "a\n", "b\n");
         assert_eq!(out.diff.expect("a diff").path, "f.txt");
+    }
+}
+
+#[cfg(test)]
+mod allow_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// `a` allows the kind of action it named, for the session, and nothing
+    /// else: it used to allow every later call, destructive ones included.
+    #[test]
+    fn allow_for_the_session_covers_only_what_it_named() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut c = tests::ctx(Role::SoloBuild, dir.path());
+        let (io, rx) = crate::user_io::UserIo::pair();
+        c.user_io = Some(io);
+        let answers = std::thread::spawn(move || {
+            let mut asked = Vec::new();
+            while let Ok(req) = rx.recv() {
+                if let crate::user_io::UserRequest::Permission {
+                    summary,
+                    strict,
+                    scope,
+                    reply,
+                    ..
+                } = req
+                {
+                    asked.push((summary.clone(), strict, scope.clone()));
+                    let _ = reply.send(if scope.is_some() {
+                        crate::user_io::Permission::Always
+                    } else {
+                        crate::user_io::Permission::Deny
+                    });
+                }
+            }
+            asked
+        });
+        let run = |cmd: &str| gated_execute("bash", &json!({"command": cmd}), &c).unwrap();
+        run("mkdir build");
+        run("mkdir -p build");
+        run("mkdir other");
+        run("rm -rf other");
+        drop(c);
+        let asked = answers.join().unwrap();
+        let summaries: Vec<&str> = asked.iter().map(|(s, _, _)| s.as_str()).collect();
+        // The second `mkdir build` is covered by the first `a`; `mkdir
+        // other` is another kind; `rm` asks, strict, with no `a`.
+        assert_eq!(
+            summaries,
+            vec!["mkdir build", "mkdir other", "rm -rf other"],
+            "{asked:?}"
+        );
+        assert_eq!(asked[0].2.as_deref(), Some("`mkdir build` commands"));
+        assert!(asked[2].1, "rm is strict");
+        assert_eq!(asked[2].2, None, "no allow-for-session on destruction");
+    }
+
+    #[test]
+    fn scopes_name_what_a_would_allow() {
+        assert_eq!(
+            allow_scope("bash", &json!({"command": "cargo test --workspace"})),
+            Some(("bash:cargo test".into(), "`cargo test` commands".into()))
+        );
+        assert_eq!(
+            allow_scope("search_replace", &json!({"path": "a.rs"})).map(|s| s.1),
+            Some("edits to files in the project".into())
+        );
+        assert_eq!(
+            allow_scope("bash", &json!({"command": "rm -rf target"})),
+            None
+        );
+        assert!(strict_prompt("bash", &json!({"command": "git clean -fdx"})));
+        assert!(!strict_prompt("bash", &json!({"command": "cargo test"})));
     }
 }

@@ -107,8 +107,10 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     if view.panels.is_empty() {
         palette::draw(frame, chat, comp.y, view, theme);
     }
-    panel::draw(frame, full, body, view, theme);
-    if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
+    let panel_cursor = panel::draw(frame, full, body, view, theme);
+    if panel_cursor.is_some() {
+        composer::draw::paint_cursor(frame, panel_cursor, theme);
+    } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
         composer::draw::paint_cursor(frame, cursor, theme);
     }
     Hit {
@@ -319,13 +321,13 @@ pub enum Hint {
 }
 
 /// Context hints with their priority.
-pub fn hints_ranked(view: &View) -> Vec<(&'static str, String, Hint)> {
+pub fn hints_ranked(view: &View) -> Vec<(String, String, Hint)> {
     hints(view)
         .into_iter()
         .map(|(k, l)| {
-            let rank = match k {
+            let rank = match k.as_str() {
                 // Getting out: cancel, quit, and the permission answers.
-                "^c" | "esc" | "^d" | "y" | "n" | "a" => Hint::Essential,
+                "^c" | "esc" | "^d" | "y" | "n" | "a" | "⏎" => Hint::Essential,
                 // Discoverable without the bar, so first to go.
                 "⇧enter" | "^r" | "end" => Hint::Optional,
                 // `enter` included: everyone knows Enter sends.
@@ -336,21 +338,24 @@ pub fn hints_ranked(view: &View) -> Vec<(&'static str, String, Hint)> {
         .collect()
 }
 
-pub fn hints(view: &View) -> Vec<(&'static str, String)> {
+pub fn hints(view: &View) -> Vec<(String, String)> {
+    hints_static(view)
+        .into_iter()
+        .map(|(k, l)| (k.to_string(), l))
+        .collect()
+}
+
+fn hints_static(view: &View) -> Vec<(&'static str, String)> {
     if let Some(until) = view.quit_armed_until {
         if view.now_ms <= until {
             return vec![("^c", "press ^c again to quit".into())];
         }
     }
-    if let Some(p) = view.panels.top() {
-        let _ = p;
-        return vec![
-            ("↑↓", "move".into()),
-            ("enter", "select".into()),
-            ("tab", "next field".into()),
-            ("?", "keys".into()),
-            ("esc", "back".into()),
-        ];
+    if view.panels.top().is_some() {
+        // The open panel's own keys, as its last row lists them: the bar
+        // used to offer form keys (`tab next field`) even on a permission
+        // prompt, which takes ⏎, a and n.
+        return Vec::new();
     }
     if view.palette.is_some() {
         return vec![
@@ -392,6 +397,21 @@ fn hint_width(key: &str, label: &str, first: bool) -> usize {
 fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let w = area.width as usize;
     let mut items = hints_ranked(view);
+    if let Some(p) = view.panels.top() {
+        items = p
+            .legend(view)
+            .split(" · ")
+            .filter(|i| !i.trim().is_empty())
+            .map(|i| {
+                let (k, l) = i.split_once(' ').unwrap_or((i, ""));
+                let rank = match k {
+                    "esc" | "⏎" | "y" | "n" | "a" => Hint::Essential,
+                    _ => Hint::Useful,
+                };
+                (k.to_string(), l.to_string(), rank)
+            })
+            .collect();
+    }
     // Drop the least important hints until the rest fit, rather than chopping
     // whatever happens to be last.
     loop {
@@ -420,7 +440,7 @@ fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
             spans.push(Span::styled("    ", theme.body()));
         }
         spans.push(Span::styled(
-            (*key).to_string(),
+            key.clone(),
             theme.body().add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(format!(" {label}"), theme.muted()));
