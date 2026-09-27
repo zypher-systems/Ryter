@@ -169,32 +169,27 @@ enum Unusable {
 }
 
 impl Agent {
-    /// Ask the user's chosen reviewer to review the uncommitted work. With no
-    /// usable choice, asks the user to choose ([`AgentEvent::ReviewerNeeded`])
-    /// and runs nothing. Emits [`AgentEvent::TurnStarted`] and
-    /// [`AgentEvent::TurnFinished`] around it, so it shows as busy and `Esc`
-    /// stops it. Returns the review, or an empty string when none ran.
+    /// `/audit`: the user's chosen reviewer reviews the uncommitted work,
+    /// after the user agrees to what it should cost. With no usable choice,
+    /// asks the user to choose ([`AgentEvent::ReviewerNeeded`]) and runs
+    /// nothing. Returns the review, or an empty string when none ran.
     pub async fn second_opinion(&mut self) -> Result<String> {
-        let turn = crate::agent::next_turn();
-        let started = std::time::Instant::now();
-        self.emit(AgentEvent::TurnStarted { turn })?;
-        let out = self.second_inner().await;
-        if matches!(out, Err(Error::Cancelled)) {
-            self.kill_all_children();
-            let _ = self.emit(AgentEvent::Cancelled);
-        }
-        let _ = self.emit(AgentEvent::TurnFinished {
-            turn,
-            tools: 0,
-            duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        });
-        match out {
-            Err(Error::Cancelled) => Ok(String::new()),
-            other => other,
-        }
+        self.audit(false).await
     }
 
-    /// `/second model`: ask the user to choose again, priced for the work
+    /// At the end of a build turn that changed files: offer an audit, with
+    /// what it would cost, unless the user turned offers off. Saying yes
+    /// runs it; there is no second question. Nothing when there is nothing
+    /// uncommitted to review.
+    pub async fn offer_audit(&mut self) -> Result<String> {
+        let offers = self.cfg.as_ref().is_some_and(|c| c.ui.offer_audit);
+        if !offers || self.role != Role::SoloBuild || self.ctx.user_io.is_none() {
+            return Ok(String::new());
+        }
+        self.audit(true).await
+    }
+
+    /// `/audit model`: ask the user to choose again, priced for the work
     /// there is to review now.
     pub fn choose_reviewer(&mut self) -> Result<()> {
         let context_tokens = match self.review_job()? {
@@ -220,7 +215,7 @@ impl Agent {
     fn review_job(&mut self) -> Result<std::result::Result<Job, String>> {
         let Ok(root) = crate::review::root(&self.ctx.workspace) else {
             return Ok(Err(
-                "a second opinion reads what changed, which needs a git repository".into(),
+                "an audit reads what changed, which needs a git repository".into(),
             ));
         };
         let base = crate::review::head_base(&root);
@@ -263,26 +258,52 @@ impl Agent {
         }))
     }
 
-    async fn second_inner(&mut self) -> Result<String> {
+    /// Ask, then run. `offered`: Ryter is offering at the end of a build
+    /// turn, so a "no" says nothing, and the prompt can stop the offers.
+    async fn audit(&mut self, offered: bool) -> Result<String> {
         if !self.role.is_solo() {
-            return self.say(
-                "second opinions are for solo mode; in crew mode every task already has an auditor",
-            );
+            return self
+                .say("audits are for solo mode; in crew mode every task already has an auditor");
         }
         let job = match self.review_job()? {
             Ok(job) => job,
+            Err(_) if offered => return Ok(String::new()),
             Err(why) => return self.say(why),
         };
         let reviewer = match self.reviewer().await {
             Ok(r) => r,
             Err(why) => {
+                let reason = match why {
+                    Unusable::Unchosen => String::new(),
+                    Unusable::Because(s) => s,
+                };
+                // Offered with no reviewer: ask whether to choose one, rather
+                // than open a chooser nobody asked for.
+                if offered {
+                    let Some(io) = self.ctx.user_io.clone() else {
+                        return Ok(String::new());
+                    };
+                    let why = if reason.is_empty() {
+                        "nobody is chosen to audit yet".to_string()
+                    } else {
+                        reason.clone()
+                    };
+                    let answer = io.permission(
+                        "audit offer",
+                        &format!(
+                            "Audit this work with a second model before you commit?\n{why}: \
+                             y to choose a model and your limit per audit"
+                        ),
+                        &self.ctx.cancel,
+                    );
+                    if answer != crate::user_io::Permission::Allow {
+                        return Ok(String::new());
+                    }
+                }
                 self.emit(AgentEvent::ReviewerNeeded {
                     context_tokens: job.context_tokens,
                     then_run: true,
-                    reason: match why {
-                        Unusable::Unchosen => String::new(),
-                        Unusable::Because(s) => s,
-                    },
+                    reason: if offered { String::new() } else { reason },
                 })?;
                 return Ok(String::new());
             }
@@ -314,22 +335,57 @@ impl Agent {
             s
         };
         let summary = format!(
-            "{model} on {connection} (your choice)\nreviews {} file{}, +{} −{}, read-only\n{cost}",
+            "{}{model} on {connection} (your choice)\nreviews {} file{}, +{} −{}, read-only\n{cost}",
+            if offered {
+                "Audit this work before you commit?\n"
+            } else {
+                ""
+            },
             job.files,
             if job.files == 1 { "" } else { "s" },
             job.added,
             job.removed,
         );
         if let Some(io) = self.ctx.user_io.clone() {
-            let answer = io.permission("second opinion", &summary, &self.ctx.cancel);
+            let tool = if offered { "audit offer" } else { "audit" };
+            let answer = io.permission(tool, &summary, &self.ctx.cancel);
             if self.ctx.cancel.is_cancelled() {
-                return Err(Error::Cancelled);
+                return Ok(String::new());
             }
-            if answer == crate::user_io::Permission::Deny {
-                return self.say("second opinion not run");
+            match answer {
+                crate::user_io::Permission::Allow => {}
+                _ if offered => return Ok(String::new()),
+                _ => return self.say("audit not run"),
             }
         }
 
+        // Only now is it a turn: busy, and `Esc` stops it. An offer
+        // declined leaves the build turn's summary on screen.
+        let turn = crate::agent::next_turn();
+        let started = std::time::Instant::now();
+        self.emit(AgentEvent::TurnStarted { turn })?;
+        let out = self.run_audit(reviewer, job).await;
+        if matches!(out, Err(Error::Cancelled)) {
+            self.kill_all_children();
+            let _ = self.emit(AgentEvent::Cancelled);
+        }
+        let _ = self.emit(AgentEvent::TurnFinished {
+            turn,
+            tools: 0,
+            duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        });
+        match out {
+            Err(Error::Cancelled) => Ok(String::new()),
+            other => other,
+        }
+    }
+
+    async fn run_audit(&mut self, reviewer: Reviewer, job: Job) -> Result<String> {
+        let ReviewerConfig {
+            connection,
+            model,
+            limit_usd,
+        } = reviewer.choice.clone();
         let cfg = self.cfg.clone().unwrap_or_default();
         let caps = Caps {
             session_usd: self.budget_usd,
@@ -392,7 +448,7 @@ impl Agent {
             // the user didn't choose.
             Err(e) => {
                 return self.say(format!(
-                    "the reviewer {model} failed: {e}. `/second model` chooses another."
+                    "the auditor {model} failed: {e}. `/audit model` chooses another."
                 ));
             }
         };
@@ -408,12 +464,12 @@ impl Agent {
         if text.is_empty() {
             return self.say(if cut_short {
                 format!(
-                    "no review: {stopped}. {} spent. `/second model` can raise the limit.",
+                    "no audit: {stopped}. {} spent. `/audit model` can raise the limit.",
                     total.label()
                 )
             } else {
                 format!(
-                    "{model} finished without writing a review ({} spent)",
+                    "{model} finished without writing an audit ({} spent)",
                     total.label()
                 )
             });

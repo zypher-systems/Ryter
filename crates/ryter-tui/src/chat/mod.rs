@@ -3,6 +3,9 @@
 //! `Message` replaces the old `LogLine`. Every message opens with a speaker
 //! header row; bodies are left-aligned for every kind (`R-CHAT-09`).
 
+/// Rows an audit shows before folding, unless edits are shown whole.
+pub const AUDIT_ROWS: usize = 14;
+
 pub mod cache;
 pub mod diff;
 pub mod highlight;
@@ -385,8 +388,13 @@ pub fn render_message(msg: &Message, opts: &RenderOpts, theme: Theme) -> Vec<Lin
         return out;
     }
     // Bodies indent one column; user bodies carry a `▎` rule (`R-CHAT-10`).
+    // An audit carries a rule in the auditor's color on every row, so any
+    // slice of it on screen reads as the audit, not the model at work, even
+    // when its header has scrolled away.
+    let audit = matches!(&msg.kind, MessageKind::Specialist { role, .. } if role == "audit");
     let (gutter, gutter_style) = match msg.kind {
         MessageKind::User => ("▎", Style::default().fg(theme.user).bg(theme.bg)),
+        _ if audit => ("┃", Style::default().fg(theme.audit).bg(theme.bg)),
         _ => (" ", theme.body()),
     };
     let inner = width.saturating_sub(2).max(8);
@@ -436,6 +444,19 @@ pub fn render_message(msg: &Message, opts: &RenderOpts, theme: Theme) -> Vec<Lin
                 .collect()
         }
     };
+    // A long audit folds like a long edit: its findings come most serious
+    // first, and the verdict is in the header. Unfolded, it took the whole
+    // chat and pushed the work it audited off the screen.
+    let mut body_rows = body_rows;
+    // Folding away a line or two hides more than it saves.
+    if audit && opts.diff_rows != usize::MAX && body_rows.len() >= AUDIT_ROWS + 4 {
+        let rest = body_rows.len() - AUDIT_ROWS;
+        body_rows.truncate(AUDIT_ROWS);
+        body_rows.push(Line::from(Span::styled(
+            format!("… {rest} more lines · ^O shows it whole"),
+            theme.muted().add_modifier(Modifier::ITALIC),
+        )));
+    }
     for row in body_rows {
         let mut spans = vec![
             Span::styled(gutter, gutter_style),

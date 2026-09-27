@@ -27,7 +27,7 @@
                         │  username                                                    default ┃
                         │  reasoning             ‹ collapsed ›                         default ┃
                         │  mouse                 [ on ]                                default ┃
-                        │  panel                 [ on ]                                default ┃
+                        │  panel                 [ on ]                                default │
                         │  timestamps            [ off ]                                config │
                         ╰─ ↑↓ move · space/←→ change · enter edit · esc done ──────────────────╯
 

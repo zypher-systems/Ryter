@@ -189,7 +189,7 @@ pub const KEYMAP: &[Binding] = &[
         Ctx::Global,
         "Ctrl+O",
         KeyAction::ToggleDiffs,
-        "show every edit whole, or folded",
+        "show every edit and audit whole, or folded",
     ),
     b(Ctx::Global, "Ctrl+L", KeyAction::Redraw, "redraw"),
     b(

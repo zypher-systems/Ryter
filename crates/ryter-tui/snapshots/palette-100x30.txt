@@ -19,7 +19,7 @@
 │ mo                                                          │ ╰──────────────────────────────────╯
 │›/models         Switch the lead's model                  ▸  │
 │ /tools          Tool permission mode                     ▸  │
-│ /second         A different model reviews your uncommitt…   │
+│ /audit          A second model reviews your uncommitted …   │
 │ /crew           Crew mode: a lead, an architect, parall… ▸  │
 │ /solo           Leave crew mode: one model, Tab between …   │
 │ /skills         Browse, run, create, and remove skills … ▸  │

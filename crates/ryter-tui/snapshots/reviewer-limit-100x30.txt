@@ -1,14 +1,14 @@
  ryter  ·  build                            grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- dus╭─ second opinion · your limit ─────────────────────────────────────────── 5 · sort price ─╮
+ dus╭─ audit · your limit ──────────────────────────────────────────────────── 5 · sort price ─╮
  ▎ t│ z-ai/glm-5.3 on openrouter                                                               │
-    │ this review: about $0.01–$0.11                                                           │
+    │ this audit: about $0.01–$0.11                                                            │
  · e│                                                                                          │ s
-   3│ The most one review may spend, in dollars. Each review asks before it                    │
-   4│ runs and shows its estimate against this. Near the limit the reviewer                    │
+   3│ The most one audit may spend, in dollars. Each audit asks before it                      │
+   4│ runs and shows its estimate against this. Near the limit the auditor                     │
    5│ writes up what it has; a step that would pass it is never sent.                          │
    5│                                                                                          │
-   6│ A large change reviewed by a strong model can cost $20 or more.                          │
+   6│ A large change audited by a strong model can cost $20 or more.                           │
    7│                                                                                          │
    8│                                                                                          │
  · w│                                                                                          │ s

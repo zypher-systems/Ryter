@@ -68,8 +68,10 @@ pub enum Work {
     Undo,
     /// `/second`: another model reviews the uncommitted work.
     SecondOpinion,
-    /// `/second model`: ask the user to choose the reviewer again.
+    /// `/audit model`: ask the user to choose the reviewer again.
     ChooseReviewer,
+    /// Offer an audit after build turns, or not.
+    SetOfferAudit(bool),
     /// Save the user's reviewer choice; run the review when `then_run`.
     SetReviewer(ryter_core::config::ReviewerConfig, bool),
     /// `/changes`: put one file back as `base` had it.
@@ -223,8 +225,23 @@ pub fn run(init: WorkerInit) {
             Ok(Work::Turn { text, reply }) => {
                 if let Some(a) = &mut agent {
                     a.ctx.cancel.reset();
+                    let before = a.session.meta.checkpoints.len();
                     let out = match rt.block_on(a.turn(&text)) {
-                        Ok(r) => r.text,
+                        Ok(r) => {
+                            // A build turn that finished and changed files:
+                            // offer an audit. Not for a turn another program
+                            // asked for over MCP.
+                            let changed = a.session.meta.checkpoints.len() > before;
+                            if changed
+                                && reply.is_none()
+                                && r.reason == ryter_core::StopReason::Completed
+                            {
+                                if let Err(e) = rt.block_on(a.offer_audit()) {
+                                    send_err(&ev_tx, e.to_string());
+                                }
+                            }
+                            r.text
+                        }
                         Err(e) => {
                             send_err(&ev_tx, e.to_string());
                             String::new()
@@ -375,6 +392,12 @@ pub fn run(init: WorkerInit) {
                     let _ = a.session.set_mode(role);
                 }
             }
+            Ok(Work::SetOfferAudit(on)) => {
+                cfg.ui.offer_audit = on;
+                if let Some(c) = agent.as_mut().and_then(|a| a.cfg.as_mut()) {
+                    c.ui.offer_audit = on;
+                }
+            }
             Ok(Work::ChooseReviewer) => {
                 if let Some(a) = &mut agent {
                     if let Err(e) = a.choose_reviewer() {
@@ -388,7 +411,7 @@ pub fn run(init: WorkerInit) {
                 }
                 let _ = ev_tx.send(AgentEvent::Notice {
                     message: format!(
-                        "second opinions: {} on {}, up to ${:.2} a review · /second model changes it",
+                        "audits: {} on {}, up to ${:.2} each · /audit model changes it",
                         choice.model, choice.connection, choice.limit_usd
                     ),
                 });

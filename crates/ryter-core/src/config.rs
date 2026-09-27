@@ -154,6 +154,8 @@ pub struct UiConfig {
     pub line_numbers: bool,
     /// `/commit` adds a `Ryter:` trailer: model, cost, tests.
     pub receipts: bool,
+    /// After a build turn that changed files, offer an audit (`/audit`).
+    pub offer_audit: bool,
 }
 
 impl Default for UiConfig {
@@ -168,6 +170,7 @@ impl Default for UiConfig {
             timestamps: true,
             line_numbers: true,
             receipts: true,
+            offer_audit: true,
         }
     }
 }
@@ -183,6 +186,7 @@ pub const UI_KEYS: &[&str] = &[
     "timestamps",
     "line_numbers",
     "receipts",
+    "offer_audit",
 ];
 
 /// Unknown keys under `[ui]` in a TOML document (empty when none).
@@ -1239,6 +1243,8 @@ struct UiFile {
     line_numbers: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     receipts: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    offer_audit: Option<bool>,
 }
 
 impl From<&UiConfig> for UiFile {
@@ -1253,6 +1259,7 @@ impl From<&UiConfig> for UiFile {
             timestamps: Some(ui.timestamps),
             line_numbers: Some(ui.line_numbers),
             receipts: Some(ui.receipts),
+            offer_audit: Some(ui.offer_audit),
         }
     }
 }
@@ -1285,6 +1292,9 @@ impl UiFile {
         }
         if let Some(v) = self.receipts {
             ui.receipts = v;
+        }
+        if let Some(v) = self.offer_audit {
+            ui.offer_audit = v;
         }
     }
 }

@@ -9,13 +9,13 @@
                                                    ││     12.4k / 256k tokens  │
  ─── 2 files (1 new, 1 changed, +8 −1) · 2.1s ──── ││ price unknown            │
                                                    ┃│ reasoning  auto · medium │
- ⇢ second opinion  claude-opus-5.5 · ✗ blo…  $0.04 ┃╰──────────────────────────╯
-   • blocking  app/server.js:6 : an empty query    ┃╭─ spend ──────────────────╮
-     returns early, but  find  still runs on       ┃│ session            $?.?? │
-     undefined  when  q  is missing.               ┃╰──────────────────────────╯
-   • note: the test covers  ""  only.              ┃╭─ budget ─────────── off ─╮
-                                                   ┃│ cap                  off │
-   VERDICT: FAIL                                   ┃╰──────────────────────────╯
+ ⇢ audit  claude-opus-5.5 · ✗ blocking pro…  $0.04 ┃╰──────────────────────────╯
+ ┃ • blocking  app/server.js:6 : an empty query    ┃╭─ spend ──────────────────╮
+ ┃   returns early, but  find  still runs on       ┃│ session            $?.?? │
+ ┃   undefined  when  q  is missing.               ┃╰──────────────────────────╯
+ ┃ • note: the test covers  ""  only.              ┃╭─ budget ─────────── off ─╮
+ ┃                                                 ┃│ cap                  off │
+ ┃ VERDICT: FAIL                                   ┃╰──────────────────────────╯
  · ✓ done · 2 tools · 0:02                                     ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮

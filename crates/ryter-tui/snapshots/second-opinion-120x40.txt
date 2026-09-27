@@ -21,12 +21,12 @@
 
  ─────────────────── 2 files (1 new, 1 changed, +8 −1) · 2.1s ────────────────────
 
- ⇢ second opinion  claude-opus-5.5 · ✗ blocking problems                     $0.04
-   • blocking  app/server.js:6 : an empty query returns early, but  find  still
-     runs on  undefined  when  q  is missing.
-   • note: the test covers  ""  only.
-
-   VERDICT: FAIL
+ ⇢ audit  claude-opus-5.5 · ✗ blocking problems                              $0.04
+ ┃ • blocking  app/server.js:6 : an empty query returns early, but  find  still
+ ┃   runs on  undefined  when  q  is missing.
+ ┃ • note: the test covers  ""  only.
+ ┃
+ ┃ VERDICT: FAIL
 
 
 

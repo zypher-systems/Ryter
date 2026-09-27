@@ -158,6 +158,12 @@ impl Settings {
                 Kind::Toggle(view.ui.line_numbers),
             )
             .origin(origin(&view.ui.line_numbers, &d.line_numbers)),
+            Field::new(
+                "offer_audit",
+                "audit offers",
+                Kind::Toggle(view.ui.offer_audit),
+            )
+            .origin(origin(&view.ui.offer_audit, &d.offer_audit)),
         ];
         Self {
             form: Form::new(fields),
@@ -235,6 +241,9 @@ impl Settings {
         }
         if let Some(v) = toggle("line_numbers") {
             view.ui.line_numbers = v;
+        }
+        if let Some(v) = toggle("offer_audit") {
+            view.ui.offer_audit = v;
         }
     }
 }

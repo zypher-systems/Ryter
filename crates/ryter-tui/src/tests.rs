@@ -874,3 +874,61 @@ fn snapshot_reviewer_chooser() {
     crate::panel::sync_composer(&mut v);
     all_sizes("reviewer-limit", &v);
 }
+
+/// An audit stays in the chat as the audit: every row it shows carries the
+/// auditor's rule, and a long one folds so the work it audited stays on
+/// screen. `^O` shows it whole.
+#[test]
+fn an_audit_reads_as_the_audit_and_folds() {
+    let t = Theme::truecolor_dark();
+    let long: String = (1..=30)
+        .map(|i| format!("- **blocking** `app/server.js:{i}`: finding {i}\n"))
+        .collect::<String>()
+        + "\nVERDICT: FAIL";
+    let mut v = edited();
+    crate::run_events_apply(&mut v, AgentEvent::TurnStarted { turn: 2 });
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::SecondOpinion {
+            model: "z-ai/glm-5.3".into(),
+            connection: "openrouter".into(),
+            verdict: Some(false),
+            body: long,
+            total_usd: Some(0.01),
+        },
+    );
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnFinished {
+            turn: 2,
+            tools: 0,
+            duration_ms: 3000,
+        },
+    );
+    let screen = render_to_string(&v, 120, 40);
+    assert!(
+        screen.contains("… 18 more lines · ^O shows it whole"),
+        "{screen}"
+    );
+    // The work it audited is still on screen above it.
+    assert!(
+        screen.contains("app/server.js") && screen.contains("trim the query"),
+        "{screen}"
+    );
+    let buf = render_buffer(&v, 120, 40, t);
+    let rows: Vec<u16> = (0..buf.area.height)
+        .filter(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, *y)].symbol().to_string())
+                .collect::<String>()
+                .contains("finding")
+        })
+        .collect();
+    assert_eq!(rows.len(), 14);
+    for y in rows {
+        let cell = &buf[(1, y)];
+        assert_eq!((cell.symbol(), cell.fg), ("┃", t.audit), "row {y}");
+    }
+    v.diffs_expanded = true;
+    assert!(!render_to_string(&v, 120, 80).contains("more lines · ^O"));
+}

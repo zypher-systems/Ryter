@@ -77,6 +77,7 @@ colors = "auto"            # auto | truecolor | 256 | 16 ; NO_COLOR always wins
 timestamps = true          # HH:MM on speaker headers
 line_numbers = true        # gutter in code blocks
 receipts = true            # /commit adds a `Ryter:` trailer: model, cost, tests
+offer_audit = true         # after a build turn that changed files, offer an audit (asks first, shows the cost)
 
 [mcp]
 inbound = true

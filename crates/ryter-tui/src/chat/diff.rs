@@ -3,7 +3,7 @@
 //!
 //! The tool measured the diff against the file on disk, so the numbers are
 //! the file's own. A long diff shows its first rows and says how many more
-//! there are; `Ctrl+O` shows every edit whole.
+//! there are; `Ctrl+O` shows every edit (and audit) whole.
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};

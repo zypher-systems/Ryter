@@ -3,15 +3,15 @@
  dusty
  ▎ trim the query
 
- · edit  app╭─ second opinion · your limit ─────────────────────────────────────────────── 5 · sort price ─╮2 −1  0.0s
+ · edit  app╭─ audit · your limit ──────────────────────────────────────────────────────── 5 · sort price ─╮2 −1  0.0s
    3        │ z-ai/glm-5.3 on openrouter                                                                   │
-   4   app.g│ this review: about $0.01–$0.11                                                               │
+   4   app.g│ this audit: about $0.01–$0.11                                                                │
    5 -   con│                                                                                              │
-   5 +   con│ The most one review may spend, in dollars. Each review asks before it                        │
-   6 +   if │ runs and shows its estimate against this. Near the limit the reviewer                        │
+   5 +   con│ The most one audit may spend, in dollars. Each audit asks before it                          │
+   6 +   if │ runs and shows its estimate against this. Near the limit the auditor                         │
    7     res│ writes up what it has; a step that would pass it is never sent.                              │
    8   })   │                                                                                              │
- · write  te│ A large change reviewed by a strong model can cost $20 or more.                              │ nes  0.0s
+ · write  te│ A large change audited by a strong model can cost $20 or more.                               │ nes  0.0s
    1 + impor│                                                                                              │
    2 + impor│                                                                                              │
    3 +      │                                                                                              │

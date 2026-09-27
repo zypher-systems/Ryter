@@ -4,6 +4,8 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.5.1 (`fix/0.5.1`) — `/audit`, offered after changes.** `/second` is now `/audit` (kept as an alias), and Ryter offers an audit when a build turn changes files: `y` audit, `n` pass, `s` stop offering.
+
 - **0.5.0 (`feat/0.5.0`, notes in `docs/releases/v0.5.0.md`) — `/second`, a second opinion in solo** (2026-09-27; DECISIONS entry of that date). The user chooses the reviewer from the live catalog, with each model priced for the review, and a dollar limit per review. Every review asks first, and the limit is kept before each step. Tried live: grok-4.7 caught both planted bugs in a `median` (a string sort, and the even-length case) for $0.02 of a $1.00 limit, and "fix those" fixed them with tests. Crew work is frozen except for bugs until a solo-versus-crew benchmark says it earns its setup.
 - **0.4.0 (`feat/0.4.0`, notes in `docs/releases/v0.4.0.md`) — turns that end, and edits you can see** (2026-09-26; see the two DECISIONS entries of that date). Fixed, each with a test that failed first:
   - a waiting patch looped the lead to the round cap on every message;

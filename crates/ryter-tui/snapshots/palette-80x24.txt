@@ -13,7 +13,7 @@
 │ mo                                              │ ╰──────────────────────────╯
 │›/models         Switch the lead's model      ▸  │ ╭─ spend ──────────────────╮
 │ /tools          Tool permission mode         ▸  │ │ session            $?.?? │
-│ /second         A different model reviews yo…   │ ╰──────────────────────────╯
+│ /audit          A second model reviews your …   │ ╰──────────────────────────╯
 │ /crew           Crew mode: a lead, an archi… ▸  │ ╭─ budget ─────────── off ─╮
 │ /solo           Leave crew mode: one model, …   │ │ cap                  off │
 │ /skills         Browse, run, create, and re… ▸  │ ╰──────────────────────────╯
