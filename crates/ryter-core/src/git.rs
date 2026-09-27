@@ -113,6 +113,88 @@ pub fn restore_checkpoint(dir: &Path, sha: &str) -> Result<usize> {
     Ok(touched)
 }
 
+/// Paths that differ between two snapshots: changed, added, or deleted
+/// (renames as both paths). Errors are errors: undo must not guess.
+pub fn paths_between(dir: &Path, from: &str, to: &str) -> Result<Vec<String>> {
+    Ok(git(
+        dir,
+        &["diff", "--name-only", "--no-renames", "-z", from, to, "--"],
+    )?
+    .split('\0')
+    .filter(|p| !p.is_empty())
+    .map(str::to_string)
+    .collect())
+}
+
+/// Put `paths` back as snapshot `sha` has them: restore the ones it has,
+/// delete the ones it doesn't. Nothing else is touched. Returns how many.
+pub fn restore_paths(dir: &Path, sha: &str, paths: &[String]) -> Result<usize> {
+    let mut keep = Vec::new();
+    let mut n = 0;
+    for p in paths {
+        if git(dir, &["cat-file", "-e", &format!("{sha}:{p}")]).is_ok() {
+            keep.push(p.as_str());
+        } else if std::fs::remove_file(dir.join(p)).is_ok() {
+            n += 1;
+        }
+    }
+    for chunk in keep.chunks(200) {
+        let mut args = vec!["restore", "--source", sha, "--worktree", "--"];
+        args.extend(chunk.iter().copied());
+        git(dir, &args)?;
+        n += chunk.len();
+    }
+    Ok(n)
+}
+
+/// Whether git ignores `path` (relative to `dir`), so snapshots skip it.
+pub fn is_ignored(dir: &Path, path: &str) -> bool {
+    Command::new("git")
+        .args([
+            "-C",
+            &dir.to_string_lossy(),
+            "check-ignore",
+            "-q",
+            "--",
+            path,
+        ])
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Store the file's content as a git object, for putting it back later;
+/// `None` when there is no file.
+pub fn save_blob(dir: &Path, path: &str) -> Result<Option<String>> {
+    if !dir.join(path).is_file() {
+        return Ok(None);
+    }
+    Ok(Some(
+        git(dir, &["hash-object", "-w", "--", path])?
+            .trim()
+            .to_string(),
+    ))
+}
+
+/// Write a saved object back as the file, byte for byte; `None` removes it.
+pub fn put_blob(dir: &Path, path: &str, blob: Option<&str>) -> Result<()> {
+    let target = dir.join(path);
+    let Some(blob) = blob else {
+        let _ = std::fs::remove_file(&target);
+        return Ok(());
+    };
+    let out = Command::new("git")
+        .args(["-C", &dir.to_string_lossy(), "cat-file", "blob", blob])
+        .output()
+        .map_err(|e| Error::Io(format!("git: {e}")))?;
+    if !out.status.success() {
+        return Err(Error::Io(format!("git cat-file blob {blob} failed")));
+    }
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| Error::Io(e.to_string()))?;
+    }
+    std::fs::write(&target, out.stdout).map_err(|e| Error::Io(e.to_string()))
+}
+
 /// Whether `dir` is inside a git work tree.
 pub fn is_repo(dir: &Path) -> bool {
     git(dir, &["rev-parse", "--is-inside-work-tree"])

@@ -162,8 +162,16 @@ pub enum Action {
     SetMode(ryter_core::Role),
     /// `/crew` from solo mode: the crew builder first time, then crew mode.
     EnterCrew,
-    /// `/undo`: put files back as they were before the last build turn.
-    Undo,
+    /// `/undo [force]`: put back what the last build turn changed.
+    Undo {
+        /// Even over the user's later edits to those files.
+        force: bool,
+    },
+    /// `/redo [force]`: reverse the last undo.
+    Redo {
+        /// Even over the user's edits since the undo.
+        force: bool,
+    },
     /// `/second`: a second model reviews the uncommitted work.
     SecondOpinion,
     /// `/audit model`: choose the reviewer and its limit again.

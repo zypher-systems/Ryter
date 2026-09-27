@@ -64,8 +64,16 @@ pub enum Work {
     SetRole(ryter_core::Role),
     /// The user's reasoning levels per model changed.
     SetModelReasoning(std::collections::BTreeMap<String, String>),
-    /// `/undo`.
-    Undo,
+    /// `/undo [force]`.
+    Undo {
+        /// Even over the user's later edits.
+        force: bool,
+    },
+    /// `/redo [force]`.
+    Redo {
+        /// Even over the user's edits since the undo.
+        force: bool,
+    },
     /// `/second`: another model reviews the uncommitted work.
     SecondOpinion,
     /// `/audit model`: ask the user to choose the reviewer again.
@@ -440,10 +448,23 @@ pub fn run(init: WorkerInit) {
                     send_err(&ev_tx, "no API key — /provider set-key".into());
                 }
             }
-            Ok(Work::Undo) => {
+            Ok(Work::Undo { force }) => {
                 let message = match &mut agent {
-                    Some(a) => a.undo().unwrap_or_else(|e| format!("undo failed: {e}")),
+                    Some(a) => {
+                        let r = if force { a.undo_force() } else { a.undo() };
+                        r.unwrap_or_else(|e| format!("undo failed: {e}"))
+                    }
                     None => "nothing to undo yet".into(),
+                };
+                let _ = ev_tx.send(AgentEvent::Notice { message });
+            }
+            Ok(Work::Redo { force }) => {
+                let message = match &mut agent {
+                    Some(a) => {
+                        let r = if force { a.redo_force() } else { a.redo() };
+                        r.unwrap_or_else(|e| format!("redo failed: {e}"))
+                    }
+                    None => "nothing to redo".into(),
                 };
                 let _ = ev_tx.send(AgentEvent::Notice { message });
             }

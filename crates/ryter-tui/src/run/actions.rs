@@ -173,7 +173,11 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 set_mode(view, cx, ryter_core::Role::Orchestrator);
             }
         }
-        Action::Undo => cx.send(Work::Undo),
+        Action::Undo { .. } | Action::Redo { .. } if view.busy => {
+            view.warn("wait for this turn to end: it may still be changing files");
+        }
+        Action::Undo { force } => cx.send(Work::Undo { force }),
+        Action::Redo { force } => cx.send(Work::Redo { force }),
         Action::SecondOpinion if view.busy => {
             view.warn("an audit reads the finished work: wait for this turn to end");
         }

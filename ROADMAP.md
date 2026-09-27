@@ -4,6 +4,8 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.5.2 (`fix/0.5.2`) — `/undo` puts back what the turn changed, and only that.** The user's own edits since stay; `/undo` refuses over them unless forced; `/redo` reverses an undo; gitignored files the model writes are saved first.
+
 - **0.5.1 (`fix/0.5.1`) — `/audit`, offered after changes.** `/second` is now `/audit` (kept as an alias), and Ryter offers an audit when a build turn changes files: `y` audit, `n` pass, `s` stop offering.
 
 - **0.5.0 (`feat/0.5.0`, notes in `docs/releases/v0.5.0.md`) — `/second`, a second opinion in solo** (2026-09-27; DECISIONS entry of that date). The user chooses the reviewer from the live catalog, with each model priced for the review, and a dollar limit per review. Every review asks first, and the limit is kept before each step. Tried live: grok-4.7 caught both planted bugs in a `median` (a string sort, and the even-length case) for $0.02 of a $1.00 limit, and "fix those" fixed them with tests. Crew work is frozen except for bugs until a solo-versus-crew benchmark says it earns its setup.
@@ -31,9 +33,6 @@ Living plan for Ryter. The lead updates this as work lands.
   - bare `env` was read-only.
 - **Security, still open:** the never-run list doesn't bind a builder that writes a script (Landlock is the boundary, and it's off by default); shell reads can reach `.env` indirectly (`grep -r`, `xargs cat`); environment secrets other than Ryter's keys are visible to commands; no independent adversarial pass of the new gate yet.
 - **Audit findings still open** (verified 2026-09-26, not yet fixed):
-  - **`/undo`:**
-    - It restores the whole checkpoint, so edits the user made between turns are lost.
-    - Gitignored files aren't in the checkpoint, so an overwrite of one can't be undone.
   - **Spend:**
     - The budget never trips on an unpriced model, and the lead and solo hats have no token cap.
     - The per-task cap resets on every drain.
