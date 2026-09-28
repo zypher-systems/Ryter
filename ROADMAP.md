@@ -4,6 +4,11 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.6.5 (`fix/0.6.5`) — only models the account can use.** OpenRouter's models come from `/models/user`, which applies the account's privacy settings, provider rules, and guardrails, with tools filtered client-side. The full tool list is the fallback.
+  - Before a crew run, `Agent::refused_seats` asks each connection's `Provider::refused` about the seats it will call: in the catalog but not on the account's list. A refused seat pauses the crew before anyone is paid.
+  - An auditor whose provider fails is `SignOff::Unreachable`, and the task keeps its branch. Any non-cancel failure after the builder committed keeps it too.
+  - A paused crew is drained once a turn.
+  - Found when a run paid $4.43 for design and build, then the auditor (claude-fable-5.1) was refused under zero data retention and the branch was deleted.
 - **0.6.4 (`fix/0.6.4`) — the model picker opens at once.** OpenRouter's models are listed with `?supported_parameters=tools` (0.16 s, while the full catalog stalled for minutes).
   - Each connection's last model list is kept (`llm::model_cache`), and the picker opens on it while a fresh one downloads on a thread of its own, with a client of its own.
   - After 30 s the picker says the provider is slow; the download goes on for up to 5 minutes and fills the cache.

@@ -35,6 +35,9 @@ const MAX_RETRIES: u32 = 3;
 const BACKOFF_BASE: Duration = Duration::from_millis(500);
 /// Ceiling on one backoff wait.
 const BACKOFF_CAP: Duration = Duration::from_secs(20);
+/// How long a crew run waits to learn which seats the account refuses
+/// before it starts anyway. Both lists come back in well under a second.
+const REFUSED_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Statuses worth trying again: rate limits, overload, and gateway noise.
 /// A 400 or 401 will not change on a second attempt.
@@ -247,7 +250,50 @@ impl Provider for HttpProvider {
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        let url = models_url(&self.base_url);
+        if !is_openrouter(&self.base_url) {
+            return self.get_models(&format!("{}/models", self.base_url)).await;
+        }
+        // The account's own list leaves out what its privacy settings (zero
+        // data retention), provider rules, and guardrails refuse. From the
+        // whole catalog such a model could be picked for a seat and fail on
+        // its first request, after the other seats had been paid. That list
+        // ignores `supported_parameters`, so tools are filtered here.
+        match self.get_models(&account_models_url(&self.base_url)).await {
+            Ok(models) => Ok(models
+                .into_iter()
+                .filter(|m| m.tools == Some(true))
+                .collect()),
+            Err(_) => self.get_models(&tool_models_url(&self.base_url)).await,
+        }
+    }
+
+    async fn refused(&self, models: &[String]) -> Vec<String> {
+        if !is_openrouter(&self.base_url) || models.is_empty() {
+            return Vec::new();
+        }
+        // In the catalog but not on the account's list: the account refuses
+        // it. A model on neither (a typo, a routing suffix such as `:nitro`)
+        // is left for its first request to explain.
+        let (mine, all) = (
+            account_models_url(&self.base_url),
+            tool_models_url(&self.base_url),
+        );
+        let lists = futures_util::future::join(self.get_models(&mine), self.get_models(&all));
+        let Ok((Ok(account), Ok(catalog))) = tokio::time::timeout(REFUSED_TIMEOUT, lists).await
+        else {
+            return Vec::new();
+        };
+        let has = |list: &[ModelInfo], id: &str| list.iter().any(|m| m.id == id);
+        models
+            .iter()
+            .filter(|m| has(&catalog, m) && !has(&account, m))
+            .cloned()
+            .collect()
+    }
+}
+
+impl HttpProvider {
+    async fn get_models(&self, url: &str) -> Result<Vec<ModelInfo>> {
         let resp = self
             .client
             .get(url)
@@ -702,16 +748,21 @@ fn tools_anthropic(tools: &[ToolSpec]) -> Value {
         .collect()
 }
 
-/// Where a connection lists its models. OpenRouter's whole catalog has
-/// stalled near its end for minutes at a time, while the models that take
-/// tools (all Ryter can drive) come back in a fraction of a second.
-fn models_url(base_url: &str) -> String {
-    let url = format!("{base_url}/models");
-    if base_url.contains("openrouter.ai") {
-        format!("{url}?supported_parameters=tools")
-    } else {
-        url
-    }
+fn is_openrouter(base_url: &str) -> bool {
+    base_url.contains("openrouter.ai")
+}
+
+/// OpenRouter's models that take tools (all Ryter can drive), whatever the
+/// account allows. Its whole catalog has stalled near its end for minutes at
+/// a time; this comes back in a fraction of a second.
+fn tool_models_url(base_url: &str) -> String {
+    format!("{base_url}/models?supported_parameters=tools")
+}
+
+/// OpenRouter's models this account can use, under its privacy settings,
+/// provider rules, and guardrails.
+fn account_models_url(base_url: &str) -> String {
+    format!("{base_url}/models/user")
 }
 
 fn parse_models_json(text: &str) -> Result<Vec<ModelInfo>> {
@@ -1377,14 +1428,13 @@ mod tests {
     }
 
     #[test]
-    fn openrouter_is_asked_for_the_models_that_take_tools() {
+    fn openrouter_is_asked_for_the_accounts_models() {
+        let base = "https://openrouter.ai/api/v1";
+        assert!(is_openrouter(base) && !is_openrouter("https://api.x.ai/v1"));
+        assert_eq!(account_models_url(base), format!("{base}/models/user"));
         assert_eq!(
-            models_url("https://openrouter.ai/api/v1"),
-            "https://openrouter.ai/api/v1/models?supported_parameters=tools"
-        );
-        assert_eq!(
-            models_url("https://api.x.ai/v1"),
-            "https://api.x.ai/v1/models"
+            tool_models_url(base),
+            format!("{base}/models?supported_parameters=tools")
         );
     }
 

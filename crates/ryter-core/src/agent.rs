@@ -240,6 +240,10 @@ impl Agent {
         // and the lead answered it every round, to the round cap, paying for
         // each one.
         let mut drained = false;
+        // A crew that paused (a seat the account refuses, no independent
+        // auditor) stays paused for the turn: nothing the lead does can
+        // unpause it, and each re-drain was another paid round for the lead.
+        let mut paused = false;
         let repaired = self.session.repair_unanswered()?;
         if repaired > 0 {
             crate::trace::log(
@@ -480,9 +484,12 @@ impl Agent {
                     })?;
                     continue;
                 }
-                if self.role == Role::Orchestrator && (!drained || self.crew_has_pending()?) {
+                if self.role == Role::Orchestrator
+                    && (!drained || !paused && self.crew_has_pending()?)
+                {
                     drained = true;
-                    let report = self.drain_crew().await?;
+                    let (report, stopped) = self.drain_crew_inner().await?;
+                    paused = stopped;
                     // Hand the results back and take another round. Without this
                     // the turn ended before the crew ran, so the orchestrator
                     // could neither tell the user what happened nor record the
@@ -683,23 +690,34 @@ impl Agent {
     /// branch, and the patch lands on the user's branch as one commit once all
     /// of it is done. Every specialist round is metered.
     pub async fn drain_crew(&mut self) -> Result<String> {
+        Ok(self.drain_crew_inner().await?.0)
+    }
+
+    /// [`Agent::drain_crew`], and whether the crew paused on something only
+    /// the user can fix.
+    async fn drain_crew_inner(&mut self) -> Result<(String, bool)> {
         if self.role != Role::Orchestrator {
-            return Ok(String::new());
+            return Ok((String::new(), false));
         }
         let pending = |q: &TaskQueue, role: &str| {
             q.tasks
                 .iter()
                 .any(|t| t.status == TaskStatus::Pending && t.role == role)
         };
-        let anything = {
+        let (design, build_ahead) = {
             let q = self
                 .queue
                 .lock()
                 .map_err(|e| Error::Config(e.to_string()))?;
-            pending(&q, "architect") || pending(&q, "builder")
+            // A design that isn't held writes builder tasks that run next.
+            let unheld = q
+                .tasks
+                .iter()
+                .any(|t| t.status == TaskStatus::Pending && t.role == "architect" && !t.hold);
+            (pending(&q, "architect"), pending(&q, "builder") || unheld)
         };
-        if !anything && self.session.meta.patch.is_none() {
-            return Ok(String::new());
+        if !design && !build_ahead && self.session.meta.patch.is_none() {
+            return Ok((String::new(), false));
         }
 
         let free = self
@@ -739,11 +757,32 @@ impl Agent {
         let mut reports: Vec<String> = Vec::new();
         let mut budget_hit: Option<Error> = None;
         let mut paused = false;
+        let refused = self.refused_seats(design, build_ahead).await;
+        if !refused.is_empty() {
+            let seats = refused
+                .iter()
+                .map(|(seat, model)| format!("  {seat}: {model}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let why = format!(
+                "The crew did not start: this account can't use\n{seats}\n\
+                 OpenRouter gives these models no provider under the account's settings \
+                 (zero data retention, provider rules, or guardrails), so the first call to \
+                 one fails, after the seats before it have been paid. Give the seat another \
+                 model in /crew, or change the settings at \
+                 https://openrouter.ai/settings/privacy. The tasks stay queued."
+            );
+            self.emit(AgentEvent::Error {
+                message: why.clone(),
+            })?;
+            reports.push(format!("### crew paused\n{why}\n"));
+            paused = true;
+        }
         // Resolved at the first builder batch, not before: a design-only run
         // must not be refused for want of an auditor.
         let mut build: Option<BuildStack> = None;
         loop {
-            if self.ctx.cancel.is_cancelled() || budget_hit.is_some() {
+            if paused || self.ctx.cancel.is_cancelled() || budget_hit.is_some() {
                 break;
             }
             let role = {
@@ -1034,13 +1073,20 @@ impl Agent {
                         ))?;
                     }
                     Err(e) => {
-                        reports.push(format!("### {task_id} — failed\n{e}\n"));
+                        // A provider's refusal is a paragraph of JSON; the
+                        // board and the lead get the reason.
+                        let why = match &e {
+                            Error::Provider(raw) => crate::llm::explain_error(raw)
+                                .map_or_else(|| e.to_string(), |w| format!("provider: {w}")),
+                            _ => e.to_string(),
+                        };
+                        reports.push(format!("### {task_id} — failed\n{why}\n"));
                         {
                             let mut q = self
                                 .queue
                                 .lock()
                                 .map_err(|e| Error::Config(e.to_string()))?;
-                            q.set(&task_id, TaskStatus::Blocked, e.to_string());
+                            q.set(&task_id, TaskStatus::Blocked, why.clone());
                         }
                         if let Error::Budget {
                             spent,
@@ -1054,9 +1100,7 @@ impl Agent {
                                 unpriced: unpriced.clone(),
                             });
                         }
-                        self.emit(AgentEvent::Error {
-                            message: e.to_string(),
-                        })?;
+                        self.emit(AgentEvent::Error { message: why })?;
                     }
                 }
             }
@@ -1136,7 +1180,55 @@ impl Agent {
             self.emit(AgentEvent::Error { message: note })?;
             return Err(e);
         }
-        Ok(report)
+        Ok((report, paused))
+    }
+
+    /// Crew seats this run would call that the account refuses, as
+    /// `(seat, model)`. Asked before anything runs, for free: the auditor is
+    /// called last, so a refused one used to surface only after the architect
+    /// and builder had been paid for work that could then not land.
+    async fn refused_seats(&self, design: bool, build: bool) -> Vec<(String, String)> {
+        let mut seats: Vec<(String, Arc<dyn Provider>, String, String)> = Vec::new();
+        let mut seat = |name: &str, (p, m, c): (Arc<dyn Provider>, String, String)| {
+            seats.push((name.to_string(), p, m, c));
+        };
+        if design {
+            seat("architect", self.specialist_stack(Role::Architect));
+        }
+        if build {
+            seat("builder", self.specialist_stack(Role::Builder));
+            if self.session.meta.auditor_enabled {
+                // A panel that doesn't resolve is reported when builds start.
+                for a in self.auditor_panel().unwrap_or_default() {
+                    let name = if a.focus.is_empty() {
+                        "auditor".to_string()
+                    } else {
+                        format!("auditor ({})", a.focus)
+                    };
+                    seat(&name, (a.provider, a.model, a.connection));
+                }
+            }
+        }
+        // One question per connection.
+        let mut asks: Vec<(String, Arc<dyn Provider>, Vec<String>)> = Vec::new();
+        for (_, p, m, c) in &seats {
+            match asks.iter_mut().find(|(conn, ..)| conn == c) {
+                Some((_, _, models)) if !models.contains(m) => models.push(m.clone()),
+                Some(_) => {}
+                None => asks.push((c.clone(), p.clone(), vec![m.clone()])),
+            }
+        }
+        let mut refused = Vec::new();
+        for (conn, p, models) in asks {
+            for m in p.refused(&models).await {
+                refused.push((conn.clone(), m));
+            }
+        }
+        seats
+            .into_iter()
+            .filter(|(_, _, m, c)| refused.iter().any(|(rc, rm)| rc == c && rm == m))
+            .map(|(name, _, m, _)| (name, m))
+            .collect()
     }
 
     /// `request_hat`: ask the user, and on yes switch hats here, mid-turn, so
@@ -2975,6 +3067,93 @@ mod tests {
             TaskStatus::Pending
         );
         assert!(!home.path().join("worktrees").exists(), "nothing may start");
+    }
+
+    /// The live case: a design that builds next, with an auditor the account
+    /// refuses. The architect and builder used to be paid ($4.43) before the
+    /// auditor's first call failed; now nothing starts.
+    #[tokio::test]
+    async fn a_seat_the_account_refuses_stops_the_crew_before_anyone_is_paid() {
+        let p = ReplayProvider::scripted(vec![say("the architect must not run")])
+            .refusing(&["claude-auditor"]);
+        let (home, _cwd, mut agent) = crew_setup(p);
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo_as(
+                &serde_json::json!({"items": [{"id": "design", "title": "redesign", "role": "architect"}]}),
+                "orchestrator",
+            )
+            .unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert!(report.contains("crew paused"), "{report}");
+        assert!(report.contains("auditor: claude-auditor"), "{report}");
+        assert!(
+            report.contains("openrouter.ai/settings/privacy"),
+            "{report}"
+        );
+        assert!(!report.contains("Crew cost"), "nothing was paid: {report}");
+        assert_eq!(
+            agent.queue.lock().unwrap().tasks[0].status,
+            TaskStatus::Pending
+        );
+        assert!(!home.path().join("worktrees").exists(), "nothing may start");
+    }
+
+    /// A held design builds nothing yet, so only the architect's seat is
+    /// asked about: an auditor to fix later does not block the design.
+    #[tokio::test]
+    async fn a_held_design_runs_despite_a_refused_auditor() {
+        let p = ReplayProvider::scripted(vec![
+            architect_writes(serde_json::json!([
+                {"id": "b1", "title": "add a", "files": ["a.txt"]}
+            ])),
+            say("plan: one file"),
+        ])
+        .refusing(&["claude-auditor"]);
+        let (_home, _cwd, mut agent) = crew_setup(p);
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo_as(
+                &serde_json::json!({"items": [{"id": "design", "title": "design", "role": "architect", "hold": true}]}),
+                "orchestrator",
+            )
+            .unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert!(!report.contains("crew paused"), "{report}");
+        let q = agent.queue.lock().unwrap();
+        let design = q.tasks.iter().find(|t| t.id == "design").unwrap();
+        assert_eq!(design.status, TaskStatus::Done, "{:?}", q.tasks);
+    }
+
+    /// A paused crew is reported to the lead once a turn. Only the user can
+    /// unpause it, and every re-drain was another paid round for the lead,
+    /// up to the round cap.
+    #[tokio::test]
+    async fn a_paused_crew_is_reported_once_a_turn() {
+        let p = ReplayProvider::scripted(vec![
+            call(
+                "todo_write",
+                serde_json::json!({"items": [{"id": "t1", "title": "x", "files": ["a.txt"]}]}),
+            ),
+            say("queued"),
+            say("The auditor seat needs another model."),
+            say("a round the lead should not have been asked for"),
+        ])
+        .refusing(&["claude-auditor"]);
+        let (_home, _cwd, mut agent) = crew_setup(p);
+        let r = agent.turn("add a").await.unwrap();
+        assert_eq!(r.text, "The auditor seat needs another model.");
+        let reports = agent
+            .session
+            .transcript
+            .iter()
+            .filter(|m| m.content.contains("crew paused"))
+            .count();
+        assert_eq!(reports, 1);
     }
 
     /// Your branch receives the whole change as one commit, and only once

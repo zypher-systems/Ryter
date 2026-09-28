@@ -86,27 +86,8 @@ pub async fn probe(provider: &dyn crate::llm::Provider, model: &str) -> Result<(
 
 /// Provider errors are long JSON; keep the part a person can act on.
 fn short_reason(e: &str) -> String {
-    let lower = e.to_ascii_lowercase();
-    if lower.contains("data policy") || lower.contains("zero data retention") {
-        return "not available under your account's data policy (e.g. zero data retention)".into();
-    }
-    if lower.contains("tool use") || lower.contains("tools") && lower.contains("support") {
-        return "no provider serves it with tool use, which every crew role needs".into();
-    }
-    if lower.contains("not a valid model") {
-        return "not a model this connection knows (renamed or retired?)".into();
-    }
-    if lower.contains("401") || lower.contains("403") || lower.contains("unauthorized") {
-        return "the key was refused for this model".into();
-    }
-    if lower.contains("404") || lower.contains("not found") || lower.contains("no endpoints") {
-        return "not found, or no provider serves it for this account".into();
-    }
-    if lower.contains("402") || lower.contains("credit") {
-        return "out of credits".into();
-    }
-    let one: String = e.lines().next().unwrap_or(e).chars().take(140).collect();
-    one
+    crate::llm::explain_error(e)
+        .unwrap_or_else(|| e.lines().next().unwrap_or(e).chars().take(140).collect())
 }
 
 /// Above this blended price ($/M tokens) a model is a premium outlier, not a
