@@ -2,6 +2,26 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-28 — Mission control draws the queue; the workbench undoes one change at a time
+- **By:** lead
+- **Decision:**
+  - **Queue snapshots.** The agent sends `AgentEvent::Tasks` (every `TaskView` plus the open patch) after a `todo_write` and at each step of a crew run: batch taken, results in, held tasks proposed, run ended. `TaskView.waits_on` is a task's `after` plus the task laying the foundation (`TaskQueue::views`), so the board shows what the scheduler enforces.
+  - **The TUI keeps every edge it has seen** (`View::task_edges`), so a landed prerequisite stays drawn. A design's tasks hang under the design only when they wait on nothing else.
+  - **The board** (`crewboard.rs`) has tiles, a plan tree, and lanes. A lane's `acting` comes from `SubagentActivity.role`, so a builder's worktree in review shows as "in audit".
+  - **Specialist activity** goes to `activity.jsonl` as well as to the sink (`crew::Progress.log`).
+  - **The workbench** (`workbench.rs`) reads the changes against the last turn's checkpoint or `HEAD`, and builds each file's diff from `review::file_versions`, numbering hunks as `FileDiff::new` does. `x` sends `RevertHunk`, and `review::revert_hunk` swaps that hunk's new lines for its old ones through `diff::revert_hunk`, recorded like a file revert (`Agent::revert_recorded`).
+- **Chosen vs rejected:**
+  - Rejected drawing the plan as positioned boxes with routed arrows. A tree of what waits on what reads right at any width and can't draw a crossing that isn't there. A task that waits on several shows "also after …".
+  - Rejected progress bars in lanes. There is no real measure of a worker's progress, and the user asked for an accurate picture. Lanes show who, what, and for how long.
+  - Rejected typing in the composer while the workbench is open: `x` undoes a change there.
+  - `x` undoes at once, since `/undo` brings it back. `X` asks first.
+- **Why:** the user wanted designs B and D with A in one 0.6.0, and the board to stay an accurate drawing of what is going on. A crew run the night before had hidden everything that mattered: a blocked scaffold, tasks started without it, and 80 calls of builder workarounds.
+- **Where:** `crates/ryter-core/src/queue.rs` (`TaskView`, `PatchView`, `views`), `event.rs`, `agent.rs` (`emit_tasks`, `revert_hunk`), `crew.rs` (`Progress`), `diff.rs` (`revert_hunk`), `review.rs`, `crates/ryter-tui/src/crewboard.rs`, `workbench.rs`, `draw.rs`, `run/keys.rs`
+- **Residual risk:**
+  - Lanes are matched to tasks by title.
+  - A change more than about four hunks down scrolls into view only as you move to it.
+  - The workbench is on the ledger only; the classic screen keeps `/changes`.
+
 ### 2026-09-28 — The ledger is the default screen; the 0.5 layout stays as `classic`
 - **By:** lead
 - **Decision:**

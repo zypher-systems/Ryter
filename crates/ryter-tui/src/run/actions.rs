@@ -20,7 +20,7 @@ use crate::activity::Verb;
 use crate::chat::MessageKind;
 use crate::panel::{self, Notice, PanelEnv};
 use crate::theme::{ColorMode, Theme};
-use crate::view::{ConnRow, TodoRow, View};
+use crate::view::{ConnRow, View};
 use ryter_core::AgentEvent;
 
 /// Loop-owned state the actions need besides the view.
@@ -133,6 +133,10 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             }
         }
         Action::New => new_session(view, cx),
+        // On the ledger `/changes` is the workbench.
+        Action::OpenPanel(PanelId::Changes) if !view.ui.classic() => {
+            perform(view, cx, Action::OpenWorkbench);
+        }
         Action::OpenPanel(id) => open_panel(view, cx, id),
         Action::Resume(id) => resume(view, cx, &id),
         Action::DeleteSession(id) => delete_session(view, cx, &id),
@@ -209,6 +213,16 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             then_run,
         )),
         Action::Revert { base, path } => cx.send(Work::Revert { base, path }),
+        Action::RevertHunk { base, path, hunk } => cx.send(Work::RevertHunk { base, path, hunk }),
+        Action::OpenWorkbench => {
+            view.panels.clear();
+            view.palette = None;
+            view.workbench = Some(crate::workbench::Workbench::open(
+                view,
+                cx.workspace.clone(),
+            ));
+        }
+
         Action::DraftCommit(paths) => cx.send(Work::DraftCommit(paths)),
         Action::Commit { paths, message } => cx.send(Work::Commit { paths, message }),
         Action::SetReceipts(on) => {
@@ -664,14 +678,25 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
     view.turn = view.turn.max(1);
     view.scroll.to_bottom();
     let q = ryter_core::queue::TaskQueue::open(session.dir.join("tasks.json"));
-    view.todos = q
-        .tasks
-        .iter()
-        .map(|t| TodoRow {
-            title: t.title.clone(),
-            status: format!("{:?}", t.status).to_ascii_lowercase(),
-        })
-        .collect();
+    view.task_edges.clear();
+    let tree = session
+        .meta
+        .patch
+        .as_ref()
+        .map(|p| p.worktree.clone())
+        // The TUI runs in the project.
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let patch = session
+        .meta
+        .patch
+        .as_ref()
+        .map(|p| ryter_core::queue::PatchView {
+            branch: p.branch.clone(),
+            target: p.target.clone(),
+            tasks: p.tasks.clone(),
+            landed: p.landed.clone(),
+        });
+    view.set_tasks(q.views(|p| tree.join(p).exists()), patch);
     view.spend_by_role.clear();
     view.spend_by_conn.clear();
     view.spend_rows_role.clear();

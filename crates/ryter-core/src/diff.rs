@@ -155,6 +155,34 @@ impl FileDiff {
     }
 }
 
+/// `new` with hunk `index` (as [`FileDiff::new`] numbers them) put back as
+/// it was in `old`, and every other change kept. `None` when there is no
+/// such hunk.
+pub fn revert_hunk(old: &str, new: &str, index: usize) -> Option<String> {
+    let diff = TextDiff::configure()
+        .algorithm(Algorithm::Myers)
+        .timeout(DEADLINE)
+        .diff_lines(old, new);
+    let groups = join_close(diff.grouped_ops(CONTEXT));
+    let group = groups.get(index)?;
+    let (first, last) = (group.first()?, group.last()?);
+    let old_lines: Vec<&str> = old.split_inclusive('\n').collect();
+    let new_lines: Vec<&str> = new.split_inclusive('\n').collect();
+    let (os, oe) = (first.old_range().start, last.old_range().end);
+    let (ns, ne) = (first.new_range().start, last.new_range().end);
+    let mut out = String::with_capacity(new.len());
+    new_lines[..ns.min(new_lines.len())]
+        .iter()
+        .for_each(|l| out.push_str(l));
+    old_lines[os.min(old_lines.len())..oe.min(old_lines.len())]
+        .iter()
+        .for_each(|l| out.push_str(l));
+    new_lines[ne.min(new_lines.len())..]
+        .iter()
+        .for_each(|l| out.push_str(l));
+    Some(out)
+}
+
 /// Gaps between hunks at most this long are shown, not folded: a `⋯`
 /// standing in for one line hides more than it saves.
 const JOIN_GAP: usize = 2;
@@ -272,5 +300,25 @@ mod tests {
         assert_eq!(d.elided, 1000 - MAX_LINES);
         assert!(!d.is_empty());
         assert!(FileDiff::new("same", Some("x\n"), "x\n").is_empty());
+    }
+
+    /// One hunk goes back; the other stays. Hunks are counted as the diff
+    /// shows them.
+    #[test]
+    fn a_hunk_reverts_alone() {
+        let old: String = (1..=30).map(|i| format!("line {i}\n")).collect();
+        let new = old
+            .replace("line 3\n", "line three\n")
+            .replace("line 25\n", "line twenty-five\nextra\n");
+        let d = FileDiff::new("f", Some(&old), &new);
+        assert_eq!(d.hunks.len(), 2);
+        let back = revert_hunk(&old, &new, 1).unwrap();
+        assert!(back.contains("line three\n") && back.contains("line 25\n"));
+        assert!(!back.contains("extra"));
+        let back = revert_hunk(&old, &new, 0).unwrap();
+        assert!(back.contains("line 3\n") && back.contains("extra\n"));
+        assert_eq!(revert_hunk(&old, &new, 2), None);
+        // A new file's only hunk taken back leaves nothing.
+        assert_eq!(revert_hunk("", "a\nb\n", 0).unwrap(), "");
     }
 }

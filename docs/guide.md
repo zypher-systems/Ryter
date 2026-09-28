@@ -73,6 +73,20 @@ ryter models [connection]
 - **The bottom bar** holds what the header and cards used to show: the mode (`BUILD`, `CREW · LEAD`), the project and branch, the model, the context gauge, and the cost this turn, this session, and for the project, against the budget. The keys that matter now are on its right. When space runs short, it drops keys first, then the project, the model, and the gauge. The mode and the costs stay.
 - **`$`** on an empty composer opens the **spend drawer** above it. It shows this turn, the session, and the project side by side, with spend by role for the session and the project, and the budget, task cap, and warning level. `b` sets a budget, `⏎` opens the full `/spend` table.
 
+**Mission control** (crew mode on the ledger, once there's a plan) puts a board above the lead's conversation:
+- **Tiles:** spend against the budget, tasks landed out of all of them, where the patch stands, and the crew's time and model calls this turn.
+- **The plan:** a tree of what waits on what. It's drawn from the agent's queue snapshots (`after`, and the manifest-first rule), so it shows exactly what the scheduler enforces. Each task is marked `✓` landed, `◐` building, `◑` in audit, `✕` blocked (with the reason, wrapped rather than cut), `○` waiting on something, or `◇` proposed.
+- **Lanes:** one row per worker, showing who is acting (builder or auditor), on which task, what it's doing, and for how long.
+
+Everything a specialist reports is also kept in the session's `activity.jsonl`.
+
+**The workbench** (`^T`, or `/changes` on the ledger) shows what changed beside the chat, in three panes:
+- **Left:** the files changed (this turn, or since the last commit with `tab`), the turn's commands and what came of them, and the turns.
+- **Middle:** the chat.
+- **Right:** the selected file's changes, one at a time, with line numbers on both sides.
+
+Its keys: `↑↓` pick a file, `j`/`k` move between its changes, `x` undoes the selected change alone, `X` undoes the whole file (after a `y`), and `u` undoes the turn. `x` and `X` are recorded like a turn, so `/undo` brings them back. While the workbench is open, keys go to it and not the composer; `esc` or `^T` returns to the chat.
+
 `[ui] layout = "classic"` (also in `/settings`, applied at once) brings back the 0.5 screen. That's a header row, the chat with a right-hand **info panel** of cards (session, model + context gauge, spend + budget gauge, tasks, crew, mcp), the **activity strip** while a turn runs, the bordered **composer**, and a hint bar. `^b` shows or hides the info panel on either layout; it also drops automatically under 80 columns.
 
 Every message is a left-aligned block under a speaker header — your name (from `[ui] username`, then `git user.name`, then `$USER`), the model name, `· system`, or a one-line tool row (`· read_file  path  0.1s`). Markdown renders with headings, lists, quotes, tables, and fenced code with syntax highlighting and a line-number gutter. Long model turns end with a summary line (`3 tools · 12.4k tok · 0:42 · $0.01`).
@@ -126,6 +140,7 @@ The keys are on the card's last row:
 | `^b` | toggle the info panel |
 | `^o` | show every edit and finished turn whole, or folded |
 | `$` | the spend drawer (ledger, when the composer is empty) |
+| `^t` | the workbench (ledger); `/changes` on the classic screen |
 | `^l` | redraw |
 | `PgUp` / `PgDn` | scroll the transcript one viewport |
 | `Shift+↑` / `Shift+↓` | scroll one row |

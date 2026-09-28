@@ -9,6 +9,7 @@
         │  ^r         toggle the reasoning pane                                            │
         │  ^b         toggle the info panel                                                │
         │  ^o         show every edit, audit, and folded turn whole, or folded             │
+        │  ^t         the workbench: what changed beside the chat, one change at a time    │
         │  ^l         redraw                                                               │
         │  ^g         release/grab the mouse (release it to select and copy text)          │
         │  f1         open /help                                                           │
@@ -19,7 +20,6 @@
         │  pgdn       scroll one viewport down                                             │
         │  ⇧↑         scroll one row up                                                    │
         │  ⇧↓         scroll one row down                                                  │
-        │  ^home      top of the transcript                                                │
         │ ←→ section   ↑↓ scroll   pgup pgdn page   esc close                              │
         ╰──────────────────────────────────────────────────────────────────────────────────╯
 

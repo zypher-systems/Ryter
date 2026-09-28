@@ -226,6 +226,15 @@ pub enum AgentEvent {
         #[serde(default)]
         servers: Vec<(String, String)>,
     },
+    /// The crew's task queue changed: every task, and the open patch. The
+    /// crew board draws only from this.
+    Tasks {
+        /// Every task, in queue order.
+        tasks: Vec<crate::queue::TaskView>,
+        /// The open patch, if any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        patch: Option<crate::queue::PatchView>,
+    },
     /// Active session changed (`/new`, `/resume`).
     Session {
         /// Session id.

@@ -585,6 +585,9 @@ impl Agent {
                     duration_ms: Some(u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX)),
                     diff: out.diff.clone().map(Box::new),
                 })?;
+                if call.name == "todo_write" && !out.is_error {
+                    self.emit_tasks()?;
+                }
                 self.session.push_message(Message {
                     role: "tool".into(),
                     content: out.text,
@@ -826,6 +829,8 @@ impl Agent {
                     self.session.set_patch(Some(p))?;
                 }
             }
+            // After the patch took them in, so the board says what it waits on.
+            self.emit_tasks()?;
             let mut jobs = Vec::new();
             let mut child_cancels: Vec<Arc<crate::cancel::Cancel>> = Vec::new();
             for task in batch {
@@ -869,9 +874,10 @@ impl Agent {
                 let cancel = child_cancel;
                 let running = self.running.clone();
                 let task_id = task.id.clone();
-                let progress = self.sink.clone().map(|sink| crew::Progress {
-                    sink,
+                let progress = Some(crew::Progress {
+                    sink: self.sink.clone(),
                     id: sub_id.clone(),
+                    log: Some(self.session.dir.join("activity.jsonl")),
                 });
                 jobs.push(async move {
                     let result = if role == Role::Builder {
@@ -1056,6 +1062,7 @@ impl Agent {
             if role != Role::Builder && !combined.is_empty() {
                 let _ = self.session.write_note(Phase::Plan, &combined);
             }
+            self.emit_tasks()?;
             // "Design it, don't build yet": the builder tasks this architect
             // wrote wait as proposed until the lead releases them.
             if hold {
@@ -1069,6 +1076,9 @@ impl Agent {
                     }
                 }
                 q.set_all_saved();
+            }
+            if hold {
+                self.emit_tasks()?;
             }
         }
 
@@ -1096,6 +1106,7 @@ impl Agent {
             self.record_crew_spend(&meter)?;
             self.keep_task_spend(&meter)?;
         }
+        self.emit_tasks()?;
         let total = meter.total();
         if total.billable_tokens > 0 {
             let mut line = format!(
@@ -1511,6 +1522,19 @@ impl Agent {
     /// Put one file back as `base` had it, from `/changes`. Snapshots the
     /// files first, so `/undo` brings the file back.
     pub fn revert_file(&mut self, base: &str, path: &str) -> Result<()> {
+        self.revert_recorded(|dir| crate::review::revert_file(dir, base, path))
+    }
+
+    /// Put back one hunk of `path` as `base` had it, recorded like a file
+    /// revert so `/undo` brings it back.
+    pub fn revert_hunk(&mut self, base: &str, path: &str, hunk: usize) -> Result<()> {
+        self.revert_recorded(|dir| crate::review::revert_hunk(dir, base, path, hunk))
+    }
+
+    fn revert_recorded(
+        &mut self,
+        revert: impl FnOnce(&std::path::Path) -> Result<()>,
+    ) -> Result<()> {
         let dir = self.ctx.workspace.clone();
         let name = format!(
             "{}-{}",
@@ -1526,7 +1550,7 @@ impl Agent {
         if let Some(sha) = &sha {
             self.session.push_checkpoint(sha.clone())?;
         }
-        crate::review::revert_file(&dir, base, path)?;
+        revert(&dir)?;
         // Recorded like a turn, so `/undo` brings back this one file and
         // nothing the user changed around it.
         if let Some(sha) = sha {
@@ -2167,6 +2191,34 @@ The auditor is off, so the patch stays on `{}`.
     }
 
     /// Write the crew's new spend to the session log and the spend card.
+    /// Tell the crew board what the queue holds now.
+    pub(crate) fn emit_tasks(&mut self) -> Result<()> {
+        let tree = self
+            .session
+            .meta
+            .patch
+            .as_ref()
+            .map(|p| p.worktree.clone())
+            .unwrap_or_else(|| self.ctx.workspace.clone());
+        let tasks = self
+            .queue
+            .lock()
+            .map_err(|e| Error::Config(e.to_string()))?
+            .views(|p| tree.join(p).exists());
+        let patch = self
+            .session
+            .meta
+            .patch
+            .as_ref()
+            .map(|p| crate::queue::PatchView {
+                branch: p.branch.clone(),
+                target: p.target.clone(),
+                tasks: p.tasks.clone(),
+                landed: p.landed.clone(),
+            });
+        self.emit(AgentEvent::Tasks { tasks, patch })
+    }
+
     /// Keep each queued task's spend on the task, so the next run's caps
     /// start from it.
     fn keep_task_spend(&self, meter: &Meter) -> Result<()> {
@@ -2967,6 +3019,8 @@ mod tests {
             ),
         ]);
         let (home, _cwd, mut agent) = crew_setup(p);
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
         agent
             .queue
             .lock()
@@ -2998,6 +3052,27 @@ mod tests {
             .join("worktrees")
             .join(agent.session.meta.id.as_str());
         assert!(!wt.join("audio").exists() && !wt.join("ui").exists());
+        drop(q);
+        // The crew board heard every change, and the last word matches the queue.
+        let snapshots: Vec<Vec<crate::queue::TaskView>> = rx
+            .try_iter()
+            .filter_map(|e| match e {
+                AgentEvent::Tasks { tasks, .. } => Some(tasks),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            snapshots.iter().any(|t| t[0].status == "running"),
+            "{snapshots:?}"
+        );
+        let last = snapshots.last().unwrap();
+        assert_eq!(last[0].status, "blocked");
+        assert!(last[0].reason.contains("alsa-lib-devel"), "{last:?}");
+        assert_eq!(last[1].waits_on, ["scaffold"]);
+        // What the builder did is kept in the session.
+        let log =
+            std::fs::read_to_string(agent.session.dir.join("activity.jsonl")).unwrap_or_default();
+        assert!(log.contains("\"role\":\"builder\""), "{log}");
     }
 
     /// Tasks that only wait on a blocked one give the crew nothing to do: the

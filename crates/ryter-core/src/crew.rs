@@ -1317,19 +1317,39 @@ pub struct Bill<'a> {
 /// Where a specialist's activity is reported.
 #[derive(Clone)]
 pub struct Progress {
-    /// Event sink (TUI, `--json`).
-    pub sink: std::sync::mpsc::Sender<AgentEvent>,
+    /// Event sink (TUI, `--json`), when someone is watching.
+    pub sink: Option<std::sync::mpsc::Sender<AgentEvent>>,
     /// The specialist's id on the crew card.
     pub id: SubagentId,
+    /// The session's `activity.jsonl`: what each specialist did, kept. A
+    /// builder's 80 calls of workarounds used to leave no trace but its bill.
+    pub log: Option<std::path::PathBuf>,
 }
 
 impl Progress {
     pub(crate) fn say(&self, role: Role, text: impl Into<String>) {
-        let _ = self.sink.send(AgentEvent::SubagentActivity {
-            id: self.id.clone(),
-            role,
-            text: text.into(),
-        });
+        let text = text.into();
+        if let Some(path) = &self.log {
+            let _ = crate::session::append_jsonl(
+                path,
+                &serde_json::json!({
+                    "ts": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0),
+                    "id": self.id.as_str(),
+                    "role": role.to_string(),
+                    "text": text,
+                }),
+            );
+        }
+        if let Some(sink) = &self.sink {
+            let _ = sink.send(AgentEvent::SubagentActivity {
+                id: self.id.clone(),
+                role,
+                text,
+            });
+        }
     }
 }
 
@@ -2398,8 +2418,9 @@ mod tests {
             hooks: None,
             cancel: Cancel::new(),
             progress: Some(Progress {
-                sink: tx,
+                sink: Some(tx),
                 id: crate::queue::new_sub_id(),
+                log: None,
             }),
         };
         run_build_task(&job, &task("t1", "x")).await.unwrap();

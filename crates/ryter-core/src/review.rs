@@ -199,6 +199,34 @@ pub fn revert_file(dir: &Path, base: &str, path: &str) -> Result<()> {
     Ok(())
 }
 
+/// `path` as `base` had it (`None`: not there) and as it is now (`None`:
+/// deleted), for a diff that can be taken apart hunk by hunk.
+pub fn file_versions(
+    dir: &Path,
+    base: &str,
+    path: &str,
+) -> Result<(Option<String>, Option<String>)> {
+    let top = root(dir)?;
+    let old = git(&top, &["show", &format!("{base}:{path}")]).ok();
+    let new = std::fs::read_to_string(top.join(path)).ok();
+    Ok((old, new))
+}
+
+/// Put back one hunk of `path` as `base` had it, keeping its other changes.
+/// Hunks are numbered as [`crate::diff::FileDiff::new`] numbers them.
+pub fn revert_hunk(dir: &Path, base: &str, path: &str, hunk: usize) -> Result<()> {
+    let top = root(dir)?;
+    let (old, new) = file_versions(dir, base, path)?;
+    let new = new.ok_or_else(|| Error::Io(format!("{path} is gone; undo the file instead")))?;
+    let out = crate::diff::revert_hunk(old.as_deref().unwrap_or(""), &new, hunk)
+        .ok_or_else(|| Error::Io(format!("{path} has no change {}", hunk + 1)))?;
+    if old.is_none() && out.is_empty() {
+        // All of a new file taken back: it was never there.
+        return std::fs::remove_file(top.join(path)).map_err(|e| Error::Io(format!("{path}: {e}")));
+    }
+    std::fs::write(top.join(path), out).map_err(|e| Error::Io(format!("{path}: {e}")))
+}
+
 /// Commit exactly `paths` as they are now, with the user's identity and
 /// hooks. Anything else they staged stays staged, and out of this commit.
 /// Returns `<short sha> <subject>`.

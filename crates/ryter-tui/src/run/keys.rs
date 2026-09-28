@@ -34,6 +34,17 @@ pub fn handle(view: &mut View, key: KeyEvent) -> Action {
                 view.diffs_expanded = !view.diffs_expanded;
                 return Action::None;
             }
+            KeyAction::ToggleWorkbench if !view.panels.has_modal() => {
+                if view.workbench.take().is_some() {
+                    return Action::None;
+                }
+                // The classic screen has `/changes` for this.
+                return if view.ui.classic() {
+                    Action::OpenPanel(PanelId::Changes)
+                } else {
+                    Action::OpenWorkbench
+                };
+            }
             KeyAction::Help if !view.panels.has_modal() => {
                 if view.panels.top().is_some_and(|p| p.kind() == "help") {
                     view.panels.pop();
@@ -50,6 +61,11 @@ pub fn handle(view: &mut View, key: KeyEvent) -> Action {
                 }
                 return Action::None;
             }
+            // Esc leaves the workbench (a `y`/`n` confirm in it takes Esc too).
+            KeyAction::Back if view.panels.is_empty() && view.workbench.is_some() => {
+                view.workbench = None;
+                return Action::None;
+            }
             KeyAction::Back if view.panels.is_empty() => return esc(view),
             _ => {}
         }
@@ -59,6 +75,15 @@ pub fn handle(view: &mut View, key: KeyEvent) -> Action {
     if !view.panels.is_empty() {
         let a = panel::handle_key(view, key);
         panel::sync_composer(view);
+        return a;
+    }
+
+    // The workbench takes every other key: `x` there undoes a change.
+    if let Some(mut w) = view.workbench.take() {
+        let (keep, a) = w.key(key, view);
+        if keep {
+            view.workbench = Some(w);
+        }
         return a;
     }
 

@@ -1,0 +1,44 @@
+ CHANGES · UNCOMMITTED         │        ·  welcome · /help for keys                     ╭ config.rs  +3 −2 · change 1 of 2 ───────────────────────────────────╮
+ ▸ config.rs             +3 −2 │        ●  why does loa… ···· ✓ answered · 1.8s · …  ▸  │▌change 1 · line 1                                                   │
+                               │                                                        │▌   1    1   line 1                                                  │
+ COMMANDS                      │        ●  dusty                                        │▌   2    2   line 2                                                  │
+ none this turn                │        │  trim the query                               │▌   3      - line 3                                                  │
+                               │        │                                               │▌        3 + line three                                              │
+ TURNS                         │        ├─ edit   app/server.js ·········· +2 −1  0.0s  │▌   4    4   line 4                                                  │
+ ✓ trim the query              │        │    3                                          │▌   5    5   line 5                                                  │
+ ✓ why does load() ignore a m… │        │    4   app.get('/search', (req, res) => {     │                                                                     │
+                               │        │    5 -   const q = req.query.q                │ change 2 · line 23                                                  │
+                               │        │    5 +   const q = (req.query.q || '').trim(  │   23   23   line 23                                                 │
+                               │        │        )                                      │   24   24   line 24                                                 │
+                               │        │    6 +   if (!q) return res.json([])          │   25      - line 25                                                 │
+                               │        │    7     res.json(find(q))                    │        25 + line twenty-five                                        │
+                               │        │    8   })                                     │        26 + extra                                                   │
+                               │        ├─ write  test/search.t… · new · 6 lines  0.0s  │   26   27   line 26                                                 │
+                               │        │    1 + import { test } from 'node:test'       │   27   28   line 27                                                 │
+                               │        │    2 + import assert from 'node:assert'       │                                                                     │
+                               │        │    3 +                                        │                                                                     │
+                               │        │    4 + test('an empty query finds nothing',   │                                                                     │
+                               │        │        async () => {                          │                                                                     │
+                               │        │    5 +   assert.deepEqual(await search(''),   │                                                                     │
+                               │        │        [])                                    │                                                                     │
+                               │        │    6 + })                                     │                                                                     │
+                               │        └─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 …  │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        │                                                                     │
+                               │                                                        ╰─────────────────────────────────────────────────────────────────────╯
+ WORKBENCH  muzak  main │ turn $0.004 · session $0.018 · budget off      ↑↓ file  j k change  x undo change  X undo file  u undo turn  tab last turn  esc chat

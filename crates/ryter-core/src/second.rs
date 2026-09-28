@@ -404,8 +404,9 @@ impl Agent {
             .with_log(self.session.spend_path())
             .with_efforts(efforts, cfg.model_reasoning.clone());
         let progress = self.sink.clone().map(|sink| Progress {
-            sink,
+            sink: Some(sink),
             id: crate::queue::new_sub_id(),
+            log: None,
         });
         if let Some(sink) = &self.sink {
             meter = meter.with_sink(sink.clone());

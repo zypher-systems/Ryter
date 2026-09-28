@@ -471,6 +471,7 @@ fn crew_cards_only_in_crew_mode() {
         spend: None,
         status: "working".into(),
         started_ms: 0,
+        acting: "builder".into(),
     });
     let frame = render_to_string(&view, 160, 50);
     assert!(
@@ -813,6 +814,252 @@ fn ledger() -> View {
 #[test]
 fn snapshot_ledger() {
     all_sizes("ledger", &ledger());
+}
+
+/// Mission control: crew mode with a plan puts the board above the lead's
+/// chat, drawn from the queue snapshot and the live lanes.
+fn crew_board() -> View {
+    let mut v = ledger();
+    v.mode = Role::Orchestrator;
+    v.budget_usd = 3.0;
+    v.spend = Some(0.10);
+    v.turn_calls = 43;
+    v.now_ms = 64_000;
+    v.crew_started_ms = Some(0);
+    let t = |id: &str, role: &str, status: &str, by: &str, waits: &[&str], reason: &str| {
+        ryter_core::queue::TaskView {
+            id: id.into(),
+            title: format!("{id} task"),
+            role: role.into(),
+            status: status.into(),
+            by: by.into(),
+            waits_on: waits.iter().map(|s| s.to_string()).collect(),
+            reason: reason.into(),
+            retries: 0,
+        }
+    };
+    // First snapshot: everything waits on the scaffold.
+    v.set_tasks(
+        vec![
+            t("design", "architect", "done", "orchestrator", &[], ""),
+            t("scaffold", "builder", "running", "architect", &[], ""),
+            t(
+                "greet",
+                "builder",
+                "pending",
+                "architect",
+                &["scaffold"],
+                "waits on scaffold",
+            ),
+            t(
+                "count",
+                "builder",
+                "pending",
+                "architect",
+                &["scaffold"],
+                "waits on scaffold",
+            ),
+        ],
+        None,
+    );
+    // Later: the scaffold landed; greet builds, count is in audit.
+    v.set_tasks(
+        vec![
+            t("design", "architect", "done", "orchestrator", &[], ""),
+            t("scaffold", "builder", "done", "architect", &[], ""),
+            t("greet", "builder", "running", "architect", &[], ""),
+            t("count", "builder", "running", "architect", &[], ""),
+        ],
+        Some(ryter_core::queue::PatchView {
+            branch: "ryter/patch-01a0e642-1".into(),
+            target: "main".into(),
+            tasks: vec!["scaffold".into(), "greet".into(), "count".into()],
+            landed: vec!["scaffold".into()],
+        }),
+    );
+    for (id, title, acting, status, started) in [
+        ("s1", "greet task", "builder", "edit src/greet.rs", 46_000),
+        ("s2", "count task", "auditor", "reviewing (glm-5.3)", 59_000),
+    ] {
+        v.crew.push(crate::view::CrewRow {
+            id: id.into(),
+            role: "builder".into(),
+            label: title.into(),
+            spend: None,
+            status: status.into(),
+            started_ms: started,
+            acting: acting.into(),
+        });
+    }
+    v
+}
+
+#[test]
+fn snapshot_crew_board() {
+    let v = crew_board();
+    let text = render_to_string(&v, 140, 42);
+    check_snapshot("crew-board-140x42", &text);
+    for want in [
+        "SPEND",
+        "$0.10 of $3.00",
+        "1 of 3 landed",
+        "patch-1 → main",
+        "waits on greet, count",
+        "1:04",
+        "43 model calls this turn",
+        "✓ design",
+        "└▶ ✓ scaffold  landed",
+        "├▶ ◐ greet  building 0:18",
+        "└▶ ◑ count  in audit 0:05",
+        "patch ▸ main  lands when greet, count land",
+        "builder",
+        "auditor",
+        "reviewing (glm-5.3)",
+        "CREW · LEAD",
+    ] {
+        assert!(text.contains(want), "missing {want:?}:\n{text}");
+    }
+    // Solo mode, or no plan: no board.
+    let mut v = crew_board();
+    v.mode = Role::SoloBuild;
+    assert!(!render_to_string(&v, 140, 42).contains("PLAN"));
+}
+
+/// Last night's run on the board: the scaffold blocked on a missing system
+/// package, its reason in plain sight, and what waits on it.
+#[test]
+fn a_blocked_scaffold_shows_why_and_what_waits() {
+    let mut v = crew_board();
+    v.crew.clear();
+    let t = |id: &str, status: &str, waits: &[&str], reason: &str| ryter_core::queue::TaskView {
+        id: id.into(),
+        title: format!("{id} task"),
+        role: "builder".into(),
+        status: status.into(),
+        by: "orchestrator".into(),
+        waits_on: waits.iter().map(|s| s.to_string()).collect(),
+        reason: reason.into(),
+        retries: 0,
+    };
+    v.task_edges.clear();
+    v.set_tasks(
+        vec![
+            t(
+                "scaffold",
+                "blocked",
+                &[],
+                "the builder is blocked: sudo dnf install alsa-lib-devel",
+            ),
+            t("audio", "pending", &["scaffold"], "waits on scaffold"),
+            t("ui", "pending", &["scaffold"], "waits on scaffold"),
+        ],
+        None,
+    );
+    let text = render_to_string(&v, 140, 42);
+    for want in [
+        "✕ scaffold",
+        "blocked: the builder is blocked: sudo dnf install alsa-lib-devel",
+        "├▶ ○ audio  waits on scaffold",
+        "└▶ ○ ui  waits on scaffold",
+        "0 of 3 landed",
+        "no one is working right now",
+    ] {
+        assert!(text.contains(want), "missing {want:?}:\n{text}");
+    }
+}
+
+/// A repo with one committed file changed in two places.
+fn workbench_repo() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["config", "user.email", "ryter@test"]);
+    git(&["config", "user.name", "ryter"]);
+    git(&["config", "commit.gpgsign", "false"]);
+    let old: String = (1..=30).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(dir.path().join("config.rs"), &old).unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "base"]);
+    let new = old
+        .replace("line 3\n", "line three\n")
+        .replace("line 25\n", "line twenty-five\nextra\n");
+    std::fs::write(dir.path().join("config.rs"), new).unwrap();
+    dir
+}
+
+/// The workbench: the changed file on the left, the chat in the middle, its
+/// changes on the right one at a time; `j` moves to the next, `x` undoes that
+/// one alone, and nothing typed reaches the composer.
+#[test]
+fn workbench_shows_changes_and_undoes_one() {
+    let repo = workbench_repo();
+    let mut v = ledger();
+    v.workbench = Some(crate::workbench::Workbench::open(
+        &v,
+        repo.path().to_path_buf(),
+    ));
+    let text = render_to_string(&v, 160, 44);
+    check_snapshot("workbench-160x44", &text);
+    for want in [
+        "CHANGES · UNCOMMITTED",
+        "▸ config.rs",
+        "+3 −2",
+        "config.rs  +3 −2 · change 1 of 2",
+        "change 1 · line 1",
+        "change 2 · line 23",
+        "line three",
+        "WORKBENCH",
+        "x undo change",
+    ] {
+        assert!(text.contains(want), "missing {want:?}:\n{text}");
+    }
+    assert!(
+        !text.contains("what should change?"),
+        "no composer in the workbench"
+    );
+    let key = |c: KeyCode| KeyEvent::new(c, KeyModifiers::NONE);
+    // `j`: the second change; `x`: undo exactly that one.
+    assert_eq!(
+        crate::run::keys::handle(&mut v, key(KeyCode::Char('j'))),
+        Action::None
+    );
+    let a = crate::run::keys::handle(&mut v, key(KeyCode::Char('x')));
+    let Action::RevertHunk { base, path, hunk } = a else {
+        panic!("x should undo the change: {a:?}");
+    };
+    assert_eq!((path.as_str(), hunk), ("config.rs", 1));
+    ryter_core::review::revert_hunk(repo.path(), &base, &path, hunk).unwrap();
+    let now = std::fs::read_to_string(repo.path().join("config.rs")).unwrap();
+    assert!(
+        now.contains("line three") && !now.contains("extra"),
+        "{now}"
+    );
+    assert!(
+        v.composer.is_empty(),
+        "keys went to the workbench, not the composer"
+    );
+    // `X` asks first; Esc leaves.
+    assert_eq!(
+        crate::run::keys::handle(&mut v, key(KeyCode::Char('X'))),
+        Action::None
+    );
+    assert_eq!(
+        crate::run::keys::handle(&mut v, key(KeyCode::Char('n'))),
+        Action::None
+    );
+    crate::run::keys::handle(&mut v, key(KeyCode::Esc));
+    assert!(v.workbench.is_none());
 }
 
 /// `$` opens the spend drawer above the composer: the turn, the session, and

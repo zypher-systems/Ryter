@@ -70,6 +70,46 @@ pub struct Task {
     pub spent: crate::meter::Tally,
 }
 
+/// One task as the crew board shows it: everything drawn comes from here,
+/// so the picture is the queue, not a description of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskView {
+    /// Queue id.
+    pub id: String,
+    /// One line for the user.
+    pub title: String,
+    /// `architect` or `builder`.
+    pub role: String,
+    /// `proposed` / `pending` / `running` / `blocked` / `done`.
+    pub status: String,
+    /// Who wrote it (`architect` for a design's tasks).
+    #[serde(default)]
+    pub by: String,
+    /// What it waits on now: its `after`, and the task laying the project's
+    /// foundation when there is one.
+    #[serde(default)]
+    pub waits_on: Vec<String>,
+    /// Why it is blocked, or what it waits on: one line.
+    #[serde(default)]
+    pub reason: String,
+    /// Audit rejections so far.
+    #[serde(default)]
+    pub retries: u32,
+}
+
+/// The open patch, as the crew board shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchView {
+    /// `ryter/patch-…`.
+    pub branch: String,
+    /// The user's branch it lands on.
+    pub target: String,
+    /// Task ids taken into it.
+    pub tasks: Vec<String>,
+    /// Task ids whose work is on it.
+    pub landed: Vec<String>,
+}
+
 /// Persisted FIFO queue (`tasks.json` in the session dir).
 #[derive(Debug, Clone)]
 pub struct TaskQueue {
@@ -285,6 +325,62 @@ impl TaskQueue {
                 && t.status != TaskStatus::Done
                 && t.files.iter().any(|f| MANIFESTS.contains(&f.as_str()))
         })
+    }
+
+    /// Every task for the crew board. `exists` is as for [`Self::take_ready`].
+    pub fn views(&self, exists: impl Fn(&str) -> bool) -> Vec<TaskView> {
+        let foundation = self.foundation(&exists).map(|t| t.id.clone());
+        self.tasks
+            .iter()
+            .map(|t| {
+                let mut waits_on: Vec<String> = t.after.clone();
+                if let Some(f) = &foundation {
+                    if t.role == "builder" && *f != t.id && !waits_on.contains(f) {
+                        waits_on.push(f.clone());
+                    }
+                }
+                let status = match t.status {
+                    TaskStatus::Proposed => "proposed",
+                    TaskStatus::Pending => "pending",
+                    TaskStatus::Running => "running",
+                    TaskStatus::Blocked => "blocked",
+                    TaskStatus::Done => "done",
+                };
+                let reason = match t.status {
+                    TaskStatus::Blocked => t
+                        .findings
+                        .lines()
+                        .map(str::trim)
+                        .find(|l| !l.is_empty())
+                        .unwrap_or("")
+                        .to_string(),
+                    TaskStatus::Pending => {
+                        let unmet = self.unmet(t);
+                        if !unmet.is_empty() {
+                            format!("waits on {}", unmet.join(", "))
+                        } else if foundation
+                            .as_ref()
+                            .is_some_and(|f| *f != t.id && t.role == "builder")
+                        {
+                            format!("waits on {}", foundation.clone().unwrap_or_default())
+                        } else {
+                            String::new()
+                        }
+                    }
+                    _ => String::new(),
+                };
+                TaskView {
+                    id: t.id.clone(),
+                    title: t.title.clone(),
+                    role: t.role.clone(),
+                    status: status.into(),
+                    by: t.by.clone(),
+                    waits_on,
+                    reason,
+                    retries: t.retries,
+                }
+            })
+            .collect()
     }
 
     /// Why each pending task that can't start is waiting, one line each, for
@@ -676,5 +772,29 @@ mod scope_tests {
         ]));
         let built = |p: &str| p == "Cargo.toml";
         assert_eq!(ids(&q.take_ready(4, |_| true, built)), ["deps", "docs"]);
+    }
+
+    /// The board's view carries what each task waits on, the foundation
+    /// rule included, and why a blocked task is blocked.
+    #[test]
+    fn views_say_what_waits_on_what() {
+        let (_d, mut q) = queue(json!([
+            {"id": "scaffold", "title": "crate", "files": ["Cargo.toml"]},
+            {"id": "audio", "title": "audio", "files": ["src/audio.rs"], "after": ["scaffold"]},
+            {"id": "ui", "title": "ui", "files": ["src/ui.rs"]},
+        ]));
+        q.set(
+            "scaffold",
+            TaskStatus::Blocked,
+            "needs alsa-lib-devel\nmore",
+        );
+        let v = q.views(|_| false);
+        assert_eq!(v[0].reason, "needs alsa-lib-devel");
+        assert_eq!(v[1].waits_on, ["scaffold"]);
+        assert_eq!(v[1].reason, "waits on scaffold");
+        assert_eq!(v[2].waits_on, ["scaffold"], "the manifest comes first");
+        // Once the manifest exists nothing waits on it by that rule.
+        let v = q.views(|p| p == "Cargo.toml");
+        assert!(v[2].waits_on.is_empty());
     }
 }

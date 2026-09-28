@@ -39,7 +39,27 @@ fn receipt(view: &View, verb: &Verb, tools: u32, duration_ms: u64) -> String {
 }
 
 pub fn apply(view: &mut View, ev: AgentEvent) {
-    match &ev {
+    // The workbench shows the files as they are: read them again after
+    // anything that changes them.
+    if matches!(
+        ev,
+        AgentEvent::Reverted { .. }
+            | AgentEvent::TurnFinished { .. }
+            | AgentEvent::Checkpoint { .. }
+            | AgentEvent::Notice { .. }
+    ) {
+        apply_inner(view, &ev);
+        if let Some(mut w) = view.workbench.take() {
+            w.reload(view);
+            view.workbench = Some(w);
+        }
+        return;
+    }
+    apply_inner(view, &ev);
+}
+
+fn apply_inner(view: &mut View, ev: &AgentEvent) {
+    match ev {
         AgentEvent::Token { text } => view.on_token(text),
         AgentEvent::Reasoning { text } => {
             let turn = view.turn;
@@ -68,7 +88,12 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
                 view.activity.current.clear();
             }
         }
+        AgentEvent::Tasks { tasks, patch } => {
+            view.set_tasks(tasks.clone(), patch.clone());
+        }
         AgentEvent::TurnStarted { .. } => {
+            view.turn_calls = 0;
+            view.crew_started_ms = None;
             view.tally = Default::default();
             view.lookups = None;
             view.turn_spend_from = view.spend;
@@ -132,6 +157,7 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
             total_usd,
             ..
         } => {
+            view.turn_calls += 1;
             if let Some(p) = &mut view.project_spend {
                 p.add(*role, model, *total_usd);
             }
@@ -153,6 +179,9 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
             role,
             description,
         } => {
+            if view.crew_started_ms.is_none() {
+                view.crew_started_ms = Some(view.now_ms);
+            }
             view.crew.push(CrewRow {
                 id: id.to_string(),
                 role: role.to_string(),
@@ -160,13 +189,15 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
                 spend: None,
                 status: "running".into(),
                 started_ms: view.now_ms,
+                acting: role.to_string(),
             });
         }
         // Progress goes on the specialist's crew row, not into the chat. A
         // second opinion has no crew row: it shows on the activity strip.
-        AgentEvent::SubagentActivity { id, text, .. } => {
+        AgentEvent::SubagentActivity { id, text, role } => {
             if let Some(row) = view.crew.iter_mut().find(|c| c.id == id.as_str()) {
                 row.status = wrap::truncate(text, 48);
+                row.acting = role.to_string();
             } else if view.activity.busy() {
                 view.activity.current = wrap::truncate(text, 48);
             }
@@ -336,7 +367,7 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
             view.mcp_status = servers.iter().cloned().collect();
         }
     }
-    panel::on_event(view, &ev);
+    panel::on_event(view, ev);
 }
 
 fn on_tool_call(
