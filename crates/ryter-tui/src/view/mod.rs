@@ -150,6 +150,15 @@ pub struct View {
     pub task_edges: Vec<(String, String)>,
     /// The open patch.
     pub patch_view: Option<ryter_core::queue::PatchView>,
+    /// The checks run on each task and the patch (`[auditor] checks`).
+    pub crew_checks: Vec<String>,
+    /// USD spent per crew task, as the meter charged it.
+    pub task_spend: BTreeMap<String, f64>,
+    /// Every lane's activity this session, by subagent id: `(task, lines)`.
+    /// A lane's transcript outlives the lane.
+    pub lane_logs: BTreeMap<String, (String, Vec<String>)>,
+    /// The lane `tab` picked on the crew board.
+    pub lane_selected: Option<usize>,
     /// When the crew started working this turn, and the model calls since
     /// the turn began, for the board's clock.
     pub crew_started_ms: Option<u64>,
@@ -350,6 +359,10 @@ impl View {
             tasks: Vec::new(),
             task_edges: Vec::new(),
             patch_view: None,
+            crew_checks: Vec::new(),
+            task_spend: BTreeMap::new(),
+            lane_logs: BTreeMap::new(),
+            lane_selected: None,
             crew_started_ms: None,
             turn_calls: 0,
             lookups: None,

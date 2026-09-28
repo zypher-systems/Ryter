@@ -387,6 +387,7 @@ impl Agent {
                 model: self.model.clone(),
                 role: self.role,
                 subagent_id: None,
+                task: None,
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,
                 cached_tokens: usage.cached_tokens,
@@ -1705,6 +1706,7 @@ impl Agent {
             model: self.model.clone(),
             role: self.role,
             subagent_id: None,
+            task: None,
             input_tokens: usage.input_tokens,
             output_tokens: usage.output_tokens,
             cached_tokens: usage.cached_tokens,
@@ -2216,7 +2218,12 @@ The auditor is off, so the patch stays on `{}`.
                 tasks: p.tasks.clone(),
                 landed: p.landed.clone(),
             });
-        self.emit(AgentEvent::Tasks { tasks, patch })
+        let checks = self.checks.clone();
+        self.emit(AgentEvent::Tasks {
+            tasks,
+            checks,
+            patch,
+        })
     }
 
     /// Keep each queued task's spend on the task, so the next run's caps
@@ -2268,6 +2275,7 @@ The auditor is off, so the patch stays on `{}`.
                 model,
                 role,
                 subagent_id: None,
+                task: None,
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,
                 cached_tokens: usage.cached_tokens,

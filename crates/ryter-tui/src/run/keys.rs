@@ -251,6 +251,18 @@ fn composer_key(view: &mut View, key: KeyEvent) -> Action {
         && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
     {
         if view.crew_mode() {
+            // On the crew board, tab picks a lane; ⏎ opens its transcript.
+            if !view.ui.classic() && !view.crew.is_empty() {
+                let n = view.crew.len();
+                view.lane_selected = match (view.lane_selected, key.code == KeyCode::BackTab) {
+                    (None, false) => Some(0),
+                    (None, true) => Some(n - 1),
+                    (Some(i), false) if i + 1 < n => Some(i + 1),
+                    (Some(i), true) if i > 0 => Some(i - 1),
+                    _ => None,
+                };
+                return Action::None;
+            }
             view.system("crew mode · /solo to go back to build, plan, and review");
             return Action::None;
         }
@@ -263,6 +275,19 @@ fn composer_key(view: &mut View, key: KeyEvent) -> Action {
     let action = keymap::lookup(Ctx::Composer, key);
     let mut edited = true;
     let result = match action {
+        Some(KeyAction::Send)
+            if view.composer.is_empty() && view.crew_mode() && view.lane_selected.is_some() =>
+        {
+            let lane = view
+                .lane_selected
+                .and_then(|i| view.crew.get(i))
+                .map(|c| c.id.clone());
+            if let Some(id) = lane {
+                view.panels
+                    .push(Box::new(crate::panel::lane::Lane::new(id)));
+            }
+            return Action::None;
+        }
         Some(KeyAction::Send) => return submit(view),
         Some(KeyAction::Newline) => {
             view.composer.newline();

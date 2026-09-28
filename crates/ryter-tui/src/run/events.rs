@@ -88,7 +88,12 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 view.activity.current.clear();
             }
         }
-        AgentEvent::Tasks { tasks, patch } => {
+        AgentEvent::Tasks {
+            tasks,
+            checks,
+            patch,
+        } => {
+            view.crew_checks = checks.clone();
             view.set_tasks(tasks.clone(), patch.clone());
         }
         AgentEvent::TurnStarted { .. } => {
@@ -155,9 +160,13 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             output_tokens,
             cached_tokens,
             total_usd,
+            task,
             ..
         } => {
             view.turn_calls += 1;
+            if let (Some(t), Some(usd)) = (task, total_usd) {
+                *view.task_spend.entry(t.clone()).or_insert(0.0) += *usd;
+            }
             if let Some(p) = &mut view.project_spend {
                 p.add(*role, model, *total_usd);
             }
@@ -182,6 +191,9 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             if view.crew_started_ms.is_none() {
                 view.crew_started_ms = Some(view.now_ms);
             }
+            view.lane_logs
+                .entry(id.to_string())
+                .or_insert_with(|| (description.clone(), Vec::new()));
             view.crew.push(CrewRow {
                 id: id.to_string(),
                 role: role.to_string(),
@@ -195,6 +207,13 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
         // Progress goes on the specialist's crew row, not into the chat. A
         // second opinion has no crew row: it shows on the activity strip.
         AgentEvent::SubagentActivity { id, text, role } => {
+            if let Some((_, lines)) = view.lane_logs.get_mut(id.as_str()) {
+                let at = crate::chat::OffsetTimestamp::now(view.tz_offset).hhmm();
+                lines.push(format!("{at}  {role:<8} {text}"));
+                if lines.len() > 500 {
+                    lines.remove(0);
+                }
+            }
             if let Some(row) = view.crew.iter_mut().find(|c| c.id == id.as_str()) {
                 row.status = wrap::truncate(text, 48);
                 row.acting = role.to_string();
@@ -243,6 +262,8 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             summary,
             body,
         } => {
+            // A finished lane leaves the board; don't leave the pick on another.
+            view.lane_selected = None;
             let label = view
                 .crew
                 .iter()
@@ -768,6 +789,7 @@ mod tests {
                 model: "grok-4.6".into(),
                 role: Role::Orchestrator,
                 subagent_id: None,
+                task: None,
                 input_tokens: 100,
                 output_tokens: 20,
                 cached_tokens: 0,
@@ -800,6 +822,7 @@ mod tests {
                 model: "m".into(),
                 role: Role::Orchestrator,
                 subagent_id: None,
+                task: None,
                 input_tokens: 1,
                 output_tokens: 1,
                 cached_tokens: 0,

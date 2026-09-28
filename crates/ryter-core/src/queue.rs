@@ -347,13 +347,7 @@ impl TaskQueue {
                     TaskStatus::Done => "done",
                 };
                 let reason = match t.status {
-                    TaskStatus::Blocked => t
-                        .findings
-                        .lines()
-                        .map(str::trim)
-                        .find(|l| !l.is_empty())
-                        .unwrap_or("")
-                        .to_string(),
+                    TaskStatus::Blocked => blocked_reason(&t.findings),
                     TaskStatus::Pending => {
                         let unmet = self.unmet(t);
                         if !unmet.is_empty() {
@@ -456,6 +450,45 @@ impl TaskQueue {
 
 fn default_role() -> String {
     "builder".into()
+}
+
+/// One line saying why a task is blocked. An audit's findings open with the
+/// seat (`[z-ai/glm-5.3-prime · review]`) and often a line of preamble; the
+/// board showed that header as the reason. The first finding, or the verdict
+/// when there is none, says it.
+fn blocked_reason(findings: &str) -> String {
+    let lines: Vec<&str> = findings
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .filter(|l| !(l.starts_with('[') && l.ends_with(']')))
+        .collect();
+    let finding = lines.iter().find(|l| {
+        let low = l.to_ascii_lowercase();
+        (l.starts_with("- ")
+            || l.starts_with("* ")
+            || l.starts_with("1.")
+            || low.contains("blocking"))
+            && !low.starts_with("verdict")
+    });
+    let rejected = findings.contains("VERDICT: FAIL") || findings.contains("VERDICT:FAIL");
+    let line = finding
+        .or(lines
+            .iter()
+            .find(|l| !l.to_ascii_uppercase().starts_with("VERDICT")))
+        .map(|l| {
+            l.trim_start_matches(['-', '*', ' '])
+                .trim_start_matches("1.")
+                .trim()
+                .to_string()
+        })
+        .unwrap_or_default();
+    let line = line.replace("**", "");
+    if rejected && !line.is_empty() {
+        format!("the audit failed it: {line}")
+    } else {
+        line
+    }
 }
 
 /// Build manifests at a project's root. A tree with none of them can't be
@@ -796,5 +829,19 @@ mod scope_tests {
         // Once the manifest exists nothing waits on it by that rule.
         let v = q.views(|p| p == "Cargo.toml");
         assert!(v[2].waits_on.is_empty());
+    }
+
+    /// The audit's header is not a reason; its first finding is.
+    #[test]
+    fn a_blocked_reason_is_the_finding_not_the_header() {
+        let findings = "[z-ai/glm-5.3-prime · review]\nThe exact failure repeated.\n\n1. **`src/app.rs` is still absent** — nothing to review.\n2. more\n\nVERDICT: FAIL";
+        assert_eq!(
+            blocked_reason(findings),
+            "the audit failed it: `src/app.rs` is still absent — nothing to review."
+        );
+        assert_eq!(
+            blocked_reason("needs alsa-lib-devel\nmore"),
+            "needs alsa-lib-devel"
+        );
     }
 }

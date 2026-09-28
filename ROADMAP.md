@@ -4,6 +4,13 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.6.3 (`fix/0.6.3`) — mission control as designed.** The crew screen is design D's layout:
+  - tiles for SPEND, TASKS, CHECKS, ELAPSED;
+  - the plan on the left at full height, with a legend at its foot;
+  - on the right, the lanes, each with its task's cost, and the LEAD box holding the conversation and the prompt;
+  - the strip names the seats' models and the patch.
+
+  `tab` picks a lane and `⏎` opens its transcript. The bar says `esc stop the crew`. A blocked task's reason is the audit's first finding, not its `[model · review]` header. Left out of the mockup on purpose: lane progress bars (there is no real measure of progress) and `p plan`.
 - **0.6.2 (`fix/0.6.2`) — the plan is drawn.** Mission control's plan is boxes in their state's color, left to right by what waits on what, joined by `──┬─▶` / `└─▶`, as the design showed. A blocked task's full reason, and a task's other prerequisites, are listed under the drawing. A plan too big for the space falls back to the tree, and a long plan keeps its top rows with `… N more rows` instead of losing them.
 - **0.6.1 (`fix/0.6.1`) — the views are in sight.** A strip across the top of the ledger names the views, `chat`, `changes ^t`, `crew board` (`/crew` in solo mode), and lights the one on screen. In crew mode the board shows before there's a plan, and the workbench replaces it rather than sitting under it. `^t` is in the bar's keys. In 0.6.0 the workbench was behind an unadvertised key, and a crew session that started with a question showed no board, so it looked like there was one view.
 - **0.6.0 (`feat/0.6.0`) — the ledger layout.** The default screen is one reading column on a timeline:
