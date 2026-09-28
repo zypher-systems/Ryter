@@ -72,11 +72,13 @@ pub fn estimate_range(context_tokens: u64) -> (Usage, Usage) {
         input_tokens: context_tokens,
         output_tokens: 1_500,
         cached_tokens: 0,
+        cache_write_tokens: 0,
     };
     let high = Usage {
         input_tokens: context_tokens * 6 + 60_000,
         output_tokens: 24_000,
         cached_tokens: 0,
+        cache_write_tokens: 0,
     };
     (low, high)
 }

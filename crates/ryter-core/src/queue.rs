@@ -59,6 +59,9 @@ pub struct Task {
     /// Last auditor findings (if any).
     #[serde(default)]
     pub findings: String,
+    /// What the task has spent on every run so far. Its caps count all of it.
+    #[serde(default, skip_serializing_if = "crate::meter::Tally::is_empty")]
+    pub spent: crate::meter::Tally,
 }
 
 /// Persisted FIFO queue (`tasks.json` in the session dir).
@@ -150,6 +153,7 @@ impl TaskQueue {
                     status: u.status.unwrap_or(TaskStatus::Pending),
                     retries: 0,
                     findings: String::new(),
+                    spent: Default::default(),
                 }),
             }
         }

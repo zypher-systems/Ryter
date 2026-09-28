@@ -350,26 +350,34 @@ fn usage_from(v: &Value) -> Option<Usage> {
     if v.is_null() {
         return None;
     }
-    let input = v
-        .get("prompt_tokens")
-        .or_else(|| v.get("input_tokens"))
-        .and_then(Value::as_u64)
+    let n = |k: &str| v.get(k).and_then(Value::as_u64);
+    let input = n("prompt_tokens")
+        .or_else(|| n("input_tokens"))
         .unwrap_or(0);
-    let output = v
-        .get("completion_tokens")
-        .or_else(|| v.get("output_tokens"))
-        .and_then(Value::as_u64)
+    let output = n("completion_tokens")
+        .or_else(|| n("output_tokens"))
         .unwrap_or(0);
-    let cached = v
-        .get("prompt_tokens_details")
-        .and_then(|d| d.get("cached_tokens"))
-        .or_else(|| {
-            v.get("input_tokens_details")
-                .and_then(|d| d.get("cached_tokens"))
-        })
-        .or_else(|| v.get("cache_read_input_tokens"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
+    let detail = |outer: &str, k: &str| v.get(outer).and_then(|d| d.get(k)).and_then(Value::as_u64);
+    // Anthropic's `input_tokens` leaves out what was read from or written to
+    // the cache; everyone else's prompt count includes it. Add them back so
+    // `input_tokens` always means the whole prompt.
+    let (read, write) = (
+        n("cache_read_input_tokens"),
+        n("cache_creation_input_tokens"),
+    );
+    let anthropic = read.is_some() || write.is_some();
+    let (input, cached, cache_write) = if anthropic {
+        let (read, write) = (read.unwrap_or(0), write.unwrap_or(0));
+        (input + read + write, read, write)
+    } else {
+        let cached = detail("prompt_tokens_details", "cached_tokens")
+            .or_else(|| detail("input_tokens_details", "cached_tokens"))
+            // DeepSeek's own API.
+            .or_else(|| n("prompt_cache_hit_tokens"))
+            .unwrap_or(0);
+        let write = detail("prompt_tokens_details", "cache_write_tokens").unwrap_or(0);
+        (input, cached, write)
+    };
     if input == 0 && output == 0 && cached == 0 {
         return None;
     }
@@ -377,6 +385,7 @@ fn usage_from(v: &Value) -> Option<Usage> {
         input_tokens: input,
         output_tokens: output,
         cached_tokens: cached,
+        cache_write_tokens: cache_write,
     })
 }
 
@@ -451,6 +460,67 @@ data: {"delta":{"stop_reason":"end_turn"}}
                 !deltas.contains(&StreamDelta::Truncated),
                 "{backend:?} false positive: {deltas:?}"
             );
+        }
+    }
+
+    /// Anthropic counts the prompt in three fields; `input_tokens` is only the
+    /// part that was neither read from nor written to the cache. The usage
+    /// Ryter keeps is the whole prompt, with reads and writes marked.
+    #[test]
+    fn anthropic_cache_counts_are_part_of_the_prompt() {
+        let sse = r#"event: message_start
+data: {"message":{"usage":{"input_tokens":12,"cache_read_input_tokens":9000,"cache_creation_input_tokens":800,"output_tokens":1}}}
+
+event: message_delta
+data: {"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":40}}
+
+"#;
+        let usage = parse_sse(Backend::Messages, sse)
+            .unwrap()
+            .into_iter()
+            .filter_map(|d| match d {
+                StreamDelta::Usage(u) => Some(u),
+                _ => None,
+            })
+            .fold(Usage::default(), Usage::merge);
+        assert_eq!(
+            usage,
+            Usage {
+                input_tokens: 9812,
+                output_tokens: 40,
+                cached_tokens: 9000,
+                cache_write_tokens: 800,
+            }
+        );
+    }
+
+    /// OpenAI-style counts already include cached tokens; DeepSeek names its
+    /// own field.
+    #[test]
+    fn other_cache_counts_are_read_as_given() {
+        for (sse, cached) in [
+            (
+                r#"data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":60}}}
+
+"#,
+                60,
+            ),
+            (
+                r#"data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":70,"prompt_cache_miss_tokens":30}}
+
+"#,
+                70,
+            ),
+        ] {
+            let u = parse_sse(Backend::ChatCompletions, sse)
+                .unwrap()
+                .into_iter()
+                .find_map(|d| match d {
+                    StreamDelta::Usage(u) => Some(u),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!((u.input_tokens, u.cached_tokens), (100, cached));
         }
     }
 }

@@ -4,6 +4,7 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.5.5 (`fix/0.5.5`) — spend counts what you pay.** Anthropic prompts are counted whole: cache reads and cache writes (1.25× input, never counted before) are priced at their own rates, and OpenRouter's cache rates are read from its catalog. With a session budget set, a model with no price is not called again after its first unpriced call, in solo, lead, and crew; the reply that came back is kept. A crew task's caps count what it spent on earlier runs (`Task.spent`).
 - **0.5.4 (`fix/0.5.4`) — model lists show only models that can chat.** `:batch` routes and image or audio models are left out of `/models`, the `/audit` chooser, and `ryter models`, read from the catalog's output types (id patterns where a catalog gives none); router models such as `openrouter/auto` stay.
 - **0.5.3 (`fix/0.5.3`) — approving like Reeve, clearer menus.** The approval card docks above the composer (what, why, risk, change); `⏎` allows after a 500 ms guard, `a` allows one named kind of action for the session, `n` denies, destructive commands take only `y`. Panel keys on the panel's last row in color; search inside the model picker and help; the picker opens on the current model. Fixed: the picker's `$-1000000/M` footer for routers, `/provider` showing a connection's default model instead of the one in use, and form keys in the hint bar during a prompt. The look (palette) is still to decide: options on the comparison page, Copper proposed.
 
@@ -36,10 +37,7 @@ Living plan for Ryter. The lead updates this as work lands.
   - bare `env` was read-only.
 - **Security, still open:** the never-run list doesn't bind a builder that writes a script (Landlock is the boundary, and it's off by default); shell reads can reach `.env` indirectly (`grep -r`, `xargs cat`); environment secrets other than Ryter's keys are visible to commands; no independent adversarial pass of the new gate yet.
 - **Audit findings still open** (verified 2026-09-26, not yet fixed):
-  - **Spend:**
-    - The budget never trips on an unpriced model, and the lead and solo hats have no token cap.
-    - The per-task cap resets on every drain.
-    - Anthropic `cache_creation_input_tokens` aren't counted, and `input − cached` is wrong for Anthropic, whose `input_tokens` already excludes cache reads.
+  - **Spend:** the lead and solo hats have no token cap (with a budget set, an unpriced model is now stopped instead; see 0.5.5).
   - **Headless:** `ryter -p` exits 0 on `MaxTurns`, `Truncated`, and `Stuck`, and `TurnFinished` carries no stop reason.
   - **MCP:** `use_tool` reads with no timeout while holding the hub lock, and takes the first line as the reply without matching its id. A notification shifts every later result by one.
   - **Streams:**

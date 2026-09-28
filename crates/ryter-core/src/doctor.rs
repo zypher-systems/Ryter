@@ -194,6 +194,7 @@ fn spend_checks(checks: &mut Vec<Check>, cfg: &Config) {
         input_tokens: 1_000,
         output_tokens: 1_000,
         cached_tokens: 0,
+        cache_write_tokens: 0,
     };
     match book.cost("grok-4.6", usage) {
         Some(v) if v > 0.0 => checks.push(Check {

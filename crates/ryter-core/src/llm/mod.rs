@@ -302,6 +302,7 @@ mod tests {
                 input_tokens: 12,
                 output_tokens: 3,
                 cached_tokens: 2,
+                cache_write_tokens: 0,
             })
         );
         assert!(

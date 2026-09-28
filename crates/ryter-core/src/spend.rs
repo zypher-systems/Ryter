@@ -15,6 +15,9 @@ pub struct Usage {
     pub output_tokens: u64,
     /// Cached input tokens (billed at the cached rate when known).
     pub cached_tokens: u64,
+    /// Input tokens written to the provider's cache this call, billed at the
+    /// cache-write rate (Anthropic: 1.25× input). Part of `input_tokens`.
+    pub cache_write_tokens: u64,
 }
 
 impl Usage {
@@ -28,6 +31,7 @@ impl Usage {
             input_tokens: self.input_tokens.max(later.input_tokens),
             output_tokens: self.output_tokens.max(later.output_tokens),
             cached_tokens: self.cached_tokens.max(later.cached_tokens),
+            cache_write_tokens: self.cache_write_tokens.max(later.cache_write_tokens),
         }
     }
 }
@@ -41,6 +45,8 @@ pub struct Rates {
     pub cached_per_million: f64,
     /// Output.
     pub output_per_million: f64,
+    /// Input written to the cache. Falls back to input if unset.
+    pub cache_write_per_million: Option<f64>,
     /// When prompt tokens reach this, use the long-context rates for the whole request.
     pub long_threshold: Option<u64>,
     /// Long-context input.
@@ -58,6 +64,7 @@ impl Rates {
             input_per_million: input,
             cached_per_million: input,
             output_per_million: output,
+            cache_write_per_million: None,
             long_threshold: None,
             long_input_per_million: None,
             long_cached_per_million: None,
@@ -85,12 +92,18 @@ impl Rates {
         }
     }
 
-    /// USD for `usage`, or `None` if this rates entry should not be used.
+    /// USD for `usage`. `input_tokens` is the whole prompt: cache reads and
+    /// writes are the parts of it billed at their own rates.
     pub fn cost(self, usage: Usage) -> f64 {
         let (input, cached, output) = self.effective(usage);
-        let billable_input = usage.input_tokens.saturating_sub(usage.cached_tokens);
-        (billable_input as f64) * input / 1_000_000.0
+        let write = self.cache_write_per_million.unwrap_or(input);
+        let plain = usage
+            .input_tokens
+            .saturating_sub(usage.cached_tokens)
+            .saturating_sub(usage.cache_write_tokens);
+        (plain as f64) * input / 1_000_000.0
             + (usage.cached_tokens as f64) * cached / 1_000_000.0
+            + (usage.cache_write_tokens as f64) * write / 1_000_000.0
             + (usage.output_tokens as f64) * output / 1_000_000.0
     }
 }
@@ -128,12 +141,15 @@ impl PriceBook {
             let completion = parse_per_token(pricing.completion.as_deref())?;
             let Some(input) = prompt else { continue };
             let Some(output) = completion else { continue };
+            let read = parse_per_token(pricing.input_cache_read.as_deref())?.unwrap_or(input);
+            let write = parse_per_token(pricing.input_cache_write.as_deref())?;
             self.catalog.insert(
                 m.id,
                 Rates {
                     input_per_million: input * 1_000_000.0,
-                    cached_per_million: input * 1_000_000.0,
+                    cached_per_million: read * 1_000_000.0,
                     output_per_million: output * 1_000_000.0,
+                    cache_write_per_million: write.map(|w| w * 1_000_000.0),
                     long_threshold: None,
                     long_input_per_million: None,
                     long_cached_per_million: None,
@@ -216,6 +232,7 @@ fn override_rates(o: &PriceOverride) -> Rates {
         input_per_million: input,
         cached_per_million: o.cached_per_million.unwrap_or(input),
         output_per_million: o.output_per_million.unwrap_or(0.0),
+        cache_write_per_million: o.cache_write_per_million,
         long_threshold: None,
         long_input_per_million: None,
         long_cached_per_million: None,
@@ -259,6 +276,7 @@ fn spacexai_rates(model: &str) -> Option<Rates> {
         input_per_million: input,
         cached_per_million: cached,
         output_per_million: output,
+        cache_write_per_million: None,
         long_threshold: Some(200_000),
         long_input_per_million: Some(long_in),
         long_cached_per_million: Some(long_cached),
@@ -285,6 +303,10 @@ struct OpenRouterPricing {
     prompt: Option<String>,
     #[serde(default)]
     completion: Option<String>,
+    #[serde(default)]
+    input_cache_read: Option<String>,
+    #[serde(default)]
+    input_cache_write: Option<String>,
 }
 
 #[cfg(test)]
@@ -314,6 +336,7 @@ mod tests {
                     input_tokens: 50_000,
                     output_tokens: 10_000,
                     cached_tokens: 0,
+                    cache_write_tokens: 0,
                 },
             )
             .unwrap();
@@ -331,6 +354,7 @@ mod tests {
                     input_tokens: 200_000,
                     output_tokens: 1_000,
                     cached_tokens: 0,
+                    cache_write_tokens: 0,
                 },
             )
             .unwrap();
@@ -348,6 +372,7 @@ mod tests {
                     input_tokens: 100,
                     output_tokens: 100,
                     cached_tokens: 0,
+                    cache_write_tokens: 0,
                 },
             ),
             None
@@ -373,6 +398,7 @@ mod tests {
                 input_per_million: Some(10.0),
                 cached_per_million: None,
                 output_per_million: Some(20.0),
+                cache_write_per_million: None,
             },
         );
         let book = PriceBook::from_config(&cfg);
@@ -383,6 +409,7 @@ mod tests {
                     input_tokens: 1_000_000,
                     output_tokens: 1_000_000,
                     cached_tokens: 0,
+                    cache_write_tokens: 0,
                 },
             )
             .unwrap();
@@ -403,9 +430,53 @@ mod tests {
                     input_tokens: 1_000_000,
                     output_tokens: 1_000_000,
                     cached_tokens: 0,
+                    cache_write_tokens: 0,
                 },
             )
             .unwrap();
         assert!((cost - 18.0).abs() < 1e-6, "{cost}");
+    }
+
+    /// Anthropic bills a prompt in three parts: plain input, cache reads
+    /// (0.1×), and cache writes (1.25×). Before, writes were not counted and
+    /// reads were subtracted from a count that already left them out.
+    #[test]
+    fn cache_reads_and_writes_are_priced_at_their_own_rates() {
+        let mut cfg = Config::default();
+        cfg.pricing.insert(
+            "claude-sonnet-5".into(),
+            PriceOverride {
+                input_per_million: Some(3.0),
+                cached_per_million: Some(0.3),
+                output_per_million: Some(15.0),
+                cache_write_per_million: Some(3.75),
+            },
+        );
+        let book = PriceBook::from_config(&cfg);
+        let cost = book
+            .cost(
+                "claude-sonnet-5",
+                Usage {
+                    input_tokens: 1_000_000 + 2_000_000 + 400_000,
+                    output_tokens: 100_000,
+                    cached_tokens: 2_000_000,
+                    cache_write_tokens: 400_000,
+                },
+            )
+            .unwrap();
+        let expected = 3.0 + 2.0 * 0.3 + 0.4 * 3.75 + 0.1 * 15.0;
+        assert!((cost - expected).abs() < 1e-9, "{cost} vs {expected}");
+    }
+
+    #[test]
+    fn openrouter_cache_rates_are_read() {
+        let json = r#"{"data":[{"id":"anthropic/claude-sonnet-5","pricing":{
+            "prompt":"0.000003","completion":"0.000015",
+            "input_cache_read":"0.0000003","input_cache_write":"0.00000375"}}]}"#;
+        let mut book = PriceBook::new();
+        book.ingest_openrouter_models(json).unwrap();
+        let r = book.rates("anthropic/claude-sonnet-5").unwrap();
+        assert!((r.cached_per_million - 0.3).abs() < 1e-9);
+        assert!((r.cache_write_per_million.unwrap() - 3.75).abs() < 1e-9);
     }
 }

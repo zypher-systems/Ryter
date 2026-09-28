@@ -299,6 +299,18 @@ Sources, high wins: TOML `[pricing."<model>"]` → OpenRouter catalog (when inge
 
 Unknown rates show `$?.??` plus token counts. Ryter never invents `$0.00` for an unpriced model.
 
+A budget can't stop what it can't price. With a session budget set, a call that comes back with no price is kept, and Ryter says so. It then won't call that model again until it has a price or the budget is off: in the TUI the next message says so instead of sending, and headless exits `3`. Give it one in `config.toml`:
+
+```toml
+[pricing."claude-sonnet-5"]
+input_per_million = 3.0
+cached_per_million = 0.3        # cache reads
+cache_write_per_million = 3.75  # cache writes (Anthropic: 1.25x input)
+output_per_million = 15.0
+```
+
+Prompt caching is priced in parts: cache reads at the cached rate, cache writes at the cache-write rate, the rest at the input rate. Each rate falls back to the input rate when unset.
+
 A session budget is optional. With one, the crew stops when spend reaches it, says what finished and what didn't, and waits (exit `3` in headless). Without one, nothing stops on cost and you watch the spend card.
 
 | Command | Effect |

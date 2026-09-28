@@ -288,11 +288,8 @@ impl Agent {
             if self.ctx.cancel.is_cancelled() {
                 return self.finish_cancelled(last_text).await;
             }
-            if self.over_budget() {
-                return Err(Error::Budget {
-                    spent: self.session.meta.spend_usd_total.unwrap_or(0.0),
-                    cap: self.budget_usd,
-                });
+            if let Some(e) = self.over_budget().or_else(|| self.unpriced_stop()) {
+                return Err(e);
             }
             self.maybe_compact()?;
             if self.session.transcript.len() < compactions {
@@ -396,11 +393,20 @@ impl Agent {
                 total_usd,
             })?;
 
-            if self.over_budget() {
-                return Err(Error::Budget {
-                    spent: self.session.meta.spend_usd_total.unwrap_or(0.0),
-                    cap: self.budget_usd,
-                });
+            if let Some(e) = self.over_budget() {
+                return Err(e);
+            }
+            // A budget can't stop what it can't price. This round's reply is
+            // kept; the next call stops before it is sent (`unpriced_stop`).
+            if total_usd.is_none() && self.budget_usd > 0.0 {
+                self.emit(AgentEvent::Notice {
+                    message: format!(
+                        "{} has no price, so the ${:.2} budget can't see what it \
+                         costs. Ryter won't call it again until it has one \
+                         ([pricing] in config.toml) or the budget is off.",
+                        self.model, self.budget_usd
+                    ),
+                })?;
             }
 
             last_text = text.clone();
@@ -691,7 +697,19 @@ impl Agent {
             .as_ref()
             .map(|c| c.local_connections())
             .unwrap_or_default();
+        let prior = {
+            let q = self
+                .queue
+                .lock()
+                .map_err(|e| Error::Config(e.to_string()))?;
+            q.tasks
+                .iter()
+                .filter(|t| !t.spent.is_empty())
+                .map(|t| (t.id.clone(), t.spent))
+                .collect()
+        };
         let mut meter = Meter::new(self.book.clone(), self.caps())
+            .with_prior(prior)
             .with_free(free)
             .with_log(self.session.spend_path())
             .with_efforts(
@@ -917,6 +935,7 @@ impl Agent {
             let results = futures_util::future::join_all(jobs).await;
             watch.abort();
             self.record_crew_spend(&meter)?;
+            self.keep_task_spend(&meter)?;
             let mut combined = String::new();
             for (sub_id, task_id, retries, outcome) in results {
                 match outcome {
@@ -987,10 +1006,16 @@ impl Agent {
                                 .map_err(|e| Error::Config(e.to_string()))?;
                             q.set(&task_id, TaskStatus::Blocked, e.to_string());
                         }
-                        if let Error::Budget { spent, cap } = &e {
+                        if let Error::Budget {
+                            spent,
+                            cap,
+                            unpriced,
+                        } = &e
+                        {
                             budget_hit = Some(Error::Budget {
                                 spent: *spent,
                                 cap: *cap,
+                                unpriced: unpriced.clone(),
                             });
                         }
                         self.emit(AgentEvent::Error {
@@ -1035,6 +1060,7 @@ impl Agent {
                 }
             }
             self.record_crew_spend(&meter)?;
+            self.keep_task_spend(&meter)?;
         }
         let total = meter.total();
         if total.billable_tokens > 0 {
@@ -1667,11 +1693,22 @@ impl Agent {
                 open.join("\n")
             ));
         }
-        s.push_str(
-            "Raise the budget (`/budget +2`, or `/budget off`), then tell the \
-             lead to continue. Headless: raise `[spend] session_budget_usd`, \
-             then `ryter -c -p continue`.",
-        );
+        if matches!(
+            e,
+            Error::Budget {
+                unpriced: Some(_),
+                ..
+            }
+        ) {
+            // Raising the cap would not help; the error says what does.
+            s.push_str("Then tell the lead to continue.");
+        } else {
+            s.push_str(
+                "Raise the budget (`/budget +2`, or `/budget off`), then tell the \
+                 lead to continue. Headless: raise `[spend] session_budget_usd`, \
+                 then `ryter -c -p continue`.",
+            );
+        }
         Ok(s)
     }
 
@@ -2024,6 +2061,20 @@ The auditor is off, so the patch stays on `{}`.
     }
 
     /// Write the crew's new spend to the session log and the spend card.
+    /// Keep each queued task's spend on the task, so the next run's caps
+    /// start from it.
+    fn keep_task_spend(&self, meter: &Meter) -> Result<()> {
+        let mut q = self
+            .queue
+            .lock()
+            .map_err(|e| Error::Config(e.to_string()))?;
+        for t in &mut q.tasks {
+            t.spent = meter.task(&t.id);
+        }
+        q.set_all_saved();
+        Ok(())
+    }
+
     pub(crate) fn record_crew_spend(&mut self, meter: &Meter) -> Result<()> {
         // One event per role and model, not per round.
         let mut grouped: std::collections::BTreeMap<SpendKey, (Role, Usage, Option<f64>)> =
@@ -2123,14 +2174,25 @@ The auditor is off, so the patch stays on `{}`.
         }
     }
 
-    fn over_budget(&self) -> bool {
-        if self.budget_usd <= 0.0 {
-            return false;
+    fn over_budget(&self) -> Option<Error> {
+        let spent = self.session.meta.spend_usd_total?;
+        (self.budget_usd > 0.0 && spent >= self.budget_usd).then(|| self.budget_error(None))
+    }
+
+    /// Before a call: this model's last call had no price and it still has
+    /// none, so with a budget set it would spend where the budget can't see.
+    fn unpriced_stop(&self) -> Option<Error> {
+        let unpriced = self.session.meta.unpriced_model.as_deref()?;
+        (self.budget_usd > 0.0 && unpriced == self.model && self.book.rates(&self.model).is_none())
+            .then(|| self.budget_error(Some(self.model.clone())))
+    }
+
+    fn budget_error(&self, unpriced: Option<String>) -> Error {
+        Error::Budget {
+            spent: self.session.meta.spend_usd_total.unwrap_or(0.0),
+            cap: self.budget_usd,
+            unpriced,
         }
-        self.session
-            .meta
-            .spend_usd_total
-            .is_some_and(|s| s >= self.budget_usd)
     }
 
     pub(crate) fn emit(&mut self, ev: AgentEvent) -> Result<()> {
@@ -3313,6 +3375,7 @@ mod tests {
                 input_tokens: 250_000,
                 output_tokens: 0,
                 cached_tokens: 0,
+                cache_write_tokens: 0,
             }),
             StreamDelta::Done,
         ];
@@ -3727,6 +3790,7 @@ mod tests {
                     input_tokens: 2_000,
                     output_tokens: 100,
                     cached_tokens: 0,
+                    cache_write_tokens: 0,
                 }),
                 StreamDelta::ReportedCost(0.05),
                 StreamDelta::Done,
@@ -3773,6 +3837,7 @@ mod tests {
                     input_tokens: 2_000,
                     output_tokens: 100,
                     cached_tokens: 0,
+                    cache_write_tokens: 0,
                 }),
                 StreamDelta::ReportedCost(0.05),
                 StreamDelta::Done,
@@ -3819,6 +3884,7 @@ mod tests {
                     input_tokens: 2_000,
                     output_tokens: 100,
                     cached_tokens: 0,
+                    cache_write_tokens: 0,
                 }),
                 StreamDelta::ReportedCost(0.05),
                 StreamDelta::Done,
@@ -3882,6 +3948,7 @@ mod tests {
                 input_tokens: 10,
                 output_tokens: 2,
                 cached_tokens: 0,
+                cache_write_tokens: 0,
             }),
             StreamDelta::Done,
         ]);
@@ -3907,6 +3974,7 @@ mod tests {
                     input_tokens: 8,
                     output_tokens: 4,
                     cached_tokens: 0,
+                    cache_write_tokens: 0,
                 }),
                 StreamDelta::Done,
             ],
@@ -3916,6 +3984,7 @@ mod tests {
                     input_tokens: 20,
                     output_tokens: 6,
                     cached_tokens: 0,
+                    cache_write_tokens: 0,
                 }),
                 StreamDelta::Done,
             ],
@@ -4026,6 +4095,7 @@ mod tests {
                 input_tokens: 1_000_000,
                 output_tokens: 1_000_000,
                 cached_tokens: 0,
+                cache_write_tokens: 0,
             }),
             StreamDelta::Done,
         ]);
@@ -4059,6 +4129,7 @@ mod tests {
                 input_tokens: 100,
                 output_tokens: 10,
                 cached_tokens: 0,
+                cache_write_tokens: 0,
             }),
             StreamDelta::Done,
         ]);
@@ -4069,6 +4140,45 @@ mod tests {
         assert_eq!(agent.session.meta.spend_usd_total, None);
         let rec = &agent.session.spend_log().unwrap()[0];
         assert_eq!(rec.total_usd, None);
+    }
+
+    /// With a budget set, a model the budget can't price isn't called again
+    /// until it has a price. Before, an unpriced model spent without any cap.
+    #[tokio::test]
+    async fn a_budget_stops_a_model_it_cannot_price() {
+        let p = ReplayProvider::new(vec![
+            StreamDelta::Text("ok".into()),
+            StreamDelta::Usage(Usage {
+                input_tokens: 100,
+                output_tokens: 10,
+                cached_tokens: 0,
+                cache_write_tokens: 0,
+            }),
+            StreamDelta::Done,
+        ]);
+        let (_home, _cwd, mut agent) = setup(p);
+        agent.model = "mystery-model".into();
+        agent.budget_usd = 5.0;
+        // The answer that came back is kept.
+        assert_eq!(agent.turn("x").await.unwrap().text, "ok");
+        assert_eq!(agent.session.spend_log().unwrap().len(), 1);
+
+        // The next message stops before calling the model at all.
+        let err = agent.turn("again").await.unwrap_err();
+        assert!(
+            matches!(&err, Error::Budget { unpriced: Some(m), .. } if m == "mystery-model"),
+            "{err}"
+        );
+        assert!(err.to_string().contains("[pricing]"), "{err}");
+        assert_eq!(
+            agent.session.spend_log().unwrap().len(),
+            1,
+            "no second call"
+        );
+
+        // With no budget there is nothing to protect: it runs.
+        agent.budget_usd = 0.0;
+        agent.turn("go on").await.unwrap();
     }
 
     #[tokio::test]

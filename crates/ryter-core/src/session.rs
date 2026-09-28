@@ -78,6 +78,10 @@ pub struct Meta {
     /// True if any turn had unknown rates.
     #[serde(default)]
     pub spend_unknown: bool,
+    /// The model whose last call had no price. With a budget set, it is not
+    /// called again until it has one: the budget could not see it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unpriced_model: Option<String>,
     /// Auditor gate for this session.
     #[serde(default = "default_auditor_on")]
     pub auditor_enabled: bool,
@@ -195,6 +199,7 @@ impl Session {
             title: String::new(),
             spend_usd_total: None,
             spend_unknown: false,
+            unpriced_model: None,
             auditor_enabled: true,
             patch: None,
             patches_opened: 0,
@@ -372,8 +377,14 @@ impl Session {
         match rec.total_usd {
             Some(v) => {
                 self.meta.spend_usd_total = Some(self.meta.spend_usd_total.unwrap_or(0.0) + v);
+                if self.meta.unpriced_model.as_deref() == Some(rec.model.as_str()) {
+                    self.meta.unpriced_model = None;
+                }
             }
-            None => self.meta.spend_unknown = true,
+            None => {
+                self.meta.spend_unknown = true;
+                self.meta.unpriced_model = Some(rec.model.clone());
+            }
         }
         self.write_meta()
     }
@@ -871,6 +882,7 @@ mod tests {
                 input_tokens: 10,
                 output_tokens: 5,
                 cached_tokens: 0,
+                cache_write_tokens: 0,
             },
             Some(0.01),
         ))
