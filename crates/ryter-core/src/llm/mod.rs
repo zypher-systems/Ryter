@@ -1,6 +1,7 @@
 //! Inference providers: SpaceXAI, OpenRouter, and generic OpenAI/Anthropic wires.
 
 mod http;
+pub mod model_cache;
 mod parse;
 
 use async_trait::async_trait;

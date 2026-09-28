@@ -4,6 +4,11 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.6.4 (`fix/0.6.4`) — the model picker opens at once.** OpenRouter's models are listed with `?supported_parameters=tools` (0.16 s, while the full catalog stalled for minutes).
+  - Each connection's last model list is kept (`llm::model_cache`), and the picker opens on it while a fresh one downloads on a thread of its own, with a client of its own.
+  - After 30 s the picker says the provider is slow; the download goes on for up to 5 minutes and fills the cache.
+  - Turns no longer wait behind a model list.
+  - Found when OpenRouter's `/models` took 75 s and more to trickle in; Reeve looked instant because it kept its last list.
 - **0.6.3 (`fix/0.6.3`) — mission control as designed.** The crew screen is design D's layout:
   - tiles for SPEND, TASKS, CHECKS, ELAPSED;
   - the plan on the left at full height, with a legend at its foot;

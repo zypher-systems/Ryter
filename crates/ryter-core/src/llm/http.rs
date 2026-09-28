@@ -247,7 +247,7 @@ impl Provider for HttpProvider {
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        let url = format!("{}/models", self.base_url);
+        let url = models_url(&self.base_url);
         let resp = self
             .client
             .get(url)
@@ -700,6 +700,18 @@ fn tools_anthropic(tools: &[ToolSpec]) -> Value {
             })
         })
         .collect()
+}
+
+/// Where a connection lists its models. OpenRouter's whole catalog has
+/// stalled near its end for minutes at a time, while the models that take
+/// tools (all Ryter can drive) come back in a fraction of a second.
+fn models_url(base_url: &str) -> String {
+    let url = format!("{base_url}/models");
+    if base_url.contains("openrouter.ai") {
+        format!("{url}?supported_parameters=tools")
+    } else {
+        url
+    }
 }
 
 fn parse_models_json(text: &str) -> Result<Vec<ModelInfo>> {
@@ -1362,6 +1374,18 @@ mod tests {
         let models = parse_models_json(json).unwrap();
         assert_eq!(models[0].id, "anthropic/claude-sonnet-4.6");
         assert_eq!(models[0].context_length, Some(200000));
+    }
+
+    #[test]
+    fn openrouter_is_asked_for_the_models_that_take_tools() {
+        assert_eq!(
+            models_url("https://openrouter.ai/api/v1"),
+            "https://openrouter.ai/api/v1/models?supported_parameters=tools"
+        );
+        assert_eq!(
+            models_url("https://api.x.ai/v1"),
+            "https://api.x.ai/v1/models"
+        );
     }
 
     /// The model picker lists what can chat: not batch routes, which answer

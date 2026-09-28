@@ -2,6 +2,21 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-28 — Model lists come from a cache first, and OpenRouter's from its tools filter
+- **By:** lead
+- **Decision:**
+  - **Where the list comes from:** OpenRouter connections list models with `?supported_parameters=tools` (`http::models_url`).
+  - **The cache:** every connection's last list is kept in `~/.ryter/cache/models/<connection>.json` (`llm::model_cache`). The picker and the crew builder open on it, with a note in the corner (`from 2 h ago · refreshing`).
+  - **The fetch:** it runs on a thread and client of its own (`worker::fetch_models`). After 30 s the picker says the provider is slow; after 300 s it gives up and keeps the cached list.
+- **Chosen vs rejected:**
+  - Rejected fetching on the worker's thread, as before. A turn waited behind a slow catalog.
+  - Rejected sharing the agent's client with the fetch thread. Its pooled connections live on the worker's runtime, which only runs while the worker is busy.
+  - Rejected a hard 30 s cutoff. The download that finishes later is what fills the cache.
+  - Models that take no tools are no longer listed on OpenRouter. They were dimmed before, and neither the build hat nor the crew can use them.
+- **Why:** OpenRouter's full `/models` stalled near its end for minutes, and the picker spun until it ended. The tools-filtered list came back in 0.16 s. Reeve looked instant because it showed its last list while refetching.
+- **Where:** `crates/ryter-core/src/llm/http.rs`, `llm/model_cache.rs`, `event.rs` (`ModelsNote`), `crates/ryter-tui/src/run/worker.rs`, `panel/models.rs`
+- **Residual risk:** a model OpenRouter doesn't mark with `tools` is invisible in the picker, even where it could chat. It can still be set by id.
+
 ### 2026-09-28 — Mission control draws the queue; the workbench undoes one change at a time
 - **By:** lead
 - **Decision:**
