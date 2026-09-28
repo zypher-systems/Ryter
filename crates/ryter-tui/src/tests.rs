@@ -907,10 +907,13 @@ fn snapshot_crew_board() {
         "waits on greet, count",
         "1:04",
         "43 model calls this turn",
-        "✓ design",
-        "└▶ ✓ scaffold  landed",
-        "├▶ ◐ greet  building 0:18",
-        "└▶ ◑ count  in audit 0:05",
+        "│ ✓ design",
+        "────▶│ ✓ scaffold",
+        "──┬─▶│ ◐ greet",
+        "└─▶│ ◑ count",
+        "│   landed",
+        "│   building 0:18",
+        "│   in audit 0:05",
         "patch ▸ main  lands when greet, count land",
         "builder",
         "auditor",
@@ -957,10 +960,14 @@ fn a_blocked_scaffold_shows_why_and_what_waits() {
     );
     let text = render_to_string(&v, 140, 42);
     for want in [
-        "✕ scaffold",
-        "blocked: the builder is blocked: sudo dnf install alsa-lib-devel",
-        "├▶ ○ audio  waits on scaffold",
-        "└▶ ○ ui  waits on scaffold",
+        "│ ✕ scaffold",
+        "──┬─▶│ ○ audio",
+        "└─▶│ ○ ui",
+        "│   waits on scaffold",
+        // The box can't hold the reason; it is under the drawing, whole.
+        "✕ scaffold  blocked: the builder is blocked:",
+        "sudo dnf install",
+        "alsa-lib-devel",
         "0 of 3 landed",
         "no one is working right now",
     ] {
@@ -1100,6 +1107,52 @@ fn the_view_strip_names_every_view() {
     v.mode = Role::Orchestrator;
     let text = render_to_string(&v, 140, 40);
     assert!(text.contains("CHANGES") && !text.contains("PLAN"), "{text}");
+}
+
+/// The user's plan from a real run: a design and the two tasks it wrote,
+/// drawn as boxes with the design fanning out to both. And a plan too tall to
+/// draw falls back to the tree rather than being cut.
+#[test]
+fn the_plan_is_drawn_and_falls_back_when_it_wont_fit() {
+    let t = |id: &str, role: &str, status: &str, by: &str| ryter_core::queue::TaskView {
+        id: id.into(),
+        title: format!("{id} task"),
+        role: role.into(),
+        status: status.into(),
+        by: by.into(),
+        waits_on: Vec::new(),
+        reason: String::new(),
+        retries: 0,
+    };
+    let mut v = crew_board();
+    v.crew.clear();
+    v.task_edges.clear();
+    v.patch_view = None;
+    v.set_tasks(
+        vec![
+            t("modern-style", "architect", "done", "orchestrator"),
+            t("style-rewrite", "builder", "running", "architect"),
+            t("brand-markup", "builder", "running", "architect"),
+        ],
+        None,
+    );
+    let text = render_to_string(&v, 140, 42);
+    assert!(text.contains("│ ✓ modern-style"), "{text}");
+    assert!(text.contains("──┬─▶│ ◐ style-rewrite"), "{text}");
+    assert!(text.contains("└─▶│ ◐ brand-markup"), "{text}");
+    // Twelve tasks at 30 rows can't be drawn: the tree, in full.
+    let mut many = vec![t("design", "architect", "done", "orchestrator")];
+    for i in 0..12 {
+        many.push(t(&format!("task-{i}"), "builder", "pending", "architect"));
+    }
+    v.task_edges.clear();
+    v.set_tasks(many, None);
+    let text = render_to_string(&v, 140, 30);
+    assert!(
+        text.contains("✓ design") && text.contains("├▶ ○ task-0") && !text.contains("┌──"),
+        "{text}"
+    );
+    assert!(text.contains("more rows"), "{text}");
 }
 
 /// `$` opens the spend drawer above the composer: the turn, the session, and

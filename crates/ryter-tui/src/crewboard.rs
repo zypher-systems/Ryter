@@ -32,7 +32,8 @@ pub fn height(view: &View, avail: u16, width: u16, theme: Theme) -> u16 {
         return 0;
     }
     let inner = usize::from(plan_width(width).saturating_sub(3));
-    let plan = plan_rows(view, theme, inner).len() as u16 + 1;
+    let cap = usize::from(avail.saturating_sub(10 + TILES_H + 3));
+    let plan = plan_view(view, theme, inner, cap).len() as u16 + 1;
     let lanes = view.crew.len().max(1) as u16 + 1;
     let want = TILES_H + plan.max(lanes) + 2;
     want.min(avail.saturating_sub(10))
@@ -66,11 +67,12 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         ..rest
     };
     let inner = usize::from(plan_w.saturating_sub(3));
+    let cap = usize::from(plan.height.saturating_sub(3));
     boxed(
         frame,
         plan,
         "PLAN",
-        plan_rows(view, theme, inner),
+        plan_view(view, theme, inner, cap),
         view,
         theme,
     );
@@ -116,9 +118,17 @@ fn boxed(
     let inner = b.inner(area);
     frame.render_widget(b, area);
     let h = usize::from(inner.height);
-    // The newest rows matter most when there are too many.
-    let skip = rows.len().saturating_sub(h);
-    let rows: Vec<Line<'static>> = rows.into_iter().skip(skip).collect();
+    // Too many rows: the first ones, and how many more there are. A plan
+    // reads from the top; cutting it there hid what the rest waits on.
+    let mut rows = rows;
+    if rows.len() > h && h > 0 {
+        let more = rows.len() - (h - 1);
+        rows.truncate(h - 1);
+        rows.push(Line::from(Span::styled(
+            format!("… {more} more rows"),
+            Style::default().fg(theme.dim).bg(theme.bg),
+        )));
+    }
     frame.render_widget(
         Paragraph::new(rows).style(Style::default().bg(theme.bg)),
         Rect {
@@ -480,25 +490,237 @@ fn plan_rows(view: &View, theme: Theme, width: usize) -> Vec<Line<'static>> {
     }
     let dim = Style::default().fg(theme.dim).bg(theme.bg);
     rows.push(Line::from(Span::styled(String::new(), dim)));
-    if let Some(p) = &view.patch_view {
-        let open: Vec<&str> = p
-            .tasks
-            .iter()
-            .filter(|t| !p.landed.contains(t))
-            .map(String::as_str)
-            .collect();
-        let note = if open.is_empty() {
-            "lands when the crew finishes".to_string()
-        } else {
-            format!("lands when {} land", open.join(", "))
-        };
-        rows.push(Line::from(vec![
-            Span::styled("patch ▸ ", dim),
-            Span::styled(p.target.clone(), Style::default().fg(theme.fg).bg(theme.bg)),
-            Span::styled(format!("  {note}"), dim),
-        ]));
-    }
+    rows.extend(patch_line(view, theme));
     rows
+}
+
+/// Where the patch stands, under the plan.
+fn patch_line(view: &View, theme: Theme) -> Option<Line<'static>> {
+    let dim = Style::default().fg(theme.dim).bg(theme.bg);
+    let p = view.patch_view.as_ref()?;
+    let open: Vec<&str> = p
+        .tasks
+        .iter()
+        .filter(|t| !p.landed.contains(t))
+        .map(String::as_str)
+        .collect();
+    let note = if open.is_empty() {
+        "lands when the crew finishes".to_string()
+    } else {
+        format!("lands when {} land", open.join(", "))
+    };
+    Some(Line::from(vec![
+        Span::styled("patch ▸ ", dim),
+        Span::styled(p.target.clone(), Style::default().fg(theme.fg).bg(theme.bg)),
+        Span::styled(format!("  {note}"), dim),
+    ]))
+}
+
+/// The plan as a drawing when it fits in `width × cap`, else as the tree.
+fn plan_view(view: &View, theme: Theme, width: usize, cap: usize) -> Vec<Line<'static>> {
+    if view.tasks.is_empty() {
+        return plan_rows(view, theme, width);
+    }
+    plan_drawing(view, theme, width, cap).unwrap_or_else(|| plan_rows(view, theme, width))
+}
+
+/// Box rows, and the columns between a box and the next: `──┬─▶`.
+const BOX_H: usize = 4;
+const GAP: usize = 5;
+
+/// The plan drawn: a box per task in its state's color, left to right by
+/// what waits on what, each joined to the tasks after it. `None` when it
+/// won't fit, and the tree is drawn instead. A task that waits on more than
+/// one sits under the first; the others, and a blocked task's full reason,
+/// are listed under the drawing.
+fn plan_drawing(view: &View, theme: Theme, width: usize, cap: usize) -> Option<Vec<Line<'static>>> {
+    let tasks = &view.tasks;
+    let has = |id: &str| tasks.iter().any(|t| t.id == id);
+    let parents = |id: &str| -> Vec<String> {
+        view.task_edges
+            .iter()
+            .filter(|(a, b)| b == id && has(a) && a != id)
+            .map(|(a, _)| a.clone())
+            .collect()
+    };
+    // The first parent carries the box; a cycle or a lost parent makes a root.
+    let n = tasks.len();
+    let mut primary: Vec<Option<usize>> = vec![None; n];
+    for (i, t) in tasks.iter().enumerate() {
+        primary[i] = parents(&t.id)
+            .first()
+            .and_then(|p| tasks.iter().position(|x| x.id == *p));
+    }
+    for i in 0..n {
+        // Walk up; a loop back to `i` is a cycle, so `i` becomes a root.
+        let mut seen = vec![i];
+        let mut at = primary[i];
+        while let Some(p) = at {
+            if seen.contains(&p) {
+                primary[i] = None;
+                break;
+            }
+            seen.push(p);
+            at = primary[p];
+        }
+    }
+    let children = |p: usize| -> Vec<usize> { (0..n).filter(|&c| primary[c] == Some(p)).collect() };
+    let depth = |mut i: usize| {
+        let mut d = 0;
+        while let Some(p) = primary[i] {
+            d += 1;
+            i = p;
+        }
+        d
+    };
+    let levels = (0..n).map(depth).max().unwrap_or(0) + 1;
+    let box_w = width.saturating_sub((levels - 1) * GAP) / levels;
+    let box_w = box_w.min(30);
+    if box_w < 16 {
+        return None;
+    }
+    // Rows: each task at the top of the block its tasks after it fill.
+    let mut row = vec![0usize; n];
+    fn place(i: usize, at: usize, row: &mut [usize], kids: &dyn Fn(usize) -> Vec<usize>) -> usize {
+        row[i] = at;
+        let ks = kids(i);
+        if ks.is_empty() {
+            return at + BOX_H;
+        }
+        let mut r = at;
+        for k in ks {
+            r = place(k, r, row, kids);
+        }
+        r
+    }
+    let mut total = 0;
+    for i in (0..n).filter(|&i| primary[i].is_none()) {
+        total = place(i, total, &mut row, &children);
+    }
+    if total > cap.max(BOX_H) {
+        return None;
+    }
+    let base = Style::default().fg(theme.dim).bg(theme.bg);
+    let mut grid: Vec<Vec<(char, Style)>> = vec![vec![(' ', base); width]; total];
+    let put = |grid: &mut Vec<Vec<(char, Style)>>, y: usize, x: usize, s: &str, st: Style| {
+        for (k, ch) in s.chars().enumerate() {
+            if let Some(cell) = grid.get_mut(y).and_then(|r| r.get_mut(x + k)) {
+                *cell = (ch, st);
+            }
+        }
+    };
+    let mut notes: Vec<Line<'static>> = Vec::new();
+    for (i, t) in tasks.iter().enumerate() {
+        let (mark, color, words) = state(view, t, theme);
+        let x = depth(i) * (box_w + GAP);
+        let y = row[i];
+        let edge = Style::default().fg(color).bg(theme.bg);
+        let inner = box_w - 2;
+        put(&mut grid, y, x, &format!("┌{}┐", "─".repeat(inner)), edge);
+        let title = wrap::truncate(&format!(" {mark} {}", t.id), inner);
+        put(&mut grid, y + 1, x, "│", edge);
+        put(
+            &mut grid,
+            y + 1,
+            x + 1,
+            &format!("{title:<inner$}"),
+            Style::default()
+                .fg(theme.fg)
+                .bg(theme.bg)
+                .add_modifier(Modifier::BOLD),
+        );
+        put(&mut grid, y + 1, x + box_w - 1, "│", edge);
+        let said = wrap::truncate(&format!("   {words}"), inner);
+        put(&mut grid, y + 2, x, "│", edge);
+        put(&mut grid, y + 2, x + 1, &format!("{said:<inner$}"), base);
+        put(&mut grid, y + 2, x + box_w - 1, "│", edge);
+        put(
+            &mut grid,
+            y + 3,
+            x,
+            &format!("└{}┘", "─".repeat(inner)),
+            edge,
+        );
+        // What the box can't hold goes under the drawing, in full.
+        if t.status == "blocked" && wrap::width(&format!("   {words}")) > inner {
+            let red = Style::default().fg(theme.error).bg(theme.bg);
+            for (k, part) in wrap::wrap_plain(&format!("✕ {}  {words}", t.id), width.max(20))
+                .into_iter()
+                .enumerate()
+            {
+                let part = if k == 0 { part } else { format!("  {part}") };
+                notes.push(Line::from(Span::styled(part, red)));
+            }
+        }
+        let more = parents(&t.id);
+        if more.len() > 1 {
+            notes.push(Line::from(Span::styled(
+                format!("{} also waits on {}", t.id, more[1..].join(", ")),
+                base,
+            )));
+        }
+        // Connectors to the tasks after this one.
+        let ks = children(i);
+        if let (Some(first), Some(last)) = (ks.first(), ks.last()) {
+            let x0 = x + box_w;
+            let mid = y + 1;
+            let line = Style::default().fg(theme.dim).bg(theme.bg);
+            put(
+                &mut grid,
+                mid,
+                x0,
+                if ks.len() > 1 {
+                    "──┬─▶"
+                } else {
+                    "────▶"
+                },
+                line,
+            );
+            let _ = first;
+            for (k, &c) in ks.iter().enumerate().skip(1) {
+                let cy = row[c] + 1;
+                let glyph = if c == *last {
+                    "  └─▶"
+                } else {
+                    "  ├─▶"
+                };
+                put(&mut grid, cy, x0, glyph, line);
+                // The trunk down to it.
+                let from = row[ks[k - 1]] + 2;
+                for yy in from..cy {
+                    put(&mut grid, yy, x0 + 2, "│", line);
+                }
+            }
+        }
+    }
+    let mut rows: Vec<Line<'static>> = grid
+        .into_iter()
+        .map(|cells| {
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            let mut text = String::new();
+            let mut style = base;
+            for (ch, st) in cells {
+                if st != style && !text.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut text), style));
+                }
+                style = st;
+                text.push(ch);
+            }
+            spans.push(Span::styled(text.trim_end().to_string(), style));
+            Line::from(spans)
+        })
+        .collect();
+    if !notes.is_empty() {
+        rows.push(Line::from(Span::styled(String::new(), base)));
+        for l in notes {
+            rows.push(l);
+        }
+    }
+    if let Some(p) = patch_line(view, theme) {
+        rows.push(Line::from(Span::styled(String::new(), base)));
+        rows.push(p);
+    }
+    Some(rows)
 }
 
 /// One row per worker: who is acting, on what, doing what, for how long.

@@ -4,6 +4,7 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.6.2 (`fix/0.6.2`) — the plan is drawn.** Mission control's plan is boxes in their state's color, left to right by what waits on what, joined by `──┬─▶` / `└─▶`, as the design showed. A blocked task's full reason, and a task's other prerequisites, are listed under the drawing. A plan too big for the space falls back to the tree, and a long plan keeps its top rows with `… N more rows` instead of losing them.
 - **0.6.1 (`fix/0.6.1`) — the views are in sight.** A strip across the top of the ledger names the views, `chat`, `changes ^t`, `crew board` (`/crew` in solo mode), and lights the one on screen. In crew mode the board shows before there's a plan, and the workbench replaces it rather than sitting under it. `^t` is in the bar's keys. In 0.6.0 the workbench was behind an unadvertised key, and a crew session that started with a question showed no board, so it looked like there was one view.
 - **0.6.0 (`feat/0.6.0`) — the ledger layout.** The default screen is one reading column on a timeline:
   - questions `●`, model text `◆`, tool steps `├─` led by dots to what came of them, and a measured closing line `└─` per turn;

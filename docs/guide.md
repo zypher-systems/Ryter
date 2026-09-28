@@ -76,7 +76,7 @@ ryter models [connection]
 
 **Mission control** (crew mode on the ledger) puts a board above the lead's conversation. Before there is a plan, it says so:
 - **Tiles:** spend against the budget, tasks landed out of all of them, where the patch stands, and the crew's time and model calls this turn.
-- **The plan:** a tree of what waits on what. It's drawn from the agent's queue snapshots (`after`, and the manifest-first rule), so it shows exactly what the scheduler enforces. Each task is marked `✓` landed, `◐` building, `◑` in audit, `✕` blocked (with the reason, wrapped rather than cut), `○` waiting on something, or `◇` proposed.
+- **The plan:** drawn as boxes, each in its state's color, left to right by what waits on what, and joined by `──┬─▶` / `└─▶`. A blocked task's full reason is listed under the drawing. A plan too big to draw in the space shows as a tree instead. It's drawn from the agent's queue snapshots (`after`, and the manifest-first rule), so it shows exactly what the scheduler enforces. Each task is marked `✓` landed, `◐` building, `◑` in audit, `✕` blocked (with the reason, wrapped rather than cut), `○` waiting on something, or `◇` proposed.
 - **Lanes:** one row per worker, showing who is acting (builder or auditor), on which task, what it's doing, and for how long.
 
 Everything a specialist reports is also kept in the session's `activity.jsonl`.

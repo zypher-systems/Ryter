@@ -11,7 +11,7 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
   - **Specialist activity** goes to `activity.jsonl` as well as to the sink (`crew::Progress.log`).
   - **The workbench** (`workbench.rs`) reads the changes against the last turn's checkpoint or `HEAD`, and builds each file's diff from `review::file_versions`, numbering hunks as `FileDiff::new` does. `x` sends `RevertHunk`, and `review::revert_hunk` swaps that hunk's new lines for its old ones through `diff::revert_hunk`, recorded like a file revert (`Agent::revert_recorded`).
 - **Chosen vs rejected:**
-  - Rejected drawing the plan as positioned boxes with routed arrows. A tree of what waits on what reads right at any width and can't draw a crossing that isn't there. A task that waits on several shows "also after …".
+  - First shipped as a text tree. That read as a list, not the drawing the design showed, so 0.6.2 draws boxes (`plan_drawing`). Each task is placed at the top of the block its followers fill, under its first prerequisite, so connectors never cross. Other prerequisites and full blocked reasons are listed under the drawing. The tree remains the fallback when the drawing won't fit.
   - Rejected progress bars in lanes. There is no real measure of a worker's progress, and the user asked for an accurate picture. Lanes show who, what, and for how long.
   - Rejected typing in the composer while the workbench is open: `x` undoes a change there.
   - `x` undoes at once, since `/undo` brings it back. `X` asks first.
