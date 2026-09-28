@@ -298,11 +298,40 @@ pub async fn run_build_task(job: &BuildJob<'_>, task: &Task) -> Result<TaskOutco
             git::remove_worktree_keep_branch(job.repo, &wt);
             Err(e)
         }
+        // A failure after the builder committed (a provider refused the
+        // conflict resolver) is no verdict on that work, and it was paid for.
+        Err(e) if !matches!(e, Error::Cancelled) && has_work(job.repo, &onto, &branch) => {
+            let why = match &e {
+                Error::Provider(raw) => {
+                    crate::llm::explain_error(raw).unwrap_or_else(|| e.to_string())
+                }
+                other => other.to_string(),
+            };
+            let gate = Gate {
+                cost: job.meter.task(&task.id).label(),
+                ..Gate::default()
+            };
+            Ok(keep_branch(
+                job,
+                task,
+                &wt,
+                &branch,
+                format!("stopped after the build: {why}"),
+                "",
+                &gate,
+            ))
+        }
         Err(e) => {
             let _ = git::remove_worktree(job.repo, &wt, &branch);
             Err(e)
         }
     }
+}
+
+/// `branch` changes something since it left `onto`.
+fn has_work(repo: &Path, onto: &str, branch: &str) -> bool {
+    git::git(repo, &["merge-base", onto, branch])
+        .is_ok_and(|base| !git::changed_paths(repo, base.trim(), branch).is_empty())
 }
 
 /// Gate state carried across integrations.
@@ -460,6 +489,9 @@ async fn build_inner(
                 SignOff::Failed(findings) => {
                     return Ok(failed(job, task, wt, branch, &findings, &handback, &gate));
                 }
+                SignOff::Unreachable(why) => {
+                    return Ok(keep_branch(job, task, wt, branch, why, &handback, &gate));
+                }
                 SignOff::Uncovered => {
                     return Ok(keep_branch(
                         job,
@@ -616,6 +648,9 @@ enum SignOff {
     Failed(String),
     /// No seat covers the changed paths, so nobody can sign off.
     Uncovered,
+    /// A seat's provider refused or failed the call: no verdict on the work,
+    /// which stays. Why, for a person.
+    Unreachable(String),
 }
 
 /// Run the panel over everything `wt` would land on top of `target`. Seats run
@@ -640,7 +675,24 @@ async fn sign_off(
         // them. The builder's work is committed, so reset to it. On the first
         // live crew run an audit probe was swept into the next commit.
         git::discard_uncommitted(wt);
-        let text = text?;
+        let text = match text {
+            Ok(t) => t,
+            // An auditor the account cannot use (OpenRouter under zero data
+            // retention) used to fail the task and delete the builder's
+            // paid-for branch.
+            Err(Error::Provider(e)) => {
+                return Ok(SignOff::Unreachable(format!(
+                    "the auditor ({}) could not run: {}",
+                    seat.model,
+                    crate::llm::explain_error(&e).unwrap_or_else(|| e
+                        .lines()
+                        .next()
+                        .unwrap_or(&e)
+                        .to_string())
+                )));
+            }
+            Err(e) => return Err(e),
+        };
         let v = verdict(&text);
         // Checks that ran and passed on this tree verified it already.
         if v == Verdict::Unverified && gate.checks.trim().is_empty() {
@@ -823,6 +875,7 @@ pub async fn land_patch(job: &BuildJob<'_>, patch: &crate::session::Patch) -> Re
                         "no auditor covers the files the conflict resolution changed".into(),
                     ));
                 }
+                SignOff::Unreachable(why) => return Ok(PatchLanding::Waiting(why)),
             }
         }
     }
@@ -1698,7 +1751,12 @@ mod tests {
         inner: ReplayProvider,
         seen: Mutex<Vec<CompletionRequest>>,
         before: Mutex<BeforeTurn>,
+        refuse_from: Mutex<Option<usize>>,
     }
+
+    /// OpenRouter's reply when the account's zero data retention setting
+    /// leaves a model no provider, as a live crew run got it.
+    const ZDR_REFUSAL: &str = r#"http 404 Not Found: {"error":{"message":"0 endpoints out of 4 requested are available matching your guardrail restrictions and data policy. We removed them for the following reasons (an endpoint may have matched multiple reasons):\nZDR violation (account settings): 4 endpoints excluded; configurable at https://openrouter.ai/settings/privacy","code":404,"metadata":{"ineligibility_reasons":[{"reason":"zdr-violation-by-account","endpoint_count":4}]}}}"#;
 
     impl Scripted {
         fn new(turns: Vec<Vec<StreamDelta>>) -> Arc<Self> {
@@ -1706,7 +1764,13 @@ mod tests {
                 inner: ReplayProvider::scripted(turns),
                 seen: Mutex::new(Vec::new()),
                 before: Mutex::new(None),
+                refuse_from: Mutex::new(None),
             })
+        }
+        /// From turn `n` on, answer as OpenRouter does a model the account's
+        /// data policy refuses.
+        fn refuse_from(&self, n: usize) {
+            *self.refuse_from.lock().unwrap() = Some(n);
         }
         fn before_turn(&self, n: usize, f: impl FnOnce() + Send + 'static) {
             *self.before.lock().unwrap() = Some((n, Box::new(f)));
@@ -1745,6 +1809,14 @@ mod tests {
             };
             if let Some(f) = hook {
                 f();
+            }
+            if self
+                .refuse_from
+                .lock()
+                .unwrap()
+                .is_some_and(|from| n >= from)
+            {
+                return Err(Error::Provider(ZDR_REFUSAL.into()));
             }
             self.inner.stream(req).await
         }
@@ -2210,6 +2282,69 @@ mod tests {
         assert!(!f.repo.path().join("extra.txt").exists());
         let b = git::git(f.repo.path(), &["branch", "--list", "ryter-*"]).unwrap();
         assert!(!b.trim().is_empty(), "work kept for the user");
+    }
+
+    /// The branch a kept task left, and the file it holds there.
+    fn kept(f: &Fixture, path: &str) -> String {
+        let b = git::git(f.repo.path(), &["branch", "--list", "ryter-*"]).unwrap();
+        let branch = b.trim().trim_start_matches(['*', '+', ' ']).to_string();
+        assert!(!branch.is_empty(), "the work's branch was deleted");
+        git::git(f.repo.path(), &["show", &format!("{branch}:{path}")]).unwrap()
+    }
+
+    /// An auditor the provider refuses is no verdict on the work. It used to
+    /// fail the task and delete the branch: a live run lost $1.86 of finished
+    /// builder work to an auditor that zero data retention ruled out.
+    #[tokio::test]
+    async fn an_auditor_the_account_refuses_keeps_the_builders_work() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            write_call("extra.txt", "built\n"),
+            say("STATUS: DONE"),
+        ]);
+        p.refuse_from(2);
+        let panel = vec![seat(&p, "anthropic/claude-fable-5.1", "", &[])];
+        let meter = Meter::new(
+            crate::spend::PriceBook::new(),
+            crate::meter::Caps::default(),
+        );
+        let out = run_with(&f, &p, &task("t1", "x"), true, &[], &panel, &meter, 0).await;
+        assert_eq!(out.status, TaskStatus::Blocked, "{out:?}");
+        for want in [
+            "the auditor (anthropic/claude-fable-5.1) could not run",
+            "zero data retention",
+            "https://openrouter.ai/settings/privacy",
+            "has the work",
+        ] {
+            assert!(out.summary.contains(want), "{want}: {}", out.summary);
+        }
+        assert!(!out.summary.contains('{'), "no JSON: {}", out.summary);
+        assert!(!f.repo.path().join("extra.txt").exists(), "nothing merged");
+        assert_eq!(kept(&f, "extra.txt"), "built\n");
+    }
+
+    /// Any other call that fails after the builder committed keeps the work
+    /// too: here the conflict resolver's provider refuses.
+    #[tokio::test]
+    async fn a_failure_after_the_build_keeps_the_builders_work() {
+        let f = fixture();
+        let repo = f.repo.path().to_path_buf();
+        let p = Scripted::new(vec![write_call("README.md", "builder line\n"), say("done")]);
+        p.before_turn(1, move || {
+            std::fs::write(repo.join("README.md"), "upstream line\n").unwrap();
+            git::commit_all(&repo, "upstream edit").unwrap();
+        });
+        p.refuse_from(2);
+        let out = run(&f, &p, &task("t8", "edit readme"), true, &[]).await;
+        assert_eq!(out.status, TaskStatus::Blocked, "{out:?}");
+        assert!(
+            out.summary.contains("stopped after the build"),
+            "{}",
+            out.summary
+        );
+        assert!(out.summary.contains("data policy"), "{}", out.summary);
+        assert_eq!(kept(&f, "README.md"), "builder line\n");
+        assert!(!mid_merge(f.repo.path()));
     }
 
     /// A rejected attempt is fixed in place: the retry reopens the same

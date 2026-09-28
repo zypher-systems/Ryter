@@ -207,6 +207,13 @@ pub trait Provider: Send + Sync {
     async fn stream(&self, req: CompletionRequest) -> Result<DeltaStream>;
     /// List models on this connection.
     async fn list_models(&self) -> Result<Vec<ModelInfo>>;
+    /// Of `models`, the ones this connection serves but this account cannot
+    /// use: on OpenRouter, models the account's privacy settings (zero data
+    /// retention), provider rules, or guardrails leave with no provider. Their
+    /// first request fails. Empty when the provider cannot tell.
+    async fn refused(&self, _models: &[String]) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// Build a live HTTP provider from a connection and a resolved key.
@@ -218,6 +225,7 @@ pub fn http_provider(conn: &ConnectionConfig, api_key: String) -> HttpProvider {
 pub struct ReplayProvider {
     turns: Mutex<VecDeque<Vec<StreamDelta>>>,
     models: Vec<ModelInfo>,
+    refused: Vec<String>,
     /// When true, the last remaining turn is cloned instead of consumed.
     pub(crate) repeat_last: bool,
 }
@@ -228,6 +236,7 @@ impl ReplayProvider {
         Self {
             turns: Mutex::new(VecDeque::from([deltas])),
             models: Vec::new(),
+            refused: Vec::new(),
             repeat_last: true,
         }
     }
@@ -242,8 +251,15 @@ impl ReplayProvider {
         Self {
             turns: Mutex::new(VecDeque::from(turns)),
             models: Vec::new(),
+            refused: Vec::new(),
             repeat_last: false,
         }
+    }
+
+    /// Answer [`Provider::refused`] as an account that cannot use `models`.
+    pub fn refusing(mut self, models: &[&str]) -> Self {
+        self.refused = models.iter().map(|m| m.to_string()).collect();
+        self
     }
 }
 
@@ -265,6 +281,44 @@ impl Provider for ReplayProvider {
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
         Ok(self.models.clone())
     }
+
+    async fn refused(&self, models: &[String]) -> Vec<String> {
+        models
+            .iter()
+            .filter(|m| self.refused.contains(m))
+            .cloned()
+            .collect()
+    }
+}
+
+/// A provider error a person can act on, for the ones Ryter recognises.
+/// Provider errors are long JSON; OpenRouter's refusal under zero data
+/// retention runs to a paragraph with routing metadata.
+pub fn explain_error(e: &str) -> Option<String> {
+    let lower = e.to_ascii_lowercase();
+    if lower.contains("data policy") || lower.contains("zero data retention") {
+        return Some(
+            "not available under your account's data policy (e.g. zero data retention); \
+             change it at https://openrouter.ai/settings/privacy or pick another model"
+                .into(),
+        );
+    }
+    if lower.contains("tool use") || lower.contains("tools") && lower.contains("support") {
+        return Some("no provider serves it with tool use, which every crew role needs".into());
+    }
+    if lower.contains("not a valid model") {
+        return Some("not a model this connection knows (renamed or retired?)".into());
+    }
+    if lower.contains("401") || lower.contains("403") || lower.contains("unauthorized") {
+        return Some("the key was refused for this model".into());
+    }
+    if lower.contains("404") || lower.contains("not found") || lower.contains("no endpoints") {
+        return Some("not found, or no provider serves it for this account".into());
+    }
+    if lower.contains("402") || lower.contains("credit") {
+        return Some("out of credits".into());
+    }
+    None
 }
 
 /// Wire protocol for a connection.

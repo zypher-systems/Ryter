@@ -2,6 +2,22 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-28 — OpenRouter lists the account's models, and the crew checks its seats first
+- **By:** lead
+- **Decision:**
+  - **The list:** OpenRouter models come from `/models/user` (the account's list), keeping rows whose `supported_parameters` include `tools`. That endpoint ignores `?supported_parameters`. If it fails, the list falls back to `/models?supported_parameters=tools`.
+  - **The seat check:** `Provider::refused` returns the models that are in the tools catalog but not on the account's list. `Agent::refused_seats` asks once per connection before a crew run. It checks the architect when a design is pending, and the builder and the auditor panel when a build is ahead (builder tasks pending, or a design that isn't held). If any seat is refused, the crew pauses: nothing runs, and the tasks stay queued.
+  - **Kept work:** a seat's provider error during sign-off is `SignOff::Unreachable`. The task is kept like any work that must not land (`keep_branch`), and a patch landing waits. Any other non-cancel error after the builder committed keeps the branch too (`crew::has_work`).
+  - **Once a turn:** `drain_crew_inner` says whether the crew paused, and the turn doesn't drain it again.
+- **Chosen vs rejected:**
+  - Rejected treating "not on the account's list" alone as refused. A routing suffix (`:nitro`) or an id OpenRouter doesn't list would be blocked. A model on neither list is left for its first request to explain.
+  - Rejected probing each seat with a request, as the crew builder does. It costs a little and takes seconds. The two lists are free and come back in about 0.2 s.
+  - Rejected checking the auditor for a held design. A design-only run must not be refused for want of an auditor.
+  - Rejected keeping half-done work when the builder's own call fails mid-task. It isn't committed, and a retry starts over as before.
+- **Why:** a live run paid $2.56 (architect) and $1.86 (builder) before its auditor, claude-fable-5.1, was refused under the account's zero data retention setting. The refusal then deleted the builder's branch. The picker had offered the model because it listed the whole catalog.
+- **Where:** `crates/ryter-core/src/llm/http.rs` (`list_models`, `refused`), `llm/mod.rs` (`Provider::refused`, `explain_error`), `agent.rs` (`refused_seats`, `drain_crew_inner`), `crew.rs` (`SignOff::Unreachable`, `has_work`)
+- **Residual risk:** a stale model cache from before the upgrade still lists refused models until the picker's background refresh replaces it, which takes about a second. The seat check catches them anyway. It covers OpenRouter only; other providers' refusals still surface on the first call, with the work kept.
+
 ### 2026-09-28 — Model lists come from a cache first, and OpenRouter's from its tools filter
 - **By:** lead
 - **Decision:**
