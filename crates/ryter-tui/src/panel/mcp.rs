@@ -578,6 +578,7 @@ impl Panel for Mcp {
                                     args,
                                     enabled: true,
                                     env: std::collections::BTreeMap::new(),
+                                    timeout_secs: None,
                                 },
                             );
                             self.pane = Pane::Home;

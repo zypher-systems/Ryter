@@ -2,6 +2,25 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-27 — Outbound MCP calls wait with a deadline and match replies by id
+- **By:** lead
+- **Decision:**
+  - Each server's stdout is read on its own thread into a channel, and its stderr is drained into a 2 KB tail.
+  - A request waits for the message with its own id: up to a deadline (`timeout_secs`, default 120s; 60s for `initialize` and `tools/list`), until the stdout closes, or until the turn is cancelled. It then sends `notifications/cancelled`.
+  - While waiting, it skips non-JSON lines, notifications, and replies to abandoned requests, and answers server requests: `ping` gets `{}`, anything else gets -32601.
+  - `McpHub::route` finds the server under the hub lock and releases it; the call holds only that server's lock (`call_tool`).
+  - `isError: true` is returned as an error. `Error::Mcp` carries MCP failures without a misleading `provider:`/`config:` prefix.
+  - `search_tool` matches every query word against key and description, and lists each tool's arguments from its `inputSchema`.
+- **Chosen vs rejected:**
+  - Rejected a shared id counter and concurrent calls per server. One call at a time per server, with id matching, is enough to stop the shift, and much simpler.
+  - The 120s default is a backstop, not a limit on normal work: Esc is the way out, and `timeout_secs` raises it per server.
+- **Why:** a server that never answered hung the turn for good, with the hub locked. The reference server (`server-everything`) sends a notification before its `initialize` reply, so it failed to connect at all ("missing field id"). Any notification mid-session shifted every later result by one.
+- **Where:** `crates/ryter-core/src/mcp/client.rs`, `tools/mod.rs` (`mcp_use`), `config.rs` (`McpServerConfig.timeout_secs`), `error.rs`
+- **Residual risk:**
+  - Server-to-client features Ryter refuses (sampling, roots, elicitation) make those tools fail.
+  - Progress notifications aren't shown.
+  - A call to a server whose tool is still running after a timeout waits its turn behind nothing: the server may still be busy.
+
 ### 2026-09-27 — A budget stops what it can't price; Anthropic prompts counted whole
 - **By:** lead
 - **Decision:**

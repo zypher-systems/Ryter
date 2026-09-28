@@ -336,6 +336,17 @@ User-invocable skills and `~/.ryter/commands/*.md` join the palette under **skil
 
 **Outbound.** `[mcp_servers.<name>]` stdio children. The orchestrator discovers with `search_tool` and calls with `use_tool`. Child env does not inherit API keys unless that server’s `env` table asks. In the TUI, `/mcp` is a panel: `Enter` toggles a server, `r` reconnects, `d` removes it (type the name to confirm), and `Enter` on the trailing `+ add server` row walks name → command → args → review. Each server row shows its live status (`connected · 5 tools`, `error: …`, `disabled`).
 
+`search_tool` matches every word of its query against a tool's name and description, and lists each tool's arguments. A server has 60 seconds to start and list its tools. A tool call may run for 120 seconds, or for the server's `timeout_secs`:
+
+```toml
+[servers.browser]            # ~/.ryter/mcp.toml ([mcp_servers.browser] in config.toml)
+command = "npx"
+args = ["-y", "@playwright/mcp"]
+timeout_secs = 300
+```
+
+Esc stops a call at once. Ryter then tells the server it stopped waiting, and skips the late reply if one comes. If a server exits, the tool error says so, with the last thing it wrote to stderr; `/mcp` → `r` reconnects it.
+
 **Inbound.** `/mcp` → **inbound** shows the listener state and the links a client needs:
 
 - stdio: `ryter mcp serve`
