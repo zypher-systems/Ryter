@@ -91,6 +91,10 @@ pub struct Meta {
     /// Patches opened so far (names the next branch).
     #[serde(default)]
     pub patches_opened: u32,
+    /// Ryter has offered the project's detected checks this session; it
+    /// asks once.
+    #[serde(default)]
+    pub checks_offered: bool,
     /// Build-hat checkpoints, oldest first, for `/undo`.
     #[serde(default)]
     pub checkpoints: Vec<String>,
@@ -133,6 +137,10 @@ pub struct Patch {
     /// Their titles, for the landing commit message.
     #[serde(default)]
     pub titles: Vec<String>,
+    /// Landed tasks the auditor passed on review alone; the patch's checks
+    /// must build and test them before it lands.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unverified: Vec<String>,
 }
 
 fn default_auditor_on() -> bool {
@@ -203,6 +211,7 @@ impl Session {
             auditor_enabled: true,
             patch: None,
             patches_opened: 0,
+            checks_offered: false,
             checkpoints: Vec::new(),
             turn_records: Default::default(),
             redo: Vec::new(),
@@ -579,6 +588,13 @@ impl Session {
         Ok(c)
     }
 
+    /// Remember that the detected checks were offered.
+    pub fn set_checks_offered(&mut self) -> Result<()> {
+        self.meta.checks_offered = true;
+        self.touch()
+    }
+
+    /// Set the auditor gate for this session.
     pub fn set_auditor(&mut self, on: bool) -> Result<()> {
         self.meta.auditor_enabled = on;
         self.touch()

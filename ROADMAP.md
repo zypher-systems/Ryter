@@ -4,6 +4,7 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.5.7 (`fix/0.5.7`) — crew builds in order.** Tasks take `after` (ids that must land first); in a project with no build manifest, the task that creates it runs first and alone. Tasks waiting on a blocked one never start, and the lead is told what they wait on once, not after every reply. A builder's `STATUS: BLOCKED` skips checks, audit, and retries and carries its fix to the lead. Auditors may answer `VERDICT: UNVERIFIED` when the code can't be built yet; such work lands on the patch marked, and the patch needs checks to land. With no checks set, Ryter detects them from the manifest and asks once. From a real run that spent $2.29, mostly on retries against a scaffold that never landed.
 - **0.5.6 (`fix/0.5.6`) — outbound MCP that doesn't hang.** Each server's stdout is read on its own thread; a call waits with a deadline (`timeout_secs`, default 120s; 60s to start) and stops on Esc, sending `notifications/cancelled`. Replies are matched by id: notifications, log lines, and late replies are skipped, and server requests are answered (`ping`) or refused. The hub is locked only to route a call, so one slow server doesn't stall the rest. `isError` results are errors; an exited server is named with its last stderr line. `search_tool` matches every word and lists each tool's arguments. `@modelcontextprotocol/server-everything` failed to connect before (a notification arrived ahead of the `initialize` reply). Inbound MCP is still to review.
 - **0.5.5 (`fix/0.5.5`) — spend counts what you pay.** Anthropic prompts are counted whole: cache reads and cache writes (1.25× input, never counted before) are priced at their own rates, and OpenRouter's cache rates are read from its catalog. With a session budget set, a model with no price is not called again after its first unpriced call, in solo, lead, and crew; the reply that came back is kept. A crew task's caps count what it spent on earlier runs (`Task.spent`).
 - **0.5.4 (`fix/0.5.4`) — model lists show only models that can chat.** `:batch` routes and image or audio models are left out of `/models`, the `/audit` chooser, and `ryter models`, read from the catalog's output types (id patterns where a catalog gives none); router models such as `openrouter/auto` stay.
@@ -44,6 +45,11 @@ Living plan for Ryter. The lead updates this as work lands.
     - Tool-call fragments are keyed by id, not `index`, so interleaved parallel calls merge.
     - A stream dropped mid-reply loses the partial text.
     - A `Retry-After` wait is followed by the backoff wait as well.
+  - **Crew (from the 2026-09-28 run):**
+    - Builders ran `sudo` and wrote into `~/.local` with the sandbox off; the prompt now forbids it, but nothing enforces it.
+    - A builder's scratch folder inside its worktree (`.scratch/`, `.probe/`) is committed with the task.
+    - Builder activity isn't in the session's event log.
+    - Worktree paths are shown whole, which reads as work outside the project.
   - **Chat:** the user's own message is rendered as markdown, so `everything__echo` shows as "everythingecho" (found 2026-09-27).
   - **Shell:** programs that read `/dev/tty` (ssh or gpg prompts) wait out the command timeout.
   - **Compaction:** it can't shrink a single long turn, because it keeps at least four user turns.

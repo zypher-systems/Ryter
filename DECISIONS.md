@@ -2,6 +2,26 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-28 — The crew builds in order: prerequisites land first, and blocked means blocked
+- **By:** lead
+- **Decision:**
+  - **`Task.after`:** the ids a task needs done first. `TaskQueue::take_ready` starts a task only when each of them is done, which for a builder task means landed on the patch; an unknown id counts as unmet.
+  - **Foundation first:** when the tree tasks branch from has no build manifest at its root (`queue::MANIFESTS`), the first unfinished builder task that declares one runs alone, and other builder tasks wait for it (`TaskQueue::foundation`), declared or not.
+  - **Waiting is reported, once:** when nothing can start, the crew report lists what each waiting task waits on and why (`TaskQueue::waiting`). `crew_has_pending` counts only tasks that can start (`startable`), so the lead isn't sent back to the crew after every reply.
+  - **`STATUS: BLOCKED` from a builder** is committed and kept on its branch without checks, audit, or a retry. The line of its NOTES that says what would unblock it becomes the task's reason (`blocked_reason`).
+  - **`VERDICT: UNVERIFIED`** (`crew::Verdict`): with no checks run, an auditor can pass code it can't build because something outside the task hasn't landed. The task lands on the patch listed in `Patch.unverified`, and `land_patch` refuses to land a patch with unverified work until checks are set.
+  - **Check detection** (`checks::detect`): with no `[auditor] checks`, Ryter reads the patch tree's manifest before each builder batch and before landing, and asks once a session (`Meta.checks_offered`). The answers are: save them to `.ryter/config.toml` (trusted projects only), use them this session, or no. Headless says it in the crew report instead.
+- **Chosen vs rejected:**
+  - Rejected auditing on review alone until everything merges, as the rule. A compiler finds errors a review misses, and fixing them per task, while the builder has its context, is cheaper than one integration task that owns everyone's errors. `UNVERIFIED` covers the case where a build is impossible.
+  - Rejected detecting checks silently. `npm test` runs the project's own scripts, outside the permission gate, so the user says yes once.
+  - Rejected special-casing the word "scaffold". The manifest rule catches the case whatever it is called, and `after` covers the rest.
+- **Why:** a crew run on a new Rust app spent $2.29, mostly on retries. The scaffold was blocked (a missing system library, which the builder worked around with `sudo` and downloads into `~/.local`). Three tasks built on it started anyway, with no `Cargo.toml`, and each was rejected for its absence. No check built the finished patch, because none were set.
+- **Where:** `crates/ryter-core/src/queue.rs`, `crew.rs`, `checks.rs`, `agent.rs` (`drain_crew`, `offer_checks`, `crew_has_pending`), `config.rs` (`save_project_checks`), `session.rs`, `prompts/*.md`
+- **Residual risk:**
+  - A plan that splits dependent work without `after`, in a project that already has a manifest, still runs it in parallel.
+  - Builders are told not to use `sudo` or write outside their worktree, but nothing enforces it while the sandbox is off.
+  - Detected checks are a starting point (`cargo test`, not clippy).
+
 ### 2026-09-27 — Outbound MCP calls wait with a deadline and match replies by id
 - **By:** lead
 - **Decision:**

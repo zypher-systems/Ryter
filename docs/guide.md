@@ -243,15 +243,17 @@ Project markdown is loaded from the working tree without a trust gate: `RYTER.md
 
 `todo_write` **is** the work queue. After a lead turn with no remaining tool calls, Ryter drains pending tasks, up to `[subagents] max` in parallel (must be ≥ 1). Each task names its role: architect tasks run first, then builders, each gated by checks and an auditor. Tasks declare the `files` they own; disjoint tasks run in parallel, overlapping or undeclared ones one at a time.
 
+**Order.** A task can list the tasks it builds on in `after` (`"after": ["scaffold"]`). It starts only once they have landed on the patch, so it branches from their real code. In a project with no build manifest yet (`Cargo.toml`, `package.json`, `pyproject.toml`, `go.mod`, …), the task that creates one runs first and alone, and every other builder task waits for it, whether or not the plan says so. A task whose prerequisite is blocked never starts: the crew report lists what each one waits on, and the lead fixes that task instead of retrying the ones waiting.
+
 Crew roles default to the lead’s current provider and model. Assign a different model per role with `/crew` (Enter on a role, first picker row is `default`). That is also how you split providers. Optional `[specialists.*]` tables in `~/.ryter/config.toml` pin the same overrides.
 
 Each builder task:
 
 1. `git worktree add` under `~/.ryter/worktrees/<session>/<task>/` on branch `ryter-<8hex>-<slug>`
-2. The builder implements its brief and ends with a handback (`STATUS / FILES / DECISIONS / NOTES`)
+2. The builder implements its brief and ends with a handback (`STATUS / FILES / DECISIONS / NOTES`). `STATUS: BLOCKED` means something outside the task stopped it (a missing system package, a module another task owns): the work is kept on its branch, nothing is checked or audited, no retry is spent, and the lead tells you what to do (`sudo dnf install libpq-devel`)
 3. The runtime commits, then merges **your branch into the worktree**. Conflicts are resolved there by a builder — never in your checkout — and the resolution is re-audited
-4. **Checks**: `[auditor] checks` run in the worktree (set them per project in `.ryter/config.toml`). A failure rejects the work before any audit
-5. **Auditor**: reviews the brief, handback, check output, and full diff, and ends with `VERDICT: PASS` or `VERDICT: FAIL`
+4. **Checks**: `[auditor] checks` run in the worktree (set them per project in `.ryter/config.toml`). A failure rejects the work before any audit. With none set, Ryter reads the project's files once there is a manifest (`Cargo.toml` → `cargo test`, `package.json` → its `build` and `test` scripts, `go.mod` → `go build`/`go test`, pytest or unittest for Python) and asks once whether to use them, for the session or saved to the project
+5. **Auditor**: reviews the brief, handback, check output, and full diff, and ends with `VERDICT: PASS`, `VERDICT: FAIL`, or `VERDICT: UNVERIFIED`. `UNVERIFIED` is for code that reads right but can't be built yet because something outside the task hasn't landed, and only when no checks ran. It isn't a rejection. The task lands on the patch marked, and the patch doesn't reach your branch until checks have built and tested it
 6. **Land**: one `--no-ff` merge commit (undo with `git revert -m 1`). If your branch moved meanwhile, it re-integrates and re-checks first. If you have uncommitted edits to the same files, it stops and keeps the branch
 7. Rejected → retry with the findings, up to `[auditor] max_retries`, then `blocked`
 

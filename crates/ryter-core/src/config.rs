@@ -90,6 +90,32 @@ pub fn review_path(home: &Path) -> PathBuf {
     home.join("review.toml")
 }
 
+/// Set `[auditor] checks` in the project's `.ryter/config.toml`, keeping the
+/// rest of the file (comments included) as it is. The caller knows no checks
+/// are set yet.
+pub fn save_project_checks(root: &Path, checks: &[String]) -> Result<()> {
+    let dir = root.join(".ryter");
+    fs::create_dir_all(&dir).map_err(|e| Error::Config(e.to_string()))?;
+    let path = dir.join("config.toml");
+    let text = fs::read_to_string(&path).unwrap_or_default();
+    let list = toml::Value::Array(checks.iter().cloned().map(toml::Value::String).collect());
+    let line = format!("checks = {list}");
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    match lines.iter().position(|l| l.trim() == "[auditor]") {
+        Some(i) => lines.insert(i + 1, line),
+        None => {
+            if lines.last().is_some_and(|l| !l.trim().is_empty()) {
+                lines.push(String::new());
+            }
+            lines.push("[auditor]".into());
+            lines.push(line);
+        }
+    }
+    let mut body = lines.join("\n");
+    body.push('\n');
+    fs::write(&path, body).map_err(|e| Error::Config(e.to_string()))
+}
+
 /// Save the reviewer choice.
 pub fn save_reviewer(home: &Path, r: &ReviewerConfig) -> Result<()> {
     fs::create_dir_all(home).map_err(|e| Error::Config(e.to_string()))?;

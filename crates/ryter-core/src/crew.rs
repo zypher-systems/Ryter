@@ -31,6 +31,22 @@ pub struct TaskOutcome {
     /// results, and the audit. It is the only way results reach the one role
     /// that writes project memory.
     pub report: String,
+    /// Landed on review alone: the auditor could not build or test it,
+    /// because something outside the task had not landed yet. The patch
+    /// must build and test it before it reaches the user's branch.
+    pub unverified: bool,
+}
+
+/// An auditor's decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// Merge it.
+    Pass,
+    /// Fix it first.
+    Fail,
+    /// The code reads right, but it can't be built or tested until
+    /// something outside the task lands. Not a rejection: no retry is spent.
+    Unverified,
 }
 
 /// Parse the auditor's verdict.
@@ -40,6 +56,12 @@ pub struct TaskOutcome {
 /// deciding. A bare `PASS`/`FAIL` first line is still accepted. Anything else
 /// is a fail: an unparseable review must not merge.
 pub fn parse_verdict(text: &str) -> bool {
+    verdict(text) == Verdict::Pass
+}
+
+/// The auditor's verdict: the last `VERDICT:` line wins; a bare first-line
+/// `PASS` still counts; anything else is a fail.
+pub fn verdict(text: &str) -> Verdict {
     let clean = |l: &str| {
         l.trim()
             .trim_matches(|c: char| matches!(c, '*' | '#' | '`' | '_' | '>' | ' '))
@@ -51,19 +73,90 @@ pub fn parse_verdict(text: &str) -> bool {
         if let Some(rest) = l.strip_prefix("VERDICT") {
             let rest = rest.trim_start_matches([':', ' ', '*', '-']);
             if rest.starts_with("PASS") {
-                verdict = Some(true);
+                verdict = Some(Verdict::Pass);
             } else if rest.starts_with("FAIL") {
-                verdict = Some(false);
+                verdict = Some(Verdict::Fail);
+            } else if rest.starts_with("UNVERIFIED") {
+                verdict = Some(Verdict::Unverified);
             }
         }
     }
     if let Some(v) = verdict {
         return v;
     }
-    text.lines()
+    let first_pass = text
+        .lines()
         .map(clean)
         .find(|l| !l.is_empty())
-        .is_some_and(|l| l.starts_with("PASS"))
+        .is_some_and(|l| l.starts_with("PASS"));
+    if first_pass {
+        Verdict::Pass
+    } else {
+        Verdict::Fail
+    }
+}
+
+/// The builder's `STATUS: BLOCKED` handback: it hit something outside its
+/// task (a missing system package, a file another task owns that isn't
+/// there). Checked and audited anyway, it only spent a retry; one builder
+/// spent 80 calls working around a missing sound library, `sudo` included.
+/// The line of a blocked handback that says what would unblock it, for the
+/// lead and for every task waiting on this one. Builders write NOTES as a
+/// list; the fix (`sudo dnf install libpq-devel`) is the line that matters.
+fn blocked_reason(handback: &str) -> Option<String> {
+    let clean = |l: &str| {
+        l.trim()
+            .trim_start_matches(['-', '*', ' '])
+            .trim()
+            .to_string()
+    };
+    let mut notes: Vec<String> = Vec::new();
+    let mut in_notes = false;
+    for line in handback.lines() {
+        let t = line.trim().trim_matches('*');
+        if let Some(rest) = t.strip_prefix("NOTES:") {
+            in_notes = true;
+            let rest = clean(rest.trim_start_matches('*'));
+            if !rest.is_empty() {
+                notes.push(rest);
+            }
+            continue;
+        }
+        if in_notes {
+            if t.starts_with("```") {
+                break;
+            }
+            let l = clean(t);
+            if !l.is_empty() {
+                notes.push(l);
+            }
+        }
+    }
+    let wants = ["unblock", "sudo ", "install", "missing", "not installed"];
+    let pick = notes
+        .iter()
+        .find(|l| {
+            let low = l.to_ascii_lowercase();
+            wants.iter().any(|w| low.contains(w))
+        })
+        .or(notes.first())?;
+    let mut r: String = pick.chars().take(200).collect();
+    if pick.chars().count() > 200 {
+        r.push('…');
+    }
+    Some(r)
+}
+
+fn builder_blocked(handback: &str) -> bool {
+    handback.lines().any(|l| {
+        let l = l
+            .trim()
+            .trim_matches(|c: char| matches!(c, '*' | '`' | '#' | ' '))
+            .to_ascii_uppercase();
+        l.strip_prefix("STATUS")
+            .map(|r| r.trim_start_matches([':', ' ', '*']))
+            .is_some_and(|r| r.starts_with("BLOCKED"))
+    })
 }
 
 /// One seat on the auditor panel.
@@ -225,6 +318,8 @@ struct Gate {
     audit: String,
     /// Task cost so far, for the report.
     cost: String,
+    /// Signed off on review alone (`VERDICT: UNVERIFIED`).
+    unverified: bool,
 }
 
 async fn build_inner(
@@ -286,6 +381,16 @@ async fn build_inner(
     )
     .await?;
     git::commit_all(wt, &format!("ryter: {}", task.title))?;
+    if builder_blocked(&handback) {
+        let gate = Gate::default();
+        let why = match blocked_reason(&handback) {
+            Some(r) => format!("the builder is blocked: {r}"),
+            None => "the builder is blocked; its handback says why".into(),
+        };
+        let mut o = keep_branch(job, task, wt, branch, why, &handback, &gate);
+        o.summary = "blocked; needs the lead or the user".into();
+        return Ok(o);
+    }
 
     let mut gate = Gate::default();
     for _ in 0..MAX_INTEGRATIONS {
@@ -348,6 +453,10 @@ async fn build_inner(
         if !gate.signed_off {
             match sign_off(job, task, wt, &ctx, &target, &handback, &mut gate).await? {
                 SignOff::Passed => gate.signed_off = true,
+                SignOff::Unverified => {
+                    gate.signed_off = true;
+                    gate.unverified = true;
+                }
                 SignOff::Failed(findings) => {
                     return Ok(failed(job, task, wt, branch, &findings, &handback, &gate));
                 }
@@ -423,12 +532,18 @@ async fn build_inner(
             task.title,
             &target[..target.len().min(12)]
         );
+        let status = if gate.unverified {
+            "merged on review alone; the patch builds and tests it"
+        } else {
+            "merged"
+        };
         return Ok(TaskOutcome {
             id: task.id.clone(),
             status: TaskStatus::Done,
             findings: gate.audit.clone(),
-            report: report(task, "merged", &summary, &handback, &gate),
+            report: report(task, status, &summary, &handback, &gate),
             summary,
+            unverified: gate.unverified,
         });
     }
     Ok(keep_branch(
@@ -494,6 +609,9 @@ async fn resolve_in(
 enum SignOff {
     /// Every seat that covers the change passed it.
     Passed,
+    /// Every seat passed or couldn't verify, and at least one couldn't: no
+    /// checks ran, and the code can't be built until another task lands.
+    Unverified,
     /// A seat failed it; its findings.
     Failed(String),
     /// No seat covers the changed paths, so nobody can sign off.
@@ -515,6 +633,7 @@ async fn sign_off(
 ) -> Result<SignOff> {
     let changed = git::changed_paths(wt, target, "HEAD");
     let mut reviews = Vec::new();
+    let mut unverified = false;
     for seat in job.auditors.iter().filter(|a| a.applies_to(&changed)) {
         let text = audit(job, seat, task, wt, ctx, target, handback, gate).await;
         // Reviewers probe: they write scratch tests, run them, sometimes leave
@@ -522,7 +641,12 @@ async fn sign_off(
         // live crew run an audit probe was swept into the next commit.
         git::discard_uncommitted(wt);
         let text = text?;
-        let pass = parse_verdict(&text);
+        let v = verdict(&text);
+        // Checks that ran and passed on this tree verified it already.
+        if v == Verdict::Unverified && gate.checks.trim().is_empty() {
+            unverified = true;
+        }
+        let pass = v != Verdict::Fail;
         let lens = if seat.focus.is_empty() {
             "review"
         } else {
@@ -536,6 +660,8 @@ async fn sign_off(
     }
     Ok(if reviews.is_empty() {
         SignOff::Uncovered
+    } else if unverified {
+        SignOff::Unverified
     } else {
         SignOff::Passed
     })
@@ -633,6 +759,7 @@ pub async fn land_patch(job: &BuildJob<'_>, patch: &crate::session::Patch) -> Re
         by: "orchestrator".into(),
         role: "builder".into(),
         hold: false,
+        after: Vec::new(),
         status: TaskStatus::Running,
         retries: 0,
         findings: String::new(),
@@ -684,7 +811,8 @@ pub async fn land_patch(job: &BuildJob<'_>, patch: &crate::session::Patch) -> Re
             )
             .await?
             {
-                SignOff::Passed => {}
+                // The checks below build and test the whole patch.
+                SignOff::Passed | SignOff::Unverified => {}
                 SignOff::Failed(f) => {
                     return Ok(PatchLanding::Waiting(format!(
                         "the auditors rejected the conflict resolution:\n{f}"
@@ -697,6 +825,21 @@ pub async fn land_patch(job: &BuildJob<'_>, patch: &crate::session::Patch) -> Re
                 }
             }
         }
+    }
+    // Work signed off on review alone lands only on a patch that builds
+    // and tests: that was the promise when it was let through.
+    if !patch.unverified.is_empty() && job.checks.is_empty() {
+        return Ok(PatchLanding::Waiting(format!(
+            "{} passed review but were never built or tested, and no checks are \
+             set to build and test the patch. Set `checks` under [auditor] in \
+             .ryter/config.toml (for example `cargo test`), then continue.",
+            patch
+                .unverified
+                .iter()
+                .map(|t| format!("`{t}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
     }
     if let Err(out) = run_checks(job, wt, &ctx).await {
         return Ok(PatchLanding::Waiting(format!(
@@ -843,7 +986,11 @@ async fn audit(
     // invisible and a builder's own commits dropped out.
     let diff = crate::tools::cap_output(git::diff_range(wt, target, "HEAD"));
     let checks = if job.checks.is_empty() {
-        "No checks are configured for this project. Run its tests yourself before you pass the work.".to_string()
+        "No checks are configured for this project. Build it and run its tests yourself before \
+         you pass the work. If it can't be built yet because something outside this task hasn't \
+         landed (the manifest or module another task creates), review it by reading and end with \
+         `VERDICT: UNVERIFIED`; the patch builds and tests it before it reaches the user."
+            .to_string()
     } else {
         format!(
             "The harness ran these checks on this exact tree; all passed:\n{}",
@@ -945,6 +1092,7 @@ fn failed(
         findings: findings.to_string(),
         report: report(task, &summary, findings, handback, gate),
         summary,
+        unverified: false,
     }
 }
 
@@ -967,6 +1115,7 @@ fn keep_branch(
         findings: why.clone(),
         report: report(task, "not merged", &summary, handback, gate),
         summary,
+        unverified: false,
     }
 }
 
@@ -977,6 +1126,7 @@ fn outcome(task: &Task, status: TaskStatus, why: &str, handback: &str, audit: &s
         findings: why.to_string(),
         summary: why.to_string(),
         report: format!("### {} — {}\n{why}\n{handback}{audit}", task.id, task.title),
+        unverified: false,
     }
 }
 
@@ -1082,6 +1232,7 @@ pub async fn run_note_task(
                 task.title,
                 meter.task(&task.id).label()
             ),
+            unverified: false,
         });
     }
     let body = clip_handback(&text);
@@ -1097,6 +1248,7 @@ pub async fn run_note_task(
         ),
         findings: body.clone(),
         summary: first_line(&body).unwrap_or_else(|| format!("{} {}", role, task.title)),
+        unverified: false,
     })
 }
 
@@ -1475,6 +1627,7 @@ mod tests {
             // Bare first line still works.
             ("PASS\nlooks good", true),
             ("FAIL\nbad", false),
+            ("can't build yet\nVERDICT: UNVERIFIED", false),
             // Anything unparseable must not merge.
             ("## Review\nlooks good to me", false),
             ("", false),
@@ -1493,6 +1646,7 @@ mod tests {
             by: String::new(),
             role: "builder".into(),
             hold: false,
+            after: Vec::new(),
             status: TaskStatus::Running,
             retries: 0,
             findings: String::new(),
@@ -1754,6 +1908,95 @@ mod tests {
             audit_request.contains("src/new_module.rs") && audit_request.contains("brand_new"),
             "auditor never saw the new file:\n{audit_request}"
         );
+    }
+
+    /// The unblocking line is found in a NOTES list, as a real builder wrote it.
+    #[test]
+    fn the_reason_a_builder_is_blocked_is_the_fix() {
+        let handback = "Scaffold done but it can't link.\n\n```\nSTATUS: BLOCKED\nFILES: Cargo.toml\nNOTES:\n- Resolved pq-sys version: **0.7.6**.\n- `cargo build` fails: cannot find -lpq\n- To unblock (Fedora 44): `sudo dnf install libpq-devel`, then cargo build passes.\n```";
+        assert_eq!(
+            blocked_reason(handback).unwrap(),
+            "To unblock (Fedora 44): `sudo dnf install libpq-devel`, then cargo build passes."
+        );
+        assert_eq!(
+            blocked_reason("STATUS: BLOCKED\nNOTES: the audio module isn't there").unwrap(),
+            "the audio module isn't there"
+        );
+        assert_eq!(blocked_reason("STATUS: BLOCKED"), None);
+    }
+
+    /// `UNVERIFIED` is its own verdict, not a pass or a fail.
+    #[test]
+    fn unverified_is_its_own_verdict() {
+        assert_eq!(
+            verdict("- reads right\nVERDICT: UNVERIFIED"),
+            Verdict::Unverified
+        );
+        assert_eq!(verdict("**VERDICT: PASS**"), Verdict::Pass);
+        assert_eq!(verdict("no verdict at all"), Verdict::Fail);
+    }
+
+    /// A builder that says it is blocked is not checked, audited, or
+    /// retried: its reason goes to the lead. One spent 80 calls working
+    /// around a missing system library instead.
+    #[tokio::test]
+    async fn a_blocked_builder_is_neither_checked_nor_audited() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            write_call("half.rs", "// started\n"),
+            say(
+                "STATUS: BLOCKED\nFILES: half.rs\nDECISIONS: none\nNOTES: needs alsa-lib-devel: sudo dnf install alsa-lib-devel",
+            ),
+            say("VERDICT: PASS"),
+        ]);
+        let meter = Meter::new(
+            crate::spend::PriceBook::new(),
+            crate::meter::Caps::default(),
+        );
+        let panel = vec![seat(&p, "auditor-m", "", &[])];
+        let checks = vec!["false".to_string()];
+        let t = task("t1", "scaffold");
+        let out = run_with(&f, &p, &t, true, &checks, &panel, &meter, 2).await;
+        assert_eq!(out.status, TaskStatus::Blocked, "not a retry: {out:?}");
+        assert_eq!(p.calls(), 2, "no auditor was asked");
+        assert!(
+            out.findings.contains("sudo dnf install alsa-lib-devel"),
+            "{}",
+            out.findings
+        );
+        assert!(!f.repo.path().join("half.rs").exists(), "nothing lands");
+    }
+
+    /// With no checks, an auditor that can't build the task yet passes it on
+    /// review alone, marked so the patch builds and tests it.
+    #[tokio::test]
+    async fn an_unverified_review_lands_marked() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            write_call("src/audio.rs", "pub fn play() {}\n"),
+            say("STATUS: DONE"),
+            say("- no Cargo.toml yet\nVERDICT: UNVERIFIED"),
+        ]);
+        let out = run(&f, &p, &task("t1", "audio"), true, &[]).await;
+        assert_eq!(out.status, TaskStatus::Done, "{out:?}");
+        assert!(out.unverified);
+        assert!(out.report.contains("review alone"), "{}", out.report);
+    }
+
+    /// Checks that ran and passed verified the tree: an `UNVERIFIED` then is
+    /// a plain pass.
+    #[tokio::test]
+    async fn unverified_after_passing_checks_is_a_pass() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            write_call("src/audio.rs", "pub fn play() {}\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: UNVERIFIED"),
+        ]);
+        let checks = vec!["true".to_string()];
+        let out = run(&f, &p, &task("t1", "audio"), true, &checks).await;
+        assert_eq!(out.status, TaskStatus::Done, "{out:?}");
+        assert!(!out.unverified);
     }
 
     #[tokio::test]
