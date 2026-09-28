@@ -137,6 +137,13 @@ impl Settings {
             }),
             Field::new("g_ui", "ui", Kind::Header),
             select("theme", "theme", &theme_opts, &view.theme_name, &d.theme),
+            select(
+                "layout",
+                "layout",
+                &["ledger", "classic"],
+                &view.ui.layout,
+                &d.layout,
+            ),
             Field::new("username", "username", Kind::Text(view.ui.username.clone()))
                 .origin(origin(&view.ui.username, &d.username)),
             select(
@@ -223,6 +230,9 @@ impl Settings {
         }
         if let Some(v) = sel("theme") {
             view.ui.theme = v;
+        }
+        if let Some(v) = sel("layout") {
+            view.ui.layout = v;
         }
         if let Some(v) = text("username") {
             view.ui.username = v;

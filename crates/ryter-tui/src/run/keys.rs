@@ -113,6 +113,17 @@ pub fn handle(view: &mut View, key: KeyEvent) -> Action {
         return Action::None;
     }
 
+    // `$` on an empty composer opens the spend drawer (the ledger's bar
+    // says so). Anywhere in a message it is just a dollar sign.
+    if key.code == KeyCode::Char('$')
+        && !key.modifiers.contains(KeyModifiers::CONTROL)
+        && view.composer.is_empty()
+        && !view.ui.classic()
+        && matches!(view.composer.mode, ComposerMode::Normal)
+    {
+        return Action::OpenPanel(PanelId::SpendDrawer);
+    }
+
     composer_key(view, key)
 }
 

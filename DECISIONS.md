@@ -2,6 +2,26 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-28 — The ledger is the default screen; the 0.5 layout stays as `classic`
+- **By:** lead
+- **Decision:**
+  - `[ui] layout = "ledger"` (default) draws one centered reading column, at most 112 columns (`draw::LEDGER_COLUMN`), on a timeline. The gutter is added when rows are placed, so the render cache is unchanged: `chat::layout::GUTTER`, the time and `●`, `◆`, `├─`, `│`, `└─`.
+  - Every turn ends with a `SystemLevel::Receipt` line built at `TurnFinished` from `TurnTally` and the turn's spend (`View::turn_spend_from`).
+  - Every finished turn except the newest folds to one line; `^o` (`diffs_expanded`) opens them.
+  - A new turn is pinned four rows down, so the folded turns above it stay in sight.
+  - The composer is a rule and a prompt. One bottom bar replaces the header, the hint bar, and the info cards. `$` on an empty composer opens a docked spend drawer (`panel::spend_drawer`).
+  - `layout = "classic"` is the 0.5 screen, byte for byte: every existing snapshot is unchanged, because `View::new` starts classic and the app takes the config's layout.
+- **Chosen vs rejected:**
+  - From five options on a design canvas, the user picked A (the ledger) as the default, B (the workbench) as a mode to switch to, and D (mission control) for crew mode. Rejected C (quiet): it hides too much for a tool whose job is showing what it changes.
+  - Rejected removing the classic layout. The user wanted to be able to go back, so it is one setting away.
+  - Turn costs show three decimals under $0.10 (`chat::turn_usd`): a turn is often a fraction of a cent, and `$0.00` hid it.
+- **Why:** the user asked for real design options, not color changes. The cards took a third of the width to show five numbers, and nothing said what each turn had done or cost.
+- **Where:** `crates/ryter-tui/src/draw.rs` (`draw_ledger`, `draw_status_bar`), `chat/layout.rs`, `chat/mod.rs` (`ledger_header`, `turn_usd`), `composer/draw.rs`, `run/events.rs` (`receipt`), `panel/spend_drawer.rs`, `crates/ryter-core/src/config.rs` (`UiConfig.layout`)
+- **Residual risk:**
+  - A folded turn opens only with `^o`, all at once; clicking a fold line does nothing yet.
+  - The status bar's drop order is fixed.
+  - Sessions from before 0.6.0 have no closing lines, so their turns don't fold.
+
 ### 2026-09-28 — The crew builds in order: prerequisites land first, and blocked means blocked
 - **By:** lead
 - **Decision:**

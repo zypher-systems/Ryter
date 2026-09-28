@@ -64,7 +64,16 @@ ryter models [connection]
 
 ## Talking to Ryter
 
-`ryter` on a tty opens the TUI. Top to bottom: a one-line header (`ryter · orchestrator`, project path, version), the chat transcript with a right-hand **info panel** of cards (session, model + context gauge, spend + budget gauge, tasks, crew, mcp), the **activity strip** while a turn runs, the bordered **composer**, and a hint bar showing the keys that matter right now. `^b` hides the info panel; it also drops automatically under 80 columns.
+`ryter` on a tty opens the TUI in the **ledger** layout (`[ui] layout = "ledger"`, the default since 0.6.0):
+
+- **One reading column on a timeline**, centered, at most 112 columns wide. Each question starts with its time and `●`. The model's text hangs off `◆`, each tool step off `├─` (`edit   src/config.rs ······· +9 −1`, `run    npm test ····· ✓ 4 passed`), and edits show as full-row green and red diffs.
+- **Every turn closes with what it came to**, measured by Ryter: `└─ ✓ 5 tools · 2 files (2 changed, +3 −0) · 1 command (1 ok) · 7.9s · $0.001`.
+- **Finished turns fold to one line:** what was asked, led by dots to that summary, ending in `▸`. The newest turn stays open. `^o` opens every turn and every edit whole, and folds them again.
+- **The composer** is a rule and a `›` prompt beneath the column. The rule's left end takes the mode's color.
+- **The bottom bar** holds what the header and cards used to show: the mode (`BUILD`, `CREW · LEAD`), the project and branch, the model, the context gauge, and the cost this turn, this session, and for the project, against the budget. The keys that matter now are on its right. When space runs short, it drops keys first, then the project, the model, and the gauge. The mode and the costs stay.
+- **`$`** on an empty composer opens the **spend drawer** above it. It shows this turn, the session, and the project side by side, with spend by role for the session and the project, and the budget, task cap, and warning level. `b` sets a budget, `⏎` opens the full `/spend` table.
+
+`[ui] layout = "classic"` (also in `/settings`, applied at once) brings back the 0.5 screen. That's a header row, the chat with a right-hand **info panel** of cards (session, model + context gauge, spend + budget gauge, tasks, crew, mcp), the **activity strip** while a turn runs, the bordered **composer**, and a hint bar. `^b` shows or hides the info panel on either layout; it also drops automatically under 80 columns.
 
 Every message is a left-aligned block under a speaker header — your name (from `[ui] username`, then `git user.name`, then `$USER`), the model name, `· system`, or a one-line tool row (`· read_file  path  0.1s`). Markdown renders with headings, lists, quotes, tables, and fenced code with syntax highlighting and a line-number gutter. Long model turns end with a summary line (`3 tools · 12.4k tok · 0:42 · $0.01`).
 
@@ -115,7 +124,8 @@ The keys are on the card's last row:
 | `^d` | quit when the composer is empty |
 | `^r` | toggle the reasoning pane |
 | `^b` | toggle the info panel |
-| `^o` | show every edit whole, or folded |
+| `^o` | show every edit and finished turn whole, or folded |
+| `$` | the spend drawer (ledger, when the composer is empty) |
 | `^l` | redraw |
 | `PgUp` / `PgDn` | scroll the transcript one viewport |
 | `Shift+↑` / `Shift+↓` | scroll one row |

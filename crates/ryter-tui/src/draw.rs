@@ -33,6 +33,9 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     if full.height < 6 || full.width < 20 {
         return Hit::default();
     }
+    if !view.ui.classic() {
+        return draw_ledger(frame, view, theme);
+    }
     let composer_h =
         composer::draw::height(view, full.width).min(full.height.saturating_sub(8).max(3));
     let body_avail = full.height.saturating_sub(1 + 1 + 1 + composer_h + 1);
@@ -119,6 +122,253 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         activity: act,
         composer: comp,
     }
+}
+
+/// Widest the ledger's reading column gets: the timeline gutter plus about
+/// a hundred columns of text. Wider lines are harder to read, not better.
+pub const LEDGER_COLUMN: u16 = 112;
+
+/// The ledger (`[ui] layout = "ledger"`, the default): one reading column on
+/// a timeline, centred; the composer beneath it as a single prompt line; and
+/// one bar at the bottom for everything the header and cards used to say.
+fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
+    let full = frame.area();
+    let composer_h =
+        composer::draw::height(view, full.width).min(full.height.saturating_sub(6).max(2));
+    let body_avail = full.height.saturating_sub(composer_h + 1);
+    let activity_h = activity::height(view, body_avail).min(body_avail.saturating_sub(6));
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(4),
+            Constraint::Length(activity_h),
+            Constraint::Length(composer_h),
+            Constraint::Length(1),
+        ])
+        .split(full);
+    let (body, act, comp_row, bar) = (rows[0], rows[1], rows[2], rows[3]);
+    // The column, centred; one cell to its right is the scrollbar.
+    let col_w = full.width.saturating_sub(2).min(LEDGER_COLUMN);
+    let col_x = full.x + (full.width.saturating_sub(col_w + 1)) / 2;
+    let column = |r: Rect| Rect {
+        x: col_x,
+        width: col_w,
+        ..r
+    };
+    let chat = column(body);
+    let gutter = Rect {
+        x: col_x + col_w,
+        width: 1,
+        ..body
+    };
+    let cf = draw_chat(frame, chat, view, theme);
+    if view.panels.is_empty() {
+        draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme);
+    }
+    let act = column(act);
+    if activity_h > 0 {
+        activity::draw(frame, act, view, theme);
+    }
+    let comp = column(comp_row);
+    let cursor = composer::draw::draw(frame, comp, view, theme);
+    draw_status_bar(frame, bar, view, theme);
+    if view.panels.is_empty() {
+        palette::draw(frame, chat, comp.y, view, theme);
+    }
+    let panel_cursor = panel::draw(frame, full, body, view, theme);
+    if panel_cursor.is_some() {
+        composer::draw::paint_cursor(frame, panel_cursor, theme);
+    } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
+        composer::draw::paint_cursor(frame, cursor, theme);
+    }
+    Hit {
+        chat,
+        cards: Vec::new(),
+        activity: act,
+        composer: comp,
+    }
+}
+
+/// The ledger's bottom bar: who you're talking to, where, with what, how
+/// full the context is, what it has cost (this turn, the session, the
+/// project) against the budget, and the keys that matter now. Facts drop
+/// from the least needed when it doesn't fit; the mode and cost stay.
+fn draw_status_bar(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
+    let w = area.width as usize;
+    let bar_bg = theme.panel_bg;
+    let on = |fg| Style::default().fg(fg).bg(bar_bg);
+    let mode = if view.crew_mode() {
+        " CREW · LEAD ".to_string()
+    } else {
+        format!(" {} ", view.mode_label().to_ascii_uppercase())
+    };
+    let mode_span = Span::styled(
+        mode,
+        Style::default()
+            .fg(theme.bg)
+            .bg(theme.mode(view.mode))
+            .add_modifier(Modifier::BOLD),
+    );
+    let project = std::path::Path::new(&view.cwd)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| view.cwd.clone());
+    let place = match &view.git_branch {
+        Some(b) => format!(" {project}  {b} "),
+        None => format!(" {project} "),
+    };
+    let model = format!(" {} ", crate::chat::short_model(&view.model));
+    let frac = view.ctx_frac();
+    let filled = ((frac * 8.0).round() as usize).min(8);
+    let gauge = [
+        Span::styled(" ctx ", on(theme.dim)),
+        Span::styled(
+            "▰".repeat(filled),
+            on(crate::panel::widgets::gauge_color(frac, theme)),
+        ),
+        Span::styled("▱".repeat(8 - filled), on(theme.dim)),
+        Span::styled(
+            format!(" {}% ", (frac * 100.0).round() as u32),
+            on(theme.dim),
+        ),
+    ];
+    // Cost: the turn, the session, the project, and the budget, together.
+    let turn = view
+        .spend
+        .map(|now| now - view.turn_spend_from.unwrap_or(0.0))
+        .map(crate::chat::turn_usd);
+    let session_style = match view.spend {
+        Some(s) if view.budget_usd > 0.0 && s >= view.budget_usd => on(theme.error),
+        Some(s) if view.warn_usd > 0.0 && s >= view.warn_usd => on(theme.warn),
+        Some(_) => on(theme.fg),
+        None => on(theme.dim),
+    };
+    let mut cost: Vec<Span<'static>> = vec![Span::styled("│ ", on(theme.dim))];
+    if let Some(t) = &turn {
+        cost.push(Span::styled("turn ", on(theme.dim)));
+        cost.push(Span::styled(t.clone(), on(theme.fg)));
+        cost.push(Span::styled(" · ", on(theme.dim)));
+    }
+    cost.push(Span::styled("session ", on(theme.dim)));
+    // Nothing spent yet is $0, not unknown; a few cents keep their digits.
+    let session = match view.spend {
+        None if !view.spend_unknown => "$0".to_string(),
+        Some(s) if !view.spend_unknown => crate::chat::turn_usd(s),
+        _ => view.spend_label(),
+    };
+    cost.push(Span::styled(session, session_style));
+    let project_cost = view.project_spend.as_ref().map(|p| {
+        let known = crate::chat::turn_usd(p.total_usd);
+        if p.unpriced_calls > 0 {
+            format!("≥{known}")
+        } else {
+            known
+        }
+    });
+    let mut project_spans = Vec::new();
+    if let Some(p) = &project_cost {
+        project_spans.push(Span::styled(" · project ", on(theme.dim)));
+        project_spans.push(Span::styled(p.clone(), on(theme.fg)));
+    }
+    let budget = if view.budget_usd > 0.0 {
+        format!(" · budget ${:.2} ", view.budget_usd)
+    } else {
+        " · budget off ".to_string()
+    };
+    let budget_span = Span::styled(budget, on(theme.dim));
+
+    // Keys, as the hint bar ranks them, with the spend drawer first; an open
+    // panel's own keys while it is open.
+    let mut keys = match view.panels.top() {
+        Some(p) => legend_keys(&p.legend(view)),
+        None => hints_ranked(view),
+    };
+    if view.panels.top().is_none() && view.palette.is_none() && view.composer.is_empty() {
+        keys.insert(0, ("$".into(), "spend".into(), Hint::Useful));
+    }
+    let key_spans = |keys: &[(String, String, Hint)]| -> Vec<Span<'static>> {
+        let mut v = Vec::new();
+        for (k, l, _) in keys {
+            v.push(Span::styled(
+                k.clone(),
+                on(theme.accent).add_modifier(Modifier::BOLD),
+            ));
+            v.push(Span::styled(format!(" {l}  "), on(theme.dim)));
+        }
+        v
+    };
+    let width_of =
+        |spans: &[Span<'static>]| spans.iter().map(|s| wrap::width(&s.content)).sum::<usize>();
+
+    // Fit: drop keys first (least needed first), then the project name, the
+    // model, the gauge, the turn and project costs.
+    let mut show_place = true;
+    let mut show_model = true;
+    let mut show_gauge = true;
+    let mut show_project = true;
+    let left = |show_place: bool, show_model: bool, show_gauge: bool, show_project: bool| {
+        let mut v = vec![mode_span.clone()];
+        if show_place {
+            v.push(Span::styled(
+                place.clone(),
+                Style::default().fg(theme.fg).bg(theme.sticky_bg),
+            ));
+        }
+        if show_model {
+            v.push(Span::styled(model.clone(), on(theme.dim)));
+        }
+        if show_gauge {
+            v.extend(gauge.iter().cloned());
+        }
+        v.extend(cost.iter().cloned());
+        if show_project {
+            v.extend(project_spans.iter().cloned());
+        }
+        v.push(budget_span.clone());
+        v
+    };
+    loop {
+        let l = left(show_place, show_model, show_gauge, show_project);
+        let used = width_of(&l) + width_of(&key_spans(&keys));
+        if used <= w {
+            break;
+        }
+        if keys.len() > 1 {
+            let worst = keys
+                .iter()
+                .enumerate()
+                .max_by_key(|(i, (_, _, rank))| (*rank, *i))
+                .map(|(i, _)| i);
+            if let Some(i) = worst {
+                if keys[i].2 != Hint::Essential || keys.len() > 2 {
+                    keys.remove(i);
+                    continue;
+                }
+            }
+        }
+        if show_place {
+            show_place = false;
+        } else if show_model {
+            show_model = false;
+        } else if show_gauge {
+            show_gauge = false;
+        } else if show_project {
+            show_project = false;
+        } else if !keys.is_empty() {
+            keys.pop();
+        } else {
+            break;
+        }
+    }
+    let mut spans = left(show_place, show_model, show_gauge, show_project);
+    let ks = key_spans(&keys);
+    let pad = w.saturating_sub(width_of(&spans) + width_of(&ks));
+    spans.push(Span::styled(" ".repeat(pad), on(theme.dim)));
+    spans.extend(ks);
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(bar_bg)),
+        area,
+    );
 }
 
 fn hairline(frame: &mut Frame, area: Rect, theme: Theme) {
@@ -376,6 +626,10 @@ fn hints_static(view: &View) -> Vec<(&'static str, String)> {
     }
     v.push(("⇧enter", "newline".into()));
     v.push(("/", "commands".into()));
+    // Finished turns fold to one line on the ledger; ^O opens them.
+    if !view.ui.classic() && !view.diffs_expanded && view.has_folded_turns() {
+        v.push(("^o", "expand".into()));
+    }
     if view.activity.has_history {
         v.push(("^r", "reasoning".into()));
     }
@@ -394,23 +648,27 @@ fn hint_width(key: &str, label: &str, first: bool) -> usize {
     wrap::width(key) + 1 + wrap::width(label) + if first { 0 } else { 4 }
 }
 
+/// A panel's legend (`⏎ allow · a allow edits · n deny`) as ranked hints.
+fn legend_keys(legend: &str) -> Vec<(String, String, Hint)> {
+    legend
+        .split(" · ")
+        .filter(|i| !i.trim().is_empty())
+        .map(|i| {
+            let (k, l) = i.split_once(' ').unwrap_or((i, ""));
+            let rank = match k {
+                "esc" | "⏎" | "y" | "n" | "a" => Hint::Essential,
+                _ => Hint::Useful,
+            };
+            (k.to_string(), l.to_string(), rank)
+        })
+        .collect()
+}
+
 fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let w = area.width as usize;
     let mut items = hints_ranked(view);
     if let Some(p) = view.panels.top() {
-        items = p
-            .legend(view)
-            .split(" · ")
-            .filter(|i| !i.trim().is_empty())
-            .map(|i| {
-                let (k, l) = i.split_once(' ').unwrap_or((i, ""));
-                let rank = match k {
-                    "esc" | "⏎" | "y" | "n" | "a" => Hint::Essential,
-                    _ => Hint::Useful,
-                };
-                (k.to_string(), l.to_string(), rank)
-            })
-            .collect();
+        items = legend_keys(&p.legend(view));
     }
     // Drop the least important hints until the rest fit, rather than chopping
     // whatever happens to be last.

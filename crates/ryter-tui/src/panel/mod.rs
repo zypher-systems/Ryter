@@ -22,6 +22,7 @@ pub mod sessions;
 pub mod settings;
 pub mod skills;
 pub mod spend;
+pub mod spend_drawer;
 pub mod theme;
 pub mod toggles;
 pub mod widgets;
@@ -322,6 +323,7 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
         PanelId::Agents => Box::new(agents::Agents::default()),
         PanelId::Sessions(mode) => Box::new(sessions::Sessions::new(view, env, mode)),
         PanelId::Spend => Box::new(spend::Spend::default()),
+        PanelId::SpendDrawer => Box::new(spend_drawer::SpendDrawer),
         PanelId::Budget => Box::new(budget::Budget::new(view)),
         PanelId::Settings => Box::new(settings::Settings::new(view)),
         PanelId::Theme => Box::new(theme::ThemePicker::new(view)),

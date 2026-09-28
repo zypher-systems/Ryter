@@ -8,7 +8,7 @@
         │  ^p         open the command palette                                             ┃
         │  ^r         toggle the reasoning pane                                            │
         │  ^b         toggle the info panel                                                │
-        │  ^o         show every edit and audit whole, or folded                           │
+        │  ^o         show every edit, audit, and folded turn whole, or folded             │
         │  ^l         redraw                                                               │
         │  ^g         release/grab the mouse (release it to select and copy text)          │
         │  f1         open /help                                                           │

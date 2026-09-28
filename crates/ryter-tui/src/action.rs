@@ -30,6 +30,8 @@ pub enum PanelId {
     Sessions(SessionsMode),
     /// `/spend`.
     Spend,
+    /// `$` on the ledger: the spend drawer.
+    SpendDrawer,
     /// `/budget`.
     Budget,
     /// `/settings`.

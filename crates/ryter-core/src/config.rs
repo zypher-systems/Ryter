@@ -182,6 +182,16 @@ pub struct UiConfig {
     pub receipts: bool,
     /// After a build turn that changed files, offer an audit (`/audit`).
     pub offer_audit: bool,
+    /// `ledger` (one reading column on a timeline, status in the bottom
+    /// bar) | `classic` (chat beside the info cards, as before 0.6.0).
+    pub layout: String,
+}
+
+impl UiConfig {
+    /// The 0.5 layout: chat beside the info cards.
+    pub fn classic(&self) -> bool {
+        self.layout == "classic"
+    }
 }
 
 impl Default for UiConfig {
@@ -197,6 +207,7 @@ impl Default for UiConfig {
             line_numbers: true,
             receipts: true,
             offer_audit: true,
+            layout: "ledger".into(),
         }
     }
 }
@@ -213,6 +224,7 @@ pub const UI_KEYS: &[&str] = &[
     "line_numbers",
     "receipts",
     "offer_audit",
+    "layout",
 ];
 
 /// Unknown keys under `[ui]` in a TOML document (empty when none).
@@ -1277,6 +1289,8 @@ struct UiFile {
     receipts: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     offer_audit: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    layout: Option<String>,
 }
 
 impl From<&UiConfig> for UiFile {
@@ -1292,6 +1306,7 @@ impl From<&UiConfig> for UiFile {
             line_numbers: Some(ui.line_numbers),
             receipts: Some(ui.receipts),
             offer_audit: Some(ui.offer_audit),
+            layout: Some(ui.layout.clone()),
         }
     }
 }
@@ -1327,6 +1342,9 @@ impl UiFile {
         }
         if let Some(v) = self.offer_audit {
             ui.offer_audit = v;
+        }
+        if let Some(v) = self.layout {
+            ui.layout = v;
         }
     }
 }

@@ -143,6 +143,8 @@ pub struct View {
     pub lookups: Option<(u64, crate::chat::toolview::Lookups)>,
     /// What this turn has done, for its closing line.
     pub tally: crate::chat::toolview::TurnTally,
+    /// Session spend when the running turn started, for its closing line.
+    pub turn_spend_from: Option<f64>,
     /// Tool call id → (tool, target), for its result.
     pub tool_calls: BTreeMap<String, (String, String)>,
     /// Last known token count.
@@ -329,6 +331,7 @@ impl View {
             todos: Vec::new(),
             lookups: None,
             tally: Default::default(),
+            turn_spend_from: None,
             tool_calls: BTreeMap::new(),
             ctx_tokens: None,
             ctx_window: None,
@@ -366,7 +369,12 @@ impl View {
             max_crew: 4,
             sandbox_profile: "off".into(),
             web: false,
-            ui: UiConfig::default(),
+            // Tests and snapshots start on the classic layout; the app takes
+            // the user's `[ui] layout` (ledger by default) from config.
+            ui: UiConfig {
+                layout: "classic".into(),
+                ..UiConfig::default()
+            },
             recent_commands: Vec::new(),
             conn_tests: BTreeMap::new(),
             last_export: None,
@@ -542,6 +550,20 @@ impl View {
             .iter()
             .find(|(turn, _)| *turn == t)
             .map(|(_, top)| *top)
+    }
+
+    /// Whether the ledger folds any finished turn right now.
+    pub fn has_folded_turns(&self) -> bool {
+        let latest = self.messages.iter().map(|m| m.turn).max().unwrap_or(0);
+        self.messages.iter().any(|m| {
+            m.turn != latest
+                && matches!(
+                    m.kind,
+                    MessageKind::System {
+                        level: crate::chat::SystemLevel::Receipt
+                    }
+                )
+        })
     }
 
     /// The anchored user message.
