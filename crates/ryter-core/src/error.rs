@@ -36,6 +36,10 @@ pub enum Error {
     #[error("task budget: {0}")]
     TaskBudget(String),
 
+    /// An outbound MCP server failed, timed out, or went away.
+    #[error("{0}")]
+    Mcp(String),
+
     /// In-flight turn was cancelled.
     #[error("cancelled")]
     Cancelled,

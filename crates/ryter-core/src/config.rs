@@ -437,6 +437,9 @@ pub struct McpServerConfig {
     /// Extra env (API keys are not inherited by default).
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Seconds a tool call may run before Ryter stops waiting (default 120).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
 }
 
 fn default_true() -> bool {
@@ -2010,6 +2013,7 @@ mod tests {
                 args: vec!["-y".into(), "@modelcontextprotocol/server-github".into()],
                 enabled: true,
                 env: BTreeMap::new(),
+                timeout_secs: None,
             },
         );
         save_mcp(dir.path(), &cfg).unwrap();

@@ -415,11 +415,19 @@ fn mcp_use(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     let Some(hub) = &ctx.mcp else {
         return Ok(ToolOutput::err("no MCP servers connected"));
     };
-    let mut hub = hub
+    // The hub is locked only to find the server: a slow call must not stall
+    // `search_tool` or calls to other servers.
+    let routed = hub
         .lock()
-        .map_err(|e| crate::error::Error::Config(e.to_string()))?;
-    match crate::mcp::use_tool(&mut hub, name, arguments) {
+        .map_err(|e| crate::error::Error::Config(e.to_string()))?
+        .route(name);
+    let (tool, server) = match routed {
+        Ok(r) => r,
+        Err(e) => return Ok(ToolOutput::err(e.to_string())),
+    };
+    match crate::mcp::call_tool(&server, &tool, arguments, Some(&ctx.cancel)) {
         Ok(t) => Ok(ToolOutput::ok(t)),
+        Err(crate::error::Error::Cancelled) => Ok(ToolOutput::err("cancelled")),
         Err(e) => Ok(ToolOutput::err(e.to_string())),
     }
 }

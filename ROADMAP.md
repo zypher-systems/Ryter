@@ -4,6 +4,7 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.5.6 (`fix/0.5.6`) — outbound MCP that doesn't hang.** Each server's stdout is read on its own thread; a call waits with a deadline (`timeout_secs`, default 120s; 60s to start) and stops on Esc, sending `notifications/cancelled`. Replies are matched by id: notifications, log lines, and late replies are skipped, and server requests are answered (`ping`) or refused. The hub is locked only to route a call, so one slow server doesn't stall the rest. `isError` results are errors; an exited server is named with its last stderr line. `search_tool` matches every word and lists each tool's arguments. `@modelcontextprotocol/server-everything` failed to connect before (a notification arrived ahead of the `initialize` reply). Inbound MCP is still to review.
 - **0.5.5 (`fix/0.5.5`) — spend counts what you pay.** Anthropic prompts are counted whole: cache reads and cache writes (1.25× input, never counted before) are priced at their own rates, and OpenRouter's cache rates are read from its catalog. With a session budget set, a model with no price is not called again after its first unpriced call, in solo, lead, and crew; the reply that came back is kept. A crew task's caps count what it spent on earlier runs (`Task.spent`).
 - **0.5.4 (`fix/0.5.4`) — model lists show only models that can chat.** `:batch` routes and image or audio models are left out of `/models`, the `/audit` chooser, and `ryter models`, read from the catalog's output types (id patterns where a catalog gives none); router models such as `openrouter/auto` stay.
 - **0.5.3 (`fix/0.5.3`) — approving like Reeve, clearer menus.** The approval card docks above the composer (what, why, risk, change); `⏎` allows after a 500 ms guard, `a` allows one named kind of action for the session, `n` denies, destructive commands take only `y`. Panel keys on the panel's last row in color; search inside the model picker and help; the picker opens on the current model. Fixed: the picker's `$-1000000/M` footer for routers, `/provider` showing a connection's default model instead of the one in use, and form keys in the hint bar during a prompt. The look (palette) is still to decide: options on the comparison page, Copper proposed.
@@ -39,11 +40,11 @@ Living plan for Ryter. The lead updates this as work lands.
 - **Audit findings still open** (verified 2026-09-26, not yet fixed):
   - **Spend:** the lead and solo hats have no token cap (with a budget set, an unpriced model is now stopped instead; see 0.5.5).
   - **Headless:** `ryter -p` exits 0 on `MaxTurns`, `Truncated`, and `Stuck`, and `TurnFinished` carries no stop reason.
-  - **MCP:** `use_tool` reads with no timeout while holding the hub lock, and takes the first line as the reply without matching its id. A notification shifts every later result by one.
   - **Streams:**
     - Tool-call fragments are keyed by id, not `index`, so interleaved parallel calls merge.
     - A stream dropped mid-reply loses the partial text.
     - A `Retry-After` wait is followed by the backoff wait as well.
+  - **Chat:** the user's own message is rendered as markdown, so `everything__echo` shows as "everythingecho" (found 2026-09-27).
   - **Shell:** programs that read `/dev/tty` (ssh or gpg prompts) wait out the command timeout.
   - **Compaction:** it can't shrink a single long turn, because it keeps at least four user turns.
 
