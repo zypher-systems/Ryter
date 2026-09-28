@@ -1,40 +1,40 @@
-  chat     changes  ^t    crew board
- ╭ SPEND ────────────────────────╮ ╭ TASKS ────────────────────────╮ ╭ PATCH ────────────────────────╮ ╭ TIME ────────────────────────────╮
- │ $0.018                        │ │ 0 of 0 landed                 │ │ none open                     │ │ idle                             │
- │ no budget · $ for detail      │ │ ▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱│ │ none yet                      │ │ 0 model calls this turn          │
+  chat     changes  ^t    crew board                                                       lead grok-4.6 · builders same · auditor grok-4.6
+ ╭ SPEND ────────────────────────╮ ╭ TASKS ────────────────────────╮ ╭ CHECKS ───────────────────────╮ ╭ ELAPSED ─────────────────────────╮
+ │ $0.018                        │ │ 0 of 0 landed                 │ │ none set                      │ │ idle                             │
+ │ no budget                     │ │ ▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱│ │ each auditor tests it         │ │ 0 calls · 0 retries              │
  ╰───────────────────────────────╯ ╰───────────────────────────────╯ ╰───────────────────────────────╯ ╰──────────────────────────────────╯
- ╭ PLAN ───────────────────────────────────────────────────────────────────╮ ╭ LANES ─────────────────────────────────────────────────────╮
- │ no plan yet                                                             │ │ no one is working right now                                │
- │ ask the lead for work: the tasks it or the architect queue appear here, │ │                                                            │
- │ with what each waits on                                                 │ │                                                            │
- │                                                                         │ │                                                            │
- ╰─────────────────────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────────────────────╯
-                     ·  welcome · /help for keys
-                     ●  why does load() ignore a missing file? ······························· ✓ answered · 1.8s · $0.002  ▸
-
-                     ●  dusty
-                     │  trim the query
-                     │
-                     ├─ edit   app/server.js ··································································· +2 −1  0.0s
-                     │    3
-                     │    4   app.get('/search', (req, res) => {
-                     │    5 -   const q = req.query.q
-                     │    5 +   const q = (req.query.q || '').trim()
-                     │    6 +   if (!q) return res.json([])
-                     │    7     res.json(find(q))
-                     │    8   })
-                     ├─ write  test/search.test.js ····················································· new · 6 lines  0.0s
-                     │    1 + import { test } from 'node:test'
-                     │    2 + import assert from 'node:assert'
-                     │    3 +
-                     │    4 + test('an empty query finds nothing', async () => {
-                     │    5 +   assert.deepEqual(await search(''), [])
-                     │    6 + })
-                     └─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s · $0.004
-
-
-
-
-             ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-             › ask the lead; the crew does the work · /solo to leave
+ ╭ PLAN ──────────────────────────────────────────────────────╮ ╭ LANES ──────────────────────────────────────────────────────────────────╮
+ │ no plan yet                                                │ │ no one is working right now                                             │
+ │ ask the lead for work: the tasks it or the architect queue │ ╰─────────────────────────────────────────────────────────────────────────╯
+ │ appear here, with what each waits on                       │ ╭ LEAD ───────────────────────────────────────────────────────────────────╮
+ │                                                            │ │         ·  welcome · /help for keys                                     │
+ │                                                            │ │         ●  why does load() ignore a… ···· ✓ answered · 1.8s · $0.002  ▸ │
+ │                                                            │ │                                                                         │
+ │                                                            │ │         ●  dusty                                                        │
+ │                                                            │ │         │  trim the query                                               │
+ │                                                            │ │         │                                                               │
+ │                                                            │ │         ├─ edit   app/server.js ··························· +2 −1  0.0s │
+ │                                                            │ │         │    3                                                          │
+ │                                                            │ │         │    4   app.get('/search', (req, res) => {                     │
+ │                                                            │ │         │    5 -   const q = req.query.q                                │
+ │                                                            │ │         │    5 +   const q = (req.query.q || '').trim()                 │
+ │                                                            │ │         │    6 +   if (!q) return res.json([])                          │
+ │                                                            │ │         │    7     res.json(find(q))                                    │
+ │                                                            │ │         │    8   })                                                     │
+ │                                                            │ │         ├─ write  test/search.test.js ············· new · 6 lines  0.0s │
+ │                                                            │ │         │    1 + import { test } from 'node:test'                       │
+ │                                                            │ │         │    2 + import assert from 'node:assert'                       │
+ │                                                            │ │         │    3 +                                                        │
+ │                                                            │ │         │    4 + test('an empty query finds nothing', async () => {     │
+ │                                                            │ │         │    5 +   assert.deepEqual(await search(''), [])               │
+ │                                                            │ │         │    6 + })                                                     │
+ │                                                            │ │         └─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s · $0.0… │
+ │                                                            │ │                                                                         │
+ │                                                            │ │                                                                         │
+ │                                                            │ │                                                                         │
+ │                                                            │ │                                                                         │
+ │ legend                                                     │ │                                                                         │
+ │ ✓ landed   ◐ building   ◑ in audit   ✕ blocked             │ │ ────────────────────────────────────────────────────────────────────────│
+ │ ○ waiting                                                  │ │ › ask the lead; the crew does the work · /solo to leave                 │
+ ╰────────────────────────────────────────────────────────────╯ ╰─────────────────────────────────────────────────────────────────────────╯
  CREW · LEAD  muzak  main  grok-4.6  ctx ▱▱▱▱▱▱▱▱ 5% │ turn $0.004 · session $0.018 · budget off  $ spend  enter send  / commands  ^c quit

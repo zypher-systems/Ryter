@@ -74,10 +74,10 @@ ryter models [connection]
 - **The bottom bar** holds what the header and cards used to show: the mode (`BUILD`, `CREW · LEAD`), the project and branch, the model, the context gauge, and the cost this turn, this session, and for the project, against the budget. The keys that matter now are on its right. When space runs short, it drops keys first, then the project, the model, and the gauge. The mode and the costs stay.
 - **`$`** on an empty composer opens the **spend drawer** above it. It shows this turn, the session, and the project side by side, with spend by role for the session and the project, and the budget, task cap, and warning level. `b` sets a budget, `⏎` opens the full `/spend` table.
 
-**Mission control** (crew mode on the ledger) puts a board above the lead's conversation. Before there is a plan, it says so:
-- **Tiles:** spend against the budget, tasks landed out of all of them, where the patch stands, and the crew's time and model calls this turn.
+**Mission control** (crew mode on the ledger) is the crew's screen. Tiles run across the top. The plan is on the left, at full height, with a legend. On the right are the lanes, and the LEAD box with the lead's conversation and the prompt. The strip names who fills each seat and where the patch lands. `tab` picks a lane and `⏎` opens its transcript. Before there is a plan, the board says so:
+- **Tiles:** spend against the budget, tasks landed out of all of them, the checks run on each task, and the crew's time, model calls, and retries.
 - **The plan:** drawn as boxes, each in its state's color, left to right by what waits on what, and joined by `──┬─▶` / `└─▶`. A blocked task's full reason is listed under the drawing. A plan too big to draw in the space shows as a tree instead. It's drawn from the agent's queue snapshots (`after`, and the manifest-first rule), so it shows exactly what the scheduler enforces. Each task is marked `✓` landed, `◐` building, `◑` in audit, `✕` blocked (with the reason, wrapped rather than cut), `○` waiting on something, or `◇` proposed.
-- **Lanes:** one row per worker, showing who is acting (builder or auditor), on which task, what it's doing, and for how long.
+- **Lanes:** one row per worker, showing who is acting (builder or auditor), on which task, what it's doing, for how long, and what the task has cost.
 
 Everything a specialist reports is also kept in the session's `activity.jsonl`.
 

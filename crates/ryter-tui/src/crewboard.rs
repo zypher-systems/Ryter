@@ -26,34 +26,42 @@ pub fn shown(view: &View) -> bool {
     !view.ui.classic() && view.crew_mode() && view.workbench.is_none()
 }
 
-/// Rows the board wants out of `avail`, leaving the lead's chat room.
-pub fn height(view: &View, avail: u16, width: u16, theme: Theme) -> u16 {
-    if !shown(view) {
-        return 0;
-    }
-    let inner = usize::from(plan_width(width).saturating_sub(3));
-    let cap = usize::from(avail.saturating_sub(10 + TILES_H + 3));
-    let plan = plan_view(view, theme, inner, cap).len() as u16 + 1;
-    let lanes = view.crew.len().max(1) as u16 + 1;
-    let want = TILES_H + plan.max(lanes) + 2;
-    want.min(avail.saturating_sub(10))
-        .max(TILES_H + 4)
-        .min(avail)
+/// Where the lead's conversation goes inside the board.
+#[derive(Debug, Clone, Copy)]
+pub struct LeadAreas {
+    /// The lead's chat.
+    pub chat: Rect,
+    /// The activity strip, when a turn runs.
+    pub activity: Rect,
+    /// The prompt.
+    pub composer: Rect,
 }
 
-/// Paint the board into `area`.
-pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
-    if area.height < TILES_H + 3 {
-        return;
-    }
+/// The crew screen, as design D lays it out: tiles across the top; the plan
+/// on the left at full height with its legend; on the right the lanes, and
+/// under them the lead's conversation and the prompt in one box. Returns
+/// where the caller draws the chat, the activity strip, and the composer.
+pub fn draw_screen(
+    frame: &mut Frame,
+    area: Rect,
+    view: &View,
+    theme: Theme,
+    activity_h: u16,
+    composer_h: u16,
+) -> LeadAreas {
+    let area = Rect {
+        x: area.x + 1,
+        width: area.width.saturating_sub(2),
+        ..area
+    };
     let tiles = Rect {
-        height: TILES_H,
+        height: TILES_H.min(area.height),
         ..area
     };
     draw_tiles(frame, tiles, view, theme);
     let rest = Rect {
-        y: area.y + TILES_H,
-        height: area.height - TILES_H,
+        y: area.y + tiles.height,
+        height: area.height.saturating_sub(tiles.height),
         ..area
     };
     let plan_w = plan_width(rest.width);
@@ -61,21 +69,29 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         width: plan_w,
         ..rest
     };
-    let lanes = Rect {
+    let right = Rect {
         x: rest.x + plan_w + 1,
         width: rest.width.saturating_sub(plan_w + 1),
         ..rest
     };
     let inner = usize::from(plan_w.saturating_sub(3));
-    let cap = usize::from(plan.height.saturating_sub(3));
-    boxed(
+    let cap = usize::from(plan.height.saturating_sub(5));
+    boxed_with_footer(
         frame,
         plan,
         "PLAN",
         plan_view(view, theme, inner, cap),
-        view,
+        legend(theme, inner),
         theme,
     );
+    // Lanes: as tall as there are workers, within reason.
+    let lanes_h = (view.crew.len().max(1) as u16 + 2)
+        .clamp(3, 10)
+        .min(right.height / 2);
+    let lanes = Rect {
+        height: lanes_h,
+        ..right
+    };
     boxed(
         frame,
         lanes,
@@ -84,11 +100,118 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         view,
         theme,
     );
+    let lead = Rect {
+        y: right.y + lanes_h,
+        height: right.height.saturating_sub(lanes_h),
+        ..right
+    };
+    let b = block("LEAD", theme);
+    let inner = b.inner(lead);
+    frame.render_widget(b, lead);
+    let inner = Rect {
+        x: inner.x + 1,
+        width: inner.width.saturating_sub(1),
+        ..inner
+    };
+    let composer_h = composer_h.min(inner.height.saturating_sub(2));
+    let activity_h = activity_h.min(inner.height.saturating_sub(composer_h + 2));
+    let chat_h = inner.height.saturating_sub(composer_h + activity_h);
+    LeadAreas {
+        chat: Rect {
+            height: chat_h,
+            ..inner
+        },
+        activity: Rect {
+            y: inner.y + chat_h,
+            height: activity_h,
+            ..inner
+        },
+        composer: Rect {
+            y: inner.y + chat_h + activity_h,
+            height: composer_h,
+            ..inner
+        },
+    }
 }
 
-/// The plan's share of the board's width.
+/// What the plan's marks mean, at its foot.
+fn legend(theme: Theme, width: usize) -> Vec<Line<'static>> {
+    let dim = Style::default().fg(theme.dim).bg(theme.bg);
+    let item = |mark: &'static str, color: Color, label: &'static str| {
+        vec![
+            Span::styled(mark, Style::default().fg(color).bg(theme.bg)),
+            Span::styled(format!(" {label}   "), dim),
+        ]
+    };
+    let items = [
+        item("✓", theme.success, "landed"),
+        item("◐", theme.accent, "building"),
+        item("◑", theme.audit, "in audit"),
+        item("✕", theme.error, "blocked"),
+        item("○", theme.dim, "waiting"),
+    ];
+    // As many to a line as fit.
+    let mut lines = vec![Line::from(Span::styled("legend", dim))];
+    let mut row: Vec<Span<'static>> = Vec::new();
+    let mut used = 0;
+    for it in items {
+        let w: usize = it.iter().map(|s| wrap::width(&s.content)).sum();
+        if used + w > width && !row.is_empty() {
+            lines.push(Line::from(std::mem::take(&mut row)));
+            used = 0;
+        }
+        used += w;
+        row.extend(it);
+    }
+    lines.push(Line::from(row));
+    lines
+}
+
+/// `boxed`, with `footer` pinned to the box's last rows.
+fn boxed_with_footer(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    rows: Vec<Line<'static>>,
+    footer: Vec<Line<'static>>,
+    theme: Theme,
+) {
+    let b = block(title, theme);
+    let inner = b.inner(area);
+    frame.render_widget(b, area);
+    let h = usize::from(inner.height);
+    let foot = footer.len().min(h);
+    let body_h = h - foot;
+    let mut rows = rows;
+    if rows.len() > body_h && body_h > 0 {
+        let more = rows.len() - (body_h - 1);
+        rows.truncate(body_h - 1);
+        rows.push(Line::from(Span::styled(
+            format!("… {more} more rows"),
+            Style::default().fg(theme.dim).bg(theme.bg),
+        )));
+    }
+    rows.truncate(body_h);
+    while rows.len() < body_h {
+        rows.push(Line::from(Span::styled(
+            String::new(),
+            Style::default().bg(theme.bg),
+        )));
+    }
+    rows.extend(footer.into_iter().take(foot));
+    frame.render_widget(
+        Paragraph::new(rows).style(Style::default().bg(theme.bg)),
+        Rect {
+            x: inner.x + 1,
+            width: inner.width.saturating_sub(1),
+            ..inner
+        },
+    );
+}
+
+/// The plan's share of the width: the left side, as the design has it.
 fn plan_width(total: u16) -> u16 {
-    (total * 11 / 20).max(30).min(total.saturating_sub(24))
+    (total * 45 / 100).max(30).min(total.saturating_sub(40))
 }
 
 fn block(title: &str, theme: Theme) -> Block<'static> {
@@ -149,7 +272,7 @@ fn draw_tiles(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let tiles: [(&str, Vec<Span<'static>>, Vec<Span<'static>>); 4] = [
         spend_tile(view, theme, dim, fg, w),
         tasks_tile(view, theme, dim, fg, w),
-        patch_tile(view, theme, dim, fg),
+        checks_tile(view, theme, dim, fg),
         time_tile(view, dim, fg),
     ];
     for (i, (title, value, detail)) in tiles.into_iter().enumerate() {
@@ -191,7 +314,7 @@ fn spend_tile(view: &View, theme: Theme, dim: Style, fg: Style, w: u16) -> Tile 
             Span::styled("▱".repeat(cells - filled), dim),
         ]
     } else {
-        vec![Span::styled("no budget · $ for detail", dim)]
+        vec![Span::styled("no budget", dim)]
     };
     ("SPEND", value, detail)
 }
@@ -232,36 +355,29 @@ fn tasks_tile(view: &View, theme: Theme, dim: Style, fg: Style, w: u16) -> Tile 
     ("TASKS", value, detail)
 }
 
-fn patch_tile(view: &View, _theme: Theme, dim: Style, fg: Style) -> Tile {
-    match &view.patch_view {
-        None => (
-            "PATCH",
-            vec![Span::styled("none open", dim)],
-            vec![Span::styled("none yet", dim)],
-        ),
-        Some(p) => {
-            let short = p.branch.rsplit('-').next().unwrap_or(&p.branch);
-            let waiting: Vec<&str> = p
-                .tasks
-                .iter()
-                .filter(|t| !p.landed.contains(t))
-                .map(String::as_str)
-                .collect();
-            let detail = if waiting.is_empty() {
-                format!("{} landed · lands next", p.landed.len())
-            } else {
-                format!("waits on {}", waiting.join(", "))
-            };
-            (
-                "PATCH",
-                vec![
-                    Span::styled(format!("patch-{short}"), fg),
-                    Span::styled(format!(" → {}", p.target), dim),
-                ],
-                vec![Span::styled(detail, dim)],
-            )
-        }
+fn checks_tile(view: &View, theme: Theme, dim: Style, fg: Style) -> Tile {
+    if view.crew_checks.is_empty() {
+        return (
+            "CHECKS",
+            vec![Span::styled("none set", dim)],
+            vec![Span::styled("each auditor tests it", dim)],
+        );
     }
+    let first = view.crew_checks[0].clone();
+    let more = view.crew_checks.len() - 1;
+    let value = if more == 0 {
+        first
+    } else {
+        format!("{first} +{more}")
+    };
+    (
+        "CHECKS",
+        vec![
+            Span::styled("✓ ", Style::default().fg(theme.success).bg(theme.bg)),
+            Span::styled(value, fg),
+        ],
+        vec![Span::styled("each task + the patch", dim)],
+    )
 }
 
 fn time_tile(view: &View, dim: Style, fg: Style) -> Tile {
@@ -272,11 +388,16 @@ fn time_tile(view: &View, dim: Style, fg: Style) -> Tile {
         Some(s) => vec![Span::styled(fmt_elapsed(s), fg)],
         None => vec![Span::styled("idle", dim)],
     };
+    let retries: u32 = view.tasks.iter().map(|t| t.retries).sum();
     (
-        "TIME",
+        "ELAPSED",
         value,
         vec![Span::styled(
-            format!("{} model calls this turn", view.turn_calls),
+            format!(
+                "{} calls · {retries} retr{}",
+                view.turn_calls,
+                if retries == 1 { "y" } else { "ies" }
+            ),
             dim,
         )],
     )
@@ -498,10 +619,13 @@ fn plan_rows(view: &View, theme: Theme, width: usize) -> Vec<Line<'static>> {
 fn patch_line(view: &View, theme: Theme) -> Option<Line<'static>> {
     let dim = Style::default().fg(theme.dim).bg(theme.bg);
     let p = view.patch_view.as_ref()?;
+    // What the queue says, not the patch's own list: a task retried after it
+    // landed is open again.
+    let done = |id: &str| view.tasks.iter().any(|t| t.id == id && t.status == "done");
     let open: Vec<&str> = p
         .tasks
         .iter()
-        .filter(|t| !p.landed.contains(t))
+        .filter(|t| !done(t))
         .map(String::as_str)
         .collect();
     let note = if open.is_empty() {
@@ -524,9 +648,9 @@ fn plan_view(view: &View, theme: Theme, width: usize, cap: usize) -> Vec<Line<'s
     plan_drawing(view, theme, width, cap).unwrap_or_else(|| plan_rows(view, theme, width))
 }
 
-/// Box rows, and the columns between a box and the next: `──┬─▶`.
+/// Box rows, and the columns between a box and the next: `─┬─▶`.
 const BOX_H: usize = 4;
-const GAP: usize = 5;
+const GAP: usize = 4;
 
 /// The plan drawn: a box per task in its state's color, left to right by
 /// what waits on what, each joined to the tasks after it. `None` when it
@@ -576,7 +700,7 @@ fn plan_drawing(view: &View, theme: Theme, width: usize, cap: usize) -> Option<V
     let levels = (0..n).map(depth).max().unwrap_or(0) + 1;
     let box_w = width.saturating_sub((levels - 1) * GAP) / levels;
     let box_w = box_w.min(30);
-    if box_w < 16 {
+    if box_w < 15 {
         return None;
     }
     // Rows: each task at the top of the block its tasks after it fill.
@@ -630,7 +754,7 @@ fn plan_drawing(view: &View, theme: Theme, width: usize, cap: usize) -> Option<V
                 .add_modifier(Modifier::BOLD),
         );
         put(&mut grid, y + 1, x + box_w - 1, "│", edge);
-        let said = wrap::truncate(&format!("   {words}"), inner);
+        let said = wrap::truncate(&format!("  {words}"), inner);
         put(&mut grid, y + 2, x, "│", edge);
         put(&mut grid, y + 2, x + 1, &format!("{said:<inner$}"), base);
         put(&mut grid, y + 2, x + box_w - 1, "│", edge);
@@ -642,7 +766,7 @@ fn plan_drawing(view: &View, theme: Theme, width: usize, cap: usize) -> Option<V
             edge,
         );
         // What the box can't hold goes under the drawing, in full.
-        if t.status == "blocked" && wrap::width(&format!("   {words}")) > inner {
+        if t.status == "blocked" && wrap::width(&format!("  {words}")) > inner {
             let red = Style::default().fg(theme.error).bg(theme.bg);
             for (k, part) in wrap::wrap_plain(&format!("✕ {}  {words}", t.id), width.max(20))
                 .into_iter()
@@ -670,9 +794,9 @@ fn plan_drawing(view: &View, theme: Theme, width: usize, cap: usize) -> Option<V
                 mid,
                 x0,
                 if ks.len() > 1 {
-                    "──┬─▶"
+                    "─┬─▶"
                 } else {
-                    "────▶"
+                    "───▶"
                 },
                 line,
             );
@@ -680,15 +804,15 @@ fn plan_drawing(view: &View, theme: Theme, width: usize, cap: usize) -> Option<V
             for (k, &c) in ks.iter().enumerate().skip(1) {
                 let cy = row[c] + 1;
                 let glyph = if c == *last {
-                    "  └─▶"
+                    " └─▶"
                 } else {
-                    "  ├─▶"
+                    " ├─▶"
                 };
                 put(&mut grid, cy, x0, glyph, line);
                 // The trunk down to it.
                 let from = row[ks[k - 1]] + 2;
                 for yy in from..cy {
-                    put(&mut grid, yy, x0 + 2, "│", line);
+                    put(&mut grid, yy, x0 + 1, "│", line);
                 }
             }
         }
@@ -732,15 +856,37 @@ fn lane_rows(view: &View, theme: Theme, width: u16) -> Vec<Line<'static>> {
     let spin = crate::activity::SPINNER[view.activity.frame % crate::activity::SPINNER.len()];
     view.crew
         .iter()
-        .map(|c| {
+        .enumerate()
+        .map(|(i, c)| {
             let who = if c.acting.is_empty() {
                 c.role.as_str()
             } else {
                 c.acting.as_str()
             };
+            let selected = view.lane_selected == Some(i);
+            let bg = if selected {
+                theme.selection_bg
+            } else {
+                theme.bg
+            };
+            let on = |fg| Style::default().fg(fg).bg(bg);
             let secs = view.now_ms.saturating_sub(c.started_ms) / 1000;
-            let clock = format!("  {}", fmt_elapsed(secs));
-            let task = wrap::truncate(&c.label, 18);
+            // What the task has cost so far, as the meter charged it.
+            let cost = view
+                .tasks
+                .iter()
+                .find(|t| t.title == c.label)
+                .and_then(|t| view.task_spend.get(&t.id))
+                .map(|u| format!("  {}", turn_usd(*u)))
+                .unwrap_or_default();
+            let clock = format!("  {}{cost}", fmt_elapsed(secs));
+            // The task's id, as the plan names it; its title when unknown.
+            let task = view
+                .tasks
+                .iter()
+                .find(|t| t.title == c.label)
+                .map_or(c.label.as_str(), |t| t.id.as_str());
+            let task = wrap::truncate(task, 18);
             let room = usize::from(width)
                 .saturating_sub(10 + 2 + wrap::width(&task) + 2 + wrap::width(&clock) + 4);
             let doing = wrap::truncate(&c.status, room);
@@ -748,16 +894,13 @@ fn lane_rows(view: &View, theme: Theme, width: u16) -> Vec<Line<'static>> {
             Line::from(vec![
                 Span::styled(
                     format!("{:<9} ", wrap::truncate(who, 9)),
-                    Style::default().fg(theme.role(who)).bg(theme.bg),
+                    on(theme.role(who)),
                 ),
-                Span::styled(
-                    format!("{spin} "),
-                    Style::default().fg(theme.accent).bg(theme.bg),
-                ),
-                Span::styled(task, Style::default().fg(theme.fg).bg(theme.bg)),
-                Span::styled(format!("  {doing}"), dim),
-                Span::styled(" ".repeat(pad), dim),
-                Span::styled(clock, dim),
+                Span::styled(format!("{spin} "), on(theme.accent)),
+                Span::styled(task, on(theme.fg)),
+                Span::styled(format!("  {doing}"), on(theme.dim)),
+                Span::styled(" ".repeat(pad), on(theme.dim)),
+                Span::styled(clock, on(theme.dim)),
             ])
         })
         .collect()

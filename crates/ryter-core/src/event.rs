@@ -73,6 +73,9 @@ pub enum AgentEvent {
         role: Role,
         /// Child id when a specialist spent.
         subagent_id: Option<SubagentId>,
+        /// The crew task it was spent on, for the board's lanes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task: Option<String>,
         /// Prompt tokens.
         input_tokens: u64,
         /// Completion tokens.
@@ -231,6 +234,9 @@ pub enum AgentEvent {
     Tasks {
         /// Every task, in queue order.
         tasks: Vec<crate::queue::TaskView>,
+        /// The checks run on every task and on the patch.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        checks: Vec<String>,
         /// The open patch, if any.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         patch: Option<crate::queue::PatchView>,

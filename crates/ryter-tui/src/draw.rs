@@ -153,24 +153,40 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         .split(full);
     let (strip, body, act, comp_row, bar) = (rows[0], rows[1], rows[2], rows[3], rows[4]);
     draw_view_strip(frame, strip, view, theme);
-    // Crew mode with a plan: mission control above the lead's chat.
-    let board_h = crate::crewboard::height(view, body.height, body.width.saturating_sub(2), theme);
-    let body = if board_h > 0 {
-        let board = Rect {
-            x: body.x + 1,
-            width: body.width.saturating_sub(2),
-            height: board_h,
+    // Crew mode: mission control takes the screen, the lead's conversation
+    // and the prompt in their own box on it (design D).
+    if crate::crewboard::shown(view) {
+        let area = Rect {
+            height: bar.y.saturating_sub(body.y),
             ..body
         };
-        crate::crewboard::draw(frame, board, view, theme);
-        Rect {
-            y: body.y + board_h,
-            height: body.height - board_h,
-            ..body
+        let lead = crate::crewboard::draw_screen(frame, area, view, theme, activity_h, composer_h);
+        draw_chat(frame, lead.chat, view, theme);
+        if lead.activity.height > 0 {
+            activity::draw(frame, lead.activity, view, theme);
         }
-    } else {
-        body
-    };
+        let cursor = if lead.composer.height > 0 {
+            composer::draw::draw(frame, lead.composer, view, theme)
+        } else {
+            None
+        };
+        draw_status_bar(frame, bar, view, theme);
+        if view.panels.is_empty() {
+            palette::draw(frame, lead.chat, lead.composer.y, view, theme);
+        }
+        let panel_cursor = panel::draw(frame, full, area, view, theme);
+        if panel_cursor.is_some() {
+            composer::draw::paint_cursor(frame, panel_cursor, theme);
+        } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
+            composer::draw::paint_cursor(frame, cursor, theme);
+        }
+        return Hit {
+            chat: lead.chat,
+            cards: Vec::new(),
+            activity: lead.activity,
+            composer: lead.composer,
+        };
+    }
     // The column, centred; one cell to its right is the scrollbar.
     let col_w = full.width.saturating_sub(2).min(LEDGER_COLUMN);
     let col_x = full.x + (full.width.saturating_sub(col_w + 1)) / 2;
@@ -292,7 +308,33 @@ fn draw_view_strip(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         LedgerView::Crew,
     ));
     let used: usize = spans.iter().map(|s| wrap::width(&s.content)).sum();
-    let title = view.session_title.trim();
+    // Crew mode: who fills each seat, and where the patch lands.
+    let crew_line = view.crew_mode().then(|| {
+        let seat = |role: &str| {
+            view.specialists
+                .get(role)
+                .and_then(|r| r.model.clone())
+                .map(|m| crate::chat::short_model(&m).to_string())
+                .unwrap_or_else(|| crate::chat::short_model(&view.model).to_string())
+        };
+        let lead = crate::chat::short_model(&view.model).to_string();
+        let builders = seat("builder");
+        let builders = if builders == lead {
+            "same".to_string()
+        } else {
+            builders
+        };
+        let mut line = format!(
+            "lead {lead} · builders {builders} · auditor {}",
+            seat("auditor")
+        );
+        if let Some(p) = &view.patch_view {
+            let n = p.branch.rsplit('-').next().unwrap_or("");
+            line.push_str(&format!("   patch-{n} → {}", p.target));
+        }
+        line
+    });
+    let title = crew_line.as_deref().unwrap_or(view.session_title.trim());
     if !title.is_empty() && used + 8 < area.width as usize {
         let t = wrap::truncate(title, area.width as usize - used - 2);
         let pad = (area.width as usize).saturating_sub(used + wrap::width(&t) + 1);
@@ -758,6 +800,11 @@ fn hints_static(view: &View) -> Vec<(&'static str, String)> {
     // The one key that isn't discoverable any other way.
     if !view.crew_mode() {
         v.push(("tab", view.mode.next_hat().as_str().to_string()));
+    } else if !view.ui.classic() && !view.crew.is_empty() {
+        v.push(("tab", "lanes".into()));
+        if view.lane_selected.is_some() && view.composer.is_empty() {
+            v.push(("⏎", "on a lane: its transcript".into()));
+        }
     }
     v.push(("⇧enter", "newline".into()));
     v.push(("/", "commands".into()));
@@ -772,7 +819,9 @@ fn hints_static(view: &View) -> Vec<(&'static str, String)> {
         v.push(("^r", "reasoning".into()));
     }
     v.push(("^b", "panel".into()));
-    if view.busy {
+    if view.busy && view.crew_mode() {
+        v.push(("esc", "stop the crew".into()));
+    } else if view.busy {
         v.push(("esc", "cancel".into()));
     } else if !view.scroll.follow {
         v.push(("end", "follow".into()));

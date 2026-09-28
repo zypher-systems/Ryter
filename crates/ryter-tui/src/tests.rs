@@ -904,16 +904,16 @@ fn snapshot_crew_board() {
         "$0.10 of $3.00",
         "1 of 3 landed",
         "patch-1 → main",
-        "waits on greet, count",
+        "lead grok-4.6 · builders same · auditor grok-4.6",
         "1:04",
-        "43 model calls this turn",
+        "43 calls · 0 retries",
         "│ ✓ design",
-        "────▶│ ✓ scaffold",
-        "──┬─▶│ ◐ greet",
+        "───▶│ ✓ scaffold",
+        "─┬─▶│ ◐ greet",
         "└─▶│ ◑ count",
-        "│   landed",
-        "│   building 0:18",
-        "│   in audit 0:05",
+        "│  landed",
+        "│  building 0:18",
+        "│  in audit 0:05",
         "patch ▸ main  lands when greet, count land",
         "builder",
         "auditor",
@@ -926,6 +926,45 @@ fn snapshot_crew_board() {
     let mut v = crew_board();
     v.mode = Role::SoloBuild;
     assert!(!render_to_string(&v, 140, 42).contains("PLAN"));
+}
+
+/// Lanes: `tab` picks one, `⏎` opens its transcript, and each shows what
+/// its task has cost.
+#[test]
+fn a_lane_opens_its_transcript() {
+    let mut v = crew_board();
+    v.task_spend.insert("greet".into(), 0.003);
+    v.lane_logs.insert(
+        "s1".into(),
+        (
+            "greet task".into(),
+            vec![
+                "13:47  builder  read src/lib.rs".into(),
+                "13:48  builder  edit src/greet.rs".into(),
+            ],
+        ),
+    );
+    let text = render_to_string(&v, 140, 42);
+    assert!(
+        text.contains("0:18  $0.003"),
+        "the lane shows its task's cost:\n{text}"
+    );
+    let key = |c: KeyCode| KeyEvent::new(c, KeyModifiers::NONE);
+    crate::run::keys::handle(&mut v, key(KeyCode::Tab));
+    assert_eq!(v.lane_selected, Some(0));
+    assert!(render_to_string(&v, 140, 42).contains("on a lane: its transcript"));
+    crate::run::keys::handle(&mut v, key(KeyCode::Enter));
+    assert_eq!(v.panels.top().map(|p| p.kind()), Some("lane"));
+    let text = render_to_string(&v, 140, 42);
+    assert!(
+        text.contains("edit src/greet.rs") && text.contains("lane · greet task"),
+        "{text}"
+    );
+    // Tab past the last lane lets go.
+    v.panels.clear();
+    crate::run::keys::handle(&mut v, key(KeyCode::Tab));
+    crate::run::keys::handle(&mut v, key(KeyCode::Tab));
+    assert_eq!(v.lane_selected, None);
 }
 
 /// Last night's run on the board: the scaffold blocked on a missing system
@@ -961,12 +1000,12 @@ fn a_blocked_scaffold_shows_why_and_what_waits() {
     let text = render_to_string(&v, 140, 42);
     for want in [
         "│ ✕ scaffold",
-        "──┬─▶│ ○ audio",
+        "─┬─▶│ ○ audio",
         "└─▶│ ○ ui",
-        "│   waits on scaffold",
+        "│  waits on scaffold",
         // The box can't hold the reason; it is under the drawing, whole.
         "✕ scaffold  blocked: the builder is blocked:",
-        "sudo dnf install",
+        "sudo dnf",
         "alsa-lib-devel",
         "0 of 3 landed",
         "no one is working right now",
@@ -1138,7 +1177,7 @@ fn the_plan_is_drawn_and_falls_back_when_it_wont_fit() {
     );
     let text = render_to_string(&v, 140, 42);
     assert!(text.contains("│ ✓ modern-style"), "{text}");
-    assert!(text.contains("──┬─▶│ ◐ style-rewrite"), "{text}");
+    assert!(text.contains("─┬─▶│ ◐ style-rewrite"), "{text}");
     assert!(text.contains("└─▶│ ◐ brand-markup"), "{text}");
     // Twelve tasks at 30 rows can't be drawn: the tree, in full.
     let mut many = vec![t("design", "architect", "done", "orchestrator")];
@@ -1152,7 +1191,8 @@ fn the_plan_is_drawn_and_falls_back_when_it_wont_fit() {
         text.contains("✓ design") && text.contains("├▶ ○ task-0") && !text.contains("┌──"),
         "{text}"
     );
-    assert!(text.contains("more rows"), "{text}");
+    // The plan has the screen's height now: all twelve fit.
+    assert!(text.contains("└▶ ○ task-11"), "{text}");
 }
 
 /// `$` opens the spend drawer above the composer: the turn, the session, and

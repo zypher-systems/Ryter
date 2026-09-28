@@ -219,6 +219,7 @@ impl Meter {
                 model: line.model.clone(),
                 role: line.role,
                 subagent_id: None,
+                task: Some(line.task.clone()),
                 input_tokens: line.usage.input_tokens,
                 output_tokens: line.usage.output_tokens,
                 cached_tokens: line.usage.cached_tokens,

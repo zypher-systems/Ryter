@@ -14,6 +14,7 @@ pub mod crew_builder;
 pub mod doctor;
 pub mod help;
 pub mod hooks;
+pub mod lane;
 pub mod mcp;
 pub mod modal;
 pub mod models;
