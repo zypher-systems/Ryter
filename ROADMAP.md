@@ -44,6 +44,7 @@ Living plan for Ryter. The lead updates this as work lands.
     - Tool-call fragments are keyed by id, not `index`, so interleaved parallel calls merge.
     - A stream dropped mid-reply loses the partial text.
     - A `Retry-After` wait is followed by the backoff wait as well.
+  - **Chat:** the user's own message is rendered as markdown, so `everything__echo` shows as "everythingecho" (found 2026-09-27).
   - **Shell:** programs that read `/dev/tty` (ssh or gpg prompts) wait out the command timeout.
   - **Compaction:** it can't shrink a single long turn, because it keeps at least four user turns.
 

@@ -19,7 +19,7 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
 - **Residual risk:**
   - Server-to-client features Ryter refuses (sampling, roots, elicitation) make those tools fail.
   - Progress notifications aren't shown.
-  - A call to a server whose tool is still running after a timeout waits its turn behind nothing: the server may still be busy.
+  - After a timeout the server may still be running the abandoned tool, so the next call to it can be slow.
 
 ### 2026-09-27 — A budget stops what it can't price; Anthropic prompts counted whole
 - **By:** lead
