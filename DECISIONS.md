@@ -2,6 +2,24 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-27 — A budget stops what it can't price; Anthropic prompts counted whole
+- **By:** lead
+- **Decision:**
+  - **`Usage.input_tokens` is always the whole prompt.** Anthropic's `input_tokens` leaves out cache reads and writes, so the parser adds them back and marks both (`cached_tokens`, the new `cache_write_tokens`). `Rates::cost` prices plain input, reads, and writes at their own rates (`cache_write_per_million`, falling back to input). Before, writes weren't counted, and reads were subtracted from a count that already excluded them, so Anthropic spend showed about half and the context gauge showed a few thousand tokens for a 100k prompt.
+  - **With a session budget, an unpriced model is stopped after one call.** The call's reply is kept, and a notice says why. `Meta.unpriced_model` records the model, and the next call checks it before sending (`Agent::unpriced_stop`); `Error::Budget { unpriced }` says what to do. A crew run with a session budget stops at an unpriced charge the same way (`Meter::charge`).
+  - **A crew task's caps count earlier runs.** `Task.spent` keeps the task's tally in `tasks.json`; each drain seeds the meter with it (`Meter::with_prior`) and writes it back.
+- **Chosen vs rejected:**
+  - Rejected stopping mid-turn right after the unpriced call. The reply would be lost from the transcript, and the next message would start without it.
+  - Rejected checking before the first call. A model can be missing from the price book and still have its cost reported by the provider (OpenRouter), so the first call is what tells.
+  - Rejected a solo token cap for now. Any default would be a number Ryter chose for the user; a price makes the budget the user already set work.
+  - Without a budget nothing changes: the spend card shows `$?.??`, as before.
+- **Why:** the user can pay $25–$90 for one review. A budget that silently doesn't apply is worse than none.
+- **Where:** `crates/ryter-core/src/llm/parse.rs` (`usage_from`), `spend.rs`, `agent.rs` (`over_budget`, `unpriced_stop`), `meter.rs`, `session.rs`, `queue.rs`, `error.rs`
+- **Residual risk:**
+  - One unpriced call is always made before the stop.
+  - Long-context rates don't raise the cache-write rate.
+  - A crew task id reused after its task was removed inherits nothing, but one removed and re-added with the same id during a single run would.
+
 ### 2026-09-27 — Model lists show only models that can chat
 - **By:** lead
 - **Decision:** `parse_models_json` drops catalog rows that can't hold a conversation here (`http::converses`), so `/models`, the `/audit` chooser, `ryter models`, and crew suggestions never list them:

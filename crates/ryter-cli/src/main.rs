@@ -446,6 +446,8 @@ async fn run_prompt(
     let (tx, rx) = mpsc::channel();
     let json = cli.json;
     let printer = std::thread::spawn(move || {
+        // Whether the reply so far ends mid-line, so a notice starts its own.
+        let mut open_line = false;
         while let Ok(ev) = rx.recv() {
             if json {
                 if let Ok(line) = serde_json::to_string(&ev) {
@@ -454,7 +456,13 @@ async fn run_prompt(
             } else if let AgentEvent::Token { text } = ev {
                 let _ = io::stdout().write_all(text.as_bytes());
                 let _ = io::stdout().flush();
+                if !text.is_empty() {
+                    open_line = !text.ends_with('\n');
+                }
             } else if let AgentEvent::Notice { message } = ev {
+                if std::mem::take(&mut open_line) {
+                    println!();
+                }
                 eprintln!("ryter: {message}");
             }
         }
@@ -536,10 +544,7 @@ async fn run_prompt(
             }
             Ok(ExitCode::SUCCESS)
         }
-        Err(Error::Budget { spent, cap }) => {
-            eprintln!("budget exceeded (${spent:.4} >= ${cap:.2})");
-            Err(Error::Budget { spent, cap })
-        }
+        // `main` prints the error, and exits 3 for a budget stop.
         Err(e) => Err(e),
     }
 }

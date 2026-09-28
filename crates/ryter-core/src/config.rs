@@ -494,6 +494,9 @@ pub struct PriceOverride {
     /// Output / completion tokens.
     #[serde(default)]
     pub output_per_million: Option<f64>,
+    /// Input written to the provider's cache (Anthropic: 1.25× input).
+    #[serde(default)]
+    pub cache_write_per_million: Option<f64>,
 }
 
 impl Default for SpendConfig {

@@ -62,12 +62,16 @@ pub struct Meter {
     /// The user's reasoning level per model.
     model_efforts: BTreeMap<String, String>,
     lines: Mutex<Vec<SpendLine>>,
+    /// What each task spent on earlier runs. Its caps count that too, so a
+    /// retried task doesn't start again from $0.
+    prior: BTreeMap<String, Tally>,
     /// How many lines the session has already recorded.
     recorded: Mutex<usize>,
 }
 
 /// Totals for one task or a whole run.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Tally {
     /// Uncached input + output tokens.
     pub billable_tokens: u64,
@@ -80,6 +84,11 @@ pub struct Tally {
 }
 
 impl Tally {
+    /// Nothing counted yet.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
     fn add(&mut self, l: &SpendLine) {
         self.billable_tokens +=
             l.usage.input_tokens.saturating_sub(l.usage.cached_tokens) + l.usage.output_tokens;
@@ -114,8 +123,15 @@ impl Meter {
             efforts: BTreeMap::new(),
             model_efforts: BTreeMap::new(),
             lines: Mutex::new(Vec::new()),
+            prior: BTreeMap::new(),
             recorded: Mutex::new(0),
         }
+    }
+
+    /// Count what these tasks spent on earlier runs against their caps.
+    pub fn with_prior(mut self, prior: BTreeMap<String, Tally>) -> Self {
+        self.prior = prior;
+        self
     }
 
     /// Treat these connections as free: a local model has no API cost. Its
@@ -209,13 +225,14 @@ impl Meter {
                 total_usd: line.usd,
             });
         }
+        let unpriced = line.usd.is_none().then(|| line.model.clone());
         let mut lines = self
             .lines
             .lock()
             .map_err(|e| Error::Config(e.to_string()))?;
         lines.push(line);
         let mut run = Tally::default();
-        let mut this = Tally::default();
+        let mut this = self.prior.get(task).copied().unwrap_or_default();
         for l in lines.iter() {
             run.add(l);
             if l.task == task {
@@ -228,6 +245,16 @@ impl Meter {
             return Err(Error::Budget {
                 spent,
                 cap: self.caps.session_usd,
+                unpriced: None,
+            });
+        }
+        // The session budget can't see an unpriced call; stop the crew rather
+        // than let it spend without one.
+        if self.caps.session_usd > 0.0 && unpriced.is_some() {
+            return Err(Error::Budget {
+                spent,
+                cap: self.caps.session_usd,
+                unpriced,
             });
         }
         if self.caps.task_usd > 0.0 && this.usd >= self.caps.task_usd {
@@ -255,9 +282,9 @@ impl Meter {
         self.book.cost(model, usage)
     }
 
-    /// Totals for one task.
+    /// Totals for one task, earlier runs included.
     pub fn task(&self, task: &str) -> Tally {
-        let mut t = Tally::default();
+        let mut t = self.prior.get(task).copied().unwrap_or_default();
         if let Ok(lines) = self.lines.lock() {
             for l in lines.iter().filter(|l| l.task == task) {
                 t.add(l);
@@ -309,6 +336,7 @@ mod tests {
             input_tokens: input,
             output_tokens: output,
             cached_tokens: 0,
+            cache_write_tokens: 0,
         }
     }
 
@@ -366,6 +394,54 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, Error::TaskBudget(_)), "{err}");
         assert_eq!(m.task("t1").label(), "$?.??");
+    }
+
+    /// A crew run with a session budget stops at a call it can't price: the
+    /// budget could not see it.
+    #[test]
+    fn a_session_budget_stops_the_crew_at_an_unpriced_call() {
+        let m = Meter::new(
+            PriceBook::new(),
+            Caps {
+                session_usd: 5.0,
+                ..Caps::default()
+            },
+        );
+        let err = m
+            .charge("t1", Role::Builder, "c", "mystery", usage(10, 10), None)
+            .unwrap_err();
+        assert!(
+            matches!(&err, Error::Budget { unpriced: Some(m), .. } if m == "mystery"),
+            "{err}"
+        );
+        // Without a session budget the task caps are the guard, as before.
+        let m = Meter::new(PriceBook::new(), Caps::default());
+        m.charge("t1", Role::Builder, "c", "mystery", usage(10, 10), None)
+            .unwrap();
+    }
+
+    /// A task's caps count what it spent on earlier runs. Each run used to
+    /// start a task from $0, so a task retried across runs was never capped.
+    #[test]
+    fn a_task_cap_counts_earlier_runs() {
+        let caps = Caps {
+            task_usd: 1.0,
+            ..Caps::default()
+        };
+        let first = Meter::new(PriceBook::new(), caps);
+        first
+            .charge("t1", Role::Builder, "c", "m", usage(1, 1), Some(0.70))
+            .unwrap();
+        let kept = first.task("t1");
+
+        let second = Meter::new(PriceBook::new(), caps).with_prior([("t1".into(), kept)].into());
+        let err = second
+            .charge("t1", Role::Builder, "c", "m", usage(1, 1), Some(0.40))
+            .unwrap_err();
+        assert!(matches!(err, Error::TaskBudget(_)), "{err}");
+        assert!((second.task("t1").usd - 1.10).abs() < 1e-9);
+        // The run's own total is only this run.
+        assert!((second.total().usd - 0.40).abs() < 1e-9);
     }
 
     /// A local model costs nothing in fees, and that is a real $0.00, not an
@@ -431,6 +507,7 @@ mod tests {
                 input_tokens: 10_000,
                 output_tokens: 100,
                 cached_tokens: 9_000,
+                cache_write_tokens: 0,
             },
             Some(0.01),
         )

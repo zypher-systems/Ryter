@@ -381,6 +381,7 @@ accept = ["python3 hidden_check.py"]
                 input_tokens: 1_000,
                 output_tokens: 50,
                 cached_tokens: 0,
+                cache_write_tokens: 0,
             }),
             StreamDelta::ReportedCost(0.01),
             StreamDelta::Done,

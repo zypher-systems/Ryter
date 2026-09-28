@@ -636,6 +636,7 @@ pub async fn land_patch(job: &BuildJob<'_>, patch: &crate::session::Patch) -> Re
         status: TaskStatus::Running,
         retries: 0,
         findings: String::new(),
+        spent: Default::default(),
     };
     let ctx = ToolContext {
         workspace: wt.to_path_buf(),
@@ -1249,6 +1250,7 @@ pub(crate) async fn run_specialist(
                         input_tokens: request_tokens(&messages),
                         output_tokens: STEP_OUTPUT,
                         cached_tokens: 0,
+                        cache_write_tokens: 0,
                     },
                 )
                 .unwrap_or(0.0);
@@ -1494,6 +1496,7 @@ mod tests {
             status: TaskStatus::Running,
             retries: 0,
             findings: String::new(),
+            spent: Default::default(),
         }
     }
 
@@ -1890,6 +1893,7 @@ mod tests {
                 input_tokens: input,
                 output_tokens: output,
                 cached_tokens: 0,
+                cache_write_tokens: 0,
             }),
             StreamDelta::ReportedCost(0.01),
             StreamDelta::Done,
