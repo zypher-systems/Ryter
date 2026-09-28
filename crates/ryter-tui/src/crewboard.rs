@@ -18,9 +18,12 @@ use crate::view::View;
 /// Rows the tiles take, borders included.
 const TILES_H: u16 = 4;
 
-/// Whether the board shows: crew mode on the ledger, with a plan.
+/// Whether the board shows: crew mode on the ledger, plan or not yet. It
+/// used to wait for a plan, so a crew session that began with a question
+/// looked like solo mode.
 pub fn shown(view: &View) -> bool {
-    !view.ui.classic() && view.crew_mode() && !view.tasks.is_empty()
+    // The workbench is a view of its own, in crew mode too.
+    !view.ui.classic() && view.crew_mode() && view.workbench.is_none()
 }
 
 /// Rows the board wants out of `avail`, leaving the lead's chat room.
@@ -328,6 +331,20 @@ fn plan_rows(view: &View, theme: Theme, width: usize) -> Vec<Line<'static>> {
             .collect()
     };
     let mut rows = Vec::new();
+    if tasks.is_empty() {
+        let dim = Style::default().fg(theme.dim).bg(theme.bg);
+        rows.push(Line::from(Span::styled(
+            "no plan yet",
+            Style::default().fg(theme.fg).bg(theme.bg),
+        )));
+        for l in wrap::wrap_plain(
+            "ask the lead for work: the tasks it or the architect queue appear here, with what each waits on",
+            width.max(20),
+        ) {
+            rows.push(Line::from(Span::styled(l, dim)));
+        }
+        return rows;
+    }
     let mut shown: Vec<&str> = Vec::new();
     #[allow(clippy::too_many_arguments)]
     fn walk<'a>(

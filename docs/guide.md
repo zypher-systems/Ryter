@@ -66,6 +66,7 @@ ryter models [connection]
 
 `ryter` on a tty opens the TUI in the **ledger** layout (`[ui] layout = "ledger"`, the default since 0.6.0):
 
+- **A view strip** across the top names the views and lights the one on screen: `chat`, `changes ^t` (the workbench), and `crew board` (crew mode; `/crew` from solo mode).
 - **One reading column on a timeline**, centered, at most 112 columns wide. Each question starts with its time and `●`. The model's text hangs off `◆`, each tool step off `├─` (`edit   src/config.rs ······· +9 −1`, `run    npm test ····· ✓ 4 passed`), and edits show as full-row green and red diffs.
 - **Every turn closes with what it came to**, measured by Ryter: `└─ ✓ 5 tools · 2 files (2 changed, +3 −0) · 1 command (1 ok) · 7.9s · $0.001`.
 - **Finished turns fold to one line:** what was asked, led by dots to that summary, ending in `▸`. The newest turn stays open. `^o` opens every turn and every edit whole, and folds them again.
@@ -73,7 +74,7 @@ ryter models [connection]
 - **The bottom bar** holds what the header and cards used to show: the mode (`BUILD`, `CREW · LEAD`), the project and branch, the model, the context gauge, and the cost this turn, this session, and for the project, against the budget. The keys that matter now are on its right. When space runs short, it drops keys first, then the project, the model, and the gauge. The mode and the costs stay.
 - **`$`** on an empty composer opens the **spend drawer** above it. It shows this turn, the session, and the project side by side, with spend by role for the session and the project, and the budget, task cap, and warning level. `b` sets a budget, `⏎` opens the full `/spend` table.
 
-**Mission control** (crew mode on the ledger, once there's a plan) puts a board above the lead's conversation:
+**Mission control** (crew mode on the ledger) puts a board above the lead's conversation. Before there is a plan, it says so:
 - **Tiles:** spend against the budget, tasks landed out of all of them, where the patch stands, and the crew's time and model calls this turn.
 - **The plan:** a tree of what waits on what. It's drawn from the agent's queue snapshots (`after`, and the manifest-first rule), so it shows exactly what the scheduler enforces. Each task is marked `✓` landed, `◐` building, `◑` in audit, `✕` blocked (with the reason, wrapped rather than cut), `○` waiting on something, or `◇` proposed.
 - **Lanes:** one row per worker, showing who is acting (builder or auditor), on which task, what it's doing, and for how long.

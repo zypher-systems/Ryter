@@ -139,18 +139,20 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     } else {
         composer::draw::height(view, full.width).min(full.height.saturating_sub(6).max(2))
     };
-    let body_avail = full.height.saturating_sub(composer_h + 1);
+    let body_avail = full.height.saturating_sub(composer_h + 2);
     let activity_h = activity::height(view, body_avail).min(body_avail.saturating_sub(6));
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(1),
             Constraint::Min(4),
             Constraint::Length(activity_h),
             Constraint::Length(composer_h),
             Constraint::Length(1),
         ])
         .split(full);
-    let (body, act, comp_row, bar) = (rows[0], rows[1], rows[2], rows[3]);
+    let (strip, body, act, comp_row, bar) = (rows[0], rows[1], rows[2], rows[3], rows[4]);
+    draw_view_strip(frame, strip, view, theme);
     // Crew mode with a plan: mission control above the lead's chat.
     let board_h = crate::crewboard::height(view, body.height, body.width.saturating_sub(2), theme);
     let body = if board_h > 0 {
@@ -225,6 +227,82 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         activity: act,
         composer: comp,
     }
+}
+
+/// Which view the ledger is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LedgerView {
+    /// The conversation.
+    Chat,
+    /// The workbench.
+    Changes,
+    /// Crew mode: the board above the lead's chat.
+    Crew,
+}
+
+/// The view on screen now.
+pub fn ledger_view(view: &View) -> LedgerView {
+    if view.workbench.is_some() {
+        LedgerView::Changes
+    } else if view.crew_mode() {
+        LedgerView::Crew
+    } else {
+        LedgerView::Chat
+    }
+}
+
+/// The strip across the top: the views there are, the one on screen lit,
+/// and the key to each. Without it the workbench and the crew board were
+/// there but out of sight.
+fn draw_view_strip(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
+    let now = ledger_view(view);
+    let dim = Style::default().fg(theme.dim).bg(theme.bg);
+    let tab = |label: &str, key: &str, this: LedgerView| -> Vec<Span<'static>> {
+        let on = now == this;
+        let style = if on {
+            Style::default()
+                .fg(theme.bg)
+                .bg(theme.mode(view.mode))
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.fg).bg(theme.bg)
+        };
+        let mut v = vec![Span::styled(format!(" {label} "), style)];
+        if !key.is_empty() {
+            v.push(Span::styled(format!(" {key}"), dim));
+        }
+        v.push(Span::styled("   ", dim));
+        v
+    };
+    let mut spans = vec![Span::styled(" ", dim)];
+    spans.extend(tab(
+        "chat",
+        if now == LedgerView::Changes {
+            "esc"
+        } else {
+            ""
+        },
+        LedgerView::Chat,
+    ));
+    spans.extend(tab("changes", "^t", LedgerView::Changes));
+    // The board is crew mode's screen; in solo mode `/crew` gets there.
+    spans.extend(tab(
+        "crew board",
+        if view.crew_mode() { "" } else { "/crew" },
+        LedgerView::Crew,
+    ));
+    let used: usize = spans.iter().map(|s| wrap::width(&s.content)).sum();
+    let title = view.session_title.trim();
+    if !title.is_empty() && used + 8 < area.width as usize {
+        let t = wrap::truncate(title, area.width as usize - used - 2);
+        let pad = (area.width as usize).saturating_sub(used + wrap::width(&t) + 1);
+        spans.push(Span::styled(" ".repeat(pad), dim));
+        spans.push(Span::styled(t, dim));
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.bg)),
+        area,
+    );
 }
 
 /// The ledger's bottom bar: who you're talking to, where, with what, how
@@ -683,6 +761,9 @@ fn hints_static(view: &View) -> Vec<(&'static str, String)> {
     }
     v.push(("⇧enter", "newline".into()));
     v.push(("/", "commands".into()));
+    if !view.ui.classic() {
+        v.push(("^t", "changes".into()));
+    }
     // Finished turns fold to one line on the ledger; ^O opens them.
     if !view.ui.classic() && !view.diffs_expanded && view.has_folded_turns() {
         v.push(("^o", "expand".into()));
