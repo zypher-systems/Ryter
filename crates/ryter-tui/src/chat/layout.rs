@@ -6,15 +6,42 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use super::cache::{Entry, Key};
-use super::{MessageKind, RenderOpts, lang_hint_from_tool, render_message, wrap};
+use super::{MessageKind, RenderOpts, SystemLevel, lang_hint_from_tool, render_message, wrap};
 use crate::theme::Theme;
 use crate::view::View;
 use crate::view::scroll::Resolved;
+
+/// Columns the ledger's timeline takes on the left: `01:42  ●  `.
+pub const GUTTER: usize = 10;
+
+/// What the ledger's gutter shows beside a message.
+#[derive(Debug, Clone, PartialEq)]
+enum Gutter {
+    /// Classic layout: no gutter.
+    None,
+    /// A user message: the time and `●` on its first row.
+    User(String),
+    /// A model's first row: `◆` in its color.
+    Speaker(ratatui::style::Color),
+    /// A tool step: `├─`.
+    Tool,
+    /// A notice: `·`, `!` for a warning, `✕` for an error, in its color.
+    Note(&'static str, ratatui::style::Color),
+    /// More of the same speaker: the spine only.
+    Line,
+    /// The turn's closing line: `└─`.
+    End,
+    /// A folded turn: its time and `●`, dimmed.
+    Folded(String),
+}
 
 /// One rendered message with its document offset.
 struct Placed {
     start: usize,
     separator: bool,
+    /// On the ledger, the separator row carries the spine: the turn goes on.
+    spine: bool,
+    gutter: Gutter,
     entry: Rc<Entry>,
 }
 
@@ -45,6 +72,9 @@ fn flags(opts: &RenderOpts) -> u64 {
     if opts.diff_rows == usize::MAX {
         f |= 8;
     }
+    if opts.ledger {
+        f |= 16;
+    }
     if let Some(h) = &opts.lang_hint {
         let mut hash: u64 = 1469;
         for b in h.bytes() {
@@ -59,6 +89,61 @@ fn flags(opts: &RenderOpts) -> u64 {
     f ^ (uh << 3)
 }
 
+/// Whether a finished turn shows as one line: on the ledger, every turn
+/// but the latest, unless `^O` shows everything whole.
+fn folds(view: &View, turn: u64, latest: u64) -> bool {
+    !view.ui.classic()
+        && !view.diffs_expanded
+        && turn != latest
+        && turn != 0
+        && view.messages.iter().any(|m| {
+            m.turn == turn
+                && matches!(
+                    m.kind,
+                    MessageKind::System {
+                        level: SystemLevel::Receipt
+                    }
+                )
+        })
+}
+
+/// A folded turn: what was asked, led by dots to what it came to.
+fn fold_line(view: &View, turn: u64, width: usize, theme: Theme) -> Line<'static> {
+    let asked = view
+        .messages
+        .iter()
+        .find(|m| m.turn == turn && matches!(m.kind, MessageKind::User))
+        .map(|m| m.collapsed(width))
+        .unwrap_or_default();
+    let came = view
+        .messages
+        .iter()
+        .rev()
+        .find(|m| {
+            m.turn == turn
+                && matches!(
+                    m.kind,
+                    MessageKind::System {
+                        level: SystemLevel::Receipt
+                    }
+                )
+        })
+        .map(|m| m.body.trim().to_string())
+        .unwrap_or_default();
+    let came = format!("{}  ▸", wrap::truncate(&came, width / 2));
+    let came_w = wrap::width(&came);
+    let asked = wrap::truncate(&asked, width.saturating_sub(came_w + 6));
+    let dots = width.saturating_sub(wrap::width(&asked) + came_w + 2);
+    Line::from(vec![
+        Span::styled(asked, theme.muted()),
+        Span::styled(
+            format!(" {} ", "·".repeat(dots)),
+            Style::default().fg(theme.dim).bg(theme.bg),
+        ),
+        Span::styled(came, theme.muted()),
+    ])
+}
+
 fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
     let mut placed = Vec::with_capacity(view.messages.len());
     let mut row = 0usize;
@@ -66,7 +151,40 @@ fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
     let mut tops = view.scroll.turn_tops.borrow_mut();
     tops.clear();
     let mut last_hint: Option<String> = None;
+    let ledger = !view.ui.classic();
+    let width = if ledger {
+        width.saturating_sub(GUTTER).max(12)
+    } else {
+        width
+    };
+    let latest = view.messages.iter().map(|m| m.turn).max().unwrap_or(0);
+    let mut folded_done: Vec<u64> = Vec::new();
     for (i, msg) in view.messages.iter().enumerate() {
+        if folds(view, msg.turn, latest) {
+            if folded_done.contains(&msg.turn) {
+                continue;
+            }
+            folded_done.push(msg.turn);
+            tops.push((msg.turn, row));
+            let time = view
+                .messages
+                .iter()
+                .find(|m| m.turn == msg.turn && matches!(m.kind, MessageKind::User))
+                .map(|m| stamp(view, m))
+                .unwrap_or_default();
+            placed.push(Placed {
+                start: row,
+                separator: false,
+                spine: false,
+                gutter: Gutter::Folded(time),
+                entry: Rc::new(Entry {
+                    lines: vec![fold_line(view, msg.turn, width, theme)],
+                    bytes: 0,
+                }),
+            });
+            row += 1;
+            continue;
+        }
         // A model step that only called tools streams no text: nothing to
         // show, not an empty header.
         if matches!(msg.kind, MessageKind::Assistant { .. }) && msg.body.trim().is_empty() {
@@ -74,11 +192,32 @@ fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
         }
         let prev = i.checked_sub(1).map(|p| &view.messages[p]);
         let continuation = prev.is_some_and(|p| p.same_speaker(msg));
+        // On the ledger a model is named once a turn; its later steps keep
+        // the `◆` mark in the gutter but not the header. Each step's cost is
+        // in the turn's closing line.
+        let named_before = ledger
+            && matches!(
+                msg.kind,
+                MessageKind::Assistant { .. } | MessageKind::Specialist { .. }
+            )
+            && view.messages[..i]
+                .iter()
+                .rev()
+                .take_while(|m| m.turn == msg.turn)
+                .any(|m| m.same_speaker(msg) && !m.body.trim().is_empty());
         let both_tools = prev.is_some_and(|p| {
             matches!(p.kind, MessageKind::Tool { .. })
                 && matches!(msg.kind, MessageKind::Tool { .. })
         });
-        let separator = i > 0 && !continuation && !both_tools;
+        let receipt = matches!(
+            msg.kind,
+            MessageKind::System {
+                level: SystemLevel::Receipt
+            }
+        );
+        // The spine runs through the turn; a new question starts clear of it.
+        let spine = ledger && !matches!(msg.kind, MessageKind::User);
+        let separator = i > 0 && !continuation && !both_tools && (!ledger || !receipt);
         if separator {
             row += 1;
         }
@@ -97,12 +236,13 @@ fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
             line_numbers: view.ui.line_numbers,
             username: view.username.clone(),
             lang_hint: last_hint.clone(),
-            continuation,
+            continuation: continuation || named_before,
             diff_rows: if view.diffs_expanded {
                 usize::MAX
             } else {
                 super::diff::DEFAULT_ROWS
             },
+            ledger,
         };
         let key = Key {
             id: msg.id,
@@ -112,9 +252,33 @@ fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
             flags: flags(&opts),
         };
         let entry = cache.get_or_insert(key, || render_message(msg, &opts, theme));
+        let gutter = if !ledger {
+            Gutter::None
+        } else {
+            match &msg.kind {
+                MessageKind::User => Gutter::User(stamp(view, msg)),
+                MessageKind::Tool { .. } => Gutter::Tool,
+                MessageKind::System {
+                    level: SystemLevel::Receipt,
+                } => Gutter::End,
+                MessageKind::System { level } => Gutter::Note(
+                    match level {
+                        SystemLevel::Warn => "!",
+                        SystemLevel::Error => "✕",
+                        _ => "·",
+                    },
+                    msg.accent(theme),
+                ),
+                _ if continuation => Gutter::Line,
+                _ if named_before => Gutter::Speaker(msg.accent(theme)),
+                _ => Gutter::Speaker(msg.accent(theme)),
+            }
+        };
         placed.push(Placed {
             start: row,
             separator,
+            spine,
+            gutter,
             entry: entry.clone(),
         });
         row += entry.rows();
@@ -130,18 +294,30 @@ fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
 pub fn frame(view: &View, width: usize, height: usize, theme: Theme) -> ChatFrame {
     let width = width.max(12);
     let (placed, doc_rows) = place(view, width, theme);
-    let anchor_top = view.anchor_top();
+    // On the ledger a new turn is pinned a few rows down, so the turns
+    // folded above it stay in sight: they are one line each, there to be
+    // glanced at.
+    let anchor_top = view.anchor_top().map(|t| {
+        if view.ui.classic() {
+            t
+        } else {
+            t.saturating_sub(4)
+        }
+    });
     let resolved = view.scroll.resolve(doc_rows, height, anchor_top, view.busy);
     let off = resolved.offset;
     let end = off + height;
     let blank = || Line::from(Span::styled(String::new(), theme.body()));
+    let ledger = !view.ui.classic();
+    let dim = Style::default().fg(theme.dim).bg(theme.bg);
+    let spine_row = || Line::from(Span::styled(format!("{}│", " ".repeat(7)), dim));
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
     for p in &placed {
         let sep_row = p.start.checked_sub(1);
         if p.separator {
             if let Some(r) = sep_row {
                 if r >= off && r < end {
-                    lines.push(blank());
+                    lines.push(if p.spine { spine_row() } else { blank() });
                 }
             }
         }
@@ -151,8 +327,15 @@ pub fn frame(view: &View, width: usize, height: usize, theme: Theme) -> ChatFram
         }
         let from = off.saturating_sub(p.start);
         let to = (end - p.start).min(p.entry.rows());
-        for l in &p.entry.lines[from..to] {
-            lines.push(l.clone());
+        for (i, l) in p.entry.lines[from..to].iter().enumerate() {
+            if !ledger || p.gutter == Gutter::None {
+                lines.push(l.clone());
+                continue;
+            }
+            let first = from + i == 0;
+            let mut spans = gutter_spans(&p.gutter, first, theme);
+            spans.extend(l.spans.iter().cloned());
+            lines.push(Line::from(spans));
         }
     }
     while lines.len() < height {
@@ -169,6 +352,13 @@ pub fn frame(view: &View, width: usize, height: usize, theme: Theme) -> ChatFram
                 .add_modifier(Modifier::BOLD);
             let name = m.speaker(&view.username);
             let right = format!("↑ {}", s.rows_above);
+            // On the ledger the pinned question sits on the timeline too.
+            let lead = if view.ui.classic() {
+                String::new()
+            } else {
+                format!("{:<5}  ●  ", stamp(view, m))
+            };
+            let name = format!("{lead}{name}");
             let used = wrap::width(&name) + 2;
             let room = width.saturating_sub(used + wrap::width(&right) + 3);
             let body = m.collapsed(room);
@@ -192,6 +382,51 @@ pub fn frame(view: &View, width: usize, height: usize, theme: Theme) -> ChatFram
         sticky,
         resolved,
         doc_rows,
+    }
+}
+
+/// A question's time in the gutter, unless `[ui] timestamps` is off.
+fn stamp(view: &View, m: &super::Message) -> String {
+    if view.ui.timestamps {
+        m.at.hhmm()
+    } else {
+        String::new()
+    }
+}
+
+/// The ledger's left columns for one row of a message.
+fn gutter_spans(g: &Gutter, first: bool, theme: Theme) -> Vec<Span<'static>> {
+    let dim = Style::default().fg(theme.dim).bg(theme.bg);
+    let pad = |s: &str| Span::styled(s.to_string(), dim);
+    let spine = || vec![pad("       │  ")];
+    if !first {
+        return match g {
+            Gutter::None => Vec::new(),
+            Gutter::Folded(_) => vec![pad("          ")],
+            _ => spine(),
+        };
+    }
+    match g {
+        Gutter::None => Vec::new(),
+        Gutter::User(t) => vec![
+            Span::styled(format!("{t:<5}  "), dim),
+            Span::styled("●", Style::default().fg(theme.user).bg(theme.bg)),
+            pad("  "),
+        ],
+        Gutter::Folded(t) => vec![Span::styled(format!("{t:<5}  ●  "), dim)],
+        Gutter::Speaker(c) => vec![
+            pad("       "),
+            Span::styled("◆", Style::default().fg(*c).bg(theme.bg)),
+            pad("  "),
+        ],
+        Gutter::Tool => vec![pad("       ├─ ")],
+        Gutter::End => vec![pad("       └─ ")],
+        Gutter::Note(mark, c) => vec![
+            pad("       "),
+            Span::styled(*mark, Style::default().fg(*c).bg(theme.bg)),
+            pad("  "),
+        ],
+        Gutter::Line => spine(),
     }
 }
 

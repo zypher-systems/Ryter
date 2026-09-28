@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ryter_core::{AgentEvent, Phase, Role};
 
-use crate::action::{PanelId, SessionsMode};
+use crate::action::{Action, PanelId, SessionsMode};
 use crate::activity::Mode as ActivityMode;
 use crate::chat::MessageKind;
 use crate::draw::{render_buffer, render_to_string, render_with_theme};
@@ -714,7 +714,10 @@ fn f1_opens_help_and_esc_closes_it() {
 /// A build turn that edits one file and creates another: the chat shows
 /// each edit as numbered rows with the file's own line numbers.
 fn edited() -> View {
-    let mut v = idle();
+    edited_on(idle())
+}
+
+fn edited_on(mut v: View) -> View {
     let _ = v.submit_user("trim the query".into(), "trim the query".into());
     let old = "import express from 'express'\nconst app = express()\n\napp.get('/search', (req, res) => {\n  const q = req.query.q\n  res.json(find(q))\n})\n\napp.listen(3000)\n";
     let new = old.replace(
@@ -776,6 +779,109 @@ fn edited() -> View {
 #[test]
 fn snapshot_edit_diff() {
     all_sizes("edit-diff", &edited());
+}
+
+/// The ledger (0.6.0's default layout): an answered turn folded to one line,
+/// then an edit turn on the timeline, closed by what it came to.
+fn ledger() -> View {
+    let mut v = idle();
+    v.ui.layout = "ledger".into();
+    v.panel_visible = false;
+    v.cwd = "~/workspace/muzak".into();
+    v.git_branch = Some("main".into());
+    v.spend = Some(0.012);
+    let _ = v.submit_user(
+        "why does load() ignore a missing file?".into(),
+        "why does load() ignore a missing file?".into(),
+    );
+    crate::run_events_apply(&mut v, AgentEvent::TurnStarted { turn: 1 });
+    v.on_token("A first run has no config yet, so it falls back to the defaults.");
+    v.spend = Some(0.014);
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnFinished {
+            turn: 1,
+            tools: 0,
+            duration_ms: 1800,
+        },
+    );
+    v.turn_spend_from = Some(0.014);
+    v.spend = Some(0.018);
+    edited_on(v)
+}
+
+#[test]
+fn snapshot_ledger() {
+    all_sizes("ledger", &ledger());
+}
+
+/// `$` opens the spend drawer above the composer: the turn, the session, and
+/// the project side by side, by role, and the budget.
+#[test]
+fn snapshot_ledger_spend_drawer() {
+    let mut v = ledger();
+    let mut p = ryter_core::project::ProjectSpend::default();
+    p.total_usd = 2.29;
+    p.sessions = 6;
+    p.calls = 501;
+    p.by_role.insert("builder".into(), 0.83);
+    p.by_role.insert("auditor".into(), 0.73);
+    p.by_role.insert("orchestrator".into(), 0.46);
+    p.by_role.insert("architect".into(), 0.27);
+    v.project_spend = Some(p);
+    let a = crate::run::keys::handle(
+        &mut v,
+        KeyEvent::new(KeyCode::Char('$'), KeyModifiers::NONE),
+    );
+    assert_eq!(a, Action::OpenPanel(PanelId::SpendDrawer));
+    let e = env();
+    let _ = panel::open(&mut v, PanelId::SpendDrawer, &e);
+    let text = render_to_string(&v, 120, 40);
+    check_snapshot("ledger-spend-drawer-120x40", &text);
+    assert!(
+        text.contains("project · muzak") && text.contains("$2.29"),
+        "{text}"
+    );
+    // A dollar sign inside a message is just text.
+    let mut v = ledger();
+    v.composer.insert_str("echo ");
+    let a = crate::run::keys::handle(
+        &mut v,
+        KeyEvent::new(KeyCode::Char('$'), KeyModifiers::NONE),
+    );
+    assert_ne!(a, Action::OpenPanel(PanelId::SpendDrawer));
+}
+
+/// The whole ledger document: the welcome note, the first turn folded to one
+/// line, the edit turn on the timeline and its closing line.
+#[test]
+fn ledger_folds_finished_turns_and_closes_each() {
+    let mut v = ledger();
+    // A new turn is pinned to the top; scroll up to see what came before.
+    render_to_string(&v, 120, 60);
+    v.scroll.to_top(false);
+    let text = render_to_string(&v, 120, 60);
+    check_snapshot("ledger-whole-120x60", &text);
+    assert!(text.contains("·  welcome · /help for keys"), "{text}");
+    assert!(
+        text.contains("why does load() ignore a missing file?")
+            && text.contains("✓ answered · 1.8s · $0.002  ▸"),
+        "the first turn folds to one line:\n{text}"
+    );
+    assert!(
+        !text.contains("A first run has no config"),
+        "its answer is folded away"
+    );
+    assert!(
+        text.contains("└─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s · $0.004"),
+        "{text}"
+    );
+    // ^O shows everything whole.
+    let mut v = ledger();
+    v.diffs_expanded = true;
+    render_to_string(&v, 120, 60);
+    v.scroll.to_top(false);
+    assert!(render_to_string(&v, 120, 60).contains("A first run has no config"));
 }
 
 /// `S-01` for diffs: the glyph snapshot can't see the tint, so check the

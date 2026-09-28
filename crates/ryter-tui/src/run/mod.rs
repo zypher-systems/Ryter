@@ -331,7 +331,8 @@ fn populate_view(
     opts: &TuiOpts,
 ) {
     view.ui = cfg.ui.clone();
-    view.panel_visible = cfg.ui.panel;
+    // The ledger carries its facts in the bottom bar; ^b still shows the cards.
+    view.panel_visible = cfg.ui.panel && cfg.ui.classic();
     view.activity = crate::activity::Activity::new(ActivityMode::parse(&cfg.ui.reasoning));
     view.username = resolve_username(
         &cfg.ui.username,

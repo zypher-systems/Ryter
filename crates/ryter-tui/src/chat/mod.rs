@@ -104,6 +104,9 @@ pub enum SystemLevel {
     Error,
     /// A dim horizontal rule with the body centred in it (`R-EVT-04`).
     Rule,
+    /// What a turn came to, closing it on the ledger: `✓ 4 tools · 1 file
+    /// (+9 −1) · 0:12 · $0.004`. The folded form of a finished turn shows it.
+    Receipt,
 }
 
 /// Who or what produced a message.
@@ -220,7 +223,7 @@ impl Message {
                 SystemLevel::Info => "system".into(),
                 SystemLevel::Warn => "warning".into(),
                 SystemLevel::Error => "error".into(),
-                SystemLevel::Rule => String::new(),
+                SystemLevel::Rule | SystemLevel::Receipt => String::new(),
             },
         }
     }
@@ -241,7 +244,7 @@ impl Message {
                 SystemLevel::Info => "· ",
                 SystemLevel::Warn => "! ",
                 SystemLevel::Error => "✕ ",
-                SystemLevel::Rule => "",
+                SystemLevel::Rule | SystemLevel::Receipt => "",
             },
         }
     }
@@ -258,7 +261,7 @@ impl Message {
             },
             MessageKind::Merge => theme.build,
             MessageKind::System { level } => match level {
-                SystemLevel::Info | SystemLevel::Rule => theme.dim,
+                SystemLevel::Info | SystemLevel::Rule | SystemLevel::Receipt => theme.dim,
                 SystemLevel::Warn => theme.warn,
                 SystemLevel::Error => theme.error,
             },
@@ -303,6 +306,21 @@ impl Message {
             }
         }
         parts.join("  ")
+    }
+}
+
+/// What one turn cost: `$0.004`, `<$0.001`, `$0.12`. A turn is often a
+/// fraction of a cent, which `$0.00` would hide.
+pub fn turn_usd(c: f64) -> String {
+    let c = c.max(0.0);
+    if c == 0.0 {
+        "$0".into()
+    } else if c < 0.001 {
+        "<$0.001".into()
+    } else if c < 0.1 {
+        format!("${c:.3}")
+    } else {
+        format_usd(Some(c))
     }
 }
 
@@ -352,6 +370,9 @@ pub struct RenderOpts {
     pub continuation: bool,
     /// Diff rows shown under an edit; the rest fold into one line.
     pub diff_rows: usize,
+    /// Rows for the ledger: the timeline gutter carries the time and the
+    /// speaker mark, so headers drop them and tool rows lead to their result.
+    pub ledger: bool,
 }
 
 /// Render one message to rows. The first row is the speaker header unless
@@ -359,6 +380,14 @@ pub struct RenderOpts {
 pub fn render_message(msg: &Message, opts: &RenderOpts, theme: Theme) -> Vec<Line<'static>> {
     let width = opts.width.max(12);
     let mut out: Vec<Line<'static>> = Vec::new();
+    if let MessageKind::System {
+        level: SystemLevel::Receipt,
+    } = msg.kind
+    {
+        let text = wrap::truncate(msg.body.trim(), width);
+        out.push(Line::from(Span::styled(text, theme.muted())));
+        return out;
+    }
     if let MessageKind::System {
         level: SystemLevel::Rule,
     } = msg.kind
@@ -372,7 +401,10 @@ pub fn render_message(msg: &Message, opts: &RenderOpts, theme: Theme) -> Vec<Lin
         out.push(Line::from(Span::styled(text, theme.muted())));
         return out;
     }
-    if !opts.continuation {
+    // On the ledger a notice is its text, marked `·` in the gutter; the
+    // `system` header row said nothing the mark doesn't.
+    let ledger_note = opts.ledger && matches!(msg.kind, MessageKind::System { .. });
+    if !opts.continuation && !ledger_note {
         out.push(header_row(msg, opts, theme, width));
     }
     let is_tool = matches!(msg.kind, MessageKind::Tool { .. });
@@ -393,6 +425,9 @@ pub fn render_message(msg: &Message, opts: &RenderOpts, theme: Theme) -> Vec<Lin
     // when its header has scrolled away.
     let audit = matches!(&msg.kind, MessageKind::Specialist { role, .. } if role == "audit");
     let (gutter, gutter_style) = match msg.kind {
+        // On the ledger the spine is the gutter, for every speaker; an
+        // audit keeps its rule, so any slice of it reads as the audit.
+        _ if opts.ledger && !audit => ("", theme.body()),
         MessageKind::User => ("▎", Style::default().fg(theme.user).bg(theme.bg)),
         _ if audit => ("┃", Style::default().fg(theme.audit).bg(theme.bg)),
         _ => (" ", theme.body()),
@@ -458,10 +493,14 @@ pub fn render_message(msg: &Message, opts: &RenderOpts, theme: Theme) -> Vec<Lin
         )));
     }
     for row in body_rows {
-        let mut spans = vec![
-            Span::styled(gutter, gutter_style),
-            Span::styled(" ", theme.body()),
-        ];
+        let mut spans = if gutter.is_empty() {
+            Vec::new()
+        } else {
+            vec![
+                Span::styled(gutter, gutter_style),
+                Span::styled(" ", theme.body()),
+            ]
+        };
         spans.extend(row.spans);
         out.push(Line::from(spans));
     }
@@ -469,6 +508,9 @@ pub fn render_message(msg: &Message, opts: &RenderOpts, theme: Theme) -> Vec<Lin
 }
 
 fn header_row(msg: &Message, opts: &RenderOpts, theme: Theme, width: usize) -> Line<'static> {
+    if opts.ledger {
+        return ledger_header(msg, opts, theme, width);
+    }
     let accent = msg.accent(theme);
     let name_style = Style::default()
         .fg(accent)
@@ -504,6 +546,79 @@ fn header_row(msg: &Message, opts: &RenderOpts, theme: Theme, width: usize) -> L
         spans.push(Span::styled(meta, theme.muted()));
     }
     Line::from(spans)
+}
+
+/// A header on the ledger. The gutter holds the time and the mark (`●`, `◆`,
+/// `├─`), so a user header is just the name, a model header its name and
+/// cost, and a tool row `edit   src/config.rs ········ +9 −1`: the verb in a
+/// fixed column, then what it touched, led by dots to what came of it.
+fn ledger_header(msg: &Message, opts: &RenderOpts, theme: Theme, width: usize) -> Line<'static> {
+    let accent = msg.accent(theme);
+    let bold = Style::default()
+        .fg(accent)
+        .bg(theme.bg)
+        .add_modifier(Modifier::BOLD);
+    match &msg.kind {
+        MessageKind::Tool { name, status } => {
+            let verb_style = match status {
+                ToolStatus::Error => theme.on_bg(theme.error),
+                _ => theme.muted(),
+            };
+            let verb = format!("{:<7}", wrap::truncate(name, 7));
+            let meta = msg.meta_text(false);
+            let meta_w = wrap::width(&meta);
+            // The label repeats the verb (`read src/a.rs`); the column shows it.
+            let label = msg.meta.label.clone().unwrap_or_default();
+            let label = label
+                .strip_prefix(name.as_str())
+                .map(str::trim_start)
+                .unwrap_or(&label)
+                .to_string();
+            let room = width.saturating_sub(7 + meta_w + 3);
+            let label = wrap::truncate(&label, room);
+            let used = 7 + wrap::width(&label);
+            let mut spans = vec![
+                Span::styled(verb, verb_style),
+                Span::styled(label, theme.body()),
+            ];
+            if meta_w > 0 && used + meta_w + 2 <= width {
+                let dots = width - used - meta_w - 2;
+                spans.push(Span::styled(
+                    format!(" {} ", "·".repeat(dots)),
+                    theme.muted(),
+                ));
+                let meta_style = if meta.starts_with('✓') {
+                    theme.on_bg(theme.success)
+                } else if meta.starts_with('✗') || matches!(status, ToolStatus::Error) {
+                    theme.on_bg(theme.error)
+                } else {
+                    theme.muted()
+                };
+                spans.push(Span::styled(meta, meta_style));
+            }
+            Line::from(spans)
+        }
+        MessageKind::User => Line::from(Span::styled(msg.speaker(&opts.username), bold)),
+        _ => {
+            let name = msg.speaker(&opts.username);
+            let mut spans = vec![Span::styled(name.clone(), bold)];
+            let mut used = wrap::width(&name);
+            if let Some(label) = msg.meta.label.as_ref().filter(|l| !l.is_empty()) {
+                let label = wrap::truncate(label, width.saturating_sub(used + 14));
+                used += 3 + wrap::width(&label);
+                spans.push(Span::styled(format!(" · {label}"), theme.muted()));
+            }
+            let cost = msg.meta.cost.map(turn_usd).unwrap_or_default();
+            if !cost.is_empty() && used + wrap::width(&cost) + 2 <= width {
+                spans.push(Span::styled(
+                    " ".repeat(width - used - wrap::width(&cost)),
+                    theme.body(),
+                ));
+                spans.push(Span::styled(cost, theme.muted()));
+            }
+            Line::from(spans)
+        }
+    }
 }
 
 /// Best-effort file extension from a tool summary like `read src/main.rs`.
@@ -550,6 +665,7 @@ mod tests {
             lang_hint: None,
             continuation: false,
             diff_rows: diff::DEFAULT_ROWS,
+            ledger: false,
         }
     }
 

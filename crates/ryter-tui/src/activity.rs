@@ -227,6 +227,11 @@ pub fn height(view: &View, body_h: u16) -> u16 {
     if a.mode == Mode::Off || !a.has_history {
         return 0;
     }
+    // On the ledger a finished turn's closing line says what the strip
+    // would: it shows while a turn runs, or when its reasoning is opened.
+    if !view.ui.classic() && !a.busy() && a.mode == Mode::Collapsed {
+        return 0;
+    }
     match a.mode {
         Mode::Collapsed => 1,
         Mode::Expanded => {

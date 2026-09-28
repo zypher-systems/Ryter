@@ -11,6 +11,33 @@ use crate::view::{CrewRow, TodoRow, View};
 const TOOL_ERROR_CHARS: usize = 600;
 
 /// Apply one event to the view and notify open panels.
+/// A turn's closing line on the ledger: `✓ 4 tools · 1 file (1 changed, +9
+/// −1) · 1 command (1 ok) · 12s · $0.004`. Measured by Ryter, not reported by
+/// the model.
+fn receipt(view: &View, verb: &Verb, tools: u32, duration_ms: u64) -> String {
+    let mut parts = vec![match verb {
+        Verb::Stopped => "⊘ stopped".to_string(),
+        Verb::Failed => "✕ failed".to_string(),
+        _ => "✓".to_string(),
+    }];
+    let mut first = if tools == 0 {
+        "answered".to_string()
+    } else {
+        format!("{tools} tool{}", if tools == 1 { "" } else { "s" })
+    };
+    first = format!("{} {first}", parts.remove(0));
+    parts.push(first);
+    if !view.tally.is_empty() {
+        parts.push(view.tally.line());
+    }
+    parts.push(crate::chat::fmt_duration(duration_ms));
+    if let Some(now) = view.spend {
+        let cost = now - view.turn_spend_from.unwrap_or(0.0);
+        parts.push(crate::chat::turn_usd(cost));
+    }
+    parts.join(" · ")
+}
+
 pub fn apply(view: &mut View, ev: AgentEvent) {
     match &ev {
         AgentEvent::Token { text } => view.on_token(text),
@@ -44,6 +71,7 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
         AgentEvent::TurnStarted { .. } => {
             view.tally = Default::default();
             view.lookups = None;
+            view.turn_spend_from = view.spend;
             // `R-EVT-03`: authoritative busy signal. `submit_user` already
             // started the strip for keyboard turns; MCP-driven turns land here.
             view.busy = true;
@@ -66,9 +94,20 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
             };
             view.busy = false;
             view.cancelling = false;
-            view.activity.finish(verb, Some(*tools), Some(*duration_ms));
-            // What the turn did, measured, whatever the model said about it.
-            if !view.tally.is_empty() {
+            view.activity
+                .finish(verb.clone(), Some(*tools), Some(*duration_ms));
+            if !view.ui.classic() {
+                // The ledger closes every turn with what it came to.
+                let line = receipt(view, &verb, *tools, *duration_ms);
+                view.push(
+                    MessageKind::System {
+                        level: crate::chat::SystemLevel::Receipt,
+                    },
+                    line,
+                );
+                view.tally = Default::default();
+            } else if !view.tally.is_empty() {
+                // What the turn did, measured, whatever the model said about it.
                 let line = format!(
                     "{} · {}",
                     view.tally.line(),

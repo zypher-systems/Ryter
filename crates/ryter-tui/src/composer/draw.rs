@@ -14,6 +14,13 @@ use crate::view::View;
 
 /// Rows the composer needs at `width` (border included).
 pub fn height(view: &View, width: u16) -> u16 {
+    if !view.ui.classic() {
+        // A rule above the prompt, no box.
+        let col = width.min(crate::draw::LEDGER_COLUMN);
+        let inner = usize::from(col.saturating_sub(3));
+        let rows = view.composer.rows(inner).clamp(1, MAX_ROWS);
+        return u16::try_from(rows).unwrap_or(1) + 1;
+    }
     let inner = usize::from(width.saturating_sub(4));
     let rows = view.composer.rows(inner).clamp(1, MAX_ROWS);
     u16::try_from(rows).unwrap_or(1) + 2
@@ -70,16 +77,78 @@ fn placeholder(view: &View) -> String {
     }
 }
 
+/// The ledger's composer: a rule, then the prompt. The rule takes the
+/// mode's color, so where the message goes is still in sight as you type;
+/// `queued` and a long message's count sit at its right end.
+fn ledger_frame(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Rect {
+    let w = area.width as usize;
+    let rule = Style::default().fg(theme.dim).bg(theme.bg);
+    let mut right: Vec<Span<'static>> = Vec::new();
+    if view.queued_prompt.is_some() {
+        right.push(Span::styled(
+            " queued ",
+            Style::default()
+                .fg(theme.warn)
+                .bg(theme.bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    let count = view.composer.char_count();
+    if count > COUNTER_AT && !matches!(view.composer.mode, Mode::Secret { .. }) {
+        right.push(Span::styled(
+            format!(" {} chars ", group_thousands(count)),
+            Style::default().fg(theme.dim).bg(theme.bg),
+        ));
+    }
+    let lead = Style::default().fg(border_color(view, theme)).bg(theme.bg);
+    let right_w: usize = right.iter().map(|s| wrap::width(&s.content)).sum();
+    let mut spans = vec![Span::styled("──", lead)];
+    spans.push(Span::styled(
+        "─".repeat(w.saturating_sub(2 + right_w + 2)),
+        rule,
+    ));
+    spans.extend(right);
+    spans.push(Span::styled("──", rule));
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)),
+        Rect { height: 1, ..area },
+    );
+    Rect {
+        y: area.y + 1,
+        height: area.height - 1,
+        ..area
+    }
+}
+
 /// Draw the composer into `area` and return the cursor cell, if visible.
 pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Option<(u16, u16)> {
-    if area.height < 3 || area.width < 8 {
+    let ledger = !view.ui.classic();
+    if area.height < if ledger { 2 } else { 3 } || area.width < 8 {
         return None;
     }
     let border = border_color(view, theme);
-    let bg = theme.composer_bg;
+    let bg = if ledger { theme.bg } else { theme.composer_bg };
     let bs = Style::default().fg(border).bg(bg);
     let w = area.width as usize;
     frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
+    let inner = if ledger {
+        ledger_frame(frame, area, view, theme)
+    } else {
+        classic_frame(frame, area, view, theme, bs, bg, w)
+    };
+    body(frame, inner, view, theme, bg)
+}
+
+fn classic_frame(
+    frame: &mut Frame,
+    area: Rect,
+    view: &View,
+    theme: Theme,
+    bs: Style,
+    bg: Color,
+    w: usize,
+) -> Rect {
+    let border = border_color(view, theme);
     // Top border: ╭─ title ──────── queued ─╮ (no phase: there are none).
     let t = format!(" {} ", wrap::truncate(&title(view), w.saturating_sub(12)));
     let mut right = String::new();
@@ -157,12 +226,22 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Option<
             }
         }
     }
-    let inner = Rect {
+    Rect {
         x: area.x + 1,
         y: area.y + 1,
         width: area.width - 2,
         height: area.height - 2,
-    };
+    }
+}
+
+/// The prompt and the text, inside whatever frame the layout drew.
+fn body(
+    frame: &mut Frame,
+    inner: Rect,
+    view: &View,
+    theme: Theme,
+    bg: Color,
+) -> Option<(u16, u16)> {
     let g = glyph(view);
     let gw = wrap::width(g);
     let text_x = inner.x + gw as u16 + 1;

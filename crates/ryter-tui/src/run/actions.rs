@@ -474,7 +474,7 @@ fn open_panel(view: &mut View, cx: &mut Ctx, id: PanelId) {
         PanelId::Models => cx.send(Work::ListModels),
         PanelId::CrewBuilder => cx.send(Work::ListCrewModels),
         // The logs are the truth; replace the live running copy with them.
-        PanelId::Spend => {
+        PanelId::Spend | PanelId::SpendDrawer => {
             if let Ok(p) = ryter_core::project::project_spend(&cx.home, &cx.workspace) {
                 view.project_spend = Some(p);
             }
@@ -1022,7 +1022,7 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
         Err(e) => view.error(e.to_string()),
     }
     // Live `[ui]` knobs that do not need a restart.
-    view.panel_visible = view.ui.panel;
+    view.panel_visible = view.ui.panel && view.ui.classic();
     view.activity.mode = crate::activity::Mode::parse(&view.ui.reasoning);
     if view.ui.theme != view.theme_name {
         let name = view.ui.theme.clone();

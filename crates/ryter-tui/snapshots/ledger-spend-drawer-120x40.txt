@@ -1,0 +1,40 @@
+           ·  welcome · /help for keys
+           ●  why does load() ignore a missing file? ······························· ✓ answered · 1.8s · $0.002  ▸
+
+           ●  dusty
+           │  trim the query
+           │
+           ├─ edit   app/server.js ··································································· +2 −1  0.0s
+           │    3
+           │    4   app.get('/search', (req, res) => {
+           │    5 -   const q = req.query.q
+           │    5 +   const q = (req.query.q || '').trim()
+           │    6 +   if (!q) return res.json([])
+           │    7     res.json(find(q))
+           │    8   })
+           ├─ write  test/search.test.js ····················································· new · 6 lines  0.0s
+           │    1 + import { test } from 'node:test'
+           │    2 + import assert from 'node:assert'
+           │    3 +
+           │    4 + test('an empty query finds nothing', async () => {
+           │    5 +   assert.deepEqual(await search(''), [])
+           │    6 + })
+           └─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s · $0.004
+
+╭─ spend ──────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ this turn                             session                               project · muzak                          │
+│ $0.004                                $0.018                                $2.29                                    │
+│ 2 tools                               0 model calls                         6 sessions                               │
+│                                                                                                                      │
+│ this session, by role                                     project, by role                                           │
+│ nothing yet                                               builder   ▰▰▰▰▰▰▰▰▰▰▰▰    $0.83                            │
+│                                                           auditor   ▰▰▰▰▰▰▰▰▰▰▰▱    $0.73                            │
+│                                                           lead      ▰▰▰▰▰▰▰▱▱▱▱▱    $0.46                            │
+│                                                           architect ▰▰▰▰▱▱▱▱▱▱▱▱    $0.27                            │
+│                                                                                                                      │
+│ budget off   task cap $3.00   warn at $1.00                                                                          │
+│ b set a budget   ⏎ full table   esc close                                                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+   ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   › what should change? · Tab: plan · / for commands
+ BUILD  grok-4.6  ctx ▱▱▱▱▱▱▱▱ 5% │ turn $0.004 · session $0.018 · project $2.29 · budget off  ⏎ full table  esc close
