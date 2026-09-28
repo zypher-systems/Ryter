@@ -55,6 +55,9 @@ pub struct CrewRow {
     pub status: String,
     /// `now_ms` when it started.
     pub started_ms: u64,
+    /// Who is acting on the task right now (`builder`, `auditor`): the
+    /// builder's worktree is reviewed in the same lane.
+    pub acting: String,
 }
 
 /// Everything the draw path needs.
@@ -138,6 +141,20 @@ pub struct View {
     pub auditor_on: bool,
     /// Task list.
     pub todos: Vec<TodoRow>,
+    /// The workbench, when open (`^T`).
+    pub workbench: Option<crate::workbench::Workbench>,
+    /// The crew's queue, as the agent last reported it (`AgentEvent::Tasks`).
+    pub tasks: Vec<ryter_core::queue::TaskView>,
+    /// Every "waits on" edge seen this session, `(before, after)`: an edge
+    /// stays drawn once its prerequisite has landed.
+    pub task_edges: Vec<(String, String)>,
+    /// The open patch.
+    pub patch_view: Option<ryter_core::queue::PatchView>,
+    /// When the crew started working this turn, and the model calls since
+    /// the turn began, for the board's clock.
+    pub crew_started_ms: Option<u64>,
+    /// Model calls this turn.
+    pub turn_calls: u32,
     /// The chat's folded lookup row and what it has counted, while lookups
     /// keep coming.
     pub lookups: Option<(u64, crate::chat::toolview::Lookups)>,
@@ -329,6 +346,12 @@ impl View {
             has_key: false,
             auditor_on: true,
             todos: Vec::new(),
+            workbench: None,
+            tasks: Vec::new(),
+            task_edges: Vec::new(),
+            patch_view: None,
+            crew_started_ms: None,
+            turn_calls: 0,
             lookups: None,
             tally: Default::default(),
             turn_spend_from: None,
@@ -550,6 +573,42 @@ impl View {
             .iter()
             .find(|(turn, _)| *turn == t)
             .map(|(_, top)| *top)
+    }
+
+    /// Take a queue snapshot: the board's tasks, the edges between them, and
+    /// the tasks card's rows.
+    pub fn set_tasks(
+        &mut self,
+        tasks: Vec<ryter_core::queue::TaskView>,
+        patch: Option<ryter_core::queue::PatchView>,
+    ) {
+        for t in &tasks {
+            for b in &t.waits_on {
+                let e = (b.clone(), t.id.clone());
+                if e.0 != e.1 && !self.task_edges.contains(&e) {
+                    self.task_edges.push(e);
+                }
+            }
+        }
+        // A design's builder tasks come out of it: drawn under the design
+        // when they wait on nothing else, which is not the same as waiting.
+        for t in tasks.iter().filter(|t| t.by == "architect") {
+            if self.task_edges.iter().any(|(_, b)| *b == t.id) {
+                continue;
+            }
+            if let Some(d) = tasks.iter().find(|d| d.role == "architect") {
+                self.task_edges.push((d.id.clone(), t.id.clone()));
+            }
+        }
+        self.todos = tasks
+            .iter()
+            .map(|t| TodoRow {
+                title: t.title.clone(),
+                status: t.status.clone(),
+            })
+            .collect();
+        self.tasks = tasks;
+        self.patch_view = patch;
     }
 
     /// Whether the ledger folds any finished turn right now.

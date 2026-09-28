@@ -133,8 +133,12 @@ pub const LEDGER_COLUMN: u16 = 112;
 /// one bar at the bottom for everything the header and cards used to say.
 fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     let full = frame.area();
-    let composer_h =
-        composer::draw::height(view, full.width).min(full.height.saturating_sub(6).max(2));
+    // The workbench takes the keys, so it has no composer.
+    let composer_h = if view.workbench.is_some() {
+        0
+    } else {
+        composer::draw::height(view, full.width).min(full.height.saturating_sub(6).max(2))
+    };
     let body_avail = full.height.saturating_sub(composer_h + 1);
     let activity_h = activity::height(view, body_avail).min(body_avail.saturating_sub(6));
     let rows = Layout::default()
@@ -147,6 +151,24 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         ])
         .split(full);
     let (body, act, comp_row, bar) = (rows[0], rows[1], rows[2], rows[3]);
+    // Crew mode with a plan: mission control above the lead's chat.
+    let board_h = crate::crewboard::height(view, body.height, body.width.saturating_sub(2), theme);
+    let body = if board_h > 0 {
+        let board = Rect {
+            x: body.x + 1,
+            width: body.width.saturating_sub(2),
+            height: board_h,
+            ..body
+        };
+        crate::crewboard::draw(frame, board, view, theme);
+        Rect {
+            y: body.y + board_h,
+            height: body.height - board_h,
+            ..body
+        }
+    } else {
+        body
+    };
     // The column, centred; one cell to its right is the scrollbar.
     let col_w = full.width.saturating_sub(2).min(LEDGER_COLUMN);
     let col_x = full.x + (full.width.saturating_sub(col_w + 1)) / 2;
@@ -155,22 +177,38 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         width: col_w,
         ..r
     };
-    let chat = column(body);
-    let gutter = Rect {
-        x: col_x + col_w,
-        width: 1,
-        ..body
-    };
-    let cf = draw_chat(frame, chat, view, theme);
-    if view.panels.is_empty() {
-        draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme);
+    let mut chat = column(body);
+    if let Some(w) = &view.workbench {
+        let area = Rect {
+            x: body.x + 1,
+            width: body.width.saturating_sub(2),
+            ..body
+        };
+        w.draw(frame, area, view, theme, |f, r| {
+            draw_chat(f, r, view, theme);
+        });
+        chat = area;
+    } else {
+        let gutter = Rect {
+            x: col_x + col_w,
+            width: 1,
+            ..body
+        };
+        let cf = draw_chat(frame, chat, view, theme);
+        if view.panels.is_empty() {
+            draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme);
+        }
     }
     let act = column(act);
     if activity_h > 0 {
         activity::draw(frame, act, view, theme);
     }
     let comp = column(comp_row);
-    let cursor = composer::draw::draw(frame, comp, view, theme);
+    let cursor = if composer_h > 0 {
+        composer::draw::draw(frame, comp, view, theme)
+    } else {
+        None
+    };
     draw_status_bar(frame, bar, view, theme);
     if view.panels.is_empty() {
         palette::draw(frame, chat, comp.y, view, theme);
@@ -197,7 +235,9 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let w = area.width as usize;
     let bar_bg = theme.panel_bg;
     let on = |fg| Style::default().fg(fg).bg(bar_bg);
-    let mode = if view.crew_mode() {
+    let mode = if view.workbench.is_some() {
+        " WORKBENCH ".to_string()
+    } else if view.crew_mode() {
         " CREW · LEAD ".to_string()
     } else {
         format!(" {} ", view.mode_label().to_ascii_uppercase())
@@ -279,11 +319,16 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
 
     // Keys, as the hint bar ranks them, with the spend drawer first; an open
     // panel's own keys while it is open.
-    let mut keys = match view.panels.top() {
-        Some(p) => legend_keys(&p.legend(view)),
-        None => hints_ranked(view),
+    let mut keys = match (view.panels.top(), &view.workbench) {
+        (Some(p), _) => legend_keys(&p.legend(view)),
+        (None, Some(w)) => legend_keys(&w.legend()),
+        (None, None) => hints_ranked(view),
     };
-    if view.panels.top().is_none() && view.palette.is_none() && view.composer.is_empty() {
+    if view.panels.top().is_none()
+        && view.palette.is_none()
+        && view.workbench.is_none()
+        && view.composer.is_empty()
+    {
         keys.insert(0, ("$".into(), "spend".into(), Hint::Useful));
     }
     let key_spans = |keys: &[(String, String, Hint)]| -> Vec<Span<'static>> {
@@ -327,11 +372,23 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         v.push(budget_span.clone());
         v
     };
+    // In the workbench the keys are the point: facts go before they do.
+    let keys_first = view.workbench.is_some();
     loop {
         let l = left(show_place, show_model, show_gauge, show_project);
         let used = width_of(&l) + width_of(&key_spans(&keys));
         if used <= w {
             break;
+        }
+        if keys_first && (show_model || show_gauge || show_place) {
+            if show_model {
+                show_model = false;
+            } else if show_gauge {
+                show_gauge = false;
+            } else {
+                show_place = false;
+            }
+            continue;
         }
         if keys.len() > 1 {
             let worst = keys

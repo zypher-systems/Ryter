@@ -9,11 +9,11 @@
     │  ^r         toggle the reasoning pane                                │
     │  ^b         toggle the info panel                                    │
     │  ^o         show every edit, audit, and folded turn whole, or folded │
+    │  ^t         the workbench: what changed beside the chat, one change… │
     │  ^l         redraw                                                   │
     │  ^g         release/grab the mouse (release it to select and copy t… │
     │  f1         open /help                                               │
     │  esc        back one level                                           │
-    │                                                                      │
     │ ←→ section   ↑↓ scroll   pgup pgdn page   esc close                  │
     ╰──────────────────────────────────────────────────────────────────────╯
 

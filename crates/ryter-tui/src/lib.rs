@@ -6,6 +6,7 @@ mod action;
 mod activity;
 mod chat;
 mod composer;
+mod crewboard;
 mod draw;
 mod info;
 mod keymap;
@@ -14,6 +15,7 @@ mod panel;
 mod run;
 mod theme;
 mod view;
+mod workbench;
 
 pub use draw::{render_to_string, render_with_theme};
 pub use run::{TuiOpts, run};

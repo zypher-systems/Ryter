@@ -89,6 +89,15 @@ pub enum Work {
         /// Repository-relative path.
         path: String,
     },
+    /// Put one change of a file back.
+    RevertHunk {
+        /// Commit to restore from.
+        base: String,
+        /// Repository-relative path.
+        path: String,
+        /// Which change.
+        hunk: usize,
+    },
     /// `/commit`: draft a message for these paths.
     DraftCommit(Vec<String>),
     /// `/commit`: commit these paths.
@@ -467,6 +476,16 @@ pub fn run(init: WorkerInit) {
                     None => "nothing to redo".into(),
                 };
                 let _ = ev_tx.send(AgentEvent::Notice { message });
+            }
+            Ok(Work::RevertHunk { base, path, hunk }) => {
+                let result = match &mut agent {
+                    Some(a) => a.revert_hunk(&base, &path, hunk),
+                    None => ryter_core::review::revert_hunk(&cwd, &base, &path, hunk),
+                };
+                let _ = ev_tx.send(AgentEvent::Reverted {
+                    path: format!("{path} (change {})", hunk + 1),
+                    error: result.err().map(|e| e.to_string()),
+                });
             }
             Ok(Work::Revert { base, path }) => {
                 let result = match &mut agent {

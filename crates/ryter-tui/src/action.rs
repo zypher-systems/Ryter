@@ -199,6 +199,17 @@ pub enum Action {
         /// Repository-relative path.
         path: String,
     },
+    /// The workbench's `x`: put one change (hunk) of a file back.
+    RevertHunk {
+        /// Commit to restore from.
+        base: String,
+        /// Repository-relative path.
+        path: String,
+        /// Which change, as the workbench numbers them.
+        hunk: usize,
+    },
+    /// Open the workbench (`^T`, or `/changes` on the ledger).
+    OpenWorkbench,
     /// `/commit`: draft a message for these paths.
     DraftCommit(Vec<String>),
     /// `/commit`: commit these paths with this message.
