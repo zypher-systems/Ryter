@@ -284,7 +284,9 @@ impl Panel for Models {
 
     fn status(&self, view: &View) -> String {
         let n = self.filtered(view).len();
-        if self.loading {
+        if let Some(note) = &view.models_note {
+            format!("{n} · {note}")
+        } else if self.loading {
             format!("{n} · loading")
         } else {
             format!("{n} · sort {}", self.sort.label())

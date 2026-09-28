@@ -384,6 +384,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             }
             panel::on_notice(view, &Notice::Models(models.clone()));
         }
+        AgentEvent::ModelsNote { note } => view.models_note = note.clone(),
         AgentEvent::McpStatus { servers } => {
             view.mcp_status = servers.iter().cloned().collect();
         }

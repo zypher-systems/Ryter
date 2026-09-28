@@ -928,6 +928,25 @@ fn snapshot_crew_board() {
     assert!(!render_to_string(&v, 140, 42).contains("PLAN"));
 }
 
+/// The model picker says where its list stands: from the cache while a
+/// fresh one downloads, or that the provider is slow.
+#[test]
+fn the_model_picker_says_where_its_list_stands() {
+    let mut v = edited();
+    let p = crate::panel::models::Models::new(&mut v, None);
+    v.panels.push(Box::new(p));
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::ModelsNote {
+            note: Some("from 2 h ago · refreshing".into()),
+        },
+    );
+    let text = render_to_string(&v, 120, 30);
+    assert!(text.contains("from 2 h ago · refreshing"), "{text}");
+    crate::run_events_apply(&mut v, AgentEvent::ModelsNote { note: None });
+    assert!(!render_to_string(&v, 120, 30).contains("refreshing"));
+}
+
 /// Lanes: `tab` picks one, `⏎` opens its transcript, and each shows what
 /// its task has cost.
 #[test]

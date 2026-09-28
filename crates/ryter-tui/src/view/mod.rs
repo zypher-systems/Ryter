@@ -141,6 +141,9 @@ pub struct View {
     pub auditor_on: bool,
     /// Task list.
     pub todos: Vec<TodoRow>,
+    /// Where the model list stands (`AgentEvent::ModelsNote`): from the
+    /// cache and refreshing, or why the fresh one didn't come.
+    pub models_note: Option<String>,
     /// The workbench, when open (`^T`).
     pub workbench: Option<crate::workbench::Workbench>,
     /// The crew's queue, as the agent last reported it (`AgentEvent::Tasks`).
@@ -356,6 +359,7 @@ impl View {
             auditor_on: true,
             todos: Vec::new(),
             workbench: None,
+            models_note: None,
             tasks: Vec::new(),
             task_edges: Vec::new(),
             patch_view: None,

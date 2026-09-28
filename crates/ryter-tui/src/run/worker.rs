@@ -177,6 +177,69 @@ pub struct WorkerInit {
     pub user_io: UserIo,
 }
 
+/// How long a model list may take before the picker says the provider is
+/// slow. The download goes on: it is what fills the cache for next time.
+const MODELS_SLOW: Duration = Duration::from_secs(30);
+/// How long a model list may take at all. OpenRouter's catalog has taken
+/// over a minute to trickle in.
+const MODELS_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Model lists fetched off the worker's thread, one per connection.
+struct Fetched {
+    /// For the crew builder (every connection), not the model picker.
+    crew: bool,
+    results: Vec<(String, Result<Vec<ryter_core::ModelInfo>, String>)>,
+}
+
+/// Fetch each connection's model list on a thread of its own, so a slow
+/// catalog never holds up a turn, and send what came back.
+fn fetch_models(targets: Vec<(String, Arc<dyn Provider>)>, crew: bool, tx: mpsc::Sender<Fetched>) {
+    std::thread::spawn(move || {
+        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        let results = targets
+            .into_iter()
+            .map(|(name, p)| {
+                // The timer is made inside the runtime: made outside it, it
+                // panicked and took the thread down with no word.
+                let got = rt.block_on(async {
+                    tokio::time::timeout(MODELS_TIMEOUT, p.list_models()).await
+                });
+                let r = match got {
+                    Ok(Ok(m)) => Ok(m),
+                    Ok(Err(e)) => Err(e.to_string()),
+                    Err(_) => Err(format!("no full answer in {}s", MODELS_TIMEOUT.as_secs())),
+                };
+                (name, r)
+            })
+            .collect();
+        let _ = tx.send(Fetched { crew, results });
+    });
+}
+
+/// Rows ready for the picker: priced from the book, tagged with their
+/// connection.
+fn prepared(
+    models: Vec<ryter_core::ModelInfo>,
+    connection: &str,
+    book: &PriceBook,
+) -> Vec<ryter_core::ModelInfo> {
+    models
+        .into_iter()
+        .map(|mut m| {
+            enrich(&mut m, book);
+            if m.connection.is_none() {
+                m.connection = Some(connection.to_string());
+            }
+            m
+        })
+        .collect()
+}
+
 /// Thread body.
 pub fn run(init: WorkerInit) {
     let WorkerInit {
@@ -235,7 +298,67 @@ pub fn run(init: WorkerInit) {
         let _ = ev_tx.send(a.checkpoint_event());
         agent = Some(a);
     }
+    let (fetch_tx, fetch_rx) = mpsc::channel::<Fetched>();
+    // Fetches in flight, and when each began: a second `/models` waits on
+    // the first, and a slow one is said to be slow.
+    let mut fetching: BTreeMap<(bool, String), (std::time::Instant, bool)> = BTreeMap::new();
     loop {
+        for ((_, name), (since, told)) in fetching.iter_mut() {
+            if !*told && since.elapsed() >= MODELS_SLOW {
+                *told = true;
+                let note = match ryter_core::llm::model_cache::load(&home, name) {
+                    Some((_, secs)) => format!(
+                        "{name} slow · list from {} ago, still downloading",
+                        ryter_core::llm::model_cache::age(secs)
+                    ),
+                    None => format!("{name} slow · still downloading"),
+                };
+                let _ = ev_tx.send(AgentEvent::ModelsNote { note: Some(note) });
+            }
+        }
+        while let Ok(done) = fetch_rx.try_recv() {
+            let book = PriceBook::from_config(&cfg);
+            let mut all = Vec::new();
+            let mut notes = Vec::new();
+            for (name, result) in done.results {
+                fetching.remove(&(done.crew, name.clone()));
+                match result {
+                    Ok(models) => {
+                        ryter_core::llm::model_cache::save(&home, &name, &models);
+                        all.extend(prepared(models, &name, &book));
+                    }
+                    Err(e) => {
+                        // Keep what the picker already shows: the cached list.
+                        match ryter_core::llm::model_cache::load(&home, &name) {
+                            Some((models, secs)) => {
+                                notes.push(format!(
+                                    "{name} slow · list from {} ago",
+                                    ryter_core::llm::model_cache::age(secs)
+                                ));
+                                all.extend(prepared(models, &name, &book));
+                            }
+                            None => {
+                                notes.push(format!("{name} didn't answer · try again"));
+                                send_err(
+                                    &ev_tx,
+                                    format!(
+                                        "{name}'s model list didn't come ({e}). Its catalog \
+                                         endpoint is slow right now; /models again in a moment."
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(a) = &mut agent {
+                a.book.ingest_model_info(&all);
+            }
+            let _ = ev_tx.send(AgentEvent::ModelsListed { models: all });
+            let _ = ev_tx.send(AgentEvent::ModelsNote {
+                note: (!notes.is_empty()).then(|| notes.join("; ")),
+            });
+        }
         match work_rx.recv_timeout(Duration::from_millis(200)) {
             Ok(Work::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => continue,
@@ -543,55 +666,73 @@ pub fn run(init: WorkerInit) {
             }
             Ok(Work::ListCrewModels) => {
                 let book = PriceBook::from_config(&cfg);
-                let mut all = Vec::new();
+                let mut shown = Vec::new();
+                let mut oldest = 0u64;
+                let mut targets: Vec<(String, Arc<dyn Provider>)> = Vec::new();
                 for (name, conn) in &cfg.connections {
                     let Ok(key) = resolve_secret(&cfg, &ConnectionId::new(name)) else {
                         continue;
                     };
-                    let provider = http_provider(conn, key);
-                    if let Ok(models) = rt.block_on(provider.list_models()) {
-                        for mut m in models {
-                            enrich(&mut m, &book);
-                            m.connection = Some(name.clone());
-                            all.push(m);
-                        }
+                    if let Some((models, secs)) = ryter_core::llm::model_cache::load(&home, name) {
+                        oldest = oldest.max(secs);
+                        shown.extend(prepared(models, name, &book));
+                    }
+                    if let std::collections::btree_map::Entry::Vacant(slot) =
+                        fetching.entry((true, name.clone()))
+                    {
+                        slot.insert((std::time::Instant::now(), false));
+                        targets.push((name.clone(), Arc::new(http_provider(conn, key))));
                     }
                 }
-                // Price spend from the catalog too, for providers that don't
-                // report cost per call.
-                if let Some(a) = &mut agent {
-                    a.book.ingest_model_info(&all);
+                if !shown.is_empty() {
+                    let _ = ev_tx.send(AgentEvent::ModelsListed { models: shown });
+                    let _ = ev_tx.send(AgentEvent::ModelsNote {
+                        note: Some(format!(
+                            "from {} ago · refreshing",
+                            ryter_core::llm::model_cache::age(oldest)
+                        )),
+                    });
                 }
-                let _ = ev_tx.send(AgentEvent::ModelsListed { models: all });
+                if !targets.is_empty() {
+                    fetch_models(targets, true, fetch_tx.clone());
+                }
             }
             Ok(Work::ListModels) => {
                 let Some(a) = &agent else {
                     let _ = ev_tx.send(AgentEvent::ModelsListed { models: vec![] });
                     continue;
                 };
-                match rt.block_on(a.provider.list_models()) {
-                    Ok(models) => {
-                        let book = PriceBook::from_config(&cfg);
-                        let conn = a.connection.clone();
-                        let models: Vec<_> = models
-                            .into_iter()
-                            .map(|mut m| {
-                                enrich(&mut m, &book);
-                                if m.connection.is_none() {
-                                    m.connection = Some(conn.clone());
-                                }
-                                m
-                            })
-                            .collect();
-                        if let Some(a) = &mut agent {
-                            a.book.ingest_model_info(&models);
+                let name = a.connection.clone();
+                // The last list at once; the fresh one behind it.
+                if let Some((models, secs)) = ryter_core::llm::model_cache::load(&home, &name) {
+                    let book = PriceBook::from_config(&cfg);
+                    let _ = ev_tx.send(AgentEvent::ModelsListed {
+                        models: prepared(models, &name, &book),
+                    });
+                    let _ = ev_tx.send(AgentEvent::ModelsNote {
+                        note: Some(format!(
+                            "from {} ago · refreshing",
+                            ryter_core::llm::model_cache::age(secs)
+                        )),
+                    });
+                }
+                if let std::collections::btree_map::Entry::Vacant(slot) =
+                    fetching.entry((false, name.clone()))
+                {
+                    slot.insert((std::time::Instant::now(), false));
+                    // A client of its own, made on the thread that uses it. The
+                    // agent's client keeps its connections on the worker's
+                    // runtime, which only runs while the worker is busy; a
+                    // fetch from another thread stalled on them for good.
+                    let provider: Arc<dyn Provider> = match cfg.connections.get(&name) {
+                        Some(c) => {
+                            let key =
+                                resolve_secret(&cfg, &ConnectionId::new(&name)).unwrap_or_default();
+                            Arc::new(http_provider(c, key))
                         }
-                        let _ = ev_tx.send(AgentEvent::ModelsListed { models });
-                    }
-                    Err(e) => {
-                        send_err(&ev_tx, format!("models: {e}"));
-                        let _ = ev_tx.send(AgentEvent::ModelsListed { models: vec![] });
-                    }
+                        None => a.provider.clone(),
+                    };
+                    fetch_models(vec![(name, provider)], false, fetch_tx.clone());
                 }
             }
             Ok(Work::Reconnect {

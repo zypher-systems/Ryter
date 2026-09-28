@@ -221,6 +221,12 @@ pub enum AgentEvent {
         /// Catalog rows.
         models: Vec<crate::llm::ModelInfo>,
     },
+    /// Where the model list stands: shown from the cache while a fresh one
+    /// downloads, or why the fresh one didn't come. `None` when it's current.
+    ModelsNote {
+        /// One line for the picker.
+        note: Option<String>,
+    },
     /// In-flight turn stopped because the user (or MCP) cancelled.
     Cancelled,
     /// Outbound MCP servers (re)connected; per-server status text.
