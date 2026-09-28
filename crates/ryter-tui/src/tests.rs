@@ -1062,6 +1062,46 @@ fn workbench_shows_changes_and_undoes_one() {
     assert!(v.workbench.is_none());
 }
 
+/// The views are in sight: a strip names them with their keys and lights
+/// the one on screen, and crew mode shows its board before there is a plan.
+#[test]
+fn the_view_strip_names_every_view() {
+    let v = ledger();
+    let text = render_to_string(&v, 140, 40);
+    let top = text.lines().next().unwrap();
+    assert!(
+        top.contains("chat") && top.contains("changes  ^t") && top.contains("crew board  /crew"),
+        "{top}"
+    );
+    // Crew mode, nothing planned yet: the board is there, saying so.
+    let mut v = ledger();
+    v.mode = Role::Orchestrator;
+    let text = render_to_string(&v, 140, 40);
+    assert!(
+        text.contains("PLAN") && text.contains("no plan yet"),
+        "{text}"
+    );
+    assert!(text.contains("no one is working right now"), "{text}");
+    check_snapshot("crew-board-empty-140x40", &text);
+    // The workbench lights `changes`.
+    let repo = workbench_repo();
+    let mut v = ledger();
+    v.workbench = Some(crate::workbench::Workbench::open(
+        &v,
+        repo.path().to_path_buf(),
+    ));
+    let top = render_to_string(&v, 140, 40)
+        .lines()
+        .next()
+        .unwrap()
+        .to_string();
+    assert!(top.contains("chat  esc"), "{top}");
+    // In crew mode too the workbench takes the screen, not a strip under the board.
+    v.mode = Role::Orchestrator;
+    let text = render_to_string(&v, 140, 40);
+    assert!(text.contains("CHANGES") && !text.contains("PLAN"), "{text}");
+}
+
 /// `$` opens the spend drawer above the composer: the turn, the session, and
 /// the project side by side, by role, and the budget.
 #[test]

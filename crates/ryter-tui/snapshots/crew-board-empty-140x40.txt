@@ -1,15 +1,12 @@
   chat     changes  ^t    crew board
  ╭ SPEND ────────────────────────╮ ╭ TASKS ────────────────────────╮ ╭ PATCH ────────────────────────╮ ╭ TIME ────────────────────────────╮
- │ $0.10 of $3.00                │ │ 1 of 3 landed                 │ │ patch-1 → main                │ │ 1:04                             │
- │ ▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱│ │ ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰│ │ waits on greet, count         │ │ 43 model calls this turn         │
+ │ $0.018                        │ │ 0 of 0 landed                 │ │ none open                     │ │ idle                             │
+ │ no budget · $ for detail      │ │ ▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱│ │ none yet                      │ │ 0 model calls this turn          │
  ╰───────────────────────────────╯ ╰───────────────────────────────╯ ╰───────────────────────────────╯ ╰──────────────────────────────────╯
  ╭ PLAN ───────────────────────────────────────────────────────────────────╮ ╭ LANES ─────────────────────────────────────────────────────╮
- │ ✓ design  done                                                          │ │ builder   ⠋ greet task  edit src/greet.rs             0:18 │
- │ └▶ ✓ scaffold  landed                                                   │ │ auditor   ⠋ count task  reviewing (glm-5.3)           0:05 │
- │    ├▶ ◐ greet  building 0:18                                            │ │                                                            │
- │    └▶ ◑ count  in audit 0:05                                            │ │                                                            │
- │                                                                         │ │                                                            │
- │ patch ▸ main  lands when greet, count land                              │ │                                                            │
+ │ no plan yet                                                             │ │ no one is working right now                                │
+ │ ask the lead for work: the tasks it or the architect queue appear here, │ │                                                            │
+ │ with what each waits on                                                 │ │                                                            │
  │                                                                         │ │                                                            │
  ╰─────────────────────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────────────────────╯
                      ·  welcome · /help for keys
@@ -37,6 +34,7 @@
 
 
 
+
              ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
              › ask the lead; the crew does the work · /solo to leave
- CREW · LEAD  muzak  main  grok-4.6  ctx ▱▱▱▱▱▱▱▱ 5% │ turn $0.086 · session $0.10 · budget $3.00 $ spend  enter send  / commands  ^c quit
+ CREW · LEAD  muzak  main  grok-4.6  ctx ▱▱▱▱▱▱▱▱ 5% │ turn $0.004 · session $0.018 · budget off  $ spend  enter send  / commands  ^c quit
