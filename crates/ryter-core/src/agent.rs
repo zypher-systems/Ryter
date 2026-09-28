@@ -2,7 +2,7 @@
 
 use futures_util::StreamExt;
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
@@ -658,9 +658,15 @@ impl Agent {
             .queue
             .lock()
             .map_err(|e| Error::Config(e.to_string()))?;
-        Ok(q.tasks.iter().any(|t| {
-            t.status == TaskStatus::Pending && (t.role == "architect" || t.role == "builder")
-        }))
+        // The tree builder tasks branch from: the open patch, or the project.
+        let tree = self
+            .session
+            .meta
+            .patch
+            .as_ref()
+            .map(|p| p.worktree.clone())
+            .unwrap_or_else(|| self.ctx.workspace.clone());
+        Ok(q.startable(|p| tree.join(p).exists()))
     }
 
     /// Run pending queue items. Orchestrator only. Role follows the current phase.
@@ -779,14 +785,34 @@ impl Agent {
             } else {
                 "builder"
             };
+            if role == Role::Builder {
+                if let Some(line) = self.offer_checks(&target_repo) {
+                    reports.push(line);
+                }
+            }
+            let exists = |p: &str| target_repo.join(p).exists();
             let batch = {
                 let mut q = self
                     .queue
                     .lock()
                     .map_err(|e| Error::Config(e.to_string()))?;
-                q.take_pending_where(self.max_crew, |t| t.role == role_name)
+                q.take_ready(self.max_crew, |t| t.role == role_name, exists)
             };
             if batch.is_empty() {
+                // Pending work that can't start: say what it waits on, so
+                // the lead fixes that instead of retrying around it.
+                let waiting = self
+                    .queue
+                    .lock()
+                    .map_err(|e| Error::Config(e.to_string()))?
+                    .waiting(exists);
+                if !waiting.is_empty() {
+                    reports.push(format!(
+                        "### waiting\nThese tasks did not start; what they build on isn't done:\n{}\n\
+                         Fix or retry the task they wait on (or change their `after`); they start once it is done.\n",
+                        waiting.join("\n")
+                    ));
+                }
                 break;
             }
             let hold = role == Role::Architect && batch.iter().any(|t| t.hold);
@@ -949,6 +975,9 @@ impl Agent {
                         }
                         if role == Role::Builder && outcome.status == TaskStatus::Done {
                             if let Some(mut p) = self.session.meta.patch.clone() {
+                                if outcome.unverified && !p.unverified.contains(&outcome.id) {
+                                    p.unverified.push(outcome.id.clone());
+                                }
                                 if !p.landed.contains(&outcome.id) {
                                     p.landed.push(outcome.id.clone());
                                     if let Some(t) = self
@@ -1052,6 +1081,11 @@ impl Agent {
                 match self.build_stack() {
                     Ok(b) => build = Some(b),
                     Err(why) => reports.push(format!("### patch waiting\n{why}\n")),
+                }
+            }
+            if let Some((_, _, _, _, tree)) = build.clone() {
+                if let Some(line) = self.offer_checks(&tree) {
+                    reports.push(line);
                 }
             }
             if let Some((p, m, c, auditors, _)) = &build {
@@ -1834,6 +1868,77 @@ impl Agent {
     /// Everything builders need: provider, model, connection, the auditor
     /// panel, and the patch worktree they land on. `Err` says why builds
     /// cannot run (no independent auditor, no repository, no commits).
+    /// With no checks set, offer the ones the project's files name, once a
+    /// session. Nothing else builds or tests the crew's work before it
+    /// merges. Returns a line for the crew report when the user should know.
+    fn offer_checks(&mut self, tree: &Path) -> Option<String> {
+        if !self.checks.is_empty() || self.session.meta.checks_offered {
+            return None;
+        }
+        let found = crate::checks::detect(tree);
+        if found.is_empty() {
+            return None;
+        }
+        let _ = self.session.set_checks_offered();
+        let list = found
+            .iter()
+            .map(|c| format!("`{c}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let Some(io) = self.ctx.user_io.clone() else {
+            return Some(format!(
+                "### no checks set\nNothing builds or tests the crew's work before it merges. \
+                 This project looks like it would use {list}: set them as `checks` under \
+                 [auditor] in .ryter/config.toml.\n"
+            ));
+        };
+        let root = self.project_root.clone().filter(|_| self.trusted);
+        let save = "Yes, and save them for this project";
+        let session = "Yes, for this session";
+        let no = "No";
+        let mut options = Vec::new();
+        if root.is_some() {
+            options.push(save.to_string());
+        }
+        options.push(session.to_string());
+        options.push(no.to_string());
+        let question = format!(
+            "No checks are set for this project, so nothing builds or tests the crew's \
+             work before it merges. Run these in each task's worktree, and on the \
+             finished patch?\n\n{}",
+            found
+                .iter()
+                .map(|c| format!("  {c}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let answer = io.ask(&question, options, &self.ctx.cancel);
+        if answer == save || answer == session {
+            self.checks = found.clone();
+            if answer == save {
+                if let Some(root) = root {
+                    if let Err(e) = crate::config::save_project_checks(&root, &found) {
+                        return Some(format!(
+                            "### checks\nUsing {list} this session; saving them failed: {e}\n"
+                        ));
+                    }
+                    return Some(format!(
+                        "### checks\nEvery task is now built and tested with {list} before it \
+                         merges (saved in .ryter/config.toml).\n"
+                    ));
+                }
+            }
+            return Some(format!(
+                "### checks\nEvery task is now built and tested with {list} before it merges, \
+                 this session.\n"
+            ));
+        }
+        Some(format!(
+            "### no checks\nThe user declined {list}. Work the auditor can only review \
+             waits at the patch until checks are set.\n"
+        ))
+    }
+
     fn build_stack(&mut self) -> std::result::Result<BuildStack, String> {
         let (p, m, c) = self.specialist_stack(Role::Builder);
         let auditors = if self.session.meta.auditor_enabled {
@@ -1965,6 +2070,7 @@ impl Agent {
             tasks: Vec::new(),
             landed: Vec::new(),
             titles: Vec::new(),
+            unverified: Vec::new(),
         };
         self.session.meta.patches_opened = n;
         self.session.set_patch(Some(patch.clone()))?;
@@ -2847,6 +2953,153 @@ mod tests {
             "one commit on your branch for the whole patch: {log:?}"
         );
         assert!(agent.session.meta.patch.is_none());
+    }
+
+    /// Tonight's run, fixed: the scaffold is blocked, so the tasks built on
+    /// it never start (one by `after`, one because the scaffold creates the
+    /// project's manifest), and the lead is told what they wait on.
+    #[tokio::test]
+    async fn tasks_built_on_a_blocked_scaffold_never_start() {
+        let p = ReplayProvider::scripted(vec![
+            write("Cargo.toml", "[package]\nname = \"muzak\"\n"),
+            say(
+                "STATUS: BLOCKED\nFILES: Cargo.toml\nDECISIONS: none\nNOTES: needs alsa-lib-devel (sudo dnf install alsa-lib-devel)",
+            ),
+        ]);
+        let (home, _cwd, mut agent) = crew_setup(p);
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo(&serde_json::json!({"items": [
+                {"id": "scaffold", "title": "scaffold", "files": ["Cargo.toml", "src/main.rs"]},
+                {"id": "audio", "title": "audio", "files": ["src/audio.rs"], "after": ["scaffold"]},
+                {"id": "ui", "title": "ui", "files": ["src/ui.rs"]}
+            ]}))
+            .unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert!(
+            report.contains(
+                "`audio` waits on `scaffold` (blocked: the builder is blocked: needs alsa-lib-devel"
+            ),
+            "{report}"
+        );
+        assert!(
+            report.contains("`ui` waits on `scaffold`") && report.contains("build manifest"),
+            "{report}"
+        );
+        let q = agent.queue.lock().unwrap();
+        let status = |id: &str| q.tasks.iter().find(|t| t.id == id).unwrap().status;
+        assert_eq!(status("scaffold"), TaskStatus::Blocked);
+        assert_eq!(status("audio"), TaskStatus::Pending);
+        assert_eq!(status("ui"), TaskStatus::Pending);
+        let wt = home
+            .path()
+            .join("worktrees")
+            .join(agent.session.meta.id.as_str());
+        assert!(!wt.join("audio").exists() && !wt.join("ui").exists());
+    }
+
+    /// Tasks that only wait on a blocked one give the crew nothing to do: the
+    /// lead reports once and the turn ends. It used to run the crew again
+    /// after every reply, and the lead answered "nothing new" each time.
+    #[tokio::test]
+    async fn waiting_tasks_do_not_keep_the_lead_talking() {
+        let p = ReplayProvider::scripted(vec![
+            say("Queued; the crew starts now."),
+            write("Cargo.toml", "[package]\nname = \"a\"\n"),
+            say("STATUS: BLOCKED\nNOTES: to unblock: sudo dnf install libpq-devel"),
+            say("The scaffold needs libpq-devel; install it and I'll retry."),
+            say("Nothing new."),
+        ]);
+        let (_home, _cwd, mut agent) = crew_setup(p);
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo(&serde_json::json!({"items": [
+                {"id": "scaffold", "title": "scaffold", "files": ["Cargo.toml"]},
+                {"id": "greet", "title": "greet", "files": ["src/greet.rs"], "after": ["scaffold"]}
+            ]}))
+            .unwrap();
+        let r = agent.turn("build it").await.unwrap();
+        assert!(r.text.contains("libpq-devel"), "{}", r.text);
+        let replies = agent
+            .session
+            .transcript
+            .iter()
+            .filter(|m| m.role == "assistant")
+            .count();
+        assert_eq!(replies, 2, "one reply before the crew, one after");
+    }
+
+    /// Work passed on review alone doesn't reach your branch until checks
+    /// build and test the patch.
+    #[tokio::test]
+    async fn unverified_work_waits_at_the_patch_until_checks_run() {
+        let p = ReplayProvider::scripted(vec![
+            write("a.txt", "a\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: UNVERIFIED"),
+        ]);
+        let (_home, cwd, mut agent) = crew_setup(p);
+        agent
+            .queue
+            .lock()
+            .unwrap()
+            .apply_todo(
+                &serde_json::json!({"items": [{"id": "t1", "title": "add a", "files": ["a.txt"]}]}),
+            )
+            .unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert!(report.contains("never built or tested"), "{report}");
+        assert!(!cwd.path().join("a.txt").exists());
+        assert_eq!(
+            agent.session.meta.patch.as_ref().unwrap().unverified,
+            ["t1"]
+        );
+        agent.checks = vec!["true".into()];
+        let report = agent.drain_crew().await.unwrap();
+        assert!(report.contains("patch landed"), "{report}");
+        assert!(cwd.path().join("a.txt").exists());
+    }
+
+    /// With no checks set, Ryter offers the ones the project's files name,
+    /// once, and a yes applies them to the crew.
+    #[test]
+    fn detected_checks_are_offered_once() {
+        let (_home, cwd, mut agent) = setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        std::fs::write(cwd.path().join("Cargo.toml"), "[package]\nname = \"a\"\n").unwrap();
+        // Headless: said once, in the report.
+        let line = agent.offer_checks(cwd.path()).unwrap();
+        assert!(line.contains("`cargo test`"), "{line}");
+        assert!(agent.offer_checks(cwd.path()).is_none(), "once");
+        assert!(agent.checks.is_empty());
+
+        // In the TUI: asked, and a yes for this session applies.
+        agent.session.meta.checks_offered = false;
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        let answer =
+            std::thread::spawn(
+                move || match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+                    Ok(crate::user_io::UserRequest::Question {
+                        question,
+                        options,
+                        reply,
+                    }) => {
+                        assert!(question.contains("cargo test"), "{question}");
+                        // An untrusted project can't keep them in its config.
+                        assert_eq!(options, ["Yes, for this session", "No"]);
+                        reply.send("Yes, for this session".into()).unwrap();
+                    }
+                    other => panic!("expected a question, got {other:?}"),
+                },
+            );
+        let line = agent.offer_checks(cwd.path()).unwrap();
+        answer.join().unwrap();
+        assert!(line.contains("this session"), "{line}");
+        assert_eq!(agent.checks, ["cargo test"]);
     }
 
     /// A blocked task holds the patch: nothing reaches your branch, not even

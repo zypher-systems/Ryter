@@ -254,8 +254,10 @@ fn spec(name: &str) -> Option<ToolSpec> {
              worktree, gated by checks and auditors before it lands. The crew runs \
              when your reply ends. A builder's brief is its entire spec: what to \
              change, the constraints, how to know it is done. Declare the files each \
-             builder task owns: disjoint tasks run in parallel. On an architect task, \
-             hold: true keeps its builder tasks proposed until the user approves.",
+             builder task owns: disjoint tasks run in parallel. List in `after` the \
+             tasks one needs done first (a scaffold, a shared module): it starts only \
+             once they have landed. On an architect task, hold: true keeps its \
+             builder tasks proposed until the user approves.",
             json!({"type":"object","properties":{"items":{"type":"array","items":{
                 "type":"object",
                 "properties":{
@@ -265,6 +267,7 @@ fn spec(name: &str) -> Option<ToolSpec> {
                     "role":{"type":"string","enum":["architect","builder"]},
                     "files":{"type":"array","items":{"type":"string"},"description":"paths this builder task owns"},
                     "hold":{"type":"boolean","description":"architect only: wait for approval before building"},
+                    "after":{"type":"array","items":{"type":"string"},"description":"ids of tasks that must land before this one starts"},
                     "status":{"type":"string","enum":["pending","proposed","done","blocked","dropped"]}
                 }
             }}},"required":["items"]}),

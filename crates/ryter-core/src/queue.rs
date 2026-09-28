@@ -51,6 +51,12 @@ pub struct Task {
     /// for the user to approve ("design it, don't build yet").
     #[serde(default)]
     pub hold: bool,
+    /// Tasks that must be done (for a builder task: landed) before this one
+    /// starts. A plan that said "the scaffold builds first" in prose was not
+    /// enforced: once the scaffold was blocked, the tasks built on it ran
+    /// without it and were rejected for its absence, three times each.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after: Vec<String>,
     /// Status.
     pub status: TaskStatus,
     /// Auditor retries used.
@@ -130,6 +136,9 @@ impl TaskQueue {
                     if let Some(v) = u.hold {
                         t.hold = v;
                     }
+                    if let Some(v) = u.after {
+                        t.after = v;
+                    }
                     // A running task keeps running whatever the list says.
                     if let Some(v) = u.status {
                         if t.status != TaskStatus::Running {
@@ -150,6 +159,7 @@ impl TaskQueue {
                         u.role.unwrap_or_else(default_role)
                     },
                     hold: u.hold.unwrap_or(false),
+                    after: u.after.unwrap_or_default(),
                     status: u.status.unwrap_or(TaskStatus::Pending),
                     retries: 0,
                     findings: String::new(),
@@ -180,16 +190,42 @@ impl TaskQueue {
 
     /// Like [`Self::take_pending`], but only tasks `eligible` accepts.
     pub fn take_pending_where(&mut self, max: u32, eligible: impl Fn(&Task) -> bool) -> Vec<Task> {
+        self.take_ready(max, eligible, |_| true)
+    }
+
+    /// Pending tasks `eligible` accepts that may start now: everything in
+    /// their `after` is done, and no unfinished task is laying the project's
+    /// foundation (see [`Self::foundation`]). `exists` says whether a path is
+    /// in the tree the tasks branch from.
+    pub fn take_ready(
+        &mut self,
+        max: u32,
+        eligible: impl Fn(&Task) -> bool,
+        exists: impl Fn(&str) -> bool,
+    ) -> Vec<Task> {
+        let foundation = self.foundation(&exists).map(|t| t.id.clone());
+        let ready: Vec<bool> = self
+            .tasks
+            .iter()
+            .map(|t| {
+                self.unmet(t).is_empty()
+                    && (t.role != "builder" || foundation.as_ref().is_none_or(|f| *f == t.id))
+            })
+            .collect();
         // Parallel builders merge into one branch, so two tasks editing the
         // same files would race to conflict. Take pending tasks in order and
         // skip any whose scope collides with one already in this batch; they
         // run in a later batch.
         let mut out: Vec<Task> = Vec::new();
-        for t in &mut self.tasks {
+        for (t, ready) in self.tasks.iter_mut().zip(ready) {
             if out.len() >= max as usize {
                 break;
             }
-            if t.status != TaskStatus::Pending || !eligible(t) {
+            if t.status != TaskStatus::Pending || !eligible(t) || !ready {
+                continue;
+            }
+            // The foundation runs alone.
+            if foundation.as_deref() == Some(t.id.as_str()) && !out.is_empty() {
                 continue;
             }
             // An empty batch accepts anything, so an unscoped task at the head
@@ -199,9 +235,102 @@ impl TaskQueue {
             }
             t.status = TaskStatus::Running;
             out.push(t.clone());
+            if foundation.as_deref() == Some(t.id.as_str()) {
+                break;
+            }
         }
         let _ = self.save();
         out
+    }
+
+    /// Whether any pending task could start now. Tasks that only wait on
+    /// something blocked don't count: the crew has nothing to do for them,
+    /// and running it again just repeats what they wait on.
+    pub fn startable(&self, exists: impl Fn(&str) -> bool) -> bool {
+        let foundation = self.foundation(&exists).map(|t| t.id.clone());
+        self.tasks.iter().any(|t| {
+            t.status == TaskStatus::Pending
+                && (t.role == "architect" || t.role == "builder")
+                && self.unmet(t).is_empty()
+                && (t.role != "builder" || foundation.as_ref().is_none_or(|f| *f == t.id))
+        })
+    }
+
+    /// The ids in `t.after` that are not done yet. An id that names no task
+    /// is unmet: a dropped prerequisite must not be silently skipped.
+    pub fn unmet<'a>(&self, t: &'a Task) -> Vec<&'a str> {
+        t.after
+            .iter()
+            .filter(|dep| {
+                !self
+                    .tasks
+                    .iter()
+                    .any(|d| &d.id == *dep && d.status == TaskStatus::Done)
+            })
+            .map(String::as_str)
+            .collect()
+    }
+
+    /// The unfinished builder task that creates the project's build manifest
+    /// (`Cargo.toml`, `package.json`, …) when the tree has none at its root.
+    /// Until it lands nothing else builds: other tasks would each invent the
+    /// manifest, or be rejected because the crate cannot compile. This holds
+    /// even when the plan forgot to say so in `after`.
+    pub fn foundation(&self, exists: impl Fn(&str) -> bool) -> Option<&Task> {
+        if MANIFESTS.iter().any(|m| exists(m)) {
+            return None;
+        }
+        self.tasks.iter().find(|t| {
+            t.role == "builder"
+                && t.status != TaskStatus::Done
+                && t.files.iter().any(|f| MANIFESTS.contains(&f.as_str()))
+        })
+    }
+
+    /// Why each pending task that can't start is waiting, one line each, for
+    /// the lead: it is the one who can unblock them.
+    pub fn waiting(&self, exists: impl Fn(&str) -> bool) -> Vec<String> {
+        let foundation = self.foundation(&exists);
+        let why = |id: &str| -> String {
+            match self.tasks.iter().find(|d| d.id == id) {
+                None => format!("`{id}`, which is not in the task list"),
+                Some(d) => {
+                    let state = match d.status {
+                        TaskStatus::Blocked => {
+                            let reason = d.findings.lines().find(|l| !l.trim().is_empty());
+                            match reason {
+                                Some(r) => format!("blocked: {}", r.trim()),
+                                None => "blocked".into(),
+                            }
+                        }
+                        TaskStatus::Proposed => "proposed, waiting for approval".into(),
+                        TaskStatus::Running => "running".into(),
+                        TaskStatus::Pending => "pending".into(),
+                        TaskStatus::Done => "done".into(),
+                    };
+                    format!("`{id}` ({state})")
+                }
+            }
+        };
+        self.tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Pending)
+            .filter_map(|t| {
+                let unmet = self.unmet(t);
+                if !unmet.is_empty() {
+                    let on: Vec<String> = unmet.iter().map(|d| why(d)).collect();
+                    return Some(format!("- `{}` waits on {}", t.id, on.join(", ")));
+                }
+                match foundation {
+                    Some(f) if f.id != t.id => Some(format!(
+                        "- `{}` waits on {}, which creates the project's build manifest",
+                        t.id,
+                        why(&f.id)
+                    )),
+                    _ => None,
+                }
+            })
+            .collect()
     }
 
     /// Update one task.
@@ -233,6 +362,25 @@ fn default_role() -> String {
     "builder".into()
 }
 
+/// Build manifests at a project's root. A tree with none of them can't be
+/// built, whatever else is in it.
+pub const MANIFESTS: &[&str] = &[
+    "Cargo.toml",
+    "package.json",
+    "pyproject.toml",
+    "setup.py",
+    "go.mod",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "CMakeLists.txt",
+    "Makefile",
+    "Gemfile",
+    "composer.json",
+    "mix.exs",
+    "deno.json",
+];
+
 /// One `todo_write` item. Every field is optional so an update can name
 /// only what changes.
 struct Update {
@@ -242,6 +390,7 @@ struct Update {
     files: Option<Vec<String>>,
     role: Option<String>,
     hold: Option<bool>,
+    after: Option<Vec<String>>,
     status: Option<TaskStatus>,
     dropped: bool,
 }
@@ -255,6 +404,7 @@ fn parse_update(item: &Value) -> Update {
             files: None,
             role: None,
             hold: None,
+            after: None,
             status: None,
             dropped: false,
         };
@@ -282,6 +432,13 @@ fn parse_update(item: &Value) -> Update {
             _ => default_role(),
         }),
         hold: item.get("hold").and_then(Value::as_bool),
+        after: item.get("after").and_then(Value::as_array).map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(|d| d.trim().to_string())
+                .filter(|d| !d.is_empty())
+                .collect()
+        }),
         status: match status_word.as_str() {
             "" => None,
             "done" | "completed" => Some(TaskStatus::Done),
@@ -428,5 +585,96 @@ mod scope_tests {
                 .any(|t| t.id == "arch" && t.status == TaskStatus::Running)
         );
         assert!(q.tasks.iter().any(|t| t.id == "b1"));
+    }
+
+    fn done(q: &mut TaskQueue, id: &str) {
+        q.set(id, TaskStatus::Done, "");
+    }
+
+    /// A task starts only once what it is `after` is done; a blocked
+    /// prerequisite holds it, and the lead is told why.
+    #[test]
+    fn a_task_waits_for_what_it_is_after() {
+        let (_d, mut q) = queue(json!([
+            {"id": "scaffold", "title": "crate", "files": ["src/main.rs"]},
+            {"id": "audio", "title": "audio", "files": ["src/audio"], "after": ["scaffold"]},
+            {"id": "ui", "title": "ui", "files": ["src/ui"], "after": ["scaffold"]},
+        ]));
+        assert_eq!(ids(&q.take_pending(4)), ["scaffold"]);
+        q.set(
+            "scaffold",
+            TaskStatus::Blocked,
+            "needs alsa-lib-devel installed\nmore",
+        );
+        assert!(
+            q.take_pending(4).is_empty(),
+            "nothing builds on a blocked scaffold"
+        );
+        assert_eq!(
+            q.waiting(|_| true),
+            [
+                "- `audio` waits on `scaffold` (blocked: needs alsa-lib-devel installed)",
+                "- `ui` waits on `scaffold` (blocked: needs alsa-lib-devel installed)",
+            ]
+        );
+        q.set("scaffold", TaskStatus::Pending, "");
+        assert_eq!(ids(&q.take_pending(4)), ["scaffold"]);
+        done(&mut q, "scaffold");
+        assert_eq!(
+            ids(&q.take_pending(4)),
+            ["audio", "ui"],
+            "then both, in parallel"
+        );
+    }
+
+    /// A prerequisite that was dropped, or never existed, is not met.
+    #[test]
+    fn an_unknown_prerequisite_is_unmet() {
+        let (_d, mut q) = queue(json!([
+            {"id": "b", "title": "b", "files": ["b"], "after": ["gone"]},
+        ]));
+        assert!(q.take_pending(4).is_empty());
+        assert_eq!(
+            q.waiting(|_| true),
+            ["- `b` waits on `gone`, which is not in the task list"]
+        );
+    }
+
+    /// With no build manifest in the tree, the task that creates one runs
+    /// alone, and the rest wait for it, even when the plan didn't say so.
+    #[test]
+    fn the_task_that_creates_the_manifest_runs_first_and_alone() {
+        let (_d, mut q) = queue(json!([
+            {"id": "lib", "title": "library", "files": ["src/library.rs"]},
+            {"id": "scaffold", "title": "crate", "files": ["Cargo.toml", "src/main.rs"]},
+            {"id": "audio", "title": "audio", "files": ["src/audio"]},
+        ]));
+        let empty = |_: &str| false;
+        assert_eq!(ids(&q.take_ready(4, |_| true, empty)), ["scaffold"]);
+        q.set("scaffold", TaskStatus::Blocked, "cargo build failed");
+        assert!(q.take_ready(4, |_| true, empty).is_empty());
+        assert_eq!(
+            q.waiting(empty),
+            [
+                "- `lib` waits on `scaffold` (blocked: cargo build failed), which creates the project's build manifest",
+                "- `audio` waits on `scaffold` (blocked: cargo build failed), which creates the project's build manifest",
+            ]
+        );
+        // Once the tree has a manifest there is no foundation to wait for.
+        q.set("scaffold", TaskStatus::Done, "");
+        let built = |p: &str| p == "Cargo.toml";
+        assert_eq!(ids(&q.take_ready(4, |_| true, built)), ["lib", "audio"]);
+    }
+
+    /// An existing project already has its manifest: nothing waits on a task
+    /// that edits it.
+    #[test]
+    fn an_existing_manifest_is_no_foundation() {
+        let (_d, mut q) = queue(json!([
+            {"id": "deps", "title": "bump deps", "files": ["Cargo.toml"]},
+            {"id": "docs", "title": "docs", "files": ["docs"]},
+        ]));
+        let built = |p: &str| p == "Cargo.toml";
+        assert_eq!(ids(&q.take_ready(4, |_| true, built)), ["deps", "docs"]);
     }
 }

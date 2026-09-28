@@ -27,4 +27,7 @@ List findings first, each with `path:line` and why it matters, marking which are
 ```
 VERDICT: PASS
 VERDICT: FAIL
+VERDICT: UNVERIFIED
 ```
+
+`UNVERIFIED` is for one case only: no checks ran, and the code cannot be built or tested yet because something outside this task has not landed (the crate manifest or a module another task creates). Review it by reading, list what you could not confirm, and say so. It is not a pass for work you could have tested, and not a fail for what another task owns: the patch is built and tested before it reaches the user.
