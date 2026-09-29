@@ -1047,7 +1047,7 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
         Err(e) => view.error(e.to_string()),
     }
     // Live `[ui]` knobs that do not need a restart.
-    view.panel_visible = view.ui.panel && view.ui.classic();
+    view.panel_visible = view.ui.panel;
     view.activity.mode = crate::activity::Mode::parse(&view.ui.reasoning);
     if view.ui.theme != view.theme_name {
         let name = view.ui.theme.clone();

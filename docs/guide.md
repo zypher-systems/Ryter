@@ -64,7 +64,17 @@ ryter models [connection]
 
 ## Talking to Ryter
 
-`ryter` on a tty opens the TUI in the **ledger** layout (`[ui] layout = "ledger"`, the default since 0.6.0):
+`ryter` on a tty opens the TUI in the **ledger** layout (`[ui] layout = "ledger"`, the default since 0.6.0).
+
+**In solo mode, a rail runs down the left** (screens 110 columns and wider). It carries:
+- the Ryter name, the project and branch;
+- the session's title, when it began, and how many turns it has had;
+- **the hat**, as a block in its color: `BUILD` green, `PLAN` cyan, `REVIEW` yellow, with what it does (`edits files, runs commands`) and `tab` to switch;
+- the model, its reasoning level, and the context gauge with tokens used of the window;
+- **spend**: this turn, the session, the project, the budget, and a bar per turn;
+- the files the last turn changed, with `+`/`−` counts.
+
+The prompt sits in a box of the hat's color, with the keys that matter now on its lower edge. The rail replaces the view strip and the bottom bar, which come back when the rail is hidden (`^b`, or `[ui] panel = false`) or the screen is narrower than 110 columns. The rest is the same either way:
 
 - **A view strip** across the top names the views and lights the one on screen: `chat`, `changes ^t` (the workbench), and `crew board` (crew mode; `/crew` from solo mode).
 - **One reading column on a timeline**, centered, at most 112 columns wide. Each question starts with its time and `●`. The model's text hangs off `◆`, each tool step off `├─` (`edit   src/config.rs ······· +9 −1`, `run    npm test ····· ✓ 4 passed`), and edits show as full-row green and red diffs.
@@ -74,10 +84,10 @@ ryter models [connection]
 - **The bottom bar** holds what the header and cards used to show: the mode (`BUILD`, `CREW · LEAD`), the project and branch, the model, the context gauge, and the cost this turn, this session, and for the project, against the budget. The keys that matter now are on its right. When space runs short, it drops keys first, then the project, the model, and the gauge. The mode and the costs stay.
 - **`$`** on an empty composer opens the **spend drawer** above it. It shows this turn, the session, and the project side by side, with spend by role for the session and the project, and the budget, task cap, and warning level. `b` sets a budget, `⏎` opens the full `/spend` table.
 
-**Mission control** (crew mode on the ledger) is the crew's screen. Tiles run across the top. The plan is on the left, at full height, with a legend. On the right are the lanes, and the LEAD box with the lead's conversation and the prompt. The strip names who fills each seat and where the patch lands. `tab` picks a lane and `⏎` opens its transcript. Before there is a plan, the board says so:
-- **Tiles:** spend against the budget, tasks landed out of all of them, the checks run on each task, and the crew's time, model calls, and retries.
+**Mission control** (crew mode on the ledger) is the crew's screen. Five tiles run across the top. The plan is on the left, at full height, with a legend. On the right are the lanes, and the LEAD box with the lead's conversation and the prompt. The strip names who fills each seat and where the patch lands. `tab` picks a lane and `⏎` opens its transcript. Before there is a plan, the board says so:
+- **Tiles:** spend against the budget (or, with no budget, what the last minute cost), tasks landed out of all of them, the checks run on each task, the crew's time, model calls, and retries, and the **pulse**: the crew's tokens a second now, a bar per second, and how long since any worker was last heard from (yellow after 30 seconds of silence).
 - **The plan:** drawn as boxes, each in its state's color, left to right by what waits on what, and joined by `──┬─▶` / `└─▶`. A blocked task's full reason is listed under the drawing. A plan too big to draw in the space shows as a tree instead. It's drawn from the agent's queue snapshots (`after`, and the manifest-first rule), so it shows exactly what the scheduler enforces. Each task is marked `✓` landed, `◐` building, `◑` in audit, `✕` blocked (with the reason, wrapped rather than cut), `○` waiting on something, or `◇` proposed.
-- **Lanes:** one row per worker, showing who is acting (builder or auditor), on which task, what it's doing, for how long, and what the task has cost.
+- **Lanes:** a live card per worker, updated a few times a second while it works. The first row says who is acting (builder or auditor), on which task, with which model, and what it is doing right now, for how long: `WAITING` for the model's first byte (after 20 seconds, "the provider is slow"), `THINKING`, `WRITING` a file edit or its reply, or `RUNNING` a tool or command. The second row is the meter: lines of the file written so far, tokens (estimated while streaming), tokens a second, the task's cost, and its tool calls. Under it are the last three lines of what the worker is producing: its reasoning, the file it is writing, or the command's output as it runs. On a short screen the cards drop their output lines, then become one row a worker.
 
 Everything a specialist reports is also kept in the session's `activity.jsonl`.
 
@@ -88,7 +98,7 @@ Everything a specialist reports is also kept in the session's `activity.jsonl`.
 
 Its keys: `↑↓` pick a file, `j`/`k` move between its changes, `x` undoes the selected change alone, `X` undoes the whole file (after a `y`), and `u` undoes the turn. `x` and `X` are recorded like a turn, so `/undo` brings them back. While the workbench is open, keys go to it and not the composer; `esc` or `^T` returns to the chat.
 
-`[ui] layout = "classic"` (also in `/settings`, applied at once) brings back the 0.5 screen. That's a header row, the chat with a right-hand **info panel** of cards (session, model + context gauge, spend + budget gauge, tasks, crew, mcp), the **activity strip** while a turn runs, the bordered **composer**, and a hint bar. `^b` shows or hides the info panel on either layout; it also drops automatically under 80 columns.
+`[ui] layout = "classic"` (also in `/settings`, applied at once) brings back the 0.5 screen. That's a header row, the chat with a right-hand **info panel** of cards (session, model + context gauge, spend + budget gauge, tasks, crew, mcp), the **activity strip** while a turn runs, the bordered **composer**, and a hint bar. `^b` shows or hides the info panel there (it also drops automatically under 80 columns), and the rail on the ledger.
 
 Every message is a left-aligned block under a speaker header — your name (from `[ui] username`, then `git user.name`, then `$USER`), the model name, `· system`, or a one-line tool row (`· read_file  path  0.1s`). Markdown renders with headings, lists, quotes, tables, and fenced code with syntax highlighting and a line-number gutter. Long model turns end with a summary line (`3 tools · 12.4k tok · 0:42 · $0.01`).
 
@@ -138,7 +148,7 @@ The keys are on the card's last row:
 | `^c` | clear composer → cancel turn → quit (press twice within 2 s) |
 | `^d` | quit when the composer is empty |
 | `^r` | toggle the reasoning pane |
-| `^b` | toggle the info panel |
+| `^b` | show or hide the rail (ledger) or the info panel (classic) |
 | `^o` | show every edit and finished turn whole, or folded |
 | `$` | the spend drawer (ledger, when the composer is empty) |
 | `^t` | the workbench (ledger); `/changes` on the classic screen |

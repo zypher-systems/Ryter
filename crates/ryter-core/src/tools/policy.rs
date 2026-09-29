@@ -686,6 +686,7 @@ fn decide_bash(args: &Value, ctx: &ToolContext) -> Decision {
         let cx = here.as_ref().unwrap_or(ctx);
         if let Some(dir) = cd_within(s, cx) {
             here = Some(ToolContext {
+                live: None,
                 workspace: dir,
                 ..cx.clone()
             });
@@ -1979,6 +1980,7 @@ mod tests {
 
     fn ctx_for(role: Role, dir: &Path) -> ToolContext {
         ToolContext {
+            live: None,
             workspace: dir.to_path_buf(),
             notes_dir: dir.join("notes"),
             role,

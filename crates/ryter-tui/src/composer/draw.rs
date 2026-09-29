@@ -80,9 +80,9 @@ fn placeholder(view: &View) -> String {
 /// The ledger's composer: a rule, then the prompt. The rule takes the
 /// mode's color, so where the message goes is still in sight as you type;
 /// `queued` and a long message's count sit at its right end.
-fn ledger_frame(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Rect {
-    let w = area.width as usize;
-    let rule = Style::default().fg(theme.dim).bg(theme.bg);
+/// Notes for the prompt's edge: a message waiting its turn, and the length
+/// of a long one.
+fn edge_notes(view: &View, theme: Theme) -> Vec<Span<'static>> {
     let mut right: Vec<Span<'static>> = Vec::new();
     if view.queued_prompt.is_some() {
         right.push(Span::styled(
@@ -100,6 +100,50 @@ fn ledger_frame(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Rec
             Style::default().fg(theme.dim).bg(theme.bg),
         ));
     }
+    right
+}
+
+/// Rows the boxed prompt needs at `width`, its box included.
+pub fn boxed_height(view: &View, width: u16) -> u16 {
+    let inner = usize::from(width.saturating_sub(4));
+    let rows = view.composer.rows(inner).clamp(1, MAX_ROWS);
+    u16::try_from(rows).unwrap_or(1) + 2
+}
+
+/// The prompt in a box of the hat's color (the solo screen's rail layout):
+/// the notes on its top edge, `keys` on its lower one. Returns the cursor
+/// cell, if visible.
+pub fn draw_boxed(
+    frame: &mut Frame,
+    area: Rect,
+    view: &View,
+    theme: Theme,
+    keys: Line<'static>,
+) -> Option<(u16, u16)> {
+    if area.height < 3 || area.width < 8 {
+        return None;
+    }
+    let b = ratatui::widgets::Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_style(Style::default().fg(border_color(view, theme)).bg(theme.bg))
+        .title_top(Line::from(edge_notes(view, theme)).right_aligned())
+        .title_bottom(keys.right_aligned())
+        .style(Style::default().bg(theme.bg));
+    let inner = b.inner(area);
+    frame.render_widget(b, area);
+    let inner = Rect {
+        x: inner.x + 1,
+        width: inner.width.saturating_sub(2),
+        ..inner
+    };
+    body(frame, inner, view, theme, theme.bg)
+}
+
+fn ledger_frame(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Rect {
+    let w = area.width as usize;
+    let rule = Style::default().fg(theme.dim).bg(theme.bg);
+    let right = edge_notes(view, theme);
     let lead = Style::default().fg(border_color(view, theme)).bg(theme.bg);
     let right_w: usize = right.iter().map(|s| wrap::width(&s.content)).sum();
     let mut spans = vec![Span::styled("──", lead)];

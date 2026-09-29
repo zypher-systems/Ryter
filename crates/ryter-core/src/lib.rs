@@ -52,7 +52,7 @@ pub use config::{
 };
 pub use doctor::Report as DoctorReport;
 pub use error::{Error, Result};
-pub use event::AgentEvent;
+pub use event::{AgentEvent, LivePhase};
 pub use hooks::{HookDecision, HookEvent, HookSet};
 pub use ids::{ConnectionId, SessionId, SubagentId};
 pub use llm::{

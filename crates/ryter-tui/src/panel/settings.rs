@@ -155,7 +155,7 @@ impl Settings {
             ),
             Field::new("mouse", "mouse", Kind::Toggle(view.ui.mouse))
                 .origin(origin(&view.ui.mouse, &d.mouse)),
-            Field::new("panel", "panel", Kind::Toggle(view.ui.panel))
+            Field::new("panel", "panel · rail", Kind::Toggle(view.ui.panel))
                 .origin(origin(&view.ui.panel, &d.panel)),
             Field::new("timestamps", "timestamps", Kind::Toggle(view.ui.timestamps))
                 .origin(origin(&view.ui.timestamps, &d.timestamps)),

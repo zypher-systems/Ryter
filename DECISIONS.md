@@ -2,6 +2,25 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-29 — Crew members report live; solo gets a rail
+- **By:** lead
+- **Decision:**
+  - **Live progress:** a specialist's step sends `AgentEvent::SubagentLive` (phase, target, estimated tokens, lines written, and the last three lines of output) while it streams (`crew::LiveStep`). The phases are waiting for the first byte, thinking, writing (a reply, or a tool call such as a file edit), and running. A change of phase is sent at once, anything else at most every 200 ms. The partial tool call is read (`partial_call`, `partial_str`) only when a report is due.
+  - **Command output:** `ToolContext.live` carries a sink. `shell::run_command_live` passes the newest three lines of whichever pipe moved to it every 250 ms while the command runs.
+  - **The board (design C1):** each lane is a card with a chip (WAITING, THINKING, WRITING, RUNNING), a meter, and the output tail. A PULSE tile shows the crew's tokens a second, a bar per second, and the time since the last byte. With no budget, SPEND shows what the last minute cost. Cards shrink to fit, from five rows down to one.
+  - **The rail (design S2):** in solo mode on the ledger, at 110 columns and wider, `rail.rs` draws the name, the session, the hat as a block in its color, the model and context, spend with a bar per turn, and the last turn's changed files. The prompt is boxed in the hat's color (`composer::draw::draw_boxed`) with the keys on its lower edge. The view strip and the bottom bar are not drawn while it shows. `[ui] panel` and `^b` now drive the rail on the ledger, as they drive the info panel on the classic screen.
+  - **The session's title** is sent to the TUI when the first message sets it, so the rail names the session.
+- **Chosen vs rejected:**
+  - The user picked S2 and C1 from eight options on the design canvas (four for solo, four for crew).
+  - Rejected sending every stream delta. A long file edit arrives in thousands of fragments, and each report read the whole call so far.
+  - Rejected logging live events to `activity.jsonl`: several a second is noise. Finished tool calls are still logged.
+  - Rejected exact token counts while streaming. Usage arrives only when a step ends, so the count is characters ÷ 4 and shown with `~`.
+  - C1's `r` (reasoning on and off) is `^r` on the board: the lead's prompt is always taking keys, so `r` would be typed. Elsewhere `^r` still toggles the reasoning pane. S2's `u undo` is `/undo` for the same reason.
+  - The prompt's keys are on its box's lower edge, not inside it: the prompt row holds the typing and its placeholder.
+- **Why:** "Setting there for 10 minutes seeing no movement is not a good experience." The board reported only finished tool calls, so a model thinking or writing a long edit looked frozen. In solo mode the name was nowhere on screen, the costs were in the bottom bar, and the hat was a small chip at its left end.
+- **Where:** `crates/ryter-core/src/event.rs` (`SubagentLive`, `LivePhase`), `crew.rs` (`LiveStep`, `running_tool`), `tools/shell.rs` (`run_command_live`), `tools/mod.rs` (`LiveOutput`), `agent.rs` (title event); `crates/ryter-tui/src/crewboard.rs` (`lane_cards`, `pulse_tile`), `rail.rs`, `draw.rs` (`draw_with_rail`), `composer/draw.rs`, `view/mod.rs` (`LaneLive`, pulse)
+- **Residual risk:** a model that doesn't stream its reasoning shows WAITING until it writes. A command faster than 250 ms shows no output while running. Tools other than `bash` show no running output.
+
 ### 2026-09-28 — OpenRouter lists the account's models, and the crew checks its seats first
 - **By:** lead
 - **Decision:**

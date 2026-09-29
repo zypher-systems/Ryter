@@ -133,6 +133,9 @@ pub const LEDGER_COLUMN: u16 = 112;
 /// one bar at the bottom for everything the header and cards used to say.
 fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     let full = frame.area();
+    if crate::rail::shown(view, full.width) {
+        return draw_with_rail(frame, view, theme);
+    }
     // The workbench takes the keys, so it has no composer.
     let composer_h = if view.workbench.is_some() {
         0
@@ -243,6 +246,119 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         activity: act,
         composer: comp,
     }
+}
+
+/// Solo mode with the side rail (design S2): the rail on the left at full
+/// height; the conversation, the activity strip and a prompt boxed in the
+/// hat's color on the right. The rail says what the strip and the bottom bar
+/// said, so neither is drawn; the keys go on the prompt's border.
+fn draw_with_rail(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
+    let full = frame.area();
+    let rail = Rect {
+        width: crate::rail::RAIL_W,
+        ..full
+    };
+    crate::rail::draw(frame, rail, view, theme);
+    let main = Rect {
+        x: full.x + rail.width,
+        width: full.width.saturating_sub(rail.width),
+        ..full
+    };
+    let col_w = main.width.saturating_sub(4).min(LEDGER_COLUMN);
+    let col_x = main.x + (main.width.saturating_sub(col_w + 1)) / 2;
+    let prompt_h =
+        composer::draw::boxed_height(view, col_w).min(main.height.saturating_sub(8).max(3));
+    let body_avail = main.height.saturating_sub(prompt_h + 1);
+    let activity_h = activity::height(view, body_avail).min(body_avail.saturating_sub(6));
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(4),
+            Constraint::Length(activity_h),
+            Constraint::Length(prompt_h),
+        ])
+        .split(main);
+    let (body, act, prompt_row) = (rows[1], rows[2], rows[3]);
+    let column = |r: Rect| Rect {
+        x: col_x,
+        width: col_w,
+        ..r
+    };
+    let chat = column(body);
+    let cf = draw_chat(frame, chat, view, theme);
+    if view.panels.is_empty() {
+        let gutter = Rect {
+            x: col_x + col_w,
+            width: 1,
+            ..body
+        };
+        draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme);
+    }
+    let act = column(act);
+    if activity_h > 0 {
+        activity::draw(frame, act, view, theme);
+    }
+    // The prompt, boxed in the hat's color, the keys on its lower edge.
+    let comp = column(prompt_row);
+    let keys = prompt_keys(view, theme, usize::from(comp.width.saturating_sub(4)));
+    let cursor = composer::draw::draw_boxed(frame, comp, view, theme, keys);
+    if view.panels.is_empty() {
+        palette::draw(frame, chat, comp.y, view, theme);
+    }
+    let panel_cursor = panel::draw(frame, full, main, view, theme);
+    if panel_cursor.is_some() {
+        composer::draw::paint_cursor(frame, panel_cursor, theme);
+    } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
+        composer::draw::paint_cursor(frame, cursor, theme);
+    }
+    Hit {
+        chat,
+        cards: Vec::new(),
+        activity: act,
+        composer: comp,
+    }
+}
+
+/// The keys that matter now, for the prompt's border: the bottom bar's, less
+/// the least needed until they fit in `width`.
+fn prompt_keys(view: &View, theme: Theme, width: usize) -> Line<'static> {
+    let mut keys = match view.panels.top() {
+        Some(p) => legend_keys(&p.legend(view)),
+        None => hints_ranked(view),
+    };
+    if view.panels.top().is_none() && view.palette.is_none() && view.composer.is_empty() {
+        keys.insert(0, ("$".into(), "spend".into(), Hint::Useful));
+    }
+    let used = |keys: &[(String, String, Hint)]| -> usize {
+        keys.iter()
+            .map(|(k, l, _)| wrap::width(k) + 1 + wrap::width(l) + 3)
+            .sum::<usize>()
+            + 1
+    };
+    while used(&keys) > width && keys.len() > 1 {
+        let worst = keys
+            .iter()
+            .enumerate()
+            .max_by_key(|(i, (_, _, rank))| (*rank, *i))
+            .map_or(keys.len() - 1, |(i, _)| i);
+        keys.remove(worst);
+    }
+    let mut spans = vec![Span::styled(" ", Style::default().bg(theme.bg))];
+    for (k, l, _) in keys {
+        spans.push(Span::styled(
+            k,
+            Style::default()
+                .fg(theme.accent)
+                .bg(theme.bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            format!(" {l}   "),
+            Style::default().fg(theme.dim).bg(theme.bg),
+        ));
+    }
+    Line::from(spans)
 }
 
 /// Which view the ledger is showing.
@@ -755,6 +871,8 @@ pub fn hints_ranked(view: &View) -> Vec<(String, String, Hint)> {
             let rank = match k.as_str() {
                 // Getting out: cancel, quit, and the permission answers.
                 "^c" | "esc" | "^d" | "y" | "n" | "a" | "⏎" => Hint::Essential,
+                // The lanes' reasoning switch is on the board alone.
+                "^r" if l.ends_with(" reasoning") => Hint::Useful,
                 // Discoverable without the bar, so first to go.
                 "⇧enter" | "^r" | "end" => Hint::Optional,
                 // `enter` included: everyone knows Enter sends.
@@ -802,6 +920,14 @@ fn hints_static(view: &View) -> Vec<(&'static str, String)> {
         v.push(("tab", view.mode.next_hat().as_str().to_string()));
     } else if !view.ui.classic() && !view.crew.is_empty() {
         v.push(("tab", "lanes".into()));
+        if crate::crewboard::shown(view) {
+            let label = if view.lanes_hide_reasoning {
+                "show reasoning"
+            } else {
+                "hide reasoning"
+            };
+            v.push(("^r", label.into()));
+        }
         if view.lane_selected.is_some() && view.composer.is_empty() {
             v.push(("⏎", "on a lane: its transcript".into()));
         }
@@ -815,10 +941,23 @@ fn hints_static(view: &View) -> Vec<(&'static str, String)> {
     if !view.ui.classic() && !view.diffs_expanded && view.has_folded_turns() {
         v.push(("^o", "expand".into()));
     }
-    if view.activity.has_history {
+    if crate::crewboard::shown(view) && !view.crew.is_empty() {
+        // Listed with the lane keys above.
+    } else if view.activity.has_history {
         v.push(("^r", "reasoning".into()));
     }
-    v.push(("^b", "panel".into()));
+    // `^b` shows and hides the info panel on the classic screen, the rail
+    // on the ledger's solo screen.
+    if view.ui.classic() {
+        v.push(("^b", "panel".into()));
+    } else if !view.crew_mode() {
+        let label = if view.panel_visible {
+            "hide rail"
+        } else {
+            "show rail"
+        };
+        v.push(("^b", label.into()));
+    }
     if view.busy && view.crew_mode() {
         v.push(("esc", "stop the crew".into()));
     } else if view.busy {

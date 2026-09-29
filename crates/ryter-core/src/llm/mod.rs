@@ -160,6 +160,11 @@ pub struct ToolCallAccumulator {
 }
 
 impl ToolCallAccumulator {
+    /// The call arriving now, as far as it has come.
+    pub fn last(&self) -> Option<&AssistantToolCall> {
+        self.calls.last()
+    }
+
     /// Fold one `StreamDelta::ToolCall` in.
     pub fn push(&mut self, id: &str, name: &str, arguments: &str) {
         let target = if id.is_empty() {

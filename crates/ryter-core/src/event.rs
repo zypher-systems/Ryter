@@ -6,6 +6,20 @@ use crate::ids::SubagentId;
 use crate::phase::Phase;
 use crate::role::Role;
 
+/// What a crew member is doing right now ([`AgentEvent::SubagentLive`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LivePhase {
+    /// Request sent; no byte back yet.
+    Waiting,
+    /// The model is reasoning.
+    Thinking,
+    /// The model is writing: its reply, or a tool call such as a file edit.
+    Writing,
+    /// A tool or command is running.
+    Running,
+}
+
 /// A unit of progress from the session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -108,6 +122,30 @@ pub enum AgentEvent {
         role: Role,
         /// Short description.
         text: String,
+    },
+    /// What a crew member is doing between its steps, sent a few times a
+    /// second while it works: waiting for the model, thinking, writing, or
+    /// running a command. The board used to sit still for minutes while a
+    /// model thought or wrote a long edit, because only finished tool calls
+    /// were reported.
+    SubagentLive {
+        /// Child id.
+        id: SubagentId,
+        /// Who is acting (an auditor reviews in its builder's lane).
+        role: Role,
+        /// What kind of work.
+        phase: LivePhase,
+        /// What it is on: `edit src/ui.rs`, `$ cargo test`. Empty while it
+        /// thinks or waits.
+        target: String,
+        /// Output tokens this step so far, estimated from the characters
+        /// streamed (usage arrives only when the step ends).
+        tokens: u64,
+        /// Lines of the file being written so far; 0 for anything else.
+        lines: u32,
+        /// The last few lines of what it is producing: its reasoning, the
+        /// file it is writing, a command's output.
+        tail: Vec<String>,
     },
     /// `/second` needs the user to choose who reviews and how much one
     /// review may spend: nobody chose yet, the choice can't be used, or the

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crate::cancel::kill_group;
 use crate::error::{Error, Result};
-use crate::tools::{ToolContext, ToolOutput};
+use crate::tools::{LiveOutput, ToolContext, ToolOutput};
 
 pub fn bash(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     let cmd = args
@@ -15,7 +15,7 @@ pub fn bash(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         .ok_or_else(|| Error::Config("bash: missing command".into()))?;
     let timeout = Duration::from_secs(timeout_secs(args));
     Ok(
-        match run_command(cmd, &ctx.workspace, timeout, &ctx.cancel)? {
+        match run_command_live(cmd, &ctx.workspace, timeout, &ctx.cancel, ctx.live.as_ref())? {
             Run::Ok(text) => ToolOutput::ok(text),
             Run::Failed(text) => ToolOutput::err(text),
             Run::Cancelled => ToolOutput::err("cancelled"),
@@ -70,6 +70,23 @@ pub fn run_command(
     timeout: Duration,
     cancel: &crate::cancel::Cancel,
 ) -> Result<Run> {
+    run_command_live(cmd, cwd, timeout, cancel, None)
+}
+
+/// How often a running command's newest output is passed on.
+const LIVE_EVERY: Duration = Duration::from_millis(250);
+/// Lines of a running command's output passed on each time.
+const LIVE_LINES: usize = 3;
+
+/// [`run_command`], passing its newest output lines to `live` as they arrive,
+/// so the crew board shows a test run working rather than a frozen lane.
+pub fn run_command_live(
+    cmd: &str,
+    cwd: &std::path::Path,
+    timeout: Duration,
+    cancel: &crate::cancel::Cancel,
+    live: Option<&LiveOutput>,
+) -> Result<Run> {
     let mut command = Command::new("bash");
     command
         // `-c`, not `-lc`: a login shell sources the user's profile on every
@@ -103,7 +120,26 @@ pub fn run_command(
     let stdout = drain(child.stdout.take());
     let stderr = drain(child.stderr.take());
     let start = std::time::Instant::now();
+    let mut told = (start, 0usize, 0usize);
     let status = loop {
+        if let Some(live) = live {
+            if told.0.elapsed() >= LIVE_EVERY {
+                let (out, err) = (stdout.len(), stderr.len());
+                // Whichever pipe moved last: tests print to stdout, cargo's
+                // progress to stderr.
+                let moved = if out != told.1 {
+                    Some(&stdout)
+                } else if err != told.2 {
+                    Some(&stderr)
+                } else {
+                    None
+                };
+                if let Some(pipe) = moved {
+                    live.0(&pipe.tail(LIVE_LINES));
+                }
+                told = (std::time::Instant::now(), out, err);
+            }
+        }
         if cancel.is_cancelled() {
             kill_group(pgid);
             let _ = child.kill();
@@ -199,6 +235,29 @@ struct Drain {
 }
 
 impl Drain {
+    /// Bytes read so far.
+    fn len(&self) -> usize {
+        self.buf.lock().map(|b| b.len()).unwrap_or(0)
+    }
+
+    /// The last `n` non-empty lines read so far. A line still being written
+    /// counts: a progress bar never ends its line.
+    fn tail(&self, n: usize) -> Vec<String> {
+        let bytes = self.buf.lock().map(|b| {
+            let from = b.len().saturating_sub(4096);
+            b[from..].to_vec()
+        });
+        let text = String::from_utf8_lossy(&bytes.unwrap_or_default()).into_owned();
+        let mut lines: Vec<String> = text
+            .split(['\n', '\r'])
+            .map(str::trim_end)
+            .filter(|l| !l.trim().is_empty())
+            .map(str::to_string)
+            .collect();
+        let from = lines.len().saturating_sub(n);
+        lines.split_off(from)
+    }
+
     /// What was read by `deadline`, and whether the pipe was still open.
     fn collect(self, deadline: std::time::Instant) -> (String, bool) {
         let wait = deadline.saturating_duration_since(std::time::Instant::now());
@@ -263,6 +322,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let cancel = Cancel::new();
         let ctx = ToolContext {
+            live: None,
             workspace: dir.path().to_path_buf(),
             notes_dir: dir.path().to_path_buf(),
             role: Role::Builder,
@@ -328,6 +388,32 @@ mod tests {
     }
 
     /// Output past the pipe buffer (64 KiB) must not stall until the timeout.
+    /// A test run's output reaches the board while it runs, not only when
+    /// it ends.
+    #[test]
+    fn output_is_passed_on_while_the_command_runs() {
+        let dir = TempDir::new().unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Vec<String>>::new()));
+        let sink = seen.clone();
+        let live = LiveOutput(std::sync::Arc::new(move |tail: &[String]| {
+            sink.lock().unwrap().push(tail.to_vec());
+        }));
+        let run = run_command_live(
+            "for i in 1 2 3 4; do echo test $i ... ok; sleep 0.3; done",
+            dir.path(),
+            Duration::from_secs(10),
+            &Cancel::new(),
+            Some(&live),
+        )
+        .unwrap();
+        assert!(matches!(run, Run::Ok(_)));
+        let seen = seen.lock().unwrap();
+        // Several updates, the first before the command was done.
+        assert!(seen.len() >= 2, "{seen:?}");
+        assert!(!seen[0].iter().any(|l| l.contains("test 4")), "{seen:?}");
+        assert!(seen.iter().all(|t| t.len() <= LIVE_LINES), "{seen:?}");
+    }
+
     #[test]
     fn large_output_does_not_block() {
         let (r, took) = run("head -c 1000000 /dev/zero | tr '\\0' x", 20);

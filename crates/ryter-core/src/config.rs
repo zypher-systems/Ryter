@@ -170,7 +170,7 @@ pub struct UiConfig {
     pub reasoning: String,
     /// Enable mouse capture (wheel scroll, card clicks).
     pub mouse: bool,
-    /// Info panel visible at startup.
+    /// The info panel (classic layout) or the rail (ledger), at startup.
     pub panel: bool,
     /// `auto` | `truecolor` | `256` | `16`.
     pub colors: String,

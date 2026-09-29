@@ -873,6 +873,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         book: PriceBook::from_config(b.cfg),
         session: b.session,
         ctx: ToolContext {
+            live: None,
             workspace: b.cwd.to_path_buf(),
             notes_dir: notes,
             role,

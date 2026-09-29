@@ -4,6 +4,11 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.7.0 (`feat/0.7.0`) — live lanes and the rail.** Chosen from eight designs on the canvas: C1 for crew, S2 for solo.
+  - **Engine:** specialists send `SubagentLive` while they stream: waiting, thinking, writing, or running, with the output's last three lines. Reports are throttled to 200 ms, and a change of phase is sent at once. `bash` passes its newest output through `ToolContext.live`.
+  - **Board:** a card per worker with a chip, a meter and the output tail; a PULSE tile; spend in the last minute; `^r` hides reasoning. Cards shrink to fit.
+  - **Solo:** a rail with the name, the session, the hat as a colour block, the model and context, spend by turn, and the last turn's files. The prompt is boxed in the hat's colour. `^b` and `[ui] panel` drive it.
+  - Found when a crew run sat still for ten minutes while its architect thought, and the solo screen had no name and the costs at the bottom.
 - **0.6.5 (`fix/0.6.5`) — only models the account can use.** OpenRouter's models come from `/models/user`, which applies the account's privacy settings, provider rules, and guardrails, with tools filtered client-side. The full tool list is the fallback.
   - Before a crew run, `Agent::refused_seats` asks each connection's `Provider::refused` about the seats it will call: in the catalog but not on the account's list. A refused seat pauses the crew before anyone is paid.
   - An auditor whose provider fails is `SignOff::Unreachable`, and the task keeps its branch. Any non-cancel failure after the builder committed keeps it too.

@@ -77,6 +77,22 @@ pub struct ToolContext {
     pub allowed: Arc<Mutex<std::collections::HashSet<String>>>,
     /// `[features] web`.
     pub web: bool,
+    /// Where a running command's output goes as it arrives: the crew board's
+    /// lane. `None` where only the result matters.
+    pub live: Option<LiveOutput>,
+}
+
+/// Takes a running command's latest output lines.
+pub type LiveSink = dyn Fn(&[String]) + Send + Sync;
+
+/// A running command's latest output lines, as they arrive.
+#[derive(Clone)]
+pub struct LiveOutput(pub Arc<LiveSink>);
+
+impl std::fmt::Debug for LiveOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LiveOutput")
+    }
 }
 
 /// Marks a permission prompt for a write outside the project. The TUI shows
@@ -664,6 +680,7 @@ mod tests {
         let notes = root.join(".ryter-notes");
         std::fs::create_dir_all(&notes).unwrap();
         ToolContext {
+            live: None,
             workspace: root.to_path_buf(),
             notes_dir: notes,
             role,

@@ -183,6 +183,7 @@ async fn run_inner(task: &BenchTask, env: &BenchEnv, result: &mut BenchResult) -
         provider: env.provider.clone(),
         book: PriceBook::from_config(&env.cfg),
         ctx: ToolContext {
+            live: None,
             workspace: work.clone(),
             notes_dir: session.notes_dir(),
             role: Role::Orchestrator,

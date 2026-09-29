@@ -26,6 +26,14 @@ pub fn handle(view: &mut View, key: KeyEvent) -> Action {
                 view.panel_visible = !view.panel_visible;
                 return Action::None;
             }
+            // On the crew board, the lanes' reasoning; elsewhere the
+            // reasoning pane.
+            KeyAction::ToggleReasoning
+                if crate::crewboard::shown(view) && !view.crew.is_empty() =>
+            {
+                view.lanes_hide_reasoning = !view.lanes_hide_reasoning;
+                return Action::None;
+            }
             KeyAction::ToggleReasoning => {
                 view.activity.toggle();
                 return Action::None;

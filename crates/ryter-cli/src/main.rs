@@ -484,6 +484,7 @@ async fn run_prompt(
         book: PriceBook::from_config(&cfg),
         session,
         ctx: ToolContext {
+            live: None,
             workspace: cwd.clone(),
             notes_dir: notes,
             role,
@@ -1024,6 +1025,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
         book: PriceBook::from_config(&cfg),
         session,
         ctx: ToolContext {
+            live: None,
             workspace: cwd.clone(),
             notes_dir: notes,
             role: Role::Orchestrator,
@@ -1149,6 +1151,7 @@ fn serve_host_from_config(
         book: PriceBook::from_config(cfg),
         session,
         ctx: ToolContext {
+            live: None,
             workspace: cwd.to_path_buf(),
             notes_dir: notes,
             role: Role::Orchestrator,

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::cancel::Cancel;
 use crate::error::{Error, Result};
-use crate::event::AgentEvent;
+use crate::event::{AgentEvent, LivePhase};
 use crate::git;
 use crate::ids::SubagentId;
 use crate::llm::{CompletionRequest, Provider, StreamDelta};
@@ -369,6 +369,7 @@ async fn build_inner(
         last_text: None,
     };
     let ctx = ToolContext {
+        live: None,
         workspace: wt.to_path_buf(),
         notes_dir: scratch.to_path_buf(),
         role: Role::Builder,
@@ -818,6 +819,7 @@ pub async fn land_patch(job: &BuildJob<'_>, patch: &crate::session::Patch) -> Re
         spent: Default::default(),
     };
     let ctx = ToolContext {
+        live: None,
         workspace: wt.to_path_buf(),
         notes_dir: scratch.clone(),
         role: Role::Builder,
@@ -1068,6 +1070,7 @@ async fn audit(
         )
     };
     let audit_ctx = ToolContext {
+        live: None,
         role: Role::Auditor,
         ..ctx.clone()
     };
@@ -1237,6 +1240,7 @@ pub async fn run_note_task(
     // It used to be a throwaway queue at `<repo>/tasks.json`: the tasks never
     // reached a builder, and the file landed in the user's project.
     let ctx = ToolContext {
+        live: None,
         workspace: workspace.to_path_buf(),
         notes_dir,
         role,
@@ -1404,6 +1408,222 @@ impl Progress {
             });
         }
     }
+
+    /// Tell the board what the specialist is doing this moment. Not logged:
+    /// it comes several times a second.
+    fn live(
+        &self,
+        role: Role,
+        phase: LivePhase,
+        target: &str,
+        tokens: u64,
+        lines: u32,
+        tail: Vec<String>,
+    ) {
+        if let Some(sink) = &self.sink {
+            let _ = sink.send(AgentEvent::SubagentLive {
+                id: self.id.clone(),
+                role,
+                phase,
+                target: target.to_string(),
+                tokens,
+                lines,
+                tail,
+            });
+        }
+    }
+}
+
+/// How often a streaming step is reported, at most. A change of what it is
+/// doing is reported at once.
+const LIVE_EVERY: std::time::Duration = std::time::Duration::from_millis(200);
+/// Lines of what a specialist is producing that the board shows.
+const LIVE_TAIL: usize = 3;
+/// Bytes of reasoning or reply kept for the tail.
+const LIVE_KEEP: usize = 2000;
+
+/// One model step of a specialist, as the board sees it while it streams:
+/// waiting for the first byte, thinking, writing a reply or a tool call.
+struct LiveStep<'a> {
+    progress: Option<&'a Progress>,
+    role: Role,
+    sent: Option<(std::time::Instant, LivePhase, String)>,
+    chars: usize,
+    reasoning: String,
+    text: String,
+}
+
+impl<'a> LiveStep<'a> {
+    /// A request went out: waiting until something comes back.
+    fn start(progress: Option<&'a Progress>, role: Role) -> Self {
+        let mut s = Self {
+            progress,
+            role,
+            sent: None,
+            chars: 0,
+            reasoning: String::new(),
+            text: String::new(),
+        };
+        s.report(LivePhase::Waiting, String::new(), 0, Vec::new());
+        s
+    }
+
+    fn reasoning(&mut self, t: &str) {
+        self.chars += t.len();
+        keep_tail(&mut self.reasoning, t);
+        if self.due(LivePhase::Thinking) {
+            let tail = tail_lines(&self.reasoning, LIVE_TAIL);
+            self.report(LivePhase::Thinking, String::new(), 0, tail);
+        }
+    }
+
+    fn text(&mut self, t: &str) {
+        self.chars += t.len();
+        keep_tail(&mut self.text, t);
+        if self.due(LivePhase::Writing) {
+            let tail = tail_lines(&self.text, LIVE_TAIL);
+            self.report(LivePhase::Writing, "its reply".into(), 0, tail);
+        }
+    }
+
+    /// A tool call is arriving: what it is on, and for a file being
+    /// written, the file so far. Read only when a report is due: a long
+    /// edit arrives in thousands of fragments.
+    fn call(&mut self, fragment: &str, calls: &crate::llm::ToolCallAccumulator) {
+        self.chars += fragment.len();
+        if !self.due(LivePhase::Writing) {
+            return;
+        }
+        let Some(call) = calls.last() else {
+            return;
+        };
+        let (target, body) = partial_call(&call.name, &call.arguments);
+        let lines = body.as_deref().map_or(0, |b| b.lines().count() as u32);
+        let tail = body.map(|b| tail_lines(&b, LIVE_TAIL)).unwrap_or_default();
+        self.report(LivePhase::Writing, target, lines, tail);
+    }
+
+    /// A change of phase is reported at once, anything else at most every
+    /// [`LIVE_EVERY`].
+    fn due(&self, phase: LivePhase) -> bool {
+        self.progress.is_some()
+            && self
+                .sent
+                .as_ref()
+                .is_none_or(|(at, ph, _)| *ph != phase || at.elapsed() >= LIVE_EVERY)
+    }
+
+    fn report(&mut self, phase: LivePhase, target: String, lines: u32, tail: Vec<String>) {
+        let Some(p) = self.progress else {
+            return;
+        };
+        // A rough count, about four characters a token: usage arrives only
+        // when the step ends.
+        let tokens = (self.chars / 4) as u64;
+        p.live(self.role, phase, &target, tokens, lines, tail);
+        self.sent = Some((std::time::Instant::now(), phase, target));
+    }
+}
+
+/// Report a tool about to run, and give it a context whose command output
+/// goes to the board as it arrives.
+fn running_tool(
+    progress: Option<&Progress>,
+    role: Role,
+    target: &str,
+    ctx: &ToolContext,
+) -> ToolContext {
+    let mut ctx = ctx.clone();
+    if let Some(p) = progress {
+        p.live(role, LivePhase::Running, target, 0, 0, Vec::new());
+        let (p, target) = (p.clone(), target.to_string());
+        ctx.live = Some(crate::tools::LiveOutput(std::sync::Arc::new(
+            move |tail: &[String]| {
+                p.live(role, LivePhase::Running, &target, 0, 0, tail.to_vec());
+            },
+        )));
+    }
+    ctx
+}
+
+/// Append `t`, keeping about the last [`LIVE_KEEP`] bytes.
+fn keep_tail(buf: &mut String, t: &str) {
+    buf.push_str(t);
+    if buf.len() > 2 * LIVE_KEEP {
+        let mut cut = buf.len() - LIVE_KEEP;
+        while !buf.is_char_boundary(cut) {
+            cut += 1;
+        }
+        buf.drain(..cut);
+    }
+}
+
+/// The last `n` non-blank lines of `text`, the line still being written
+/// included.
+fn tail_lines(text: &str, n: usize) -> Vec<String> {
+    let mut lines: Vec<String> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.trim_end().to_string())
+        .collect();
+    let from = lines.len().saturating_sub(n);
+    lines.split_off(from)
+}
+
+/// What a tool call still arriving is on (`edit src/ui.rs`), and for a file
+/// being written, its text so far.
+fn partial_call(name: &str, args: &str) -> (String, Option<String>) {
+    let mut known = serde_json::Map::new();
+    for key in [
+        "path",
+        "target_file",
+        "command",
+        "pattern",
+        "query",
+        "url",
+        "name",
+        "question",
+    ] {
+        if let Some(v) = partial_str(args, key) {
+            known.insert(key.into(), serde_json::Value::String(v));
+        }
+    }
+    let target = crate::agent::tool_summary(name, &serde_json::Value::Object(known));
+    let body = match name {
+        "write" => partial_str(args, "content"),
+        "search_replace" => partial_str(args, "new_string"),
+        _ => None,
+    };
+    (target, body)
+}
+
+/// The string value of `key` in JSON still arriving: as much of it as has
+/// come, unescaped. `None` until the value has started.
+fn partial_str(json: &str, key: &str) -> Option<String> {
+    let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
+    let rest = json[at..].trim_start().strip_prefix(':')?.trim_start();
+    let mut chars = rest.strip_prefix('"')?.chars();
+    let mut out = String::new();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => break,
+            '\\' => match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => {}
+                Some('u') => {
+                    let hex: String = chars.by_ref().take(4).collect();
+                    if let Some(ch) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                        out.push(ch);
+                    }
+                }
+                Some(other) => out.push(other),
+                None => break,
+            },
+            other => out.push(other),
+        }
+    }
+    Some(out)
 }
 
 /// Tool rounds and output ceiling per role. A builder writing a whole file puts
@@ -1462,6 +1682,7 @@ pub(crate) async fn run_specialist(
         if ctx.cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
+        let mut live = LiveStep::start(bill.progress, role);
         // A limit is kept before each step: price the step from what will
         // be sent, stop if it doesn't fit, and write up while one still does.
         if let Some(limit) = bill.wrap_up_usd {
@@ -1542,12 +1763,19 @@ pub(crate) async fn run_specialist(
                 break;
             };
             match d? {
-                StreamDelta::Text(t) => text.push_str(&t),
+                StreamDelta::Text(t) => {
+                    live.text(&t);
+                    text.push_str(&t);
+                }
+                StreamDelta::Reasoning(t) => live.reasoning(&t),
                 StreamDelta::ToolCall {
                     id,
                     name,
                     arguments,
-                } => calls.push(&id, &name, &arguments),
+                } => {
+                    calls.push(&id, &name, &arguments);
+                    live.call(&arguments, &calls);
+                }
                 StreamDelta::Usage(u) => usage = usage.merge(u),
                 StreamDelta::ReportedCost(c) => reported = Some(c),
                 StreamDelta::Truncated => truncated = true,
@@ -1597,7 +1825,9 @@ pub(crate) async fn run_specialist(
             for call in &calls {
                 let parsed: serde_json::Value =
                     serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
-                let out = run_tool(&call.name, parsed, ctx).await?;
+                let target = crate::agent::tool_summary(&call.name, &parsed);
+                let tool_ctx = running_tool(bill.progress, role, &target, ctx);
+                let out = run_tool(&call.name, parsed, &tool_ctx).await?;
                 messages.push(crate::llm::Message {
                     role: "tool".into(),
                     content: out.text,
@@ -1640,10 +1870,12 @@ pub(crate) async fn run_specialist(
             }
             let parsed: serde_json::Value =
                 serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+            let target = crate::agent::tool_summary(&call.name, &parsed);
             if let Some(p) = bill.progress {
-                p.say(role, crate::agent::tool_summary(&call.name, &parsed));
+                p.say(role, target.clone());
             }
-            let out = run_tool(&call.name, parsed, ctx).await?;
+            let tool_ctx = running_tool(bill.progress, role, &target, ctx);
+            let out = run_tool(&call.name, parsed, &tool_ctx).await?;
             messages.push(crate::llm::Message {
                 role: "tool".into(),
                 content: out.text,
@@ -2571,6 +2803,114 @@ mod tests {
             "{said:?}"
         );
         assert!(said.iter().any(|t| t.contains("reviewing")), "{said:?}");
+    }
+
+    /// Between tool calls the board used to show nothing, for minutes. Now
+    /// each step says what it is doing as it streams: waiting, thinking with
+    /// its reasoning, writing a file with the file so far, running a tool.
+    #[tokio::test]
+    async fn specialists_report_live_what_they_are_doing() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            vec![
+                StreamDelta::Reasoning(
+                    "The panel needs the elapsed time.\nI'll add a gauge.".into(),
+                ),
+                StreamDelta::ToolCall {
+                    id: "w".into(),
+                    name: "write".into(),
+                    arguments: r#"{"path":"src/ui.rs","content":"fn draw() {\n"#.into(),
+                },
+                StreamDelta::ToolCall {
+                    id: String::new(),
+                    name: String::new(),
+                    arguments: r#"    let g = gauge();\n}\n"}"#.into(),
+                },
+                StreamDelta::Done,
+            ],
+            say("STATUS: DONE"),
+            say("VERDICT: PASS"),
+        ]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let panel = vec![seat(&p, "auditor-m", "", &[])];
+        let meter = Meter::new(
+            crate::spend::PriceBook::new(),
+            crate::meter::Caps::default(),
+        );
+        let job = BuildJob {
+            provider: p.clone(),
+            model: "m",
+            connection: "c",
+            auditors: &panel,
+            meter: &meter,
+            repo: f.repo.path(),
+            home: f.home.path(),
+            session_id: "sess0001",
+            project_root: None,
+            trusted: false,
+            always_approve: true,
+            web: false,
+            auditor_enabled: true,
+            checks: &[],
+            check_timeout: std::time::Duration::from_secs(30),
+            max_retries: 0,
+            hooks: None,
+            cancel: Cancel::new(),
+            progress: Some(Progress {
+                sink: Some(tx),
+                id: crate::queue::new_sub_id(),
+                log: None,
+            }),
+        };
+        run_build_task(&job, &task("t1", "x")).await.unwrap();
+        let live: Vec<(LivePhase, String, u32, Vec<String>)> = rx
+            .try_iter()
+            .filter_map(|e| match e {
+                AgentEvent::SubagentLive {
+                    phase,
+                    target,
+                    lines,
+                    tail,
+                    ..
+                } => Some((phase, target, lines, tail)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(live[0].0, LivePhase::Waiting, "{live:?}");
+        assert!(
+            live.iter()
+                .any(|(ph, _, _, tail)| *ph == LivePhase::Thinking
+                    && tail.last().is_some_and(|l| l.contains("add a gauge"))),
+            "{live:?}"
+        );
+        assert!(
+            live.iter()
+                .any(|(ph, target, _, tail)| *ph == LivePhase::Writing
+                    && target == "edit src/ui.rs"
+                    && tail.first().is_some_and(|l| l.contains("fn draw"))),
+            "{live:?}"
+        );
+        assert!(
+            live.iter()
+                .any(|(ph, target, ..)| *ph == LivePhase::Running && target == "edit src/ui.rs"),
+            "{live:?}"
+        );
+    }
+
+    #[test]
+    fn a_tool_call_still_arriving_is_read_as_far_as_it_goes() {
+        let (target, body) = partial_call(
+            "search_replace",
+            r#"{"path":"src/ui.rs","old_string":"x","new_string":"fn a() {\n    let t = \"é\u00e9\";\n    le"#,
+        );
+        assert_eq!(target, "edit src/ui.rs");
+        let body = body.unwrap();
+        assert_eq!(body, "fn a() {\n    let t = \"éé\";\n    le");
+        assert_eq!(tail_lines(&body, 2), ["    let t = \"éé\";", "    le"]);
+        let (target, body) = partial_call("bash", r#"{"command":"cargo te"#);
+        assert_eq!((target.as_str(), body), ("bash cargo te", None));
+        // Before the value starts there is nothing to show.
+        assert_eq!(partial_str(r#"{"path":"#, "path"), None);
     }
 
     /// Live run 2 committed an auditor's probe test and __pycache__ files.
