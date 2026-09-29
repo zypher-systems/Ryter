@@ -791,7 +791,7 @@ impl Agent {
                  OpenRouter gives these models no provider under the account's settings \
                  (zero data retention, provider rules, or guardrails), so the first call to \
                  one fails, after the seats before it have been paid. Give the seat another \
-                 model in /crew, or change the settings at \
+                 model in /models, or change the settings at \
                  https://openrouter.ai/settings/privacy. The tasks stay queued."
             );
             self.emit(AgentEvent::Error {
@@ -2435,7 +2435,7 @@ The auditor is off, so the patch stays on `{}`.
         format!(
             "Task {task} has been rejected {total} times in all with builder {short} \
              (${spent:.2} spent on it). More rounds of the same model rarely get past \
-             that: choose a stronger builder in /crew → builder before it runs again."
+             that: choose a stronger builder in /models → builder before it runs again."
         )
     }
 
@@ -3268,7 +3268,7 @@ mod tests {
         assert!(report.contains("### t1: rejected 3 times"), "{report}");
         assert!(
             report.contains("rejected 3 times in all with builder grok-4.6")
-                && report.contains("choose a stronger builder in /crew → builder")
+                && report.contains("choose a stronger builder in /models → builder")
                 && report.contains("don't pick one for them")
                 && !report.contains("Try "),
             "{report}"
@@ -3276,7 +3276,7 @@ mod tests {
         let events: Vec<AgentEvent> = rx.try_iter().collect();
         assert!(events.iter().any(|e| matches!(
             e,
-            AgentEvent::Notice { message } if message.contains("in /crew → builder")
+            AgentEvent::Notice { message } if message.contains("in /models → builder")
         )));
         assert!(events.iter().any(|e| matches!(
             e,

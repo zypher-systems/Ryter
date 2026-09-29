@@ -9,7 +9,7 @@ use crate::action::Action;
 use crate::activity::SPINNER;
 use crate::chat::{short_model, wrap};
 use crate::theme::Theme;
-use crate::view::View;
+use crate::view::{CREW_ROLES, View};
 
 /// Sort order (`R-POP-26`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,8 +84,12 @@ pub struct Models {
     pub items: Vec<ModelInfo>,
     /// Waiting for `ModelsListed`.
     pub loading: bool,
-    /// `Some(role)` when opened from `/crew` (`R-POP-28`).
+    /// The tab on screen: `None` is the lead (the solo model in solo
+    /// mode), `Some(role)` a crew role. `←→` moves between them.
     pub assign_role: Option<String>,
+    /// Every connection's models were asked for (a role tab lists them all;
+    /// the lead's tab lists its connection's).
+    crew_listed: bool,
     /// `Some` when choosing the second-opinion reviewer.
     pub review: Option<ReviewPick>,
     /// Why the last Enter did nothing.
@@ -103,26 +107,25 @@ impl Models {
             .find(|c| c.name == view.connection)
             .map(|c| c.kind.clone())
             .unwrap_or_default();
-        let mut items = Vec::new();
-        if assign_role.is_some() {
-            items.push(default_row(&view.connection));
-            for c in view.connections.clone() {
-                if !c.has_key && c.name != view.connection {
-                    continue;
-                }
-                let mut fb = crate::view::fallback_models(&c.kind, &c.model);
-                for m in &mut fb {
-                    m.connection = Some(c.name.clone());
-                }
-                items.extend(fb);
+        let _ = kind;
+        // Every tab's rows: the lead's tab shows its connection's, a role's
+        // tab all of them and `default` (follows the lead).
+        let mut items = vec![default_row(&view.connection)];
+        for c in view.connections.clone() {
+            if !c.has_key && c.name != view.connection {
+                continue;
             }
-        } else {
-            items.extend(crate::view::fallback_models(&kind, &view.model));
+            let mut fb = crate::view::fallback_models(&c.kind, &c.model);
+            for m in &mut fb {
+                m.connection = Some(c.name.clone());
+            }
+            items.extend(fb);
         }
         view.composer.clear();
         let mut p = Self {
             items,
             loading: true,
+            crew_listed: assign_role.is_some(),
             assign_role,
             review: None,
             refusal: None,
@@ -182,8 +185,22 @@ impl Models {
                 {
                     return false;
                 }
+                // The lead's tab: its connection's models, no `default`.
+                if self.review.is_none() && self.assign_role.is_none() {
+                    if m.id.is_empty() {
+                        return false;
+                    }
+                    if m.connection
+                        .as_deref()
+                        .is_some_and(|c| c != view.connection)
+                    {
+                        return false;
+                    }
+                }
+                // `default` stays unless the filter rules it out: typing a
+                // model's name and pressing enter picked `default` above it.
                 if m.id.is_empty() {
-                    return true;
+                    return f.is_empty() || "default follows the lead".contains(&f);
                 }
                 if f.is_empty() {
                     return true;
@@ -228,7 +245,7 @@ impl Models {
     pub fn set_models(&mut self, view: &View, models: &[ModelInfo]) {
         if !models.is_empty() {
             let mut v = Vec::new();
-            if self.assign_role.is_some() && self.review.is_none() {
+            if self.review.is_none() {
                 v.push(default_row(&view.connection));
             }
             v.extend(models.iter().cloned());
@@ -242,12 +259,126 @@ impl Models {
     /// Put the cursor on the model in use, as the list opens: with hundreds
     /// in a catalog, starting at the top meant scrolling to find it.
     fn select_current(&mut self, view: &View) {
-        if self.review.is_some() || self.assign_role.is_some() || !view.composer.text().is_empty() {
+        if self.review.is_some() || !view.composer.text().is_empty() {
             return;
         }
-        if let Some(i) = self.filtered(view).iter().position(|m| m.id == view.model) {
+        let now = match &self.assign_role {
+            None => view.model.clone(),
+            // A role that follows the lead is on the `default` row.
+            Some(role) => view
+                .specialists
+                .get(role)
+                .filter(|r| r.is_override())
+                .and_then(|r| r.model.clone())
+                .unwrap_or_default(),
+        };
+        if let Some(i) = self.filtered(view).iter().position(|m| m.id == now) {
             self.selected = i;
         }
+    }
+
+    /// The tabs: the lead (the solo model in solo mode), then the roles.
+    fn tabs(view: &View) -> Vec<(Option<&'static str>, String)> {
+        let lead = if view.crew_mode() { "Lead" } else { "Solo" };
+        let mut v = vec![(None, lead.to_string())];
+        for r in CREW_ROLES {
+            let mut label = r.to_string();
+            label[..1].make_ascii_uppercase();
+            v.push((Some(*r), label));
+        }
+        v
+    }
+
+    fn tab(&self) -> usize {
+        match &self.assign_role {
+            None => 0,
+            Some(r) => CREW_ROLES.iter().position(|c| c == r).map_or(0, |i| i + 1),
+        }
+    }
+
+    /// `←→`: the next or previous tab. The first move to a role asks for
+    /// every connection's models.
+    fn switch(&mut self, view: &View, forward: bool) -> Outcome {
+        let n = CREW_ROLES.len() + 1;
+        let t = if forward {
+            (self.tab() + 1) % n
+        } else {
+            (self.tab() + n - 1) % n
+        };
+        self.assign_role = (t > 0).then(|| CREW_ROLES[t - 1].to_string());
+        self.selected = 0;
+        self.refusal = None;
+        self.select_current(view);
+        match &self.assign_role {
+            Some(role) if !self.crew_listed => {
+                self.crew_listed = true;
+                self.loading = true;
+                Outcome::Act(Action::ListCrewModels { role: role.clone() })
+            }
+            _ => Outcome::Stay,
+        }
+    }
+
+    /// Which seats use `id`: `lead`, `arch`, `build`, `audit`.
+    fn used_by(view: &View, id: &str) -> String {
+        let mut who = Vec::new();
+        if id == view.model {
+            who.push("lead");
+        }
+        for (role, short) in [
+            ("architect", "arch"),
+            ("builder", "build"),
+            ("auditor", "audit"),
+        ] {
+            let own = view
+                .specialists
+                .get(role)
+                .filter(|r| r.is_override())
+                .and_then(|r| r.model.as_deref());
+            if own == Some(id) {
+                who.push(short);
+            }
+        }
+        who.join(" ")
+    }
+
+    /// The tabs row and what the tab's seat runs on now.
+    fn header(&self, view: &View, theme: Theme) -> Vec<Line<'static>> {
+        let on = self.tab();
+        let mut spans = vec![Span::styled(" ", theme.panel_muted())];
+        for (i, (_, label)) in Self::tabs(view).into_iter().enumerate() {
+            if i == on {
+                spans.push(Span::styled(
+                    format!("‹ {label} ›"),
+                    theme
+                        .on_panel(theme.accent)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                ));
+            } else {
+                spans.push(Span::styled(format!("  {label}  "), theme.panel_muted()));
+            }
+            spans.push(Span::styled(" ", theme.panel_muted()));
+        }
+        spans.push(Span::styled("  ←→", theme.on_panel(theme.accent)));
+        let now = match &self.assign_role {
+            None => view.model.clone(),
+            Some(role) => match view
+                .specialists
+                .get(role)
+                .filter(|r| r.is_override())
+                .and_then(|r| r.model.clone())
+            {
+                Some(m) => m,
+                None => format!("follows the lead ({})", short_model(&view.model)),
+            },
+        };
+        vec![
+            Line::from(spans),
+            Line::from(vec![
+                Span::styled(" now: ", theme.panel_muted()),
+                Span::styled(now, theme.on_panel(theme.fg)),
+            ]),
+        ]
     }
 }
 
@@ -277,8 +408,7 @@ impl Panel for Models {
                 _,
             ) => "audit · your limit".into(),
             (Some(_), _) => "audit · who audits?".into(),
-            (None, Some(r)) => format!("model for {r}"),
-            (None, None) => "models".into(),
+            (None, _) => "models".into(),
         }
     }
 
@@ -299,7 +429,10 @@ impl Panel for Models {
                 chosen: Some(_), ..
             }) => "type dollars · enter save · esc back".into(),
             Some(_) => "↑↓ move · enter choose · s sort · esc close".into(),
-            None => "↑↓ move · enter select · tab reasoning · s sort · esc close".into(),
+            None => {
+                "↑↓ move · enter set · ←→ role · tab reasoning · b guided setup · s sort · esc close"
+                    .into()
+            }
         }
     }
 
@@ -322,12 +455,12 @@ impl Panel for Models {
         }
         let w = usize::from(width);
         let h = usize::from(height);
-        let rows_h = h.saturating_sub(3).max(1); // header + footer
+        let rows_h = h.saturating_sub(5).max(1); // tabs, now, header, footer
         let list = self.filtered(view);
         let n = list.len();
         let sel = self.selected.min(n.saturating_sub(1));
         let first = super::window(sel, n, rows_h);
-        let mut lines: Vec<Line<'static>> = Vec::new();
+        let mut lines: Vec<Line<'static>> = self.header(view, theme);
         let rows: Vec<Vec<String>> = list
             .iter()
             .skip(first)
@@ -341,14 +474,11 @@ impl Panel for Models {
                         String::new(),
                         String::new(),
                         m.connection.clone().unwrap_or_default(),
+                        String::new(),
                     ];
                 }
-                let mut id = m.id.clone();
-                if m.id == view.model && self.assign_role.is_none() {
-                    id.push_str("  ●");
-                }
                 vec![
-                    id,
+                    m.id.clone(),
                     m.context_length
                         .map(format_tokens)
                         .unwrap_or_else(|| "?".into()),
@@ -358,6 +488,7 @@ impl Panel for Models {
                     m.connection
                         .clone()
                         .unwrap_or_else(|| view.connection.clone()),
+                    Self::used_by(view, &m.id),
                 ]
             })
             .collect();
@@ -377,6 +508,7 @@ impl Panel for Models {
                 "out/M",
                 "reasoning",
                 "connection",
+                "used by",
             ],
             &rows,
             &[
@@ -384,6 +516,7 @@ impl Panel for Models {
                 widgets::Al::R,
                 widgets::Al::R,
                 widgets::Al::R,
+                widgets::Al::L,
                 widgets::Al::L,
                 widgets::Al::L,
             ],
@@ -483,6 +616,15 @@ impl Panel for Models {
                 self.sort = self.sort.next();
                 Outcome::Stay
             }
+            KeyCode::Left => self.switch(view, false),
+            KeyCode::Right => self.switch(view, true),
+            // The guided crew setup, one key away.
+            KeyCode::Char('b') if view.composer.is_empty() => Outcome::PushAct(
+                Box::new(super::crew_builder::CrewBuilder::new(view, false)),
+                Action::ListCrewModels {
+                    role: String::new(),
+                },
+            ),
             // Tab / Shift+Tab: how hard this model reasons, wherever it runs.
             KeyCode::Tab | KeyCode::BackTab => {
                 let Some(m) = self
@@ -537,7 +679,7 @@ impl Panel for Models {
         if self.review.is_some() {
             (96, 20)
         } else {
-            (84, 18)
+            (104, 22)
         }
     }
 
@@ -786,6 +928,90 @@ mod tests {
 
     fn key(p: &mut Models, v: &mut View, code: KeyCode) -> Outcome {
         p.key(KeyEvent::new(code, KeyModifiers::NONE), v)
+    }
+
+    /// `/models` is where every model is chosen: `←→` moves from the lead to
+    /// each crew role, the first move asks for every connection's models,
+    /// and `⏎` sets the model of the role on screen. It used to take `/crew`
+    /// twice to reach a role's model.
+    #[test]
+    fn models_has_a_tab_per_role() {
+        let mut v = View::new(
+            ryter_core::Phase::Build,
+            "openrouter".into(),
+            "x-ai/grok-4.7".into(),
+            "/tmp".into(),
+        );
+        v.specialists.insert(
+            "auditor".into(),
+            ryter_core::RoleModel {
+                connection: Some("openrouter".into()),
+                model: Some("qwen/qwen3.7-max".into()),
+            },
+        );
+        let mut p = Models::new(&mut v, None);
+        let models = [
+            row("x-ai/grok-4.7", "openrouter", Some((2.0, 6.0))),
+            row("qwen/qwen3.7-max", "openrouter", Some((1.6, 6.4))),
+            row("minimax/minimax-m2.7", "openrouter", Some((0.3, 1.2))),
+            row("grok-4.6", "spacexai", Some((2.0, 6.0))),
+        ];
+        p.set_models(&v, &models);
+        let text = |p: &Models, v: &View| {
+            p.render(v, 104, 20, Theme::truecolor_dark())
+                .lines
+                .iter()
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| s.content.as_ref())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        // The lead's tab: its connection's models, no `default`, who uses what.
+        let t = text(&p, &v);
+        assert!(
+            t.contains("‹ Solo ›") && t.contains("now: x-ai/grok-4.7"),
+            "{t}"
+        );
+        assert!(!t.contains("grok-4.6") && !t.contains("default"), "{t}");
+        assert!(t.contains("audit"), "{t}");
+        // → the architect: every connection's models are asked for once.
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Right),
+            Outcome::Act(Action::ListCrewModels { role }) if role == "architect"
+        ));
+        let t = text(&p, &v);
+        assert!(
+            t.contains("‹ Architect ›") && t.contains("now: follows the lead (grok-4.7)"),
+            "{t}"
+        );
+        // → the builder: the list is already here.
+        assert!(matches!(key(&mut p, &mut v, KeyCode::Right), Outcome::Stay));
+        p.set_models(&v, &models);
+        assert!(
+            text(&p, &v).contains("grok-4.6"),
+            "all connections for a role"
+        );
+        // ⏎ sets the builder, not the lead.
+        v.composer.set_text("minimax");
+        let out = key(&mut p, &mut v, KeyCode::Enter);
+        assert!(matches!(
+            &out,
+            Outcome::CloseAct(Action::SetCrewRole { role, model, .. })
+                if role == "builder" && model == "minimax/minimax-m2.7"
+        ));
+        // ← from the lead wraps to the auditor, which opens on its model.
+        let mut p = Models::new(&mut v, None);
+        p.set_models(&v, &models);
+        key(&mut p, &mut v, KeyCode::Left);
+        let t = text(&p, &v);
+        assert!(
+            t.contains("‹ Auditor ›") && t.contains("now: qwen/qwen3.7-max"),
+            "{t}"
+        );
     }
 
     /// The chooser: every catalog model but the one doing the work, each

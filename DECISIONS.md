@@ -2,6 +2,17 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-29 — Every model is chosen in /models; /crew only switches the mode
+- **By:** lead
+- **Decision:**
+  - `/models` has a tab per seat: the lead (`Solo` in solo mode), architect, builder and auditor (`Models.assign_role`, `←→`). The lead's tab lists its connection's models. A role's tab lists every connection's models and `default`, and the first move there sends `ListCrewModels`.
+  - Each tab says what its seat runs on now, and a `used by` column marks the seats. `⏎` sets the seat's model, `Tab` its reasoning, and `b` opens the crew builder.
+  - `/crew` switches to crew mode. In crew mode it says where the models are. The old crew panel is `/crews`: the ready-made crews, presets, and roles.
+  - Every message that said `/crew` for a model now says `/models`.
+- **Chosen vs rejected:** the user picked role tabs in `/models` over a separate `/seats` command, and over keeping `/crew` for settings with a key for the mode. The first tab reads `Solo` in solo mode and `Lead` in crew mode, where the sketch said `Lead` in both: in solo mode there is no lead.
+- **Why:** "to change the models you have to use /crew models and that is not clear." In solo mode `/crew` switched the mode, and in crew mode it opened the settings. 0.7.1's advice to choose a stronger builder would have switched the user's mode.
+- **Where:** `crates/ryter-tui/src/panel/models.rs`, `palette/registry.rs` (`run_crew`, `/crews`), `panel/crew.rs` (title), messages in `crew.rs`, `agent.rs`, `run/actions.rs`, `panel/crew_builder.rs`, `ryter-cli`
+
 ### 2026-09-29 — A task's cap asks; a stopped task resumes where it was
 - **By:** lead
 - **Decision:**

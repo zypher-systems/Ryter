@@ -30,7 +30,7 @@ SpaceXAI and OpenRouter are compiled in as equals. Other OpenAI-compatible or An
 
 Credential order per connection: TOML `api_key` → `env_key` → the stored key → well-known env (`OPENROUTER_API_KEY`, `XAI_API_KEY`).
 
-**Reasoning.** Each model has a reasoning level you choose: **Tab** on a model in `/models`, on a role in `/crew`, or on a seat in the crew builder steps it through `auto → low → medium → high → model's own`. The model card shows the level in use (`reasoning  auto · medium`). The choice follows the model into every role that uses it, and is saved to `~/.ryter/reasoning.toml`; `[model_reasoning]` in `config.toml` does the same by hand, keyed by model id.
+**Reasoning.** Each model has a reasoning level you choose: **Tab** on a model in `/models`, on any role's tab in `/models`, or on a seat in the crew builder steps it through `auto → low → medium → high → model's own`. The model card shows the level in use (`reasoning  auto · medium`). The choice follows the model into every role that uses it, and is saved to `~/.ryter/reasoning.toml`; `[model_reasoning]` in `config.toml` does the same by hand, keyed by model id.
 
 **Auto** means Ryter picks by role: `high` for the plan hat and the architect, `medium` for every role that acts. `[reasoning_effort]` overrides that per role (`build`, `plan`, `review`, `lead`, `architect`, `builder`, `auditor`). **Model's own** sends nothing. Beware: with no setting, some models think for minutes before acting. The level is sent only to OpenRouter connections.
 
@@ -106,7 +106,7 @@ Every message is a left-aligned block under a speaker header — your name (from
 
 Type a message and press `Enter`. `Shift+Enter` (or `Alt+Enter`) inserts a newline; paste is bracketed so multi-line text lands in one message. While a turn runs, `Enter` queues the next message. `↑`/`↓` on an empty composer walk prompt history.
 
-`/` (or `^p`) opens the **command palette**: fuzzy-matched, grouped by category, with a description and keybinding column. `Enter` runs the command, `→` opens its panel, `Tab` completes. Every configuration command opens a **panel** — a bordered popout with a title, status, and legend line — and panels stack: `/crew` → pick a role → `/models` opens on top; `Esc` closes one level.
+`/` (or `^p`) opens the **command palette**: fuzzy-matched, grouped by category, with a description and keybinding column. `Enter` runs the command, `→` opens its panel, `Tab` completes. Every configuration command opens a **panel** — a bordered popout with a title, status, and legend line — and panels stack: `/models` → `b` → the crew builder opens on top; `Esc` closes one level.
 
 The **activity strip** shows what the model is doing (`⠙ writing · edit docs/guide.md · 0:34 · 1.2k tok`). Reasoning streams there as a one-line ticker; `^r` expands it to a scrollable pane (`Alt+PgUp`/`Alt+PgDn`). Reasoning is display-only — it is never saved or sent back to a model. `[ui] reasoning = "off"` hides it.
 
@@ -257,7 +257,9 @@ Headless, `ryter -p` runs in build; `--hat plan|review|crew` picks another. Head
 
 ## Crew mode
 
-`/crew` switches to crew mode. The first time, the crew builder opens (below); once a crew is saved, `/crew` switches straight to it, and in crew mode `/crew` opens the crew's settings. `/solo` goes back. In crew mode the right-hand panel adds the tasks and crew cards.
+`/crew` switches to crew mode, and that's all it does. The first time, the crew builder opens (below); once a crew is saved, `/crew` switches straight to it. `/solo` goes back. In crew mode the right-hand panel adds the tasks and crew cards.
+
+**Every model is chosen in `/models`.** It has a tab per seat: the lead (`Solo` in solo mode), architect, builder and auditor, with `←→` to move between them. Each tab says what the seat runs on now, and a `used by` column marks which seats use each model. `⏎` sets the model for the seat on screen, `Tab` its reasoning, and `b` opens the guided crew builder. It works the same in solo and crew mode, so you can set up the crew before you switch to it. **`/crews`** holds the ready-made crews and your saved ones, to preview, apply, save or delete.
 
 ## The lead
 
@@ -281,7 +283,7 @@ Project markdown is loaded from the working tree without a trust gate: `RYTER.md
 
 **Order.** A task can list the tasks it builds on in `after` (`"after": ["scaffold"]`). It starts only once they have landed on the patch, so it branches from their real code. In a project with no build manifest yet (`Cargo.toml`, `package.json`, `pyproject.toml`, `go.mod`, …), the task that creates one runs first and alone, and every other builder task waits for it, whether or not the plan says so. A task whose prerequisite is blocked never starts: the crew report lists what each one waits on, and the lead fixes that task instead of retrying the ones waiting.
 
-Crew roles default to the lead’s current provider and model. Assign a different model per role with `/crew` (Enter on a role, first picker row is `default`). That is also how you split providers. Optional `[specialists.*]` tables in `~/.ryter/config.toml` pin the same overrides.
+Crew roles default to the lead’s current provider and model. Assign a different model per role in `/models` (`←→` to the role; the first row, `default`, follows the lead). That is also how you split providers. Optional `[specialists.*]` tables in `~/.ryter/config.toml` pin the same overrides.
 
 Each builder task:
 
@@ -295,11 +297,11 @@ Each builder task:
 
 Tasks land on a patch branch (`ryter/patch-…`), not yours. When every task in the patch is done and the combined checks pass, the patch lands on your branch as **one commit** (`git revert -m 1` undoes it all). A blocked task holds the patch until you retry or drop it; the lead says what it is waiting on.
 
-Auditors must be different models from the lead and the builder — otherwise builds refuse to start and say how to fix it. Before the crew starts, Ryter checks that your OpenRouter account can use every seat it is about to call (a free lookup). If one is ruled out, say an auditor under zero data retention, nothing runs, the tasks stay queued, and you're told which seat to change. If a model still fails after the builder has finished (the auditor's provider is down, say), the task stops with its work kept on its branch. Assign one in `/crew`, or list a panel under `[[auditor.panel]]` (all must pass; cheapest first; seats may have a `focus` and `paths`).
+Auditors must be different models from the lead and the builder — otherwise builds refuse to start and say how to fix it. Before the crew starts, Ryter checks that your OpenRouter account can use every seat it is about to call (a free lookup). If one is ruled out, say an auditor under zero data retention, nothing runs, the tasks stay queued, and you're told which seat to change. If a model still fails after the builder has finished (the auditor's provider is down, say), the task stops with its work kept on its branch. Assign one in `/models → auditor`, or list a panel under `[[auditor.panel]]` (all must pass; cheapest first; seats may have a `focus` and `paths`).
 
 For a trivial change the lead can `propose_edit`: you see the diff and press `y`. Only a person can approve it.
 
-**The crew builder** is where a crew is set up. It opens the first time you type `/crew`, and from the crew settings with `b`. When you save, you're in crew mode. It walks through seven steps:
+**The crew builder** is where a crew is set up. It opens the first time you type `/crew`, and from `/models` or `/crews` with `b`. When you save, you're in crew mode. It walks through seven steps:
 
 1. A starting point: skiff, schooner, galleon, or your current crew.
 2. The lead.
@@ -313,12 +315,12 @@ Each seat step says what the role does, puts a ★ recommendation first, and lis
 
 The estimate uses token counts measured on paid runs (`crates/ryter-core/src/estimate.rs`). It is rough, and a job is usually larger than it looks.
 
-Three ready-made crews sit in `/crew`, picked from every model you can reach at today's prices, so they never name a model you can't use or one that has gone stale:
+Three ready-made crews sit in `/crews`, picked from every model you can reach at today's prices, so they never name a model you can't use or one that has gone stale:
 
 | Crew | Cost | Builder | Architect and auditor |
 | --- | --- | --- | --- |
 | **skiff** | low | a budget model | the best of the budget models; the auditor is still a different model from another vendor |
-| **schooner** | balanced | a budget model | strong models (the default suggestion, `s` in `/crew`) |
+| **schooner** | balanced | a budget model | strong models (the default suggestion, `s` in `/crews`) |
 | **galleon** | high | a strong model | strong models, the auditor from another vendor |
 
 Enter on one previews it; `y` applies it and keeps your previous crew as the `before-suggest` preset. `ryter crew tiers` shows all three; `ryter crew suggest --tier galleon --apply` applies one from the shell. Strong seats prefer established vendors when one is close in price: price is the only signal before `ryter bench`, and on a live catalog it put an obscure model ahead of Claude Opus. None of the crews changes the lead. A local model server works as a connection with no key: `ryter connections add box --kind ollama --model qwen3-coder:30b`. `ryter bench` runs `bench/` through the crew and reports what landed, what passed hidden tests, and the cost per accepted task — it spends real money.
@@ -329,7 +331,7 @@ Crew spend is metered per task and role and counts against `[spend] session_budg
 
 **A task that stops after its build is committed** (you stopped it at the cap during the audit, the auditor's provider refused, the merge failed) goes straight back to the checks and the audit on its next run. The builder isn't paid again.
 
-**Rejections are counted per task, in all**, across the lead's requeues and recreations. The lane card shows them in yellow, and a blocked task says `rejected; blocked (5 rejections in all)`. At 3 rejections, and every 3 after, Ryter says more retries of the same builder rarely help and that you should choose a stronger one in `/crew → builder`. Which model is your choice: Ryter names none and switches nothing. The lead is told to pass it on without picking one for you, and the cap question mentions it too.
+**Rejections are counted per task, in all**, across the lead's requeues and recreations. The lane card shows them in yellow, and a blocked task says `rejected; blocked (5 rejections in all)`. At 3 rejections, and every 3 after, Ryter says more retries of the same builder rarely help and that you should choose a stronger one in `/models → builder`. Which model is your choice: Ryter names none and switches nothing. The lead is told to pass it on without picking one for you, and the cap question mentions it too.
 
 `/auditor on|off` is session-only unless you also change config. With the auditor off, **nothing merges**: finished work waits on its branch. After each batch the lead gets the crew report, tells you what landed, and records builder decisions in `DECISIONS.md` — builders never write project memory themselves.
 
@@ -372,7 +374,7 @@ The **budget** card on the right shows the cap, how much is used and left, or `o
 
 ## Slash commands
 
-Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/crew` `/mcp` `/skills` `/hooks` `/sessions` `/agents` `/spend` `/theme` `/tools` `/auditor` `/context` `/doctor` `/help`. `/changes` and `/commit` open panels too (see [Review and commit](#review-and-commit)). Direct commands act immediately: `/undo [force]` `/redo [force]` `/new` `/rename <title>` `/budget [amount|+amount|off]` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
+Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/crews` `/mcp` `/skills` `/hooks` `/sessions` `/agents` `/spend` `/theme` `/tools` `/auditor` `/context` `/doctor` `/help`. `/changes` and `/commit` open panels too (see [Review and commit](#review-and-commit)). Direct commands act immediately: `/undo [force]` `/redo [force]` `/new` `/rename <title>` `/budget [amount|+amount|off]` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
 
 User-invocable skills and `~/.ryter/commands/*.md` join the palette under **skills**. Built-ins win on a name clash.
 

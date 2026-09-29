@@ -499,7 +499,7 @@ impl Panel for CrewBuilder {
                     prose(
                         &mut lines,
                         "no models could be listed. add a key in /provider, then come back \
-                         with /crew → crew builder.",
+                         with /models → b.",
                     );
                 }
             }
