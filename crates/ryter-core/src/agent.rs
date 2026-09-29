@@ -946,7 +946,7 @@ impl Agent {
                     io,
                     cancel: child_cancel.clone(),
                     note: if role == Role::Builder && before >= REJECTIONS_ADVISE {
-                        self.builder_advice(&task.id, before, &builder_m, &builder_c, &auditors)
+                        self.builder_advice(&task.id, before, &builder_m)
                     } else {
                         String::new()
                     },
@@ -1065,12 +1065,13 @@ impl Agent {
                 if rejected > 0 {
                     let total = self.session.add_rejections(&task_id, rejected)?;
                     // Every third rejection: say that more retries of the same
-                    // model rarely help, and name a stronger one.
+                    // model rarely help, and that the user should choose a
+                    // stronger one. The lead passes it on; the choice is theirs.
                     if total / REJECTIONS_ADVISE > (total - rejected) / REJECTIONS_ADVISE {
-                        let advice =
-                            self.builder_advice(&task_id, total, &builder_m, &builder_c, &auditors);
+                        let advice = self.builder_advice(&task_id, total, &builder_m);
                         reports.push(format!(
-                            "### {task_id}: rejected {total} times\n{advice} Tell the user.\n"
+                            "### {task_id}: rejected {total} times\n{advice} Tell the user; \
+                             which model is theirs to choose, so don't pick one for them.\n"
                         ));
                         self.emit(AgentEvent::Notice { message: advice })?;
                     }
@@ -2420,16 +2421,10 @@ The auditor is off, so the patch stays on `{}`.
     }
 
     /// For a task the checks or the audit keep rejecting: how often, with
-    /// which builder, what it has cost, and a stronger builder from the
-    /// models this account can use (the cached catalog), when there is one.
-    fn builder_advice(
-        &self,
-        task: &str,
-        total: u32,
-        builder: &str,
-        connection: &str,
-        auditors: &[crew::Auditor],
-    ) -> String {
+    /// which builder, what it has cost, and that a stronger builder is
+    /// needed. Which one is the user's choice: Ryter names none and switches
+    /// nothing.
+    fn builder_advice(&self, task: &str, total: u32, builder: &str) -> String {
         let spent = self
             .queue
             .lock()
@@ -2437,39 +2432,11 @@ The auditor is off, so the patch stays on `{}`.
             .and_then(|q| q.tasks.iter().find(|t| t.id == task).map(|t| t.spent.usd))
             .unwrap_or(0.0);
         let short = builder.rsplit('/').next().unwrap_or(builder);
-        let mut advice = format!(
+        format!(
             "Task {task} has been rejected {total} times in all with builder {short} \
              (${spent:.2} spent on it). More rounds of the same model rarely get past \
-             that; a stronger builder usually costs less than more retries."
-        );
-        let models: Vec<crate::llm::ModelInfo> =
-            crate::llm::model_cache::load(&self.home, connection)
-                .map(|(models, _)| models)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|mut m| {
-                    m.connection = Some(connection.to_string());
-                    m
-                })
-                .collect();
-        let local = self
-            .cfg
-            .as_ref()
-            .map(|c| c.local_connections())
-            .unwrap_or_default();
-        let avoid: Vec<String> = auditors.iter().map(|a| a.model.clone()).collect();
-        match crate::tiering::stronger_builder(
-            builder,
-            &self.connection,
-            &self.model,
-            &models,
-            &local,
-            &avoid,
-        ) {
-            Some(p) => advice.push_str(&format!(" Try {} in /crew → builder.", p.label())),
-            None => advice.push_str(" Pick a stronger one in /crew → builder."),
-        }
-        advice
+             that: choose a stronger builder in /crew → builder before it runs again."
+        )
     }
 
     pub(crate) fn record_crew_spend(&mut self, meter: &Meter) -> Result<()> {
@@ -3271,11 +3238,11 @@ mod tests {
     }
 
     /// The audit keeps rejecting a task: its rejections are counted in all,
-    /// across runs, and at three the user is told a stronger builder may
-    /// cost less than more retries. A requeued task's single attempt used
+    /// across runs, and at three the user is told to choose a stronger
+    /// builder. Ryter names no model and switches nothing. A requeued task's single attempt used
     /// to say "rejected 3 times" again.
     #[tokio::test]
-    async fn repeated_rejections_are_counted_and_a_stronger_builder_suggested() {
+    async fn repeated_rejections_are_counted_and_the_user_told_to_choose_a_builder() {
         let p = ReplayProvider::scripted(vec![
             write("a.txt", "a\n"),
             say("STATUS: DONE"),
@@ -3301,7 +3268,9 @@ mod tests {
         assert!(report.contains("### t1: rejected 3 times"), "{report}");
         assert!(
             report.contains("rejected 3 times in all with builder grok-4.6")
-                && report.contains("stronger builder"),
+                && report.contains("choose a stronger builder in /crew → builder")
+                && report.contains("don't pick one for them")
+                && !report.contains("Try "),
             "{report}"
         );
         let events: Vec<AgentEvent> = rx.try_iter().collect();

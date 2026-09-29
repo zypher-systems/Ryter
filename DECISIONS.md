@@ -8,15 +8,16 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
   - **Asking at the cap:** when a charge crosses a task's dollar cap, `run_specialist` asks through `Bill.ask` (a `CapAsk`, from the lead's `UserIo`), on a blocking thread so other workers go on. Raising the cap (`Meter::raise_task_cap`) keeps the step's reply and continues. Stopping keeps the branch (`keep_branch`) and tells the lead that recreating the task starts the build over. A token cap still stops. Headless has no `UserIo` and stops as before.
   - **Before a retry:** a task at its cap asks, or stops, before its first step (`run_build_task`). It used to pay for one call and stop.
   - **Resuming at the gate:** once the builder's work is committed, a stop that is not a rejection sets `TaskOutcome.gate_next` and the handback, and the agent stores both on the task. The next run with the branch present skips the builder. A rejection clears it.
-  - **Rejections:** `failed()` marks `rejected`. The agent counts them per task id in the session meta, which survives requeueing and recreation, and shows them on the board (`TaskView.rejections`). At every third, `builder_advice` names a stronger builder from the cached catalog (`tiering::stronger_builder`: the high tier's builder, else the balanced tier's architect, pricier than the current one and never an auditor), as a notice and in the crew report.
+  - **Rejections:** `failed()` marks `rejected`. The agent counts them per task id in the session meta, which survives requeueing and recreation, and shows them on the board (`TaskView.rejections`). At every third, `builder_advice` tells the user, as a notice and in the crew report, to choose a stronger builder in `/crew → builder`. It names no model and switches nothing, and the lead is told not to pick one for them.
   - **Titles:** `UserIo::ask_as` titles Ryter's own questions (`task budget`, `checks`), shown as `Ryter asks · …`.
 - **Chosen vs rejected:**
   - The steps are +$5 and +$2, as the user chose.
   - Rejected resetting a requeued task's retries. It gets one attempt, as before. The count and the label now say how many in all.
   - Rejected asking on the token cap. Raising dollars doesn't lift it.
+  - Rejected naming a stronger builder, and rejected switching to one: the model is the user's choice. A named pick was built first, from the crew builder's high tier, and removed at the user's word.
 - **Why:** a $9.22 run: five audit rejections, a cap stop partway through a step, and a lead that recreated the task (a retry could not get past its spent cap), rebuilding it for $2.19 more.
-- **Where:** `crates/ryter-core/src/crew.rs` (`CapAsk`, `raise_cap`, `build_inner`, `failed`), `meter.rs` (task caps), `queue.rs` (`cap_usd`, `gate_next`, `handback`, `TaskView.rejections`), `session.rs` (`rejections`), `agent.rs` (`builder_advice`), `tiering.rs` (`stronger_builder`), `user_io.rs` (`ask_as`); `crates/ryter-tui/src/crewboard.rs`, `panel/modal.rs`
-- **Residual risk:** the stronger builder comes from price, the only signal before `ryter bench`. With no cached catalog, the advice only says to pick a stronger one.
+- **Where:** `crates/ryter-core/src/crew.rs` (`CapAsk`, `raise_cap`, `build_inner`, `failed`), `meter.rs` (task caps), `queue.rs` (`cap_usd`, `gate_next`, `handback`, `TaskView.rejections`), `session.rs` (`rejections`), `agent.rs` (`builder_advice`), `user_io.rs` (`ask_as`); `crates/ryter-tui/src/crewboard.rs`, `panel/modal.rs`
+- **Residual risk:** the advice says a stronger builder is needed but not which one. The crew builder's tiers and `/models` prices are where to look.
 
 ### 2026-09-29 — Crew members report live; solo gets a rail
 - **By:** lead

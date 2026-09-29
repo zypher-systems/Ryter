@@ -329,7 +329,7 @@ Crew spend is metered per task and role and counts against `[spend] session_budg
 
 **A task that stops after its build is committed** (you stopped it at the cap during the audit, the auditor's provider refused, the merge failed) goes straight back to the checks and the audit on its next run. The builder isn't paid again.
 
-**Rejections are counted per task, in all**, across the lead's requeues and recreations. The lane card shows them in yellow, and a blocked task says `rejected; blocked (5 rejections in all)`. At 3 rejections, and every 3 after, Ryter says more retries of the same builder rarely help and names a stronger one from the models your account can use: the crew builder's high-cost pick, never your auditor's model. The lead is told to pass that on, and the cap question mentions it too.
+**Rejections are counted per task, in all**, across the lead's requeues and recreations. The lane card shows them in yellow, and a blocked task says `rejected; blocked (5 rejections in all)`. At 3 rejections, and every 3 after, Ryter says more retries of the same builder rarely help and that you should choose a stronger one in `/crew → builder`. Which model is your choice: Ryter names none and switches nothing. The lead is told to pass it on without picking one for you, and the cap question mentions it too.
 
 `/auditor on|off` is session-only unless you also change config. With the auditor off, **nothing merges**: finished work waits on its branch. After each batch the lead gets the crew report, tells you what landed, and records builder decisions in `DECISIONS.md` — builders never write project memory themselves.
 
