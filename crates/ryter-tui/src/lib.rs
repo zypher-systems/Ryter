@@ -12,6 +12,7 @@ mod info;
 mod keymap;
 mod palette;
 mod panel;
+mod rail;
 mod run;
 mod theme;
 mod view;

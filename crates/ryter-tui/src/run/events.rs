@@ -164,6 +164,9 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             ..
         } => {
             view.turn_calls += 1;
+            if let Some(usd) = total_usd {
+                view.spend_log.push((view.now_ms, *usd));
+            }
             if let (Some(t), Some(usd)) = (task, total_usd) {
                 *view.task_spend.entry(t.clone()).or_insert(0.0) += *usd;
             }
@@ -202,6 +205,8 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 status: "running".into(),
                 started_ms: view.now_ms,
                 acting: role.to_string(),
+                live: None,
+                tools: 0,
             });
         }
         // Progress goes on the specialist's crew row, not into the chat. A
@@ -217,8 +222,57 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             if let Some(row) = view.crew.iter_mut().find(|c| c.id == id.as_str()) {
                 row.status = wrap::truncate(text, 48);
                 row.acting = role.to_string();
+                // Notes about the step, not tool calls.
+                if !["reviewing (", "near the limit", "reply cut off"]
+                    .iter()
+                    .any(|p| text.starts_with(p))
+                {
+                    row.tools += 1;
+                }
             } else if view.activity.busy() {
                 view.activity.current = wrap::truncate(text, 48);
+            }
+        }
+        AgentEvent::SubagentLive {
+            id,
+            role,
+            phase,
+            target,
+            tokens,
+            lines,
+            tail,
+        } => {
+            let now = view.now_ms;
+            if let Some(row) = view.crew.iter_mut().find(|c| c.id == id.as_str()) {
+                row.acting = role.to_string();
+                let prev = row.live.take();
+                let same = prev
+                    .as_ref()
+                    .is_some_and(|l| l.phase == *phase && l.target == *target);
+                // Tokens a second, smoothed; a new step starts from nothing.
+                let rate = match &prev {
+                    Some(l) if *tokens > l.tokens && now > l.last_ms => {
+                        let now_rate =
+                            (tokens - l.tokens) as f64 * 1000.0 / (now - l.last_ms) as f64;
+                        if l.rate > 0.0 {
+                            l.rate * 0.6 + now_rate * 0.4
+                        } else {
+                            now_rate
+                        }
+                    }
+                    Some(l) if *tokens >= l.tokens && *tokens > 0 => l.rate,
+                    _ => 0.0,
+                };
+                row.live = Some(crate::view::LaneLive {
+                    phase: *phase,
+                    target: target.clone(),
+                    since_ms: prev.as_ref().filter(|_| same).map_or(now, |l| l.since_ms),
+                    last_ms: now,
+                    tokens: *tokens,
+                    lines: *lines,
+                    tail: tail.clone(),
+                    rate,
+                });
             }
         }
         AgentEvent::ReviewerNeeded {

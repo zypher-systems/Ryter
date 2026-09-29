@@ -27,7 +27,7 @@
                         │  username                                                    default ┃
                         │  reasoning             ‹ collapsed ›                         default ┃
                         │  mouse                 [ on ]                                default │
-                        │  panel                 [ on ]                                default │
+                        │  panel · rail          [ on ]                                default │
                         │ ↑↓ move   space/←→ change   enter edit   esc done                    │
                         ╰──────────────────────────────────────────────────────────────────────╯
 

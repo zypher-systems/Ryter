@@ -17,6 +17,10 @@ use crate::view::View;
 
 /// Rows the tiles take, borders included.
 const TILES_H: u16 = 4;
+/// Rows of a full lane card: who and what, the meter, three lines of output.
+const CARD_H: u16 = 5;
+/// Rows the lead's box keeps, however many lanes there are.
+const LEAD_MIN: u16 = 8;
 
 /// Whether the board shows: crew mode on the ledger, plan or not yet. It
 /// used to wait for a plan, so a crew session that began with a question
@@ -84,22 +88,34 @@ pub fn draw_screen(
         legend(theme, inner),
         theme,
     );
-    // Lanes: as tall as there are workers, within reason.
-    let lanes_h = (view.crew.len().max(1) as u16 + 2)
-        .clamp(3, 10)
-        .min(right.height / 2);
+    // Lanes: a live card per worker, as tall as leaves the lead its room.
+    // Cards shrink to fit: three lines of output, then fewer, then one row.
+    let n = view.crew.len() as u16;
+    let room = right.height.saturating_sub(LEAD_MIN);
+    let per = (1..=CARD_H)
+        .rev()
+        .find(|h| n * h + n.saturating_sub(1) * u16::from(*h > 1) + 2 <= room)
+        .unwrap_or(1);
+    let rows = if per == 1 || n == 0 {
+        lane_rows(view, theme, right.width)
+    } else {
+        lane_cards(view, theme, right.width.saturating_sub(3), per)
+    };
+    // As tall as what it holds: a worker not yet streaming has no output.
+    let lanes_h = (rows.len() as u16 + 2).clamp(3, room.max(3));
     let lanes = Rect {
         height: lanes_h,
         ..right
     };
-    boxed(
-        frame,
-        lanes,
-        "LANES",
-        lane_rows(view, theme, lanes.width),
-        view,
-        theme,
-    );
+    boxed(frame, lanes, "LANES", rows, view, theme);
+    if per > 1 && n > 0 {
+        right_title(
+            frame,
+            lanes,
+            "live · newest output at the bottom of each card",
+            theme,
+        );
+    }
     let lead = Rect {
         y: right.y + lanes_h,
         height: right.height.saturating_sub(lanes_h),
@@ -229,6 +245,28 @@ fn block(title: &str, theme: Theme) -> Block<'static> {
         .style(Style::default().bg(theme.bg))
 }
 
+/// `text` on the right of a box's top edge, when it fits beside the title.
+fn right_title(frame: &mut Frame, area: Rect, text: &str, theme: Theme) {
+    let text = format!(" {text} ");
+    let w = wrap::width(&text) as u16;
+    // The title on the left takes about a dozen columns.
+    if area.width < w + 16 {
+        return;
+    }
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            text,
+            Style::default().fg(theme.dim).bg(theme.bg),
+        )),
+        Rect {
+            x: area.x + area.width - w - 2,
+            width: w,
+            height: 1,
+            ..area
+        },
+    );
+}
+
 fn boxed(
     frame: &mut Frame,
     area: Rect,
@@ -263,22 +301,23 @@ fn boxed(
 }
 
 fn draw_tiles(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
-    let w = area.width / 4;
+    let w = area.width / 5;
     let dim = Style::default().fg(theme.dim).bg(theme.bg);
     let fg = Style::default()
         .fg(theme.fg)
         .bg(theme.bg)
         .add_modifier(Modifier::BOLD);
-    let tiles: [(&str, Vec<Span<'static>>, Vec<Span<'static>>); 4] = [
+    let tiles: [(&str, Vec<Span<'static>>, Vec<Span<'static>>); 5] = [
         spend_tile(view, theme, dim, fg, w),
         tasks_tile(view, theme, dim, fg, w),
         checks_tile(view, theme, dim, fg),
         time_tile(view, dim, fg),
+        pulse_tile(view, theme, dim, fg, w),
     ];
     for (i, (title, value, detail)) in tiles.into_iter().enumerate() {
         let x = area.x + w * i as u16;
-        let width = if i == 3 {
-            area.width - w * 3
+        let width = if i == 4 {
+            area.width - w * 4
         } else {
             w.saturating_sub(1)
         };
@@ -314,9 +353,68 @@ fn spend_tile(view: &View, theme: Theme, dim: Style, fg: Style, w: u16) -> Tile 
             Span::styled("▱".repeat(cells - filled), dim),
         ]
     } else {
-        vec![Span::styled("no budget", dim)]
+        value.push(Span::styled(" no budget", dim));
+        // What the last minute cost: a run that is spending shows it moving.
+        let recent: f64 = view.spend_log.iter().map(|(_, usd)| usd).sum();
+        if recent > 0.0 {
+            vec![Span::styled(
+                format!("+{} in the last minute", turn_usd(recent)),
+                dim,
+            )]
+        } else {
+            vec![Span::styled("nothing in the last minute", dim)]
+        }
     };
     ("SPEND", value, detail)
+}
+
+/// How fast the crew is producing, and how long since it last said anything:
+/// a crew that is working shows it, and a stalled one shows that too.
+fn pulse_tile(view: &View, theme: Theme, dim: Style, fg: Style, w: u16) -> Tile {
+    let working = view.crew.len();
+    if working == 0 {
+        return ("PULSE", vec![Span::styled("idle", dim)], Vec::new());
+    }
+    let rate = view.crew_rate().round() as u64;
+    let value = vec![
+        Span::styled(format!("{rate} tok/s"), fg),
+        Span::styled(format!(" · {working} working"), dim),
+    ];
+    let quiet = view
+        .crew_last_ms()
+        .map(|t| view.now_ms.saturating_sub(t) as f64 / 1000.0);
+    let heard = match quiet {
+        Some(q) if q < 10.0 => format!(" last byte {q:.1}s"),
+        Some(q) => format!(" quiet {}", fmt_elapsed(q as u64)),
+        None => " starting".into(),
+    };
+    let cells = usize::from(w.saturating_sub(4)).saturating_sub(wrap::width(&heard));
+    let spark = sparkline(&view.pulse, cells);
+    let heard_style = if quiet.is_some_and(|q| q >= 30.0) {
+        Style::default().fg(theme.warn).bg(theme.bg)
+    } else {
+        dim
+    };
+    (
+        "PULSE",
+        value,
+        vec![
+            Span::styled(spark, Style::default().fg(theme.accent).bg(theme.bg)),
+            Span::styled(heard, heard_style),
+        ],
+    )
+}
+
+/// The last `cells` samples as bars, scaled to the largest.
+fn sparkline(samples: &[u64], cells: usize) -> String {
+    const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let from = samples.len().saturating_sub(cells);
+    let shown = &samples[from..];
+    let top = shown.iter().copied().max().unwrap_or(0).max(1);
+    shown
+        .iter()
+        .map(|&v| BARS[((v * 7) / top) as usize])
+        .collect()
 }
 
 fn tasks_tile(view: &View, theme: Theme, dim: Style, fg: Style, w: u16) -> Tile {
@@ -847,7 +945,205 @@ fn plan_drawing(view: &View, theme: Theme, width: usize, cap: usize) -> Option<V
     Some(rows)
 }
 
+/// About how many tokens: `812 tok`, `1.9k tok`.
+fn tokens_label(n: u64) -> String {
+    if n < 1000 {
+        format!("~{n} tok")
+    } else {
+        format!("~{:.1}k tok", n as f64 / 1000.0)
+    }
+}
+
+/// A live card per worker (design C1): who, on what, what it is doing and
+/// for how long; a meter; then the last lines of what it is producing. `per`
+/// is rows a card gets, two to five.
+fn lane_cards(view: &View, theme: Theme, width: u16, per: u16) -> Vec<Line<'static>> {
+    use ryter_core::LivePhase;
+    let width = usize::from(width);
+    let base = Style::default().bg(theme.bg);
+    let mut rows = Vec::new();
+    for (i, c) in view.crew.iter().enumerate() {
+        if i > 0 {
+            rows.push(Line::from(Span::styled(String::new(), base)));
+        }
+        let who = if c.acting.is_empty() {
+            c.role.clone()
+        } else {
+            c.acting.clone()
+        };
+        let selected = view.lane_selected == Some(i);
+        let bg = if selected {
+            theme.selection_bg
+        } else {
+            theme.bg
+        };
+        let on = |fg: Color| Style::default().fg(fg).bg(bg);
+        let task = view.tasks.iter().find(|t| t.title == c.label);
+        let task_id = task.map_or(c.label.clone(), |t| t.id.clone());
+        let model = view
+            .specialists
+            .get(who.as_str())
+            .and_then(|r| r.model.clone())
+            .unwrap_or_else(|| view.model.clone());
+        let model = crate::chat::short_model(&model).to_string();
+        let cost = task
+            .and_then(|t| view.task_spend.get(&t.id))
+            .map(|u| format!("task {}", turn_usd(*u)));
+        let live = c.live.as_ref();
+        // The chip: what it is doing, in a color you can find across the board.
+        let (chip, chip_bg) = match live.map(|l| l.phase) {
+            Some(LivePhase::Waiting) => ("WAITING", theme.warn),
+            Some(LivePhase::Thinking) => ("THINKING", theme.dim),
+            Some(LivePhase::Writing) => ("WRITING", theme.success),
+            Some(LivePhase::Running) => ("RUNNING", theme.accent),
+            None => ("WORKING", theme.dim),
+        };
+        let target = match live {
+            Some(l) => match l.target.strip_prefix("bash ") {
+                Some(cmd) => format!("$ {cmd}"),
+                None => l.target.clone(),
+            },
+            None => String::new(),
+        };
+        let since = live.map_or(c.started_ms, |l| l.since_ms);
+        let clock = fmt_elapsed(view.now_ms.saturating_sub(since) / 1000);
+        // Header: role, task, model … chip, target, clock.
+        let left_w = wrap::width(&who) + 1 + wrap::width(&task_id) + 2 + wrap::width(&model);
+        let right_min = chip.len() + 2 + 2 + clock.len();
+        let target_room = width.saturating_sub(left_w + right_min + 3);
+        let target = wrap::truncate(&target, target_room.max(8));
+        let right_w = chip.len() + 2 + 1 + wrap::width(&target) + 2 + clock.len();
+        let show_model = left_w + right_w + 2 <= width;
+        let used = wrap::width(&who)
+            + 1
+            + wrap::width(&task_id)
+            + if show_model {
+                2 + wrap::width(&model)
+            } else {
+                0
+            };
+        let pad = width.saturating_sub(used + right_w);
+        let mut header = vec![
+            Span::styled(
+                who.clone(),
+                on(theme.role(&who)).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ", on(theme.fg)),
+            Span::styled(task_id, on(theme.fg).add_modifier(Modifier::BOLD)),
+        ];
+        if show_model {
+            header.push(Span::styled(format!("  {model}"), on(theme.dim)));
+        }
+        header.push(Span::styled(" ".repeat(pad), on(theme.dim)));
+        header.push(Span::styled(
+            format!(" {chip} "),
+            Style::default()
+                .fg(theme.bg)
+                .bg(chip_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        if !target.is_empty() {
+            header.push(Span::styled(format!(" {target}"), on(theme.fg)));
+        }
+        header.push(Span::styled(format!("  {clock}"), on(theme.dim)));
+        rows.push(Line::from(header));
+
+        // The meter: how much, how fast, what it has cost.
+        let mut meter: Vec<String> = Vec::new();
+        match live {
+            Some(l) if l.phase == LivePhase::Waiting => {
+                meter.push("no reply from the model yet".into());
+                if view.now_ms.saturating_sub(l.since_ms) > 20_000 {
+                    meter.push("the provider is slow".into());
+                }
+            }
+            Some(l) if l.phase == LivePhase::Running => {}
+            Some(l) => {
+                if l.lines > 0 {
+                    meter.push(format!("{} lines so far", l.lines));
+                }
+                meter.push(tokens_label(l.tokens));
+                if l.rate >= 1.0 {
+                    meter.push(format!("{} tok/s", l.rate.round() as u64));
+                }
+            }
+            None => meter.push(wrap::truncate(&c.status, 40)),
+        }
+        if let Some(cost) = cost {
+            meter.push(cost);
+        }
+        if c.tools > 0 {
+            meter.push(format!(
+                "{} tool{} so far",
+                c.tools,
+                if c.tools == 1 { "" } else { "s" }
+            ));
+        }
+        rows.push(Line::from(Span::styled(
+            wrap::truncate(&meter.join(" · "), width),
+            on(theme.dim),
+        )));
+
+        // What it is producing: its reasoning, the file it is writing, a
+        // command's output. The newest line last.
+        let tail_rows = usize::from(per.saturating_sub(2));
+        if tail_rows == 0 || live.is_none() {
+            continue;
+        }
+        let inset = theme.code_bg;
+        let (style, mark) = match live.map(|l| (l.phase, l.lines > 0)) {
+            Some((LivePhase::Thinking, _)) => (
+                Style::default()
+                    .fg(theme.dim)
+                    .bg(inset)
+                    .add_modifier(Modifier::ITALIC),
+                "",
+            ),
+            Some((LivePhase::Writing, true)) => {
+                (Style::default().fg(theme.success).bg(inset), "+ ")
+            }
+            Some((LivePhase::Writing, false)) => (Style::default().fg(theme.fg).bg(inset), ""),
+            _ => (Style::default().fg(theme.dim).bg(inset), ""),
+        };
+        let thinking = live.is_some_and(|l| l.phase == LivePhase::Thinking);
+        let tail: Vec<String> = if thinking && view.lanes_hide_reasoning {
+            vec!["reasoning hidden · ^r shows it".into()]
+        } else {
+            live.map(|l| l.tail.clone()).unwrap_or_default()
+        };
+        // Long lines of prose wrap; code is cut at the edge.
+        let inner = width.saturating_sub(2 + mark.len());
+        let mut shown: Vec<String> = if thinking {
+            tail.iter()
+                .flat_map(|t| wrap::wrap_plain(t, inner.max(10)))
+                .collect()
+        } else {
+            tail.iter().map(|t| wrap::truncate(t, inner)).collect()
+        };
+        let from = shown.len().saturating_sub(tail_rows);
+        shown.drain(..from);
+        let blank_rows = tail_rows - shown.len();
+        for _ in 0..blank_rows {
+            rows.push(Line::from(Span::styled(" ".repeat(width), style)));
+        }
+        let last = shown.len().saturating_sub(1);
+        for (j, t) in shown.into_iter().enumerate() {
+            // The line still being written ends in a cursor.
+            let hidden = thinking && view.lanes_hide_reasoning;
+            let cursor = if j == last && !hidden { "▌" } else { "" };
+            let text = format!(" {mark}{t}{cursor}");
+            let pad = width.saturating_sub(wrap::width(&text));
+            rows.push(Line::from(vec![
+                Span::styled(text, style),
+                Span::styled(" ".repeat(pad), style),
+            ]));
+        }
+    }
+    rows
+}
+
 /// One row per worker: who is acting, on what, doing what, for how long.
+/// The board falls back to it when there is no room for cards.
 fn lane_rows(view: &View, theme: Theme, width: u16) -> Vec<Line<'static>> {
     let dim = Style::default().fg(theme.dim).bg(theme.bg);
     if view.crew.is_empty() {

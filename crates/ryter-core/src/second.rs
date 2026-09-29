@@ -414,6 +414,7 @@ impl Agent {
         // The review hat's gate: read, search, tests and linters; no writes,
         // installs, or formatting, in the user's own tree.
         let ctx = crate::tools::ToolContext {
+            live: None,
             role: Role::SoloReview,
             ..self.ctx.clone()
         };

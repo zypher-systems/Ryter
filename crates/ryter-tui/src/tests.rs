@@ -472,6 +472,8 @@ fn crew_cards_only_in_crew_mode() {
         status: "working".into(),
         started_ms: 0,
         acting: "builder".into(),
+        live: None,
+        tools: 0,
     });
     let frame = render_to_string(&view, 160, 50);
     assert!(
@@ -811,6 +813,99 @@ fn ledger() -> View {
     edited_on(v)
 }
 
+/// Design S2: solo mode gets a rail with the name, the session, the hat
+/// as a block in its color, the model, the spend and what the last turn
+/// changed. The prompt is boxed in the hat's color, the keys on its edge.
+fn with_rail() -> View {
+    let mut v = ledger();
+    v.panel_visible = true;
+    v.session_title = "Show elapsed and total time on the progress bar".into();
+    v.ctx_tokens = Some(24_000);
+    v.ctx_window = Some(200_000);
+    v
+}
+
+#[test]
+fn the_rail_names_the_session_and_shows_the_hat_and_spend() {
+    let v = with_rail();
+    let text = render_to_string(&v, 140, 44);
+    if std::env::var_os("SHOW").is_some() {
+        println!("{text}");
+    }
+    for want in [
+        "R Y T E R",
+        "muzak · main",
+        "SESSION",
+        "Show elapsed and total time",
+        "2 turns",
+        " BUILD",
+        "edits files, runs commands",
+        "plan · review   tab switch",
+        "MODEL",
+        "24k of 200k tokens",
+        "SPEND",
+        "this turn",
+        "session",
+        "budget      off",
+        "CHANGED",
+        "app/server.js",
+        "chat  changes ^t  crew /crew",
+        "hide rail",
+    ] {
+        assert!(text.contains(want), "missing {want:?}:\n{text}");
+    }
+    // Neither the strip nor the bottom bar: the rail says what they said.
+    assert!(!text.contains("crew board"), "{text}");
+    assert!(!text.contains("│ turn "), "{text}");
+    // The hat follows the mode.
+    let mut v = with_rail();
+    v.mode = Role::SoloPlan;
+    let text = render_to_string(&v, 140, 44);
+    assert!(
+        text.contains(" PLAN") && text.contains("build · review"),
+        "{text}"
+    );
+    // Narrow, or hidden with ^b: the ledger as it was.
+    for v in [
+        with_rail(),
+        View {
+            panel_visible: false,
+            ..with_rail()
+        },
+    ] {
+        let width = if v.panel_visible { 100 } else { 140 };
+        let text = render_to_string(&v, width, 44);
+        assert!(
+            !text.contains("R Y T E R") && text.contains("crew board"),
+            "{text}"
+        );
+    }
+}
+
+/// The rail and the live lanes draw at every size without losing the
+/// prompt, and the rail steps aside below its width.
+#[test]
+fn rail_and_lanes_fit_every_size() {
+    for (w, h) in [
+        (60, 20),
+        (80, 24),
+        (100, 30),
+        (110, 30),
+        (140, 44),
+        (220, 60),
+    ] {
+        let text = render_to_string(&with_rail(), w, h);
+        assert_eq!(
+            text.contains("R Y T E R"),
+            w >= crate::rail::RAIL_MIN_SCREEN,
+            "{w}x{h}:\n{text}"
+        );
+        assert!(text.contains("what should change?"), "{w}x{h}:\n{text}");
+        let text = render_to_string(&crew_live(), w, h);
+        assert!(text.contains("LANES") || h < 24, "{w}x{h}:\n{text}");
+    }
+}
+
 #[test]
 fn snapshot_ledger() {
     all_sizes("ledger", &ledger());
@@ -889,6 +984,8 @@ fn crew_board() -> View {
             status: status.into(),
             started_ms: started,
             acting: acting.into(),
+            live: None,
+            tools: 0,
         });
     }
     v
@@ -928,6 +1025,169 @@ fn snapshot_crew_board() {
     assert!(!render_to_string(&v, 140, 42).contains("PLAN"));
 }
 
+/// Design C1: each lane is a live card. What the worker is doing (writing a
+/// file, thinking, running a command) shows as it streams, with the file so
+/// far, its reasoning, or the command's output; the PULSE tile says how fast
+/// the crew is going and when it was last heard from.
+fn crew_live() -> View {
+    let mut v = crew_board();
+    v.budget_usd = 0.0;
+    v.task_spend.insert("greet".into(), 0.09);
+    v.task_spend.insert("count".into(), 0.14);
+    v.crew.push(crate::view::CrewRow {
+        id: "s3".into(),
+        role: "builder".into(),
+        label: "design task".into(),
+        spend: None,
+        status: "read src/app.rs".into(),
+        started_ms: 20_000,
+        acting: "builder".into(),
+        live: None,
+        tools: 0,
+    });
+    let live = |id: &str, role: Role, phase, target: &str, tokens, lines, tail: &[&str]| {
+        AgentEvent::SubagentLive {
+            id: ryter_core::SubagentId::new(id),
+            role,
+            phase,
+            target: target.into(),
+            tokens,
+            lines,
+            tail: tail.iter().map(|t| t.to_string()).collect(),
+        }
+    };
+    use ryter_core::LivePhase::{Running, Thinking, Writing};
+    v.now_ms = 60_000;
+    for (id, role, phase, target, tokens, lines, tail) in [
+        (
+            "s1",
+            Role::Builder,
+            Writing,
+            "edit src/greet.rs",
+            1200,
+            180,
+            &[
+                "fn greet(name: &str) -> String {",
+                "    let who = name.trim();",
+            ][..],
+        ),
+        (
+            "s2",
+            Role::Auditor,
+            Running,
+            "bash cargo test",
+            0,
+            0,
+            &[
+                "test greet::tests::trims ... ok",
+                "     Running unittests src/main.rs",
+            ][..],
+        ),
+        (
+            "s3",
+            Role::Builder,
+            Thinking,
+            "",
+            3000,
+            0,
+            &[
+                "…repeat lives in queue.rs, not in App, so the bar needs a read-only view of the queue. I'll add Queue::mode()",
+            ][..],
+        ),
+    ] {
+        crate::run_events_apply(&mut v, live(id, role, phase, target, tokens, lines, tail));
+    }
+    v.now_ms = 62_000;
+    for (id, role, phase, target, tokens, lines, tail) in [
+        (
+            "s1",
+            Role::Builder,
+            Writing,
+            "edit src/greet.rs",
+            1280,
+            212,
+            &[
+                "fn greet(name: &str) -> String {",
+                "    let who = name.trim();",
+                "    format!(\"hello, {who}\")",
+            ][..],
+        ),
+        (
+            "s3",
+            Role::Builder,
+            Thinking,
+            "",
+            3056,
+            0,
+            &[
+                "…repeat lives in queue.rs, not in App, so the bar needs a read-only view of the queue. I'll add Queue::mode() instead of passing the queue in",
+            ][..],
+        ),
+    ] {
+        crate::run_events_apply(&mut v, live(id, role, phase, target, tokens, lines, tail));
+    }
+    v.crew[0].tools = 9;
+    v.crew[1].tools = 4;
+    v.spend_log.push((50_000, 0.02));
+    v.tick(62_000);
+    v.now_ms = 62_300;
+    v
+}
+
+#[test]
+fn live_lanes_show_what_each_worker_is_doing() {
+    let v = crew_live();
+    let text = render_to_string(&v, 160, 48);
+    if std::env::var_os("SHOW").is_some() {
+        println!("{text}");
+    }
+    for want in [
+        "PULSE",
+        "tok/s · 3 working",
+        "last byte",
+        "+$0.020 in the last minute",
+        " WRITING  edit src/greet.rs",
+        "212 lines so far · ~1.3k tok · 40 tok/s · task $0.090 · 9 tools so far",
+        "+ fn greet(name: &str) -> String {",
+        "+     format!(\"hello, {who}\")▌",
+        " RUNNING  $ cargo test",
+        "test greet::tests::trims ... ok",
+        " THINKING ",
+        "I'll add Queue::mode()",
+    ] {
+        assert!(text.contains(want), "missing {want:?}:\n{text}");
+    }
+    assert!(
+        text.contains("live · newest output at the bottom of each card"),
+        "{text}"
+    );
+    // ^r hides the reasoning, and shows it again.
+    assert!(text.contains("^r hide reasoning"), "{text}");
+    let mut v = v;
+    let key = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
+    crate::run::keys::handle(&mut v, key);
+    let hidden = render_to_string(&v, 160, 48);
+    assert!(
+        hidden.contains("reasoning hidden · ^r shows it")
+            && !hidden.contains("Queue::mode()")
+            && hidden.contains("+ fn greet"),
+        "{hidden}"
+    );
+    crate::run::keys::handle(&mut v, key);
+    assert!(render_to_string(&v, 160, 48).contains("Queue::mode()"));
+    // Shorter: the cards drop their output, then become one row a worker.
+    let text = render_to_string(&v, 160, 26);
+    assert!(
+        text.contains("lines so far") && !text.contains("+ fn greet"),
+        "{text}"
+    );
+    let text = render_to_string(&v, 160, 20);
+    assert!(
+        text.contains("LANES") && !text.contains("lines so far"),
+        "{text}"
+    );
+}
+
 /// The model picker says where its list stands: from the cache while a
 /// fresh one downloads, or that the provider is slow.
 #[test]
@@ -965,7 +1225,7 @@ fn a_lane_opens_its_transcript() {
     );
     let text = render_to_string(&v, 140, 42);
     assert!(
-        text.contains("0:18  $0.003"),
+        text.contains("task $0.003"),
         "the lane shows its task's cost:\n{text}"
     );
     let key = |c: KeyCode| KeyEvent::new(c, KeyModifiers::NONE);

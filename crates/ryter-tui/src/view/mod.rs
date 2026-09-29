@@ -40,6 +40,9 @@ pub struct TodoRow {
     pub status: String,
 }
 
+/// Seconds of pulse the board keeps.
+pub const PULSE_SAMPLES: usize = 30;
+
 /// A running specialist row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CrewRow {
@@ -58,6 +61,42 @@ pub struct CrewRow {
     /// Who is acting on the task right now (`builder`, `auditor`): the
     /// builder's worktree is reviewed in the same lane.
     pub acting: String,
+    /// What it is doing this moment, as it streams.
+    pub live: Option<LaneLive>,
+    /// Tool calls it has made.
+    pub tools: u32,
+}
+
+/// A worker's current step, from `AgentEvent::SubagentLive`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LaneLive {
+    /// Waiting, thinking, writing, running.
+    pub phase: ryter_core::LivePhase,
+    /// What it is on (`edit src/ui.rs`); empty while it thinks or waits.
+    pub target: String,
+    /// `now_ms` when this phase and target began.
+    pub since_ms: u64,
+    /// `now_ms` of the last word from it.
+    pub last_ms: u64,
+    /// Output tokens this step, estimated.
+    pub tokens: u64,
+    /// Lines of the file it is writing.
+    pub lines: u32,
+    /// The last lines of what it is producing.
+    pub tail: Vec<String>,
+    /// Tokens a second, smoothed.
+    pub rate: f64,
+}
+
+impl LaneLive {
+    /// Streaming now: thinking or writing, and heard from in the last few
+    /// seconds.
+    pub fn streaming(&self, now_ms: u64) -> bool {
+        matches!(
+            self.phase,
+            ryter_core::LivePhase::Thinking | ryter_core::LivePhase::Writing
+        ) && now_ms.saturating_sub(self.last_ms) < 3_000
+    }
 }
 
 /// Everything the draw path needs.
@@ -263,6 +302,14 @@ pub struct View {
     pub last_export: Option<String>,
     /// Monotonic clock in ms, advanced by the loop.
     pub now_ms: u64,
+    /// The lanes hide the workers' reasoning (`^r` on the crew board).
+    pub lanes_hide_reasoning: bool,
+    /// The crew's tokens a second, one sample a second (the PULSE tile).
+    pub pulse: Vec<u64>,
+    /// `now_ms` of the last pulse sample.
+    pub pulse_at: u64,
+    /// Spend in the last minute, `(now_ms, usd)` per call.
+    pub spend_log: Vec<(u64, f64)>,
     /// `Ctrl+C` armed for quit until this time (`R-COMP-14`).
     pub quit_armed_until: Option<u64>,
     /// Render cache (derived; clones start empty).
@@ -419,6 +466,10 @@ impl View {
             conn_tests: BTreeMap::new(),
             last_export: None,
             now_ms: 0,
+            lanes_hide_reasoning: false,
+            pulse: Vec::new(),
+            pulse_at: 0,
+            spend_log: Vec::new(),
             quit_armed_until: None,
             cache: RefCell::new(RenderCache::new()),
             pending_warnings: Vec::new(),
@@ -436,9 +487,41 @@ impl View {
     pub fn tick(&mut self, now_ms: u64) {
         self.now_ms = now_ms;
         self.activity.tick(now_ms);
+        // The crew's pulse: one sample a second while anyone works.
+        if self.crew.is_empty() {
+            self.pulse.clear();
+        } else if now_ms.saturating_sub(self.pulse_at) >= 1_000 {
+            self.pulse_at = now_ms;
+            let rate = self.crew_rate().round() as u64;
+            self.pulse.push(rate);
+            if self.pulse.len() > PULSE_SAMPLES {
+                self.pulse.remove(0);
+            }
+        }
+        self.spend_log
+            .retain(|(at, _)| now_ms.saturating_sub(*at) < 60_000);
         if self.quit_armed_until.is_some_and(|t| now_ms > t) {
             self.quit_armed_until = None;
         }
+    }
+
+    /// Tokens a second across the crew, now.
+    pub fn crew_rate(&self) -> f64 {
+        self.crew
+            .iter()
+            .filter_map(|c| c.live.as_ref())
+            .filter(|l| l.streaming(self.now_ms))
+            .map(|l| l.rate)
+            .sum()
+    }
+
+    /// When any worker was last heard from.
+    pub fn crew_last_ms(&self) -> Option<u64> {
+        self.crew
+            .iter()
+            .filter_map(|c| c.live.as_ref())
+            .map(|l| l.last_ms)
+            .max()
     }
 
     // -- messages -------------------------------------------------------------

@@ -278,7 +278,14 @@ impl Agent {
         })?;
         if self.session.meta.title.is_empty() {
             let t: String = user.chars().take(80).collect();
-            let _ = self.session.set_title(&t);
+            if self.session.set_title(&t).is_ok() {
+                // The rail names the session: tell it the name it now has.
+                self.emit(AgentEvent::Session {
+                    id: self.session.meta.id.to_string(),
+                    phase: self.session.meta.phase,
+                    title: self.session.meta.title.clone(),
+                })?;
+            }
         }
 
         let mut last_text = String::new();
@@ -2505,6 +2512,7 @@ mod tests {
             session.dir.join("tasks.json"),
         )));
         let ctx = ToolContext {
+            live: None,
             workspace: cwd.path().to_path_buf(),
             notes_dir: notes,
             role: Role::Orchestrator,
