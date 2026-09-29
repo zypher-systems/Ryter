@@ -35,6 +35,13 @@ pub struct TaskOutcome {
     /// because something outside the task had not landed yet. The patch
     /// must build and test it before it reaches the user's branch.
     pub unverified: bool,
+    /// The builder's work is committed and waits only on the gate; the next
+    /// run goes straight there.
+    pub gate_next: bool,
+    /// The builder's handback for that work.
+    pub handback: String,
+    /// The checks or the audit rejected the work this attempt.
+    pub rejected: bool,
 }
 
 /// An auditor's decision.
@@ -187,6 +194,11 @@ impl Auditor {
 
 /// Everything a build task needs besides the task itself.
 pub struct BuildJob<'a> {
+    /// Who to ask when the task reaches its cap; `None` stops it there.
+    pub ask: Option<&'a CapAsk>,
+    /// Times the checks or the audit rejected this task before this attempt,
+    /// in all (the lead requeues and recreates tasks).
+    pub rejections: u32,
     /// Builder inference.
     pub provider: Arc<dyn Provider>,
     /// Builder model.
@@ -260,6 +272,30 @@ pub async fn run_build_task(job: &BuildJob<'_>, task: &Task) -> Result<TaskOutco
             "",
         ));
     }
+    // Already over its cap (a retry of a task that stopped there): a step
+    // could only be paid for and stop again. Asked, the user can raise it.
+    let cap = job.meter.task_cap(&task.id);
+    if cap > 0.0 && job.meter.task(&task.id).usd >= cap {
+        let raised = match job.ask {
+            Some(ask) => raise_cap(job.meter, &task.id, ask).await,
+            None => false,
+        };
+        if !raised {
+            let mut o = outcome(
+                task,
+                TaskStatus::Blocked,
+                &format!(
+                    "still at its ${cap:.2} cap ({}); raising the cap lets it go on",
+                    job.meter.task(&task.id).label()
+                ),
+                "",
+                "",
+            );
+            o.gate_next = task.gate_next;
+            o.handback = task.handback.clone();
+            return Ok(o);
+        }
+    }
     let slug: String = task
         .id
         .chars()
@@ -282,17 +318,37 @@ pub async fn run_build_task(job: &BuildJob<'_>, task: &Task) -> Result<TaskOutco
     // A retry reopens the rejected attempt instead of starting over: fixing
     // findings in place costs a fraction of rebuilding the task from scratch.
     let resumed = git::open_worktree(job.repo, &wt, &branch)?;
-    let result = build_inner(job, task, &onto, &wt, &branch, &scratch, resumed).await;
+    // The builder's handback, once its work is committed.
+    let built = std::sync::Mutex::new(None::<String>);
+    let result = build_inner(job, task, &onto, &wt, &branch, &scratch, resumed, &built).await;
     let _ = std::fs::remove_dir_all(&scratch);
+    let built = built.into_inner().ok().flatten();
+    // Stopped at the gate, not rejected: the next run goes back to the gate.
+    let at_gate = |mut o: TaskOutcome| {
+        if let Some(h) = &built {
+            if o.status == TaskStatus::Blocked && !o.rejected {
+                o.gate_next = true;
+                o.handback.clone_from(h);
+            }
+        }
+        o
+    };
     match result {
-        Ok(o) => Ok(o),
-        // A cap stopped the work partway: keep what it produced.
+        Ok(o) => Ok(at_gate(o)),
+        // A cap stopped the work partway: keep what it produced. Recreating
+        // the task would start the build over; raising its cap goes on.
         Err(Error::TaskBudget(why)) => {
             let gate = Gate {
                 cost: job.meter.task(&task.id).label(),
                 ..Gate::default()
             };
-            Ok(keep_branch(job, task, &wt, &branch, why, "", &gate))
+            let why = format!(
+                "{why}. Raising the task's cap and setting it to pending goes on from here; \
+                 recreating the task starts the build over"
+            );
+            Ok(at_gate(keep_branch(
+                job, task, &wt, &branch, why, "", &gate,
+            )))
         }
         Err(e @ Error::Budget { .. }) => {
             git::remove_worktree_keep_branch(job.repo, &wt);
@@ -311,7 +367,7 @@ pub async fn run_build_task(job: &BuildJob<'_>, task: &Task) -> Result<TaskOutco
                 cost: job.meter.task(&task.id).label(),
                 ..Gate::default()
             };
-            Ok(keep_branch(
+            Ok(at_gate(keep_branch(
                 job,
                 task,
                 &wt,
@@ -319,7 +375,7 @@ pub async fn run_build_task(job: &BuildJob<'_>, task: &Task) -> Result<TaskOutco
                 format!("stopped after the build: {why}"),
                 "",
                 &gate,
-            ))
+            )))
         }
         Err(e) => {
             let _ = git::remove_worktree(job.repo, &wt, &branch);
@@ -351,6 +407,7 @@ struct Gate {
     unverified: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn build_inner(
     job: &BuildJob<'_>,
     task: &Task,
@@ -359,6 +416,7 @@ async fn build_inner(
     branch: &str,
     scratch: &Path,
     resumed: bool,
+    built: &std::sync::Mutex<Option<String>>,
 ) -> Result<TaskOutcome> {
     let bill = Bill {
         meter: job.meter,
@@ -367,6 +425,7 @@ async fn build_inner(
         progress: job.progress.as_ref(),
         wrap_up_usd: None,
         last_text: None,
+        ask: job.ask,
     };
     let ctx = ToolContext {
         live: None,
@@ -385,41 +444,57 @@ async fn build_inner(
         web: job.web,
     };
 
-    let mut brief = builder_brief(task);
-    if resumed {
-        brief.push_str(
-            "\nYour previous attempt is already committed in this worktree. Fix the \
-             findings above in place; do not start over.\n",
+    // A run that stopped at the gate goes back to it: the builder's work is
+    // committed, and building it again would pay for it twice.
+    let handback = if resumed && task.gate_next {
+        if let Some(p) = &job.progress {
+            p.say(
+                Role::Builder,
+                "built on an earlier run: straight to the gate",
+            );
+        }
+        task.handback.clone()
+    } else {
+        let mut brief = builder_brief(task);
+        if resumed {
+            brief.push_str(
+                "\nYour previous attempt is already committed in this worktree. Fix the \
+                 findings above in place; do not start over.\n",
+            );
+        }
+        let msgs = specialist_messages(
+            job.home,
+            job.project_root,
+            job.trusted,
+            Role::Builder,
+            "",
+            &brief,
+            &task.files,
         );
-    }
-    let msgs = specialist_messages(
-        job.home,
-        job.project_root,
-        job.trusted,
-        Role::Builder,
-        "",
-        &brief,
-        &task.files,
-    );
-    let handback = run_specialist(
-        job.provider.as_ref(),
-        job.model,
-        Role::Builder,
-        msgs,
-        &ctx,
-        &bill,
-    )
-    .await?;
-    git::commit_all(wt, &format!("ryter: {}", task.title))?;
-    if builder_blocked(&handback) {
-        let gate = Gate::default();
-        let why = match blocked_reason(&handback) {
-            Some(r) => format!("the builder is blocked: {r}"),
-            None => "the builder is blocked; its handback says why".into(),
-        };
-        let mut o = keep_branch(job, task, wt, branch, why, &handback, &gate);
-        o.summary = "blocked; needs the lead or the user".into();
-        return Ok(o);
+        let handback = run_specialist(
+            job.provider.as_ref(),
+            job.model,
+            Role::Builder,
+            msgs,
+            &ctx,
+            &bill,
+        )
+        .await?;
+        git::commit_all(wt, &format!("ryter: {}", task.title))?;
+        if builder_blocked(&handback) {
+            let gate = Gate::default();
+            let why = match blocked_reason(&handback) {
+                Some(r) => format!("the builder is blocked: {r}"),
+                None => "the builder is blocked; its handback says why".into(),
+            };
+            let mut o = keep_branch(job, task, wt, branch, why, &handback, &gate);
+            o.summary = "blocked; needs the lead or the user".into();
+            return Ok(o);
+        }
+        handback
+    };
+    if let Ok(mut b) = built.lock() {
+        *b = Some(handback.clone());
     }
 
     let mut gate = Gate::default();
@@ -577,6 +652,9 @@ async fn build_inner(
             report: report(task, status, &summary, &handback, &gate),
             summary,
             unverified: gate.unverified,
+            gate_next: false,
+            handback: String::new(),
+            rejected: false,
         });
     }
     Ok(keep_branch(
@@ -817,6 +895,9 @@ pub async fn land_patch(job: &BuildJob<'_>, patch: &crate::session::Patch) -> Re
         retries: 0,
         findings: String::new(),
         spent: Default::default(),
+        cap_usd: None,
+        gate_next: false,
+        handback: String::new(),
     };
     let ctx = ToolContext {
         live: None,
@@ -841,6 +922,7 @@ pub async fn land_patch(job: &BuildJob<'_>, patch: &crate::session::Patch) -> Re
         progress: job.progress.as_ref(),
         wrap_up_usd: None,
         last_text: None,
+        ask: job.ask,
     };
     let mut gate = Gate::default();
     let user_head = git::rev(user, &patch.target)?;
@@ -1093,6 +1175,7 @@ async fn audit(
         progress: job.progress.as_ref(),
         wrap_up_usd: None,
         last_text: None,
+        ask: job.ask,
     };
     run_specialist(
         seat.provider.as_ref(),
@@ -1136,10 +1219,16 @@ fn failed(
         git::remove_worktree_keep_branch(job.repo, wt);
     }
     let _ = branch;
+    // In all, not this run's: a requeued task gets one more attempt, and the
+    // count said "rejected 3 times" after each single one.
+    let total = job.rejections + 1;
     let summary = if status == TaskStatus::Blocked {
-        format!("rejected {retries} times; blocked")
+        format!(
+            "rejected; blocked ({total} rejection{} in all)",
+            if total == 1 { "" } else { "s" }
+        )
     } else {
-        "rejected; retrying".into()
+        format!("rejected; retrying ({total} in all)")
     };
     let gate = &priced(job, task, gate);
     TaskOutcome {
@@ -1149,6 +1238,9 @@ fn failed(
         report: report(task, &summary, findings, handback, gate),
         summary,
         unverified: false,
+        gate_next: false,
+        handback: String::new(),
+        rejected: true,
     }
 }
 
@@ -1172,6 +1264,9 @@ fn keep_branch(
         report: report(task, "not merged", &summary, handback, gate),
         summary,
         unverified: false,
+        gate_next: false,
+        handback: String::new(),
+        rejected: false,
     }
 }
 
@@ -1183,6 +1278,9 @@ fn outcome(task: &Task, status: TaskStatus, why: &str, handback: &str, audit: &s
         summary: why.to_string(),
         report: format!("### {} — {}\n{why}\n{handback}{audit}", task.id, task.title),
         unverified: false,
+        gate_next: false,
+        handback: String::new(),
+        rejected: false,
     }
 }
 
@@ -1232,6 +1330,7 @@ pub async fn run_note_task(
     meter: &Meter,
     connection: &str,
     progress: Option<Progress>,
+    ask: Option<&CapAsk>,
 ) -> Result<TaskOutcome> {
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
@@ -1269,6 +1368,7 @@ pub async fn run_note_task(
         progress: progress.as_ref(),
         wrap_up_usd: None,
         last_text: None,
+        ask,
     };
     let wrote =
         |q: &crate::queue::TaskQueue| q.tasks.iter().filter(|t| t.by == "architect").count();
@@ -1290,6 +1390,9 @@ pub async fn run_note_task(
                 meter.task(&task.id).label()
             ),
             unverified: false,
+            gate_next: false,
+            handback: String::new(),
+            rejected: false,
         });
     }
     let body = clip_handback(&text);
@@ -1306,6 +1409,9 @@ pub async fn run_note_task(
         findings: body.clone(),
         summary: first_line(&body).unwrap_or_else(|| format!("{} {}", role, task.title)),
         unverified: false,
+        gate_next: false,
+        handback: String::new(),
+        rejected: false,
     })
 }
 
@@ -1369,6 +1475,74 @@ pub struct Bill<'a> {
     /// The specialist's latest text, kept as it goes, so a stop at the cap
     /// still has something to show.
     pub last_text: Option<&'a std::sync::Mutex<String>>,
+    /// Who to ask when the task reaches its cap; `None` stops it there.
+    pub ask: Option<&'a CapAsk>,
+}
+
+/// Asks the user whether to raise a task's cap when it reaches it. The task
+/// used to stop there with its step paid for and thrown away, and the lead
+/// recreated it, starting the build over.
+pub struct CapAsk {
+    /// Where the question goes.
+    pub io: crate::user_io::UserIo,
+    /// The turn's stop flag: an unanswered question ends with the turn.
+    pub cancel: Arc<Cancel>,
+    /// What else to weigh: the rejections so far, a stronger builder.
+    pub note: String,
+}
+
+/// Dollars a cap can be raised by, most first.
+const RAISE_STEPS: [f64; 2] = [5.0, 2.0];
+
+/// `task` is at its dollar cap: ask whether to raise it, and raise it if
+/// so. True when raised; the task carries on from where it is.
+async fn raise_cap(meter: &Meter, task: &str, ask: &CapAsk) -> bool {
+    let cap = meter.task_cap(task);
+    if cap <= 0.0 {
+        return false;
+    }
+    let spent = meter.task(task).usd;
+    let roles: Vec<String> = meter
+        .task_roles(task)
+        .iter()
+        .map(|(r, usd)| format!("{r} ${usd:.2}"))
+        .collect();
+    let roles = if roles.is_empty() {
+        String::new()
+    } else {
+        format!(" ({} this run)", roles.join(", "))
+    };
+    let note = if ask.note.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{}", ask.note)
+    };
+    let question = format!(
+        "Task {task} has spent ${spent:.2} of its ${cap:.2} cap{roles}.{note}\n\n\
+         Raise its cap and carry on from where it is?"
+    );
+    let options: Vec<String> = RAISE_STEPS
+        .iter()
+        .map(|step| format!("Add ${step:.0} (cap ${:.2})", cap + step))
+        .chain(["Stop here; its branch keeps the work".to_string()])
+        .collect();
+    let (io, cancel, asked) = (ask.io.clone(), ask.cancel.clone(), options.clone());
+    let answer = tokio::task::spawn_blocking(move || {
+        io.ask_as(Some("task budget"), &question, asked, &cancel)
+    })
+    .await
+    .unwrap_or_default();
+    match RAISE_STEPS
+        .iter()
+        .zip(&options)
+        .find(|(_, o)| **o == answer)
+    {
+        Some((step, _)) => {
+            meter.raise_task_cap(task, cap + step);
+            true
+        }
+        None => false,
+    }
 }
 
 /// Where a specialist's activity is reported.
@@ -1791,8 +1965,21 @@ pub(crate) async fn run_specialist(
         }
         // Charged every round, so a cap stops a runaway loop mid-task rather
         // than after it has spent the money.
-        bill.meter
-            .charge(bill.task, role, bill.connection, model, usage, reported)?;
+        if let Err(e) = bill
+            .meter
+            .charge(bill.task, role, bill.connection, model, usage, reported)
+        {
+            // At the dollar cap, the user may raise it and the step goes on;
+            // the reply it paid for is kept. A token cap stops as before.
+            let raise = matches!(&e, Error::TaskBudget(why) if !why.contains("token cap"));
+            let raised = match bill.ask {
+                Some(ask) if raise => raise_cap(bill.meter, bill.task, ask).await,
+                _ => false,
+            };
+            if !raised {
+                return Err(e);
+            }
+        }
         last = text.clone();
         let mut calls = calls.finish();
         if truncated {
@@ -1956,6 +2143,9 @@ mod tests {
             retries: 0,
             findings: String::new(),
             spent: Default::default(),
+            cap_usd: None,
+            gate_next: false,
+            handback: String::new(),
         }
     }
 
@@ -2108,6 +2298,8 @@ mod tests {
         max_retries: u32,
     ) -> TaskOutcome {
         let job = BuildJob {
+            ask: None,
+            rejections: 0,
             provider: p.clone(),
             model: "m",
             connection: "c",
@@ -2180,6 +2372,7 @@ mod tests {
                 crate::meter::Caps::default(),
             ),
             "c",
+            None,
             None,
         )
         .await
@@ -2579,6 +2772,179 @@ mod tests {
         assert!(!mid_merge(f.repo.path()));
     }
 
+    /// `turn` with its cost reported, as OpenRouter reports it.
+    fn costing(mut turn: Vec<StreamDelta>, usd: f64) -> Vec<StreamDelta> {
+        turn.insert(turn.len() - 1, StreamDelta::ReportedCost(usd));
+        turn
+    }
+
+    /// A user who answers every question with the option `pick` chooses,
+    /// and the questions asked.
+    fn answering(pick: fn(&[String]) -> String) -> (CapAsk, Arc<Mutex<Vec<String>>>) {
+        let (io, rx) = crate::user_io::UserIo::pair();
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let seen = asked.clone();
+        std::thread::spawn(move || {
+            while let Ok(req) = rx.recv() {
+                if let crate::user_io::UserRequest::Question {
+                    question,
+                    options,
+                    reply,
+                    ..
+                } = req
+                {
+                    seen.lock().unwrap().push(question);
+                    let _ = reply.send(pick(&options));
+                }
+            }
+        });
+        let ask = CapAsk {
+            io,
+            cancel: Cancel::new(),
+            note: String::new(),
+        };
+        (ask, asked)
+    }
+
+    async fn run_asked(
+        f: &Fixture,
+        p: &Arc<Scripted>,
+        t: &Task,
+        meter: &Meter,
+        ask: Option<&CapAsk>,
+    ) -> TaskOutcome {
+        let panel = vec![seat(p, "auditor-m", "", &[])];
+        let job = BuildJob {
+            ask,
+            rejections: 0,
+            provider: p.clone(),
+            model: "m",
+            connection: "c",
+            auditors: &panel,
+            meter,
+            repo: f.repo.path(),
+            home: f.home.path(),
+            session_id: "sess0001",
+            project_root: None,
+            trusted: false,
+            always_approve: true,
+            web: false,
+            auditor_enabled: true,
+            checks: &[],
+            check_timeout: std::time::Duration::from_secs(30),
+            max_retries: 0,
+            hooks: None,
+            cancel: Cancel::new(),
+            progress: None,
+        };
+        run_build_task(&job, t).await.unwrap()
+    }
+
+    fn capped(usd: f64) -> Meter {
+        Meter::new(
+            crate::spend::PriceBook::new(),
+            crate::meter::Caps {
+                task_usd: usd,
+                ..crate::meter::Caps::default()
+            },
+        )
+    }
+
+    /// At the cap the user is asked; raising it carries the step on, the
+    /// reply it paid for kept. It used to stop there, the step thrown away.
+    #[tokio::test]
+    async fn at_the_cap_the_user_can_raise_it_and_the_task_carries_on() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            costing(write_call("extra.txt", "x\n"), 0.04),
+            costing(say("STATUS: DONE"), 0.02),
+            costing(say("VERDICT: PASS"), 0.01),
+        ]);
+        let (ask, asked) = answering(|o| o[0].clone());
+        let meter = capped(0.05);
+        let out = run_asked(&f, &p, &task("t1", "x"), &meter, Some(&ask)).await;
+        assert_eq!(out.status, TaskStatus::Done, "{out:?}");
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 1, "{asked:?}");
+        assert!(
+            asked[0].contains("Task t1 has spent $0.06 of its $0.05 cap (builder $0.06 this run)"),
+            "{asked:?}"
+        );
+        assert!((meter.task_cap("t1") - 5.05).abs() < 1e-9);
+    }
+
+    /// Stopped at the cap during the audit, the next run goes straight back
+    /// to the audit: it used to run the builder again, paying twice.
+    #[tokio::test]
+    async fn a_stop_during_the_audit_resumes_at_the_audit() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            costing(write_call("extra.txt", "x\n"), 0.02),
+            costing(say("STATUS: DONE\nFILES: extra.txt"), 0.01),
+            costing(say("VERDICT: PASS"), 0.03),
+        ]);
+        let (ask, _) = answering(|o| o.last().unwrap().clone());
+        let meter = capped(0.05);
+        let mut t = task("t1", "x");
+        let out = run_asked(&f, &p, &t, &meter, Some(&ask)).await;
+        assert_eq!(out.status, TaskStatus::Blocked, "{out:?}");
+        assert!(out.gate_next, "{out:?}");
+        assert!(out.handback.contains("STATUS: DONE"), "{out:?}");
+        assert!(
+            out.findings
+                .contains("recreating the task starts the build over"),
+            "{out:?}"
+        );
+        assert!(!f.repo.path().join("extra.txt").exists(), "nothing merged");
+
+        // The next run: its cap raised, only the auditor is called.
+        t.gate_next = out.gate_next;
+        t.handback = out.handback;
+        t.spent = meter.task("t1");
+        let p = Scripted::new(vec![costing(say("VERDICT: PASS"), 0.01)]);
+        let meter = capped(0.05)
+            .with_prior([("t1".to_string(), t.spent)].into())
+            .with_task_caps([("t1".to_string(), 5.05)].into());
+        let out = run_asked(&f, &p, &t, &meter, None).await;
+        assert_eq!(out.status, TaskStatus::Done, "{out:?}");
+        assert_eq!(p.calls(), 1, "only the audit ran");
+        assert!(
+            p.request(0).contains("STATUS: DONE"),
+            "the auditor got the handback"
+        );
+        assert_eq!(
+            std::fs::read_to_string(f.repo.path().join("extra.txt")).unwrap(),
+            "x\n"
+        );
+    }
+
+    /// A task already at its cap stops before a paid step that could only
+    /// stop again. It used to pay for one call and stop.
+    #[tokio::test]
+    async fn a_task_at_its_cap_spends_nothing_to_stop_again() {
+        let f = fixture();
+        let p = Scripted::new(vec![say("should not run")]);
+        let spent = crate::meter::Tally {
+            usd: 0.06,
+            ..Default::default()
+        };
+        let meter = capped(0.05).with_prior([("t1".to_string(), spent)].into());
+        let out = run_asked(&f, &p, &task("t1", "x"), &meter, None).await;
+        assert_eq!(out.status, TaskStatus::Blocked);
+        assert!(out.findings.contains("still at its $0.05 cap"), "{out:?}");
+        assert_eq!(p.calls(), 0);
+        // Asked, the user can raise it first, and then it runs.
+        let p = Scripted::new(vec![
+            write_call("extra.txt", "x\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: PASS"),
+        ]);
+        let (ask, _) = answering(|o| o[1].clone());
+        let out = run_asked(&f, &p, &task("t1", "x"), &meter, Some(&ask)).await;
+        assert_eq!(out.status, TaskStatus::Done, "{out:?}");
+        assert!((meter.task_cap("t1") - 2.05).abs() < 1e-9);
+    }
+
     /// A rejected attempt is fixed in place: the retry reopens the same
     /// worktree instead of paying to rebuild the task from scratch.
     #[tokio::test]
@@ -2743,6 +3109,7 @@ mod tests {
             ),
             "c",
             None,
+            None,
         )
         .await
         .unwrap();
@@ -2766,6 +3133,8 @@ mod tests {
             crate::meter::Caps::default(),
         );
         let job = BuildJob {
+            ask: None,
+            rejections: 0,
             provider: p.clone(),
             model: "m",
             connection: "c",
@@ -2838,6 +3207,8 @@ mod tests {
             crate::meter::Caps::default(),
         );
         let job = BuildJob {
+            ask: None,
+            rejections: 0,
             provider: p.clone(),
             model: "m",
             connection: "c",

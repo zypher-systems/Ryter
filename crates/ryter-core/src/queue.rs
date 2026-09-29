@@ -68,6 +68,18 @@ pub struct Task {
     /// What the task has spent on every run so far. Its caps count all of it.
     #[serde(default, skip_serializing_if = "crate::meter::Tally::is_empty")]
     pub spent: crate::meter::Tally,
+    /// The dollar cap the user raised this task to, over `[spend]`'s.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cap_usd: Option<f64>,
+    /// The builder's work is committed on the task's branch and waits only
+    /// on the gate (checks, audit, merge): the next run goes straight there.
+    /// A stop at the cap during the audit used to send the next run back to
+    /// the builder, paying for the build twice.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub gate_next: bool,
+    /// The builder's handback for that work, for the auditor.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub handback: String,
 }
 
 /// One task as the crew board shows it: everything drawn comes from here,
@@ -95,6 +107,9 @@ pub struct TaskView {
     /// Audit rejections so far.
     #[serde(default)]
     pub retries: u32,
+    /// Rejections in all: every run of the task, requeued or recreated.
+    #[serde(default)]
+    pub rejections: u32,
 }
 
 /// The open patch, as the crew board shows it.
@@ -204,6 +219,9 @@ impl TaskQueue {
                     retries: 0,
                     findings: String::new(),
                     spent: Default::default(),
+                    cap_usd: None,
+                    gate_next: false,
+                    handback: String::new(),
                 }),
             }
         }
@@ -372,6 +390,7 @@ impl TaskQueue {
                     waits_on,
                     reason,
                     retries: t.retries,
+                    rejections: 0,
                 }
             })
             .collect()

@@ -325,6 +325,12 @@ Enter on one previews it; `y` applies it and keeps your previous crew as the `be
 
 Crew spend is metered per task and role and counts against `[spend] session_budget_usd`; each task also stops at `task_budget_usd` / `task_max_tokens`. See `docs/cost.md`.
 
+**When a task reaches its cap**, it pauses and Ryter asks (`Ryter asks · task budget`). You see what the task has spent and on which roles, with three choices: add $5, add $2, or stop. Raising the cap carries the task on from exactly where it was: the step it paid for is kept, and the other workers go on while you decide. A raised cap stays with the task. If you stop, the task's branch keeps the work. The lead is told to raise the cap and requeue the task rather than recreate it, because recreating it starts the build over. A task that is still at its cap asks before it spends anything. Runs with no one to ask (headless) stop as before.
+
+**A task that stops after its build is committed** (you stopped it at the cap during the audit, the auditor's provider refused, the merge failed) goes straight back to the checks and the audit on its next run. The builder isn't paid again.
+
+**Rejections are counted per task, in all**, across the lead's requeues and recreations. The lane card shows them in yellow, and a blocked task says `rejected; blocked (5 rejections in all)`. At 3 rejections, and every 3 after, Ryter says more retries of the same builder rarely help and names a stronger one from the models your account can use: the crew builder's high-cost pick, never your auditor's model. The lead is told to pass that on, and the cap question mentions it too.
+
 `/auditor on|off` is session-only unless you also change config. With the auditor off, **nothing merges**: finished work waits on its branch. After each batch the lead gets the crew report, tells you what landed, and records builder decisions in `DECISIONS.md` — builders never write project memory themselves.
 
 The architect runs in-process (no worktree) and writes tasks straight into the queue builders read from. Nested subagents are not supported.

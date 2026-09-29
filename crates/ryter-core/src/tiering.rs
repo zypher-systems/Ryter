@@ -90,6 +90,37 @@ fn short_reason(e: &str) -> String {
         .unwrap_or_else(|| e.lines().next().unwrap_or(e).chars().take(140).collect())
 }
 
+/// A builder stronger than `current`, for a task rejected again and again:
+/// the high tier's builder, else the balanced tier's architect, whichever
+/// first costs more than `current` (price is the only signal before
+/// `ryter bench`) and is none of `avoid` (the auditors: sign-off must come
+/// from another model).
+pub fn stronger_builder(
+    current: &str,
+    lead_connection: &str,
+    lead_model: &str,
+    models: &[ModelInfo],
+    local: &HashSet<String>,
+    avoid: &[String],
+) -> Option<Pick> {
+    let price = |m: &ModelInfo| match (m.input_per_million, m.output_per_million) {
+        (Some(i), Some(o)) => Some(0.8 * i + 0.2 * o),
+        _ => None,
+    };
+    let now = models
+        .iter()
+        .find(|m| same_model(&m.id, current))
+        .and_then(price)
+        .unwrap_or(0.0);
+    let high = suggest_tier(Tier::Galleon, lead_connection, lead_model, models, local).builder;
+    let strong = suggest_tier(Tier::Schooner, lead_connection, lead_model, models, local).architect;
+    [high, strong].into_iter().flatten().find(|p| {
+        !same_model(&p.model, current)
+            && !avoid.iter().any(|a| same_model(a, &p.model))
+            && p.blended > now
+    })
+}
+
 /// Above this blended price ($/M tokens) a model is a premium outlier, not a
 /// default. docs/cost.md prices the auditor and architect at a mainstream
 /// flagship; a "pro" tier several times that makes every audit cost several
@@ -805,6 +836,55 @@ mod tests {
             assert!(got.contains(want), "{raw} -> {got}");
             assert!(!got.contains('{'), "no JSON left: {got}");
         }
+    }
+
+    /// A task rejected again and again gets a stronger builder named: one
+    /// that costs more than the one failing, and never an auditor.
+    #[test]
+    fn a_stronger_builder_is_pricier_and_not_an_auditor() {
+        let cat = catalog();
+        let pick = stronger_builder(
+            "deepseek/deepseek-v4",
+            "spacexai",
+            "grok-4.6",
+            &cat,
+            &HashSet::new(),
+            &[],
+        )
+        .expect("a stronger builder");
+        assert_ne!(pick.model, "deepseek/deepseek-v4");
+        let cheap = cat.iter().find(|m| m.id == "deepseek/deepseek-v4").unwrap();
+        let price =
+            0.8 * cheap.input_per_million.unwrap() + 0.2 * cheap.output_per_million.unwrap();
+        assert!(pick.blended > price, "{pick:?}");
+        // Not the auditor, even when it is the obvious pick.
+        let again = stronger_builder(
+            "deepseek/deepseek-v4",
+            "spacexai",
+            "grok-4.6",
+            &cat,
+            &HashSet::new(),
+            std::slice::from_ref(&pick.model),
+        );
+        assert!(
+            again.as_ref().is_none_or(|p| p.model != pick.model),
+            "{again:?}"
+        );
+        // The strongest already: nothing to suggest.
+        let top = suggest_tier(Tier::Galleon, "spacexai", "grok-4.6", &cat, &HashSet::new())
+            .architect
+            .unwrap();
+        assert!(
+            stronger_builder(
+                &top.model,
+                "spacexai",
+                "grok-4.6",
+                &cat,
+                &HashSet::new(),
+                &[]
+            )
+            .is_none_or(|p| p.blended > top.blended)
+        );
     }
 
     #[test]

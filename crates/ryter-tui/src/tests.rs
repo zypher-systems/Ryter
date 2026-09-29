@@ -931,6 +931,7 @@ fn crew_board() -> View {
             waits_on: waits.iter().map(|s| s.to_string()).collect(),
             reason: reason.into(),
             retries: 0,
+            rejections: 0,
         }
     };
     // First snapshot: everything waits on the scaffold.
@@ -1128,6 +1129,9 @@ fn crew_live() -> View {
     }
     v.crew[0].tools = 9;
     v.crew[1].tools = 4;
+    if let Some(t) = v.tasks.iter_mut().find(|t| t.id == "count") {
+        t.rejections = 2;
+    }
     v.spend_log.push((50_000, 0.02));
     v.tick(62_000);
     v.now_ms = 62_300;
@@ -1151,6 +1155,7 @@ fn live_lanes_show_what_each_worker_is_doing() {
         "+ fn greet(name: &str) -> String {",
         "+     format!(\"hello, {who}\")▌",
         " RUNNING  $ cargo test",
+        "task $0.14 · 4 tools so far · rejected 2 times",
         "test greet::tests::trims ... ok",
         " THINKING ",
         "I'll add Queue::mode()",
@@ -1261,6 +1266,7 @@ fn a_blocked_scaffold_shows_why_and_what_waits() {
         waits_on: waits.iter().map(|s| s.to_string()).collect(),
         reason: reason.into(),
         retries: 0,
+        rejections: 0,
     };
     v.task_edges.clear();
     v.set_tasks(
@@ -1441,6 +1447,7 @@ fn the_plan_is_drawn_and_falls_back_when_it_wont_fit() {
         waits_on: Vec::new(),
         reason: String::new(),
         retries: 0,
+        rejections: 0,
     };
     let mut v = crew_board();
     v.crew.clear();

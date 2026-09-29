@@ -196,6 +196,10 @@ pub fn tool_summary(name: &str, args: &Value) -> String {
     }
 }
 
+/// Rejections of one task, in all, at which Ryter says more retries of the
+/// same builder rarely help; and again at each multiple.
+const REJECTIONS_ADVISE: u32 = 3;
+
 impl Agent {
     /// Run one user message to completion (or cap).
     ///
@@ -743,8 +747,19 @@ impl Agent {
                 .map(|t| (t.id.clone(), t.spent))
                 .collect()
         };
+        let raised = {
+            let q = self
+                .queue
+                .lock()
+                .map_err(|e| Error::Config(e.to_string()))?;
+            q.tasks
+                .iter()
+                .filter_map(|t| t.cap_usd.map(|c| (t.id.clone(), c)))
+                .collect()
+        };
         let mut meter = Meter::new(self.book.clone(), self.caps())
             .with_prior(prior)
+            .with_task_caps(raised)
             .with_free(free)
             .with_log(self.session.spend_path())
             .with_efforts(
@@ -918,6 +933,24 @@ impl Agent {
                 let hooks = self.ctx.hooks.clone();
                 let notes_dir = self.session.notes_dir();
                 let pass = pass_note_for(&self.session, role);
+                // Rejections in all, so far; a task rejected again and again
+                // gets advice with its cap question.
+                let before = self
+                    .session
+                    .meta
+                    .rejections
+                    .get(&task.id)
+                    .copied()
+                    .unwrap_or(0);
+                let ask = self.ctx.user_io.clone().map(|io| crew::CapAsk {
+                    io,
+                    cancel: child_cancel.clone(),
+                    note: if role == Role::Builder && before >= REJECTIONS_ADVISE {
+                        self.builder_advice(&task.id, before, &builder_m, &builder_c, &auditors)
+                    } else {
+                        String::new()
+                    },
+                });
                 let cancel = child_cancel;
                 let running = self.running.clone();
                 let task_id = task.id.clone();
@@ -929,16 +962,21 @@ impl Agent {
                 jobs.push(async move {
                     let result = if role == Role::Builder {
                         let mut task = task;
+                        // Rejections this run.
+                        let mut seen = 0u32;
                         loop {
                             if cancel.is_cancelled() {
                                 break (
                                     sub_id,
                                     task_id.clone(),
                                     task.retries,
+                                    seen,
                                     Err(Error::Cancelled),
                                 );
                             }
                             let job = crew::BuildJob {
+                                ask: ask.as_ref(),
+                                rejections: before + seen,
                                 provider: provider.clone(),
                                 model: &model,
                                 connection: &connection,
@@ -960,19 +998,25 @@ impl Agent {
                                 progress: progress.clone(),
                             };
                             let outcome = crew::run_build_task(&job, &task).await;
+                            if matches!(&outcome, Ok(o) if o.rejected) {
+                                seen += 1;
+                            }
                             match outcome {
                                 Ok(o) if o.status == TaskStatus::Pending => {
                                     task.retries += 1;
                                     task.findings = o.findings.clone();
+                                    // Rejected at the gate: the fix is the
+                                    // builder's, whatever the last run was.
+                                    task.gate_next = false;
                                     continue;
                                 }
                                 other => {
-                                    break (sub_id, task_id.clone(), task.retries, other);
+                                    break (sub_id, task_id.clone(), task.retries, seen, other);
                                 }
                             }
                         }
                     } else if cancel.is_cancelled() {
-                        (sub_id, task_id, task.retries, Err(Error::Cancelled))
+                        (sub_id, task_id, task.retries, 0, Err(Error::Cancelled))
                     } else {
                         let outcome = crew::run_note_task(
                             provider,
@@ -993,9 +1037,10 @@ impl Agent {
                             &meter,
                             &connection,
                             progress,
+                            ask.as_ref(),
                         )
                         .await;
-                        (sub_id, task_id, task.retries, outcome)
+                        (sub_id, task_id, task.retries, 0, outcome)
                     };
                     if let Ok(mut run) = running.lock() {
                         run.retain(|c| c.id.as_str() != result.0.as_str());
@@ -1016,7 +1061,20 @@ impl Agent {
             self.record_crew_spend(&meter)?;
             self.keep_task_spend(&meter)?;
             let mut combined = String::new();
-            for (sub_id, task_id, retries, outcome) in results {
+            for (sub_id, task_id, retries, rejected, outcome) in results {
+                if rejected > 0 {
+                    let total = self.session.add_rejections(&task_id, rejected)?;
+                    // Every third rejection: say that more retries of the same
+                    // model rarely help, and name a stronger one.
+                    if total / REJECTIONS_ADVISE > (total - rejected) / REJECTIONS_ADVISE {
+                        let advice =
+                            self.builder_advice(&task_id, total, &builder_m, &builder_c, &auditors);
+                        reports.push(format!(
+                            "### {task_id}: rejected {total} times\n{advice} Tell the user.\n"
+                        ));
+                        self.emit(AgentEvent::Notice { message: advice })?;
+                    }
+                }
                 match outcome {
                     Ok(outcome) => {
                         reports.push(outcome.report.clone());
@@ -1055,6 +1113,10 @@ impl Agent {
                             q.set(&outcome.id, outcome.status, &outcome.findings);
                             if let Some(t) = q.tasks.iter_mut().find(|t| t.id == outcome.id) {
                                 t.retries = retries;
+                                if role == Role::Builder {
+                                    t.gate_next = outcome.gate_next;
+                                    t.handback.clone_from(&outcome.handback);
+                                }
                             }
                         }
                         self.emit(crew::finished_event(
@@ -2037,7 +2099,7 @@ impl Agent {
                 .collect::<Vec<_>>()
                 .join("\n")
         );
-        let answer = io.ask(&question, options, &self.ctx.cancel);
+        let answer = io.ask_as(Some("checks"), &question, options, &self.ctx.cancel);
         if answer == save || answer == session {
             self.checks = found.clone();
             if answer == save {
@@ -2253,6 +2315,8 @@ The auditor is off, so the patch stays on `{}`.
             )));
         }
         let job = crew::BuildJob {
+            ask: None,
+            rejections: 0,
             provider: provider.clone(),
             model,
             connection,
@@ -2305,7 +2369,19 @@ The auditor is off, so the patch stays on `{}`.
             .queue
             .lock()
             .map_err(|e| Error::Config(e.to_string()))?
-            .views(|p| tree.join(p).exists());
+            .views(|p| tree.join(p).exists())
+            .into_iter()
+            .map(|mut t| {
+                t.rejections = self
+                    .session
+                    .meta
+                    .rejections
+                    .get(&t.id)
+                    .copied()
+                    .unwrap_or(0);
+                t
+            })
+            .collect();
         let patch = self
             .session
             .meta
@@ -2332,11 +2408,68 @@ The auditor is off, so the patch stays on `{}`.
             .queue
             .lock()
             .map_err(|e| Error::Config(e.to_string()))?;
+        let raised = meter.raised_caps();
         for t in &mut q.tasks {
             t.spent = meter.task(&t.id);
+            if let Some(cap) = raised.get(&t.id) {
+                t.cap_usd = Some(*cap);
+            }
         }
         q.set_all_saved();
         Ok(())
+    }
+
+    /// For a task the checks or the audit keep rejecting: how often, with
+    /// which builder, what it has cost, and a stronger builder from the
+    /// models this account can use (the cached catalog), when there is one.
+    fn builder_advice(
+        &self,
+        task: &str,
+        total: u32,
+        builder: &str,
+        connection: &str,
+        auditors: &[crew::Auditor],
+    ) -> String {
+        let spent = self
+            .queue
+            .lock()
+            .ok()
+            .and_then(|q| q.tasks.iter().find(|t| t.id == task).map(|t| t.spent.usd))
+            .unwrap_or(0.0);
+        let short = builder.rsplit('/').next().unwrap_or(builder);
+        let mut advice = format!(
+            "Task {task} has been rejected {total} times in all with builder {short} \
+             (${spent:.2} spent on it). More rounds of the same model rarely get past \
+             that; a stronger builder usually costs less than more retries."
+        );
+        let models: Vec<crate::llm::ModelInfo> =
+            crate::llm::model_cache::load(&self.home, connection)
+                .map(|(models, _)| models)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|mut m| {
+                    m.connection = Some(connection.to_string());
+                    m
+                })
+                .collect();
+        let local = self
+            .cfg
+            .as_ref()
+            .map(|c| c.local_connections())
+            .unwrap_or_default();
+        let avoid: Vec<String> = auditors.iter().map(|a| a.model.clone()).collect();
+        match crate::tiering::stronger_builder(
+            builder,
+            &self.connection,
+            &self.model,
+            &models,
+            &local,
+            &avoid,
+        ) {
+            Some(p) => advice.push_str(&format!(" Try {} in /crew → builder.", p.label())),
+            None => advice.push_str(" Pick a stronger one in /crew → builder."),
+        }
+        advice
     }
 
     pub(crate) fn record_crew_spend(&mut self, meter: &Meter) -> Result<()> {
@@ -3137,6 +3270,67 @@ mod tests {
         assert_eq!(design.status, TaskStatus::Done, "{:?}", q.tasks);
     }
 
+    /// The audit keeps rejecting a task: its rejections are counted in all,
+    /// across runs, and at three the user is told a stronger builder may
+    /// cost less than more retries. A requeued task's single attempt used
+    /// to say "rejected 3 times" again.
+    #[tokio::test]
+    async fn repeated_rejections_are_counted_and_a_stronger_builder_suggested() {
+        let p = ReplayProvider::scripted(vec![
+            write("a.txt", "a\n"),
+            say("STATUS: DONE"),
+            say("VERDICT: FAIL\n- a.txt: wrong"),
+            say("STATUS: DONE"),
+            say("VERDICT: FAIL\n- a.txt: still wrong"),
+            say("STATUS: DONE"),
+            say("VERDICT: FAIL\n- a.txt: wrong again"),
+            // Requeued: one more attempt.
+            say("STATUS: DONE"),
+            say("VERDICT: FAIL\n- a.txt: no"),
+        ]);
+        let (_home, _cwd, mut agent) = crew_setup(p);
+        agent.max_crew = 1;
+        agent.max_retries = 2;
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let todo =
+            serde_json::json!({"items": [{"id": "t1", "title": "add a", "files": ["a.txt"]}]});
+        agent.queue.lock().unwrap().apply_todo(&todo).unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert_eq!(agent.session.meta.rejections.get("t1"), Some(&3));
+        assert!(report.contains("### t1: rejected 3 times"), "{report}");
+        assert!(
+            report.contains("rejected 3 times in all with builder grok-4.6")
+                && report.contains("stronger builder"),
+            "{report}"
+        );
+        let events: Vec<AgentEvent> = rx.try_iter().collect();
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Notice { message } if message.contains("in /crew → builder")
+        )));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::SubagentFinished { summary, .. } if summary.contains("3 rejections in all")
+        )));
+        // The lead requeues it: one attempt, counted on, no new advice yet.
+        let requeue = serde_json::json!({"items": [{"id": "t1", "status": "pending"}]});
+        agent.queue.lock().unwrap().apply_todo(&requeue).unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert_eq!(agent.session.meta.rejections.get("t1"), Some(&4));
+        assert!(!report.contains("rejected 4 times\n"), "{report}");
+        let events: Vec<AgentEvent> = rx.try_iter().collect();
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::SubagentFinished { summary, .. } if summary.contains("4 rejections in all")
+        )));
+        // The board shows the count.
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Tasks { tasks, .. } if tasks.iter().any(|t| t.id == "t1" && t.rejections == 4)
+        )));
+    }
+
     /// A paused crew is reported to the lead once a turn. Only the user can
     /// unpause it, and every re-drain was another paid round for the lead,
     /// up to the round cap.
@@ -3357,6 +3551,7 @@ mod tests {
                         question,
                         options,
                         reply,
+                        ..
                     }) => {
                         assert!(question.contains("cargo test"), "{question}");
                         // An untrusted project can't keep them in its config.

@@ -42,8 +42,11 @@ pub enum UserRequest {
         /// Reply channel.
         reply: mpsc::Sender<Permission>,
     },
-    /// `ask_user` question.
+    /// A question: the model's `ask_user`, or Ryter's own.
     Question {
+        /// Who asks, when it is Ryter and not the model: `task budget`,
+        /// `checks`. `None` is the model.
+        title: Option<String>,
         /// Prompt text.
         question: String,
         /// Optional choices (empty = free text).
@@ -139,8 +142,20 @@ impl UserIo {
 
     /// Ask the human. Empty string on timeout, disconnect, or cancel.
     pub fn ask(&self, question: &str, options: Vec<String>, cancel: &Cancel) -> String {
+        self.ask_as(None, question, options, cancel)
+    }
+
+    /// [`Self::ask`] for a question Ryter asks, under `title`.
+    pub fn ask_as(
+        &self,
+        title: Option<&str>,
+        question: &str,
+        options: Vec<String>,
+        cancel: &Cancel,
+    ) -> String {
         let (reply_tx, reply_rx) = mpsc::channel();
         let req = UserRequest::Question {
+            title: title.map(str::to_string),
             question: question.to_string(),
             options,
             reply: reply_tx,

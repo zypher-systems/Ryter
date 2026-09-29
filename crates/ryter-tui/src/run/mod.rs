@@ -694,12 +694,14 @@ fn drain_user_prompts(
             ));
         }
         UserRequest::Question {
+            title,
             question,
             options,
             reply,
         } => {
             cx.ask_reply = Some(reply);
-            view.panels.push(Box::new(AskModal::new(question, options)));
+            view.panels
+                .push(Box::new(AskModal::new(question, options).titled(title)));
         }
     }
     panel::sync_composer(view);

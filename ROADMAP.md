@@ -4,6 +4,12 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.7.1 (`fix/0.7.1`) — caps that ask, retries that resume, rejections counted.**
+  - At its dollar cap a task asks the user (`crew::raise_cap`: +$5, +$2, or stop) and carries on in place when raised. `Meter` keeps raised caps per task, and `Task.cap_usd` keeps them across runs.
+  - A task still at its cap asks, or stops, before spending anything.
+  - A stop after the build is committed sets `Task.gate_next` with the handback, and the next run skips the builder.
+  - Rejections are counted in all per task (`Meta.rejections`), shown on the lane card, and at every third Ryter suggests a stronger builder (`tiering::stronger_builder`).
+  - Found in a $9.22 run: five rejections, a cap stop, and the lead recreating the task and rebuilding it.
 - **0.7.0 (`feat/0.7.0`) — live lanes and the rail.** Chosen from eight designs on the canvas: C1 for crew, S2 for solo.
   - **Engine:** specialists send `SubagentLive` while they stream: waiting, thinking, writing, or running, with the output's last three lines. Reports are throttled to 200 ms, and a change of phase is sent at once. `bash` passes its newest output through `ToolContext.live`.
   - **Board:** a card per worker with a chip, a meter and the output tail; a PULSE tile; spend in the last minute; `^r` hides reasoning. Cards shrink to fit.
