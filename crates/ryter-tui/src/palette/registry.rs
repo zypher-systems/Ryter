@@ -169,7 +169,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "models",
         &["model"],
         Category::Model,
-        "Switch the lead's model",
+        "Choose models: the lead's, and each crew role's (←→)",
         Some("[id]"),
         true,
         None,
@@ -191,12 +191,23 @@ pub const COMMANDS: &[CommandSpec] = &[
         "crew",
         &[],
         Category::Model,
-        "Crew mode: a lead, an architect, parallel builders, independent auditors",
+        "Switch to crew mode: a lead, an architect, parallel builders, independent auditors",
         None,
         true,
         None,
         false,
         run_crew,
+    ),
+    spec(
+        "crews",
+        &["presets"],
+        Category::Model,
+        "Ready-made and saved crews: preview, apply, save, delete",
+        None,
+        true,
+        None,
+        false,
+        |_, _| Action::OpenPanel(PanelId::Crew),
     ),
     spec(
         "solo",
@@ -569,11 +580,13 @@ fn run_sessions(_view: &mut View, rest: &str) -> Action {
     }
 }
 
-/// `/crew` enters crew mode (the crew builder the first time); in crew mode
-/// it opens the crew's settings.
+/// `/crew` switches to crew mode (the crew builder the first time), and
+/// only that. It used to open the crew's settings in crew mode, so the
+/// models were behind typing it twice; they are in `/models` now.
 fn run_crew(view: &mut View, _rest: &str) -> Action {
     if view.crew_mode() {
-        Action::OpenPanel(PanelId::Crew)
+        view.system("already in crew mode · /models sets each role's model · /solo leaves");
+        Action::None
     } else {
         Action::EnterCrew
     }

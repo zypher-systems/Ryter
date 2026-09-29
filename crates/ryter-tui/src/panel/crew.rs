@@ -78,7 +78,7 @@ impl Panel for Crew {
     }
 
     fn title(&self, _view: &View) -> String {
-        "crew".into()
+        "crews".into()
     }
 
     fn status(&self, view: &View) -> String {

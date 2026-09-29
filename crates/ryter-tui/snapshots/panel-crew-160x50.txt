@@ -8,7 +8,7 @@
 
 
 
-                                              ╭─ crew ─────────────────────────────────────── max concurrent: 4 ─╮
+                                              ╭─ crews ────────────────────────────────────── max concurrent: 4 ─╮
                                               │ roles · b opens the crew builder: every seat, with recommendation│
                                               │›● architect  default (grok-4.6)                             auto │
                                               │ ● builder  default (grok-4.6)                               auto │

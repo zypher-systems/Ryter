@@ -388,6 +388,8 @@ pub struct AskModal {
     /// Choices; empty = free text via the composer.
     pub options: Vec<String>,
     selected: usize,
+    /// Who asks, when it is Ryter and not the model.
+    title: Option<String>,
 }
 
 impl AskModal {
@@ -397,7 +399,14 @@ impl AskModal {
             question,
             options,
             selected: 0,
+            title: None,
         }
+    }
+
+    /// Ryter's own question, under `title` (`task budget`).
+    pub fn titled(mut self, title: Option<String>) -> Self {
+        self.title = title;
+        self
     }
 }
 
@@ -407,7 +416,10 @@ impl Panel for AskModal {
     }
 
     fn title(&self, _view: &View) -> String {
-        "the agent asks".into()
+        match &self.title {
+            Some(t) => format!("Ryter asks · {t}"),
+            None => "the agent asks".into(),
+        }
     }
 
     fn legend(&self, _view: &View) -> String {

@@ -844,8 +844,8 @@ fn set_mode(view: &mut View, cx: &mut Ctx, role: ryter_core::Role) {
     cx.send(Work::SetRole(role));
     if entering_crew {
         view.system(
-            "crew mode · your messages go to the lead, and the crew does the work · /crew for \
-             the crew's settings · /solo to go back",
+            "crew mode · your messages go to the lead, and the crew does the work · /models \
+             for each role's model · /solo to go back",
         );
     } else if leaving_crew {
         view.system("solo mode · Tab switches between build, plan, and review");

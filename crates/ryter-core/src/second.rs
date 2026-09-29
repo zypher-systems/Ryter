@@ -426,6 +426,7 @@ impl Agent {
             progress: progress.as_ref(),
             wrap_up_usd: (!reviewer.local).then_some(limit_usd),
             last_text: Some(&partial),
+            ask: None,
         };
         let ran = crew::run_specialist(
             reviewer.provider.as_ref(),

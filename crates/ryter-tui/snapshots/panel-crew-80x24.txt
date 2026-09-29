@@ -1,6 +1,6 @@
  ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
- · sys╭─ crew ─────────────────────────────────────── max concurrent: 4 ─╮
+ · sys╭─ crews ────────────────────────────────────── max concurrent: 4 ─╮
    wel│ roles · b opens the crew builder: every seat, with recommendation│
       │›● architect  default (grok-4.6)                             auto │
       │ ● builder  default (grok-4.6)                               auto │

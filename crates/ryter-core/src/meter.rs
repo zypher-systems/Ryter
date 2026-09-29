@@ -67,6 +67,8 @@ pub struct Meter {
     prior: BTreeMap<String, Tally>,
     /// How many lines the session has already recorded.
     recorded: Mutex<usize>,
+    /// Dollar caps the user raised, per task, over `caps.task_usd`.
+    task_caps: Mutex<BTreeMap<String, f64>>,
 }
 
 /// Totals for one task or a whole run.
@@ -125,7 +127,53 @@ impl Meter {
             lines: Mutex::new(Vec::new()),
             prior: BTreeMap::new(),
             recorded: Mutex::new(0),
+            task_caps: Mutex::new(BTreeMap::new()),
         }
+    }
+
+    /// Caps the user raised on earlier runs, per task.
+    pub fn with_task_caps(self, caps: BTreeMap<String, f64>) -> Self {
+        if let Ok(mut c) = self.task_caps.lock() {
+            *c = caps;
+        }
+        self
+    }
+
+    /// `task`'s dollar cap: the one the user raised it to, else the
+    /// configured one. 0 is none.
+    pub fn task_cap(&self, task: &str) -> f64 {
+        self.task_caps
+            .lock()
+            .ok()
+            .and_then(|c| c.get(task).copied())
+            .unwrap_or(self.caps.task_usd)
+    }
+
+    /// Raise `task`'s dollar cap to `usd`, for the rest of this run.
+    pub fn raise_task_cap(&self, task: &str, usd: f64) {
+        if let Ok(mut c) = self.task_caps.lock() {
+            c.insert(task.to_string(), usd);
+        }
+    }
+
+    /// The caps raised this run or before, to keep with the tasks.
+    pub fn raised_caps(&self) -> BTreeMap<String, f64> {
+        self.task_caps.lock().map(|c| c.clone()).unwrap_or_default()
+    }
+
+    /// What `task` spent this run, per role: `builder $4.63, auditor $0.39`.
+    pub fn task_roles(&self, task: &str) -> Vec<(Role, f64)> {
+        let mut by: Vec<(Role, f64)> = Vec::new();
+        if let Ok(lines) = self.lines.lock() {
+            for l in lines.iter().filter(|l| l.task == task) {
+                let usd = l.usd.unwrap_or(0.0);
+                match by.iter_mut().find(|(r, _)| *r == l.role) {
+                    Some((_, u)) => *u += usd,
+                    None => by.push((l.role, usd)),
+                }
+            }
+        }
+        by
     }
 
     /// Count what these tasks spent on earlier runs against their caps.
@@ -258,10 +306,10 @@ impl Meter {
                 unpriced,
             });
         }
-        if self.caps.task_usd > 0.0 && this.usd >= self.caps.task_usd {
+        let cap = self.task_cap(task);
+        if cap > 0.0 && this.usd >= cap {
             return Err(Error::TaskBudget(format!(
-                "task {task} reached its ${:.2} cap ({})",
-                self.caps.task_usd,
+                "task {task} reached its ${cap:.2} cap ({})",
                 this.label()
             )));
         }

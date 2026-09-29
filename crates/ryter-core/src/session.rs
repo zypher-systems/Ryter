@@ -95,6 +95,10 @@ pub struct Meta {
     /// asks once.
     #[serde(default)]
     pub checks_offered: bool,
+    /// Audit and check rejections per task id, in all: a task the lead
+    /// requeues or recreates keeps its count.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub rejections: std::collections::BTreeMap<String, u32>,
     /// Build-hat checkpoints, oldest first, for `/undo`.
     #[serde(default)]
     pub checkpoints: Vec<String>,
@@ -212,6 +216,7 @@ impl Session {
             patch: None,
             patches_opened: 0,
             checks_offered: false,
+            rejections: Default::default(),
             checkpoints: Vec::new(),
             turn_records: Default::default(),
             redo: Vec::new(),
@@ -592,6 +597,17 @@ impl Session {
     pub fn set_checks_offered(&mut self) -> Result<()> {
         self.meta.checks_offered = true;
         self.touch()
+    }
+
+    /// Count `n` more rejections of `task`; returns its total.
+    pub fn add_rejections(&mut self, task: &str, n: u32) -> Result<u32> {
+        let total = {
+            let c = self.meta.rejections.entry(task.to_string()).or_insert(0);
+            *c += n;
+            *c
+        };
+        self.touch()?;
+        Ok(total)
     }
 
     /// Set the auditor gate for this session.

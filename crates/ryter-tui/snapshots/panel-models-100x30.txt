@@ -1,30 +1,30 @@
  ryter  ·  build                            grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- · syste╭─ models ─────────────────────────────────────────────────────────── 4 · loading ─╮
-   welco│ ⌕ type to filter                                                                 │
-        │ model           context   in/M  out/M  reasoning  connection                     │
-        │›grok-4.6  ●        500k     $2     $6  auto       spacexai                       │
-        │ grok-4.5           256k     $2     $6  auto       spacexai                       │
-        │ grok-4.3           256k  $1.25   $2.5  auto       spacexai                       │
-        │ grok-build-0.1     256k     $1     $2  auto       spacexai                       │
-        │                                                                                  │
-        │                                                                                  │
-        │                                                                                  │
-        │                                                                                  │
-        │                                                                                  │
-        │                                                                                  │
-        │                                                                                  │
-        │                                                                                  │
-        │                                                                                  │
-        │                                                                                  │
-        │                                                                                  │
-        │                                                                                  │
-        │ grok-4.6 · 500k ctx · $2/M input / $6/M output · reasoning auto (medium in buil… │
-        │ ↑↓ move   enter select   tab reasoning   s sort   esc close                      │
-        ╰──────────────────────────────────────────────────────────────────────────────────╯
+ · s╭─ models ─────────────────────────────────────────────────────────────────── 4 · loading ─╮
+   w│ ⌕ type to filter                                                                         │
+    │ ‹ Solo ›   Architect     Builder     Auditor     ←→                                      │
+    │ now: grok-4.6                                                                            │
+    │ model           context   in/M  out/M  reasoning  connection  used by                    │
+    │›grok-4.6           500k     $2     $6  auto       spacexai    lead                       │
+    │ grok-4.5           256k     $2     $6  auto       spacexai                               │
+    │ grok-4.3           256k  $1.25   $2.5  auto       spacexai                               │
+    │ grok-build-0.1     256k     $1     $2  auto       spacexai                               │
+    │                                                                                          │
+    │                                                                                          │
+    │                                                                                          │
+    │                                                                                          │
+    │                                                                                          │
+    │                                                                                          │
+    │                                                                                          │
+    │                                                                                          │
+    │                                                                                          │
+    │                                                                                          │
+    │ grok-4.6 · 500k ctx · $2/M input / $6/M output · reasoning auto (medium in build)        │
+    │ ↑↓ move   enter set   ←→ role   tab reasoning   b guided setup   s sort   esc close      │
+    ╰──────────────────────────────────────────────────────────────────────────────────────────╯
 
 
 ╭─ filter ─────────────────────────────────────────────────────────────────────────────────────────╮
 │› typing goes to the search in the panel above                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter select    tab reasoning    s sort    esc close
+ ↑↓ move    enter set    ←→ role    tab reasoning    b guided setup    s sort    esc close

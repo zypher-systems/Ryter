@@ -839,7 +839,7 @@ fn crew_tiers_cmd() -> ryter_core::Result<()> {
         }
         println!();
     }
-    println!("Use one: `ryter crew suggest --tier <name> --apply`, or pick it in /crew.");
+    println!("Use one: `ryter crew suggest --tier <name> --apply`, or pick it in /crews.");
     Ok(())
 }
 
@@ -868,7 +868,7 @@ fn crew_suggest_cmd(tier: &str, apply: bool) -> ryter_core::Result<()> {
     print!("{}", t.render());
     if !apply {
         println!(
-            "\nRun `ryter crew suggest --tier {} --apply` to use it, or pick it in /crew.",
+            "\nRun `ryter crew suggest --tier {} --apply` to use it, or pick it in /crews.",
             tier.name()
         );
         return Ok(());
@@ -883,7 +883,7 @@ fn crew_suggest_cmd(tier: &str, apply: bool) -> ryter_core::Result<()> {
     rows.extend(t.as_specialists());
     config::save_crew(&home, &rows)?;
     println!(
-        "\nApplied to ~/.ryter/crew.toml. Your previous crew is the `before-suggest` preset in /crew."
+        "\nApplied to ~/.ryter/crew.toml. Your previous crew is the `before-suggest` preset in /crews."
     );
     Ok(())
 }

@@ -1079,10 +1079,24 @@ fn lane_cards(view: &View, theme: Theme, width: u16, per: u16) -> Vec<Line<'stat
                 if c.tools == 1 { "" } else { "s" }
             ));
         }
-        rows.push(Line::from(Span::styled(
-            wrap::truncate(&meter.join(" · "), width),
-            on(theme.dim),
-        )));
+        // Rejections in all, in the warning color: a task the audit keeps
+        // failing is where the money goes.
+        let rejections = task.map_or(0, |t| t.rejections);
+        let flag = (rejections > 0).then(|| {
+            format!(
+                " · rejected {rejections} time{}",
+                if rejections == 1 { "" } else { "s" }
+            )
+        });
+        let meter = wrap::truncate(
+            &meter.join(" · "),
+            width.saturating_sub(flag.as_deref().map_or(0, wrap::width)),
+        );
+        let mut line = vec![Span::styled(meter, on(theme.dim))];
+        if let Some(flag) = flag {
+            line.push(Span::styled(flag, on(theme.warn)));
+        }
+        rows.push(Line::from(line));
 
         // What it is producing: its reasoning, the file it is writing, a
         // command's output. The newest line last.

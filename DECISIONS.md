@@ -2,6 +2,34 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-29 — Every model is chosen in /models; /crew only switches the mode
+- **By:** lead
+- **Decision:**
+  - `/models` has a tab per seat: the lead (`Solo` in solo mode), architect, builder and auditor (`Models.assign_role`, `←→`). The lead's tab lists its connection's models. A role's tab lists every connection's models and `default`, and the first move there sends `ListCrewModels`.
+  - Each tab says what its seat runs on now, and a `used by` column marks the seats. `⏎` sets the seat's model, `Tab` its reasoning, and `b` opens the crew builder.
+  - `/crew` switches to crew mode. In crew mode it says where the models are. The old crew panel is `/crews`: the ready-made crews, presets, and roles.
+  - Every message that said `/crew` for a model now says `/models`.
+- **Chosen vs rejected:** the user picked role tabs in `/models` over a separate `/seats` command, and over keeping `/crew` for settings with a key for the mode. The first tab reads `Solo` in solo mode and `Lead` in crew mode, where the sketch said `Lead` in both: in solo mode there is no lead.
+- **Why:** "to change the models you have to use /crew models and that is not clear." In solo mode `/crew` switched the mode, and in crew mode it opened the settings. 0.7.1's advice to choose a stronger builder would have switched the user's mode.
+- **Where:** `crates/ryter-tui/src/panel/models.rs`, `palette/registry.rs` (`run_crew`, `/crews`), `panel/crew.rs` (title), messages in `crew.rs`, `agent.rs`, `run/actions.rs`, `panel/crew_builder.rs`, `ryter-cli`
+
+### 2026-09-29 — A task's cap asks; a stopped task resumes where it was
+- **By:** lead
+- **Decision:**
+  - **Asking at the cap:** when a charge crosses a task's dollar cap, `run_specialist` asks through `Bill.ask` (a `CapAsk`, from the lead's `UserIo`), on a blocking thread so other workers go on. Raising the cap (`Meter::raise_task_cap`) keeps the step's reply and continues. Stopping keeps the branch (`keep_branch`) and tells the lead that recreating the task starts the build over. A token cap still stops. Headless has no `UserIo` and stops as before.
+  - **Before a retry:** a task at its cap asks, or stops, before its first step (`run_build_task`). It used to pay for one call and stop.
+  - **Resuming at the gate:** once the builder's work is committed, a stop that is not a rejection sets `TaskOutcome.gate_next` and the handback, and the agent stores both on the task. The next run with the branch present skips the builder. A rejection clears it.
+  - **Rejections:** `failed()` marks `rejected`. The agent counts them per task id in the session meta, which survives requeueing and recreation, and shows them on the board (`TaskView.rejections`). At every third, `builder_advice` tells the user, as a notice and in the crew report, to choose a stronger builder in `/crew → builder`. It names no model and switches nothing, and the lead is told not to pick one for them.
+  - **Titles:** `UserIo::ask_as` titles Ryter's own questions (`task budget`, `checks`), shown as `Ryter asks · …`.
+- **Chosen vs rejected:**
+  - The steps are +$5 and +$2, as the user chose.
+  - Rejected resetting a requeued task's retries. It gets one attempt, as before. The count and the label now say how many in all.
+  - Rejected asking on the token cap. Raising dollars doesn't lift it.
+  - Rejected naming a stronger builder, and rejected switching to one: the model is the user's choice. A named pick was built first, from the crew builder's high tier, and removed at the user's word.
+- **Why:** a $9.22 run: five audit rejections, a cap stop partway through a step, and a lead that recreated the task (a retry could not get past its spent cap), rebuilding it for $2.19 more.
+- **Where:** `crates/ryter-core/src/crew.rs` (`CapAsk`, `raise_cap`, `build_inner`, `failed`), `meter.rs` (task caps), `queue.rs` (`cap_usd`, `gate_next`, `handback`, `TaskView.rejections`), `session.rs` (`rejections`), `agent.rs` (`builder_advice`), `user_io.rs` (`ask_as`); `crates/ryter-tui/src/crewboard.rs`, `panel/modal.rs`
+- **Residual risk:** the advice says a stronger builder is needed but not which one. The crew builder's tiers and `/models` prices are where to look.
+
 ### 2026-09-29 — Crew members report live; solo gets a rail
 - **By:** lead
 - **Decision:**
