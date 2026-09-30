@@ -19,7 +19,7 @@ Living plan for Ryter. The lead updates this as work lands.
 ## Now
 
 - **0.8.1 (`0.8.1-patch`) — a folder of projects stays as it is.**
-  - `git::holds_repos` finds repositories in a folder's folders, or one level down, when the folder isn't a repository with commits. It skips only folders the folder's own ignore rules leave out, in git's order of precedence (with the first `.gitignore` when Ryter will write it). `ensure_repo` refuses a first commit there, and git checks again at any depth by staging into a private index. A crew turn stops before its first model call. Solo mode edits without `/undo` there.
+  - `git::holds_repos` finds repositories in a folder's folders, or one level down, when the folder isn't a repository with commits. It skips only folders the folder's own ignore rules leave out, in git's order of precedence (with the first `.gitignore` when Ryter will write it). `ensure_repo` refuses a first commit there, and git checks again at any depth by staging into a private copy of the index. A crew turn stops before its first model call. Solo mode edits without `/undo` there.
   - The rail and the `$` drawer name the folder the project cost is counted in when it isn't the one Ryter runs in (`View::project_root`).
   - A failed turn's error reaches the screen before the turn closes, so it reads `✕ failed`.
   - From the 0.8.0 review: headless pages say headless, and `load_skill` refuses hidden files.

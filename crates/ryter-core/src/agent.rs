@@ -249,9 +249,14 @@ impl Agent {
         if self.role == Role::Orchestrator {
             let repos = crate::git::holds_repos(&self.ctx.workspace);
             if let Some(first) = repos.first() {
+                let state = if crate::git::is_repo(&self.ctx.workspace) {
+                    "its repository has no commit yet"
+                } else {
+                    "it isn't a git repository"
+                };
                 return Err(Error::Config(format!(
-                    "The crew can't work in {}: it isn't a git repository, and it holds \
-                     other repositories ({}) that its first commit would sweep in. If this \
+                    "The crew can't work in {}: {state}, and it holds other repositories \
+                     ({}) that its first commit would sweep in. If this \
                      is a folder of projects, start Ryter in the one you mean: cd {first} && \
                      ryter, or mkdir myapp && cd myapp && ryter for a new one. If they're \
                      this project's dependencies, add their folder to .gitignore.",
@@ -5015,6 +5020,12 @@ mod tests {
         agent.role = Role::SoloBuild;
         agent.ctx.role = Role::SoloBuild;
         assert!(agent.turn("hi").await.is_ok());
+        // A repository with no commit yet is named as one.
+        crate::git::git(cwd.path(), &["init", "-q"]).unwrap();
+        agent.role = Role::Orchestrator;
+        agent.ctx.role = Role::Orchestrator;
+        let err = agent.turn("add hello.py").await.unwrap_err().to_string();
+        assert!(err.contains("its repository has no commit yet"), "{err}");
     }
 
     /// Solo mode in a folder of projects edits without making it a
