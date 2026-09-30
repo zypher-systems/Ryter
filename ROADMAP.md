@@ -18,6 +18,10 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.8.0 (`0.8.0-patch`) — skills the model loads, and pages.**
+  - Skills are listed in the solo and lead prompts (name and description), and `load_skill` reads one. `model-invocable: false` keeps one to the palette.
+  - A built-in `canvas` skill, and a `show_page` tool that saves a page to `~/.ryter/pages/<session>/`, sealed from the network, and opens it (`[ui] open_pages`).
+  - Covers part of the 1.0 item "the model has the tools the job needs". Next on it: images end to end, a terminal-app viewer, and a browser.
 - **0.7.1 (`fix/0.7.1`) — caps that ask, retries that resume, rejections counted.**
   - At its dollar cap a task asks the user (`crew::raise_cap`: +$5, +$2, or stop) and carries on in place when raised. `Meter` keeps raised caps per task, and `Task.cap_usd` keeps them across runs.
   - A task still at its cap asks, or stops, before spending anything.

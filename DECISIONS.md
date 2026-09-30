@@ -2,6 +2,21 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-30 — The model loads skills; pages are a skill plus one tool
+- **By:** lead
+- **Decision:**
+  - **Skills:** `prompt::conversation_system` lists the skills the model may use (name and description) for solo and the lead. `load_skill` (handled in the agent loop) returns a skill's body and the folder its files live in. Skills load from the built-in set (`skill::bundled_skills`, compiled in), then `~/.ryter/skills`, then a trusted project's `.ryter/skills`, with later ones replacing earlier by name. `model-invocable: false` keeps a skill slash-only.
+  - **Pages:** the `canvas` skill carries the know-how: facts only from the session, structure, one self-contained file, light and dark, SVG charts. `show_page {title, html}` saves the page to `~/.ryter/pages/<session id>/<slug>.html`, with a Content-Security-Policy inserted first in its head (`page::sealed`), and emits a notice with the `file://` link. It opens the page when a person is attached, `[ui] open_pages` is on, and there is a desktop. Deleting a session deletes its pages.
+- **Chosen vs rejected:**
+  - Skill versus tool: the canvas is mostly know-how, so it's a skill. Only showing the page needs code, a small tool.
+  - Rejected writing pages into the project. They're for the user, not the code, and a page in the repo drew an audit offer.
+  - Rejected keeping pages in the session's folder. Its name is the whole project path, `%2F`-encoded, so the link wrapped over three lines and needed double encoding.
+  - The CSP blocks loading anything and form posts. It can't stop a script navigating away, but the model already has a shell. The policy is there so a page never pulls in a CDN script, font or tracker.
+  - Crew specialists don't get these tools yet. They don't talk to the user.
+- **Why:** the user asked what would make the harness more useful, naming a canvas and a headless browser. Model-loaded skills come first because every later ability can be taught as one.
+- **Where:** `crates/ryter-core/src/skill.rs`, `skills/canvas/SKILL.md`, `page.rs`, `prompt.rs`, `agent.rs` (`load_skill`, `show_page`), `tools/mod.rs`, `tools/policy.rs`, `config.rs` (`open_pages`, and its settings-file key), `session.rs`; `crates/ryter-tui/src/panel/settings.rs`, `run/worker.rs`
+- **Residual risk:** a model may still skip the skill and write HTML into the project. The tool description and the skill both say not to, and in the last live run the model complied.
+
 ### 2026-09-29 — Every model is chosen in /models; /crew only switches the mode
 - **By:** lead
 - **Decision:**
