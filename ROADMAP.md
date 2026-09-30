@@ -2,6 +2,20 @@
 
 Living plan for Ryter. The lead updates this as work lands.
 
+## What 1.0 means
+
+1.0 is a finished, workable product: someone new installs Ryter, points a crew at a real project, and can stop watching it. Every item below has to be true first. Until then releases go 0.8, 0.9, 0.10 and on, since minor numbers have no ceiling. When the list is done, the user decides whether that is 1.0.
+
+- [ ] **Setup works the first time.** Install, add a key, choose a crew, and land a first task on Linux and macOS, with no step the guide doesn't cover. Only models the account can use are offered (done in 0.6.5).
+- [ ] **Review means something.** The crew can look at what it built before it signs off: the terminal viewer for terminal apps, the browser for web apps, with screenshots for models that take images.
+- [ ] **Ryter only touches the project it was started in.** It never creates a repository in a folder that holds other projects, never commits outside the project, and says what it set up. (On 2026-09-28 it made `~/workspace` a repository and committed 29 other projects into it.)
+- [ ] **Cost is predictable.** A task's cap asks before it stops (done in 0.7.1), project cost counts only the project, and a crew run shows what it is likely to cost before it starts.
+- [ ] **A failed run loses nothing that was paid for.** Work stays on its branch and resumes where it stopped (done in 0.6.5 and 0.7.1), and no failure path deletes committed work.
+- [ ] **The benchmark says it works.** `ryter bench` runs a suite of real multi-file tasks. The land rate and the cost per task are published, and every release is checked against them.
+- [ ] **The model has the tools the job needs:** skills it loads itself, pages it can show the user, and images it can see.
+- [ ] **No known data-loss or wrong-number bugs are open.**
+- [ ] **The guide matches the product:** every command and screen in `docs/guide.md` works as the release does.
+
 ## Now
 
 - **0.7.1 (`fix/0.7.1`) — caps that ask, retries that resume, rejections counted.**
