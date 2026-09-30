@@ -1,6 +1,6 @@
 //! Git helpers for worktrees and merge.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::error::{Error, Result};
@@ -255,6 +255,12 @@ pub fn ensure_repo(dir: &Path) -> Result<Option<RepoSetup>> {
                 .into(),
         ));
     }
+    // A folder that holds other projects, like `~/workspace`: a first commit
+    // here swept 29 of them into one repository. Refuse before touching it.
+    let repos = holds_repos(dir);
+    if !repos.is_empty() {
+        return Err(swept_in(dir, created, &repos));
+    }
     if created {
         let branch = git(dir, &["config", "--get", "init.defaultBranch"])
             .ok()
@@ -271,9 +277,38 @@ pub fn ensure_repo(dir: &Path) -> Result<Option<RepoSetup>> {
         }));
     }
     let ignore = dir.join(".gitignore");
-    if !ignore.exists() {
+    let wrote_ignore = !ignore.exists();
+    if wrote_ignore {
         std::fs::write(&ignore, FIRST_GITIGNORE).map_err(|e| Error::Io(e.to_string()))?;
         did.push("added a .gitignore for secrets and caches".into());
+    }
+    // Git has the last word. `holds_repos` looks two levels down and
+    // follows git's ignore rules as best it can; git itself, staging into a
+    // private index, sees every repository the commit would hold, at any
+    // depth and under every rule. On a refusal, undo only what this call did.
+    // A check that couldn't run (git can't stage a repository with no
+    // commit, say) refuses too, and undoes the same way.
+    let checked = repos_to_add(dir);
+    if checked.as_ref().map_or(true, |repos| !repos.is_empty()) {
+        if wrote_ignore {
+            let _ = std::fs::remove_file(&ignore);
+        }
+        // The repository made above, still without a commit.
+        if created && head(dir).is_err() {
+            let _ = std::fs::remove_dir_all(dir.join(".git"));
+        }
+        return Err(match checked {
+            Ok(repos) => swept_in(dir, created, &repos),
+            Err(e) => Error::Config(format!(
+                "Ryter didn't {} {}: git couldn't stage it ({e}). Nothing was left behind.",
+                if created {
+                    "set up git in"
+                } else {
+                    "make the first commit in"
+                },
+                dir.display()
+            )),
+        });
     }
     git(dir, &["add", "-A"])?;
     let files = git(dir, &["diff", "--cached", "--name-only"])?
@@ -299,6 +334,159 @@ pub fn ensure_repo(dir: &Path) -> Result<Option<RepoSetup>> {
         created,
         summary: did.join(", "),
     }))
+}
+
+/// Why Ryter won't make the first commit in `dir`: `repos` would be swept in.
+fn swept_in(dir: &Path, created: bool, repos: &[String]) -> Error {
+    let what = if created {
+        "set up git in"
+    } else {
+        "make the first commit in"
+    };
+    Error::Config(format!(
+        "Ryter won't {what} {}: it holds other repositories ({}), and they'd be swept into \
+         it. If this is a folder of projects, start Ryter in the project's own folder (mkdir \
+         myapp && cd myapp && ryter). If they're this project's dependencies, add their folder \
+         to .gitignore. To make one repository here anyway, run git init and make the first \
+         commit yourself.",
+        dir.display(),
+        name_repos(repos)
+    ))
+}
+
+/// The other repositories `git add -A` would put in `dir`'s first commit
+/// (gitlinks). Staged into a private copy of the index, removed after, so
+/// the user's staging area isn't touched. A copy, not an empty index: in an
+/// unborn repository the user may already have staged one, and ignore rules
+/// don't take a staged entry out.
+fn repos_to_add(dir: &Path) -> Result<Vec<String>> {
+    let git_dir = PathBuf::from(git(dir, &["rev-parse", "--absolute-git-dir"])?.trim());
+    static PROBES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let index = git_dir.join(format!("ryter-first-commit-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_file(&index);
+    let real = git_dir.join("index");
+    if real.is_file() {
+        std::fs::copy(&real, &index).map_err(|e| Error::Io(e.to_string()))?;
+    }
+    let staged = git_with_index(dir, &index, &["add", "-A"])
+        .and_then(|_| git_with_index(dir, &index, &["ls-files", "-s", "-z"]));
+    let _ = std::fs::remove_file(&index);
+    Ok(gitlinks_in(&staged?))
+}
+
+/// The gitlinks (mode 160000) in `git ls-files -s -z` output.
+fn gitlinks_in(listing: &str) -> Vec<String> {
+    listing
+        .split('\0')
+        .filter_map(|e| e.strip_prefix("160000 "))
+        .filter_map(|e| e.split_once('\t'))
+        .map(|(_, path)| path.to_string())
+        .collect()
+}
+
+/// The repositories inside `dir` when it is a folder of projects rather
+/// than a project: not a repository with commits itself, but holding some
+/// (`~/workspace`). Empty for a project folder.
+pub fn holds_repos(dir: &Path) -> Vec<String> {
+    if !is_repo(dir) {
+        return repos_inside(dir);
+    }
+    if head(dir).is_ok() {
+        return Vec::new();
+    }
+    // Unborn: a repository staged by hand is in the first commit whatever
+    // the ignore rules say.
+    let mut found = repos_inside(dir);
+    let staged = git(dir, &["ls-files", "-s", "-z"]).unwrap_or_default();
+    for repo in gitlinks_in(&staged) {
+        if !found.contains(&repo) {
+            found.push(repo);
+        }
+    }
+    found
+}
+
+/// `alpha, beta, gamma, and 2 more`.
+pub fn name_repos(repos: &[String]) -> String {
+    let mut names: Vec<String> = repos.iter().take(3).cloned().collect();
+    if repos.len() > 3 {
+        names.push(format!("and {} more", repos.len() - 3));
+    }
+    names.join(", ")
+}
+
+/// Repositories in `dir`'s folders, or one level further down
+/// (`org/app`): a folder of projects rather than a project. A repository
+/// isn't searched.
+///
+/// Folders git will ignore are skipped, as `git add -A` leaves their
+/// repositories out, judged as git does: the nearest `.gitignore` first,
+/// then the folder's own `.gitignore` (or Ryter's first one, where it will
+/// be written), then `.git/info/exclude`, and nothing inside an ignored
+/// folder comes back. The user's global excludes aren't read, so a doubt
+/// refuses setup. Git itself checks again before the first commit
+/// ([`ensure_repo`]), at any depth.
+fn repos_inside(dir: &Path) -> Vec<String> {
+    use ignore::Match;
+    use ignore::gitignore::{Gitignore, GitignoreBuilder};
+    fn rules(base: &Path, file: &Path) -> Option<Gitignore> {
+        if !file.is_file() {
+            return None;
+        }
+        let mut b = GitignoreBuilder::new(base);
+        let _ = b.add(file);
+        b.build().ok()
+    }
+    fn folders(dir: &Path) -> Vec<(String, PathBuf)> {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut out: Vec<_> = rd
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && e.file_name() != ".git")
+            .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
+            .collect();
+        out.sort();
+        out
+    }
+    fn ignored(layers: &[Option<&Gitignore>], path: &Path) -> bool {
+        for rules in layers.iter().flatten() {
+            match rules.matched(path, true) {
+                Match::Ignore(_) => return true,
+                Match::Whitelist(_) => return false,
+                Match::None => {}
+            }
+        }
+        false
+    }
+    let top = rules(dir, &dir.join(".gitignore")).or_else(|| {
+        let mut b = GitignoreBuilder::new(dir);
+        for line in FIRST_GITIGNORE.lines() {
+            let _ = b.add_line(None, line);
+        }
+        b.build().ok()
+    });
+    let exclude = rules(dir, &dir.join(".git/info/exclude"));
+    let mut found = Vec::new();
+    for (name, path) in folders(dir) {
+        if ignored(&[top.as_ref(), exclude.as_ref()], &path) {
+            continue;
+        }
+        if path.join(".git").exists() {
+            found.push(name);
+            continue;
+        }
+        let near = rules(&path, &path.join(".gitignore"));
+        for (inner, path) in folders(&path) {
+            if !ignored(&[near.as_ref(), top.as_ref(), exclude.as_ref()], &path)
+                && path.join(".git").exists()
+            {
+                found.push(format!("{name}/{inner}"));
+            }
+        }
+    }
+    found
 }
 
 /// Current branch name.
@@ -710,6 +898,238 @@ mod tests {
     }
 
     /// A repository with history is left alone.
+    /// A folder of projects is never made into one repository: Ryter once
+    /// did that to `~/workspace` and committed 29 repositories into it.
+    #[test]
+    fn a_folder_of_repositories_is_left_alone() {
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        for app in ["alpha", "beta", "gamma", "delta"] {
+            std::fs::create_dir_all(d.join(app)).unwrap();
+            init_repo(&d.join(app)).unwrap();
+        }
+        std::fs::write(d.join("notes.txt"), "mine").unwrap();
+        let err = ensure_repo(d).unwrap_err().to_string();
+        assert!(
+            err.contains("won't set up git in")
+                && err.contains("alpha, beta, delta, and 1 more")
+                && err.contains("project's own folder")
+                && err.contains("add their folder to .gitignore"),
+            "{err}"
+        );
+        assert!(!d.join(".git").exists(), "nothing was created");
+        assert!(!d.join(".gitignore").exists());
+
+        // One level further down counts too: `clients/acme` is a project.
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        std::fs::create_dir_all(d.join("clients/acme")).unwrap();
+        init_repo(&d.join("clients/acme")).unwrap();
+        assert!(
+            ensure_repo(d)
+                .unwrap_err()
+                .to_string()
+                .contains("clients/acme")
+        );
+
+        // A repository with no commits yet gets no first commit either.
+        git(d, &["init", "-q"]).unwrap();
+        let err = ensure_repo(d).unwrap_err().to_string();
+        assert!(err.contains("won't make the first commit in"), "{err}");
+        assert!(head(d).is_err(), "no commit was made");
+
+        // A hidden folder is searched: its repository would be swept in.
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        std::fs::create_dir_all(d.join(".cache/tool")).unwrap();
+        init_repo(&d.join(".cache/tool")).unwrap();
+        assert!(
+            ensure_repo(d)
+                .unwrap_err()
+                .to_string()
+                .contains(".cache/tool")
+        );
+
+        // Dependency trees the first `.gitignore` leaves out are not projects,
+        // when Ryter writes it: there was no `.gitignore`.
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        for dep in ["node_modules/pkg", "target/x", ".venv/src"] {
+            std::fs::create_dir_all(d.join(dep)).unwrap();
+            init_repo(&d.join(dep)).unwrap();
+        }
+        std::fs::write(d.join("main.py"), "print(1)").unwrap();
+        assert!(ensure_repo(d).unwrap().unwrap().created);
+        assert!(!gitlinks(d), "no repository was committed");
+    }
+
+    /// Whether HEAD's tree holds another repository (a gitlink).
+    fn gitlinks(d: &Path) -> bool {
+        git(d, &["ls-tree", "-r", "HEAD"])
+            .unwrap()
+            .lines()
+            .any(|l| l.starts_with("160000"))
+    }
+
+    /// The folder's own ignore rules decide what counts, not folder names.
+    /// A reviewer's two cases: with a `.gitignore` of only `*.log`, a
+    /// repository in `node_modules` or `target` was committed into the new
+    /// parent, because those names were skipped whatever the rules said.
+    #[test]
+    fn the_folders_own_ignore_rules_decide_what_counts() {
+        // A new parent: its `.gitignore` stays, so the template doesn't apply.
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        std::fs::write(d.join(".gitignore"), "*.log\n").unwrap();
+        std::fs::create_dir_all(d.join("node_modules/pkg")).unwrap();
+        init_repo(&d.join("node_modules/pkg")).unwrap();
+        assert_eq!(holds_repos(d), ["node_modules/pkg"]);
+        assert!(ensure_repo(d).is_err());
+        assert!(!d.join(".git").exists());
+
+        // An unborn parent, the same `.gitignore`, a repository in `target`.
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        git(d, &["init", "-q"]).unwrap();
+        std::fs::write(d.join(".gitignore"), "*.log\n").unwrap();
+        std::fs::create_dir_all(d.join("target/pkg")).unwrap();
+        init_repo(&d.join("target/pkg")).unwrap();
+        assert_eq!(holds_repos(d), ["target/pkg"]);
+        assert!(ensure_repo(d).is_err());
+        assert!(head(d).is_err(), "no first commit");
+
+        // Folders the folder's rules ignore are left out, at either level
+        // and from `.git/info/exclude`, and the commit holds no repository.
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        git(d, &["init", "-q"]).unwrap();
+        std::fs::write(d.join(".gitignore"), "node_modules/\n").unwrap();
+        std::fs::write(d.join(".git/info/exclude"), "vendored/\n").unwrap();
+        std::fs::create_dir_all(d.join("web")).unwrap();
+        std::fs::write(d.join("web/.gitignore"), "cache/\n").unwrap();
+        for dep in ["node_modules/pkg", "vendored/lib", "web/cache"] {
+            std::fs::create_dir_all(d.join(dep)).unwrap();
+            init_repo(&d.join(dep)).unwrap();
+        }
+        std::fs::write(d.join("web/app.js"), "1").unwrap();
+        assert!(holds_repos(d).is_empty(), "{:?}", holds_repos(d));
+        assert!(ensure_repo(d).unwrap().is_some());
+        assert!(!gitlinks(d), "no repository was committed");
+    }
+
+    /// A nested `.gitignore` outranks the root's in git, Ryter's template
+    /// included: the second review's case. `web/.gitignore` with
+    /// `!target/` put `web/target`, a repository, in the first commit.
+    #[test]
+    fn a_nested_negation_outranks_the_template() {
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        std::fs::create_dir_all(d.join("web/target")).unwrap();
+        std::fs::write(d.join("web/.gitignore"), "!target/\n").unwrap();
+        init_repo(&d.join("web/target")).unwrap();
+        assert_eq!(holds_repos(d), ["web/target"]);
+        assert!(
+            ensure_repo(d)
+                .unwrap_err()
+                .to_string()
+                .contains("web/target")
+        );
+        assert!(!d.join(".git").exists() && !d.join(".gitignore").exists());
+    }
+
+    /// Git has the last word before the first commit: a repository deeper
+    /// than the walk looks is still refused, and only what Ryter did is
+    /// undone. The user's own repository and staging area are left as they
+    /// were.
+    #[test]
+    fn git_itself_checks_the_first_commit() {
+        // A new parent: the repository and `.gitignore` Ryter made go again.
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        std::fs::create_dir_all(d.join("a/b/c")).unwrap();
+        init_repo(&d.join("a/b/c")).unwrap();
+        assert!(holds_repos(d).is_empty(), "deeper than the walk");
+        let err = ensure_repo(d).unwrap_err().to_string();
+        assert!(
+            err.contains("won't set up git in") && err.contains("a/b/c"),
+            "{err}"
+        );
+        assert!(!d.join(".git").exists() && !d.join(".gitignore").exists());
+
+        // An unborn repository of the user's, with something staged.
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        git(d, &["init", "-q"]).unwrap();
+        std::fs::write(d.join("mine.txt"), "staged").unwrap();
+        git(d, &["add", "mine.txt"]).unwrap();
+        std::fs::create_dir_all(d.join("x/y/z")).unwrap();
+        init_repo(&d.join("x/y/z")).unwrap();
+        let err = ensure_repo(d).unwrap_err().to_string();
+        assert!(
+            err.contains("won't make the first commit in") && err.contains("x/y/z"),
+            "{err}"
+        );
+        assert!(head(d).is_err(), "no commit");
+        assert_eq!(
+            git(d, &["diff", "--cached", "--name-only"]).unwrap(),
+            "mine.txt\n"
+        );
+        assert!(!d.join(".gitignore").exists());
+        let git_dir = d.join(".git");
+        assert!(
+            !std::fs::read_dir(&git_dir)
+                .unwrap()
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with("ryter-")),
+            "the private index is removed"
+        );
+    }
+
+    /// A repository the user staged by hand in an unborn repository is in
+    /// the first commit whatever the ignore rules say: the third review's
+    /// case. The check began from an empty index, missed it, and the first
+    /// commit held `target/pkg`. Refused now, and the user's index keeps it.
+    #[test]
+    fn a_repository_staged_by_hand_is_seen() {
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        git(d, &["init", "-q"]).unwrap();
+        std::fs::create_dir_all(d.join("target/pkg")).unwrap();
+        init_repo(&d.join("target/pkg")).unwrap();
+        git(d, &["add", "target/pkg"]).unwrap();
+        std::fs::write(d.join(".gitignore"), "target/\n").unwrap();
+        let staged = || git(d, &["ls-files", "-s"]).unwrap();
+        let before = staged();
+        assert!(before.starts_with("160000") && before.contains("target/pkg"));
+        assert_eq!(holds_repos(d), ["target/pkg"], "the crew stops early too");
+        // `ensure_repo` refuses on git's check alone, not only the walk.
+        assert_eq!(repos_to_add(d).unwrap(), ["target/pkg"]);
+        let err = ensure_repo(d).unwrap_err().to_string();
+        assert!(
+            err.contains("won't make the first commit in") && err.contains("target/pkg"),
+            "{err}"
+        );
+        assert!(head(d).is_err(), "no commit");
+        assert_eq!(staged(), before, "the user's index is as it was");
+    }
+
+    /// When git's check can't run, setup is refused and undone like any
+    /// other refusal. A repository with no commit, deeper than the walk,
+    /// makes `git add` fail, and that left the new `.git` and `.gitignore`.
+    #[test]
+    fn a_check_that_cannot_run_leaves_nothing_behind() {
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        std::fs::create_dir_all(d.join("a/b/c")).unwrap();
+        git(&d.join("a/b/c"), &["init", "-q"]).unwrap();
+        std::fs::write(d.join("a/b/c/f.txt"), "x").unwrap();
+        std::fs::write(d.join("main.py"), "print(1)").unwrap();
+        assert!(holds_repos(d).is_empty(), "deeper than the walk");
+        let err = ensure_repo(d).unwrap_err().to_string();
+        assert!(err.contains("Nothing was left behind"), "{err}");
+        assert!(!d.join(".git").exists() && !d.join(".gitignore").exists());
+    }
+
     #[test]
     fn a_repository_with_history_is_left_alone() {
         let dir = TempDir::new().unwrap();

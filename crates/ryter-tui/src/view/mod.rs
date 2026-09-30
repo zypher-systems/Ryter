@@ -237,6 +237,10 @@ pub struct View {
     /// Read from disk at startup and when `/spend` opens; live spend is added
     /// as it happens.
     pub project_spend: Option<ryter_core::project::ProjectSpend>,
+    /// Where the project cost is counted, when that isn't the folder Ryter
+    /// runs in: the repository around it (`~/workspace`). The rail names it,
+    /// so a total that carries over from other folders explains itself.
+    pub project_root: Option<String>,
     /// The newest undo checkpoint: `/changes` compares the last turn to it.
     pub last_checkpoint: Option<String>,
     /// The latest test run's result (`✓ 13 passed`), for a commit receipt.
@@ -428,6 +432,7 @@ impl View {
             price_in: None,
             catalog_rates: BTreeMap::new(),
             project_spend: None,
+            project_root: None,
             last_checkpoint: None,
             last_tests: None,
             tests_stale: false,

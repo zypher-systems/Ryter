@@ -8,7 +8,7 @@ Living plan for Ryter. The lead updates this as work lands.
 
 - [ ] **Setup works the first time.** Install, add a key, choose a crew, and land a first task on Linux and macOS, with no step the guide doesn't cover. Only models the account can use are offered (done in 0.6.5).
 - [ ] **Review means something.** The crew can look at what it built before it signs off: the terminal viewer for terminal apps, the browser for web apps, with screenshots for models that take images.
-- [ ] **Ryter only touches the project it was started in.** It never creates a repository in a folder that holds other projects, never commits outside the project, and says what it set up. (On 2026-09-28 it made `~/workspace` a repository and committed 29 other projects into it.)
+- [ ] **Ryter only touches the project it was started in.** It never creates a repository in a folder that holds other projects (done in 0.8.1), never commits outside the project, and says what it set up. (On 2026-09-28 it made `~/workspace` a repository and committed 29 other projects into it.)
 - [ ] **Cost is predictable.** A task's cap asks before it stops (done in 0.7.1), project cost counts only the project, and a crew run shows what it is likely to cost before it starts.
 - [ ] **A failed run loses nothing that was paid for.** Work stays on its branch and resumes where it stopped (done in 0.6.5 and 0.7.1), and no failure path deletes committed work.
 - [ ] **The benchmark says it works.** `ryter bench` runs a suite of real multi-file tasks. The land rate and the cost per task are published, and every release is checked against them.
@@ -18,6 +18,11 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.8.1 (`0.8.1-patch`) — a folder of projects stays as it is.**
+  - `git::holds_repos` finds repositories in a folder's folders, or one level down, when the folder isn't a repository with commits. It skips only folders the folder's own ignore rules leave out, in git's order of precedence (with the first `.gitignore` when Ryter will write it). `ensure_repo` refuses a first commit there, and git checks again at any depth by staging into a private copy of the index. A crew turn stops before its first model call. Solo mode edits without `/undo` there.
+  - The rail and the `$` drawer name the folder the project cost is counted in when it isn't the one Ryter runs in (`View::project_root`).
+  - A failed turn's error reaches the screen before the turn closes, so it reads `✕ failed`.
+  - From the 0.8.0 review: headless pages say headless, and `load_skill` refuses hidden files.
 - **0.8.0 (`0.8.0-patch`) — skills the model loads, and pages.**
   - Skills are listed in the solo and lead prompts (name and description), and `load_skill` reads one. `model-invocable: false` keeps one to the palette.
   - A built-in `canvas` skill, and a `show_page` tool that saves a page to `~/.ryter/pages/<session>/`, sealed from the network, and opens it (`[ui] open_pages`).

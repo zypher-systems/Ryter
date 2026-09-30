@@ -384,10 +384,8 @@ pub fn run(init: WorkerInit) {
                             }
                             r.text
                         }
-                        Err(e) => {
-                            send_err(&ev_tx, e.to_string());
-                            String::new()
-                        }
+                        // The agent reported it, before closing the turn.
+                        Err(_) => String::new(),
                     };
                     refresh_live(a, &live_status, &live_spend);
                     if let Some(reply) = reply {

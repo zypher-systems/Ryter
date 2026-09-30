@@ -77,7 +77,8 @@ impl Panel for SpendDrawer {
         } else {
             format!("session · {}", view.session_title)
         };
-        let project = std::path::Path::new(&view.cwd)
+        // Named for the folder the total is counted in.
+        let project = std::path::Path::new(view.project_root.as_deref().unwrap_or(&view.cwd))
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();

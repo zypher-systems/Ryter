@@ -223,6 +223,14 @@ impl Agent {
             crate::trace::log(&self.home, &format!("undo record: {e}"));
         }
         if conversation {
+            // The screen marks a turn failed only if it hears of the failure
+            // before the turn closes. The caller used to report it after, so
+            // every failed turn closed "✓ answered".
+            if let Err(e) = &out {
+                let _ = self.emit(AgentEvent::Error {
+                    message: e.to_string(),
+                });
+            }
             let _ = self.emit(AgentEvent::TurnFinished {
                 turn,
                 tools,
@@ -233,6 +241,30 @@ impl Agent {
     }
 
     async fn turn_inner(&mut self, user: &str, tools: &mut u32) -> Result<TurnResult> {
+        // The crew works on the folder's repository, and keeps its notes
+        // there. In a folder of projects it has no repository to work on, and
+        // its first turn in `~/workspace` wrote ROADMAP.md and DECISIONS.md
+        // there and later made the folder one repository. Stop before any of
+        // it, and before paying for a model call.
+        if self.role == Role::Orchestrator {
+            let repos = crate::git::holds_repos(&self.ctx.workspace);
+            if let Some(first) = repos.first() {
+                let state = if crate::git::is_repo(&self.ctx.workspace) {
+                    "its repository has no commit yet"
+                } else {
+                    "it isn't a git repository"
+                };
+                return Err(Error::Config(format!(
+                    "The crew can't work in {}: {state}, and it holds other repositories \
+                     ({}) that its first commit would sweep in. If this \
+                     is a folder of projects, start Ryter in the one you mean: cd {first} && \
+                     ryter, or mkdir myapp && cd myapp && ryter for a new one. If they're \
+                     this project's dependencies, add their folder to .gitignore.",
+                    self.ctx.workspace.display(),
+                    crate::git::name_repos(&repos)
+                )));
+            }
+        }
         // Set up git and snapshot the files only when this turn is about to
         // change something. "Are you there?" used to open with git work.
         let mut checkpointed = false;
@@ -1376,7 +1408,9 @@ impl Agent {
         let page = crate::page::sealed(html);
         std::fs::write(&path, &page).map_err(|e| Error::Io(e.to_string()))?;
         let url = crate::page::file_url(&path);
-        let open = self.ctx.user_io.is_some() && self.cfg.as_ref().is_some_and(|c| c.ui.open_pages);
+        // Headless (`ryter -p`, tests) has no one at a screen to open it for.
+        let attended = self.ctx.user_io.is_some();
+        let open = attended && self.cfg.as_ref().is_some_and(|c| c.ui.open_pages);
         // A browser started from a sandboxed thread would run in the sandbox.
         let sandboxed = crate::sandbox::active() != crate::sandbox::SandboxProfile::Off;
         let opened = open && !sandboxed && crate::page::open(&path);
@@ -1396,6 +1430,9 @@ impl Agent {
         } else if open {
             "Saved and NOT opened: there is no desktop here, or the browser failed to \
              start. The chat shows the user the link. Don't say it is open."
+        } else if !attended {
+            "Saved and NOT opened: this run is headless, with no one at a screen to open \
+             it for. Give the link in your answer. Don't say it is open."
         } else {
             "Saved and NOT opened: the user's settings keep pages closed, and the chat \
              shows them the link. Don't say it is open."
@@ -4840,7 +4877,10 @@ mod tests {
             .filter(|m| m.role == "tool")
             .map(|m| m.content.as_str())
             .collect();
-        assert!(results[0].contains("NOT opened") && results[0].contains(&url));
+        assert!(
+            results[0].contains("NOT opened: this run is headless") && results[0].contains(&url),
+            "{results:?}"
+        );
         // Deleting the session takes its pages with it.
         crate::session::Session::remove(&agent.session.dir).unwrap();
         assert!(!path.exists());
@@ -4850,6 +4890,38 @@ mod tests {
             !std::fs::read_dir(agent.ctx.workspace.clone())
                 .unwrap()
                 .any(|e| e.unwrap().path().extension().is_some_and(|x| x == "html"))
+        );
+    }
+
+    /// With a person attached and pages set to stay closed, the model is
+    /// told the settings kept it closed; headless runs are told they are
+    /// headless, not that a setting did it.
+    #[tokio::test]
+    async fn a_page_kept_closed_by_settings_says_so() {
+        let p = ReplayProvider::scripted(vec![
+            call(
+                "show_page",
+                serde_json::json!({"title": "Report", "html": "<p>x</p>"}),
+            ),
+            say("done"),
+        ]);
+        let (_home, _cwd, mut agent) = setup(p);
+        let mut cfg = crate::config::Config::default();
+        cfg.ui.open_pages = false;
+        agent.cfg = Some(cfg);
+        let (io, _rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        agent.turn("go").await.unwrap();
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .unwrap();
+        assert!(
+            result.contains("the user's settings keep pages closed"),
+            "{result}"
         );
     }
 
@@ -4906,6 +4978,78 @@ mod tests {
         })
         .join()
         .expect("sandboxed turn");
+    }
+
+    /// In a folder of projects (`~/workspace`) the crew stops before its
+    /// first model call: no notes written there, no repository made.
+    #[tokio::test]
+    async fn the_crew_wont_start_in_a_folder_of_repositories() {
+        let p = ReplayProvider::scripted(vec![say("should not be asked")]);
+        let (_home, cwd, mut agent) = setup(p);
+        for app in ["alpha", "beta"] {
+            std::fs::create_dir_all(cwd.path().join(app)).unwrap();
+            crate::git::init_repo(&cwd.path().join(app)).unwrap();
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let err = agent.turn("add hello.py").await.unwrap_err().to_string();
+        // Reported before the turn closes, so the screen marks it failed.
+        let events: Vec<AgentEvent> = rx.try_iter().collect();
+        let error_at = events
+            .iter()
+            .position(|e| matches!(e, AgentEvent::Error { message } if *message == err));
+        let closed_at = events
+            .iter()
+            .position(|e| matches!(e, AgentEvent::TurnFinished { .. }));
+        assert!(
+            matches!((error_at, closed_at), (Some(e), Some(c)) if e < c),
+            "{events:?}"
+        );
+        assert!(
+            err.contains("The crew can't work in")
+                && err.contains("(alpha, beta)")
+                && err.contains("cd alpha && ryter")
+                && err.contains("add their folder to .gitignore"),
+            "{err}"
+        );
+        for made in [".git", "ROADMAP.md", "DECISIONS.md", "notes"] {
+            assert!(!cwd.path().join(made).exists(), "{made} was written");
+        }
+        assert!(agent.session.transcript.is_empty(), "no model call");
+        // Solo mode isn't stopped: it needs no repository.
+        agent.role = Role::SoloBuild;
+        agent.ctx.role = Role::SoloBuild;
+        assert!(agent.turn("hi").await.is_ok());
+        // A repository with no commit yet is named as one.
+        crate::git::git(cwd.path(), &["init", "-q"]).unwrap();
+        agent.role = Role::Orchestrator;
+        agent.ctx.role = Role::Orchestrator;
+        let err = agent.turn("add hello.py").await.unwrap_err().to_string();
+        assert!(err.contains("its repository has no commit yet"), "{err}");
+    }
+
+    /// Solo mode in a folder of projects edits without making it a
+    /// repository: `/undo` is off there, and it says why.
+    #[tokio::test]
+    async fn solo_edits_a_folder_of_repositories_without_making_one() {
+        let p = ReplayProvider::scripted(vec![write("hello.py", "print('hello')\n"), say("done")]);
+        let (_home, cwd, mut agent) = setup(p);
+        for app in ["alpha", "beta"] {
+            std::fs::create_dir_all(cwd.path().join(app)).unwrap();
+            crate::git::init_repo(&cwd.path().join(app)).unwrap();
+        }
+        agent.role = Role::SoloBuild;
+        agent.ctx.role = Role::SoloBuild;
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("add hello.py").await.unwrap();
+        assert!(cwd.path().join("hello.py").exists());
+        assert!(!cwd.path().join(".git").exists(), "no repository made");
+        assert!(rx.try_iter().any(|e| matches!(
+            e,
+            AgentEvent::Notice { message }
+                if message.contains("won't set up git") && message.contains("/undo is unavailable")
+        )));
     }
 
     /// Ryter's own tools go through the hooks too: a `PreToolUse` deny stops
