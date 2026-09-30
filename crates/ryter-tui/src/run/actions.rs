@@ -489,9 +489,7 @@ fn open_panel(view: &mut View, cx: &mut Ctx, id: PanelId) {
         PanelId::CrewBuilder => cx.send(Work::ListCrewModels),
         // The logs are the truth; replace the live running copy with them.
         PanelId::Spend | PanelId::SpendDrawer => {
-            if let Ok(p) = ryter_core::project::project_spend(&cx.home, &cx.workspace) {
-                view.project_spend = Some(p);
-            }
+            load_project_spend(view, &cx.home, &cx.workspace);
         }
         PanelId::Theme => {
             cx.theme_before_preview = Some((view.theme_name.clone(), cx.theme));
@@ -1211,6 +1209,17 @@ fn short_id(s: &Session) -> String {
 }
 
 /// `~`-relative display path for the header.
+/// Read what the project has cost, and note its root when that isn't `cwd`:
+/// a repository around the folder counts the other folders in it too.
+pub fn load_project_spend(view: &mut View, home: &Path, cwd: &Path) {
+    let Ok(p) = ryter_core::project::project_spend(home, cwd) else {
+        return;
+    };
+    let here = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    view.project_root = (p.root != here).then(|| display_home_path(&p.root));
+    view.project_spend = Some(p);
+}
+
 pub fn display_home_path(cwd: &Path) -> String {
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
         if let Ok(rel) = cwd.strip_prefix(&home) {

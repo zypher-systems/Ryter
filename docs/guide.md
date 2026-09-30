@@ -175,6 +175,8 @@ ryter -c -p "continue"               # continue the latest session: transcript, 
 
 An empty folder, or one that is not a git repository, works as is. Before the crew's first build, Ryter runs `git init` (your `init.defaultBranch`, else `main`), writes a `.gitignore` for secrets and caches unless one exists, commits what is already there as the starting point, and says so in the chat. A repository with no commits gets just the first commit.
 
+A folder of projects is different. That's a folder like `~/workspace` that isn't a repository with commits itself, but holds other projects' repositories, in its folders or one level further down. There, the crew stops at your first message, before any model call and without writing anything. It names the repositories it found and asks you to start Ryter in the project's own folder. If you do want one repository there, run `git init` and make the first commit yourself.
+
 ## Solo mode and hats
 
 Ryter starts in solo mode: one model in your project. `Tab` switches its hat (build → plan → review), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. The header, the message box's badge, and its border all show the hat in its own color. A switch applies to your next message. The model can also offer a switch itself: after a plan ("carry out the plan?") or a review ("fix these?") it asks with a yes/no prompt, and on `y` it carries on in the new hat in the same turn.
@@ -223,7 +225,7 @@ Before each build turn changes anything, Ryter snapshots your files as a git obj
 - **`/redo` reverses an undo,** forced or not, as long as no build turn has run since. If you've edited those files after the undo, it asks for `/redo force` the same way.
 - **Gitignored files the model writes** (a local config, say) are saved before it writes them, so `/undo` puts them back too. Snapshots skip ignored files, and a command run through the shell isn't covered.
 
-A folder that isn't a repository gets git set up first, and Ryter says so. It won't make one in your home folder or at the root.
+A folder that isn't a repository gets git set up first, and Ryter says so. It won't make one in your home folder, at the root, or in a folder that holds other projects' repositories. There, solo mode edits without snapshots, and `/undo` is unavailable.
 
 ### Review and commit
 
@@ -368,7 +370,7 @@ A session budget is optional. With one, the crew stops when spend reaches it, sa
 
 The **budget** card on the right shows the cap, how much is used and left, or `off`; click it to open the panel. Changes apply at once and are saved as your default (`~/.ryter/settings.toml`, the same value as *budget usd* in `/settings`). A trusted project's `[spend] session_budget_usd` overrides your default in that project. There is no session budget until you set one; the crew builder suggests one sized to the job. Each task is still capped at `[spend] task_budget_usd` ($3 by default; the crew builder raises it when your crew's normal design would not fit), which catches one runaway task whether or not there is a session budget. `[spend] enabled = false` still counts in memory and prints a warning.
 
-**Project cost.** A project is its git repository (the folder, outside one), so sessions started in any subfolder count toward it. The spend card shows `project` under the session total, and `p` in `/spend` switches to the project view: the total across sessions, this month, solo vs. crew, and breakdowns by role, model, and month. `ryter spend --project` prints the same. Nothing extra is recorded: every call is already in its session's `spend.jsonl`, and a running total in `~/.ryter/projects/` means only new lines are read. Calls with no known price are counted and shown (`$14.20+`), never added as $0.
+**Project cost.** A project is its git repository (the folder, outside one), so sessions started in any subfolder count toward it. The spend card shows `project` under the session total. When the project is a repository around the folder you started in, the rail says which folder, for example `in ~/workspace`, and the `$` drawer names its project column for it. `p` in `/spend` switches to the project view: the total across sessions, this month, solo vs. crew, and breakdowns by role, model, and month. `ryter spend --project` prints the same. Nothing extra is recorded: every call is already in its session's `spend.jsonl`, and a running total in `~/.ryter/projects/` means only new lines are read. Calls with no known price are counted and shown (`$14.20+`), never added as $0.
 
 `/spend` is a panel: session total, a budget gauge, and tables by role and by connection; `p` switches to the project; `e` exports CSV. The info panel’s spend card shows the total, and the budget card below it shows the cap. `ryter spend` prints the roll-up on the CLI.
 

@@ -135,6 +135,17 @@ fn heading(label: &str, theme: Theme, bg: Color) -> Line<'static> {
     ))
 }
 
+/// The end of `s` in at most `max` columns, `…` where it was cut: the
+/// folder's own name is the part worth keeping.
+pub(crate) fn tail(s: &str, max: usize) -> String {
+    let n = s.chars().count();
+    if n <= max {
+        return s.to_string();
+    }
+    let keep = max.saturating_sub(1);
+    format!("…{}", s.chars().skip(n - keep).collect::<String>())
+}
+
 /// `label` then `value`, the value at a fixed column.
 fn row(label: &str, value: Vec<Span<'static>>, theme: Theme, bg: Color) -> Line<'static> {
     let mut v = vec![Span::styled(
@@ -351,6 +362,16 @@ fn spend(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>> {
             theme,
             bg,
         ));
+        // Counted for a repository around this folder: say which.
+        if let Some(root) = &view.project_root {
+            let room = w.saturating_sub(12 + 3);
+            lines.push(row(
+                "",
+                vec![Span::styled(format!("in {}", tail(root, room)), dim)],
+                theme,
+                bg,
+            ));
+        }
     }
     let budget = if view.budget_usd > 0.0 {
         format!("${:.2}", view.budget_usd)

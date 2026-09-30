@@ -215,6 +215,10 @@ pub fn spend(view: &View, w: usize, theme: Theme) -> Card {
     rows.push(kv("session", &total, w, theme, total_style));
     if let Some(p) = &view.project_spend {
         rows.push(kv("project", &project_label(p), w, theme, theme.side()));
+        if let Some(root) = &view.project_root {
+            let root = crate::rail::tail(root, w.saturating_sub(5));
+            rows.push(kv("  in", &root, w, theme, theme.side_muted()));
+        }
     }
     let detail_from = rows.len();
     let mut by_role: Vec<(&String, &f64)> = view.spend_by_role.iter().collect();

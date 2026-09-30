@@ -255,6 +255,24 @@ pub fn ensure_repo(dir: &Path) -> Result<Option<RepoSetup>> {
                 .into(),
         ));
     }
+    // A folder that holds other projects, like `~/workspace`: a first commit
+    // here swept 29 of them into one repository. Refuse before touching it.
+    let repos = holds_repos(dir);
+    if !repos.is_empty() {
+        let what = if created {
+            "set up git in"
+        } else {
+            "make the first commit in"
+        };
+        return Err(Error::Config(format!(
+            "Ryter won't {what} {}: it holds other repositories ({}), and they'd be swept \
+             into it. Start Ryter in the project's own folder (mkdir myapp && cd myapp && \
+             ryter). If you do want one repository here, run git init and make the first \
+             commit yourself.",
+            dir.display(),
+            name_repos(&repos)
+        )));
+    }
     if created {
         let branch = git(dir, &["config", "--get", "init.defaultBranch"])
             .ok()
@@ -299,6 +317,63 @@ pub fn ensure_repo(dir: &Path) -> Result<Option<RepoSetup>> {
         created,
         summary: did.join(", "),
     }))
+}
+
+/// The repositories inside `dir` when it is a folder of projects rather
+/// than a project: not a repository with commits itself, but holding some
+/// (`~/workspace`). Empty for a project folder.
+pub fn holds_repos(dir: &Path) -> Vec<String> {
+    if is_repo(dir) && head(dir).is_ok() {
+        return Vec::new();
+    }
+    repos_inside(dir)
+}
+
+/// `alpha, beta, gamma, and 2 more`.
+pub fn name_repos(repos: &[String]) -> String {
+    let mut names: Vec<String> = repos.iter().take(3).cloned().collect();
+    if repos.len() > 3 {
+        names.push(format!("and {} more", repos.len() - 3));
+    }
+    names.join(", ")
+}
+
+/// Repositories in `dir`'s folders, or one level further down
+/// (`org/app`): a folder of projects rather than a project. Folders the
+/// first `.gitignore` leaves out (dependency trees, caches) are skipped, as
+/// their repositories stay out of the commit; a repository isn't searched.
+fn repos_inside(dir: &Path) -> Vec<String> {
+    fn folders(dir: &Path) -> Vec<(String, std::path::PathBuf)> {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut out: Vec<_> = rd
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
+            .filter(|(n, _)| {
+                n != ".git"
+                    && !FIRST_GITIGNORE
+                        .lines()
+                        .any(|l| l.strip_suffix('/') == Some(n.as_str()))
+            })
+            .collect();
+        out.sort();
+        out
+    }
+    let mut found = Vec::new();
+    for (name, path) in folders(dir) {
+        if path.join(".git").exists() {
+            found.push(name);
+            continue;
+        }
+        for (inner, path) in folders(&path) {
+            if path.join(".git").exists() {
+                found.push(format!("{name}/{inner}"));
+            }
+        }
+    }
+    found
 }
 
 /// Current branch name.
@@ -710,6 +785,68 @@ mod tests {
     }
 
     /// A repository with history is left alone.
+    /// A folder of projects is never made into one repository: Ryter once
+    /// did that to `~/workspace` and committed 29 repositories into it.
+    #[test]
+    fn a_folder_of_repositories_is_left_alone() {
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        for app in ["alpha", "beta", "gamma", "delta"] {
+            std::fs::create_dir_all(d.join(app)).unwrap();
+            init_repo(&d.join(app)).unwrap();
+        }
+        std::fs::write(d.join("notes.txt"), "mine").unwrap();
+        let err = ensure_repo(d).unwrap_err().to_string();
+        assert!(
+            err.contains("won't set up git in")
+                && err.contains("alpha, beta, delta, and 1 more")
+                && err.contains("project's own folder"),
+            "{err}"
+        );
+        assert!(!d.join(".git").exists(), "nothing was created");
+        assert!(!d.join(".gitignore").exists());
+
+        // One level further down counts too: `clients/acme` is a project.
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        std::fs::create_dir_all(d.join("clients/acme")).unwrap();
+        init_repo(&d.join("clients/acme")).unwrap();
+        assert!(
+            ensure_repo(d)
+                .unwrap_err()
+                .to_string()
+                .contains("clients/acme")
+        );
+
+        // A repository with no commits yet gets no first commit either.
+        git(d, &["init", "-q"]).unwrap();
+        let err = ensure_repo(d).unwrap_err().to_string();
+        assert!(err.contains("won't make the first commit in"), "{err}");
+        assert!(head(d).is_err(), "no commit was made");
+
+        // A hidden folder is searched: its repository would be swept in.
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        std::fs::create_dir_all(d.join(".cache/tool")).unwrap();
+        init_repo(&d.join(".cache/tool")).unwrap();
+        assert!(
+            ensure_repo(d)
+                .unwrap_err()
+                .to_string()
+                .contains(".cache/tool")
+        );
+
+        // Dependency trees the first `.gitignore` leaves out are not projects.
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        for dep in ["node_modules/pkg", "target/x", ".venv/src"] {
+            std::fs::create_dir_all(d.join(dep)).unwrap();
+            git(&d.join(dep), &["init", "-q"]).unwrap();
+        }
+        std::fs::write(d.join("main.py"), "print(1)").unwrap();
+        assert!(ensure_repo(d).unwrap().unwrap().created);
+    }
+
     #[test]
     fn a_repository_with_history_is_left_alone() {
         let dir = TempDir::new().unwrap();

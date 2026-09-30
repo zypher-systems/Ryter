@@ -107,7 +107,8 @@ impl Skill {
     }
 
     /// The text of `rel`, a file inside the skill's folder. Nothing outside
-    /// it: no absolute paths, no `..`, and no link that leads out.
+    /// it: no absolute paths, no `..`, and no link that leads out. Nothing
+    /// hidden either, which [`Skill::files`] doesn't list.
     pub fn read_file(&self, rel: &str) -> std::result::Result<String, String> {
         const MAX: u64 = 256 * 1024;
         let Some(dir) = self.folder() else {
@@ -117,7 +118,7 @@ impl Skill {
         if rel.is_empty()
             || !rel_path
                 .components()
-                .all(|c| matches!(c, std::path::Component::Normal(_)))
+                .all(|c| matches!(c, std::path::Component::Normal(n) if !n.to_string_lossy().starts_with('.')))
         {
             return Err(format!(
                 "{rel:?} is not a file of the {} skill; give a name from its list",
@@ -592,7 +593,12 @@ mod tests {
         );
         assert_eq!(skill.read_file("notes.md").unwrap(), "the notes");
         assert_eq!(skill.read_file("scripts/check.sh").unwrap(), "echo ok");
+        fs::create_dir_all(dir.join("scripts/.cache")).unwrap();
+        fs::write(dir.join("scripts/.cache/x"), "x").unwrap();
         for bad in [
+            ".hidden",
+            "scripts/.cache/x",
+            "./notes.md",
             "key",
             "../flat.md",
             "../../keys/spacexai",

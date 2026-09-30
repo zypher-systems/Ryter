@@ -2,6 +2,22 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-30 — A folder of projects is never made one repository
+- **By:** lead
+- **Decision:**
+  - `git::holds_repos(dir)` lists the repositories in `dir`'s folders and one level further down, when `dir` isn't a repository with commits. It skips `.git` and the folders `FIRST_GITIGNORE` leaves out. It doesn't skip hidden folders: their repositories would be swept into the commit, or break `git add`.
+  - `ensure_repo` refuses when that list isn't empty, both to create a repository and to make the first commit of an unborn one. Solo checkpoints already turn that error into "`/undo` is unavailable" and carry on.
+  - A crew turn (`Role::Orchestrator`) checks first in `turn_inner`, before the system prompt is built. Building the prompt writes the project memory, and the model call costs money.
+  - `View::project_root` holds the folder the project cost is counted in, set by `load_project_spend` when it differs from the canonical cwd. The rail shows it under `project`, cut from the left so the folder's name survives. The `$` drawer names its column for it.
+  - `Agent::turn` emits `AgentEvent::Error` before `TurnFinished` when the turn fails. The TUI worker no longer sends its own copy. The screen had closed every failed turn as "✓ answered" because the error arrived after the close.
+- **Chosen vs rejected:**
+  - Rejected checking only in `ensure_repo`. In the live test, the lead's turn had already written `ROADMAP.md`, `DECISIONS.md` and `notes/` into the folder. It also offered to re-route work into a sub-repository, which the crew can't do.
+  - Rejected re-rooting the crew into a sub-repository automatically. Which project is meant is the user's call, and the message names the ones found.
+  - Two levels deep, not more: `~/workspace/app` and `~/code/org/app` are the common shapes, and a deeper walk would read large trees on every crew turn.
+- **Why:** on 2026-09-28 a crew session started in `~/workspace` made it a repository and committed 29 projects into it. The project cost then counted all of them.
+- **Where:** `crates/ryter-core/src/git.rs` (`holds_repos`, `name_repos`, `repos_inside`, `ensure_repo`), `agent.rs` (`turn`, `turn_inner`); `crates/ryter-tui/src/run/actions.rs` (`load_project_spend`), `rail.rs`, `panel/spend_drawer.rs`, `info/cards.rs`, `run/events.rs` (`receipt`), `run/worker.rs`
+- **Residual risk:** a project with its own `.gitignore` that doesn't ignore `node_modules` still counts a git dependency there as a project. That refuses setup, which is the safe way to be wrong.
+
 ### 2026-09-30 — The model loads skills; pages are a skill plus one tool
 - **By:** lead
 - **Decision:**

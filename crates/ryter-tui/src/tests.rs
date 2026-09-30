@@ -882,6 +882,60 @@ fn the_rail_names_the_session_and_shows_the_hat_and_spend() {
     }
 }
 
+/// When the project cost is counted for a repository around the folder
+/// (`~/workspace` holding `muzak`), the rail and the spend drawer name it:
+/// a total that carries over from other folders explains itself.
+#[test]
+fn the_rail_names_the_folder_the_project_cost_is_counted_in() {
+    let mut v = with_rail();
+    let mut p = ryter_core::project::ProjectSpend::default();
+    p.total_usd = 20.14;
+    v.project_spend = Some(p);
+    let text = render_to_string(&v, 140, 44);
+    assert!(text.contains("project     $20.14"), "{text}");
+    assert!(!text.contains("in ~/"), "the folder is the project: {text}");
+    v.project_root = Some("~/workspace".into());
+    let text = render_to_string(&v, 140, 44);
+    assert!(text.contains("            in ~/workspace"), "{text}");
+    // A long root keeps its end, where the folder's name is.
+    v.project_root = Some("~/a/very/long/path/to/some/client/folder/workspace".into());
+    let text = render_to_string(&v, 140, 44);
+    assert!(text.contains("in …lder/workspace │"), "{text}");
+    // The drawer's project column is named for that folder too.
+    v.project_root = Some("~/workspace".into());
+    let e = env();
+    let _ = panel::open(&mut v, PanelId::SpendDrawer, &e);
+    let text = render_to_string(&v, 120, 40);
+    assert!(text.contains("project · workspace"), "{text}");
+}
+
+/// The root is noted only when it isn't the folder Ryter runs in.
+#[test]
+fn the_project_root_is_noted_only_for_a_folder_inside_a_repository() {
+    let home = tempfile::TempDir::new().unwrap();
+    let repo = tempfile::TempDir::new().unwrap();
+    ryter_core::git::ensure_repo(repo.path()).unwrap();
+    std::fs::create_dir_all(repo.path().join("app")).unwrap();
+    let mut v = with_rail();
+    crate::run::load_project_spend(&mut v, home.path(), repo.path());
+    assert!(v.project_spend.is_some());
+    assert_eq!(v.project_root, None, "Ryter runs at the root");
+    crate::run::load_project_spend(&mut v, home.path(), &repo.path().join("app"));
+    let name = repo
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert!(
+        v.project_root
+            .as_deref()
+            .is_some_and(|r| r.ends_with(&name)),
+        "{:?}",
+        v.project_root
+    );
+}
+
 /// The rail and the live lanes draw at every size without losing the
 /// prompt, and the rail steps aside below its width.
 #[test]

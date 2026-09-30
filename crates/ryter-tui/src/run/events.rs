@@ -20,13 +20,13 @@ fn receipt(view: &View, verb: &Verb, tools: u32, duration_ms: u64) -> String {
         Verb::Failed => "✕ failed".to_string(),
         _ => "✓".to_string(),
     }];
-    let mut first = if tools == 0 {
-        "answered".to_string()
-    } else {
-        format!("{tools} tool{}", if tools == 1 { "" } else { "s" })
-    };
-    first = format!("{} {first}", parts.remove(0));
-    parts.push(first);
+    let mark = parts.remove(0);
+    // A turn that stopped or failed before any tool didn't answer anything.
+    parts.push(match (tools, verb) {
+        (0, Verb::Stopped | Verb::Failed) => mark,
+        (0, _) => format!("{mark} answered"),
+        (n, _) => format!("{mark} {n} tool{}", if n == 1 { "" } else { "s" }),
+    });
     if !view.tally.is_empty() {
         parts.push(view.tally.line());
     }
@@ -828,6 +828,50 @@ mod tests {
         );
         assert_eq!(v.activity.verb, Verb::Stopped);
         assert!(!v.busy);
+    }
+
+    /// A turn that failed before any tool closes as failed: the agent
+    /// reports the error first. It used to read "✓ answered", then
+    /// "✕ failed answered".
+    #[test]
+    fn a_failed_turn_closes_as_failed() {
+        let receipt = |v: &View| {
+            v.messages
+                .iter()
+                .rev()
+                .find(|m| {
+                    matches!(
+                        m.kind,
+                        MessageKind::System {
+                            level: crate::chat::SystemLevel::Receipt
+                        }
+                    )
+                })
+                .map(|m| m.body.clone())
+                .unwrap_or_default()
+        };
+        let ledger = || {
+            let mut v = view();
+            v.ui.layout = "ledger".into();
+            v
+        };
+        let mut v = ledger();
+        apply(
+            &mut v,
+            AgentEvent::Error {
+                message: "The crew can't work in ~/workspace".into(),
+            },
+        );
+        let done = AgentEvent::TurnFinished {
+            turn: 1,
+            tools: 0,
+            duration_ms: 10,
+        };
+        apply(&mut v, done.clone());
+        assert!(receipt(&v).starts_with("✕ failed · "), "{}", receipt(&v));
+        let mut v = ledger();
+        apply(&mut v, done);
+        assert!(receipt(&v).starts_with("✓ answered · "), "{}", receipt(&v));
     }
 
     #[test]
