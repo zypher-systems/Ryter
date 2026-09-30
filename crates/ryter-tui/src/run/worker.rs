@@ -117,6 +117,8 @@ pub enum Work {
         max_crew: u32,
         /// Web tools.
         web: bool,
+        /// Open pages the model shows in the browser.
+        open_pages: bool,
     },
     /// Load a saved session.
     Resume(String),
@@ -645,6 +647,7 @@ pub fn run(init: WorkerInit) {
                 task_budget_usd,
                 max_crew,
                 web,
+                open_pages,
             }) => {
                 // The worker's copy too: an agent rebuilt later (a provider
                 // switch) starts from it, and used to lose live changes.
@@ -653,6 +656,7 @@ pub fn run(init: WorkerInit) {
                     c.spend.task_budget_usd = task_budget_usd;
                     c.subagents.max = max_crew;
                     c.features.web = web;
+                    c.ui.open_pages = open_pages;
                 };
                 apply(&mut cfg);
                 if let Some(a) = &mut agent {

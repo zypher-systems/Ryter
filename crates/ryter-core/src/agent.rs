@@ -565,6 +565,8 @@ impl Agent {
                          again with the arguments as one JSON object."
                     ))),
                     Ok(_) if call.name == "request_hat" => self.request_hat(&args),
+                    Ok(_) if call.name == "load_skill" => Ok(self.load_skill(&args)),
+                    Ok(_) if call.name == "show_page" => self.show_page(&args),
                     Ok(_) => gated_execute(&call.name, &args, &self.ctx),
                 };
                 let mut out = match out {
@@ -1304,6 +1306,75 @@ impl Agent {
     /// `request_hat`: ask the user, and on yes switch hats here, mid-turn, so
     /// the model carries on in the new hat. A plan used to end with "want me
     /// to switch to build?" that the user had no way to answer.
+    fn load_skill(&self, args: &Value) -> crate::tools::ToolOutput {
+        let name = args
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let catalog =
+            crate::skill::load_catalog(&self.home, self.project_root.as_deref(), self.trusted);
+        match catalog.model_skill(name) {
+            Some(skill) => crate::tools::ToolOutput::ok(skill.load_text()),
+            None => {
+                let names: Vec<&str> = catalog
+                    .for_model()
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect();
+                crate::tools::ToolOutput::err(format!(
+                    "no skill named {name:?}; the skills are: {}",
+                    names.join(", ")
+                ))
+            }
+        }
+    }
+
+    /// `show_page`: save the page in the session, sealed from the network,
+    /// and open it in the user's browser (`[ui] open_pages`; never headless).
+    /// The same title replaces the page.
+    fn show_page(&mut self, args: &Value) -> Result<crate::tools::ToolOutput> {
+        let title = args
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let html = args.get("html").and_then(Value::as_str).unwrap_or("");
+        if title.is_empty() || html.trim().is_empty() {
+            return Ok(crate::tools::ToolOutput::err(
+                "show_page needs a title and the page's html",
+            ));
+        }
+        let dir = crate::page::dir(&self.home, self.session.meta.id.as_str());
+        std::fs::create_dir_all(&dir).map_err(|e| Error::Io(e.to_string()))?;
+        let path = dir.join(format!("{}.html", crate::page::slug(title)));
+        let page = crate::page::sealed(html);
+        std::fs::write(&path, &page).map_err(|e| Error::Io(e.to_string()))?;
+        let url = crate::page::file_url(&path);
+        let open = self.ctx.user_io.is_some() && self.cfg.as_ref().is_some_and(|c| c.ui.open_pages);
+        let opened = open && crate::page::open(&path);
+        self.emit(AgentEvent::Notice {
+            message: if opened {
+                format!("page · {title} · opened in your browser · {url}")
+            } else {
+                format!("page · {title} · {url}")
+            },
+        })?;
+        // Said plainly: a model told "saved" still reported the page open.
+        let how = if opened {
+            "Opened in the user's browser."
+        } else if open {
+            "Saved, but it could not be opened here (no desktop); the user has the link."
+        } else {
+            "Saved and NOT opened: the user's settings keep pages closed, and the chat \
+             shows them the link. Don't say it is open."
+        };
+        Ok(crate::tools::ToolOutput::ok(format!(
+            "{how} {url} ({} KB). Showing a page with the same title replaces it.",
+            page.len().div_ceil(1024)
+        )))
+    }
+
     fn request_hat(&mut self, args: &Value) -> Result<crate::tools::ToolOutput> {
         use crate::tools::ToolOutput;
         let hat = args.get("hat").and_then(Value::as_str).unwrap_or("");
@@ -4645,6 +4716,94 @@ mod tests {
         assert_eq!(r.text, "hello");
         assert!(agent.session.meta.spend_usd_total.is_some());
         assert!(!agent.session.spend_log().unwrap().is_empty());
+    }
+
+    /// The model finds skills in its instructions and loads one itself;
+    /// they used to reach it only when the user typed one as a slash command.
+    #[tokio::test]
+    async fn the_model_loads_a_skill_it_finds_listed() {
+        let p = ReplayProvider::scripted(vec![
+            call("load_skill", serde_json::json!({"name": "canvas"})),
+            call("load_skill", serde_json::json!({"name": "nope"})),
+            say("loaded"),
+        ]);
+        let (_home, _cwd, mut agent) = setup(p);
+        agent.role = Role::SoloBuild;
+        let system = agent.system_prompt().unwrap();
+        assert!(
+            system.contains("## Skills") && system.contains("- canvas: Build a page"),
+            "{system}"
+        );
+        agent.turn("make me a page").await.unwrap();
+        let results: Vec<&str> = agent
+            .session
+            .transcript
+            .iter()
+            .filter(|m| m.role == "tool")
+            .map(|m| m.content.as_str())
+            .collect();
+        assert!(results[0].starts_with("# Skill: canvas") && results[0].contains("show_page"));
+        assert!(results[1].contains("no skill named \"nope\"") && results[1].contains("canvas"));
+    }
+
+    /// A page is saved in the session, sealed from the network, and linked
+    /// in the chat; the same title replaces it. Without a person attached
+    /// (headless, tests) nothing is opened.
+    #[tokio::test]
+    async fn a_page_is_saved_sealed_and_linked() {
+        let page = "<!doctype html><html><head><title>t</title></head><body>v1</body></html>";
+        let p = ReplayProvider::scripted(vec![
+            call(
+                "show_page",
+                serde_json::json!({"title": "Crew cost by task", "html": page}),
+            ),
+            call(
+                "show_page",
+                serde_json::json!({"title": "Crew cost by task", "html": page.replace("v1", "v2")}),
+            ),
+            call("show_page", serde_json::json!({"title": "", "html": ""})),
+            say("shown"),
+        ]);
+        let (_home, _cwd, mut agent) = setup(p);
+        agent.role = Role::SoloPlan;
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("show me the costs").await.unwrap();
+        let path = crate::page::dir(&agent.home, agent.session.meta.id.as_str())
+            .join("crew-cost-by-task.html");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("v2") && !text.contains("v1"),
+            "replaced: {text}"
+        );
+        assert!(
+            text.contains("<head><meta http-equiv=\"Content-Security-Policy\""),
+            "{text}"
+        );
+        let url = crate::page::file_url(&path);
+        let events: Vec<AgentEvent> = rx.try_iter().collect();
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Notice { message } if *message == format!("page · Crew cost by task · {url}")
+        )));
+        let results: Vec<&str> = agent
+            .session
+            .transcript
+            .iter()
+            .filter(|m| m.role == "tool")
+            .map(|m| m.content.as_str())
+            .collect();
+        assert!(results[0].contains("NOT opened") && results[0].contains(&url));
+        // Deleting the session takes its pages with it.
+        crate::session::Session::remove(&agent.session.dir).unwrap();
+        assert!(!path.exists());
+        assert!(results[2].contains("needs a title"));
+        // In the plan hat too: a page is not a change to the project.
+        assert!(
+            !std::fs::read_dir(agent.ctx.workspace.clone())
+                .unwrap()
+                .any(|e| e.unwrap().path().extension().is_some_and(|x| x == "html"))
+        );
     }
 
     #[tokio::test]

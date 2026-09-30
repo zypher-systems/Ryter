@@ -155,7 +155,7 @@ fn ceil_boundary(s: &str, at: usize) -> usize {
 }
 
 impl ToolOutput {
-    fn ok(text: impl Into<String>) -> Self {
+    pub(crate) fn ok(text: impl Into<String>) -> Self {
         Self {
             text: cap_output(text.into()),
             is_error: false,
@@ -296,6 +296,22 @@ fn spec(name: &str) -> Option<ToolSpec> {
             "Call an MCP tool by catalog key (server__tool).",
             json!({"type":"object","properties":{"name":{"type":"string"},"arguments":{"type":"object"}},"required":["name"]}),
         ),
+        "load_skill" => (
+            "Load a skill: instructions for a kind of work, listed under Skills in \
+             your instructions. Load one before starting work it covers, then follow it.",
+            json!({"type":"object","properties":{"name":{"type":"string","description":"the skill's name, e.g. canvas"}},"required":["name"]}),
+        ),
+        "show_page" => (
+            "Show the user a page: one self-contained HTML file, with CSS and any \
+             script inline and nothing loaded from the network. Pass the whole page \
+             here: Ryter saves it outside the project and opens it for the user. Don't \
+             write it, or any helper file for it, into the project. Showing a page with \
+             the same title replaces it. Load the canvas skill before making one.",
+            json!({"type":"object","properties":{
+                "title":{"type":"string","description":"what the page is about; names its file"},
+                "html":{"type":"string","description":"the whole page, starting <!doctype html>"}
+            },"required":["title","html"]}),
+        ),
         "request_hat" => (
             "Ask the user to switch your hat, e.g. to build once a plan is ready or once a \
              review found things to fix. They answer yes or no; on yes you continue in the \
@@ -343,6 +359,8 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "bash",
             "ask_user",
             "request_hat",
+            "load_skill",
+            "show_page",
             "search_tool",
             "use_tool",
             "web_fetch",
@@ -357,6 +375,8 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "write",
             "search_replace",
             "todo_write",
+            "load_skill",
+            "show_page",
             "search_tool",
             "use_tool",
             "ask_user",
@@ -407,7 +427,9 @@ pub fn execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput
         "use_tool" => mcp_use(args, ctx),
         "ask_user" => ask_user(args, ctx),
         // The agent loop answers this itself: it changes who the agent is.
-        "request_hat" => Ok(ToolOutput::err("request_hat is handled by the agent loop")),
+        "request_hat" | "load_skill" | "show_page" => Ok(ToolOutput::err(format!(
+            "{name} is handled by the agent loop"
+        ))),
         "web_fetch" => web::web_fetch(args, ctx),
         "web_search" => web::web_search(args, ctx),
         other => Ok(ToolOutput::err(format!("unknown tool {other}"))),

@@ -1064,6 +1064,7 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
         task_budget_usd: view.task_budget_usd,
         max_crew: view.max_crew,
         web: view.web,
+        open_pages: view.ui.open_pages,
     });
     cx.send(Work::SetOfferAudit(view.ui.offer_audit));
 }
@@ -1092,6 +1093,7 @@ fn save_budget(view: &mut View, cx: &mut Ctx, usd: f64, warn: f64, task: f64) {
         task_budget_usd: task,
         max_crew: view.max_crew,
         web: view.web,
+        open_pages: view.ui.open_pages,
     });
     if usd > 0.0 {
         let over = view.spend.is_some_and(|s| s >= usd);

@@ -171,6 +171,12 @@ impl Settings {
                 Kind::Toggle(view.ui.offer_audit),
             )
             .origin(origin(&view.ui.offer_audit, &d.offer_audit)),
+            Field::new(
+                "open_pages",
+                "pages in browser",
+                Kind::Toggle(view.ui.open_pages),
+            )
+            .origin(origin(&view.ui.open_pages, &d.open_pages)),
         ];
         Self {
             form: Form::new(fields),
@@ -254,6 +260,9 @@ impl Settings {
         }
         if let Some(v) = toggle("offer_audit") {
             view.ui.offer_audit = v;
+        }
+        if let Some(v) = toggle("open_pages") {
+            view.ui.open_pages = v;
         }
     }
 }

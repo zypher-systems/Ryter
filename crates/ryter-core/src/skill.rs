@@ -15,13 +15,47 @@ pub struct Skill {
     pub description: String,
     /// When true, offered in the slash palette.
     pub user_invocable: bool,
+    /// When true, listed for the model, which loads it with `load_skill`
+    /// when a task needs it (`model-invocable: false` keeps it slash-only).
+    pub model_invocable: bool,
     /// Body injected as the user turn.
     pub body: String,
     /// File it was loaded from.
     pub source: PathBuf,
 }
 
+/// Skills that ship with Ryter. A user or project skill of the same name
+/// replaces one.
+const BUNDLED: &[(&str, &str)] = &[("canvas", include_str!("../skills/canvas/SKILL.md"))];
+
+/// The skills Ryter ships with.
+pub fn bundled_skills() -> Vec<Skill> {
+    BUNDLED
+        .iter()
+        .filter_map(|(name, text)| {
+            parse_skill_text(
+                text,
+                name,
+                PathBuf::from(format!("(built in)/{name}/SKILL.md")),
+            )
+        })
+        .collect()
+}
+
 impl Skill {
+    /// What `load_skill` hands the model: the instructions, and where any
+    /// files they mention live.
+    pub fn load_text(&self) -> String {
+        let mut s = format!("# Skill: {}\n\n{}\n", self.name, self.body.trim());
+        if let Some(dir) = self.source.parent().filter(|d| d.is_dir()) {
+            s.push_str(&format!(
+                "\nFiles this skill mentions are in {}.\n",
+                dir.display()
+            ));
+        }
+        s
+    }
+
     /// Prompt sent to the orchestrator when the skill is invoked.
     pub fn expand(&self, args: &str) -> String {
         let mut s = format!("# Skill: {}\n\n{}", self.name, self.body.trim());
@@ -98,6 +132,19 @@ impl SlashCatalog {
             .map(|c| c.expand(args))
     }
 
+    /// Skills the model may load, name-sorted.
+    pub fn for_model(&self) -> Vec<&Skill> {
+        self.skills.iter().filter(|s| s.model_invocable).collect()
+    }
+
+    /// The skill `name` if the model may load it.
+    pub fn model_skill(&self, name: &str) -> Option<&Skill> {
+        let l = name.trim().trim_start_matches('/').to_ascii_lowercase();
+        self.skills
+            .iter()
+            .find(|s| s.model_invocable && s.name == l)
+    }
+
     /// Text for `/skills`.
     pub fn list_text(&self) -> String {
         if self.skills.is_empty() && self.commands.is_empty() {
@@ -142,6 +189,9 @@ impl SlashCatalog {
 pub fn load_catalog(home: &Path, project_root: Option<&Path>, trusted: bool) -> SlashCatalog {
     let mut skills: BTreeMap<String, Skill> = BTreeMap::new();
     let mut commands: BTreeMap<String, UserCommand> = BTreeMap::new();
+    for s in bundled_skills() {
+        skills.insert(s.name.clone(), s);
+    }
     load_skills_dir(&home.join("skills"), &mut skills);
     load_commands_dir(&home.join("commands"), &mut commands);
     if trusted {
@@ -266,7 +316,11 @@ fn load_commands_dir(dir: &Path, into: &mut BTreeMap<String, UserCommand>) {
 
 fn parse_skill(path: &Path, fallback: &str) -> Option<Skill> {
     let text = fs::read_to_string(path).ok()?;
-    let (fm, body) = split_frontmatter(&text);
+    parse_skill_text(&text, fallback, path.to_path_buf())
+}
+
+fn parse_skill_text(text: &str, fallback: &str, source: PathBuf) -> Option<Skill> {
+    let (fm, body) = split_frontmatter(text);
     let raw_name = fm
         .get("name")
         .cloned()
@@ -281,12 +335,18 @@ fn parse_skill(path: &Path, fallback: &str) -> Option<Skill> {
         .or_else(|| fm.get("user_invocable"))
         .map(|s| parse_bool(s))
         .unwrap_or(true);
+    let model_invocable = fm
+        .get("model-invocable")
+        .or_else(|| fm.get("model_invocable"))
+        .map(|s| parse_bool(s))
+        .unwrap_or(true);
     Some(Skill {
         name,
         description,
         user_invocable,
+        model_invocable,
         body: body.trim().to_string(),
-        source: path.to_path_buf(),
+        source,
     })
 }
 
@@ -375,6 +435,62 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// The skills a test wrote: the catalog also holds the built-in ones.
+    fn own(cat: &SlashCatalog) -> Vec<&Skill> {
+        let built_in: Vec<String> = bundled_skills().into_iter().map(|s| s.name).collect();
+        cat.skills
+            .iter()
+            .filter(|s| !built_in.contains(&s.name) || !s.source.starts_with("(built in)"))
+            .collect()
+    }
+
+    /// Ryter ships the canvas skill: listed for the model and as `/canvas`.
+    /// A skill of the same name in `~/.ryter/skills` replaces it.
+    #[test]
+    fn the_canvas_skill_ships_and_can_be_replaced() {
+        let home = TempDir::new().unwrap();
+        let cat = load_catalog(home.path(), None, false);
+        let canvas = cat.model_skill("canvas").expect("built in");
+        assert!(canvas.user_invocable && canvas.description.contains("page"));
+        assert!(canvas.body.contains("show_page"));
+        assert!(canvas.load_text().starts_with("# Skill: canvas"));
+        assert!(!canvas.load_text().contains("Files this skill mentions"));
+        assert_eq!(
+            cat.model_skill("/Canvas").map(|s| &s.name),
+            Some(&canvas.name)
+        );
+        fs::create_dir_all(home.path().join("skills/canvas")).unwrap();
+        fs::write(
+            home.path().join("skills/canvas/SKILL.md"),
+            "---\ndescription: my pages\n---\nmine\n",
+        )
+        .unwrap();
+        let cat = load_catalog(home.path(), None, false);
+        let mine = cat.model_skill("canvas").unwrap();
+        assert_eq!(mine.body, "mine");
+        assert!(
+            mine.load_text()
+                .contains("Files this skill mentions are in")
+        );
+    }
+
+    /// `model-invocable: false` keeps a skill to the slash palette.
+    #[test]
+    fn a_skill_can_be_kept_from_the_model() {
+        let home = TempDir::new().unwrap();
+        fs::create_dir_all(home.path().join("skills")).unwrap();
+        fs::write(
+            home.path().join("skills/deploy.md"),
+            "---\ndescription: ship it\nmodel-invocable: false\n---\nrun the deploy\n",
+        )
+        .unwrap();
+        let cat = load_catalog(home.path(), None, false);
+        assert!(cat.names().contains(&"deploy".to_string()));
+        assert!(cat.model_skill("deploy").is_none());
+        assert!(!cat.for_model().iter().any(|s| s.name == "deploy"));
+        assert!(cat.for_model().iter().any(|s| s.name == "canvas"));
+    }
+
     #[test]
     fn skill_dir_and_frontmatter() {
         let home = TempDir::new().unwrap();
@@ -386,14 +502,18 @@ mod tests {
         )
         .unwrap();
         let cat = load_catalog(home.path(), None, false);
-        assert_eq!(cat.skills.len(), 1);
-        assert_eq!(cat.skills[0].name, "review");
-        assert_eq!(cat.skills[0].description, "Review the diff");
-        assert!(cat.skills[0].user_invocable);
+        let skills = own(&cat);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "review");
+        assert_eq!(skills[0].description, "Review the diff");
+        assert!(skills[0].user_invocable);
         let prompt = cat.expand("review", "src/lib.rs").unwrap();
         assert!(prompt.contains("Look at git diff."));
         assert!(prompt.contains("Arguments: src/lib.rs"));
-        assert_eq!(cat.names(), vec!["review".to_string()]);
+        assert_eq!(
+            cat.names(),
+            vec!["canvas".to_string(), "review".to_string()]
+        );
     }
 
     #[test]
@@ -402,10 +522,10 @@ mod tests {
         let path = write_skill(home.path(), "summarize", "Sum up the diff").unwrap();
         assert!(path.ends_with("skills/summarize/SKILL.md"));
         let cat = load_catalog(home.path(), None, false);
-        assert_eq!(cat.skills[0].name, "summarize");
-        assert!(cat.skills[0].user_invocable);
+        assert_eq!(own(&cat)[0].name, "summarize");
+        assert!(own(&cat)[0].user_invocable);
         remove_catalog_entry(home.path(), &path).unwrap();
-        assert!(load_catalog(home.path(), None, false).skills.is_empty());
+        assert!(own(&load_catalog(home.path(), None, false)).is_empty());
     }
 
     #[test]
@@ -418,7 +538,7 @@ mod tests {
         )
         .unwrap();
         let cat = load_catalog(home.path(), None, false);
-        assert!(cat.names().is_empty());
+        assert!(!cat.names().contains(&"internal".to_string()));
         assert!(cat.expand("internal", "").is_none());
         assert!(cat.list_text().contains("(not slash)"));
     }
@@ -450,9 +570,9 @@ mod tests {
         fs::create_dir_all(proj.path().join(".ryter/skills")).unwrap();
         fs::write(proj.path().join(".ryter/skills/foo.md"), "from project\n").unwrap();
         let untrusted = load_catalog(home.path(), Some(proj.path()), false);
-        assert_eq!(untrusted.skills[0].body, "from home");
+        assert_eq!(own(&untrusted)[0].body, "from home");
         let trusted = load_catalog(home.path(), Some(proj.path()), true);
-        assert_eq!(trusted.skills[0].body, "from project");
+        assert_eq!(own(&trusted)[0].body, "from project");
     }
 
     #[test]
@@ -465,6 +585,6 @@ mod tests {
         )
         .unwrap();
         let cat = load_catalog(home.path(), None, false);
-        assert!(cat.skills.is_empty());
+        assert!(own(&cat).is_empty());
     }
 }

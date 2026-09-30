@@ -329,7 +329,18 @@ impl Session {
                 dir.display()
             )));
         }
-        fs::remove_dir_all(dir).map_err(|e| Error::Io(e.to_string()))
+        fs::remove_dir_all(dir).map_err(|e| Error::Io(e.to_string()))?;
+        // Its pages go with it: `<home>/sessions/<project>/<id>` →
+        // `<home>/pages/<id>`.
+        let sessions = dir.parent().and_then(Path::parent);
+        if let (Some(sessions), Some(id)) = (sessions, dir.file_name()) {
+            if sessions.file_name().is_some_and(|n| n == "sessions") {
+                if let Some(home) = sessions.parent() {
+                    let _ = fs::remove_dir_all(crate::page::dir(home, &id.to_string_lossy()));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Append an event and flush.

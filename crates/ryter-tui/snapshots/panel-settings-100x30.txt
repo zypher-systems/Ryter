@@ -13,7 +13,7 @@
               │  permission mode       ‹ ask ›                               default ┃
               │  features.web          [ off ]                               default ┃
               │                                                                      ┃
-              │ SANDBOX                                                              ┃
+              │ SANDBOX                                                              │
               │  profile               ‹ off ›                               default │
               │                                                                      │
               │ MCP                                                                  │

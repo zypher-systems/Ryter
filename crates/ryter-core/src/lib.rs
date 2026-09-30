@@ -21,6 +21,7 @@ pub mod llm;
 pub mod mcp;
 pub mod memory;
 pub mod meter;
+pub mod page;
 pub mod phase;
 pub mod project;
 pub mod prompt;
