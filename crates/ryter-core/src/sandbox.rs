@@ -60,6 +60,17 @@ pub fn probe() -> String {
     }
 }
 
+thread_local! {
+    static ACTIVE: std::cell::Cell<SandboxProfile> = const { std::cell::Cell::new(SandboxProfile::Off) };
+}
+
+/// The profile [`apply`] put on this thread, `Off` when none. Landlock binds
+/// the thread and everything it starts, so a browser opened from here would
+/// run inside the sandbox.
+pub fn active() -> SandboxProfile {
+    ACTIVE.with(|a| a.get())
+}
+
 /// Tokio runtime: current-thread when sandboxed so Landlock covers tool calls.
 pub fn runtime(profile: SandboxProfile) -> std::io::Result<tokio::runtime::Runtime> {
     if profile == SandboxProfile::Off {
@@ -89,7 +100,9 @@ pub fn apply(profile: SandboxProfile, workspace: &Path, home: &Path) -> Result<(
     }
     #[cfg(target_os = "linux")]
     {
-        apply_linux(profile, workspace, home)
+        apply_linux(profile, workspace, home)?;
+        ACTIVE.with(|a| a.set(profile));
+        Ok(())
     }
 }
 
@@ -150,11 +163,14 @@ fn apply_linux(profile: SandboxProfile, workspace: &Path, home: &Path) -> Result
     // so nothing here needs them.
     let rw = writable_set(&home);
     let _ = &scratch;
+    let skills = readable_set(&home);
     let status = created
         .set_compatibility(CompatLevel::BestEffort)
         .add_rules(path_beneath_rules(&ro, AccessFs::from_read(abi)))
         .map_err(|e| Error::Config(format!("sandbox rules: {e}")))?
         .add_rules(path_beneath_rules(&rw, AccessFs::from_all(abi)))
+        .map_err(|e| Error::Config(format!("sandbox rules: {e}")))?
+        .add_rules(path_beneath_rules(&skills, AccessFs::from_read(abi)))
         .map_err(|e| Error::Config(format!("sandbox rules: {e}")))?
         .add_rules(path_beneath_rules(&[ws], ws_access))
         .map_err(|e| Error::Config(format!("sandbox rules: {e}")))?
@@ -175,8 +191,19 @@ fn apply_linux(profile: SandboxProfile, workspace: &Path, home: &Path) -> Result
 /// negative rules, so any grant on the parent would re-expose `keys/`.
 #[cfg(target_os = "linux")]
 fn writable_set(home: &Path) -> Vec<std::path::PathBuf> {
-    ["tmp", "logs", "sessions"]
-        .iter()
+    made(home, &["tmp", "logs", "sessions", "pages"])
+}
+
+/// Directories a sandboxed thread may read in `~/.ryter`, beyond the ones it
+/// writes: the user's skills, which the model loads.
+#[cfg(target_os = "linux")]
+fn readable_set(home: &Path) -> Vec<std::path::PathBuf> {
+    made(home, &["skills"])
+}
+
+#[cfg(target_os = "linux")]
+fn made(home: &Path, subs: &[&str]) -> Vec<std::path::PathBuf> {
+    subs.iter()
         .map(|sub| {
             let p = home.join(sub);
             let _ = std::fs::create_dir_all(&p);
@@ -225,6 +252,12 @@ mod tests {
         );
         assert!(rw.iter().any(|p| p.ends_with("sessions")), "{rw:?}");
         assert!(rw.iter().any(|p| p.ends_with("tmp")), "{rw:?}");
+        assert!(rw.iter().any(|p| p.ends_with("pages")), "{rw:?}");
+        let ro = readable_set(home.path());
+        assert!(
+            ro.iter().all(|p| p.ends_with("skills")),
+            "only skills is read beyond the writable set: {ro:?}"
+        );
         let _ = ws;
     }
 
@@ -281,6 +314,40 @@ mod tests {
             std::fs::read_to_string(outside.path().join("secret.txt")).unwrap(),
             "nope"
         );
+    }
+
+    /// Pages and skills work under the sandbox, and keys stay shut: the
+    /// sandbox used to stop `show_page` writing and `load_skill` reading
+    /// the user's own skills.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn pages_and_skills_work_under_the_sandbox() {
+        use tempfile::TempDir;
+        let ws = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        std::fs::create_dir_all(home.path().join("skills/mine")).unwrap();
+        std::fs::write(home.path().join("skills/mine/SKILL.md"), "body").unwrap();
+        std::fs::create_dir_all(home.path().join("keys")).unwrap();
+        std::fs::write(home.path().join("keys/spacexai"), "xai-secret").unwrap();
+        let (ws_p, home_p) = (ws.path().to_path_buf(), home.path().to_path_buf());
+        let handle = std::thread::spawn(move || {
+            if let Err(e) = apply(SandboxProfile::ReadOnly, &ws_p, &home_p) {
+                eprintln!("sandbox apply skipped: {e}");
+                return;
+            }
+            assert_eq!(active(), SandboxProfile::ReadOnly);
+            let page = home_p.join("pages/s1/report.html");
+            std::fs::create_dir_all(page.parent().unwrap()).unwrap();
+            std::fs::write(&page, "<p>x</p>").unwrap();
+            assert_eq!(
+                std::fs::read_to_string(home_p.join("skills/mine/SKILL.md")).unwrap(),
+                "body"
+            );
+            assert!(std::fs::write(home_p.join("skills/mine/x"), "y").is_err());
+            assert!(std::fs::read_to_string(home_p.join("keys/spacexai")).is_err());
+        });
+        handle.join().expect("sandbox thread");
+        assert_eq!(active(), SandboxProfile::Off, "only the sandboxed thread");
     }
 
     #[cfg(target_os = "linux")]

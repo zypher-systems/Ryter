@@ -298,8 +298,12 @@ fn spec(name: &str) -> Option<ToolSpec> {
         ),
         "load_skill" => (
             "Load a skill: instructions for a kind of work, listed under Skills in \
-             your instructions. Load one before starting work it covers, then follow it.",
-            json!({"type":"object","properties":{"name":{"type":"string","description":"the skill's name, e.g. canvas"}},"required":["name"]}),
+             your instructions. Load one before starting work it covers, then follow it. \
+             A skill that lists files of its own: pass one as `file` to read it.",
+            json!({"type":"object","properties":{
+                "name":{"type":"string","description":"the skill's name, e.g. canvas"},
+                "file":{"type":"string","description":"one of the skill's own files, as its list names it"}
+            },"required":["name"]}),
         ),
         "show_page" => (
             "Show the user a page: one self-contained HTML file, with CSS and any \
@@ -669,6 +673,19 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
 }
 
 fn run_with_hooks(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
+    with_hooks(name, args, ctx, || execute(name, args, ctx))
+}
+
+/// Run a tool the agent handles itself (`show_page`, `load_skill`,
+/// `request_hat`) through the same hooks as every other tool: a
+/// `PreToolUse` deny stops it, and `PostToolUse` sees its result. They used
+/// to skip both, so a deny hook could not stop a page being written.
+pub fn with_hooks(
+    name: &str,
+    args: &Value,
+    ctx: &ToolContext,
+    run: impl FnOnce() -> Result<ToolOutput>,
+) -> Result<ToolOutput> {
     if let Some(hooks) = &ctx.hooks {
         if let crate::hooks::HookDecision::Deny(msg) =
             hooks.pre_tool(name, args, &ctx.workspace, ctx.role)
@@ -681,7 +698,7 @@ fn run_with_hooks(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOut
     // end the task. On the first live crew run, builders reading a file they
     // were about to create died with "No such file or directory". Only a
     // cancel ends the task.
-    let out = match execute(name, args, ctx) {
+    let out = match run() {
         Ok(o) => o,
         Err(crate::error::Error::Cancelled) => return Err(crate::error::Error::Cancelled),
         Err(e) => ToolOutput::err(format!("{name} failed: {e}")),

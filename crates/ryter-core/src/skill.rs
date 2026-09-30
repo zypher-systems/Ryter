@@ -43,17 +43,102 @@ pub fn bundled_skills() -> Vec<Skill> {
 }
 
 impl Skill {
-    /// What `load_skill` hands the model: the instructions, and where any
-    /// files they mention live.
+    /// What `load_skill` hands the model: the instructions, and the files
+    /// in the skill's folder, which it reads with `load_skill` and `file`.
+    /// Naming the folder was no use: the sandbox and the secrets rule keep
+    /// `~/.ryter` out of `read`.
     pub fn load_text(&self) -> String {
-        let mut s = format!("# Skill: {}\n\n{}\n", self.name, self.body.trim());
-        if let Some(dir) = self.source.parent().filter(|d| d.is_dir()) {
+        let mut s = format!(
+            "# Skill: {}
+
+{}
+",
+            self.name,
+            self.body.trim()
+        );
+        let files = self.files();
+        if !files.is_empty() {
             s.push_str(&format!(
-                "\nFiles this skill mentions are in {}.\n",
-                dir.display()
+                "\nThis skill's own files: {}. Read one with load_skill, giving its name and \
+                 `file`.\n",
+                files.join(", ")
             ));
         }
         s
+    }
+
+    /// The folder of a `<name>/SKILL.md` skill. A flat `<name>.md` skill and
+    /// a built-in one have none.
+    fn folder(&self) -> Option<&Path> {
+        if self.source.file_name().is_some_and(|n| n == "SKILL.md") {
+            self.source.parent().filter(|d| d.is_dir())
+        } else {
+            None
+        }
+    }
+
+    /// Files in the skill's folder besides `SKILL.md`, by relative path.
+    /// Hidden entries and links are left out; the list stops at 50.
+    pub fn files(&self) -> Vec<String> {
+        fn walk(root: &Path, dir: &Path, depth: usize, out: &mut Vec<String>) {
+            let Ok(rd) = fs::read_dir(dir) else { return };
+            let mut ents: Vec<_> = rd.flatten().collect();
+            ents.sort_by_key(|e| e.file_name());
+            for ent in ents {
+                if out.len() >= 50 || ent.file_name().to_string_lossy().starts_with('.') {
+                    continue;
+                }
+                let Ok(kind) = ent.file_type() else { continue };
+                let path = ent.path();
+                if kind.is_dir() && depth < 3 {
+                    walk(root, &path, depth + 1, out);
+                } else if kind.is_file() && !(depth == 0 && ent.file_name() == "SKILL.md") {
+                    if let Ok(rel) = path.strip_prefix(root) {
+                        out.push(rel.to_string_lossy().into_owned());
+                    }
+                }
+            }
+        }
+        let mut out = Vec::new();
+        if let Some(dir) = self.folder() {
+            walk(dir, dir, 0, &mut out);
+        }
+        out
+    }
+
+    /// The text of `rel`, a file inside the skill's folder. Nothing outside
+    /// it: no absolute paths, no `..`, and no link that leads out.
+    pub fn read_file(&self, rel: &str) -> std::result::Result<String, String> {
+        const MAX: u64 = 256 * 1024;
+        let Some(dir) = self.folder() else {
+            return Err(format!("the {} skill has no files of its own", self.name));
+        };
+        let rel_path = Path::new(rel);
+        if rel.is_empty()
+            || !rel_path
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            return Err(format!(
+                "{rel:?} is not a file of the {} skill; give a name from its list",
+                self.name
+            ));
+        }
+        let (Ok(root), Ok(path)) = (fs::canonicalize(dir), fs::canonicalize(dir.join(rel_path)))
+        else {
+            return Err(format!("the {} skill has no file {rel:?}", self.name));
+        };
+        if !path.starts_with(&root) || !path.is_file() {
+            return Err(format!("the {} skill has no file {rel:?}", self.name));
+        }
+        let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        if size > MAX {
+            return Err(format!(
+                "{rel} is {} KB; the most load_skill reads is 256 KB",
+                size / 1024
+            ));
+        }
+        fs::read_to_string(&path).map_err(|e| format!("{rel}: {e}"))
     }
 
     /// Prompt sent to the orchestrator when the skill is invoked.
@@ -454,7 +539,7 @@ mod tests {
         assert!(canvas.user_invocable && canvas.description.contains("page"));
         assert!(canvas.body.contains("show_page"));
         assert!(canvas.load_text().starts_with("# Skill: canvas"));
-        assert!(!canvas.load_text().contains("Files this skill mentions"));
+        assert!(!canvas.load_text().contains("own files"));
         assert_eq!(
             cat.model_skill("/Canvas").map(|s| &s.name),
             Some(&canvas.name)
@@ -468,10 +553,61 @@ mod tests {
         let cat = load_catalog(home.path(), None, false);
         let mine = cat.model_skill("canvas").unwrap();
         assert_eq!(mine.body, "mine");
+        assert!(!mine.load_text().contains("own files"), "only SKILL.md");
+    }
+
+    /// A skill's own files are listed by name and read through the skill,
+    /// and nothing outside its folder is: `..`, absolute paths and links
+    /// that lead out are refused. The first version gave the model the
+    /// folder's path, which the sandbox and the secrets rule keep it from
+    /// reading.
+    #[test]
+    fn a_skill_reads_its_own_files_and_nothing_else() {
+        let home = TempDir::new().unwrap();
+        let dir = home.path().join("skills/deploy");
+        fs::create_dir_all(dir.join("scripts")).unwrap();
+        fs::write(
+            dir.join("SKILL.md"),
+            "---\ndescription: d\n---\nsee notes.md\n",
+        )
+        .unwrap();
+        fs::write(dir.join("notes.md"), "the notes").unwrap();
+        fs::write(dir.join("scripts/check.sh"), "echo ok").unwrap();
+        fs::write(dir.join(".hidden"), "x").unwrap();
+        fs::write(dir.join("big.txt"), "x".repeat(300 * 1024)).unwrap();
+        fs::create_dir_all(home.path().join("keys")).unwrap();
+        fs::write(home.path().join("keys/spacexai"), "xai-secret").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(home.path().join("keys/spacexai"), dir.join("key")).unwrap();
+        fs::write(home.path().join("skills/flat.md"), "flat\n").unwrap();
+
+        let cat = load_catalog(home.path(), None, false);
+        let skill = cat.model_skill("deploy").unwrap();
+        assert_eq!(skill.files(), ["big.txt", "notes.md", "scripts/check.sh"]);
+        let text = skill.load_text();
         assert!(
-            mine.load_text()
-                .contains("Files this skill mentions are in")
+            text.contains("own files: big.txt, notes.md, scripts/check.sh")
+                && !text.contains(&home.path().display().to_string()),
+            "{text}"
         );
+        assert_eq!(skill.read_file("notes.md").unwrap(), "the notes");
+        assert_eq!(skill.read_file("scripts/check.sh").unwrap(), "echo ok");
+        for bad in [
+            "key",
+            "../flat.md",
+            "../../keys/spacexai",
+            "/etc/hostname",
+            "",
+            "missing.md",
+            "scripts",
+        ] {
+            let err = skill.read_file(bad).unwrap_err();
+            assert!(!err.contains("xai-secret"), "{bad}: {err}");
+        }
+        assert!(skill.read_file("big.txt").unwrap_err().contains("256 KB"));
+        let flat = cat.model_skill("flat").unwrap();
+        assert!(flat.files().is_empty(), "a flat skill's folder is others'");
+        assert!(flat.read_file("deploy/notes.md").is_err());
     }
 
     /// `model-invocable: false` keeps a skill to the slash palette.

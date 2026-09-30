@@ -564,9 +564,21 @@ impl Agent {
                         "not run: the arguments were not valid JSON ({e}). Send the call \
                          again with the arguments as one JSON object."
                     ))),
-                    Ok(_) if call.name == "request_hat" => self.request_hat(&args),
-                    Ok(_) if call.name == "load_skill" => Ok(self.load_skill(&args)),
-                    Ok(_) if call.name == "show_page" => self.show_page(&args),
+                    Ok(_)
+                        if matches!(
+                            call.name.as_str(),
+                            "request_hat" | "load_skill" | "show_page"
+                        ) =>
+                    {
+                        let ctx = self.ctx.clone();
+                        crate::tools::with_hooks(&call.name, &args, &ctx, || {
+                            match call.name.as_str() {
+                                "request_hat" => self.request_hat(&args),
+                                "load_skill" => Ok(self.load_skill(&args)),
+                                _ => self.show_page(&args),
+                            }
+                        })
+                    }
                     Ok(_) => gated_execute(&call.name, &args, &self.ctx),
                 };
                 let mut out = match out {
@@ -1312,10 +1324,23 @@ impl Agent {
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim();
+        let file = args
+            .get("file")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|f| !f.is_empty());
         let catalog =
             crate::skill::load_catalog(&self.home, self.project_root.as_deref(), self.trusted);
         match catalog.model_skill(name) {
-            Some(skill) => crate::tools::ToolOutput::ok(skill.load_text()),
+            Some(skill) => match file {
+                None => crate::tools::ToolOutput::ok(skill.load_text()),
+                Some(file) => match skill.read_file(file) {
+                    Ok(text) => {
+                        crate::tools::ToolOutput::ok(format!("# {}/{file}\n\n{text}", skill.name))
+                    }
+                    Err(e) => crate::tools::ToolOutput::err(e),
+                },
+            },
             None => {
                 let names: Vec<&str> = catalog
                     .for_model()
@@ -1352,7 +1377,9 @@ impl Agent {
         std::fs::write(&path, &page).map_err(|e| Error::Io(e.to_string()))?;
         let url = crate::page::file_url(&path);
         let open = self.ctx.user_io.is_some() && self.cfg.as_ref().is_some_and(|c| c.ui.open_pages);
-        let opened = open && crate::page::open(&path);
+        // A browser started from a sandboxed thread would run in the sandbox.
+        let sandboxed = crate::sandbox::active() != crate::sandbox::SandboxProfile::Off;
+        let opened = open && !sandboxed && crate::page::open(&path);
         self.emit(AgentEvent::Notice {
             message: if opened {
                 format!("page · {title} · opened in your browser · {url}")
@@ -1363,8 +1390,12 @@ impl Agent {
         // Said plainly: a model told "saved" still reported the page open.
         let how = if opened {
             "Opened in the user's browser."
+        } else if open && sandboxed {
+            "Saved and NOT opened: Ryter's sandbox can't start a browser, and the chat \
+             shows the user the link. Don't say it is open."
         } else if open {
-            "Saved, but it could not be opened here (no desktop); the user has the link."
+            "Saved and NOT opened: there is no desktop here, or the browser failed to \
+             start. The chat shows the user the link. Don't say it is open."
         } else {
             "Saved and NOT opened: the user's settings keep pages closed, and the chat \
              shows them the link. Don't say it is open."
@@ -4725,9 +4756,23 @@ mod tests {
         let p = ReplayProvider::scripted(vec![
             call("load_skill", serde_json::json!({"name": "canvas"})),
             call("load_skill", serde_json::json!({"name": "nope"})),
+            call(
+                "load_skill",
+                serde_json::json!({"name": "mine", "file": "notes.md"}),
+            ),
+            call(
+                "load_skill",
+                serde_json::json!({"name": "mine", "file": "../../keys/spacexai"}),
+            ),
             say("loaded"),
         ]);
-        let (_home, _cwd, mut agent) = setup(p);
+        let (home, _cwd, mut agent) = setup(p);
+        let dir = home.path().join("skills/mine");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("SKILL.md"), "---\ndescription: d\n---\nbody\n").unwrap();
+        std::fs::write(dir.join("notes.md"), "the notes").unwrap();
+        std::fs::create_dir_all(home.path().join("keys")).unwrap();
+        std::fs::write(home.path().join("keys/spacexai"), "xai-secret").unwrap();
         agent.role = Role::SoloBuild;
         let system = agent.system_prompt().unwrap();
         assert!(
@@ -4744,6 +4789,8 @@ mod tests {
             .collect();
         assert!(results[0].starts_with("# Skill: canvas") && results[0].contains("show_page"));
         assert!(results[1].contains("no skill named \"nope\"") && results[1].contains("canvas"));
+        assert_eq!(results[2], "# mine/notes.md\n\nthe notes");
+        assert!(!results[3].contains("xai-secret") && results[3].contains("not a file"));
     }
 
     /// A page is saved in the session, sealed from the network, and linked
@@ -4777,7 +4824,7 @@ mod tests {
             "replaced: {text}"
         );
         assert!(
-            text.contains("<head><meta http-equiv=\"Content-Security-Policy\""),
+            text.starts_with("<!doctype html><meta http-equiv=\"Content-Security-Policy\""),
             "{text}"
         );
         let url = crate::page::file_url(&path);
@@ -4804,6 +4851,123 @@ mod tests {
                 .unwrap()
                 .any(|e| e.unwrap().path().extension().is_some_and(|x| x == "html"))
         );
+    }
+
+    /// Under the sandbox, the model still loads the user's skills and shows
+    /// pages; the browser is left closed (it would start inside the sandbox)
+    /// and the model is told so. Both tools failed there before.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn pages_and_skills_work_in_a_sandboxed_turn() {
+        std::thread::spawn(|| {
+            let p = ReplayProvider::scripted(vec![
+                call(
+                    "load_skill",
+                    serde_json::json!({"name": "mine", "file": "notes.md"}),
+                ),
+                call(
+                    "show_page",
+                    serde_json::json!({"title": "Report", "html": "<p>x</p>"}),
+                ),
+                say("done"),
+            ]);
+            let (home, cwd, mut agent) = setup(p);
+            let dir = home.path().join("skills/mine");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("SKILL.md"), "---\ndescription: d\n---\nbody\n").unwrap();
+            std::fs::write(dir.join("notes.md"), "the notes").unwrap();
+            let mut cfg = crate::config::Config::default();
+            cfg.ui.open_pages = true;
+            agent.cfg = Some(cfg);
+            let (io, _rx) = crate::user_io::UserIo::pair();
+            agent.ctx.user_io = Some(io);
+            let profile = crate::sandbox::SandboxProfile::Workspace;
+            if let Err(e) = crate::sandbox::apply(profile, cwd.path(), home.path()) {
+                eprintln!("sandbox apply skipped: {e}");
+                return;
+            }
+            let rt = crate::sandbox::runtime(profile).unwrap();
+            rt.block_on(agent.turn("go")).unwrap();
+            let results: Vec<&str> = agent
+                .session
+                .transcript
+                .iter()
+                .filter(|m| m.role == "tool")
+                .map(|m| m.content.as_str())
+                .collect();
+            assert_eq!(results[0], "# mine/notes.md\n\nthe notes");
+            assert!(
+                results[1].contains("sandbox can't start a browser"),
+                "{results:?}"
+            );
+            let page =
+                crate::page::dir(&agent.home, agent.session.meta.id.as_str()).join("report.html");
+            assert!(std::fs::read_to_string(page).unwrap().ends_with("<p>x</p>"));
+        })
+        .join()
+        .expect("sandboxed turn");
+    }
+
+    /// Ryter's own tools go through the hooks too: a `PreToolUse` deny stops
+    /// a page being written, and `PostToolUse` sees a skill load. Both used
+    /// to skip them.
+    #[tokio::test]
+    async fn hooks_see_the_tools_the_agent_runs_itself() {
+        let p = ReplayProvider::scripted(vec![
+            call(
+                "show_page",
+                serde_json::json!({"title": "denied", "html": "<p>x</p>"}),
+            ),
+            call("load_skill", serde_json::json!({"name": "canvas"})),
+            say("done"),
+        ]);
+        let (home, _cwd, mut agent) = setup(p);
+        let script = |name: &str, body: &str| {
+            let path = home.path().join(name);
+            std::fs::write(&path, body).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            path.to_string_lossy().into_owned()
+        };
+        let deny = script("deny.sh", "#!/bin/sh\necho no-pages\nexit 2\n");
+        let seen = home.path().join("post.json");
+        let post = script(
+            "post.sh",
+            &format!("#!/bin/sh\ncat > '{}'\n", seen.display()),
+        );
+        agent.ctx.hooks = Some(Arc::new(crate::hooks::HookSet::from_config(&[
+            crate::config::HookConfig {
+                event: "PreToolUse".into(),
+                command: Some(deny),
+                url: None,
+                matcher: Some("show_page".into()),
+            },
+            crate::config::HookConfig {
+                event: "PostToolUse".into(),
+                command: Some(post),
+                url: None,
+                matcher: Some("load_skill".into()),
+            },
+        ])));
+        agent.turn("go").await.unwrap();
+        let results: Vec<&str> = agent
+            .session
+            .transcript
+            .iter()
+            .filter(|m| m.role == "tool")
+            .map(|m| m.content.as_str())
+            .collect();
+        assert!(results[0].contains("hook denied: no-pages"), "{results:?}");
+        let pages = crate::page::dir(&agent.home, agent.session.meta.id.as_str());
+        assert!(
+            !pages.join("denied.html").exists(),
+            "the deny stopped the write"
+        );
+        let posted = std::fs::read_to_string(&seen).expect("post hook ran");
+        assert!(posted.contains("load_skill"), "{posted}");
     }
 
     #[tokio::test]
