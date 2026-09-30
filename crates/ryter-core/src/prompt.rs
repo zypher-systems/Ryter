@@ -171,6 +171,19 @@ pub fn conversation_system(
             s.push('\n');
         }
     }
+    // Listed, not loaded: the model reads one with `load_skill` when a task
+    // needs it. The list changes only when skills do, so the cache holds.
+    let catalog = crate::skill::load_catalog(home, project_root, trusted);
+    let skills = catalog.for_model();
+    if !skills.is_empty() {
+        s.push_str(
+            "\n## Skills\nInstructions for particular kinds of work. When a task matches \
+             one, call load_skill with its name before you start, and follow it.\n",
+        );
+        for sk in skills {
+            s.push_str(&format!("- {}: {}\n", sk.name, sk.description));
+        }
+    }
     if let Some(mem) = crate::memory::load_project_memory(project_root) {
         s.push_str("\n## Project memory (roadmap, decisions, notes)\n");
         s.push_str("When the user asks why something is the way it is, read this and the files named in it. Update ROADMAP.md and DECISIONS.md as work changes. Do not paste specialist transcripts here.\n\n");

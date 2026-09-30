@@ -155,7 +155,7 @@ fn ceil_boundary(s: &str, at: usize) -> usize {
 }
 
 impl ToolOutput {
-    fn ok(text: impl Into<String>) -> Self {
+    pub(crate) fn ok(text: impl Into<String>) -> Self {
         Self {
             text: cap_output(text.into()),
             is_error: false,
@@ -296,6 +296,26 @@ fn spec(name: &str) -> Option<ToolSpec> {
             "Call an MCP tool by catalog key (server__tool).",
             json!({"type":"object","properties":{"name":{"type":"string"},"arguments":{"type":"object"}},"required":["name"]}),
         ),
+        "load_skill" => (
+            "Load a skill: instructions for a kind of work, listed under Skills in \
+             your instructions. Load one before starting work it covers, then follow it. \
+             A skill that lists files of its own: pass one as `file` to read it.",
+            json!({"type":"object","properties":{
+                "name":{"type":"string","description":"the skill's name, e.g. canvas"},
+                "file":{"type":"string","description":"one of the skill's own files, as its list names it"}
+            },"required":["name"]}),
+        ),
+        "show_page" => (
+            "Show the user a page: one self-contained HTML file, with CSS and any \
+             script inline and nothing loaded from the network. Pass the whole page \
+             here: Ryter saves it outside the project and opens it for the user. Don't \
+             write it, or any helper file for it, into the project. Showing a page with \
+             the same title replaces it. Load the canvas skill before making one.",
+            json!({"type":"object","properties":{
+                "title":{"type":"string","description":"what the page is about; names its file"},
+                "html":{"type":"string","description":"the whole page, starting <!doctype html>"}
+            },"required":["title","html"]}),
+        ),
         "request_hat" => (
             "Ask the user to switch your hat, e.g. to build once a plan is ready or once a \
              review found things to fix. They answer yes or no; on yes you continue in the \
@@ -343,6 +363,8 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "bash",
             "ask_user",
             "request_hat",
+            "load_skill",
+            "show_page",
             "search_tool",
             "use_tool",
             "web_fetch",
@@ -357,6 +379,8 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "write",
             "search_replace",
             "todo_write",
+            "load_skill",
+            "show_page",
             "search_tool",
             "use_tool",
             "ask_user",
@@ -407,7 +431,9 @@ pub fn execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput
         "use_tool" => mcp_use(args, ctx),
         "ask_user" => ask_user(args, ctx),
         // The agent loop answers this itself: it changes who the agent is.
-        "request_hat" => Ok(ToolOutput::err("request_hat is handled by the agent loop")),
+        "request_hat" | "load_skill" | "show_page" => Ok(ToolOutput::err(format!(
+            "{name} is handled by the agent loop"
+        ))),
         "web_fetch" => web::web_fetch(args, ctx),
         "web_search" => web::web_search(args, ctx),
         other => Ok(ToolOutput::err(format!("unknown tool {other}"))),
@@ -647,6 +673,19 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
 }
 
 fn run_with_hooks(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
+    with_hooks(name, args, ctx, || execute(name, args, ctx))
+}
+
+/// Run a tool the agent handles itself (`show_page`, `load_skill`,
+/// `request_hat`) through the same hooks as every other tool: a
+/// `PreToolUse` deny stops it, and `PostToolUse` sees its result. They used
+/// to skip both, so a deny hook could not stop a page being written.
+pub fn with_hooks(
+    name: &str,
+    args: &Value,
+    ctx: &ToolContext,
+    run: impl FnOnce() -> Result<ToolOutput>,
+) -> Result<ToolOutput> {
     if let Some(hooks) = &ctx.hooks {
         if let crate::hooks::HookDecision::Deny(msg) =
             hooks.pre_tool(name, args, &ctx.workspace, ctx.role)
@@ -659,7 +698,7 @@ fn run_with_hooks(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOut
     // end the task. On the first live crew run, builders reading a file they
     // were about to create died with "No such file or directory". Only a
     // cancel ends the task.
-    let out = match execute(name, args, ctx) {
+    let out = match run() {
         Ok(o) => o,
         Err(crate::error::Error::Cancelled) => return Err(crate::error::Error::Cancelled),
         Err(e) => ToolOutput::err(format!("{name} failed: {e}")),

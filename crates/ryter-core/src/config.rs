@@ -185,6 +185,9 @@ pub struct UiConfig {
     /// `ledger` (one reading column on a timeline, status in the bottom
     /// bar) | `classic` (chat beside the info cards, as before 0.6.0).
     pub layout: String,
+    /// Open a page the model shows (`show_page`) in the browser. Off, the
+    /// chat gives its link only.
+    pub open_pages: bool,
 }
 
 impl UiConfig {
@@ -208,6 +211,7 @@ impl Default for UiConfig {
             receipts: true,
             offer_audit: true,
             layout: "ledger".into(),
+            open_pages: true,
         }
     }
 }
@@ -225,6 +229,7 @@ pub const UI_KEYS: &[&str] = &[
     "receipts",
     "offer_audit",
     "layout",
+    "open_pages",
 ];
 
 /// Unknown keys under `[ui]` in a TOML document (empty when none).
@@ -1291,6 +1296,8 @@ struct UiFile {
     offer_audit: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     layout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    open_pages: Option<bool>,
 }
 
 impl From<&UiConfig> for UiFile {
@@ -1307,6 +1314,7 @@ impl From<&UiConfig> for UiFile {
             receipts: Some(ui.receipts),
             offer_audit: Some(ui.offer_audit),
             layout: Some(ui.layout.clone()),
+            open_pages: Some(ui.open_pages),
         }
     }
 }
@@ -1339,6 +1347,9 @@ impl UiFile {
         }
         if let Some(v) = self.receipts {
             ui.receipts = v;
+        }
+        if let Some(v) = self.open_pages {
+            ui.open_pages = v;
         }
         if let Some(v) = self.offer_audit {
             ui.offer_audit = v;
@@ -2020,6 +2031,25 @@ mod tests {
         fs::write(&path, "sentinel = true\n").unwrap();
         write_default_config(dir.path()).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "sentinel = true\n");
+    }
+
+    /// `[ui] open_pages = false` in settings.toml keeps pages closed. The
+    /// settings file is read through its own table, which first missed the
+    /// key: a page opened in the browser with it off.
+    #[test]
+    fn open_pages_off_is_read_from_settings() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("settings.toml"),
+            "[ui]\nopen_pages = false\n",
+        )
+        .unwrap();
+        assert!(!load_at(dir.path(), None, false).unwrap().ui.open_pages);
+        let mut cfg = Config::default();
+        cfg.ui.open_pages = false;
+        save_settings(dir.path(), &cfg).unwrap();
+        assert!(!load_at(dir.path(), None, false).unwrap().ui.open_pages);
+        assert!(Config::default().ui.open_pages, "on unless turned off");
     }
 
     #[test]

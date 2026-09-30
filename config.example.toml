@@ -73,12 +73,13 @@ theme = "dark"             # dark | light | default-16 | <name> from ~/.ryter/th
 layout = "ledger"          # ledger (timeline + bottom bar) | classic (chat beside the info cards, as in 0.5)
 reasoning = "collapsed"    # collapsed | expanded | off — startup state of the thinking strip
 mouse = true               # false disables mouse capture (use the terminal's own selection)
-panel = true               # classic layout: info panel visible at startup (^b toggles it on either layout)
+panel = true               # the rail (ledger) or the info panel (classic) at startup; ^b toggles it
 colors = "auto"            # auto | truecolor | 256 | 16 ; NO_COLOR always wins
 timestamps = true          # HH:MM on speaker headers (the ledger: beside each question)
 line_numbers = true        # gutter in code blocks
 receipts = true            # /commit adds a `Ryter:` trailer: model, cost, tests
 offer_audit = true         # after a build turn that changed files, offer an audit (asks first, shows the cost)
+open_pages = true          # open a page the model shows (show_page) in your browser; off, you get the link only
 
 [mcp]
 inbound = true

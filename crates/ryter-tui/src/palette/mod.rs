@@ -521,6 +521,7 @@ mod tests {
             name: "review".into(),
             description: "Review the diff".into(),
             user_invocable: true,
+            model_invocable: true,
             body: "look".into(),
             source: std::path::PathBuf::from("/tmp/SKILL.md"),
         });
@@ -528,6 +529,7 @@ mod tests {
             name: "help".into(),
             description: "shadow".into(),
             user_invocable: true,
+            model_invocable: true,
             body: "x".into(),
             source: std::path::PathBuf::from("/tmp/h.md"),
         });

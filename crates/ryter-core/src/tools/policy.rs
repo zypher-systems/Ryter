@@ -58,7 +58,7 @@ pub fn decide(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
         "read_file" | "list_dir" => decide_read(args, ctx),
         "bash" => decide_bash(args, ctx),
         "grep" | "glob" | "todo_write" | "search_tool" | "use_tool" | "ask_user"
-        | "request_hat" => Decision::Allow,
+        | "request_hat" | "load_skill" | "show_page" => Decision::Allow,
         "web_fetch" | "web_search" => {
             if ctx.web {
                 Decision::Allow

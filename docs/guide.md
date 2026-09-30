@@ -415,11 +415,11 @@ TCP requires `--token` (or `RYTER_MCP_TOKEN`) on `initialize.params.token`. Bind
 | Kind | Where |
 | --- | --- |
 | Prompts | `prompts/*.md`; override `~/.ryter/prompts/` then trusted `.ryter/prompts/` |
-| Skills | `/skills` panel. Files: `~/.ryter/skills/<name>/SKILL.md` (frontmatter `user-invocable`). `Enter` runs (optional args), `e` opens the file in `$EDITOR`, `a` writes a stub, `d` deletes a user skill (not a project overlay). |
+| Skills | `/skills` panel. Files: `~/.ryter/skills/<name>/SKILL.md` (frontmatter `user-invocable`, `model-invocable`). `Enter` runs (optional args), `e` opens the file in `$EDITOR`, `a` writes a stub, `d` deletes a user skill (not a project overlay or a built-in one). |
 | User slash | Same `/skills` list (`command` rows). `~/.ryter/commands/<name>.md` (`$ARGUMENTS`) |
 | Hooks | `/hooks` panel. `a` adds: event → command or URL → optional matcher. `d` removes. Live list is `~/.ryter/hooks.toml` (does not rewrite `config.toml`). Command gets JSON on stdin; exit 2 or HTTP 403 denies. |
 | Themes | `/theme` panel previews as you move: `dark`, `light`, `default-16`, or `~/.ryter/themes/<name>.toml`. `Enter` persists to `~/.ryter/settings.toml`. `NO_COLOR` or a 16-color `TERM` degrades automatically. |
-| UI | `[ui]` in `~/.ryter/config.toml`: `username`, `theme`, `reasoning`, `mouse`, `panel`, `colors`, `timestamps`, `line_numbers`, `receipts`, `offer_audit`. All optional; unknown keys warn once at startup. See `config.example.toml`. |
+| UI | `[ui]` in `~/.ryter/config.toml`: `username`, `theme`, `reasoning`, `mouse`, `panel`, `colors`, `timestamps`, `line_numbers`, `receipts`, `offer_audit`, `open_pages`. All optional; unknown keys warn once at startup. See `config.example.toml`. |
 
 Project `.ryter/` overlays apply only after `ryter trust` (cwd is recorded in `~/.ryter/trusted.json`). Untrusted projects still load `RYTER.md` / `AGENTS.md`.
 
@@ -434,6 +434,22 @@ user-invocable: true
 Look at `git diff` and report findings.
 ```
 
+**Skills the model uses on its own.** The model's instructions list every skill it may use, by name and one-line description, and it loads one with `load_skill` when a task calls for it. You can still start any skill yourself with its slash command. `model-invocable: false` keeps a skill to the palette. Write the `description` as when to use the skill, because that line is how the model decides. A skill in `~/.ryter/skills`, or in a trusted project's `.ryter/skills`, replaces a built-in skill of the same name.
+
+**A skill's own files.** A skill kept as a folder (`<name>/SKILL.md`) can hold more files, such as a template, a checklist or a script. When the model loads the skill it sees their names, and it reads one with `load_skill` and `file`. It can read only files inside that skill's folder: no `..`, no absolute paths, and no links that lead out. Each file can be up to 256 KB.
+
+**Built-in skills:** Ryter ships with one, `canvas`.
+
+### Pages (the canvas skill)
+
+When a terminal isn't the right place for an answer (a report, a comparison, a chart, a plan to scan), the model builds a page. It loads the `canvas` skill, writes one self-contained HTML page, and shows it with `show_page`. You can also ask for one directly with `/canvas <what you want to see>`.
+
+- **Where pages live:** `~/.ryter/pages/<session>/<title>.html`, outside your project. Deleting the session deletes its pages. Showing a page with the same title replaces it, so the model revises in place.
+- **The chat links every page**, and Ryter opens it in your browser when there's a desktop. `[ui] open_pages = false` (`/settings` → *pages in browser*) keeps pages closed, and you get the link only. Under `--sandbox`, Ryter leaves pages closed too: a browser started from the sandboxed thread would run inside the sandbox.
+- **A page loads nothing from the network:** no scripts, fonts or images from the web, and no form posts. Ryter puts a Content-Security-Policy at the very top of every page, ahead of anything the page contains. Everything the page shows is inline.
+- **Hooks see these tools too.** `PreToolUse` and `PostToolUse` hooks run for `show_page`, `load_skill` and `request_hat`, just as for `bash` or `write`. A hook can deny a page.
+- **The skill tells the model** to use only facts from the session, to say where they came from, and to make the page work in light and dark and at phone width.
+
 ## Context
 
 `/context` opens a panel with estimated tokens vs the model window (500k for `grok-4.6`, 200k otherwise), a gauge, and a breakdown by contributor (system prompt, project files, transcript, tool output); `c` compacts. The info panel’s model card shows the same gauge. Auto-compact at 85%: older turns collapse to tools used, files touched, and the latest pass note; the last four user turns stay. `/compact` forces a pass. Resume reads the rewritten `transcript.jsonl`.
@@ -442,7 +458,7 @@ Look at `git diff` and report findings.
 
 `ryter doctor` (and the `/doctor` panel, which runs the checks off-thread and can save the report with `c`) checks OS, tty, home, config, both built-in connections (key set/missing, never printed), spend catalog, git, Landlock, sandbox profile, and whether `.ryter/` is trusted. No network.
 
-`--sandbox workspace` Landlock-restricts the tool thread to the project tree (writable) plus `~/.ryter/{tmp,logs,sessions}` — never `~/.ryter/keys`. The sandbox is filesystem-only; it does not restrict network. `--sandbox read-only` makes the project tree read-only. `--sandbox off` is the default. A non-off profile **refuses to start** if the kernel cannot enforce Landlock. `/tmp` itself is not granted; scratch is `~/.ryter/tmp`. Sandboxed runs use a current-thread tokio runtime.
+`--sandbox workspace` Landlock-restricts the tool thread to the project tree (writable) plus `~/.ryter/{tmp,logs,sessions,pages}`, and reads `~/.ryter/skills`. It never grants `~/.ryter/keys`. The sandbox is filesystem-only; it does not restrict network. `--sandbox read-only` makes the project tree read-only. `--sandbox off` is the default. A non-off profile **refuses to start** if the kernel cannot enforce Landlock. `/tmp` itself is not granted; scratch is `~/.ryter/tmp`. Sandboxed runs use a current-thread tokio runtime.
 
 ## Safety
 
