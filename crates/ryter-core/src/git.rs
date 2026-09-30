@@ -266,9 +266,10 @@ pub fn ensure_repo(dir: &Path) -> Result<Option<RepoSetup>> {
         };
         return Err(Error::Config(format!(
             "Ryter won't {what} {}: it holds other repositories ({}), and they'd be swept \
-             into it. Start Ryter in the project's own folder (mkdir myapp && cd myapp && \
-             ryter). If you do want one repository here, run git init and make the first \
-             commit yourself.",
+             into it. If this is a folder of projects, start Ryter in the project's own \
+             folder (mkdir myapp && cd myapp && ryter). If they're this project's \
+             dependencies, add their folder to .gitignore. To make one repository here \
+             anyway, run git init and make the first commit yourself.",
             dir.display(),
             name_repos(&repos)
         )));
@@ -339,41 +340,62 @@ pub fn name_repos(repos: &[String]) -> String {
 }
 
 /// Repositories in `dir`'s folders, or one level further down
-/// (`org/app`): a folder of projects rather than a project. Folders the
-/// first `.gitignore` leaves out (dependency trees, caches) are skipped, as
-/// their repositories stay out of the commit; a repository isn't searched.
+/// (`org/app`): a folder of projects rather than a project. A repository
+/// isn't searched.
+///
+/// Only folders git will ignore are skipped, as `git add -A` leaves their
+/// repositories out. The rules are the folder's own: its `.gitignore` files
+/// and `.git/info/exclude`, plus Ryter's first `.gitignore` when there is no
+/// `.gitignore` for it to be kept out of. The user's global excludes aren't
+/// read, so a doubt counts as a project and setup is refused. Skipping
+/// dependency folders by name let a repository in `node_modules` be
+/// committed when the folder's own `.gitignore` didn't ignore it.
 fn repos_inside(dir: &Path) -> Vec<String> {
-    fn folders(dir: &Path) -> Vec<(String, std::path::PathBuf)> {
-        let Ok(rd) = std::fs::read_dir(dir) else {
-            return Vec::new();
-        };
-        let mut out: Vec<_> = rd
-            .flatten()
-            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-            .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
-            .filter(|(n, _)| {
-                n != ".git"
-                    && !FIRST_GITIGNORE
-                        .lines()
-                        .any(|l| l.strip_suffix('/') == Some(n.as_str()))
-            })
-            .collect();
-        out.sort();
-        out
-    }
-    let mut found = Vec::new();
-    for (name, path) in folders(dir) {
-        if path.join(".git").exists() {
-            found.push(name);
+    let template = if dir.join(".gitignore").exists() {
+        None
+    } else {
+        let mut rules = ignore::gitignore::GitignoreBuilder::new(dir);
+        for line in FIRST_GITIGNORE.lines() {
+            let _ = rules.add_line(None, line);
+        }
+        rules.build().ok()
+    };
+    let mut walk = ignore::WalkBuilder::new(dir);
+    walk.max_depth(Some(2))
+        .hidden(false)
+        .parents(false)
+        .ignore(false)
+        .git_ignore(true)
+        .git_exclude(true)
+        .git_global(false)
+        .require_git(false)
+        .follow_links(false)
+        .sort_by_file_name(|a, b| a.cmp(b))
+        .filter_entry(move |e| {
+            let is_dir = e.file_type().is_some_and(|t| t.is_dir());
+            e.file_name() != ".git"
+                && !template
+                    .as_ref()
+                    .is_some_and(|t| t.matched(e.path(), is_dir).is_ignore())
+        });
+    let mut found: Vec<std::path::PathBuf> = Vec::new();
+    for e in walk.build().flatten() {
+        let path = e.path();
+        if e.depth() == 0
+            || !e.file_type().is_some_and(|t| t.is_dir())
+            || found.iter().any(|f| path.starts_with(f))
+        {
             continue;
         }
-        for (inner, path) in folders(&path) {
-            if path.join(".git").exists() {
-                found.push(format!("{name}/{inner}"));
-            }
+        if path.join(".git").exists() {
+            found.push(path.to_path_buf());
         }
     }
     found
+        .iter()
+        .filter_map(|p| p.strip_prefix(dir).ok())
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect()
 }
 
 /// Current branch name.
@@ -800,7 +822,8 @@ mod tests {
         assert!(
             err.contains("won't set up git in")
                 && err.contains("alpha, beta, delta, and 1 more")
-                && err.contains("project's own folder"),
+                && err.contains("project's own folder")
+                && err.contains("add their folder to .gitignore"),
             "{err}"
         );
         assert!(!d.join(".git").exists(), "nothing was created");
@@ -836,15 +859,71 @@ mod tests {
                 .contains(".cache/tool")
         );
 
-        // Dependency trees the first `.gitignore` leaves out are not projects.
+        // Dependency trees the first `.gitignore` leaves out are not projects,
+        // when Ryter writes it: there was no `.gitignore`.
         let top = TempDir::new().unwrap();
         let d = top.path();
         for dep in ["node_modules/pkg", "target/x", ".venv/src"] {
             std::fs::create_dir_all(d.join(dep)).unwrap();
-            git(&d.join(dep), &["init", "-q"]).unwrap();
+            init_repo(&d.join(dep)).unwrap();
         }
         std::fs::write(d.join("main.py"), "print(1)").unwrap();
         assert!(ensure_repo(d).unwrap().unwrap().created);
+        assert!(!gitlinks(d), "no repository was committed");
+    }
+
+    /// Whether HEAD's tree holds another repository (a gitlink).
+    fn gitlinks(d: &Path) -> bool {
+        git(d, &["ls-tree", "-r", "HEAD"])
+            .unwrap()
+            .lines()
+            .any(|l| l.starts_with("160000"))
+    }
+
+    /// The folder's own ignore rules decide what counts, not folder names.
+    /// A reviewer's two cases: with a `.gitignore` of only `*.log`, a
+    /// repository in `node_modules` or `target` was committed into the new
+    /// parent, because those names were skipped whatever the rules said.
+    #[test]
+    fn the_folders_own_ignore_rules_decide_what_counts() {
+        // A new parent: its `.gitignore` stays, so the template doesn't apply.
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        std::fs::write(d.join(".gitignore"), "*.log\n").unwrap();
+        std::fs::create_dir_all(d.join("node_modules/pkg")).unwrap();
+        init_repo(&d.join("node_modules/pkg")).unwrap();
+        assert_eq!(holds_repos(d), ["node_modules/pkg"]);
+        assert!(ensure_repo(d).is_err());
+        assert!(!d.join(".git").exists());
+
+        // An unborn parent, the same `.gitignore`, a repository in `target`.
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        git(d, &["init", "-q"]).unwrap();
+        std::fs::write(d.join(".gitignore"), "*.log\n").unwrap();
+        std::fs::create_dir_all(d.join("target/pkg")).unwrap();
+        init_repo(&d.join("target/pkg")).unwrap();
+        assert_eq!(holds_repos(d), ["target/pkg"]);
+        assert!(ensure_repo(d).is_err());
+        assert!(head(d).is_err(), "no first commit");
+
+        // Folders the folder's rules ignore are left out, at either level
+        // and from `.git/info/exclude`, and the commit holds no repository.
+        let top = TempDir::new().unwrap();
+        let d = top.path();
+        git(d, &["init", "-q"]).unwrap();
+        std::fs::write(d.join(".gitignore"), "node_modules/\n").unwrap();
+        std::fs::write(d.join(".git/info/exclude"), "vendored/\n").unwrap();
+        std::fs::create_dir_all(d.join("web")).unwrap();
+        std::fs::write(d.join("web/.gitignore"), "cache/\n").unwrap();
+        for dep in ["node_modules/pkg", "vendored/lib", "web/cache"] {
+            std::fs::create_dir_all(d.join(dep)).unwrap();
+            init_repo(&d.join(dep)).unwrap();
+        }
+        std::fs::write(d.join("web/app.js"), "1").unwrap();
+        assert!(holds_repos(d).is_empty(), "{:?}", holds_repos(d));
+        assert!(ensure_repo(d).unwrap().is_some());
+        assert!(!gitlinks(d), "no repository was committed");
     }
 
     #[test]

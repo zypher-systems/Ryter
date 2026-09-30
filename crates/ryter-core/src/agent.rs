@@ -251,9 +251,10 @@ impl Agent {
             if let Some(first) = repos.first() {
                 return Err(Error::Config(format!(
                     "The crew can't work in {}: it isn't a git repository, and it holds \
-                     other projects' repositories ({}). Start Ryter in the project's own \
-                     folder: cd {first} && ryter, or mkdir myapp && cd myapp && ryter for a \
-                     new one.",
+                     other repositories ({}) that its first commit would sweep in. If this \
+                     is a folder of projects, start Ryter in the one you mean: cd {first} && \
+                     ryter, or mkdir myapp && cd myapp && ryter for a new one. If they're \
+                     this project's dependencies, add their folder to .gitignore.",
                     self.ctx.workspace.display(),
                     crate::git::name_repos(&repos)
                 )));
@@ -5002,7 +5003,8 @@ mod tests {
         assert!(
             err.contains("The crew can't work in")
                 && err.contains("(alpha, beta)")
-                && err.contains("cd alpha && ryter"),
+                && err.contains("cd alpha && ryter")
+                && err.contains("add their folder to .gitignore"),
             "{err}"
         );
         for made in [".git", "ROADMAP.md", "DECISIONS.md", "notes"] {

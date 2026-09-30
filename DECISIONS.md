@@ -5,7 +5,7 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
 ### 2026-09-30 — A folder of projects is never made one repository
 - **By:** lead
 - **Decision:**
-  - `git::holds_repos(dir)` lists the repositories in `dir`'s folders and one level further down, when `dir` isn't a repository with commits. It skips `.git` and the folders `FIRST_GITIGNORE` leaves out. It doesn't skip hidden folders: their repositories would be swept into the commit, or break `git add`.
+  - `git::holds_repos(dir)` lists the repositories in `dir`'s folders and one level further down, when `dir` isn't a repository with commits. It skips only folders git will ignore, as `git add -A` leaves their repositories out. It applies the folder's own rules (`.gitignore` files at both levels and `.git/info/exclude`) through the `ignore` crate, plus `FIRST_GITIGNORE` only when there's no `.gitignore`, since that's the only time Ryter writes it. Hidden folders aren't skipped for being hidden: their repositories would be swept into the commit, or break `git add`.
   - `ensure_repo` refuses when that list isn't empty, both to create a repository and to make the first commit of an unborn one. Solo checkpoints already turn that error into "`/undo` is unavailable" and carry on.
   - A crew turn (`Role::Orchestrator`) checks first in `turn_inner`, before the system prompt is built. Building the prompt writes the project memory, and the model call costs money.
   - `View::project_root` holds the folder the project cost is counted in, set by `load_project_spend` when it differs from the canonical cwd. The rail shows it under `project`, cut from the left so the folder's name survives. The `$` drawer names its column for it.
@@ -13,10 +13,12 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
 - **Chosen vs rejected:**
   - Rejected checking only in `ensure_repo`. In the live test, the lead's turn had already written `ROADMAP.md`, `DECISIONS.md` and `notes/` into the folder. It also offered to re-route work into a sub-repository, which the crew can't do.
   - Rejected re-rooting the crew into a sub-repository automatically. Which project is meant is the user's call, and the message names the ones found.
+  - Rejected skipping dependency folders by name (`node_modules`, `target`, …). The first version did, and an external review of PR #32 showed the hole. A folder whose own `.gitignore` held only `*.log` kept that file, so the template never applied, and a repository in `node_modules/pkg` or `target/pkg` was committed into the new parent as a gitlink.
+  - The user's global excludes (`core.excludesFile`) aren't read. Git would apply them, but reading them only ever lets more through. Leaving them out means a doubt refuses setup, and the tests don't depend on the machine's git config.
   - Two levels deep, not more: `~/workspace/app` and `~/code/org/app` are the common shapes, and a deeper walk would read large trees on every crew turn.
 - **Why:** on 2026-09-28 a crew session started in `~/workspace` made it a repository and committed 29 projects into it. The project cost then counted all of them.
 - **Where:** `crates/ryter-core/src/git.rs` (`holds_repos`, `name_repos`, `repos_inside`, `ensure_repo`), `agent.rs` (`turn`, `turn_inner`); `crates/ryter-tui/src/run/actions.rs` (`load_project_spend`), `rail.rs`, `panel/spend_drawer.rs`, `info/cards.rs`, `run/events.rs` (`receipt`), `run/worker.rs`
-- **Residual risk:** a project with its own `.gitignore` that doesn't ignore `node_modules` still counts a git dependency there as a project. That refuses setup, which is the safe way to be wrong.
+- **Residual risk:** a project whose global git excludes ignore a folder holding a git dependency is refused setup, though git would have left it out. The message names the folder, and `git init` plus a first commit by hand gets past it.
 
 ### 2026-09-30 — The model loads skills; pages are a skill plus one tool
 - **By:** lead
