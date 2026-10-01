@@ -10,10 +10,18 @@
 //! Layout of a suite:
 //!
 //! ```text
-//! bench/<task>/task.toml   title, brief, files, checks, accept
+//! bench/<task>/task.toml   title, brief, files, checks, accept, needs, [[tasks]]
 //! bench/<task>/repo/       the fixture the crew works in
 //! bench/<task>/hidden/     copied in only for acceptance, after landing
 //! ```
+//!
+//! A task says what it `needs` (`cargo --version`), and is skipped where
+//! that isn't installed. `[[tasks]]` splits it into several builder tasks,
+//! some waiting on others, the way an architect's plan does: independent
+//! ones run side by side.
+//!
+//! A run is published as a [`Report`]: a page for people and a file the next
+//! run is compared with, so a release can be checked against the last.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -46,6 +54,31 @@ pub struct TaskSpec {
     pub checks: Vec<String>,
     /// Hidden acceptance commands, run after landing with `hidden/` copied in.
     pub accept: Vec<String>,
+    /// Commands that must succeed for the task to run on this machine
+    /// (`cargo --version`). A task whose tools are missing is skipped.
+    #[serde(default)]
+    pub needs: Vec<String>,
+    /// Several builder tasks in place of the one. Empty: `title`, `brief`
+    /// and `files` are the single task.
+    #[serde(default)]
+    pub tasks: Vec<SubTask>,
+}
+
+/// One builder task of a multi-task benchmark.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SubTask {
+    /// Its id in the queue, named by `after`.
+    pub id: String,
+    /// One-line title.
+    pub title: String,
+    /// The builder's spec.
+    pub brief: String,
+    /// Paths it owns.
+    #[serde(default)]
+    pub files: Vec<String>,
+    /// Tasks that must land first.
+    #[serde(default)]
+    pub after: Vec<String>,
 }
 
 /// A task on disk.
@@ -80,6 +113,40 @@ pub struct BenchResult {
     pub secs: f64,
     /// First line of the crew report, or the error.
     pub outcome: String,
+}
+
+impl BenchTask {
+    /// The first of its `needs` this machine can't meet, if any.
+    pub fn missing(&self) -> Option<String> {
+        let cancel = crate::cancel::Cancel::new();
+        self.spec.needs.iter().find_map(|need| {
+            let ran =
+                crate::tools::shell::run_command(need, &self.dir, Duration::from_secs(20), &cancel);
+            (!matches!(ran, Ok(crate::tools::shell::Run::Ok(_)))).then(|| need.clone())
+        })
+    }
+
+    /// The builder tasks it queues: its own, or the one it is.
+    fn queue_items(&self) -> Vec<serde_json::Value> {
+        if self.spec.tasks.is_empty() {
+            return vec![serde_json::json!({
+                "id": "t1",
+                "title": self.spec.title,
+                "brief": self.spec.brief,
+                "files": self.spec.files,
+            })];
+        }
+        self.spec
+            .tasks
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "id": t.id, "title": t.title, "brief": t.brief,
+                    "files": t.files, "after": t.after,
+                })
+            })
+            .collect()
+    }
 }
 
 /// Load every task under `suite`, sorted by name.
@@ -120,6 +187,8 @@ pub struct BenchEnv {
     pub home: PathBuf,
     /// Spend cap for one task (session budget).
     pub budget_usd: f64,
+    /// Builders at once, for a task split into several.
+    pub max_crew: u32,
     /// Wall clock for each acceptance command.
     pub accept_timeout: Duration,
 }
@@ -173,12 +242,7 @@ async fn run_inner(task: &BenchTask, env: &BenchEnv, result: &mut BenchResult) -
     queue
         .lock()
         .map_err(|e| Error::Config(e.to_string()))?
-        .apply_todo(&serde_json::json!({"items": [{
-            "id": "t1",
-            "title": task.spec.title,
-            "brief": task.spec.brief,
-            "files": task.spec.files,
-        }]}))?;
+        .apply_todo(&serde_json::json!({ "items": task.queue_items() }))?;
     let mut agent = Agent {
         provider: env.provider.clone(),
         book: PriceBook::from_config(&env.cfg),
@@ -208,7 +272,7 @@ async fn run_inner(task: &BenchTask, env: &BenchEnv, result: &mut BenchResult) -
         project_root: Some(work.clone()),
         trusted: false,
         queue,
-        max_crew: 1,
+        max_crew: env.max_crew.max(1),
         max_retries: env.cfg.auditor.max_retries,
         checks: task.spec.checks.clone(),
         check_timeout_secs: env.cfg.auditor.check_timeout_secs,
@@ -315,6 +379,204 @@ impl Summary {
     }
 }
 
+/// A task that didn't run, and why.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Skipped {
+    /// Task name.
+    pub task: String,
+    /// What it needs that this machine lacks.
+    pub needs: String,
+}
+
+/// One published run: who ran it, on what, and what happened to each task.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Report {
+    /// Ryter's version.
+    pub ryter: String,
+    /// The day it ran, `YYYY-MM-DD` (UTC).
+    pub date: String,
+    /// The lead's model.
+    pub lead: String,
+    /// The builder's model.
+    pub builder: String,
+    /// The auditor's model.
+    pub auditor: String,
+    /// The spend cap per task.
+    pub budget_usd: f64,
+    /// Every run of every task.
+    pub results: Vec<BenchResult>,
+    /// Tasks left out here.
+    #[serde(default)]
+    pub skipped: Vec<Skipped>,
+}
+
+/// One task across its runs.
+struct TaskLine {
+    task: String,
+    runs: usize,
+    landed: usize,
+    accepted: usize,
+    usd: f64,
+    secs: f64,
+}
+
+impl Report {
+    /// Totals over every run.
+    pub fn summary(&self) -> Summary {
+        Summary::of(&self.results)
+    }
+
+    fn by_task(&self) -> Vec<TaskLine> {
+        let mut lines: Vec<TaskLine> = Vec::new();
+        for r in &self.results {
+            let at = match lines.iter().position(|l| l.task == r.task) {
+                Some(i) => i,
+                None => {
+                    lines.push(TaskLine {
+                        task: r.task.clone(),
+                        runs: 0,
+                        landed: 0,
+                        accepted: 0,
+                        usd: 0.0,
+                        secs: 0.0,
+                    });
+                    lines.len() - 1
+                }
+            };
+            let l = &mut lines[at];
+            l.runs += 1;
+            l.landed += usize::from(r.landed);
+            l.accepted += usize::from(r.accepted);
+            l.usd += r.usd;
+            l.secs += r.secs;
+        }
+        lines
+    }
+
+    /// The page: the headline, who ran, and a row per task.
+    pub fn markdown(&self) -> String {
+        let s = self.summary();
+        let bound = if s.unpriced { "≥" } else { "" };
+        let per = s
+            .usd_per_accepted()
+            .map(|u| format!("{bound}${u:.3}"))
+            .unwrap_or_else(|| "n/a".into());
+        let mut md = format!(
+            "# Benchmark\n\n`ryter bench` runs each task in `bench/` through the real crew, in a \
+             fresh repository: a builder does the work, the task's checks and the auditor decide \
+             whether it lands, and tests the crew never saw decide whether it was right. This \
+             page is the last published run. `ryter bench --publish docs/bench` replaces it and \
+             says how the new run compares.\n\n\
+             ## The last run\n\n\
+             - **Ryter:** {} on {}\n\
+             - **Crew:** lead `{}`, builder `{}`, auditor `{}`\n\
+             - **Cap:** ${:.2} per task\n\n\
+             | Measure | Result |\n|---|---|\n\
+             | Landed (checks and the auditor passed) | {} of {} |\n\
+             | Accepted (the hidden tests passed too) | {} of {} |\n\
+             | False passes (landed, but wrong) | {} |\n\
+             | Total cost | {bound}${:.3} |\n\
+             | Cost per accepted task | {per} |\n\n\
+             One run of each task is a small sample, and the same crew can take several times \
+             as many steps on one run as on the next. Read the cost as what this run cost, not \
+             as what the next will.\n\n\
+             ## By task\n\n\
+             | Task | Runs | Landed | Accepted | Cost per run | Time per run |\n\
+             |---|---|---|---|---|---|\n",
+            self.ryter,
+            self.date,
+            self.lead,
+            self.builder,
+            self.auditor,
+            self.budget_usd,
+            s.landed,
+            s.tasks,
+            s.accepted,
+            s.tasks,
+            s.false_passes,
+            s.usd,
+        );
+        for l in self.by_task() {
+            let n = l.runs.max(1) as f64;
+            md.push_str(&format!(
+                "| `{}` | {} | {} | {} | ${:.3} | {:.0} s |\n",
+                l.task,
+                l.runs,
+                l.landed,
+                l.accepted,
+                l.usd / n,
+                l.secs / n
+            ));
+        }
+        if !self.skipped.is_empty() {
+            md.push_str("\n## Not run\n\n");
+            for sk in &self.skipped {
+                md.push_str(&format!(
+                    "- `{}`: this machine lacks `{}`\n",
+                    sk.task, sk.needs
+                ));
+            }
+        }
+        md
+    }
+
+    /// How this run compares with `before`, in lines, and whether it is
+    /// worse where it counts: fewer accepted on a task, or more false
+    /// passes. Cost is reported and never counted as worse: it varies run to
+    /// run by more than any change to Ryter is likely to move it.
+    pub fn compare(&self, before: &Report) -> (Vec<String>, bool) {
+        let (now, then) = (self.summary(), before.summary());
+        let mut lines = vec![format!(
+            "against {} ({}): accepted {}/{} then, {}/{} now · false passes {} then, {} now",
+            before.ryter,
+            before.date,
+            then.accepted,
+            then.tasks,
+            now.accepted,
+            now.tasks,
+            then.false_passes,
+            now.false_passes
+        )];
+        let mut worse = now.false_passes > then.false_passes;
+        let old = before.by_task();
+        for l in self.by_task() {
+            let Some(o) = old.iter().find(|o| o.task == l.task) else {
+                lines.push(format!("  {}: new", l.task));
+                continue;
+            };
+            // Rates, so a different --repeat still compares.
+            let rate = |t: &TaskLine| t.accepted as f64 / t.runs.max(1) as f64;
+            if rate(&l) < rate(o) {
+                worse = true;
+                lines.push(format!(
+                    "  {}: WORSE, accepted {}/{} then, {}/{} now",
+                    l.task, o.accepted, o.runs, l.accepted, l.runs
+                ));
+            } else if rate(&l) > rate(o) {
+                lines.push(format!(
+                    "  {}: better, accepted {}/{} then, {}/{} now",
+                    l.task, o.accepted, o.runs, l.accepted, l.runs
+                ));
+            }
+        }
+        if let (Some(a), Some(b)) = (then.usd_per_accepted(), now.usd_per_accepted()) {
+            lines.push(format!(
+                "  cost per accepted task: ${a:.3} then, ${b:.3} now (it varies run to run)"
+            ));
+        }
+        (lines, worse)
+    }
+}
+
+/// Today, `YYYY-MM-DD` (UTC), for a report.
+pub fn today() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    crate::prompt::civil_date(secs / 86_400)
+}
+
 /// Copy a directory tree (files and subdirectories).
 fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     std::fs::create_dir_all(to).map_err(|e| Error::Io(e.to_string()))?;
@@ -406,6 +668,7 @@ accept = ["python3 hidden_check.py"]
             model: "grok-4.6".into(),
             home: home.to_path_buf(),
             budget_usd: 1.0,
+            max_crew: 2,
             accept_timeout: Duration::from_secs(30),
         }
     }
@@ -474,33 +737,252 @@ accept = ["python3 hidden_check.py"]
         assert!(!r.landed && !r.accepted, "{r:?}");
     }
 
+    fn write_file(path: &str, content: &str) -> Vec<StreamDelta> {
+        vec![
+            StreamDelta::ToolCall {
+                id: "w".into(),
+                name: "write".into(),
+                arguments: serde_json::json!({"path": path, "content": content}).to_string(),
+            },
+            StreamDelta::Done,
+        ]
+    }
+
+    /// A task split into two builder tasks, the second waiting on the
+    /// first, runs both and lands once: the hidden test needs both files.
+    #[tokio::test]
+    async fn a_task_split_in_two_lands_once_both_are_built() {
+        let d = TempDir::new().unwrap();
+        let t = d.path().join("two-parts");
+        std::fs::create_dir_all(t.join("repo")).unwrap();
+        std::fs::create_dir_all(t.join("hidden")).unwrap();
+        std::fs::write(
+            t.join("task.toml"),
+            r#"
+title = "two parts"
+brief = "a.py and b.py"
+files = ["a.py", "b.py"]
+checks = ["python3 -c 'import a'"]
+accept = ["python3 hidden_check.py"]
+needs = ["python3 --version"]
+
+[[tasks]]
+id = "first"
+title = "a"
+brief = "a.py: A = 1"
+files = ["a.py"]
+
+[[tasks]]
+id = "second"
+title = "b"
+brief = "b.py: B = a.A + 1"
+files = ["b.py"]
+after = ["first"]
+"#,
+        )
+        .unwrap();
+        std::fs::write(t.join("repo/a.py"), "A = 0\n").unwrap();
+        std::fs::write(
+            t.join("hidden/hidden_check.py"),
+            "import a, b\nassert (a.A, b.B) == (1, 2)\n",
+        )
+        .unwrap();
+        let tasks = load_suite(d.path()).unwrap();
+        if let Some(needs) = tasks[0].missing() {
+            eprintln!("skipping: needs {needs}");
+            return;
+        }
+        assert_eq!(tasks[0].queue_items().len(), 2);
+        let home = TempDir::new().unwrap();
+        let mut e = env(
+            home.path(),
+            vec![
+                write_file("a.py", "A = 1\n"),
+                say("STATUS: DONE"),
+                say("VERDICT: PASS"),
+                write_file("b.py", "import a\nB = a.A + 1\n"),
+                say("STATUS: DONE"),
+                say("VERDICT: PASS"),
+            ],
+        );
+        // One at a time, so the replayed turns arrive in order.
+        e.max_crew = 1;
+        let r = run_task(&tasks[0], &e).await;
+        assert!(r.landed && r.accepted, "{r:?}");
+    }
+
+    /// A task says what it needs, and is skipped where that is missing.
+    #[test]
+    fn a_task_is_skipped_where_its_tools_are_missing() {
+        let s = suite();
+        let mut tasks = load_suite(s.path()).unwrap();
+        assert_eq!(tasks[0].missing(), None, "nothing needed");
+        tasks[0].spec.needs = vec!["true".into(), "ryter-no-such-tool --version".into()];
+        assert_eq!(
+            tasks[0].missing().as_deref(),
+            Some("ryter-no-such-tool --version")
+        );
+    }
+
+    fn result(task: &str, landed: bool, accepted: bool, usd: f64) -> BenchResult {
+        BenchResult {
+            task: task.into(),
+            landed,
+            accepted,
+            usd,
+            unpriced: false,
+            billable_tokens: 0,
+            usd_by_role: Default::default(),
+            secs: 30.0,
+            outcome: String::new(),
+        }
+    }
+
+    fn report(results: Vec<BenchResult>) -> Report {
+        Report {
+            ryter: "0.1.0".into(),
+            date: "2026-01-01".into(),
+            lead: "lead-model".into(),
+            builder: "builder-model".into(),
+            auditor: "auditor-model".into(),
+            budget_usd: 1.0,
+            results,
+            skipped: vec![Skipped {
+                task: "rust-task".into(),
+                needs: "cargo --version".into(),
+            }],
+        }
+    }
+
+    /// The published page says who ran, the headline, and each task; the
+    /// file beside it reads back as the same run.
+    #[test]
+    fn a_run_is_published_as_a_page_and_a_file() {
+        let r = report(vec![
+            result("a", true, true, 0.10),
+            result("b", true, false, 0.30),
+            result("c", false, false, 0.20),
+        ]);
+        let md = r.markdown();
+        for part in [
+            "lead `lead-model`, builder `builder-model`, auditor `auditor-model`",
+            "| Landed (checks and the auditor passed) | 2 of 3 |",
+            "| Accepted (the hidden tests passed too) | 1 of 3 |",
+            "| False passes (landed, but wrong) | 1 |",
+            "| Cost per accepted task | $0.600 |",
+            "| `b` | 1 | 1 | 0 | $0.300 | 30 s |",
+            "`rust-task`: this machine lacks `cargo --version`",
+        ] {
+            assert!(md.contains(part), "{part}\n{md}");
+        }
+        let back: Report = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(back, r);
+    }
+
+    /// A release is checked against the last run: worse means a task
+    /// accepted less often, or more false passes. Cost is shown, and never
+    /// counts as worse.
+    #[test]
+    fn a_run_is_compared_with_the_last() {
+        let then = report(vec![
+            result("a", true, true, 0.10),
+            result("b", true, true, 0.10),
+        ]);
+        // The same outcomes at ten times the cost, and a new task.
+        let same = report(vec![
+            result("a", true, true, 1.0),
+            result("b", true, true, 1.0),
+            result("c", false, false, 1.0),
+        ]);
+        let (lines, worse) = same.compare(&then);
+        assert!(!worse, "{lines:?}");
+        assert!(lines.iter().any(|l| l.contains("c: new")), "{lines:?}");
+        assert!(
+            lines.iter().any(|l| l.contains("$0.100 then, $1.500 now")),
+            "{lines:?}"
+        );
+        // `b` no longer accepted, and passed wrongly.
+        let bad = report(vec![
+            result("a", true, true, 0.10),
+            result("b", true, false, 0.10),
+        ]);
+        let (lines, worse) = bad.compare(&then);
+        assert!(worse);
+        assert!(lines.iter().any(|l| l.contains("b: WORSE")), "{lines:?}");
+        // Rates compare across --repeat: 1 of 2 is worse than 1 of 1.
+        let twice = report(vec![
+            result("a", true, true, 0.1),
+            result("a", false, false, 0.1),
+            result("b", true, true, 0.1),
+            result("b", true, true, 0.1),
+        ]);
+        assert!(twice.compare(&then).1);
+        let (lines, worse) = then.compare(&bad);
+        assert!(
+            !worse && lines.iter().any(|l| l.contains("b: better")),
+            "{lines:?}"
+        );
+    }
+
     /// Every shipped task is sound: the work is not already done (the hidden
     /// tests fail on the fixture), and the reference solution passes both the
     /// gate's checks and the hidden tests. Without this, a benchmark number
-    /// measures the suite, not the crew.
+    /// measures the suite, not the crew. A task whose tools aren't installed
+    /// here is skipped, and said to be.
     #[test]
-    fn the_starter_suite_is_sound() {
-        if std::process::Command::new("python3")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            eprintln!("python3 not found; skipping");
-            return;
-        }
+    fn the_suite_is_sound() {
         let suite = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench");
         let tasks = load_suite(&suite).unwrap();
-        assert!(tasks.len() >= 4, "starter suite went missing");
+        assert!(tasks.len() >= 9, "tasks went missing: {}", tasks.len());
+        // Real work: several files, more than one language, and a split task.
+        assert!(tasks.iter().filter(|t| t.spec.files.len() >= 3).count() >= 3);
+        assert!(tasks.iter().any(|t| t.spec.tasks.len() >= 3));
+        for need in ["python3", "cargo", "node"] {
+            assert!(
+                tasks
+                    .iter()
+                    .any(|t| t.spec.needs.iter().any(|n| n.starts_with(need))),
+                "no task needs {need}"
+            );
+        }
         let cancel = crate::cancel::Cancel::new();
         let run = |dir: &Path, cmds: &[String]| {
             cmds.iter().all(|c| {
                 matches!(
-                    crate::tools::shell::run_command(c, dir, Duration::from_secs(60), &cancel),
+                    crate::tools::shell::run_command(c, dir, Duration::from_secs(300), &cancel),
                     Ok(crate::tools::shell::Run::Ok(_))
                 )
             })
         };
+        let mut checked = 0;
         for t in &tasks {
+            assert!(!t.spec.needs.is_empty(), "{}: says what it needs", t.name);
+            assert!(
+                !t.spec.brief.trim().is_empty() && !t.spec.files.is_empty(),
+                "{}",
+                t.name
+            );
+            // A split task's parts cover its files, and wait only on each other.
+            for part in &t.spec.tasks {
+                assert!(
+                    part.files.iter().all(|f| t.spec.files.contains(f)),
+                    "{}",
+                    t.name
+                );
+                assert!(
+                    part.after
+                        .iter()
+                        .all(|a| t.spec.tasks.iter().any(|p| &p.id == a)),
+                    "{}: {} waits on a task that isn't there",
+                    t.name,
+                    part.id
+                );
+            }
+            if let Some(needs) = t.missing() {
+                eprintln!("{}: skipped, this machine lacks `{needs}`", t.name);
+                continue;
+            }
+            checked += 1;
             let before = TempDir::new().unwrap();
             copy_dir(&t.dir.join("repo"), before.path()).unwrap();
             copy_dir(&t.dir.join("hidden"), before.path()).unwrap();
@@ -523,12 +1005,8 @@ accept = ["python3 hidden_check.py"]
                 "{}: solution fails the hidden tests",
                 t.name
             );
-            assert!(
-                !t.spec.brief.trim().is_empty() && !t.spec.files.is_empty(),
-                "{}",
-                t.name
-            );
         }
+        eprintln!("{checked} of {} tasks checked", tasks.len());
     }
 
     #[test]

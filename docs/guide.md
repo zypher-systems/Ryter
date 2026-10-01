@@ -544,6 +544,32 @@ The orchestrator and specialists **read** these every turn (capped). They **upda
 
 Orchestrator may write only these memory files, never `src/`.
 
+## Benchmark
+
+`ryter bench` measures the crew on real tasks. Each task in `bench/` is a small repository with something to build or fix. The crew you have set up does the work in a fresh copy: a builder builds, the task's checks and the auditor decide whether it lands, and then tests the crew never saw decide whether it was right. It spends real money on your keys, capped per task.
+
+```sh
+ryter bench                         # every task, with your crew
+ryter bench --only rust-durations   # one task (repeatable)
+ryter bench --budget-usd 2          # the cap per task (default $1)
+ryter bench --repeat 3              # each task three times
+ryter bench --crew <preset>         # a saved crew, to compare
+ryter bench --publish docs/bench    # write the results page and compare with the last
+```
+
+It reports four numbers:
+
+- **Landed:** the checks and the auditor passed, so the work reached the branch.
+- **Accepted:** the hidden tests passed too.
+- **False passes:** landed but wrong, which is how often the auditor's sign-off was mistaken.
+- **Cost per accepted task.**
+
+The suite covers Python, Rust and TypeScript, single-file fixes and changes across several files, and one piece of work split into three builder tasks, two of them side by side. A task says what it needs (`cargo`, `node`, `python3`), and is skipped, by name, on a machine without it.
+
+`--publish docs/bench` writes `docs/bench.md` (the page) and `docs/bench.json` (the same run as data). If a run was published there before, it says how this one compares, and exits 1 when a task is accepted less often or false passes went up. Cost is shown but never counted as worse: the same crew can take several times as many steps on one run as on the next. The published run is [docs/bench.md](bench.md), and each release is checked against it this way.
+
+To add a task, copy one in `bench/` (see `bench/README.md`). A test proves every task sound: the hidden tests fail on the fixture, and pass on the reference solution.
+
 ## Sessions
 
 ```

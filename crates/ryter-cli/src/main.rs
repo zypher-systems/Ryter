@@ -140,6 +140,11 @@ enum Command {
         /// Run each task this many times (models vary run to run).
         #[arg(long, default_value_t = 1)]
         repeat: u32,
+        /// Publish the run as `<path>.md` and `<path>.json` (`docs/bench`),
+        /// and compare it with the run published there before. Exits 1 if a
+        /// task is accepted less often, or false passes went up.
+        #[arg(long)]
+        publish: Option<std::path::PathBuf>,
     },
     /// Crew model assignments.
     Crew {
@@ -291,8 +296,18 @@ fn main() -> ExitCode {
             crew,
             budget_usd,
             repeat,
-        }) => match bench_cmd(&suite, &only, crew.as_deref(), budget_usd, repeat) {
-            Ok(()) => ExitCode::SUCCESS,
+            publish,
+        }) => match bench_cmd(
+            &suite,
+            &only,
+            crew.as_deref(),
+            budget_usd,
+            repeat,
+            publish.as_deref(),
+        ) {
+            Ok(true) => ExitCode::SUCCESS,
+            // Worse than the run published before.
+            Ok(false) => ExitCode::from(1),
             Err(e) => {
                 eprintln!("{e}");
                 ExitCode::from(1)
@@ -646,8 +661,9 @@ fn bench_cmd(
     crew: Option<&str>,
     budget_usd: f64,
     repeat: u32,
-) -> ryter_core::Result<()> {
-    use ryter_core::bench::{BenchEnv, Summary, load_suite, run_task};
+    publish: Option<&std::path::Path>,
+) -> ryter_core::Result<bool> {
+    use ryter_core::bench::{BenchEnv, Report, Skipped, Summary, load_suite, run_task};
     let cwd = std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?;
     let trusted = config::is_trusted(&cwd);
     let mut cfg = config::load(Some(&cwd), trusted)?;
@@ -662,6 +678,19 @@ fn bench_cmd(
     if tasks.is_empty() {
         return Err(Error::Config(format!("no tasks in {}", suite.display())));
     }
+    // A task whose tools aren't installed is left out, and said to be.
+    let mut skipped = Vec::new();
+    tasks.retain(|t| match t.missing() {
+        Some(needs) => {
+            println!("{:<24} skipped: needs `{needs}`", t.name);
+            skipped.push(Skipped {
+                task: t.name.clone(),
+                needs,
+            });
+            false
+        }
+        None => true,
+    });
     let last = config::load_last_route(&home);
     let (connection, model) = config::resolve_route(&cfg, last.as_ref(), None, None);
     let conn = cfg
@@ -670,8 +699,17 @@ fn bench_cmd(
         .ok_or_else(|| Error::Config(format!("unknown connection {connection}")))?;
     let key = resolve_secret(&cfg, &ConnectionId::new(&connection))?;
     let provider: Arc<dyn ryter_core::Provider> = Arc::new(http_provider(conn, key));
-    let (_, builder) = cfg.route_for(Role::Builder);
-    let (_, auditor) = cfg.route_for(Role::Auditor);
+    // A seat with no model of its own runs on the lead's, which is the last
+    // one used here and not the config file's default: the label said
+    // grok-4.6 for a builder that ran on the lead's model.
+    let seat = |role: Role| {
+        if cfg.follows_orchestrator(role) {
+            model.clone()
+        } else {
+            cfg.route_for(role).1
+        }
+    };
+    let (builder, auditor) = (seat(Role::Builder), seat(Role::Auditor));
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -684,6 +722,7 @@ fn bench_cmd(
         "running   {} task(s) × {repeat}, capped at ${budget_usd:.2} each — this spends real money",
         tasks.len()
     );
+    let max_crew = cfg.subagents.max;
     let env = BenchEnv {
         cfg,
         provider,
@@ -691,6 +730,7 @@ fn bench_cmd(
         model: model.clone(),
         home: run_home.clone(),
         budget_usd,
+        max_crew,
         accept_timeout: std::time::Duration::from_secs(600),
     };
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -730,13 +770,52 @@ fn bench_cmd(
             if paused {
                 eprintln!("stopping: the crew cannot run until the auditor is a different model");
                 println!("\n{}", Summary::of(&results).render());
-                return Ok(());
+                return Ok(true);
             }
         }
     }
     println!("\n{}", Summary::of(&results).render());
     println!("results   {}", results_path.display());
-    Ok(())
+    let Some(stem) = publish else {
+        return Ok(true);
+    };
+    let report = Report {
+        ryter: VERSION.to_string(),
+        date: ryter_core::bench::today(),
+        lead: model,
+        builder,
+        auditor,
+        budget_usd,
+        results,
+        skipped,
+    };
+    let (md, json) = (stem.with_extension("md"), stem.with_extension("json"));
+    // Compared with the run published there before, then replaced by this
+    // one: git keeps the old, and shows what changed.
+    let before = std::fs::read_to_string(&json)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Report>(&t).ok());
+    let mut same_or_better = true;
+    if let Some(before) = &before {
+        let (lines, worse) = report.compare(before);
+        println!();
+        for line in lines {
+            println!("{line}");
+        }
+        same_or_better = !worse;
+    }
+    let io = |e: std::io::Error| Error::Io(e.to_string());
+    if let Some(dir) = md.parent() {
+        std::fs::create_dir_all(dir).map_err(io)?;
+    }
+    std::fs::write(&md, report.markdown()).map_err(io)?;
+    let body = serde_json::to_string_pretty(&report).map_err(|e| Error::Io(e.to_string()))?;
+    std::fs::write(&json, format!("{body}\n")).map_err(io)?;
+    println!("published {} and {}", md.display(), json.display());
+    if !same_or_better {
+        eprintln!("this run is worse than the one published before");
+    }
+    Ok(same_or_better)
 }
 
 /// The lead's route and every model the user can reach, for tier suggestions.

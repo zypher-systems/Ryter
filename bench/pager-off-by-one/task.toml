@@ -8,3 +8,4 @@ Done when `python3 -m unittest -q test_pager` passes.
 files = ["pager.py"]
 checks = ["python3 -m unittest -q test_pager"]
 accept = ["python3 -m unittest -q hidden_test_pager"]
+needs = ["python3 --version"]

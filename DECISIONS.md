@@ -2,6 +2,23 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-10-01 — The benchmark: real multi-file tasks, published, and compared run to run
+- **By:** lead
+- **Decision:**
+  - **The suite** grew from four small Python tasks to nine. The new ones are a feature across four Python modules, bugs in two Python modules that only show together, a Rust crate (three modules, no dependencies), a TypeScript library run by Node's own type stripping (no build, no packages), and one piece of work split into three builder tasks.
+  - **`needs`** in `task.toml` lists commands that must succeed for a task to run (`cargo --version`). `ryter bench` and the soundness test skip a task whose tools are missing, by name. The test no longer depends on what is installed.
+  - **`[[tasks]]`** splits a benchmark task into builder tasks with `after`. They are queued as an architect's plan would be, and run with the crew's `max` builders.
+  - **`ryter bench --publish <path>`** writes `<path>.md` and `<path>.json` (`bench::Report`), compares the run with the one published there before (`Report::compare`), and exits 1 when a task is accepted less often or false passes went up.
+- **Chosen vs rejected:**
+  - Cost is reported and never fails the comparison. Measured on twelve past crew runs, the tokens one builder task used varied about a hundredfold, and the same model took between 8 and 126 calls a task. A cost threshold would fail releases at random.
+  - Rejected a predicted cost before a crew run, for the same reason. Nothing known at the plan (files named, length of the brief, number of tasks) lined up with what was then used (rank correlations 0.10, 0.27 and 0.03). The benchmark publishes what a run did cost.
+  - A split task's gate `checks` run at every stage, so they cover only what exists at every stage. The hidden tests cover the whole.
+  - TypeScript without a toolchain: the task needs a Node that strips types, and is skipped elsewhere. Installing `tsc` would need the network.
+  - The benchmark stays out of CI: it spends money on a model key. It is run by hand at a release, and the published files are committed.
+- **Why:** the roadmap's 1.0 item asks for a suite of real multi-file tasks, with the land rate and cost per task published and each release checked against them.
+- **Where:** `bench/` (tasks and `README.md`), `crates/ryter-core/src/bench.rs`, `crates/ryter-cli/src/main.rs` (`bench_cmd`), `docs/bench.md`, `docs/bench.json`
+- **Residual risk:** one run of each task is a small sample, and models vary run to run. A task that fails once isn't proof of a regression: run it again with `--repeat` before blaming a change.
+
 ### 2026-09-30 — The user's rules for every project, changed only with their yes
 - **By:** lead
 - **Decision:**

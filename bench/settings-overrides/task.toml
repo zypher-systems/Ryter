@@ -1,0 +1,21 @@
+title = "Fix environment overrides in the settings package"
+brief = """
+`settings.load(defaults, environ)` should return the defaults with overrides
+from the environment applied. It gets several things wrong. Fix them:
+
+- Only variables starting with `APP_` are overrides. The rest of the name is
+  the key, lower-cased. `__` separates nested keys: `APP_DB__PORT=5433`
+  overrides `{"db": {"port": ...}}`.
+- An override replaces only its own key. Other keys of a nested dictionary,
+  such as `db.host`, keep their default.
+- Values are parsed: `true`/`false` (any case) are booleans, whole numbers are
+  ints, other numbers are floats, anything else stays a string.
+- `defaults` must not be modified, at any depth. The result is a new dictionary.
+
+The fixes are in `settings/env.py` and `settings/merge.py`; `settings/__init__.py`
+shows how they are used. Done when `python3 -m unittest -q test_settings` passes.
+"""
+files = ["settings/env.py", "settings/merge.py"]
+checks = ["python3 -m unittest -q test_settings"]
+accept = ["python3 -m unittest -q hidden_test_settings"]
+needs = ["python3 --version"]
