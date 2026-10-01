@@ -9,7 +9,7 @@
                                                     │ ctx █░░░░░░░░░░░░░   5%  │
                                                     │     12.4k / 256k tokens  │
                                                     │ price unknown            │
-╭─ commands ──────────────────────────── 6 of 33 ─╮ │ reasoning  auto · medium │
+╭─ commands ──────────────────────────── 6 of 34 ─╮ │ reasoning  auto · medium │
 │ mo                                              │ ╰──────────────────────────╯
 │›/models         Choose models: the lead's a… ▸  │ ╭─ spend ──────────────────╮
 │ /tools          Tool permission mode         ▸  │ │ session            $?.?? │

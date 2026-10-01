@@ -19,6 +19,7 @@ pub mod mcp;
 pub mod modal;
 pub mod models;
 pub mod providers;
+pub mod rules;
 pub mod sessions;
 pub mod settings;
 pub mod skills;
@@ -343,6 +344,7 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
         PanelId::Auditor => Box::new(toggles::Toggles::auditor(view)),
         PanelId::Mcp => Box::new(mcp::Mcp::default()),
         PanelId::Skills => Box::new(skills::Skills::default()),
+        PanelId::Rules => Box::new(rules::Rules::new(view, env)),
         PanelId::Hooks => Box::new(hooks::Hooks::default()),
         PanelId::Context => Box::new(context::Context::default()),
         PanelId::Help => Box::new(help::Help::default()),

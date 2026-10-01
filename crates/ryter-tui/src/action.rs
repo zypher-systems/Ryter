@@ -46,6 +46,8 @@ pub enum PanelId {
     Mcp,
     /// `/skills`.
     Skills,
+    /// `/rules`.
+    Rules,
     /// `/hooks`.
     Hooks,
     /// `/context`.

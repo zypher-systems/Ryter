@@ -35,7 +35,7 @@
 
 
 
-╭─ commands ───────────────────────────────────────────────── 6 of 33 ─╮
+╭─ commands ───────────────────────────────────────────────── 6 of 34 ─╮
 │ mo                                                                   │
 │›/models         Choose models: the lead's and each crew role's, … ▸  │
 │ /tools          Tool permission mode                              ▸  │

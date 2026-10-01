@@ -488,6 +488,17 @@ pub const COMMANDS: &[CommandSpec] = &[
         run_skills,
     ),
     spec(
+        "rules",
+        &[],
+        Category::Extensions,
+        "Your rules for every project and for this one",
+        Some("[what to remember]"),
+        true,
+        None,
+        false,
+        run_rules,
+    ),
+    spec(
         "hooks",
         &[],
         Category::Extensions,
@@ -720,6 +731,23 @@ fn run_auditor(view: &mut View, rest: &str) -> Action {
     }
 }
 
+/// Built-in commands that are the way in to a skill of the same name:
+/// the palette lists the command, and not the skill a second time.
+pub const FRONTS_SKILL: &[&str] = &["rules"];
+
+/// `/rules` opens the panel. `/rules <what to remember>` hands that to the
+/// model with the built-in `rules` skill, which saves it only after the
+/// user has seen the change and said yes.
+fn run_rules(view: &mut View, rest: &str) -> Action {
+    if rest.is_empty() {
+        return Action::OpenPanel(PanelId::Rules);
+    }
+    match view.catalog.expand("rules", rest) {
+        Some(expanded) => view.submit_user(format!("/rules {rest}"), expanded),
+        None => Action::OpenPanel(PanelId::Rules),
+    }
+}
+
 fn run_skills(view: &mut View, rest: &str) -> Action {
     if rest.is_empty() {
         return Action::OpenPanel(PanelId::Skills);
@@ -745,6 +773,33 @@ fn run_skills(view: &mut View, rest: &str) -> Action {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    /// `/rules` opens the panel; `/rules <what to remember>` gives that to
+    /// the model with the built-in skill, as it did before the panel.
+    #[test]
+    fn rules_opens_the_panel_or_runs_the_skill() {
+        let home = tempfile::TempDir::new().unwrap();
+        let mut v = View::new(
+            ryter_core::Phase::Build,
+            "c".into(),
+            "m".into(),
+            "/tmp".into(),
+        );
+        v.catalog = ryter_core::load_catalog(home.path(), None, false);
+        assert!(matches!(
+            run_rules(&mut v, ""),
+            Action::OpenPanel(PanelId::Rules)
+        ));
+        let sent = run_rules(&mut v, "always answer in British spelling");
+        assert!(!matches!(sent, Action::OpenPanel(_)), "{sent:?}");
+        assert!(v.busy, "a turn was started");
+        // The palette lists the command once, not the skill beside it.
+        let listed = crate::palette::entries(&v)
+            .iter()
+            .filter(|e| e.name == "rules")
+            .count();
+        assert_eq!(listed, 1);
+    }
 
     #[test]
     fn specs_are_described_unique_and_reachable() {

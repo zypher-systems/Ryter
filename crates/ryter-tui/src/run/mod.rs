@@ -737,9 +737,12 @@ fn edit_with_editor(
     mouse: bool,
     path: &Path,
 ) {
-    let editor = std::env::var("VISUAL")
-        .or_else(|_| std::env::var("EDITOR"))
-        .unwrap_or_else(|_| "vi".into());
+    // An empty `VISUAL` is not an editor: it used to win over `EDITOR`,
+    // and the file itself was run as the command.
+    let set = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+    let editor = set("VISUAL")
+        .or_else(|| set("EDITOR"))
+        .unwrap_or_else(|| "vi".into());
     leave_terminal(mouse);
     let status = std::process::Command::new("sh")
         .arg("-c")
