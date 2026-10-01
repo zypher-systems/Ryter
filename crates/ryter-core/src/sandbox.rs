@@ -191,6 +191,7 @@ const TOOL_CACHES: &[&str] = &[
 ];
 
 /// System folders to read and run from, beyond the standard ones.
+#[cfg(target_os = "linux")]
 const SYSTEM_READ: &[&str] = &[
     "/usr",
     "/bin",
@@ -210,6 +211,7 @@ const SYSTEM_READ: &[&str] = &[
 
 /// Devices to read and write. `git` opens `/dev/null` for writing as it
 /// starts, so with `/dev` read-only it could not run at all.
+#[cfg(target_os = "linux")]
 const DEVICES: &[&str] = &[
     "/dev/null",
     "/dev/zero",
