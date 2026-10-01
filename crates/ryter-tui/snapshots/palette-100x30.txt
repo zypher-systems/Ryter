@@ -17,10 +17,10 @@
                                                                 ╭─ budget ─────────────────── off ─╮
 ╭─ commands ──────────────────────────────────────── 6 of 34 ─╮ │ cap                          off │
 │ mo                                                          │ ╰──────────────────────────────────╯
-│›/models         Choose models: the lead's and each crew… ▸  │
+│›/models         Choose models: one for every hat, or on… ▸  │
 │ /tools          Tool permission mode                     ▸  │
-│ /audit          A second model reviews your uncommitted …   │
 │ /crew           Switch to crew mode: a lead, an archite… ▸  │
+│ /review         Review hat: critique what changed; its m…   │
 │ /solo           Leave crew mode: one model, Tab between …   │
 │ /skills         Browse, run, create, and remove skills … ▸  │
 ╰─ enter run · tab complete · esc close ──────────────────────╯

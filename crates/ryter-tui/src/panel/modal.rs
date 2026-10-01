@@ -136,20 +136,20 @@ fn lang_for(tool: &str, summary: &str) -> Option<String> {
 
 impl PermissionModal {
     /// A yes/no question, with no "allow for this session": the model asking
-    /// to switch hats (`request_hat`), or Ryter asking before an audit spends
+    /// to switch hats (`request_hat`), or Ryter asking before a review spends
     /// money. Its title and the words for yes and no.
     fn question(&self) -> Option<(&'static str, &'static str, &'static str)> {
         match self.tool.as_str() {
             "switch hat" => Some(("switch hat?", "switch", "stay")),
-            "audit" => Some(("audit?", "audit", "not now")),
-            "audit offer" => Some(("audit this work?", "audit", "not now")),
+            "review" => Some(("review?", "review", "not now")),
+            "review offer" => Some(("review this work?", "review", "not now")),
             _ => None,
         }
     }
 
-    /// Ryter offering an audit after a build turn: `s` stops the offers.
+    /// Ryter offering a review after a build turn: `s` stops the offers.
     fn is_offer(&self) -> bool {
-        self.tool == "audit offer"
+        self.tool == "review offer"
     }
 
     fn is_hat(&self) -> bool {
@@ -525,7 +525,7 @@ impl Panel for PermissionModal {
             KeyCode::Enter | KeyCode::Char('y' | 'Y') => reply(Permission::Allow),
             KeyCode::Char('n' | 'N') | KeyCode::Esc => reply(Permission::Deny),
             KeyCode::Char('s' | 'S') if self.is_offer() => {
-                Outcome::CloseAct(Action::StopAuditOffers)
+                Outcome::CloseAct(Action::StopReviewOffers)
             }
             // `a` allows this kind of action for the session, named on the
             // card, in one press. It used to allow everything, and needed
@@ -869,7 +869,7 @@ mod tests {
             "m".into(),
             "/tmp".into(),
         );
-        let mut m = PermissionModal::new("audit offer".into(), "Audit this work?".into());
+        let mut m = PermissionModal::new("review offer".into(), "Review this work?".into());
         assert!(m.legend(&v).contains("s stop offering"));
         let press = |m: &mut PermissionModal, v: &mut crate::view::View, c: char| {
             m.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE), v)
@@ -877,7 +877,7 @@ mod tests {
         assert!(matches!(press(&mut m, &mut v, 'a'), Outcome::Stay));
         assert!(matches!(
             press(&mut m, &mut v, 's'),
-            Outcome::CloseAct(Action::StopAuditOffers)
+            Outcome::CloseAct(Action::StopReviewOffers)
         ));
         let mut asked = PermissionModal::new("audit".into(), "x".into());
         assert!(!asked.legend(&v).contains("stop offering"));

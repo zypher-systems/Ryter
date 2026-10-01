@@ -186,12 +186,11 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         }
         Action::Undo { force } => cx.send(Work::Undo { force }),
         Action::Redo { force } => cx.send(Work::Redo { force }),
-        Action::SecondOpinion if view.busy => {
-            view.warn("an audit reads the finished work: wait for this turn to end");
+        Action::ReviewNow if view.busy => {
+            view.warn("a review reads the finished work: wait for this turn to end");
         }
-        Action::SecondOpinion => cx.send(Work::SecondOpinion),
-        Action::ChooseReviewer => cx.send(Work::ChooseReviewer),
-        Action::StopAuditOffers => {
+        Action::ReviewNow => cx.send(Work::ReviewNow),
+        Action::StopReviewOffers => {
             if let Some(tx) = cx.perm_reply.take() {
                 let _ = tx.send(Permission::Deny);
             }
@@ -201,21 +200,10 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 view.error(e.to_string());
             }
             cx.send(Work::SetOfferAudit(false));
-            view.system("no more audit offers · /audit still works · /settings turns them back on");
+            view.system(
+                "no more review offers · /audit still runs one · /settings turns them back on",
+            );
         }
-        Action::SetReviewer {
-            connection,
-            model,
-            limit_usd,
-            then_run,
-        } => cx.send(Work::SetReviewer(
-            ryter_core::config::ReviewerConfig {
-                connection,
-                model,
-                limit_usd,
-            },
-            then_run,
-        )),
         Action::Revert { base, path } => cx.send(Work::Revert { base, path }),
         Action::RevertHunk { base, path, hunk } => cx.send(Work::RevertHunk { base, path, hunk }),
         Action::OpenWorkbench => {
@@ -1058,6 +1046,7 @@ fn save_crew(view: &mut View, cx: &mut Ctx) {
 fn save_settings(view: &mut View, cx: &mut Ctx) {
     cx.cfg.spend.session_budget_usd = view.budget_usd;
     cx.cfg.spend.warn_usd = view.warn_usd;
+    cx.cfg.spend.review_usd = view.review_usd;
     cx.cfg.subagents.max = view.max_crew;
     cx.cfg.subagents.steps = view.steps;
     cx.cfg.sandbox.profile = view.sandbox_profile.clone();
@@ -1086,6 +1075,7 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
     cx.send(Work::SetSettings {
         budget_usd: view.budget_usd,
         task_budget_usd: view.task_budget_usd,
+        review_usd: view.review_usd,
         max_crew: view.max_crew,
         steps: view.steps,
         web: view.web,
@@ -1116,6 +1106,7 @@ fn save_budget(view: &mut View, cx: &mut Ctx, usd: f64, warn: f64, task: f64) {
     cx.send(Work::SetSettings {
         budget_usd: usd,
         task_budget_usd: task,
+        review_usd: view.review_usd,
         max_crew: view.max_crew,
         steps: view.steps,
         web: view.web,

@@ -12,6 +12,23 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
 - **Why:** "There is too many unknowns for crew to work effectively without the user." No real project had completed in crew mode; the benchmark's clean runs were on small tasks with checks already set.
 - **Where:** `ROADMAP.md` (Direction). The code to go, when it goes: `crew.rs`, `queue.rs`, `tiering.rs`, `estimate.rs`, the crew parts of `agent.rs`, and the crew panels, about 10,000 of 72,000 lines; `bench.rs` is rebuilt on the hats.
 
+### 2026-10-01 — One reviewer: the review hat takes the audit's place
+- **By:** the user ("either let Review hat replace audit or change the Review hat to the Audit hat"), with the lead's choice of the first
+- **Decision:**
+  - **`/audit` and the offer after a build turn run a turn in the review hat** (`gate.rs`, `Agent::review_now` / `offer_review`), on the review seat's model, in the shared conversation. The separate second-opinion run is removed: its reviewer chooser, `review.toml` as a setting, `ReviewerNeeded` / `SecondOpinion`, the `second.md` prompt, the audit card in the chat.
+  - **Kept from the audit:** asking first with a cost range and the user's own history; a limit (`[spend] review_usd`, held before each step in the solo loop while the hat is review, with a write-up warning at three quarters); the verdict line; the read-only gate; no review of a model with no price under a limit.
+  - **New:** the brief points the reviewer at the approved plan's file; the verdict is recorded with the git tree it was given on (`AgentEvent::Reviewed`), and the commit receipt says "review ✓/✗ model", "not reviewed", or "not reviewed after the last change" (`review::Reviewed`).
+  - **The hat the user was in comes back** after a review, unless the reviewer asked for the build hat (its fixes) and the user said yes. Fixes made that way are new work: the loop offers a review of them.
+  - **0.10.0's choice carries over** (`apply_old_review_file`): the model until `hats.toml` exists, the limit until the settings hold one.
+  - **A model is named in the chat each time it takes over** (`chat/layout.rs`). Named once a turn, the builder's words after a review read as the reviewer's.
+- **Chosen vs rejected:**
+  - Rejected renaming the hat to Audit. "Review" is what the Tab cycle, `/models` and the roadmap already call it, and `/audit` stays as the command that asks for one.
+  - Rejected keeping the audit's separate reading (a digest of the conversation and the diff). It is cheaper per review and less led by the builder's account, but it is a second reviewer with its own context, model and limit, which is what the user asked to end. The cost of the shared conversation is said before each review.
+  - Rejected refusing a review by the model that built the work. With one model for every hat that would refuse every review. The prompt says who is reviewing instead.
+  - Rejected blocking `/commit` on a failed or missing review. The receipt says what happened; the commit is the user's.
+- **Why:** step 3 of the one-mode direction, "review as a gate", and the user's call that two reviewers was one too many.
+- **Where:** `crates/ryter-core/src/gate.rs` (was `second.rs`), `agent.rs` (the review limit in the solo loop), `config.rs`, `review.rs` (`tree_of`, `Reviewed`), `prompts/solo.md` ("A review"), `crates/ryter-tui/src/run/{worker,actions,events}.rs`, `panel/{commit,settings,models,modal}.rs`, `chat/layout.rs`
+
 ### 2026-10-01 — A model for each hat, in one conversation
 - **By:** lead, with the user's choices (the hats are the seats in `/models`; the re-read cost is said in the chat, and nothing stops)
 - **Decision:**

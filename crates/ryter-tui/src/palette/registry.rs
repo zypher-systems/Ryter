@@ -169,7 +169,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "models",
         &["model"],
         Category::Model,
-        "Choose models: the lead's and each crew role's, seat by seat",
+        "Choose models: one for every hat, or one each for plan, build and review",
         Some("[id]"),
         true,
         None,
@@ -246,7 +246,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "review",
         &[],
         Category::Model,
-        "Review hat: run the tests and critique what changed",
+        "Review hat: critique what changed; its model is set in /models",
         None,
         false,
         None,
@@ -283,18 +283,12 @@ pub const COMMANDS: &[CommandSpec] = &[
         "audit",
         &["second", "second-opinion"],
         Category::Session,
-        "A second model reviews your uncommitted changes; you choose it and its limit",
-        Some("/audit [model]"),
+        "The review hat reviews your uncommitted changes now, against the approved plan",
+        None,
         false,
         None,
         false,
-        |_, args| {
-            if args.trim() == "model" {
-                Action::ChooseReviewer
-            } else {
-                Action::SecondOpinion
-            }
-        },
+        |_, _| Action::ReviewNow,
     ),
     spec(
         "changes",

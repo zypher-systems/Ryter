@@ -176,24 +176,11 @@ pub enum Action {
         /// Even over the user's edits since the undo.
         force: bool,
     },
-    /// `/second`: a second model reviews the uncommitted work.
-    SecondOpinion,
-    /// `/audit model`: choose the reviewer and its limit again.
-    ChooseReviewer,
-    /// `s` on an audit offer: no more offers after build turns (the offer
+    /// `/audit`: the review hat reviews the uncommitted work now.
+    ReviewNow,
+    /// `s` on a review offer: no more offers after build turns (the offer
     /// itself is answered no).
-    StopAuditOffers,
-    /// The reviewer the user chose, and the most one review may spend.
-    SetReviewer {
-        /// Connection name.
-        connection: String,
-        /// Model id.
-        model: String,
-        /// USD per review.
-        limit_usd: f64,
-        /// Run the review now.
-        then_run: bool,
-    },
+    StopReviewOffers,
     /// `/changes` `x`: put one file back as `base` had it.
     Revert {
         /// Commit to restore from.

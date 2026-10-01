@@ -11,10 +11,10 @@
                                                     │ price unknown            │
 ╭─ commands ──────────────────────────── 6 of 34 ─╮ │ reasoning  auto · medium │
 │ mo                                              │ ╰──────────────────────────╯
-│›/models         Choose models: the lead's a… ▸  │ ╭─ spend ──────────────────╮
+│›/models         Choose models: one for ever… ▸  │ ╭─ spend ──────────────────╮
 │ /tools          Tool permission mode         ▸  │ │ session            $?.?? │
-│ /audit          A second model reviews your …   │ ╰──────────────────────────╯
-│ /crew           Switch to crew mode: a lead… ▸  │ ╭─ budget ─────────── off ─╮
+│ /crew           Switch to crew mode: a lead… ▸  │ ╰──────────────────────────╯
+│ /review         Review hat: critique what ch…   │ ╭─ budget ─────────── off ─╮
 │ /solo           Leave crew mode: one model, …   │ │ cap                  off │
 │ /skills         Browse, run, create, and re… ▸  │ ╰──────────────────────────╯
 ╰─ enter run · tab complete · esc close ──────────╯

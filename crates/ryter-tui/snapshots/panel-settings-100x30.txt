@@ -4,9 +4,10 @@
    welcome · /│ SPEND                                                                ┃
               │› budget usd (0 = off)      ‹ 0.00 ›                          default ┃
               │  warn usd                  ‹ 1.00 ›                          default ┃
+              │  review usd (0 = off)      ‹ 0.00 ›                          default ┃
               │                                                                      ┃
               │ AGENTS                                                               ┃
-              │  subagents max             ‹ 4 ›                             default ┃
+              │  subagents max             ‹ 4 ›                             default │
               │  auditor                   [ on ]                            default │
               │  builder steps (def 40)    ‹ 40 ›                            default │
               │  architect steps (def 30)  ‹ 30 ›                            default │
@@ -19,7 +20,6 @@
               │ SANDBOX                                                              │
               │  profile                   ‹ off ›                           default │
               │                                                                      │
-              │                 OFF           workspace     read-only                │
               │ ↑↓ move   space/←→ change   enter edit   esc done                    │
               ╰──────────────────────────────────────────────────────────────────────╯
 

@@ -64,19 +64,6 @@ fn trim(v: f64) -> String {
     }
 }
 
-/// Choosing who gives second opinions (`/second`): a model from the live
-/// catalog, then the most one review may spend. Nothing is preselected;
-/// Ryter shows prices and facts, and the user chooses.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ReviewPick {
-    /// Tokens the review starts with, to price each model for it.
-    pub context_tokens: u64,
-    /// Run the review once chosen.
-    pub then_run: bool,
-    /// The model chosen; the limit is typed next.
-    pub chosen: Option<(String, String)>,
-}
-
 /// Which side of `/models` the keys move.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
@@ -101,8 +88,6 @@ pub struct Models {
     /// Every connection's models were asked for (a role tab lists them all;
     /// the lead's tab lists its connection's).
     crew_listed: bool,
-    /// `Some` when choosing the second-opinion reviewer.
-    pub review: Option<ReviewPick>,
     /// Why the last Enter did nothing.
     refusal: Option<String>,
     selected: usize,
@@ -156,7 +141,6 @@ impl Models {
             loading: true,
             crew_listed: assign_role.is_some(),
             assign_role,
-            review: None,
             refusal: None,
             selected: 0,
             sort: Sort::Relevance,
@@ -167,57 +151,14 @@ impl Models {
         p
     }
 
-    /// Open to choose the second-opinion reviewer, from every connection
-    /// with a key, priced for the review at hand.
-    pub fn for_review(view: &mut View, context_tokens: u64, then_run: bool) -> Self {
-        let mut p = Self::new(view, Some(String::new()));
-        p.items.retain(|m| !m.id.is_empty());
-        p.assign_role = None;
-        p.review = Some(ReviewPick {
-            context_tokens,
-            then_run,
-            chosen: None,
-        });
-        p.sort = Sort::Price;
-        p
-    }
-
-    fn local(view: &View, m: &ModelInfo) -> bool {
-        let conn = m.connection.as_deref().unwrap_or(&view.connection);
-        view.connections
-            .iter()
-            .any(|c| c.name == conn && c.kind == "local")
-    }
-
-    /// What reviewing the work at hand with `m` should cost.
-    fn review_price(view: &View, m: &ModelInfo, context_tokens: u64) -> Option<(f64, f64)> {
-        if Self::local(view, m) {
-            return Some((0.0, 0.0));
-        }
-        let rates = match (m.input_per_million, m.output_per_million) {
-            (Some(i), Some(o)) if i >= 0.0 && o >= 0.0 => {
-                Some(ryter_core::Rates::per_million(i, o))
-            }
-            _ => None,
-        };
-        ryter_core::second::price_range(rates, context_tokens.max(2_000))
-    }
-
     fn filtered(&self, view: &View) -> Vec<&ModelInfo> {
         let f = view.composer.text().trim().to_ascii_lowercase();
         let mut v: Vec<&ModelInfo> = self
             .items
             .iter()
             .filter(|m| {
-                // A second opinion from the model doing the work isn't one,
-                // and a reviewer reads files and runs tests through tools.
-                if self.review.is_some()
-                    && (ryter_core::crew::same_model(&m.id, &view.model) || m.tools == Some(false))
-                {
-                    return false;
-                }
                 // The lead's tab: its connection's models, no `default`.
-                if self.review.is_none() && self.assign_role.is_none() {
+                if self.assign_role.is_none() {
                     if m.id.is_empty() {
                         return false;
                     }
@@ -275,10 +216,7 @@ impl Models {
     /// Replace the catalog from a `ModelsListed` event.
     pub fn set_models(&mut self, view: &View, models: &[ModelInfo]) {
         if !models.is_empty() {
-            let mut v = Vec::new();
-            if self.review.is_none() {
-                v.push(default_row(&view.connection));
-            }
+            let mut v = vec![default_row(&view.connection)];
             v.extend(models.iter().cloned());
             self.items = v;
             self.selected = self.selected.min(self.items.len().saturating_sub(1));
@@ -290,7 +228,7 @@ impl Models {
     /// Put the cursor on the model in use, as the list opens: with hundreds
     /// in a catalog, starting at the top meant scrolling to find it.
     fn select_current(&mut self, view: &View) {
-        if self.review.is_some() || !view.composer.text().is_empty() {
+        if !view.composer.text().is_empty() {
             return;
         }
         let (model, connection) = match &self.assign_role {
@@ -555,17 +493,11 @@ impl Panel for Models {
         "models"
     }
 
-    fn title(&self, _view: &View) -> String {
-        match (&self.review, &self.assign_role) {
-            (
-                Some(ReviewPick {
-                    chosen: Some(_), ..
-                }),
-                _,
-            ) => "audit · your limit".into(),
-            (Some(_), _) => "audit · who audits?".into(),
-            (None, _) if _view.crew_mode() => "crew models".into(),
-            (None, _) => "models".into(),
+    fn title(&self, view: &View) -> String {
+        if view.crew_mode() {
+            "crew models".into()
+        } else {
+            "models".into()
         }
     }
 
@@ -581,17 +513,11 @@ impl Panel for Models {
     }
 
     fn legend(&self, _view: &View) -> String {
-        match &self.review {
-            Some(ReviewPick {
-                chosen: Some(_), ..
-            }) => "type dollars · enter save · esc back".into(),
-            Some(_) => "↑↓ move · enter choose · s sort · esc close".into(),
-            None => match self.focus {
-                Focus::Seats => "↑↓ seat · → models · b guided setup · esc done".into(),
-                Focus::Models => {
-                    "↑↓ move · enter set · ← seats · tab reasoning · s sort · esc done".into()
-                }
-            },
+        match self.focus {
+            Focus::Seats => "↑↓ seat · → models · b guided setup · esc done".into(),
+            Focus::Models => {
+                "↑↓ move · enter set · ← seats · tab reasoning · s sort · esc done".into()
+            }
         }
     }
 
@@ -600,30 +526,19 @@ impl Panel for Models {
     }
 
     fn input_indent(&self, width: u16) -> u16 {
-        if self.review.is_some() {
-            return 0;
-        }
         // `width` is the body's, as `render` gets it.
         u16::try_from(Self::seats_width(usize::from(width)) + 1).unwrap_or(0)
     }
 
     fn keys_in_body(&self) -> bool {
-        self.review.is_none()
+        true
     }
 
     fn input(&self, _view: &View) -> Option<String> {
-        match &self.review {
-            Some(ReviewPick {
-                chosen: Some(_), ..
-            }) => Some("limit in dollars".into()),
-            _ => Some("filter".into()),
-        }
+        Some("filter".into())
     }
 
     fn render(&self, view: &View, width: u16, height: u16, theme: Theme) -> Body {
-        if let Some(r) = &self.review {
-            return self.render_review(r, view, width, height, theme);
-        }
         let w = usize::from(width);
         let h = usize::from(height);
         let left_w = Self::seats_width(w);
@@ -808,16 +723,11 @@ impl Panel for Models {
     }
 
     fn key(&mut self, key: KeyEvent, view: &mut View) -> Outcome {
-        if self.review.is_some() {
-            if let Some(out) = self.review_key(key, view) {
-                return out;
-            }
-        }
         if key.code == KeyCode::Esc {
             view.composer.clear();
             return Outcome::Close;
         }
-        if self.review.is_none() && self.focus == Focus::Seats {
+        if self.focus == Focus::Seats {
             return self.seat_key(key, view);
         }
         let n = self.filtered(view).len();
@@ -922,11 +832,7 @@ impl Panel for Models {
 
     fn size(&self, _view: &View) -> (u16, u16) {
         // Two panes: room for the seats' models and the list's names.
-        if self.review.is_some() {
-            (96, 20)
-        } else {
-            (124, 22)
-        }
+        (124, 22)
     }
 
     fn on_notice(&mut self, n: &Notice, view: &mut View) {
@@ -937,221 +843,6 @@ impl Panel for Models {
 
     fn box_clone(&self) -> Box<dyn Panel> {
         Box::new(self.clone())
-    }
-}
-
-impl Models {
-    fn render_review(
-        &self,
-        r: &ReviewPick,
-        view: &View,
-        width: u16,
-        height: u16,
-        theme: Theme,
-    ) -> Body {
-        let w = usize::from(width);
-        let h = usize::from(height);
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        if let Some((connection, model)) = &r.chosen {
-            let price = self
-                .items
-                .iter()
-                .find(|m| &m.id == model)
-                .and_then(|m| Self::review_price(view, m, r.context_tokens))
-                .map(ryter_core::second::format_range)
-                .unwrap_or_else(|| "$?.??".into());
-            for t in [
-                format!("{model} on {connection}"),
-                format!("this audit: about {price}"),
-                String::new(),
-                "The most one audit may spend, in dollars. Each audit asks before it".into(),
-                "runs and shows its estimate against this. Near the limit the auditor".into(),
-                "writes up what it has; a step that would pass it is never sent.".into(),
-                String::new(),
-                "A large change audited by a strong model can cost $20 or more.".into(),
-            ] {
-                lines.push(widgets::text(
-                    &wrap::truncate(&t, w.saturating_sub(2)),
-                    theme,
-                ));
-            }
-            if let Some(why) = &self.refusal {
-                lines.push(widgets::blank(theme));
-                lines.push(widgets::colored(why, theme.warn, theme));
-            }
-            return Body {
-                lines,
-                scroll: None,
-            };
-        }
-        let intro = if r.then_run {
-            "Choose who audits your work. Nothing is preselected: prices are for this audit."
-        } else {
-            "Choose again. Prices are for the work there is to audit now."
-        };
-        lines.push(widgets::note(
-            &wrap::truncate(intro, w.saturating_sub(2)),
-            theme,
-        ));
-        let rows_h = h.saturating_sub(4).max(1);
-        let list = self.filtered(view);
-        let n = list.len();
-        let sel = self.selected.min(n.saturating_sub(1));
-        let first = super::window(sel, n, rows_h);
-        let rows: Vec<Vec<String>> = list
-            .iter()
-            .skip(first)
-            .take(rows_h)
-            .map(|m| {
-                let cost = match Self::review_price(view, m, r.context_tokens) {
-                    Some(_) if Self::local(view, m) => "$0 · local".into(),
-                    Some(range) => ryter_core::second::format_range(range),
-                    None => "price unknown".into(),
-                };
-                vec![
-                    m.id.clone(),
-                    cost,
-                    price(m.input_per_million),
-                    price(m.output_per_million),
-                    m.connection
-                        .clone()
-                        .unwrap_or_else(|| view.connection.clone()),
-                ]
-            })
-            .collect();
-        lines.extend(widgets::table(
-            &["model", "this audit", "in/M", "out/M", "connection"],
-            &rows,
-            &[
-                widgets::Al::L,
-                widgets::Al::R,
-                widgets::Al::R,
-                widgets::Al::R,
-                widgets::Al::L,
-            ],
-            Some(sel.saturating_sub(first)),
-            w,
-            theme,
-        ));
-        if self.loading && n <= 1 {
-            let frame = SPINNER[(view.now_ms / 80) as usize % SPINNER.len()];
-            lines.push(Line::from(vec![
-                Span::styled(format!(" {frame} "), theme.on_panel(theme.accent)),
-                Span::styled(
-                    "loading every catalog you have a key for…",
-                    theme.panel_muted(),
-                ),
-            ]));
-        }
-        while lines.len() < h.saturating_sub(1) {
-            lines.push(widgets::blank(theme));
-        }
-        lines.truncate(h.saturating_sub(1));
-        // Facts about the highlighted model, not opinions of it.
-        let footer = if let Some(why) = &self.refusal {
-            why.clone()
-        } else if let Some(m) = list.get(sel) {
-            let conn = m.connection.as_deref().unwrap_or(&view.connection);
-            let same = ryter_core::tiering::family(conn, &m.id)
-                == ryter_core::tiering::family(&view.connection, &view.model);
-            match Self::review_price(view, m, r.context_tokens) {
-                None => format!("{}: no price known, so no limit can hold it", m.id),
-                Some(_) if same => format!(
-                    "{}: same vendor as {}, so a less independent opinion",
-                    m.id,
-                    short_model(&view.model)
-                ),
-                Some(_) => format!(
-                    "{}: a different vendor from {}",
-                    m.id,
-                    short_model(&view.model)
-                ),
-            }
-        } else {
-            String::new()
-        };
-        lines.push(widgets::note(
-            &wrap::truncate(&footer, w.saturating_sub(2)),
-            theme,
-        ));
-        Body {
-            lines,
-            scroll: (n > rows_h).then_some((first, n)),
-        }
-    }
-
-    /// Keys that mean something else while choosing a reviewer; `None`
-    /// falls through to the list's own keys.
-    fn review_key(&mut self, key: KeyEvent, view: &mut View) -> Option<Outcome> {
-        let r = self.review.clone()?;
-        if let Some((connection, model)) = r.chosen {
-            return Some(match key.code {
-                KeyCode::Esc => {
-                    if let Some(p) = self.review.as_mut() {
-                        p.chosen = None;
-                    }
-                    self.refusal = None;
-                    view.composer.clear();
-                    Outcome::Stay
-                }
-                KeyCode::Enter => {
-                    let typed = view
-                        .composer
-                        .text()
-                        .trim()
-                        .trim_start_matches('$')
-                        .to_string();
-                    match typed.parse::<f64>() {
-                        Ok(limit_usd) if limit_usd > 0.0 && limit_usd.is_finite() => {
-                            view.composer.clear();
-                            Outcome::CloseAct(Action::SetReviewer {
-                                connection,
-                                model,
-                                limit_usd,
-                                then_run: r.then_run,
-                            })
-                        }
-                        _ => {
-                            self.refusal = Some("type an amount in dollars, like 5 or 0.50".into());
-                            Outcome::Stay
-                        }
-                    }
-                }
-                _ => {
-                    super::edit_field(&mut view.composer, key);
-                    self.refusal = None;
-                    Outcome::Stay
-                }
-            });
-        }
-        match key.code {
-            KeyCode::Tab | KeyCode::BackTab => Some(Outcome::Stay),
-            KeyCode::Enter => {
-                let list = self.filtered(view);
-                let m = (*list.get(self.selected.min(list.len().saturating_sub(1)))?).clone();
-                if Self::review_price(view, &m, r.context_tokens).is_none() {
-                    self.refusal = Some(format!(
-                        "{} has no known price, so no limit can hold it: choose another, or add it under [pricing]",
-                        m.id
-                    ));
-                    return Some(Outcome::Stay);
-                }
-                let connection = m
-                    .connection
-                    .clone()
-                    .unwrap_or_else(|| view.connection.clone());
-                if let Some(p) = self.review.as_mut() {
-                    p.chosen = Some((connection, m.id));
-                }
-                self.refusal = None;
-                view.composer.clear();
-                Some(Outcome::Stay)
-            }
-            _ => {
-                self.refusal = None;
-                None
-            }
-        }
     }
 }
 
@@ -1602,87 +1293,6 @@ mod tests {
                 t.contains("openrouter · anthropic/claude-3.7-sonnet"),
                 "{width}: {t}"
             );
-        }
-    }
-
-    /// The chooser: every catalog model but the one doing the work, each
-    /// priced for this review; no price, no choice; then the user's limit.
-    #[test]
-    fn choosing_a_reviewer_is_the_users_choice_with_prices_and_a_limit() {
-        let mut v = View::new(
-            ryter_core::Phase::Build,
-            "openrouter".into(),
-            "deepseek/deepseek-v4.1-flash".into(),
-            "/tmp".into(),
-        );
-        let mut p = Models::for_review(&mut v, 20_000, true);
-        p.set_models(
-            &v,
-            &[
-                row(
-                    "deepseek/deepseek-v4.1-flash",
-                    "openrouter",
-                    Some((0.1, 0.6)),
-                ),
-                row("x-ai/grok-4.7", "openrouter", Some((3.0, 15.0))),
-                row("mystery/unpriced", "openrouter", None),
-            ],
-        );
-        let ids: Vec<String> = p.filtered(&v).iter().map(|m| m.id.clone()).collect();
-        assert_eq!(
-            ids,
-            vec!["x-ai/grok-4.7", "mystery/unpriced"],
-            "cheapest first, own model hidden"
-        );
-        let text = |p: &Models, v: &View| -> String {
-            p.render(v, 96, 16, Theme::truecolor_dark())
-                .lines
-                .iter()
-                .map(|l| {
-                    l.spans
-                        .iter()
-                        .map(|s| s.content.as_ref())
-                        .collect::<String>()
-                        + "\n"
-                })
-                .collect()
-        };
-        let shown = text(&p, &v);
-        assert!(
-            shown.contains("this audit") && shown.contains("$0."),
-            "{shown}"
-        );
-        assert!(shown.contains("price unknown"), "{shown}");
-        // No price: refused, and said why.
-        p.selected = 1;
-        assert!(matches!(key(&mut p, &mut v, KeyCode::Enter), Outcome::Stay));
-        assert!(text(&p, &v).contains("no known price"));
-        // A priced model: on to the limit, which nobody preset.
-        p.selected = 0;
-        assert!(matches!(key(&mut p, &mut v, KeyCode::Enter), Outcome::Stay));
-        assert_eq!(p.input(&v).as_deref(), Some("limit in dollars"));
-        assert!(v.composer.is_empty());
-        assert!(
-            matches!(key(&mut p, &mut v, KeyCode::Enter), Outcome::Stay),
-            "no amount, no save"
-        );
-        for c in "$7.5".chars() {
-            key(&mut p, &mut v, KeyCode::Char(c));
-        }
-        match key(&mut p, &mut v, KeyCode::Enter) {
-            Outcome::CloseAct(Action::SetReviewer {
-                connection,
-                model,
-                limit_usd,
-                then_run,
-            }) => {
-                assert_eq!(
-                    (connection.as_str(), model.as_str()),
-                    ("openrouter", "x-ai/grok-4.7")
-                );
-                assert!((limit_usd - 7.5).abs() < 1e-9 && then_run);
-            }
-            _ => panic!("the choice is saved"),
         }
     }
 

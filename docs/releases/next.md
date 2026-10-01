@@ -22,6 +22,7 @@ added at the top, and this comment removed.
   - a crew's builders could not write in their worktrees.
 - **Your rules could only be read or changed by hand outside Ryter, or through the model.** There was no place in Ryter to see what your rules were, and `/rules` did nothing without something to remember.
 - **Every hat ran on one model.** You could not plan with a strong model and build with a cheap one, or have a different model review the work, without changing the model by hand at each step.
+- **There were two reviewers.** The review hat critiqued your changes on the model you were working with, and `/audit` ran a second model apart from the conversation, with its own chooser, its own limit and its own card in the chat. Neither checked the work against a plan, and a commit didn't say whether the work had been reviewed.
 - **A plan was a message, approved by a question about something else.** The plan hat wrote its plan into the chat, and work started when you answered a yes/no card about switching hats. There was no way to say "change this part first", and the plan was nowhere but the chat's history.
 
 ## What changed
@@ -40,6 +41,16 @@ added at the top, and this comment removed.
   - The rail and the status line show the model your next message goes to.
   - The hats share one conversation. When a model that hasn't read it takes over, the chat says what re-reading it costs: "review hat · grok-4.7 re-reads 42k tokens, about $0.13".
   - In crew mode `/models` shows the crew's seats, as before.
+  - In the chat, each model is named as it takes over, so a reply reads as the model that wrote it.
+- **One reviewer: the review hat.** `/audit`, and the offer after a build turn that changed files, now run a review in the review hat, on the model you gave it in `/models`.
+  - **It asks first,** as before: the model, what it reviews, and a cost range. If the review hat has no model of its own, the prompt says the reviewer is the model that built the work.
+  - **It is a turn in the conversation.** The reviewer has read what you asked for, and the builder reads its findings next. The hat you were in comes back when it ends.
+  - **It checks the change against the plan you approved,** then for bugs, tests and safety, and ends with `VERDICT: PASS` or `VERDICT: FAIL`.
+  - **A failed review offers its fixes** in the build hat, and a review of the fixes is offered after.
+  - **The commit receipt says whether the work was reviewed:** "review ✓ grok-4.7", "review ✗ grok-4.7", "not reviewed", or "not reviewed after the last change". A verdict holds only for the files the reviewer read.
+  - **The limit is a setting:** `/settings` → *review usd* (0 is no limit). It holds any turn in the review hat.
+  - **Your 0.10.0 choice carries over.** The model you chose for `/audit` becomes the review hat's model, and its limit becomes the review limit, until you change them in `/models` and `/settings`.
+  - **Gone:** the reviewer chooser, `/audit model`, the audit's own card in the chat, and the rule that the reviewer must be a different model. A custom `second.md` prompt is no longer read; the review's instructions are in `solo.md`.
 - **A plan is read and approved in its own panel.** The model shows its plan (goal, steps, files, risks, how to verify) in a scrolling panel:
   - `y` approves: the plan is saved as `.ryter/plans/<date>-<title>.md` in the project, and the model builds from it in the build hat, in the same turn.
   - `e` adjusts: you type what to change, and the model shows the revised plan.
@@ -87,6 +98,13 @@ added at the top, and this comment removed.
   - A message in the build hat went to the main model, one in the review hat to the reviewer's, and the next in build back to the main one: the provider's log showed each.
   - On the switch the chat said "review hat · reviewer-x re-reads 3.1k tokens, about $0.01". The provider reported 3,000 tokens read.
   - With Review selected, the rail's MODEL line named the reviewer's model.
+- **The review, as one reviewer,** in the TUI against a stand-in provider, with a 0.10.0 `review.toml` in the home folder:
+  - `/models` showed the review seat on the model from `review.toml`, and `/settings` showed its $2.00 limit.
+  - A build turn changed a file. The offer named the reviewer's model, "reviews 1 file, +1 −1", and "about $0.03–$0.60 of your $2.00 limit". `⏎` ran it: the request went to the reviewer's model, the chat showed the review under that model's name and "review · reviewer-x · ✓ no blocking problems · $0.01", and the build hat came back.
+  - `/commit` showed "review ✓ reviewer-x" in the receipt. After I changed the file by hand it showed "not reviewed after the last change".
+  - A review that failed asked to switch to the build hat. On yes, the main model made the fix in the same turn, the chat said "✗ blocking problems", and a second review was offered. That one passed.
+  - `/audit` with `n` said "review not run" and sent nothing. With a one-cent limit it said the first step would pass the limit, and asked nothing.
+  - `s` on the offer stopped the offers and saved that.
 - **The plan panel,** in the TUI against a stand-in provider that presented a five-section plan:
   - The panel showed the plan under its title, each heading with its section under it, all on screen without scrolling.
   - `e`, then "Stream the rows; skip the button for now": the model was told those words and showed a revised plan. Nothing had been saved.

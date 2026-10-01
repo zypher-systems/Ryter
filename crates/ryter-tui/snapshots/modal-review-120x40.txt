@@ -22,19 +22,19 @@
  ───────────────────────────────────── 2 files (1 new, 1 changed, +8 −1) · 2.1s ──────────────────────────────────────
 
 
-┏━ approve? ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│ what    second opinion  x-ai/grok-4.7 on openrouter (your choice)                                                    │
-│   x-ai/grok-4.7 on openrouter (your choice)                                                                          │
-│   reviews 2 files, +8 −1, read-only                                                                                  │
-│   about $0.02–$0.31 of your $5.00 limit                                                                              │
-│   your last 4 reviews with it cost $0.03–$0.19                                                                       │
-│                                                                                                                      │
-│                                                                                                                      │
-│ ⏎ allow   n deny                                                                                                     │
+
+
+┏━ review this work? ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│ Review this work before you commit?                                                                                  │
+│ x-ai/grok-4.7 on openrouter (the review hat's model)                                                                 │
+│ reviews 2 files, +8 −1, read-only                                                                                    │
+│ about $0.02–$0.31 of your $5.00 limit                                                                                │
+│ your last 4 reviews with it cost $0.03–$0.19                                                                         │
+│ ⏎ review   n not now   s stop offering                                                                               │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  · ✓ done · 2 tools · 0:02                                                                             ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · / for commands                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ⏎ allow    n deny
+ ⏎ review    n not now    s stop offering

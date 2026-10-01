@@ -87,6 +87,15 @@ pub fn head_base(dir: &Path) -> String {
         .unwrap_or_else(|_| EMPTY_TREE.into())
 }
 
+/// The tree of a commit: the same for the same files, whenever it was
+/// made. `None` when it can't be read.
+pub fn tree_of(dir: &Path, commit: &str) -> Option<String> {
+    git(dir, &["rev-parse", &format!("{commit}^{{tree}}")])
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+}
+
 /// When `HEAD` was committed, unix millis.
 pub fn head_time_ms(dir: &Path) -> Option<u64> {
     git(dir, &["log", "-1", "--format=%ct", "HEAD"])
@@ -331,6 +340,41 @@ pub struct Receipt {
     pub tests: Option<String>,
     /// Tests ran, but files changed after.
     pub tests_stale: bool,
+    /// The review hat's last verdict on this work.
+    pub review: Reviewed,
+}
+
+/// What the review hat said of the work being committed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Reviewed {
+    /// No review ran.
+    #[default]
+    No,
+    /// One ran, and the files changed after.
+    Stale,
+    /// `VERDICT: PASS`, by this model.
+    Pass(String),
+    /// `VERDICT: FAIL`, by this model.
+    Fail(String),
+    /// It ended without a verdict.
+    NoVerdict(String),
+}
+
+impl Reviewed {
+    /// The verdict a review gave on `tree`, for a commit of `now`.
+    pub fn of(mark: Option<&(Option<String>, String, Option<bool>)>, now: Option<&str>) -> Self {
+        let Some((tree, model, verdict)) = mark else {
+            return Self::No;
+        };
+        if tree.is_none() || tree.as_deref() != now {
+            return Self::Stale;
+        }
+        match verdict {
+            Some(true) => Self::Pass(model.clone()),
+            Some(false) => Self::Fail(model.clone()),
+            None => Self::NoVerdict(model.clone()),
+        }
+    }
 }
 
 impl Receipt {
@@ -360,7 +404,14 @@ impl Receipt {
             (_, true) => "tests not rerun after the last edit".into(),
             (None, false) => "no tests run".into(),
         };
-        format!("{models} · {cost} · {tests}")
+        let review = match &self.review {
+            Reviewed::No => "not reviewed".to_string(),
+            Reviewed::Stale => "not reviewed after the last change".into(),
+            Reviewed::Pass(m) => format!("review ✓ {}", short_model(m)),
+            Reviewed::Fail(m) => format!("review ✗ {}", short_model(m)),
+            Reviewed::NoVerdict(m) => format!("review by {} gave no verdict", short_model(m)),
+        };
+        format!("{models} · {cost} · {tests} · {review}")
     }
 }
 
@@ -504,14 +555,46 @@ mod tests {
             tests: Some("✓ 13 passed".into()),
             ..Receipt::default()
         };
-        assert_eq!(r.line(), "deepseek-pro-latest · $0.34 · tests ✓ 13 passed");
+        assert_eq!(
+            r.line(),
+            "deepseek-pro-latest · $0.34 · tests ✓ 13 passed · not reviewed"
+        );
         r.tests_stale = true;
-        assert!(r.line().ends_with("tests not rerun after the last edit"));
+        assert!(
+            r.line().contains("tests not rerun after the last edit"),
+            "{}",
+            r.line()
+        );
         r.tests = None;
         r.tests_stale = false;
         r.partial = true;
         assert!(r.line().contains("(some prices unknown)"), "{}", r.line());
-        assert!(r.line().ends_with("no tests run"));
+        assert!(r.line().contains("no tests run"), "{}", r.line());
+        // The review's verdict is about the files it read, and no others.
+        let mark = (
+            Some("t1".to_string()),
+            "x-ai/grok-4.7".to_string(),
+            Some(true),
+        );
+        r.review = Reviewed::of(Some(&mark), Some("t1"));
+        assert!(r.line().ends_with("review ✓ grok-4.7"), "{}", r.line());
+        r.review = Reviewed::of(Some(&mark), Some("t2"));
+        assert!(
+            r.line().ends_with("not reviewed after the last change"),
+            "{}",
+            r.line()
+        );
+        let failed = (Some("t1".to_string()), "m".to_string(), Some(false));
+        assert_eq!(
+            Reviewed::of(Some(&failed), Some("t1")),
+            Reviewed::Fail("m".into())
+        );
+        let silent = (Some("t1".to_string()), "m".to_string(), None);
+        assert_eq!(
+            Reviewed::of(Some(&silent), Some("t1")),
+            Reviewed::NoVerdict("m".into())
+        );
+        assert_eq!(Reviewed::of(None, Some("t1")), Reviewed::No);
         let m = with_receipt("Subject\n\nBody.\n", &r);
         assert!(m.starts_with("Subject\n\nBody.\n\nRyter: "), "{m}");
     }

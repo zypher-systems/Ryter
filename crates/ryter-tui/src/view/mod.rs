@@ -153,9 +153,6 @@ pub struct View {
     pub cancelling: bool,
     /// `Ctrl+O`: every edit's diff shown whole instead of folded.
     pub diffs_expanded: bool,
-    /// `/second` needs a reviewer chosen: tokens to price for, and whether
-    /// to run once chosen. The run loop opens the chooser.
-    pub reviewer_ask: Option<(u64, bool)>,
     /// Project path shown in the header (`~/workspace/ryter`).
     pub cwd: String,
     /// Current git branch, if any.
@@ -247,6 +244,9 @@ pub struct View {
     pub last_tests: Option<String>,
     /// The model edited files after that run.
     pub tests_stale: bool,
+    /// The review hat's last review: the files it read (as a git tree), its
+    /// model, and its verdict. For a commit receipt.
+    pub last_review: Option<(Option<String>, String, Option<bool>)>,
     /// The user's reasoning level per model (`low` / `medium` / `high` /
     /// `default`); a model not listed is "auto".
     pub model_reasoning: BTreeMap<String, String>,
@@ -288,6 +288,8 @@ pub struct View {
     pub budget_last: f64,
     /// `[spend] task_budget_usd`: one task's cap, budget or not.
     pub task_budget_usd: f64,
+    /// `[spend] review_usd`: the most one review may spend (0 = no limit).
+    pub review_usd: f64,
     /// Warn threshold.
     pub warn_usd: f64,
     /// `[subagents] max`.
@@ -420,7 +422,6 @@ impl View {
             busy: false,
             cancelling: false,
             diffs_expanded: false,
-            reviewer_ask: None,
             cwd,
             git_branch: None,
             perm_mode: "ask".into(),
@@ -463,6 +464,7 @@ impl View {
             last_checkpoint: None,
             last_tests: None,
             tests_stale: false,
+            last_review: None,
             model_reasoning: BTreeMap::new(),
             price_out: None,
             specialists: BTreeMap::new(),
@@ -484,6 +486,7 @@ impl View {
             budget_usd: 0.0,
             budget_last: 5.0,
             task_budget_usd: 3.0,
+            review_usd: 0.0,
             warn_usd: 1.0,
             max_crew: 4,
             steps: ryter_core::config::Steps::default(),
@@ -609,7 +612,8 @@ impl View {
 
     /// Streamed assistant delta (`R-CHAT-03`).
     pub fn on_token(&mut self, text: &str) {
-        let model = self.model.clone();
+        // The model that is answering: this hat's.
+        let model = self.hat_model().to_string();
         match self.messages.last_mut() {
             Some(m) if matches!(m.kind, MessageKind::Assistant { .. }) => m.append(text),
             _ => {

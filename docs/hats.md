@@ -91,7 +91,7 @@ meets the auditor rule on their first build.
 - **Tools:** read, search, the auditor's command allow-list (tests, linters,
   read-only git), judged by form: `cargo fmt --check` runs, `cargo fmt`
   doesn't. No edits, installs, or fixes.
-- **Second opinion:** built as `/audit` (also `/second`), in any solo hat, and offered after a build turn that changed files. The user chooses
+- **Second opinion:** built first as `/audit`, a second model run apart from the conversation with a reviewer and limit of its own. Since the hats have their own models it is the review hat: `/audit` and the offer after a build turn run a review in that hat, on its model. See "Review before you commit" in `guide.md`.
   the reviewer from the live catalog, with each model priced for the review,
   and sets a dollar limit per review. Every review asks first, and the limit
   is kept before each step. It is the crew's best idea, independent review,

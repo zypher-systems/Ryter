@@ -69,26 +69,19 @@ pub struct Config {
     /// Non-fatal load warnings (unknown `[ui]` keys). Never serialized.
     #[serde(skip)]
     pub warnings: Vec<String>,
-    /// Who gives second opinions (`/second`), chosen by the user; saved to
-    /// `~/.ryter/review.toml`, never in `config.toml`.
-    #[serde(skip)]
-    pub reviewer: Option<ReviewerConfig>,
 }
 
-/// The user's choice for `/second`: a model, and how much one review may
-/// spend. Ryter never picks either: models change too fast to curate, and a
-/// model Ryter chose is a bill Ryter chose.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ReviewerConfig {
-    /// Connection name.
-    pub connection: String,
-    /// Model id.
-    pub model: String,
-    /// Most one review may spend, in USD.
-    pub limit_usd: f64,
+/// `~/.ryter/review.toml`, as 0.10.0 and earlier wrote it: the model the
+/// user chose for `/audit`, and the most one audit could spend.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct OldReviewer {
+    connection: String,
+    model: String,
+    limit_usd: f64,
 }
 
-/// `~/.ryter/review.toml`.
+/// `~/.ryter/review.toml`. Read, never written: the review hat took the
+/// audit's place.
 pub fn review_path(home: &Path) -> PathBuf {
     home.join("review.toml")
 }
@@ -119,18 +112,40 @@ pub fn save_project_checks(root: &Path, checks: &[String]) -> Result<()> {
     fs::write(&path, body).map_err(|e| Error::Config(e.to_string()))
 }
 
-/// Save the reviewer choice.
-pub fn save_reviewer(home: &Path, r: &ReviewerConfig) -> Result<()> {
-    fs::create_dir_all(home).map_err(|e| Error::Config(e.to_string()))?;
-    let body = toml::to_string(r).map_err(|e| Error::Config(e.to_string()))?;
-    fs::write(review_path(home), body).map_err(|e| Error::Config(e.to_string()))
-}
-
-fn apply_review_file(cfg: &mut Config, path: &Path) {
-    cfg.reviewer = fs::read_to_string(path)
+/// The audit's model and limit carry over to the review hat, which took
+/// its place. Each is the user's own choice, so each is kept until they
+/// have made that choice again where it now lives: the model until the hats
+/// have been saved (`hats.toml`), the limit until the settings hold one.
+fn apply_old_review_file(cfg: &mut Config, home: &Path) {
+    let Some(old) = fs::read_to_string(review_path(home))
         .ok()
-        .and_then(|t| toml::from_str::<ReviewerConfig>(&t).ok())
-        .filter(|r| r.limit_usd > 0.0 && !r.model.is_empty());
+        .and_then(|t| toml::from_str::<OldReviewer>(&t).ok())
+        .filter(|r| !r.model.is_empty())
+    else {
+        return;
+    };
+    if !hats_path(home).exists()
+        && cfg.connections.contains_key(&old.connection)
+        && !cfg
+            .specialists
+            .get("review")
+            .is_some_and(RoleModel::is_override)
+    {
+        cfg.specialists.insert(
+            "review".into(),
+            RoleModel {
+                connection: Some(old.connection),
+                model: Some(old.model),
+            },
+        );
+    }
+    let saved = fs::read_to_string(home.join("settings.toml"))
+        .ok()
+        .and_then(|t| toml::from_str::<SettingsFile>(&t).ok())
+        .is_some_and(|f| f.review_usd.is_some());
+    if !saved && cfg.spend.review_usd == 0.0 && old.limit_usd > 0.0 {
+        cfg.spend.review_usd = old.limit_usd;
+    }
 }
 
 impl Default for Config {
@@ -157,7 +172,6 @@ impl Default for Config {
             reasoning_effort: BTreeMap::new(),
             model_reasoning: BTreeMap::new(),
             warnings: Vec::new(),
-            reviewer: None,
         }
     }
 }
@@ -488,6 +502,10 @@ pub struct SpendConfig {
     /// dollar cap it also stops unpriced models (`0` = none).
     #[serde(default = "default_task_tokens")]
     pub task_max_tokens: u64,
+    /// Most one turn in the review hat may spend, in USD (`0` = no limit).
+    /// Near it the reviewer is told to write up; at it the turn stops.
+    #[serde(default)]
+    pub review_usd: f64,
 }
 
 fn default_task_tokens() -> u64 {
@@ -672,6 +690,7 @@ impl Default for SpendConfig {
             warn_usd: 1.0,
             task_budget_usd: default_task_usd(),
             task_max_tokens: default_task_tokens(),
+            review_usd: 0.0,
         }
     }
 }
@@ -895,7 +914,7 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
     apply_hooks_file(&mut cfg, &home.join("hooks.toml"));
     apply_connections_file(&mut cfg, &home.join("connections.toml"));
     apply_model_reasoning_file(&mut cfg, &model_reasoning_path(home));
-    apply_review_file(&mut cfg, &review_path(home));
+    apply_old_review_file(&mut cfg, home);
     validate(&cfg)?;
     // A key read from the environment stays out of the commands Ryter runs,
     // whatever its variable is called.
@@ -1287,6 +1306,8 @@ struct SettingsFile {
     warn_usd: Option<f64>,
     #[serde(default)]
     task_budget_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    review_usd: Option<f64>,
     max: Option<u32>,
     #[serde(default)]
     steps: Option<Steps>,
@@ -1323,6 +1344,9 @@ fn apply_settings_file(cfg: &mut Config, path: &Path) {
     if let Some(v) = file.task_budget_usd {
         cfg.spend.task_budget_usd = v;
     }
+    if let Some(v) = file.review_usd {
+        cfg.spend.review_usd = v.max(0.0);
+    }
     if let Some(v) = file.max {
         cfg.subagents.max = v;
     }
@@ -1350,6 +1374,7 @@ pub fn save_settings(home: &Path, cfg: &Config) -> Result<()> {
         session_budget_usd: Some(cfg.spend.session_budget_usd),
         warn_usd: Some(cfg.spend.warn_usd),
         task_budget_usd: Some(cfg.spend.task_budget_usd),
+        review_usd: Some(cfg.spend.review_usd),
         max: Some(cfg.subagents.max),
         steps: Some(cfg.subagents.steps.clamped()),
         sandbox: Some(cfg.sandbox.profile.clone()),
@@ -2490,6 +2515,53 @@ mod tests {
             UpdateMode::Install.next().next().next(),
             UpdateMode::Install
         );
+    }
+
+    /// The model and limit chosen for `/audit` in 0.10.0 are the review
+    /// hat's now. Each stays until the user has chosen again where it lives.
+    #[test]
+    fn the_audits_model_and_limit_become_the_review_hats() {
+        use crate::role::Role;
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            review_path(dir.path()),
+            "connection = \"openrouter\"\nmodel = \"z-ai/glm-5.3\"\nlimit_usd = 2.0\n",
+        )
+        .unwrap();
+        let mut cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(
+            cfg.route_for(Role::SoloReview),
+            ("openrouter".into(), "z-ai/glm-5.3".into())
+        );
+        assert!(cfg.follows_orchestrator(Role::SoloBuild));
+        assert_eq!(cfg.spend.review_usd, 2.0);
+        // The limit, changed in the settings, is the settings' from then on:
+        // even changed to none.
+        cfg.spend.review_usd = 0.0;
+        save_settings(dir.path(), &cfg).unwrap();
+        assert_eq!(
+            load_at(dir.path(), None, false).unwrap().spend.review_usd,
+            0.0
+        );
+        // The hat put back to following the others stays there.
+        cfg.specialists.remove("review");
+        save_hats(dir.path(), &cfg.specialists).unwrap();
+        let again = load_at(dir.path(), None, false).unwrap();
+        assert!(again.follows_orchestrator(Role::SoloReview));
+        // A connection that is gone carries no model over.
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            review_path(dir.path()),
+            "connection = \"gone\"\nmodel = \"m\"\nlimit_usd = 1.5\n",
+        )
+        .unwrap();
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        assert!(cfg.follows_orchestrator(Role::SoloReview));
+        assert_eq!(cfg.spend.review_usd, 1.5);
+        // No file: no model of its own, and no limit.
+        let cfg = load_at(TempDir::new().unwrap().path(), None, false).unwrap();
+        assert!(cfg.follows_orchestrator(Role::SoloReview));
+        assert_eq!(cfg.spend.review_usd, 0.0);
     }
 
     /// A hat runs on its own model when it has one, and on the one every hat

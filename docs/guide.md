@@ -230,15 +230,19 @@ Ryter starts in solo mode: one model in your project. `Tab` switches its hat (bu
 
 `Enter` approves nothing here. The panel waits as long as you take to read. A headless run (`ryter -p`) has nobody to approve a plan, so nothing is saved and the plan comes back as the answer.
 
-**Audits: a second opinion.** `/audit` asks a different model to review your uncommitted changes before you commit (`/second` also works). You choose the model and how much one audit may spend; Ryter never chooses either.
+**Review before you commit.** The review hat is the check on work before it is committed. Give it its own model in `/models` and it is a second opinion: a different model from the one that built the work. There is one reviewer, and it is this hat.
 
-- **Offered after your changes.** When a build turn finishes having changed files, Ryter offers an audit with what it would cost: `y` runs it, with no second question; `n` passes; `s` stops the offers. `/settings` (audit offers) or `[ui] offer_audit` turns them back on. Nothing is offered after a turn that only talked or read, or one that was cancelled or cut short.
-- **The first time,** `/second` opens a chooser. It lists every model from every connection you have a key for, from the live catalog, each with what *this* review should cost in dollars. The model doing the work isn't offered, and neither are models that can't use tools. A model from the same vendor is marked as less independent, and one with no known price can't be chosen, since no limit could hold it. Then you type your limit per review, in dollars; there's no preset. The choice is saved in `~/.ryter/review.toml`, and `/audit model` changes it.
-- **Every review asks first,** with the model, what it will read, and a cost range against your limit. After a few reviews it also shows what your last ones with that model cost. `n` spends nothing.
-- **It keeps to your limit before spending, not after.** Each step is priced before it's sent. A step that would pass the limit isn't sent. When about one step's room is left, or three quarters of the limit is spent, the reviewer is told to stop exploring and write up what it has. Either way you get what it found, marked if it was cut short.
-- **In the chat,** an audit carries a rule in the auditor's color on every line, and a long one folds after 14 lines; `^o` shows it whole.
-- **It can't change anything.** It reads the diff and the conversation, and may read files and run the tests, under the review hat's rules. It creates no files. Findings come marked **blocking** or **note**, with a verdict and the cost, and the model you work with gets them with your next message, so "fix those" works.
-- **A saved reviewer that disappears** (retired, or no longer priced) brings the chooser back. Ryter never falls back to another model on its own.
+- **Offered after your changes.** When a build turn finishes having changed files, Ryter offers a review with what it should cost: `⏎` runs it, with no second question; `n` passes; `s` stops the offers. `/settings` (review offers) or `[ui] offer_audit` turns them back on. Nothing is offered after a turn that only talked or read, or one that was cancelled or cut short.
+- **Asked for:** `/audit` (or `/second`) runs the same review whenever you want one.
+- **Every review asks first,** naming the model, what it will read, and a cost range. After a few reviews it also shows what your last ones with that model cost. `n` spends nothing. If the review hat follows the model every hat uses, the prompt says the reviewer is the model that built the work.
+- **It is a turn in the conversation,** in the review hat, and the hat you were in comes back when it ends. The reviewer has read what you asked for, and the model you build with reads the findings next, so "fix those" works. Because it reads the conversation, a reviewer on another model pays to read it once; the chat says what that costs.
+- **It checks against the plan.** If you approved a plan, the reviewer is pointed at its file and checks that the change does what it says, all of it and nothing more. With no plan it checks against what you asked for. Then correctness, tests and safety.
+- **It ends with a verdict:** `VERDICT: PASS` or `VERDICT: FAIL`, with findings marked **blocking** or **note**. The chat repeats it under the review: "review · grok-4.7 · ✗ blocking problems · $0.04".
+- **A failed review offers its fixes.** The reviewer asks to switch to the build hat; say yes and the build hat fixes them in the same turn. The fixes are new work, so a review of them is offered.
+- **The commit says whether the work was reviewed.** The receipt on `/commit` ends with "review ✓ grok-4.7", "review ✗ grok-4.7", "not reviewed", or "not reviewed after the last change". A verdict holds for the files the reviewer read: change one afterwards, by hand or with the model, and the receipt says so.
+- **A limit, if you want one.** `/settings` → *review usd* is the most one turn in the review hat may spend (0 is no limit). Each step is priced before it's sent. When about one step's room is left, or three quarters of the limit is spent, the reviewer is told to stop exploring and write up. A step that would pass the limit isn't sent, and a review stopped that way has no verdict. A model with no known price isn't run under a limit, since the limit couldn't hold it.
+- **It can't change anything.** The review hat reads, and runs tests and linters. Edits, installs and formatting are refused.
+- **Coming from 0.10.0:** the model and limit you chose for `/audit` (`~/.ryter/review.toml`) are now the review hat's model and the review limit. Change them in `/models` and `/settings`. `/audit model` is gone.
 
 **What the chat shows.** The model narrates as it works: what it's doing next and why, each choice between approaches with its reason, and what it thinks went wrong when something fails. Each tool step shows what came of it, measured by Ryter: `new · 48 lines`, `rewrote · 76 lines (was 89)`, an edit's changed lines, `✓ 13 passed`, or `✗ exit 1` with the cause. Reads fold into one line, and a divider closes each turn that did work (`6 files (3 new, 3 changed, +153 −15) · 9 commands (9 ok) · 2:41`).
 
@@ -289,7 +293,7 @@ The panel updates when a turn finishes. You can open it while a turn is running,
 - **The receipt.** With receipts on (the default; `t` switches, and `[ui] receipts` remembers), the message ends with a trailer:
 
   ```
-  Ryter: deepseek-pro-latest · $0.34 · tests ✓ 13 passed
+  Ryter: deepseek-pro-latest · $0.34 · tests ✓ 13 passed · review ✓ grok-4.7
   ```
 
   - **Model:** the models used since the previous commit.

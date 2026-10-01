@@ -275,40 +275,26 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 });
             }
         }
-        AgentEvent::ReviewerNeeded {
-            context_tokens,
-            then_run,
-            reason,
-        } => {
-            if !reason.is_empty() {
-                view.warn(format!("{reason}: choose who reviews"));
-            }
-            view.reviewer_ask = Some((*context_tokens, *then_run));
-        }
-        AgentEvent::SecondOpinion {
+        AgentEvent::Reviewed {
             model,
             verdict,
-            body,
+            tree,
             total_usd,
             ..
         } => {
-            let m = view.push(
-                MessageKind::Specialist {
-                    role: "audit".into(),
-                    model: model.clone(),
-                },
-                body.clone(),
-            );
-            m.meta.label = Some(format!(
-                "{} · {}",
-                crate::chat::short_model(model),
-                match verdict {
-                    Some(true) => "✓ no blocking problems",
-                    Some(false) => "✗ blocking problems",
-                    None => "no verdict",
-                }
+            let said = match verdict {
+                Some(true) => "✓ no blocking problems",
+                Some(false) => "✗ blocking problems",
+                None => "no verdict",
+            };
+            let cost = total_usd.map_or_else(String::new, |usd| {
+                format!(" · {}", ryter_core::format_usd(Some(usd)))
+            });
+            view.system(format!(
+                "review · {} · {said}{cost}",
+                crate::chat::short_model(model)
             ));
-            m.meta.cost = *total_usd;
+            view.last_review = Some((tree.clone(), model.clone(), *verdict));
         }
         AgentEvent::SubagentFinished {
             id,
@@ -370,6 +356,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 view.system(format!("committed {s}"));
                 view.last_tests = None;
                 view.tests_stale = false;
+                view.last_review = None;
                 view.panels
                     .stack
                     .retain(|p| !matches!(p.kind(), "commit" | "changes"));

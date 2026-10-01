@@ -80,7 +80,7 @@ impl Role {
             ),
             Self::SoloReview => Some(
                 "[hat: review — nothing may change; read and run tests. When asked for a review, \
-                 end with findings, blocking ones first]",
+                 end with findings, blocking ones first, then your verdict]",
             ),
             _ => None,
         }

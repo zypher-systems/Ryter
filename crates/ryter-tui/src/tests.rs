@@ -1409,6 +1409,48 @@ fn a_blocked_scaffold_shows_why_and_what_waits() {
     }
 }
 
+/// The commit's receipt says whether the review hat reviewed these files:
+/// its verdict holds for the files it read, and for no others.
+#[test]
+fn the_commit_receipt_says_whether_this_work_was_reviewed() {
+    use ryter_core::review;
+    let repo = workbench_repo();
+    let home = tempfile::tempdir().unwrap();
+    let env = crate::panel::PanelEnv {
+        home: home.path().to_path_buf(),
+        cwd: repo.path().to_path_buf(),
+        trusted: false,
+        sandbox: ryter_core::sandbox::SandboxProfile::Off,
+    };
+    let receipt = |v: &View| crate::panel::commit::Commit::new(v, &env).0.receipt_line();
+    let mut v = idle();
+    assert!(receipt(&v).contains("· not reviewed"), "{}", receipt(&v));
+    // Reviewed as the files are now.
+    let base = review::head_base(repo.path());
+    let now = review::changes(repo.path(), &base).unwrap().now;
+    let tree = review::tree_of(repo.path(), &now);
+    assert!(tree.is_some());
+    v.last_review = Some((tree.clone(), "x-ai/grok-4.7".into(), Some(true)));
+    assert!(
+        receipt(&v).contains("· review ✓ grok-4.7"),
+        "{}",
+        receipt(&v)
+    );
+    v.last_review = Some((tree, "x-ai/grok-4.7".into(), Some(false)));
+    assert!(
+        receipt(&v).contains("· review ✗ grok-4.7"),
+        "{}",
+        receipt(&v)
+    );
+    // A change after the review: what is committed is not what was read.
+    std::fs::write(repo.path().join("config.rs"), "rewritten\n").unwrap();
+    assert!(
+        receipt(&v).contains("· not reviewed after the last change"),
+        "{}",
+        receipt(&v)
+    );
+}
+
 /// A repo with one committed file changed in two places.
 fn workbench_repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -1695,124 +1737,187 @@ fn edit_rows_are_tinted_to_the_edge() {
     }
 }
 
-/// `/second`: the cost prompt, then the review in the chat with its verdict
-/// and cost.
-#[test]
-fn snapshot_second_opinion() {
+/// A review: the cost prompt, then the review hat's answer in the chat,
+/// its verdict under it, and the hat the user was in put back.
+fn reviewed(verdict: Option<bool>) -> View {
     let mut v = edited();
-    v.panels.push(Box::new(PermissionModal::new(
-        "second opinion".into(),
-        "x-ai/grok-4.7 on openrouter (your choice)\nreviews 2 files, +8 −1, read-only\nabout $0.02–$0.31 of your $5.00 limit\nyour last 4 reviews with it cost $0.03–$0.19".into(),
-    )));
-    all_sizes("modal-second-opinion", &v);
-    let mut v = edited();
-    crate::run_events_apply(
-        &mut v,
-        AgentEvent::SecondOpinion {
-            model: "anthropic/claude-opus-5.5".into(),
-            connection: "openrouter".into(),
-            verdict: Some(false),
-            body: "- **blocking** `app/server.js:6`: an empty query returns early, but `find` still runs on `undefined` when `q` is missing.\n- note: the test covers `\"\"` only.\n\nVERDICT: FAIL".into(),
-            total_usd: Some(0.04),
+    v.specialists.insert(
+        "review".into(),
+        ryter_core::config::RoleModel {
+            connection: Some("openrouter".into()),
+            model: Some("anthropic/claude-opus-5.5".into()),
         },
     );
-    all_sizes("second-opinion", &v);
-}
-
-/// Choosing who gives second opinions: the catalog priced for this review,
-/// then the user's limit.
-#[test]
-fn snapshot_reviewer_chooser() {
-    let catalog = |id: &str, i: Option<f64>, o: Option<f64>| ryter_core::ModelInfo {
-        id: id.into(),
-        context_length: Some(256_000),
-        input_per_million: i,
-        output_per_million: o,
-        connection: Some("openrouter".into()),
-        created: None,
-        tools: Some(true),
+    let body = match verdict {
+        Some(false) => {
+            "- **blocking** `app/server.js:6`: an empty query returns early, but `find` still runs on `undefined` when `q` is missing.\n- note: the test covers `\"\"` only.\n\nVERDICT: FAIL"
+        }
+        _ => {
+            "- **note** `app/server.js:6`: an empty query returns `[]`; the test covers it.\n\nVERDICT: PASS"
+        }
     };
-    let models = vec![
-        catalog("openai/gpt-5.5", Some(5.0), Some(15.0)),
-        catalog("x-ai/grok-4.7", Some(3.0), Some(15.0)),
-        catalog("z-ai/glm-5.3", Some(0.4), Some(1.6)),
-        catalog("moonshotai/kimi-k3", Some(1.0), Some(4.0)),
-        catalog("vendor/no-price", None, None),
-    ];
-    let mut v = edited();
-    let mut chooser = crate::panel::models::Models::for_review(&mut v, 18_000, true);
-    chooser.set_models(&v, &models);
-    v.panels.push(Box::new(chooser.clone()));
-    crate::panel::sync_composer(&mut v);
-    all_sizes("reviewer-chooser", &v);
-    let mut v = edited();
-    let mut c = chooser;
-    let _ = crate::panel::Panel::key(
-        &mut c,
-        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        &mut v,
-    );
-    v.panels.push(Box::new(c));
-    crate::panel::sync_composer(&mut v);
-    all_sizes("reviewer-limit", &v);
-}
-
-/// An audit stays in the chat as the audit: every row it shows carries the
-/// auditor's rule, and a long one folds so the work it audited stays on
-/// screen. `^O` shows it whole.
-#[test]
-fn an_audit_reads_as_the_audit_and_folds() {
-    let t = Theme::truecolor_dark();
-    let long: String = (1..=30)
-        .map(|i| format!("- **blocking** `app/server.js:{i}`: finding {i}\n"))
-        .collect::<String>()
-        + "\nVERDICT: FAIL";
-    let mut v = edited();
-    crate::run_events_apply(&mut v, AgentEvent::TurnStarted { turn: 2 });
-    crate::run_events_apply(
-        &mut v,
-        AgentEvent::SecondOpinion {
-            model: "z-ai/glm-5.3".into(),
-            connection: "openrouter".into(),
-            verdict: Some(false),
-            body: long,
-            total_usd: Some(0.01),
+    for ev in [
+        AgentEvent::ModeChanged {
+            role: ryter_core::Role::SoloReview,
         },
-    );
-    crate::run_events_apply(
-        &mut v,
+        AgentEvent::TurnStarted { turn: 2 },
+        AgentEvent::Token { text: body.into() },
         AgentEvent::TurnFinished {
             turn: 2,
             tools: 0,
             duration_ms: 3000,
         },
-    );
-    let screen = render_to_string(&v, 120, 40);
-    assert!(
-        screen.contains("… 18 more lines · ^O shows it whole"),
-        "{screen}"
-    );
-    // The work it audited is still on screen above it.
-    assert!(
-        screen.contains("app/server.js") && screen.contains("trim the query"),
-        "{screen}"
-    );
-    let buf = render_buffer(&v, 120, 40, t);
-    let rows: Vec<u16> = (0..buf.area.height)
-        .filter(|y| {
-            (0..buf.area.width)
-                .map(|x| buf[(x, *y)].symbol().to_string())
-                .collect::<String>()
-                .contains("finding")
-        })
-        .collect();
-    assert_eq!(rows.len(), 14);
-    for y in rows {
-        let cell = &buf[(1, y)];
-        assert_eq!((cell.symbol(), cell.fg), ("┃", t.audit), "row {y}");
+        AgentEvent::ModeChanged {
+            role: ryter_core::Role::SoloBuild,
+        },
+        AgentEvent::Reviewed {
+            model: "anthropic/claude-opus-5.5".into(),
+            connection: "openrouter".into(),
+            verdict,
+            tree: Some("4b825dc".into()),
+            total_usd: Some(0.04),
+        },
+    ] {
+        crate::run_events_apply(&mut v, ev);
     }
-    v.diffs_expanded = true;
-    assert!(!render_to_string(&v, 120, 80).contains("more lines · ^O"));
+    v
+}
+
+#[test]
+fn snapshot_review() {
+    let mut v = edited();
+    v.panels.push(Box::new(PermissionModal::new(
+        "review offer".into(),
+        "Review this work before you commit?\nx-ai/grok-4.7 on openrouter (the review hat's model)\nreviews 2 files, +8 −1, read-only\nabout $0.02–$0.31 of your $5.00 limit\nyour last 4 reviews with it cost $0.03–$0.19".into(),
+    )));
+    all_sizes("modal-review", &v);
+    all_sizes("review", &reviewed(Some(false)));
+}
+
+/// When a hat on another model speaks in the same turn, the ledger names
+/// each model as it takes over. Named once a turn, the builder's words
+/// after a review read as the reviewer's.
+#[test]
+fn a_model_is_named_again_after_another_has_spoken() {
+    let mut v = idle();
+    v.ui.layout = "ledger".into();
+    v.specialists.insert(
+        "review".into(),
+        ryter_core::config::RoleModel {
+            connection: Some("openrouter".into()),
+            model: Some("x-ai/reviewer-x".into()),
+        },
+    );
+    let _ = v.submit_user("change it".into(), "change it".into());
+    let hat = |v: &mut View, role| crate::run_events_apply(v, AgentEvent::ModeChanged { role });
+    v.on_token("Changing the greeting.");
+    hat(&mut v, ryter_core::Role::SoloReview);
+    v.on_token("The word is wrong.\n\nVERDICT: FAIL");
+    hat(&mut v, ryter_core::Role::SoloBuild);
+    v.on_token("Fixing the word.");
+    hat(&mut v, ryter_core::Role::SoloReview);
+    v.on_token("Nothing to report.\n\nVERDICT: PASS");
+    let screen = render_to_string(&v, 120, 50);
+    let at = |what: &str| {
+        screen
+            .lines()
+            .position(|l| l.contains(what))
+            .unwrap_or_else(|| panic!("no {what:?} in\n{screen}"))
+    };
+    let named: Vec<usize> = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains("◆  grok-4.6") || l.contains("◆  reviewer-x"))
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(named.len(), 4, "each takeover is named:\n{screen}");
+    // Each name is the line above the words it heads.
+    for (name, words) in named.iter().zip([
+        "Changing the greeting.",
+        "The word is wrong.",
+        "Fixing the word.",
+        "Nothing to report.",
+    ]) {
+        assert_eq!(*name + 1, at(words), "{screen}");
+    }
+    let name = |i: usize| screen.lines().nth(named[i]).unwrap_or("").to_string();
+    assert!(
+        name(0).contains("grok-4.6") && name(2).contains("grok-4.6"),
+        "{screen}"
+    );
+    assert!(
+        name(1).contains("reviewer-x") && name(3).contains("reviewer-x"),
+        "{screen}"
+    );
+    // The same model speaking twice running is named once.
+    v.on_token(" Done.");
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::Notice {
+            message: "a note".into(),
+        },
+    );
+    v.on_token("And a second step.");
+    let screen = render_to_string(&v, 120, 50);
+    assert_eq!(
+        screen
+            .lines()
+            .filter(|l| l.contains("◆  reviewer-x") || l.contains("◆  grok-4.6"))
+            .count(),
+        4,
+        "{screen}"
+    );
+}
+
+/// The verdict is said under the review, and kept for the commit's receipt
+/// until a commit is made.
+#[test]
+fn a_reviews_verdict_is_said_and_kept_for_the_commit() {
+    for (verdict, said) in [
+        (Some(true), "✓ no blocking problems"),
+        (Some(false), "✗ blocking problems"),
+        (None, "no verdict"),
+    ] {
+        let mut v = reviewed(verdict);
+        let screen = render_to_string(&v, 120, 40);
+        assert!(
+            screen.contains(&format!("review · claude-opus-5.5 · {said} · $0.04")),
+            "{screen}"
+        );
+        // The review is headed by the model that wrote it, not the one
+        // every other hat uses.
+        let heads: Vec<&str> = v
+            .messages
+            .iter()
+            .filter_map(|m| match &m.kind {
+                crate::chat::MessageKind::Assistant { model } => Some(model.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            heads.last(),
+            Some(&"anthropic/claude-opus-5.5"),
+            "{heads:?}"
+        );
+        assert_eq!(
+            v.last_review,
+            Some((
+                Some("4b825dc".to_string()),
+                "anthropic/claude-opus-5.5".to_string(),
+                verdict
+            ))
+        );
+        // The hat the user was in is back.
+        assert_eq!(v.mode, ryter_core::Role::SoloBuild);
+        crate::run_events_apply(
+            &mut v,
+            AgentEvent::Committed {
+                summary: Some("abc1234 Fix the query".into()),
+                error: None,
+            },
+        );
+        assert_eq!(v.last_review, None);
+    }
 }
 
 /// Not a test: renders preview scenes in the themes named by
@@ -1850,29 +1955,7 @@ fn render_theme_preview() {
     };
     type Scene = (&'static str, Box<dyn Fn() -> View>);
     let scenes: Vec<Scene> = vec![
-        (
-            "chat",
-            Box::new(|| {
-                let mut v = edited();
-                crate::run_events_apply(&mut v, AgentEvent::TurnStarted { turn: 2 });
-                crate::run_events_apply(&mut v, AgentEvent::SecondOpinion {
-                model: "z-ai/glm-5.3".into(),
-                connection: "openrouter".into(),
-                verdict: Some(true),
-                body: "- **note** `app/server.js:6`: an empty query returns `[]`; the test covers it.\n\nVERDICT: PASS".into(),
-                total_usd: Some(0.01),
-            });
-                crate::run_events_apply(
-                    &mut v,
-                    AgentEvent::TurnFinished {
-                        turn: 2,
-                        tools: 0,
-                        duration_ms: 3000,
-                    },
-                );
-                v
-            }),
-        ),
+        ("chat", Box::new(|| reviewed(Some(true)))),
         (
             "models",
             Box::new(|| {

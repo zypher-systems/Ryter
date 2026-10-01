@@ -117,6 +117,16 @@ impl Settings {
                 false,
                 1.0,
             ),
+            num(
+                "review",
+                "review usd (0 = off)",
+                view.review_usd,
+                0.0,
+                1_000.0,
+                0.5,
+                false,
+                0.0,
+            ),
             Field::new("g_agents", "agents", Kind::Header),
             num(
                 "max",
@@ -207,7 +217,7 @@ impl Settings {
             .origin(origin(&view.ui.line_numbers, &d.line_numbers)),
             Field::new(
                 "offer_audit",
-                "audit offers",
+                "review offers",
                 Kind::Toggle(view.ui.offer_audit),
             )
             .origin(origin(&view.ui.offer_audit, &d.offer_audit)),
@@ -252,6 +262,9 @@ impl Settings {
         }
         if let Some(v) = number("warn") {
             view.warn_usd = v;
+        }
+        if let Some(v) = number("review") {
+            view.review_usd = v;
         }
         if let Some(v) = number("max") {
             view.max_crew = v.round().clamp(1.0, 16.0) as u32;
@@ -694,6 +707,23 @@ mod tests {
                 auditor: Steps::MAX,
             }
         );
+    }
+
+    /// The most a review may spend is set here; 0 is no limit.
+    #[test]
+    fn the_review_limit_is_set_here() {
+        let mut v = view();
+        v.review_usd = 2.0;
+        let mut s = Settings::new(&v);
+        let field = s.form.get("review").unwrap();
+        assert_eq!(field.label, "review usd (0 = off)");
+        assert!(field.label.chars().count() <= 25);
+        assert_eq!(field.value_text(), "2.00");
+        s.apply(&mut v);
+        assert_eq!(v.review_usd, 2.0);
+        set(&mut s, "review", 0.0);
+        s.apply(&mut v);
+        assert_eq!(v.review_usd, 0.0);
     }
 
     fn rows(s: &Settings, v: &View, width: u16, height: u16) -> Vec<String> {

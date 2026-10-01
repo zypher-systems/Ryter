@@ -374,6 +374,7 @@ fn populate_view(
         view.budget_last = view.budget_usd;
     }
     view.task_budget_usd = cfg.spend.task_budget_usd;
+    view.review_usd = cfg.spend.review_usd;
     view.model_reasoning = cfg.model_reasoning.clone();
     view.warn_usd = cfg.spend.warn_usd;
     view.max_crew = cfg.subagents.max;
@@ -526,12 +527,6 @@ fn loop_ui(
         // Drain everything that arrived since the last frame (`R-EVT-05`).
         while let Ok(ev) = ev_rx.try_recv() {
             events::apply(view, ev);
-            if let Some((tokens, then_run)) = view.reviewer_ask.take() {
-                let chooser = crate::panel::models::Models::for_review(view, tokens, then_run);
-                view.panels.push(Box::new(chooser));
-                crate::panel::sync_composer(view);
-                cx.send(crate::run::worker::Work::ListCrewModels);
-            }
             dirty = true;
         }
         while let Ok(n) = notice_rx.try_recv() {

@@ -147,20 +147,9 @@ pub enum AgentEvent {
         /// file it is writing, a command's output.
         tail: Vec<String>,
     },
-    /// `/second` needs the user to choose who reviews and how much one
-    /// review may spend: nobody chose yet, the choice can't be used, or the
-    /// user asked to change it.
-    ReviewerNeeded {
-        /// Tokens the reviewer would start with, to price each model.
-        context_tokens: u64,
-        /// Run the review once a reviewer is chosen.
-        then_run: bool,
-        /// Why the choice is being asked for, when it isn't the first time.
-        #[serde(default)]
-        reason: String,
-    },
-    /// A second model reviewed the uncommitted work (`/second`).
-    SecondOpinion {
+    /// The review hat reviewed the uncommitted work (`/audit`, or the offer
+    /// after a build turn). The review itself is the turn's answer.
+    Reviewed {
         /// Reviewer model id.
         model: String,
         /// Its connection.
@@ -168,9 +157,11 @@ pub enum AgentEvent {
         /// `Some(true)` for `VERDICT: PASS`, `Some(false)` for FAIL, `None`
         /// when it gave neither.
         verdict: Option<bool>,
-        /// The review, for the chat.
-        body: String,
-        /// What it cost; `None` when unpriced.
+        /// The files it reviewed, as a git tree: a commit of anything else
+        /// was not reviewed.
+        #[serde(default)]
+        tree: Option<String>,
+        /// What the review cost; `None` when unpriced.
         #[serde(default)]
         total_usd: Option<f64>,
     },

@@ -74,14 +74,10 @@ pub enum Work {
         /// Even over the user's edits since the undo.
         force: bool,
     },
-    /// `/second`: another model reviews the uncommitted work.
-    SecondOpinion,
-    /// `/audit model`: ask the user to choose the reviewer again.
-    ChooseReviewer,
-    /// Offer an audit after build turns, or not.
+    /// `/audit`: the review hat reviews the uncommitted work.
+    ReviewNow,
+    /// Offer a review after build turns, or not.
     SetOfferAudit(bool),
-    /// Save the user's reviewer choice; run the review when `then_run`.
-    SetReviewer(ryter_core::config::ReviewerConfig, bool),
     /// `/changes`: put one file back as `base` had it.
     Revert {
         /// Commit to restore from.
@@ -113,6 +109,8 @@ pub enum Work {
         budget_usd: f64,
         /// Per-task cap.
         task_budget_usd: f64,
+        /// Most one review may spend.
+        review_usd: f64,
         /// Max parallel specialists.
         max_crew: u32,
         /// Steps each kind of specialist gets.
@@ -373,14 +371,14 @@ pub fn run(init: WorkerInit) {
                     let out = match rt.block_on(a.turn(&text)) {
                         Ok(r) => {
                             // A build turn that finished and changed files:
-                            // offer an audit. Not for a turn another program
+                            // offer a review. Not for a turn another program
                             // asked for over MCP.
                             let changed = a.session.meta.checkpoints.len() > before;
                             if changed
                                 && reply.is_none()
                                 && r.reason == ryter_core::StopReason::Completed
                             {
-                                if let Err(e) = rt.block_on(a.offer_audit()) {
+                                if let Err(e) = rt.block_on(a.offer_review()) {
                                     send_err(&ev_tx, e.to_string());
                                 }
                             }
@@ -540,41 +538,10 @@ pub fn run(init: WorkerInit) {
                     c.ui.offer_audit = on;
                 }
             }
-            Ok(Work::ChooseReviewer) => {
-                if let Some(a) = &mut agent {
-                    if let Err(e) = a.choose_reviewer() {
-                        send_err(&ev_tx, e.to_string());
-                    }
-                }
-            }
-            Ok(Work::SetReviewer(choice, then_run)) => {
-                if let Err(e) = ryter_core::config::save_reviewer(&home, &choice) {
-                    send_err(&ev_tx, e.to_string());
-                }
-                let _ = ev_tx.send(AgentEvent::Notice {
-                    message: format!(
-                        "audits: {} on {}, up to ${:.2} each · /audit model changes it",
-                        choice.model, choice.connection, choice.limit_usd
-                    ),
-                });
-                cfg.reviewer = Some(choice.clone());
-                if let Some(a) = &mut agent {
-                    if let Some(c) = a.cfg.as_mut() {
-                        c.reviewer = Some(choice);
-                    }
-                    if then_run {
-                        a.ctx.cancel.reset();
-                        if let Err(e) = rt.block_on(a.second_opinion()) {
-                            send_err(&ev_tx, e.to_string());
-                        }
-                        refresh_live(a, &live_status, &live_spend);
-                    }
-                }
-            }
-            Ok(Work::SecondOpinion) => {
+            Ok(Work::ReviewNow) => {
                 if let Some(a) = &mut agent {
                     a.ctx.cancel.reset();
-                    if let Err(e) = rt.block_on(a.second_opinion()) {
+                    if let Err(e) = rt.block_on(a.review_now()) {
                         send_err(&ev_tx, e.to_string());
                     }
                     refresh_live(a, &live_status, &live_spend);
@@ -645,6 +612,7 @@ pub fn run(init: WorkerInit) {
             Ok(Work::SetSettings {
                 budget_usd,
                 task_budget_usd,
+                review_usd,
                 max_crew,
                 steps,
                 web,
@@ -655,6 +623,7 @@ pub fn run(init: WorkerInit) {
                 let apply = |c: &mut Config| {
                     c.spend.session_budget_usd = budget_usd;
                     c.spend.task_budget_usd = task_budget_usd;
+                    c.spend.review_usd = review_usd;
                     c.subagents.max = max_crew;
                     c.subagents.steps = steps;
                     c.features.web = web;
