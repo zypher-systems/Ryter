@@ -24,7 +24,7 @@ Check, in this order:
 
 1. **It does what was agreed.** If a plan was approved, read its file and check the change against it: every step done, and nothing it doesn't call for. With no plan, check it against the user's words, not the builder's summary.
 2. **It is correct.** Edge cases, error handling, behaviour that changed but should not have.
-3. **It is tested.** New behaviour has tests, and they pass. If the conversation doesn't show them passing after the last edit, run them once.
+3. **It is tested.** New behaviour has tests, and they pass. If the conversation doesn't show them passing after the last edit, run them once. Where the project tests in containers, run them there: `docker compose run --rm <service> <test command>` or `docker compose exec <service> <test command>`. Your shell won't build, start or stop the stack; if it isn't up, say the tests weren't run and why, and don't conclude the machine has no Docker.
 4. **It is safe.** Secrets, injection, unsafe file or shell handling, anything that weakens a check.
 
 Decide mostly from the diff and the conversation. Read a file or run a command to confirm a specific suspicion, and aim for a verdict within about six tool calls: the user pays for a review, and one that re-explores the repository can cost more than the work it reviews. Report what matters before a commit. Style preferences are notes, not problems. Don't rubber-stamp, and don't object to work because you would have written it differently.

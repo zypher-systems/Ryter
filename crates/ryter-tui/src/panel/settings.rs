@@ -445,7 +445,8 @@ fn sandbox_table(chosen: &str, width: usize, theme: Theme) -> Vec<Line<'static>>
     }
     out.push(blank());
     out.extend(note(
-        "* docker can reach the whole machine; the sandbox does not stop it.",
+        "* docker can reach the whole machine; the sandbox does not stop it. \
+         Rootless podman can't run under workspace or read-only.",
     ));
     out.extend(note(
         "† Ryter refuses to read your keys, but nothing stops a command that tries.",

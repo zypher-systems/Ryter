@@ -1204,9 +1204,11 @@ async fn audit(
     let checks = if job.checks.is_empty() {
         "No checks are configured for this project, so nothing has built or tested this code. \
          Run its tests yourself if your shell can: it runs test runners, linters and read-only \
-         commands (`pytest`, `cargo test`, `npm test`, `go test`, `ruff check`), and refuses \
-         everything else, including containers (`docker`, `podman`), servers, installs and \
-         the project's own shell scripts. That is a limit on you, not on the project: the builder \
+         commands (`pytest`, `cargo test`, `npm test`, `go test`, `ruff check`), in the \
+         project's containers too (`docker compose run --rm <service> pytest`, `docker \
+         compose exec <service> …`), and refuses everything else, including building, \
+         starting and stopping containers, servers, installs and the project's own shell \
+         scripts. That is a limit on you, not on the project or the machine: the builder \
          can run those, and its handback says what it ran. If confirming the work needs a \
          command your shell refuses, or something outside this task that hasn't landed (the \
          manifest or module another task creates), don't look for a way round: review it by \
@@ -3028,8 +3030,9 @@ mod tests {
         let brief = p.request(2);
         for want in [
             "No checks are configured for this project",
-            "including containers (`docker`, `podman`)",
-            "That is a limit on you, not on the project",
+            "in the project's containers too (`docker compose run --rm <service> pytest`",
+            "including building, starting and stopping containers",
+            "That is a limit on you, not on the project or the machine",
             "don't look for a way round",
             "`VERDICT: UNVERIFIED`",
         ] {

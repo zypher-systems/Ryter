@@ -7,6 +7,9 @@ added at the top, and this comment removed.
 
 ## What was wrong
 
+- **A reviewer couldn't test a project that tests in containers, and said the machine had no Docker.** The auditor's shell, and the review hat's, refused every `docker` and `podman` command, so on a Docker project neither could run the tests. The auditor's own instructions said it "refuses containers", and it reported that to the user as "there is no docker or podman in my environment". Docker was there all along.
+- **`docker compose build` failed under the `workspace` sandbox** with "~/.docker/buildx/.lock: permission denied". A crew's builder spent its steps working around it and committed its scratch files.
+
 - **`/models` crashed Ryter beside the rail.** With the side rail showing and a terminal narrower than about 158 columns, opening `/models` ended the program with "index outside of buffer". The panel asks for 124 columns and was sized to the whole screen, not to the space beside the rail, so it was drawn past the right edge. It has done this since 0.9.1. Hiding the rail (`^b`) or a wider terminal avoided it.
 
 - **A crew could not get past a task whose auditor ran out of steps.** On a real project (a Docker web app) the first builder task never landed, after six rounds and $2.83:
@@ -26,6 +29,13 @@ added at the top, and this comment removed.
 - **A plan was a message, approved by a question about something else.** The plan hat wrote its plan into the chat, and work started when you answered a yes/no card about switching hats. There was no way to say "change this part first", and the plan was nowhere but the chat's history.
 
 ## What changed
+
+- **A reviewer tests in the project's containers.** The auditor and the review hat may now:
+  - run a test or lint command in one of the project's containers: `docker compose run --rm web pytest`, `docker compose exec web ruff check .`, `docker exec <container> …` (`podman` the same). The command inside answers to the same rules as outside, so `ruff format .`, `pip install` or a shell are still refused.
+  - look at what is running: `docker compose ps`, `docker compose logs web`, `docker ps`, `docker images`.
+  - They still may not build, start, stop or remove containers, use `docker run`, mount a folder, or point Docker at another machine. A refusal now says what does run in containers, and that Docker is there.
+- **`docker build` works under a sandbox profile.** Its lock folder, `~/.docker/buildx`, is writable. The registry logins beside it (`~/.docker/config.json`) stay shut.
+- **`/settings` and the guide say that rootless Podman can't run under `workspace` or `read-only`.** It needs its state in your home folder and a user namespace of its own, and a sandboxed command gets neither.
 
 - **No panel is drawn off the screen.** A panel is sized to the space it is drawn in, and whatever it asks for is cut to the screen. `/models` opens beside the rail at any width.
 
@@ -75,6 +85,12 @@ added at the top, and this comment removed.
 - **The benchmark has a tenth task, `runner-script`:** a feature in a project whose tests run only through its own script, which the auditor's shell refuses.
 
 ## Tried before release
+
+- **A reviewer and containers:**
+  - In the TUI, in the review hat, against a stand-in provider on a machine with Docker: `docker ps` ran and listed the containers; `docker compose run --rm web pytest -q` ran (Docker answered that the test folder has no compose file); `docker compose up -d --wait` and `docker run -v /:/host …` were refused, each with "Docker is here, and tests and linters do run in the project's containers".
+  - Under the real `workspace` sandbox on this machine: `docker version`, `docker ps`, `docker compose version` and `docker buildx ls` all worked. Without the new grant `docker buildx ls` failed with the same "buildx/.lock: permission denied" the crew's builder hit.
+  - Rootless Podman under the sandbox: `podman ps` failed on its database, and a user namespace could not be set up at all (`unshare -Urm` failed where it works outside the sandbox).
+  - Not tried: a real crew or review run on the Docker project this came from. It needs this build.
 
 - **`/models` beside the rail,** in the TUI at 110 columns, where 0.10.0 crashes: it opened, with every model's name and prices in view. A new test opens every panel at every width from 40 to 200 columns, with and without the rail; it crashes on 0.10.0.
 

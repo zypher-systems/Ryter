@@ -555,6 +555,13 @@ fn todo_write(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     Ok(ToolOutput::ok(format!("{n} tasks\n{summary}")))
 }
 
+/// What a reviewer may do with containers, for a refusal: a model refused
+/// `docker compose up` otherwise concludes it has no Docker at all.
+const CONTAINER_CHECKS: &str = " Docker is here, and tests and linters do run in the \
+    project's containers: `docker compose run --rm <service> <test command>`, `docker compose \
+    exec <service> <test command>`, and `docker compose ps` / `logs` to look. Building, \
+    starting and stopping the stack are not yours.";
+
 /// Decide then execute. Deny/Ask do not run. PreToolUse hooks can still deny.
 pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     if ctx.cancel.is_cancelled() {
@@ -637,12 +644,18 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
         {
             Ok(ToolOutput::err(format!(
                 "denied: the {} hat can't {} — tell the user; they can press Tab to switch to \
-                 build",
+                 build.{}",
                 ctx.role,
                 if name == "bash" {
                     "run commands that change things"
                 } else {
                     "edit files"
+                },
+                if name == "bash" && ctx.role == Role::SoloReview && policy::names_containers(args)
+                {
+                    CONTAINER_CHECKS
+                } else {
+                    ""
                 }
             )))
         }
@@ -674,10 +687,15 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
             Ok(ToolOutput::err(format!(
                 "denied: bash {} — the auditor's shell runs only test runners, linters and \
                  read-only commands, and this isn't one. That is a limit on the auditor, not \
-                 on this machine or the project: the builder can run it. Don't look for \
+                 on this machine or the project: the builder can run it.{} Don't look for \
                  another way to run it. Judge what you can from the diff, the checks and the \
                  builder's handback, and say in your review what you could not confirm.",
-                crate::user_io::summary_args(name, args)
+                crate::user_io::summary_args(name, args),
+                if policy::names_containers(args) {
+                    CONTAINER_CHECKS
+                } else {
+                    ""
+                }
             )))
         }
         Decision::Deny => Ok(ToolOutput::err(format!(
@@ -1141,7 +1159,7 @@ mod tests {
             "docker compose build web",
             "podman compose up -d --wait",
             "./dev test",
-            "docker compose run --rm web pytest",
+            "docker run --rm alpine true",
         ] {
             let out = gated_execute("bash", &json!({ "command": cmd }), &auditor).unwrap();
             assert!(out.is_error, "{cmd}: {out:?}");
@@ -1150,6 +1168,33 @@ mod tests {
                     .contains("a limit on the auditor, not on this machine")
                     && out.text.contains("the builder can run it")
                     && out.text.contains("Don't look for another way"),
+                "{cmd}: {out:?}"
+            );
+            // A refused container command says what does run in
+            // containers, so "no Docker here" isn't the conclusion.
+            assert_eq!(
+                out.text
+                    .contains("Docker is here, and tests and linters do run in the project's"),
+                cmd != "./dev test",
+                "{cmd}: {out:?}"
+            );
+        }
+        // The review hat is told the same.
+        let reviewer = ctx(Role::SoloReview, dir.path());
+        for (cmd, containers) in [
+            ("docker compose up -d --wait", true),
+            ("cd app && podman-compose build", true),
+            ("npm install", false),
+        ] {
+            let out = gated_execute("bash", &json!({ "command": cmd }), &reviewer).unwrap();
+            assert!(out.is_error, "{cmd}: {out:?}");
+            assert!(
+                out.text.contains("the review hat can't run commands"),
+                "{out:?}"
+            );
+            assert_eq!(
+                out.text.contains("docker compose run --rm <service>"),
+                containers,
                 "{cmd}: {out:?}"
             );
         }

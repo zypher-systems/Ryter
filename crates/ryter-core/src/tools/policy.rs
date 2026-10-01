@@ -509,6 +509,209 @@ fn checks_only(prog: &str, args: &[String], worktree: bool) -> bool {
     }
 }
 
+/// What a `docker` or `podman` command comes to, for a role that only
+/// checks.
+#[derive(Debug, PartialEq, Eq)]
+enum InContainer {
+    /// Not a container command, or one that builds, starts, stops or
+    /// removes: the builder's to run.
+    No,
+    /// It only looks: `docker compose ps`, `docker logs web`.
+    Looks,
+    /// It runs this command in one of the project's containers.
+    Runs(String),
+}
+
+/// Where a command's own options end: the index of its first plain
+/// argument. `None` when one of `refused` is among them. `valued` are the
+/// options followed by a value (`-e KEY=1`, `--user app`).
+fn past_options(args: &[String], valued: &[&str], refused: &[&str]) -> Option<usize> {
+    let mut i = 0;
+    while let Some(a) = args.get(i).map(String::as_str) {
+        if a == "--" {
+            return Some(i + 1);
+        }
+        if !a.starts_with('-') || a == "-" {
+            return Some(i);
+        }
+        let name = a.split('=').next().unwrap_or(a);
+        if refused.contains(&name) {
+            return None;
+        }
+        if a.starts_with("--") {
+            i += if a.contains('=') || !valued.contains(&name) {
+                1
+            } else {
+                2
+            };
+            continue;
+        }
+        if valued.contains(&a) {
+            i += 2;
+            continue;
+        }
+        // `-eKEY=1`: the value attached. Otherwise a cluster of flags
+        // (`-it`), refused if any one of them is.
+        let attached = valued
+            .iter()
+            .any(|v| v.len() == 2 && a.starts_with(v) && a.len() > 2);
+        if !attached
+            && a[1..]
+                .chars()
+                .any(|c| refused.contains(&format!("-{c}").as_str()))
+        {
+            return None;
+        }
+        i += 1;
+    }
+    Some(i)
+}
+
+/// The command a container is asked to run, as one segment the gate can
+/// read again. `None` when a word can't be put back the way it came.
+fn inner_segment(words: &[String]) -> Option<String> {
+    let plain = |w: &str| {
+        !w.is_empty()
+            && w.chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c))
+    };
+    let mut out = Vec::new();
+    for w in words {
+        if plain(w) || w == "2>&1" {
+            out.push(w.clone());
+        } else if w.contains('\'') {
+            return None;
+        } else {
+            out.push(format!("'{w}'"));
+        }
+    }
+    (!out.is_empty()).then(|| out.join(" "))
+}
+
+/// `docker`/`podman` for the review hat and the auditor. They may look at
+/// what is running, and run a command in one of the project's containers
+/// (`compose run`, `compose exec`, `exec`), which is then judged as it
+/// would be outside one. Building, starting, stopping and removing are the
+/// builder's; so is `docker run`, which starts any image with any mount.
+///
+/// Refused outright, they left an auditor unable to run the tests of a
+/// project that tests in containers, and it told the user there was no
+/// Docker on the machine.
+fn container_command(prog: &str, args: &[String]) -> InContainer {
+    const COMPOSE_VALUED: &[&str] = &[
+        "-f",
+        "--file",
+        "-p",
+        "--project-name",
+        "--profile",
+        "--ansi",
+        "--progress",
+        "--parallel",
+        "--project-directory",
+        "--env-file",
+    ];
+    // Options that point compose at another project or other variables.
+    const COMPOSE_REFUSED: &[&str] = &["--project-directory", "--env-file"];
+    const RUN_VALUED: &[&str] = &[
+        "-e",
+        "--env",
+        "-u",
+        "--user",
+        "-w",
+        "--workdir",
+        "--name",
+        "-l",
+        "--label",
+        "--pull",
+        "-v",
+        "--volume",
+        "-p",
+        "--publish",
+        "--entrypoint",
+        "--cap-add",
+        "--cap-drop",
+        "--env-from-file",
+        "--index",
+        "--detach-keys",
+        "--env-file",
+    ];
+    // Left running, given more of the machine, or a command that can't be
+    // read here.
+    const RUN_REFUSED: &[&str] = &[
+        "-d",
+        "--detach",
+        "-v",
+        "--volume",
+        "-p",
+        "--publish",
+        "--service-ports",
+        "--entrypoint",
+        "--cap-add",
+        "--privileged",
+        "--build",
+        "--env-from-file",
+        "--env-file",
+    ];
+    // `[options] CONTAINER command…`: the command, to be judged.
+    let runs = |rest: &[String]| -> InContainer {
+        let Some(at) = past_options(rest, RUN_VALUED, RUN_REFUSED) else {
+            return InContainer::No;
+        };
+        match rest.get(at + 1..).and_then(inner_segment) {
+            Some(inner) => InContainer::Runs(inner),
+            // No command: the service's own, which starts the product.
+            None => InContainer::No,
+        }
+    };
+    let follows = |rest: &[String]| rest.iter().any(|a| a == "-f" || a == "--follow");
+    let compose = |rest: &[String]| -> InContainer {
+        let Some(at) = past_options(rest, COMPOSE_VALUED, COMPOSE_REFUSED) else {
+            return InContainer::No;
+        };
+        let after = rest.get(at + 1..).unwrap_or_default();
+        match rest.get(at).map(String::as_str) {
+            Some("ps" | "images" | "ls" | "top" | "port" | "version") => InContainer::Looks,
+            // Following never ends.
+            Some("logs") if !follows(after) => InContainer::Looks,
+            Some("run" | "exec") => runs(after),
+            _ => InContainer::No,
+        }
+    };
+    match prog {
+        "docker-compose" | "podman-compose" => compose(args),
+        "docker" | "podman" => {
+            let after = args.get(1..).unwrap_or_default();
+            match args.first().map(String::as_str) {
+                Some("compose") => compose(after),
+                Some("ps" | "images" | "version" | "info" | "port" | "top" | "--version") => {
+                    InContainer::Looks
+                }
+                Some("logs") if !follows(after) => InContainer::Looks,
+                Some("exec") => runs(after),
+                // Everything else builds, starts, stops, removes, or reaches
+                // another machine (`-H`, `--context`).
+                _ => InContainer::No,
+            }
+        }
+        _ => InContainer::No,
+    }
+}
+
+/// True when a command runs `docker` or `podman`: a refusal of it says
+/// what a reviewer can do with containers.
+pub(crate) fn names_containers(args: &Value) -> bool {
+    args.get("command")
+        .and_then(Value::as_str)
+        .is_some_and(|cmd| {
+            segments(cmd).iter().any(|s| {
+                matches!(
+                    program(&words(s)),
+                    Some("docker" | "podman" | "docker-compose" | "podman-compose")
+                )
+            })
+        })
+}
+
 /// A package script, task, or make target whose name says it checks.
 fn script_checks(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
@@ -825,7 +1028,13 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
             if checks_only(prog, args, ctx.role == Role::Auditor) || read_only(prog, &words) {
                 Decision::Allow
             } else {
-                Decision::Deny
+                // A project whose tests run in its containers is checked
+                // there: the command inside answers to these same rules.
+                match container_command(prog, args) {
+                    InContainer::Looks => Decision::Allow,
+                    InContainer::Runs(inner) => decide_segment(&inner, ctx),
+                    InContainer::No => Decision::Deny,
+                }
             }
         }
         Role::Orchestrator | Role::Architect | Role::SoloPlan => {
@@ -2097,6 +2306,122 @@ mod tests {
         // Other roles: unchanged.
         assert_eq!(bash("echo x > /tmp/f", Role::Auditor, d), Decision::Deny);
         assert_eq!(bash("echo x > /tmp/f", Role::Builder, d), Decision::Deny);
+    }
+
+    /// A project that tests in its containers is checked there. The review
+    /// hat and the auditor may look at what is running and run a command in
+    /// one of the project's containers, judged as it would be outside one.
+    /// Refused every `docker` command, an auditor told the user there was
+    /// no Docker on the machine.
+    #[test]
+    fn a_reviewer_runs_the_tests_in_the_projects_containers() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join(".env"), "K=1").unwrap();
+        for role in [Role::Auditor, Role::SoloReview] {
+            for cmd in [
+                "docker compose run --rm web pytest -q",
+                "docker compose run --rm web ruff check .",
+                "docker compose run --rm web ruff format --check .",
+                "docker compose run --rm -T web python manage.py makemigrations --check --dry-run",
+                "docker compose -f docker-compose.yml -f compose.dev.yml run --rm web pytest",
+                "docker compose run --rm -e DJANGO_DEBUG=1 --user app web pytest -k 'slug and not media'",
+                "docker compose run --rm web pytest 2>&1 | tail -20",
+                "docker compose exec -T web pytest",
+                "docker compose exec -it web npm test",
+                "docker exec t-scaffold-web-1 pytest -q",
+                "podman compose run --rm web pytest",
+                "docker-compose run --rm web cargo test",
+                "podman-compose exec web go vet ./...",
+                // Looking.
+                "docker compose ps",
+                "docker compose ps --format '{{.Name}} {{.Status}}'",
+                "docker compose logs --tail 50 web",
+                "docker compose images",
+                "docker ps -a",
+                "docker logs --tail 20 t-scaffold-web-1",
+                "docker images",
+                "docker version",
+                "podman ps",
+                "docker compose exec web ls -la /app",
+            ] {
+                assert_eq!(bash(cmd, role, d), Decision::Allow, "{role}: {cmd}");
+            }
+            for cmd in [
+                // Building, starting, stopping and removing are the builder's.
+                "docker compose build web",
+                "docker compose up -d --wait",
+                "docker compose down -v",
+                "docker compose restart web",
+                "docker compose pull",
+                "docker rm -f t-scaffold-web-1",
+                "docker system prune -af",
+                "docker push registry/x",
+                "docker volume rm data",
+                // Any image, with any mount.
+                "docker run --rm -v /:/host alpine cat /host/etc/shadow",
+                "docker run --rm alpine true",
+                "podman run --rm alpine true",
+                // No command: the service's own, which starts the product.
+                "docker compose run --rm web",
+                "docker compose exec web",
+                // The command inside answers to the reviewer's rules.
+                "docker compose run --rm web sh -c 'rm -rf /app'",
+                "docker compose run --rm web bash",
+                "docker compose run --rm web ruff format .",
+                "docker compose run --rm web ruff check --fix .",
+                "docker compose run --rm web pip install requests",
+                "docker compose run --rm web pytest --snapshot-update",
+                "docker compose exec web rm -rf /app",
+                "docker compose exec web python -c 'import os'",
+                "docker compose exec web cat .env",
+                "docker compose exec web git commit -am x",
+                "docker exec web sudo pytest",
+                "docker compose run --rm web it's",
+                // More of the machine, left running, or a command hidden.
+                "docker compose run --rm -v /:/host web pytest",
+                "docker compose run --rm --volume=/:/host web pytest",
+                "docker compose run -d web pytest",
+                "docker compose run -dT web pytest",
+                "docker compose run --rm --entrypoint sh web pytest",
+                "docker compose run --rm --service-ports web pytest",
+                "docker compose run --rm --build web pytest",
+                "docker compose exec --privileged web pytest",
+                "docker exec -d web pytest",
+                // Never ends.
+                "docker compose logs -f web",
+                "docker logs --follow web",
+                // Another machine, another project, other variables.
+                "docker -H tcp://other:2375 ps",
+                "docker --context prod ps",
+                "docker compose --project-directory /etc run --rm web pytest",
+                "docker compose --env-file /tmp/x run --rm web pytest",
+                // Prints the project's `.env`, resolved.
+                "docker compose config",
+                "docker inspect t-scaffold-web-1",
+            ] {
+                assert_eq!(bash(cmd, role, d), Decision::Deny, "{role}: {cmd}");
+            }
+        }
+        // A redirect writes a file here, not in the container: refused in the
+        // user's own tree, as it is for any command.
+        let to_file = "docker compose run --rm web python manage.py test > out.txt";
+        assert_eq!(bash(to_file, Role::SoloReview, d), Decision::Deny);
+        assert_eq!(
+            bash("pytest > out.txt", Role::SoloReview, d),
+            Decision::Deny
+        );
+        // The other roles are as they were: a builder builds, the build
+        // hat asks, and the plan hat only reads files.
+        assert_eq!(
+            bash("docker compose build web", Role::Builder, d),
+            Decision::Allow
+        );
+        assert_eq!(
+            bash("docker compose run --rm web pytest", Role::SoloBuild, d),
+            Decision::Ask
+        );
+        assert_eq!(bash("docker compose ps", Role::SoloPlan, d), Decision::Deny);
     }
 
     /// Solo mode works in the user's own tree: build asks before changing

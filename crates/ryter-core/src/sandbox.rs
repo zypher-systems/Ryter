@@ -188,6 +188,11 @@ const TOOL_CACHES: &[&str] = &[
     ".m2/repository",
     ".cache/sccache",
     ".cache/pre-commit",
+    // `docker build` and `docker compose build` lock and record their
+    // builders here; without it they stop at "buildx/.lock: permission
+    // denied". Not the folder above it: `~/.docker/config.json` holds
+    // registry logins.
+    ".docker/buildx",
 ];
 
 /// System folders to read and run from, beyond the standard ones.
@@ -701,6 +706,11 @@ mod tests {
         file(".gitconfig", "[user]\nname = Me\n");
         file(".config/git/config", "[core]\n");
         file(".config/git/credentials", "https://me:token@host");
+        file(".docker/buildx/instances/default", "{}");
+        file(
+            ".docker/config.json",
+            "{\"auths\": {\"registry\": {\"auth\": \"secret\"}}}",
+        );
         // A cache planted as a link to the keys must not open them.
         std::fs::create_dir_all(u.join(".cache")).unwrap();
         std::os::unix::fs::symlink(u.join(".ssh"), u.join(".cache/pip")).unwrap();
@@ -729,6 +739,8 @@ mod tests {
             assert!(read(".config/git/config").is_ok());
             // Their cache is written; the programs themselves are not.
             std::fs::write(u.join(".cargo/registry/index/y"), "new").unwrap();
+            // `docker build` takes its lock.
+            std::fs::write(u.join(".docker/buildx/.lock"), "").unwrap();
             assert!(std::fs::write(u.join(".cargo/bin/cargo"), "swapped").is_err());
             assert!(std::fs::write(u.join("bin/mytool"), "swapped").is_err());
             // Saved logins beside them, and the rest of the home folder, stay shut:
@@ -739,6 +751,7 @@ mod tests {
                 ".ssh/id_ed25519",
                 ".cache/pip/id_ed25519",
                 ".config/git/credentials",
+                ".docker/config.json",
                 "notes/diary.txt",
             ] {
                 assert!(read(shut).is_err(), "{shut} is readable");

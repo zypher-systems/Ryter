@@ -22,6 +22,7 @@ Living plan for Ryter. The lead updates this as work lands.
 
 Work that is in `dev` and not yet released is marked *Unreleased*, and its notes collect in `docs/releases/next.md`. An entry gets its version when it's released.
 
+- **Unreleased: a reviewer tests in the project's containers.** The auditor and the review hat may run a test or lint command with `docker compose run` or `exec`, and look at what is running. `docker build` works under a sandbox profile. Before this a reviewer on a Docker project reported that the machine had no Docker.
 - **Unreleased: one reviewer.** The review hat takes the audit's place: `/audit` and the offer after a build turn run a review in that hat, on its model, against the approved plan. The commit receipt says whether the work was reviewed. The 0.10.0 audit model and limit carry over.
 - **Unreleased: a model for each hat.** `/models` lists *All hats*, *Plan*, *Build* and *Review*; a hat follows *All hats* until it has its own. The hats share one conversation, and the chat says what re-reading it costs when another model takes over.
 - **Unreleased: no panel is drawn off the screen.** `/models` crashed the program beside the rail on a terminal under about 158 columns wide (since 0.9.1). Panels are sized to the space they are drawn in.

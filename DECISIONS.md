@@ -12,6 +12,22 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
 - **Why:** "There is too many unknowns for crew to work effectively without the user." No real project had completed in crew mode; the benchmark's clean runs were on small tasks with checks already set.
 - **Where:** `ROADMAP.md` (Direction). The code to go, when it goes: `crew.rs`, `queue.rs`, `tiering.rs`, `estimate.rs`, the crew parts of `agent.rs`, and the crew panels, about 10,000 of 72,000 lines; `bench.rs` is rebuilt on the hats.
 
+### 2026-10-01 — A reviewer runs the tests in the project's containers
+- **By:** lead, from the user's report ("the auditor still is saying … there is no docker or podman in my environment")
+- **Decision:**
+  - **`container_command` (`tools/policy.rs`)**: for the auditor and the review hat, `docker`/`podman` `compose run`, `compose exec` and `exec` are read down to the command they run in the container, and that command is decided by `decide_segment` as it would be outside one. `ps`, `logs` (not followed), `images`, `version`, `info`, `port`, `top` only look and are allowed.
+  - **Still refused:** `build`, `up`, `down`, `rm`, `pull`, `push`, `docker run`; a `run`/`exec` that mounts (`-v`), detaches, publishes ports, sets an entrypoint, adds privileges or builds; no command at all (the service's own, which starts the product); `-H`/`--context`, `--project-directory`, `--env-file`; `compose config` and `inspect`, which print the project's `.env` resolved.
+  - **Refusals and instructions** (`gated_execute`, `auditor.md`, the no-checks brief, `solo.md`) say what runs in containers. The auditor's instructions used to say its shell "refuses containers", and it repeated that as a fact about the machine.
+  - **Sandbox:** `~/.docker/buildx` is a tool cache (writable). Podman's state folders are not granted: it could not start a container anyway.
+- **Chosen vs rejected:**
+  - Rejected letting a reviewer build or start the stack. Starting the product is the fourth hat's job, and a reviewer that brings a stack up leaves it up.
+  - Rejected `docker run`: any image with any mount is the whole machine.
+  - Rejected treating `docker compose run` as a wrapper for every role: a builder's `rm` inside a container would then be judged against paths on this machine.
+  - Rejected granting Podman's folders under the sandbox. Verified on this machine: under `workspace` a user namespace can't be set up (`unshare -Urm` fails; Ryter's process is closed to its children, and Landlock forbids mounts), so rootless containers can't start whatever is granted.
+- **Why:** on the user's Docker project every audit either refused to run the tests or ran out of steps trying, and the lead told the user Docker was blocked.
+- **Where:** `crates/ryter-core/src/tools/policy.rs` (`container_command`, `past_options`, `inner_segment`, `names_containers`), `tools/mod.rs` (`CONTAINER_CHECKS`), `sandbox.rs` (`TOOL_CACHES`), `crew.rs` (the no-checks brief), `prompts/auditor.md`, `prompts/solo.md`
+- **Residual risk:** `docker compose run` builds an image that is missing and starts the services the one it runs depends on, and those stay up. A test command in a container can do whatever the project's tests do, as it can outside one.
+
 ### 2026-10-01 — One reviewer: the review hat takes the audit's place
 - **By:** the user ("either let Review hat replace audit or change the Review hat to the Audit hat"), with the lead's choice of the first
 - **Decision:**
