@@ -16,6 +16,35 @@ cargo build -p ryter-cli
 
 Put the `ryter` binary on your `PATH` if you want. Data lives in `~/.ryter/` (`RYTER_HOME` overrides).
 
+### Updates
+
+A release installed with `install.sh` keeps itself up to date:
+
+- **At launch,** at most once a day, Ryter asks GitHub for the latest published release. Drafts are never offered. The check runs off the screen's thread, so startup doesn't wait for it.
+- **If a newer release is out,** Ryter installs it in the background and says so in the chat: "Ryter 0.9.1 is installed. Restart Ryter to use it." The Ryter you're running keeps working until you quit it.
+- **`ryter update`** checks and installs now, and `ryter update --check` only says whether a newer release is out.
+- **`[update] mode`** (or `/settings` → *updates* → *on launch*) sets what happens at launch:
+  - `install`, the default;
+  - `notify`, which says a newer release is out and leaves installing to `ryter update`;
+  - `off`, which doesn't check.
+
+  Headless runs (`ryter -p`, `ryter mcp serve`) never check.
+
+Before it installs anything, Ryter checks:
+
+1. **The signature.** `SHA256SUMS.sig` must be an ed25519 signature over the release's `SHA256SUMS`, made with Ryter's release key. Ryter is built with the public half of that key (`release/ryter-release.pub.pem`), so a tampered release, or one signed with any other key, is refused. Releases before 0.9.0 aren't signed and are never installed this way.
+2. **The checksum.** The download must match its line in `SHA256SUMS`.
+3. **The binary itself.** It must run and report the version the release says, within 10 seconds. A binary that hangs is stopped, along with anything it started, and nothing is installed.
+
+Only then does it replace the installed binary, the way `install.sh` does. Ryter writes the new one next to the old one and renames it into place.
+
+Ryter won't replace itself in these cases, and says what to do instead:
+
+- **A build from source** (`cargo build`, `cargo install`): only binaries the release workflow built update themselves. At launch, and from `ryter update --check`, a build from source is told when a newer release is out and how to update it.
+- **A folder you can't write to:** for example, a binary installed under `/usr/local/bin` by another account. Ryter never uses `sudo`. Rerun the install script as the account that installed it.
+
+`RYTER_UPDATE_URL` points the check at a mirror (`<url>/latest`, files under `<url>/download/<tag>/`). A mirror's releases must still carry a valid signature from the release key.
+
 ## Keys and connections
 
 SpaceXAI and OpenRouter are compiled in as equals. Other OpenAI-compatible or Anthropic Messages endpoints are user connections.

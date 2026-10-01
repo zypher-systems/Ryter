@@ -6,7 +6,7 @@
     │  warn usd              ‹ 1.00 ›                              default ┃
     │                                                                      ┃
     │ AGENTS                                                               ┃
-    │  subagents max         ‹ 4 ›                                 default ┃
+    │  subagents max         ‹ 4 ›                                 default │
     │  auditor               [ on ]                                default │
     │                                                                      │
     │ TOOLS                                                                │

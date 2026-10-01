@@ -238,6 +238,19 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     }));
     let live_spend = Arc::new(Mutex::new(String::new()));
 
+    // A newer release: checked at most once a day on a thread of its own,
+    // never the worker's, which may be sandboxed.
+    {
+        let tx = ev_tx.clone();
+        let home = home.clone();
+        let mode = cfg.update.mode;
+        std::thread::spawn(move || {
+            if let Some(message) = ryter_core::update::on_launch(&home, mode) {
+                let _ = tx.send(AgentEvent::Notice { message });
+            }
+        });
+    }
+
     let init = WorkerInit {
         cfg: cfg.clone(),
         conn,
@@ -364,6 +377,7 @@ fn populate_view(
     view.warn_usd = cfg.spend.warn_usd;
     view.max_crew = cfg.subagents.max;
     view.sandbox_profile = cfg.sandbox.profile.clone();
+    view.update_mode = cfg.update.mode;
     view.web = cfg.features.web;
     view.mcp_inbound = cfg.mcp.inbound;
     view.mcp_bind = cfg.mcp.bind.clone();

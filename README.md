@@ -14,7 +14,9 @@ curl -fsSL https://raw.githubusercontent.com/zypher-systems/ryter/main/install.s
 
 This installs a prebuilt binary to `~/.local/bin` for Linux (x86_64 and arm64, static, any distro) or macOS (Apple Silicon and Intel). The download is checked against the release's `SHA256SUMS` first. `RYTER_VERSION=v0.2.0` pins a version and `RYTER_INSTALL_DIR` picks the folder. Linux gets the full feature set; on macOS everything works except the Landlock sandbox, which is Linux-only.
 
-From source (Rust 1.88+): `cargo install --git https://github.com/zypher-systems/ryter ryter-cli`.
+Ryter keeps itself up to date. When it starts, at most once a day, it checks for a newer release. If there is one, it installs it, and you restart to use it. `ryter update` does the same on demand, and `ryter update --check` only says whether one is out. An update installs only when its signature matches Ryter's release key and the download matches its checksum. `/settings` → *updates* changes this to *notify* (say it's out, don't install) or *off*. Releases before 0.9.0 don't update themselves: run the install script once more to get 0.9.0.
+
+From source (Rust 1.88+): `cargo install --git https://github.com/zypher-systems/ryter ryter-cli`. A build from source doesn't update itself; update it the way you built it.
 
 ## Quick start
 

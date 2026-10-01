@@ -86,3 +86,4 @@ case ":$PATH:" in
        say "  export PATH=\"$DIR:\$PATH\"" ;;
 esac
 say "next: cd into a project and run: ryter"
+say "Ryter updates itself from now on (from 0.9.0): ryter update checks on demand"

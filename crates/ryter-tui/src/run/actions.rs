@@ -1040,6 +1040,7 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
     cx.cfg.features.web = view.web;
     cx.cfg.auditor.enabled = view.auditor_on;
     cx.cfg.ui = view.ui.clone();
+    cx.cfg.update.mode = view.update_mode;
     match config::save_settings(&cx.home, &cx.cfg) {
         Ok(()) => view.system("settings saved"),
         Err(e) => view.error(e.to_string()),

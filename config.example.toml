@@ -109,6 +109,12 @@ allow_dangerous = false
 # [sandbox]
 # profile = "off"               # off | workspace | read-only
 
+# Updating Ryter itself. At launch (at most once a day): install a newer signed
+# release in the background, only say it's out, or don't check. `ryter update`
+# works either way.
+# [update]
+# mode = "install"              # install | notify | off
+
 # Public web tools (SSRF-blocked: no localhost / private IPs). Off by default.
 # [features]
 # web = false

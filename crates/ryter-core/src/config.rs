@@ -52,6 +52,9 @@ pub struct Config {
     /// TUI presentation knobs (`[ui]`).
     #[serde(default)]
     pub ui: UiConfig,
+    /// Updating Ryter itself (`[update]`).
+    #[serde(default)]
+    pub update: UpdateConfig,
     /// `[reasoning_effort]`: `low` / `medium` / `high` / `default` per role
     /// (`build`, `plan`, `review`, `lead`, `architect`, `builder`,
     /// `auditor`), overriding [`reasoning_effort`]'s defaults.
@@ -150,6 +153,7 @@ impl Default for Config {
             sandbox: SandboxConfig::default(),
             features: FeaturesConfig::default(),
             ui: UiConfig::default(),
+            update: UpdateConfig::default(),
             reasoning_effort: BTreeMap::new(),
             model_reasoning: BTreeMap::new(),
             warnings: Vec::new(),
@@ -510,6 +514,58 @@ impl SandboxConfig {
     pub fn profile(&self) -> Result<crate::sandbox::SandboxProfile> {
         self.profile.parse()
     }
+}
+
+/// What Ryter does about a newer release when it starts (`[update] mode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateMode {
+    /// Check at most once a day, and install a newer release in the
+    /// background; the user restarts to use it.
+    #[default]
+    Install,
+    /// Check, and say a newer release is out; `ryter update` installs it.
+    Notify,
+    /// Never check on launch. `ryter update` still works.
+    Off,
+}
+
+impl UpdateMode {
+    /// The word in `config.toml` and `/settings`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Install => "install",
+            Self::Notify => "notify",
+            Self::Off => "off",
+        }
+    }
+
+    /// From its word: `install`, `notify`, or `off`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "install" => Some(Self::Install),
+            "notify" => Some(Self::Notify),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+
+    /// The next one in `/settings`: install, notify, off.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Install => Self::Notify,
+            Self::Notify => Self::Off,
+            Self::Off => Self::Install,
+        }
+    }
+}
+
+/// `[update]` table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateConfig {
+    /// `install` (default), `notify`, or `off`.
+    pub mode: UpdateMode,
 }
 
 /// One `[[hooks]]` row.
@@ -1130,6 +1186,8 @@ struct SettingsFile {
     auditor: Option<bool>,
     #[serde(default)]
     ui: Option<UiFile>,
+    #[serde(default)]
+    update: Option<UpdateMode>,
 }
 
 fn apply_settings_file(cfg: &mut Config, path: &Path) {
@@ -1166,6 +1224,9 @@ fn apply_settings_file(cfg: &mut Config, path: &Path) {
     if let Some(v) = file.web {
         cfg.features.web = v;
     }
+    if let Some(v) = file.update {
+        cfg.update.mode = v;
+    }
 }
 
 /// Persist budget / max / sandbox / inbound / web (does not rewrite `config.toml`).
@@ -1181,6 +1242,7 @@ pub fn save_settings(home: &Path, cfg: &Config) -> Result<()> {
         web: Some(cfg.features.web),
         auditor: Some(cfg.auditor.enabled),
         ui: Some(UiFile::from(&cfg.ui)),
+        update: Some(cfg.update.mode),
     };
     let body = toml::to_string(&file).map_err(|e| Error::Config(e.to_string()))?;
     fs::write(home.join("settings.toml"), body).map_err(|e| Error::Config(e.to_string()))
@@ -1266,6 +1328,7 @@ struct ConfigFile {
     sandbox: Option<SandboxConfig>,
     features: Option<FeaturesConfig>,
     ui: Option<UiFile>,
+    update: Option<UpdateConfig>,
     reasoning_effort: BTreeMap<String, String>,
     model_reasoning: BTreeMap<String, String>,
 }
@@ -1407,6 +1470,9 @@ impl ConfigFile {
         cfg.hooks.extend(self.hooks);
         if let Some(s) = self.sandbox {
             cfg.sandbox = s;
+        }
+        if let Some(u) = self.update {
+            cfg.update = u;
         }
         if let Some(f) = self.features {
             cfg.features = f;
@@ -2281,6 +2347,34 @@ mod tests {
         let p = &cfg.pricing["grok-4.6"];
         assert_eq!(p.input_per_million, Some(9.0));
         assert_eq!(p.output_per_million, Some(1.0));
+    }
+
+    /// `[update] mode` comes from `config.toml`, and `/settings` saves its
+    /// own choice to `settings.toml`, which wins. Install is the default.
+    #[test]
+    fn update_mode_is_read_and_saved() {
+        let dir = TempDir::new().unwrap();
+        assert_eq!(
+            load_at(dir.path(), None, false).unwrap().update.mode,
+            UpdateMode::Install
+        );
+        fs::write(
+            dir.path().join("config.toml"),
+            "[update]\nmode = \"notify\"\n",
+        )
+        .unwrap();
+        let mut cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(cfg.update.mode, UpdateMode::Notify);
+        cfg.update.mode = UpdateMode::Off;
+        save_settings(dir.path(), &cfg).unwrap();
+        assert_eq!(
+            load_at(dir.path(), None, false).unwrap().update.mode,
+            UpdateMode::Off
+        );
+        assert_eq!(
+            UpdateMode::Install.next().next().next(),
+            UpdateMode::Install
+        );
     }
 
     #[test]

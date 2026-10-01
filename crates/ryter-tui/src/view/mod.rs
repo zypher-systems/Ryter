@@ -294,6 +294,8 @@ pub struct View {
     pub max_crew: u32,
     /// Sandbox profile name.
     pub sandbox_profile: String,
+    /// `[update] mode`: what Ryter does about a newer release at launch.
+    pub update_mode: ryter_core::config::UpdateMode,
     /// `[features] web`.
     pub web: bool,
     /// `[ui]` settings in effect.
@@ -460,6 +462,7 @@ impl View {
             warn_usd: 1.0,
             max_crew: 4,
             sandbox_profile: "off".into(),
+            update_mode: ryter_core::config::UpdateMode::default(),
             web: false,
             // Tests and snapshots start on the classic layout; the app takes
             // the user's `[ui] layout` (ledger by default) from config.
