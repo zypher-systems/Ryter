@@ -59,7 +59,7 @@ SpaceXAI and OpenRouter are compiled in as equals. Other OpenAI-compatible or An
 
 Credential order per connection: TOML `api_key` → `env_key` → the stored key → well-known env (`OPENROUTER_API_KEY`, `XAI_API_KEY`).
 
-**Reasoning.** Each model has a reasoning level you choose: **Tab** on a model in `/models`, on any role's tab in `/models`, or on a seat in the crew builder steps it through `auto → low → medium → high → model's own`. The model card shows the level in use (`reasoning  auto · medium`). The choice follows the model into every role that uses it, and is saved to `~/.ryter/reasoning.toml`; `[model_reasoning]` in `config.toml` does the same by hand, keyed by model id.
+**Reasoning.** Each model has a reasoning level you choose: **Tab** on a model in `/models`, for any seat, or on a seat in the crew builder steps it through `auto → low → medium → high → model's own`. The model card shows the level in use (`reasoning  auto · medium`). The choice follows the model into every role that uses it, and is saved to `~/.ryter/reasoning.toml`; `[model_reasoning]` in `config.toml` does the same by hand, keyed by model id.
 
 **Auto** means Ryter picks by role: `high` for the plan hat and the architect, `medium` for every role that acts. `[reasoning_effort]` overrides that per role (`build`, `plan`, `review`, `lead`, `architect`, `builder`, `auditor`). **Model's own** sends nothing. Beware: with no setting, some models think for minutes before acting. The level is sent only to OpenRouter connections.
 
@@ -290,7 +290,12 @@ Headless, `ryter -p` runs in build; `--hat plan|review|crew` picks another. Head
 
 `/crew` switches to crew mode, and that's all it does. The first time, the crew builder opens (below); once a crew is saved, `/crew` switches straight to it. `/solo` goes back. In crew mode the right-hand panel adds the tasks and crew cards.
 
-**Every model is chosen in `/models`.** It has a tab per seat: the lead (`Solo` in solo mode), architect, builder and auditor, with `←→` to move between them. Each tab says what the seat runs on now, and a `used by` column marks which seats use each model. `⏎` sets the model for the seat on screen, `Tab` its reasoning, and `b` opens the guided crew builder. It works the same in solo and crew mode, so you can set up the crew before you switch to it. **`/crews`** holds the ready-made crews and your saved ones, to preview, apply, save or delete.
+**Every model is chosen in `/models`.** The seats are on the left: the lead (`Solo` in solo mode), architect, builder and auditor, each with the model it runs on now. The models for the chosen seat are on the right.
+- **Choosing a seat:** `↑↓` picks one. `→` or `⏎` moves to its models, and typing starts a filter there straight away.
+- **Setting a model:** `⏎` sets the highlighted model for the seat and takes you back to the seats, on the next one. You can set the whole crew in one visit: pick, `⏎`, pick, `⏎`. A `✓` marks each seat you've set.
+- **Other keys:** `←` goes back to the seats without setting anything. `Tab` steps the highlighted model's reasoning, `s` sorts, `b` opens the guided crew builder, and `Esc` closes.
+
+It works the same in solo and crew mode, so you can set up the crew before you switch to it. **`/crews`** holds the ready-made crews and your saved ones, to preview, apply, save or delete.
 
 ## The lead
 
@@ -314,7 +319,7 @@ Project markdown is loaded from the working tree without a trust gate: `RYTER.md
 
 **Order.** A task can list the tasks it builds on in `after` (`"after": ["scaffold"]`). It starts only once they have landed on the patch, so it branches from their real code. In a project with no build manifest yet (`Cargo.toml`, `package.json`, `pyproject.toml`, `go.mod`, …), the task that creates one runs first and alone, and every other builder task waits for it, whether or not the plan says so. A task whose prerequisite is blocked never starts: the crew report lists what each one waits on, and the lead fixes that task instead of retrying the ones waiting.
 
-Crew roles default to the lead’s current provider and model. Assign a different model per role in `/models` (`←→` to the role; the first row, `default`, follows the lead). That is also how you split providers. Optional `[specialists.*]` tables in `~/.ryter/config.toml` pin the same overrides.
+Crew roles default to the lead’s current provider and model. Assign a different model per role in `/models` (the role's seat; the first row, `default`, follows the lead). That is also how you split providers. Optional `[specialists.*]` tables in `~/.ryter/config.toml` pin the same overrides.
 
 Each builder task:
 
@@ -328,7 +333,7 @@ Each builder task:
 
 Tasks land on a patch branch (`ryter/patch-…`), not yours. When every task in the patch is done and the combined checks pass, the patch lands on your branch as **one commit** (`git revert -m 1` undoes it all). A blocked task holds the patch until you retry or drop it; the lead says what it is waiting on.
 
-Auditors must be different models from the lead and the builder — otherwise builds refuse to start and say how to fix it. Before the crew starts, Ryter checks that your OpenRouter account can use every seat it is about to call (a free lookup). If one is ruled out, say an auditor under zero data retention, nothing runs, the tasks stay queued, and you're told which seat to change. If a model still fails after the builder has finished (the auditor's provider is down, say), the task stops with its work kept on its branch. Assign one in `/models → auditor`, or list a panel under `[[auditor.panel]]` (all must pass; cheapest first; seats may have a `focus` and `paths`).
+Auditors must be different models from the lead and the builder — otherwise builds refuse to start and say how to fix it. Before the crew starts, Ryter checks that your OpenRouter account can use every seat it is about to call (a free lookup). If one is ruled out, say an auditor under zero data retention, nothing runs, the tasks stay queued, and you're told which seat to change. If a model still fails after the builder has finished (the auditor's provider is down, say), the task stops with its work kept on its branch. Assign one in `/models` (the Auditor seat), or list a panel under `[[auditor.panel]]` (all must pass; cheapest first; seats may have a `focus` and `paths`).
 
 For a trivial change the lead can `propose_edit`: you see the diff and press `y`. Only a person can approve it.
 

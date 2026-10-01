@@ -169,7 +169,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "models",
         &["model"],
         Category::Model,
-        "Choose models: the lead's, and each crew role's (←→)",
+        "Choose models: the lead's and each crew role's, seat by seat",
         Some("[id]"),
         true,
         None,

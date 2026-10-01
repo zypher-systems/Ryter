@@ -1,30 +1,30 @@
  ryter  ·  build                            grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  · s╭─ models ─────────────────────────────────────────────────────────────────── 4 · loading ─╮
-   w│ ⌕ type to filter                                                                         │
-    │ ‹ Solo ›   Architect     Builder     Auditor     ←→                                      │
-    │ now: grok-4.6                                                                            │
-    │ model           context   in/M  out/M  reasoning  connection  used by                    │
-    │›grok-4.6           500k     $2     $6  auto       spacexai    lead                       │
-    │ grok-4.5           256k     $2     $6  auto       spacexai                               │
-    │ grok-4.3           256k  $1.25   $2.5  auto       spacexai                               │
-    │ grok-build-0.1     256k     $1     $2  auto       spacexai                               │
-    │                                                                                          │
-    │                                                                                          │
-    │                                                                                          │
-    │                                                                                          │
-    │                                                                                          │
-    │                                                                                          │
-    │                                                                                          │
-    │                                                                                          │
-    │                                                                                          │
-    │                                                                                          │
-    │ grok-4.6 · 500k ctx · $2/M input / $6/M output · reasoning auto (medium in build)        │
-    │ ↑↓ move   enter set   ←→ role   tab reasoning   b guided setup   s sort   esc close      │
+   w│ SEATS                │ ⌕ type to filter                                                  │
+    │›  Solo               │ model            in/M  out/M  connection                          │
+    │   grok-4.6           │ grok-4.6           $2     $6  spacexai                            │
+    │   Architect          │ grok-4.5           $2     $6  spacexai                            │
+    │   follows lead       │ grok-4.3        $1.25   $2.5  spacexai                            │
+    │   Builder            │ grok-build-0.1     $1     $2  spacexai                            │
+    │   follows lead       │                                                                   │
+    │   Auditor            │                                                                   │
+    │   follows lead       │                                                                   │
+    │                      │                                                                   │
+    │                      │                                                                   │
+    │                      │                                                                   │
+    │                      │                                                                   │
+    │                      │                                                                   │
+    │                      │                                                                   │
+    │                      │                                                                   │
+    │                      │                                                                   │
+    │                      │                                                                   │
+    │                      │ spacexai · grok-4.6 · reasoning auto (medium in build) · 500k ct… │
+    │ ↑↓ seat   → models   │ enter set   ← seats   esc done   tab reasoning   s sort           │
     ╰──────────────────────────────────────────────────────────────────────────────────────────╯
 
 
 ╭─ filter ─────────────────────────────────────────────────────────────────────────────────────────╮
 │› typing goes to the search in the panel above                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter set    ←→ role    tab reasoning    b guided setup    s sort    esc close
+ ↑↓ seat    → models    b guided setup    esc done

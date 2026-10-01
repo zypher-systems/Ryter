@@ -77,7 +77,18 @@ pub struct ReviewPick {
     pub chosen: Option<(String, String)>,
 }
 
-/// Model picker.
+/// Which side of `/models` the keys move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    /// The seats: the lead (or solo), then each crew role.
+    Seats,
+    /// The models for the seat chosen.
+    Models,
+}
+
+/// Model picker: the seats on the left, the models for the chosen seat on
+/// the right. Enter sets the model and goes back to the seats, on the next
+/// one, so a whole crew is chosen without leaving the panel.
 #[derive(Debug, Clone)]
 pub struct Models {
     /// Catalog rows (row 0 is the `default` sentinel in crew mode).
@@ -96,7 +107,17 @@ pub struct Models {
     refusal: Option<String>,
     selected: usize,
     sort: Sort,
+    /// Which side the keys move.
+    pub focus: Focus,
+    /// Seats set since the panel opened (✓), by seat.
+    changed: [bool; SEATS],
 }
+
+/// The lead (or solo) and each crew role.
+const SEATS: usize = CREW_ROLES.len() + 1;
+
+/// The list's width with every column showing.
+const LIST_WIDTH: usize = 80;
 
 impl Models {
     /// Open for the active connection (or a crew role).
@@ -122,6 +143,12 @@ impl Models {
             items.extend(fb);
         }
         view.composer.clear();
+        // Opened on a role (from the crew panel): its models, at once.
+        let focus = if assign_role.is_some() {
+            Focus::Models
+        } else {
+            Focus::Seats
+        };
         let mut p = Self {
             items,
             loading: true,
@@ -131,6 +158,8 @@ impl Models {
             refusal: None,
             selected: 0,
             sort: Sort::Relevance,
+            focus,
+            changed: [false; SEATS],
         };
         p.select_current(view);
         p
@@ -262,23 +291,39 @@ impl Models {
         if self.review.is_some() || !view.composer.text().is_empty() {
             return;
         }
-        let now = match &self.assign_role {
-            None => view.model.clone(),
+        let (model, connection) = match &self.assign_role {
+            None => (view.model.clone(), Some(view.connection.clone())),
             // A role that follows the lead is on the `default` row.
             Some(role) => view
                 .specialists
                 .get(role)
                 .filter(|r| r.is_override())
-                .and_then(|r| r.model.clone())
+                .map(|r| (r.model.clone().unwrap_or_default(), r.connection.clone()))
                 .unwrap_or_default(),
         };
-        if let Some(i) = self.filtered(view).iter().position(|m| m.id == now) {
+        self.highlight(view, &model, connection.as_deref());
+    }
+
+    /// Put the highlight on `model` from `connection`: one model can be on
+    /// two connections, and the connection decides which provider runs it.
+    /// Matching the id alone put it on the first connection's row, and
+    /// enter then moved the seat there.
+    fn highlight(&mut self, view: &View, model: &str, connection: Option<&str>) {
+        let list = self.filtered(view);
+        let same = |m: &&ModelInfo| {
+            m.id == model
+                && connection
+                    .is_none_or(|c| m.connection.as_deref().unwrap_or(&view.connection) == c)
+        };
+        if let Some(i) = list.iter().position(same) {
+            self.selected = i;
+        } else if let Some(i) = list.iter().position(|m| m.id == model) {
             self.selected = i;
         }
     }
 
-    /// The tabs: the lead (the solo model in solo mode), then the roles.
-    fn tabs(view: &View) -> Vec<(Option<&'static str>, String)> {
+    /// The seats: the lead (the solo model in solo mode), then the roles.
+    fn seats(view: &View) -> Vec<(Option<&'static str>, String)> {
         let lead = if view.crew_mode() { "Lead" } else { "Solo" };
         let mut v = vec![(None, lead.to_string())];
         for r in CREW_ROLES {
@@ -289,23 +334,19 @@ impl Models {
         v
     }
 
-    fn tab(&self) -> usize {
+    /// The seat chosen: 0 is the lead.
+    fn seat(&self) -> usize {
         match &self.assign_role {
             None => 0,
             Some(r) => CREW_ROLES.iter().position(|c| c == r).map_or(0, |i| i + 1),
         }
     }
 
-    /// `←→`: the next or previous tab. The first move to a role asks for
-    /// every connection's models.
-    fn switch(&mut self, view: &View, forward: bool) -> Outcome {
-        let n = CREW_ROLES.len() + 1;
-        let t = if forward {
-            (self.tab() + 1) % n
-        } else {
-            (self.tab() + n - 1) % n
-        };
-        self.assign_role = (t > 0).then(|| CREW_ROLES[t - 1].to_string());
+    /// Choose seat `to`. The first role chosen asks for every connection's
+    /// models (the lead's list is its own connection's).
+    fn choose_seat(&mut self, view: &View, to: usize) -> Option<Action> {
+        let to = to.min(SEATS - 1);
+        self.assign_role = (to > 0).then(|| CREW_ROLES[to - 1].to_string());
         self.selected = 0;
         self.refusal = None;
         self.select_current(view);
@@ -313,72 +354,178 @@ impl Models {
             Some(role) if !self.crew_listed => {
                 self.crew_listed = true;
                 self.loading = true;
-                Outcome::Act(Action::ListCrewModels { role: role.clone() })
+                Some(Action::ListCrewModels { role: role.clone() })
             }
-            _ => Outcome::Stay,
+            _ => None,
         }
     }
 
-    /// Which seats use `id`: `lead`, `arch`, `build`, `audit`.
-    fn used_by(view: &View, id: &str) -> String {
-        let mut who = Vec::new();
-        if id == view.model {
-            who.push("lead");
-        }
-        for (role, short) in [
-            ("architect", "arch"),
-            ("builder", "build"),
-            ("auditor", "audit"),
-        ] {
-            let own = view
-                .specialists
-                .get(role)
-                .filter(|r| r.is_override())
-                .and_then(|r| r.model.as_deref());
-            if own == Some(id) {
-                who.push(short);
-            }
-        }
-        who.join(" ")
-    }
-
-    /// The tabs row and what the tab's seat runs on now.
-    fn header(&self, view: &View, theme: Theme) -> Vec<Line<'static>> {
-        let on = self.tab();
-        let mut spans = vec![Span::styled(" ", theme.panel_muted())];
-        for (i, (_, label)) in Self::tabs(view).into_iter().enumerate() {
-            if i == on {
-                spans.push(Span::styled(
-                    format!("‹ {label} ›"),
-                    theme
-                        .on_panel(theme.accent)
-                        .add_modifier(ratatui::style::Modifier::BOLD),
-                ));
-            } else {
-                spans.push(Span::styled(format!("  {label}  "), theme.panel_muted()));
-            }
-            spans.push(Span::styled(" ", theme.panel_muted()));
-        }
-        spans.push(Span::styled("  ←→", theme.on_panel(theme.accent)));
-        let now = match &self.assign_role {
-            None => view.model.clone(),
+    /// What a seat runs on now, short, and whether it's the lead's.
+    fn seat_model(view: &View, role: Option<&str>) -> (String, bool) {
+        match role {
+            None => (short_model(&view.model).to_string(), false),
             Some(role) => match view
                 .specialists
                 .get(role)
                 .filter(|r| r.is_override())
-                .and_then(|r| r.model.clone())
+                .and_then(|r| r.model.as_deref())
             {
-                Some(m) => m,
-                None => format!("follows the lead ({})", short_model(&view.model)),
+                Some(m) => (short_model(m).to_string(), false),
+                None => ("follows lead".into(), true),
             },
+        }
+    }
+
+    /// The seats column's width in a body `width` wide.
+    /// The list comes first: it gets 80 columns, enough for a long model
+    /// name, both prices, and its connection, before the seats take more
+    /// than their narrowest.
+    fn seats_width(width: usize) -> usize {
+        width.saturating_sub(LIST_WIDTH + 1).clamp(22, 34)
+    }
+
+    /// The seats column, a line per row of the body.
+    fn seat_lines(
+        &self,
+        view: &View,
+        width: usize,
+        h: usize,
+        theme: Theme,
+    ) -> Vec<Vec<Span<'static>>> {
+        use ratatui::style::Modifier;
+        let on = self.seat();
+        let pad = |s: String, w: usize| wrap::pad_right(&wrap::truncate(&s, w), w);
+        let mut rows: Vec<Vec<Span<'static>>> = vec![vec![Span::styled(
+            pad(" SEATS".into(), width),
+            theme.panel_muted().add_modifier(Modifier::BOLD),
+        )]];
+        // Narrow, each seat's model goes on a line of its own, so its
+        // name isn't cut to a few letters.
+        let stacked = width < 30;
+        for (i, (role, label)) in Self::seats(view).into_iter().enumerate() {
+            let here = i == on;
+            let cursor = if here { "›" } else { " " };
+            let mark = if self.changed[i] { "✓" } else { " " };
+            let (model, follows) = Self::seat_model(view, role);
+            let head = format!("{cursor}{mark} {label:<9} ");
+            let room = width.saturating_sub(wrap::width(&head));
+            let label_style = match (here, self.focus) {
+                (true, Focus::Seats) => theme.on_panel(theme.accent).add_modifier(Modifier::BOLD),
+                (true, Focus::Models) => theme.on_panel(theme.accent),
+                _ => theme.on_panel(theme.fg),
+            };
+            let mark_style = theme.on_panel(theme.success);
+            let model_style = if follows {
+                theme.panel_muted()
+            } else {
+                theme.on_panel(theme.fg)
+            };
+            if stacked {
+                rows.push(vec![
+                    Span::styled(cursor.to_string(), label_style),
+                    Span::styled(mark.to_string(), mark_style),
+                    Span::styled(
+                        pad(format!(" {label}"), width.saturating_sub(2)),
+                        label_style,
+                    ),
+                ]);
+                rows.push(vec![Span::styled(
+                    pad(format!("   {model}"), width),
+                    model_style,
+                )]);
+            } else {
+                rows.push(vec![
+                    Span::styled(cursor.to_string(), label_style),
+                    Span::styled(mark.to_string(), mark_style),
+                    Span::styled(format!(" {label:<9} "), label_style),
+                    Span::styled(pad(model, room), model_style),
+                ]);
+            }
+        }
+        while rows.len() < h.saturating_sub(1) {
+            rows.push(vec![Span::styled(" ".repeat(width), theme.panel())]);
+        }
+        rows.truncate(h.saturating_sub(1));
+        rows.push(hints(&[("↑↓", "seat"), ("→", "models")], width, theme));
+        rows
+    }
+}
+
+/// `key label` pairs, padded to `width`.
+fn hints(keys: &[(&str, &str)], width: usize, theme: Theme) -> Vec<Span<'static>> {
+    use ratatui::style::Modifier;
+    let mut spans = vec![Span::styled(" ", theme.panel())];
+    let mut used = 1;
+    for (i, (key, label)) in keys.iter().enumerate() {
+        let gap = if i > 0 { "   " } else { "" };
+        let piece = wrap::width(gap) + wrap::width(key) + 1 + wrap::width(label);
+        if used + piece > width {
+            break;
+        }
+        let color = match *key {
+            "enter" => theme.success,
+            "esc" => theme.error,
+            _ => theme.accent,
         };
-        vec![
-            Line::from(spans),
-            Line::from(vec![
-                Span::styled(" now: ", theme.panel_muted()),
-                Span::styled(now, theme.on_panel(theme.fg)),
-            ]),
-        ]
+        spans.push(Span::styled(gap.to_string(), theme.panel()));
+        spans.push(Span::styled(
+            key.to_string(),
+            theme.on_panel(color).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(format!(" {label}"), theme.panel_muted()));
+        used += piece;
+    }
+    spans.push(Span::styled(
+        " ".repeat(width.saturating_sub(used)),
+        theme.panel(),
+    ));
+    spans
+}
+
+impl Models {
+    /// A key for the filter. The highlight goes back to the first match only
+    /// when the filter's text changed: a key that only moves within it (→,
+    /// home, end) leaves the highlight where it was. → used to reset it, and
+    /// on a role the first row is `default`, so → then enter dropped the
+    /// role's model.
+    fn filter_key(&mut self, key: KeyEvent, view: &mut View) {
+        let before = view.composer.text().to_string();
+        super::edit_field(&mut view.composer, key);
+        if view.composer.text() != before {
+            self.selected = 0;
+        }
+    }
+
+    /// Keys on the seats side: ↑↓ chooses a seat, → or enter goes to its
+    /// models, and typing starts a filter there.
+    fn seat_key(&mut self, key: KeyEvent, view: &mut View) -> Outcome {
+        let seat = self.seat();
+        let act = |list: Option<Action>| list.map_or(Outcome::Stay, Outcome::Act);
+        match key.code {
+            KeyCode::Up => act(self.choose_seat(view, seat.saturating_sub(1))),
+            KeyCode::Down => act(self.choose_seat(view, seat + 1)),
+            KeyCode::Right | KeyCode::Enter => {
+                self.focus = Focus::Models;
+                Outcome::Stay
+            }
+            KeyCode::Char('b') if view.composer.is_empty() => Outcome::PushAct(
+                Box::new(super::crew_builder::CrewBuilder::new(view, false)),
+                Action::ListCrewModels {
+                    role: String::new(),
+                },
+            ),
+            KeyCode::Char(_) => {
+                self.focus = Focus::Models;
+                self.filter_key(key, view);
+                Outcome::Stay
+            }
+            KeyCode::Backspace if !view.composer.is_empty() => {
+                self.focus = Focus::Models;
+                self.filter_key(key, view);
+                Outcome::Stay
+            }
+            _ => Outcome::Stay,
+        }
     }
 }
 
@@ -408,6 +555,7 @@ impl Panel for Models {
                 _,
             ) => "audit · your limit".into(),
             (Some(_), _) => "audit · who audits?".into(),
+            (None, _) if _view.crew_mode() => "crew models".into(),
             (None, _) => "models".into(),
         }
     }
@@ -429,15 +577,29 @@ impl Panel for Models {
                 chosen: Some(_), ..
             }) => "type dollars · enter save · esc back".into(),
             Some(_) => "↑↓ move · enter choose · s sort · esc close".into(),
-            None => {
-                "↑↓ move · enter set · ←→ role · tab reasoning · b guided setup · s sort · esc close"
-                    .into()
-            }
+            None => match self.focus {
+                Focus::Seats => "↑↓ seat · → models · b guided setup · esc done".into(),
+                Focus::Models => {
+                    "↑↓ move · enter set · ← seats · tab reasoning · s sort · esc done".into()
+                }
+            },
         }
     }
 
     fn inline_input(&self) -> bool {
         true
+    }
+
+    fn input_indent(&self, width: u16) -> u16 {
+        if self.review.is_some() {
+            return 0;
+        }
+        // `width` is the body's, as `render` gets it.
+        u16::try_from(Self::seats_width(usize::from(width)) + 1).unwrap_or(0)
+    }
+
+    fn keys_in_body(&self) -> bool {
+        self.review.is_none()
     }
 
     fn input(&self, _view: &View) -> Option<String> {
@@ -455,12 +617,16 @@ impl Panel for Models {
         }
         let w = usize::from(width);
         let h = usize::from(height);
-        let rows_h = h.saturating_sub(5).max(1); // tabs, now, header, footer
+        let left_w = Self::seats_width(w);
+        let right_w = w.saturating_sub(left_w + 1);
+        let seats = self.seat_lines(view, left_w, h, theme);
+        // The right side: the search (drawn over its first row), the table,
+        // the highlighted model's facts, then its keys.
+        let rows_h = h.saturating_sub(4).max(1);
         let list = self.filtered(view);
         let n = list.len();
         let sel = self.selected.min(n.saturating_sub(1));
         let first = super::window(sel, n, rows_h);
-        let mut lines: Vec<Line<'static>> = self.header(view, theme);
         let rows: Vec<Vec<String>> = list
             .iter()
             .skip(first)
@@ -474,7 +640,6 @@ impl Panel for Models {
                         String::new(),
                         String::new(),
                         m.connection.clone().unwrap_or_default(),
-                        String::new(),
                     ];
                 }
                 vec![
@@ -488,7 +653,6 @@ impl Panel for Models {
                     m.connection
                         .clone()
                         .unwrap_or_else(|| view.connection.clone()),
-                    Self::used_by(view, &m.id),
                 ]
             })
             .collect();
@@ -500,32 +664,48 @@ impl Panel for Models {
             .take(rows_h)
             .map(|m| m.tools == Some(false))
             .collect();
+        // The cursor shows on the side the keys move.
+        let cursor = (self.focus == Focus::Models).then(|| sel.saturating_sub(first));
+        // The model's name and its prices show at every width. Short of
+        // room, reasoning and context go first, then the connection; the
+        // facts line below gives all three for the one highlighted.
+        let shown: &[usize] = if right_w >= LIST_WIDTH {
+            &[0, 1, 2, 3, 4, 5]
+        } else if right_w >= 60 {
+            &[0, 2, 3, 5]
+        } else {
+            &[0, 2, 3]
+        };
+        let pick = |all: &[&'static str]| shown.iter().map(|&i| all[i]).collect::<Vec<_>>();
+        let rows: Vec<Vec<String>> = rows
+            .into_iter()
+            .map(|r| shown.iter().map(|&i| r[i].clone()).collect())
+            .collect();
+        let aligns = [
+            widgets::Al::L,
+            widgets::Al::R,
+            widgets::Al::R,
+            widgets::Al::R,
+            widgets::Al::L,
+            widgets::Al::L,
+        ];
         let mut table = widgets::table(
-            &[
+            &pick(&[
                 "model",
                 "context",
                 "in/M",
                 "out/M",
                 "reasoning",
                 "connection",
-                "used by",
-            ],
+            ]),
             &rows,
-            &[
-                widgets::Al::L,
-                widgets::Al::R,
-                widgets::Al::R,
-                widgets::Al::R,
-                widgets::Al::L,
-                widgets::Al::L,
-                widgets::Al::L,
-            ],
-            Some(sel.saturating_sub(first)),
-            w,
+            &shown.iter().map(|&i| aligns[i]).collect::<Vec<_>>(),
+            cursor,
+            right_w,
             theme,
         );
         for (i, off) in toolless.iter().enumerate() {
-            if *off && i != sel.saturating_sub(first) {
+            if *off && Some(i) != cursor {
                 if let Some(line) = table.get_mut(i + 1) {
                     for span in &mut line.spans {
                         span.style = span.style.fg(theme.dim);
@@ -540,14 +720,18 @@ impl Panel for Models {
                 Span::styled("loading models…", theme.panel_muted()),
             ]));
         }
-        lines.extend(table);
-        while lines.len() < h.saturating_sub(1) {
-            lines.push(widgets::blank(theme));
+        let mut right: Vec<Line<'static>> = vec![widgets::blank(theme)];
+        right.extend(table);
+        while right.len() < h.saturating_sub(2) {
+            right.push(widgets::blank(theme));
         }
-        // Detail footer (R-POP-29).
-        if let Some(m) = list.get(sel) {
-            let text = if m.id.is_empty() {
-                format!("follows the lead: {} · {}", view.model, view.connection)
+        right.truncate(h.saturating_sub(2));
+        // The highlighted model's facts (R-POP-29).
+        // The connection leads, so no cut at the edge hides the provider,
+        // however long the model's id.
+        let facts = list.get(sel).map(|m| {
+            if m.id.is_empty() {
+                format!("{} · follows the lead: {}", view.connection, view.model)
             } else {
                 let rates = match (m.input_per_million, m.output_per_million) {
                     // A router's price varies by where it routes (listed as
@@ -556,28 +740,49 @@ impl Panel for Models {
                     (Some(i), Some(o)) => format_rates(Some(ryter_core::Rates::per_million(i, o))),
                     _ => "price unknown".into(),
                 };
+                let reasoning = match view.reasoning_label(&m.id) {
+                    "auto" => format!(
+                        "auto ({} in {})",
+                        view.reasoning_effective(view.mode, &m.id),
+                        view.mode_label()
+                    ),
+                    l => l.to_string(),
+                };
+                let conn = m.connection.as_deref().unwrap_or(&view.connection);
                 format!(
-                    "{} · {} · {rates} · reasoning {}",
+                    "{conn} · {} · reasoning {reasoning} · {} · {rates}",
                     m.id,
                     m.context_length
                         .map(|c| format!("{} ctx", format_tokens(c)))
                         .unwrap_or_else(|| "ctx ?".into()),
-                    match view.reasoning_label(&m.id) {
-                        "auto" => format!(
-                            "auto ({} in {})",
-                            view.reasoning_effective(view.mode, &m.id),
-                            view.mode_label()
-                        ),
-                        l => l.to_string(),
-                    }
                 )
-            };
-            lines.truncate(h.saturating_sub(1));
-            lines.push(widgets::note(
-                &wrap::truncate(&text, w.saturating_sub(2)),
-                theme,
-            ));
-        }
+            }
+        });
+        right.push(match facts {
+            Some(text) => widgets::note(&wrap::truncate(&text, right_w.saturating_sub(2)), theme),
+            None => widgets::blank(theme),
+        });
+        right.push(Line::from(hints(
+            &[
+                ("enter", "set"),
+                ("←", "seats"),
+                ("esc", "done"),
+                ("tab", "reasoning"),
+                ("s", "sort"),
+            ],
+            right_w,
+            theme,
+        )));
+        let rule = Span::styled("│", theme.panel_muted());
+        let lines = seats
+            .into_iter()
+            .zip(right)
+            .map(|(mut l, r)| {
+                l.push(rule.clone());
+                l.extend(r.spans);
+                Line::from(l)
+            })
+            .collect();
         Body {
             lines,
             scroll: (n > rows_h).then_some((first, n)),
@@ -590,12 +795,15 @@ impl Panel for Models {
                 return out;
             }
         }
+        if key.code == KeyCode::Esc {
+            view.composer.clear();
+            return Outcome::Close;
+        }
+        if self.review.is_none() && self.focus == Focus::Seats {
+            return self.seat_key(key, view);
+        }
         let n = self.filtered(view).len();
         match key.code {
-            KeyCode::Esc => {
-                view.composer.clear();
-                Outcome::Close
-            }
             KeyCode::Up => {
                 self.selected = super::step(self.selected.min(n.saturating_sub(1)), -1, n);
                 Outcome::Stay
@@ -616,8 +824,11 @@ impl Panel for Models {
                 self.sort = self.sort.next();
                 Outcome::Stay
             }
-            KeyCode::Left => self.switch(view, false),
-            KeyCode::Right => self.switch(view, true),
+            // Back to the seats, the filter kept.
+            KeyCode::Left => {
+                self.focus = Focus::Seats;
+                Outcome::Stay
+            }
             // The guided crew setup, one key away.
             KeyCode::Char('b') if view.composer.is_empty() => Outcome::PushAct(
                 Box::new(super::crew_builder::CrewBuilder::new(view, false)),
@@ -641,6 +852,8 @@ impl Panel for Models {
                 );
                 Outcome::Act(Action::SetModelReasoning { model: m, level })
             }
+            // Set the seat's model, and go back to the seats, on the next
+            // one: the panel stays open until esc.
             KeyCode::Enter => {
                 let Some(m) = self
                     .filtered(view)
@@ -651,35 +864,50 @@ impl Panel for Models {
                     return Outcome::Stay;
                 };
                 view.composer.clear();
-                match &self.assign_role {
-                    Some(role) => {
-                        if m.id.is_empty() {
-                            Outcome::CloseAct(Action::ResetCrewRole(role.clone()))
-                        } else {
-                            Outcome::CloseAct(Action::SetCrewRole {
-                                role: role.clone(),
-                                connection: m.connection.unwrap_or_else(|| view.connection.clone()),
-                                model: m.id,
-                            })
-                        }
-                    }
-                    None => Outcome::CloseAct(Action::SetModel(m.id)),
+                let set = match &self.assign_role {
+                    Some(role) if m.id.is_empty() => Action::ResetCrewRole(role.clone()),
+                    Some(role) => Action::SetCrewRole {
+                        role: role.clone(),
+                        connection: m.connection.unwrap_or_else(|| view.connection.clone()),
+                        model: m.id,
+                    },
+                    None => Action::SetModel(m.id),
+                };
+                let seat = self.seat();
+                self.changed[seat] = true;
+                self.focus = Focus::Seats;
+                if seat + 1 == SEATS {
+                    // The last seat stays chosen. Its list must open on the
+                    // model just set: reading the seat now would find the
+                    // one before, as the set hasn't been applied yet.
+                    let (model, connection) = match &set {
+                        Action::SetModel(id) => (id.clone(), Some(view.connection.clone())),
+                        Action::SetCrewRole {
+                            model, connection, ..
+                        } => (model.clone(), Some(connection.clone())),
+                        _ => (String::new(), None),
+                    };
+                    self.highlight(view, &model, connection.as_deref());
+                    return Outcome::Act(set);
+                }
+                match self.choose_seat(view, seat + 1) {
+                    Some(list) => Outcome::Act(Action::Many(vec![set, list])),
+                    None => Outcome::Act(set),
                 }
             }
             _ => {
-                if super::edit_field(&mut view.composer, key) {
-                    self.selected = 0;
-                }
+                self.filter_key(key, view);
                 Outcome::Stay
             }
         }
     }
 
     fn size(&self, _view: &View) -> (u16, u16) {
+        // Two panes: room for the seats' models and the list's names.
         if self.review.is_some() {
             (96, 20)
         } else {
-            (104, 22)
+            (124, 22)
         }
     }
 
@@ -930,18 +1158,29 @@ mod tests {
         p.key(KeyEvent::new(code, KeyModifiers::NONE), v)
     }
 
-    /// `/models` is where every model is chosen: `←→` moves from the lead to
-    /// each crew role, the first move asks for every connection's models,
-    /// and `⏎` sets the model of the role on screen. It used to take `/crew`
-    /// twice to reach a role's model.
-    #[test]
-    fn models_has_a_tab_per_role() {
+    fn text(p: &Models, v: &View) -> String {
+        // The panel's full width: seats on one line each.
+        p.render(v, 122, 20, Theme::truecolor_dark())
+            .lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect()
+    }
+
+    fn crew_view() -> View {
         let mut v = View::new(
             ryter_core::Phase::Build,
             "openrouter".into(),
             "x-ai/grok-4.7".into(),
             "/tmp".into(),
         );
+        v.mode = ryter_core::Role::Orchestrator;
         v.specialists.insert(
             "auditor".into(),
             ryter_core::RoleModel {
@@ -949,16 +1188,317 @@ mod tests {
                 model: Some("qwen/qwen3.7-max".into()),
             },
         );
-        let mut p = Models::new(&mut v, None);
-        let models = [
+        v
+    }
+
+    fn catalog() -> Vec<ModelInfo> {
+        vec![
             row("x-ai/grok-4.7", "openrouter", Some((2.0, 6.0))),
             row("qwen/qwen3.7-max", "openrouter", Some((1.6, 6.4))),
             row("minimax/minimax-m2.7", "openrouter", Some((0.3, 1.2))),
             row("grok-4.6", "spacexai", Some((2.0, 6.0))),
-        ];
+        ]
+    }
+
+    /// The crew is chosen in one visit: the seats beside the list, and
+    /// enter sets the seat's model and goes back to the seats, on the next
+    /// one. It used to close after every seat, so a crew took four visits.
+    #[test]
+    fn a_whole_crew_is_chosen_without_leaving_the_panel() {
+        let mut v = crew_view();
+        let mut p = Models::new(&mut v, None);
+        p.set_models(&v, &catalog());
+        let t = text(&p, &v);
+        assert!(
+            t.contains("SEATS") && t.contains("›  Lead      grok-4.7"),
+            "{t}"
+        );
+        assert!(
+            t.contains("Architect follows lead") && t.contains("Auditor   qwen3.7-max"),
+            "{t}"
+        );
+        assert_eq!(p.focus, Focus::Seats);
+        assert_eq!(p.title(&v), "crew models");
+
+        // The lead: → to its models, enter sets it, and the cursor is back
+        // on the seats, on the architect, whose list (every connection's)
+        // is asked for in the same breath.
+        assert!(matches!(key(&mut p, &mut v, KeyCode::Right), Outcome::Stay));
+        assert_eq!(p.focus, Focus::Models);
+        v.composer.set_text("grok-4.7");
+        match key(&mut p, &mut v, KeyCode::Enter) {
+            Outcome::Act(Action::Many(acts)) => {
+                assert!(matches!(&acts[0], Action::SetModel(m) if m == "x-ai/grok-4.7"));
+                assert!(matches!(&acts[1], Action::ListCrewModels { role } if role == "architect"));
+            }
+            _ => panic!("set the lead and list the architect's models"),
+        }
+        assert_eq!((p.focus, p.seat()), (Focus::Seats, 1));
+        assert!(v.composer.is_empty(), "the filter is cleared");
+        p.set_models(&v, &catalog());
+
+        // The architect: enter goes to its models, typing filters there.
+        key(&mut p, &mut v, KeyCode::Enter);
+        for c in "minimax".chars() {
+            key(&mut p, &mut v, KeyCode::Char(c));
+        }
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetCrewRole { role, model, .. })
+                if role == "architect" && model == "minimax/minimax-m2.7"
+        ));
+        assert_eq!((p.focus, p.seat()), (Focus::Seats, 2));
+
+        // The builder: typing on the seats side starts a filter at once.
+        for c in "grok-4.6".chars() {
+            key(&mut p, &mut v, KeyCode::Char(c));
+        }
+        assert_eq!(p.focus, Focus::Models);
+        assert!(
+            text(&p, &v).contains("grok-4.6"),
+            "every connection for a role"
+        );
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetCrewRole { role, connection, .. })
+                if role == "builder" && connection == "spacexai"
+        ));
+
+        // The auditor, the last seat: ← goes back without setting, and the
+        // cursor stays on the last seat after a set.
+        assert_eq!(p.seat(), 3);
+        key(&mut p, &mut v, KeyCode::Right);
+        assert!(matches!(key(&mut p, &mut v, KeyCode::Left), Outcome::Stay));
+        assert_eq!(p.focus, Focus::Seats);
+        key(&mut p, &mut v, KeyCode::Right);
+        v.composer.set_text("qwen");
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetCrewRole { role, model, .. })
+                if role == "auditor" && model == "qwen/qwen3.7-max"
+        ));
+        assert_eq!((p.focus, p.seat()), (Focus::Seats, 3));
+
+        // Each seat set is ticked; esc closes, keeping them.
+        let t = text(&p, &v);
+        for seat in ["✓ Lead", "✓ Architect", "✓ Builder", "✓ Auditor"] {
+            assert!(t.contains(seat), "{seat}: {t}");
+        }
+        assert!(matches!(key(&mut p, &mut v, KeyCode::Esc), Outcome::Close));
+    }
+
+    /// ↑↓ moves between seats without wrapping, the list follows the seat
+    /// and opens on its model, and opening on a role (from the crew panel)
+    /// starts in that role's models.
+    #[test]
+    fn the_list_follows_the_seat() {
+        let mut v = crew_view();
+        let mut p = Models::new(&mut v, None);
+        p.set_models(&v, &catalog());
+        assert!(matches!(key(&mut p, &mut v, KeyCode::Up), Outcome::Stay));
+        assert_eq!(p.seat(), 0);
+        // The lead's list is its own connection's, with no `default`.
+        let t = text(&p, &v);
+        assert!(!t.contains("grok-4.6 ") && !t.contains("default"), "{t}");
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Down),
+            Outcome::Act(Action::ListCrewModels { role }) if role == "architect"
+        ));
+        key(&mut p, &mut v, KeyCode::Down);
+        key(&mut p, &mut v, KeyCode::Down);
+        assert!(matches!(key(&mut p, &mut v, KeyCode::Down), Outcome::Stay));
+        assert_eq!(p.seat(), 3);
+        p.set_models(&v, &catalog());
+        let on = p.filtered(&v)[p.selected].id.clone();
+        assert_eq!(
+            on, "qwen/qwen3.7-max",
+            "the auditor's list opens on its model"
+        );
+
+        let p = Models::new(&mut v, Some("builder".into()));
+        assert_eq!((p.focus, p.seat()), (Focus::Models, 2));
+    }
+
+    /// Keys that only move within the filter (→, home, end) leave the
+    /// highlight where it is. → used to send it to the first row, which on
+    /// a role is `default`: → then enter dropped the role's model.
+    #[test]
+    fn moving_in_the_filter_keeps_the_highlight() {
+        let mut v = crew_view();
+        let mut p = Models::new(&mut v, Some("builder".into()));
+        p.set_models(&v, &catalog());
+        let minimax = p
+            .filtered(&v)
+            .iter()
+            .position(|m| m.id == "minimax/minimax-m2.7")
+            .unwrap();
+        p.selected = minimax;
+        for code in [KeyCode::Right, KeyCode::Home, KeyCode::End] {
+            assert!(matches!(key(&mut p, &mut v, code), Outcome::Stay));
+            assert_eq!(p.selected, minimax, "{code:?}");
+        }
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetCrewRole { role, model, .. })
+                if role == "builder" && model == "minimax/minimax-m2.7"
+        ));
+        // With a filter, typing goes to the first match, and moving within
+        // the text doesn't.
+        let mut p = Models::new(&mut v, Some("builder".into()));
+        p.set_models(&v, &catalog());
+        key(&mut p, &mut v, KeyCode::Char('o'));
+        assert_eq!(p.selected, 0);
+        key(&mut p, &mut v, KeyCode::Down);
+        let on = p.selected;
+        assert!(on > 0);
+        key(&mut p, &mut v, KeyCode::Right);
+        key(&mut p, &mut v, KeyCode::Home);
+        assert_eq!(p.selected, on);
+        key(&mut p, &mut v, KeyCode::Left);
+        assert_eq!(p.focus, Focus::Seats, "← on the list goes to the seats");
+    }
+
+    /// Setting the last seat keeps it chosen, and its list opens on the
+    /// model just set: it used to read the seat before the set landed, so
+    /// enter again saved the old model back.
+    #[test]
+    fn the_last_seat_opens_on_the_model_just_set() {
+        let mut v = crew_view();
+        let mut p = Models::new(&mut v, Some("auditor".into()));
+        p.set_models(&v, &catalog());
+        assert_eq!(
+            p.filtered(&v)[p.selected].id,
+            "qwen/qwen3.7-max",
+            "its model now"
+        );
+        v.composer.set_text("minimax");
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetCrewRole { role, model, .. })
+                if role == "auditor" && model == "minimax/minimax-m2.7"
+        ));
+        assert_eq!((p.focus, p.seat()), (Focus::Seats, 3));
+        assert_eq!(p.filtered(&v)[p.selected].id, "minimax/minimax-m2.7");
+        key(&mut p, &mut v, KeyCode::Right);
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetCrewRole { model, .. }) if model == "minimax/minimax-m2.7"
+        ));
+    }
+
+    /// Narrow, the list drops its connection and reasoning columns, and the
+    /// facts line leads with them.
+    #[test]
+    fn narrow_the_facts_line_names_the_connection() {
+        let mut v = crew_view();
+        let mut p = Models::new(&mut v, Some("builder".into()));
+        p.set_models(&v, &catalog());
+        p.selected = p
+            .filtered(&v)
+            .iter()
+            .position(|m| m.id == "grok-4.6")
+            .unwrap();
+        let narrow: String = p
+            .render(&v, 78, 16, Theme::truecolor_dark())
+            .lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect();
+        assert!(!narrow.contains("connection"), "no column: {narrow}");
+        assert!(
+            narrow.contains("spacexai · grok-4.6 · reasoning"),
+            "{narrow}"
+        );
+        let wide = text(&p, &v);
+        assert!(
+            wide.contains("connection") && wide.contains("spacexai"),
+            "{wide}"
+        );
+    }
+
+    /// One model can be on two connections. The highlight follows the
+    /// connection as well as the id, when a seat opens on its model and
+    /// after the last seat is set; by id alone it went to the first
+    /// connection's row, and enter then moved the seat there. A reviewer's
+    /// case: `shared-model` on openrouter and on spacexai.
+    #[test]
+    fn a_model_on_two_connections_keeps_its_connection() {
+        let mut v = crew_view();
+        let mut models = catalog();
+        models.push(row("shared-model", "openrouter", Some((1.0, 2.0))));
+        models.push(row("shared-model", "spacexai", Some((1.0, 2.0))));
+        let mut p = Models::new(&mut v, Some("auditor".into()));
         p.set_models(&v, &models);
-        let text = |p: &Models, v: &View| {
-            p.render(v, 104, 20, Theme::truecolor_dark())
+        for c in "shared".chars() {
+            key(&mut p, &mut v, KeyCode::Char(c));
+        }
+        assert_eq!(p.selected, 0, "openrouter's copy first");
+        key(&mut p, &mut v, KeyCode::Down);
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetCrewRole { connection, model, .. })
+                if connection == "spacexai" && model == "shared-model"
+        ));
+        let on = p.filtered(&v)[p.selected];
+        assert_eq!(
+            (on.id.as_str(), on.connection.as_deref()),
+            ("shared-model", Some("spacexai"))
+        );
+        key(&mut p, &mut v, KeyCode::Right);
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetCrewRole { connection, .. }) if connection == "spacexai"
+        ));
+        // Opening on a seat set to the second connection's copy.
+        v.specialists.insert(
+            "auditor".into(),
+            ryter_core::RoleModel {
+                connection: Some("spacexai".into()),
+                model: Some("shared-model".into()),
+            },
+        );
+        let mut p = Models::new(&mut v, Some("auditor".into()));
+        p.set_models(&v, &models);
+        assert_eq!(
+            p.filtered(&v)[p.selected].connection.as_deref(),
+            Some("spacexai")
+        );
+    }
+
+    /// The model's name and its prices show at every width; the facts line
+    /// leads with the connection, so a long id can't push it out of sight.
+    #[test]
+    fn names_and_prices_show_at_every_width() {
+        let mut v = crew_view();
+        let models = vec![
+            row(
+                "deepseek/deepseek-v4.1-flash",
+                "openrouter",
+                Some((0.02, 0.6)),
+            ),
+            row(
+                "anthropic/claude-3.7-sonnet:thinking",
+                "openrouter",
+                Some((3.0, 15.0)),
+            ),
+        ];
+        let mut p = Models::new(&mut v, Some("builder".into()));
+        p.set_models(&v, &models);
+        p.selected = p
+            .filtered(&v)
+            .iter()
+            .position(|m| m.id.starts_with("anthropic"))
+            .unwrap();
+        // The body widths of an 80, 100 and 120 column terminal.
+        for width in [70u16, 90, 110] {
+            let t: String = p
+                .render(&v, width, 16, Theme::truecolor_dark())
                 .lines
                 .iter()
                 .map(|l| {
@@ -966,52 +1506,19 @@ mod tests {
                         .iter()
                         .map(|s| s.content.as_ref())
                         .collect::<String>()
+                        + "\n"
                 })
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        // The lead's tab: its connection's models, no `default`, who uses what.
-        let t = text(&p, &v);
-        assert!(
-            t.contains("‹ Solo ›") && t.contains("now: x-ai/grok-4.7"),
-            "{t}"
-        );
-        assert!(!t.contains("grok-4.6") && !t.contains("default"), "{t}");
-        assert!(t.contains("audit"), "{t}");
-        // → the architect: every connection's models are asked for once.
-        assert!(matches!(
-            key(&mut p, &mut v, KeyCode::Right),
-            Outcome::Act(Action::ListCrewModels { role }) if role == "architect"
-        ));
-        let t = text(&p, &v);
-        assert!(
-            t.contains("‹ Architect ›") && t.contains("now: follows the lead (grok-4.7)"),
-            "{t}"
-        );
-        // → the builder: the list is already here.
-        assert!(matches!(key(&mut p, &mut v, KeyCode::Right), Outcome::Stay));
-        p.set_models(&v, &models);
-        assert!(
-            text(&p, &v).contains("grok-4.6"),
-            "all connections for a role"
-        );
-        // ⏎ sets the builder, not the lead.
-        v.composer.set_text("minimax");
-        let out = key(&mut p, &mut v, KeyCode::Enter);
-        assert!(matches!(
-            &out,
-            Outcome::CloseAct(Action::SetCrewRole { role, model, .. })
-                if role == "builder" && model == "minimax/minimax-m2.7"
-        ));
-        // ← from the lead wraps to the auditor, which opens on its model.
-        let mut p = Models::new(&mut v, None);
-        p.set_models(&v, &models);
-        key(&mut p, &mut v, KeyCode::Left);
-        let t = text(&p, &v);
-        assert!(
-            t.contains("‹ Auditor ›") && t.contains("now: qwen/qwen3.7-max"),
-            "{t}"
-        );
+                .collect();
+            assert!(t.contains("deepseek/deepseek-v4.1-flash "), "{width}: {t}");
+            assert!(
+                t.contains("$0.02") && t.contains("$0.6") && t.contains("$15"),
+                "{width}: {t}"
+            );
+            assert!(
+                t.contains("openrouter · anthropic/claude-3.7-sonnet"),
+                "{width}: {t}"
+            );
+        }
     }
 
     /// The chooser: every catalog model but the one doing the work, each
@@ -1123,6 +1630,7 @@ mod tests {
             tools: Some(true),
         }];
         p.loading = false;
+        p.focus = Focus::Models;
         let tab = |p: &mut Models, v: &mut View| {
             p.key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), v)
         };

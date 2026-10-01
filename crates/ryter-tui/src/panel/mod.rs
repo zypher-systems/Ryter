@@ -124,6 +124,17 @@ pub trait Panel {
     fn inline_input(&self) -> bool {
         false
     }
+    /// Columns the inline input row starts after, on the body's first row:
+    /// for a panel whose left column has its own heading there (`/models`'
+    /// SEATS). Zero puts the input on a row of its own, full width.
+    fn input_indent(&self, _width: u16) -> u16 {
+        0
+    }
+    /// The panel draws its key hints in its own body, one set per pane; the
+    /// legend still lists them in the bottom bar.
+    fn keys_in_body(&self) -> bool {
+        false
+    }
     /// Sit just above the composer, full width, over an undimmed chat,
     /// instead of floating in the middle: for prompts that interrupt a turn.
     fn docked(&self) -> bool {
@@ -447,8 +458,8 @@ pub fn draw(
     for (i, p) in view.panels.stack.iter().enumerate() {
         let focused = i + 1 == n;
         let (pw, rows) = p.size(view);
-        let extra = u16::from(!p.legend(view).is_empty())
-            + u16::from(p.inline_input() && p.input(view).is_some());
+        let extra = u16::from(!p.legend(view).is_empty() && !p.keys_in_body())
+            + u16::from(p.inline_input() && p.input(view).is_some() && p.input_indent(pw) == 0);
         let modal = p.modal();
         let area = if p.docked() {
             docked_rect(body, rows + extra)
@@ -531,8 +542,10 @@ fn draw_one(
     };
     let mut inner = chrome::draw_frame(frame, area, &ch, theme);
     // The keys, as the panel's last row: in color, where the eye reads,
-    // rather than dim text in the border.
-    if !legend.is_empty() && inner.height > 2 {
+    // rather than dim text in the border. A panel that draws its own keys
+    // still gets the full list when asked for it.
+    let keys_here = !p.keys_in_body() || (focused && view.panels.show_keys);
+    if !legend.is_empty() && keys_here && inner.height > 2 {
         let row = Rect {
             y: inner.y + inner.height - 1,
             height: 1,
@@ -547,20 +560,35 @@ fn draw_one(
     }
     // The search row, inside the panel it filters.
     let mut cursor = None;
-    if let (true, Some(label)) = (p.inline_input(), p.input(view)) {
-        if inner.height > 2 {
-            let row = Rect { height: 1, ..inner };
-            let (line, cx) = input_row(view, &label, usize::from(row.width), theme);
-            frame.render_widget(Paragraph::new(line), row);
-            if focused {
-                cursor = Some((row.x + cx.min(row.width.saturating_sub(1)), row.y));
+    let indent = p
+        .input_indent(inner.width)
+        .min(inner.width.saturating_sub(8));
+    let search = match (p.inline_input(), p.input(view)) {
+        (true, Some(label)) if inner.height > 2 => {
+            let row = Rect {
+                x: inner.x + indent,
+                width: inner.width - indent,
+                height: 1,
+                ..inner
+            };
+            if indent == 0 {
+                inner.y += 1;
+                inner.height -= 1;
             }
-            inner.y += 1;
-            inner.height -= 1;
+            Some((row, label))
         }
-    }
+        _ => None,
+    };
     let body = p.render(view, inner.width, inner.height, theme);
     frame.render_widget(Paragraph::new(body.lines).style(theme.panel()), inner);
+    // After the body: an indented search row shares the body's first row.
+    if let Some((row, label)) = search {
+        let (line, cx) = input_row(view, &label, usize::from(row.width), theme);
+        frame.render_widget(Paragraph::new(line), row);
+        if focused {
+            cursor = Some((row.x + cx.min(row.width.saturating_sub(1)), row.y));
+        }
+    }
     if let Some((first, total)) = body.scroll {
         chrome::scrollbar(frame, area, first, total, inner.height as usize, theme);
     }
