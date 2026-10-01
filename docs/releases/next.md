@@ -53,6 +53,15 @@ added at the top, and this comment removed.
   - With no checks, the auditor's brief names what its shell refuses, and no longer says to build the project itself.
   - `docker compose build`, `podman compose up` and `./dev test` are refused to an auditor with "a limit on the auditor, not on this machine". `sudo` is not blamed on the role.
 - **The new benchmark task, once, with a real crew** (lead deepseek-v4.1-flash, builder glm-5.3, auditor grok-4.7): it landed and passed the hidden tests in 75 seconds for $0.098. The auditor used 7 of its 12 steps: it read the change, wrote a scratch test for the rounding and the unknown currency, and gave its verdict. It didn't try the project's script.
+- **The `workspace` sandbox, on a real machine:**
+  - **By hand,** inside the profile: `git`, `cargo`, `rustc`, `node`, `npm` and `python3` ran; `git commit` and `git worktree add` worked; a Rust program and a Cargo project built; `mktemp` made its file in `~/.ryter/tmp`. `~/.ssh`, the home folder and `/tmp` were refused. `docker ps` still answered, as the table says it will.
+  - **The benchmark's reference solutions,** tested inside the profile: the Rust library, the TypeScript library, the project run by its own script, and the Python tasks all passed their visible and hidden tests.
+  - **The whole suite with a real crew,** inside the profile (lead deepseek-v4.1-flash, builder glm-5.3, auditor grok-4.7):
+    - All ten tasks landed, and nine passed the hidden tests.
+    - The tenth, the TypeScript task, was a false pass, on the same hidden test a crew missed once before without a sandbox (`off` must still remove a `once` handler). It is not the sandbox's doing.
+    - It took two runs. The first stopped the Rust task with "Invalid cross-device link", which is how the missing right to move files was found. Its builder spent 120 steps and $0.45 trying to work round it. Fixed, the same task landed in 7 builder steps.
+    - Cost: $1.87 over both runs.
+- **The sandbox table,** in the TUI: under the `profile` field at 110 and 80 columns, with the chosen profile in capitals as the choice moved.
 - **Step limits:**
   - In the TUI, `/settings` showed the three limits with their defaults. I raised the builder's to 50 and lowered the auditor's to 10, saved, and restarted: both were kept, and marked as set by you.
   - With scripted models, an auditor given six steps was told "this is the last of your 6 steps" on its sixth, and a builder given five was stopped on its fifth, with the report saying so.
