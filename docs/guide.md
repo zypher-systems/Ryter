@@ -569,7 +569,7 @@ They can also write the tools' download caches (`~/.cargo/registry`, `~/.npm`, p
 
 - **It doesn't limit the network.**
 - **It doesn't contain Docker.** A command that can reach the Docker socket can mount the whole machine. If that matters, don't give the account Docker access.
-- **It needs Linux.** Elsewhere Ryter refuses to start with `workspace` or `read-only`, and it also refuses on a Linux kernel that can't enforce Landlock.
+- **It needs Linux.** Elsewhere Ryter refuses to start with `workspace` or `read-only`, and it also refuses on a Linux kernel that can't enforce Landlock. On a kernel older than 5.19 a profile works, but a file can't be moved from one folder to another under it, so some builds fail (`cargo` building a library, for one).
 - **Some of Ryter's own features are off under it:** your every-project rules can't be changed, and pages aren't opened in a browser.
 
 `ryter --sandbox workspace bench` runs the benchmark's crew under the profile.

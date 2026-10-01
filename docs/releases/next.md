@@ -16,6 +16,7 @@ added at the top, and this comment removed.
   - `git` could not start, because it opens `/dev/null` for writing and `/dev` was read-only;
   - `cargo`, `rustc` and anything else installed under the home folder were refused;
   - nothing could make a temporary file, since `/tmp` is shut and `TMPDIR` pointed nowhere;
+  - no file could be moved from one folder to another, so `cargo` could not build a library ("Invalid cross-device link");
   - a crew's builders could not write in their worktrees.
 
 ## What changed
@@ -34,9 +35,11 @@ added at the top, and this comment removed.
   - read and run your toolchains under your home folder (`~/.cargo/bin`, `~/.rustup`, node managers, `~/.local/bin`, pipx, uv), and any folder on your `PATH` there;
   - write those tools' download caches, so a build that fetches a dependency works;
   - make temporary files, in `~/.ryter/tmp`;
+  - move a file between folders they may write (on Linux 5.19 or later);
   - write a crew's worktrees.
 
   The rest of your home folder, `~/.ssh`, the tools' saved logins and Ryter's keys stay shut.
+- **A key read from the environment is kept out of every command**, whatever its variable is called. Only `XAI_API_KEY` and `OPENROUTER_API_KEY` were, so a key under another name was handed to each command the model ran.
 - **Under a sandbox, Ryter's keys can't be read from its own process.** `/proc` is readable in the sandbox, and a command could read a key from Ryter's environment or memory there. Ryter now closes its process to other processes when a profile is on.
 - **`ryter --sandbox workspace bench`** runs the benchmark's crew inside the sandbox.
 - **The benchmark has a tenth task, `runner-script`:** a feature in a project whose tests run only through its own script, which the auditor's shell refuses.

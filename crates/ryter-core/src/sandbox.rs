@@ -216,7 +216,8 @@ const DEVICES: &[&str] = &[
     "/dev/full",
     "/dev/random",
     "/dev/urandom",
-    "/dev/tty",
+    // New terminals, for tools and test suites that open one. Not
+    // `/dev/tty`: that is the user's own terminal, the one Ryter is drawn on.
     "/dev/ptmx",
     "/dev/pts",
 ];
@@ -335,9 +336,23 @@ fn apply_linux(
     };
 
     let abi = ABI::V1;
+    // Moving or linking a file from one folder to another is its own right
+    // (`Refer`), added to Landlock after its first version. A rule set that
+    // doesn't name it refuses every such move, as "Invalid cross-device
+    // link": `rustc` puts a library's metadata in place that way, and so
+    // does every package manager. So it is named, and granted with the rest
+    // wherever a command may write. A kernel without it keeps the first
+    // version's behaviour; the sandbox still holds there.
     let created = Ruleset::default()
         .set_compatibility(CompatLevel::HardRequirement)
         .handle_access(AccessFs::from_all(abi))
+        .map_err(|e| {
+            Error::Config(format!(
+                "sandbox {profile} requested but Landlock is unavailable: {e}"
+            ))
+        })?
+        .set_compatibility(CompatLevel::BestEffort)
+        .handle_access(AccessFs::Refer)
         .map_err(|e| {
             Error::Config(format!(
                 "sandbox {profile} requested but Landlock is unavailable: {e}"
@@ -352,9 +367,11 @@ fn apply_linux(
 
     let ws = canonicalize_or(workspace);
     let home = canonicalize_or(home);
+    // Everything a folder that may be written allows, moves included.
+    let all = AccessFs::from_all(abi) | AccessFs::Refer;
     let ws_access = match profile {
         SandboxProfile::ReadOnly => AccessFs::from_read(abi),
-        SandboxProfile::Workspace | SandboxProfile::Off => AccessFs::from_all(abi),
+        SandboxProfile::Workspace | SandboxProfile::Off => all,
     };
     // Do not allow `/tmp` itself: TempDir and other projects live there.
     // Scratch is `~/.ryter/tmp` (or `$RYTER_HOME/tmp`), and `TMPDIR` points
@@ -385,7 +402,7 @@ fn apply_linux(
         .map_err(rules)?
         .add_rules(path_beneath_rules(&read_files, file_read))
         .map_err(rules)?
-        .add_rules(path_beneath_rules(&write_dirs, AccessFs::from_all(abi)))
+        .add_rules(path_beneath_rules(&write_dirs, all))
         .map_err(rules)?
         .add_rules(path_beneath_rules(&write_files, file_write))
         .map_err(rules)?
@@ -746,6 +763,28 @@ mod tests {
                 .output()
                 .unwrap();
             assert_eq!(String::from_utf8_lossy(&own.stdout).trim(), "shut");
+            // A file moves between two folders of the project, as `rustc`
+            // moves a library's metadata into place. Under a rule set that
+            // doesn't name that right, it failed: "Invalid cross-device link".
+            std::fs::create_dir_all(ws_p.join("target/tmp")).unwrap();
+            std::fs::create_dir_all(ws_p.join("target/deps")).unwrap();
+            std::fs::write(ws_p.join("target/tmp/lib.rmeta"), "meta").unwrap();
+            std::fs::rename(
+                ws_p.join("target/tmp/lib.rmeta"),
+                ws_p.join("target/deps/lib.rmeta"),
+            )
+            .unwrap();
+            std::fs::hard_link(
+                ws_p.join("target/deps/lib.rmeta"),
+                ws_p.join("target/tmp/again.rmeta"),
+            )
+            .unwrap();
+            // Out of the scratch folder into the project too.
+            std::fs::create_dir_all(home_p.join("tmp")).unwrap();
+            std::fs::write(home_p.join("tmp/made"), "x").unwrap();
+            std::fs::rename(home_p.join("tmp/made"), ws_p.join("made")).unwrap();
+            // But nothing moves into a folder that is only read.
+            assert!(std::fs::rename(ws_p.join("made"), u.join("bin/made")).is_err());
             // A crew's worktrees are written, and so is the project.
             let wt = home_p.join("worktrees/sess/t1");
             std::fs::create_dir_all(&wt).unwrap();

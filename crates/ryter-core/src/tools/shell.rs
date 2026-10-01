@@ -47,6 +47,26 @@ const NON_INTERACTIVE: &[(&str, &str)] = &[
     ("PIP_NO_INPUT", "1"),
 ];
 
+/// Environment variables a key is read from, besides the two built-in ones:
+/// every connection's `env_key`. A command's environment leaves them out.
+/// Only `XAI_API_KEY` and `OPENROUTER_API_KEY` used to be, so a key under
+/// any other name was handed to every command, and `env` put it in the
+/// transcript.
+static KEY_VARS: std::sync::RwLock<Vec<String>> = std::sync::RwLock::new(Vec::new());
+
+/// Keep `var` out of the environment of every command run from here on.
+pub fn hide_env(var: &str) {
+    let var = var.trim();
+    if var.is_empty() {
+        return;
+    }
+    if let Ok(mut vars) = KEY_VARS.write() {
+        if !vars.iter().any(|v| v == var) {
+            vars.push(var.to_string());
+        }
+    }
+}
+
 /// How a command ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Run {
@@ -104,6 +124,11 @@ pub fn run_command_live(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if let Ok(vars) = KEY_VARS.read() {
+        for var in vars.iter() {
+            command.env_remove(var);
+        }
+    }
     // Under a sandbox `/tmp` is shut, so temporary files go to Ryter's
     // scratch folder: `mktemp`, and every tool that calls it, failed.
     if let Some(dir) = crate::sandbox::scratch() {
@@ -521,5 +546,29 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    /// A key's variable is kept out of a command's environment, whatever it
+    /// is called. `cargo test` sets `CARGO_PKG_NAME` for this process, so it
+    /// stands in for a key here: the command sees it until it is hidden.
+    #[test]
+    fn a_hidden_variable_does_not_reach_a_command() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let cancel = crate::cancel::Cancel::new();
+        let show = || match run_command(
+            "echo \"[$CARGO_PKG_NAME]\"",
+            dir.path(),
+            Duration::from_secs(20),
+            &cancel,
+        )
+        .unwrap()
+        {
+            Run::Ok(out) => out.trim().to_string(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(show(), "[ryter-core]");
+        hide_env("CARGO_PKG_NAME");
+        hide_env("  ");
+        assert_eq!(show(), "[]");
     }
 }

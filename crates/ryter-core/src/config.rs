@@ -895,6 +895,13 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
     apply_model_reasoning_file(&mut cfg, &model_reasoning_path(home));
     apply_review_file(&mut cfg, &review_path(home));
     validate(&cfg)?;
+    // A key read from the environment stays out of the commands Ryter runs,
+    // whatever its variable is called.
+    for conn in cfg.connections.values() {
+        if let Some(var) = conn.env_key.as_deref() {
+            crate::tools::shell::hide_env(var);
+        }
+    }
     Ok(cfg)
 }
 
