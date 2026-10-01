@@ -28,6 +28,7 @@ pub mod prompt;
 pub mod queue;
 pub mod review;
 pub mod role;
+pub mod rules;
 pub mod sandbox;
 pub mod second;
 pub mod session;

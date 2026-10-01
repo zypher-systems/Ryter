@@ -26,7 +26,10 @@ pub struct Skill {
 
 /// Skills that ship with Ryter. A user or project skill of the same name
 /// replaces one.
-const BUNDLED: &[(&str, &str)] = &[("canvas", include_str!("../skills/canvas/SKILL.md"))];
+const BUNDLED: &[(&str, &str)] = &[
+    ("canvas", include_str!("../skills/canvas/SKILL.md")),
+    ("rules", include_str!("../skills/rules/SKILL.md")),
+];
 
 /// The skills Ryter ships with.
 pub fn bundled_skills() -> Vec<Skill> {
@@ -654,8 +657,31 @@ mod tests {
         assert!(prompt.contains("Arguments: src/lib.rs"));
         assert_eq!(
             cat.names(),
-            vec!["canvas".to_string(), "review".to_string()]
+            vec![
+                "canvas".to_string(),
+                "review".to_string(),
+                "rules".to_string()
+            ]
         );
+    }
+
+    /// Ryter ships the rules skill, as `/rules` and for the model to load:
+    /// when to save a standing rule, in which file, and that the user is
+    /// asked.
+    #[test]
+    fn the_rules_skill_ships() {
+        let home = TempDir::new().unwrap();
+        let cat = load_catalog(home.path(), None, false);
+        let rules = cat.model_skill("rules").expect("built in");
+        assert!(rules.user_invocable && rules.description.contains("standing rule"));
+        for part in [
+            "update_rules",
+            "~/.ryter/RYTER.md",
+            "word for word",
+            "They may say no",
+        ] {
+            assert!(rules.body.contains(part), "{part}");
+        }
     }
 
     #[test]

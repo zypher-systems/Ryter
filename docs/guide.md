@@ -311,7 +311,7 @@ In crew mode every message you send goes to the lead. You never talk to a specia
 
 There is no mode to switch. Specialists get a **fresh window**: their task brief, `RYTER.md` / `AGENTS.md`, and the project memory scoped to their files, not the chat history.
 
-Project markdown is loaded from the working tree without a trust gate: `RYTER.md`, or `AGENTS.md` if `RYTER.md` is absent.
+Project markdown is loaded from the working tree without a trust gate: `RYTER.md`, or `AGENTS.md` if `RYTER.md` is absent. Your own rules for every project come before it: see [Your rules](#your-rules).
 
 ## Build workers, auditor, merge
 
@@ -451,6 +451,7 @@ TCP requires `--token` (or `RYTER_MCP_TOKEN`) on `initialize.params.token`. Bind
 | Kind | Where |
 | --- | --- |
 | Prompts | `prompts/*.md`; override `~/.ryter/prompts/` then trusted `.ryter/prompts/` |
+| Rules | `~/.ryter/RYTER.md` for every project; `RYTER.md` (or `AGENTS.md`) at a project's top for that project. See [Your rules](#your-rules). |
 | Skills | `/skills` panel. Files: `~/.ryter/skills/<name>/SKILL.md` (frontmatter `user-invocable`, `model-invocable`). `Enter` runs (optional args), `e` opens the file in `$EDITOR`, `a` writes a stub, `d` deletes a user skill (not a project overlay or a built-in one). |
 | User slash | Same `/skills` list (`command` rows). `~/.ryter/commands/<name>.md` (`$ARGUMENTS`) |
 | Hooks | `/hooks` panel. `a` adds: event → command or URL → optional matcher. `d` removes. Live list is `~/.ryter/hooks.toml` (does not rewrite `config.toml`). Command gets JSON on stdin; exit 2 or HTTP 403 denies. |
@@ -474,7 +475,32 @@ Look at `git diff` and report findings.
 
 **A skill's own files.** A skill kept as a folder (`<name>/SKILL.md`) can hold more files, such as a template, a checklist or a script. When the model loads the skill it sees their names, and it reads one with `load_skill` and `file`. It can read only files inside that skill's folder: no `..`, no absolute paths, and no links that lead out. Each file can be up to 256 KB.
 
-**Built-in skills:** Ryter ships with one, `canvas`.
+**Built-in skills:** Ryter ships with two, `canvas` and `rules`.
+
+### Your rules
+
+Ryter keeps your standing rules in two plain Markdown files, and puts both into the instructions of every role (solo, the lead, the architect, builders and auditors) on every message:
+
+- **`~/.ryter/RYTER.md`:** your rules for every project. How you like work reported, what to ask before doing, spelling, tone.
+- **`RYTER.md` at the top of a project** (or `AGENTS.md` when there's no `RYTER.md`): rules for that project.
+
+Your rules come first, and where the two differ the project's win. You can edit either file by hand at any time. Ryter loads up to 32 KB of the every-project file.
+
+**Saving a rule from the chat.** Say how you want something done from now on, such as "from now on, answer in British spelling", or type `/rules <what to remember>`. The model loads the built-in `rules` skill and changes the every-project file with the `update_rules` tool. Before anything is saved, Ryter shows you the change line by line and asks:
+
+- **The prompt holds the whole change.** Every added and removed line is there, and long lines are wrapped, not cut. This file isn't in your project, so `/changes` never shows it; the prompt is the only place to read the change.
+- **A change longer than the prompt scrolls.** `↓` and `PgDn` move through it, `↑` and `PgUp` go back, and a line under the change says how many rows are left.
+- **Only `y` saves it, and only once every row of the change has been on screen.** Before that, `y` tells you there is more to read. Ryter counts the rows it has drawn, not the keys pressed, so holding `PgDn` or pressing it many times at once skips nothing: each screenful starts where the last one ended. If you resize the window part-way through, the reading starts again from the top.
+- **In a window too small to show any of the change,** the prompt says so, and `y` does nothing until there is room. There's no "always" for this prompt, and `--always-approve` doesn't skip it, because the file steers every later session.
+- **The rules are plain text.** A change holding a character the screen wouldn't show as it is (a control code, an invisible character, or one that reverses the direction of text) is refused before you are asked.
+- If you say no, the file is left as it was, and the model is told so.
+- In a headless run (`ryter -p`) nobody can answer, so nothing is saved.
+- Under `--sandbox` the file can be read but not changed. The model's shell commands run in the same sandbox, and a rules file the sandbox could write would need no asking.
+- If you edit the file by hand while the question is on screen, nothing is saved over your edit.
+
+The file may be a link to one you keep elsewhere, such as in a dotfiles folder. A link to anything inside Ryter's own folder is not read as rules, because that folder holds your keys. Under `--sandbox` a link isn't followed, so linked rules are left out there unless the file they point at is inside the project. If `RYTER_HOME` puts Ryter's folder somewhere else, the prompt and the model name the file where it really is.
+
+A rule saved this way takes effect from your next message. For a rule that belongs to one project, the model edits that project's `RYTER.md` with its ordinary file tools, under the usual approvals for an edit.
 
 ### Pages (the canvas skill)
 
@@ -524,6 +550,40 @@ Ryter keeps **why** on disk, not in the orchestrator transcript:
 The orchestrator and specialists **read** these every turn (capped). They **update** them as work changes. They must not paste chat logs. When you ask why something is a certain way, the orchestrator should quote `DECISIONS.md` and open the files it names.
 
 Orchestrator may write only these memory files, never `src/`.
+
+## Benchmark
+
+`ryter bench` measures the crew on real tasks. Each task in `bench/` is a small repository with something to build or fix. The crew you have set up does the work in a fresh copy: a builder builds, the task's checks and the auditor decide whether it lands, and then tests the crew never saw decide whether it was right. It spends real money on your keys, capped per task.
+
+```sh
+ryter bench                         # every task, with your crew
+ryter bench --only rust-durations   # one task (repeatable)
+ryter bench --budget-usd 2          # the cap per task (default $1)
+ryter bench --repeat 3              # each task three times
+ryter bench --crew <preset>         # a saved crew, to compare
+ryter bench --publish docs/bench    # write the results page and compare with the last
+```
+
+It reports four numbers:
+
+- **Landed:** the checks and the auditor passed, so the work reached the branch.
+- **Accepted:** the hidden tests passed too.
+- **False passes:** landed but wrong, which is how often the auditor's sign-off was mistaken.
+- **Cost per accepted task.**
+
+The suite covers Python, Rust and TypeScript, single-file fixes and changes across several files, and one piece of work split into three builder tasks, two of them side by side. A task says what it needs (`cargo`, `node`, `python3`), and is skipped, by name, on a machine without it.
+
+`--publish docs/bench` writes `docs/bench.md` (the page) and `docs/bench.json` (the same run as data). If a run was published there before, it says how this one compares. Cost is shown but never counted as worse: the same crew can take several times as many steps on one run as on the next. A task that ran last time and not this time is named. The published run is [docs/bench.md](bench.md), and each release is checked against it this way.
+
+The published run is what the next one is measured against, so it is replaced only by a run that can stand in for it. Otherwise it is left exactly as it was, and `ryter bench` exits 1:
+
+- **The run is worse:** a task is accepted less often, or is passed wrong more often. Both are counted per run of the task, so runs with a different `--repeat` still compare. If the new run is the truth, remove `docs/bench.json` and publish again.
+- **A published task was skipped** because this machine lacks its tools.
+- **Only part of the suite ran:** `--publish` can't be combined with `--only`.
+
+A run that measured nothing is a failure whether you publish or not. `ryter bench` exits 1 when every task was skipped, and it stops at the first task no model answered: a key the provider refuses, a model your account can't reach, or a crew that won't start because the auditor is the same model as the builder. It says which, and spends nothing on the tasks left. `--repeat` must be at least 1 and `--budget-usd` above 0.
+
+To add a task, copy one in `bench/` (see `bench/README.md`). A test proves every task sound: the hidden tests fail on the fixture, and pass on the reference solution.
 
 ## Sessions
 

@@ -39,6 +39,9 @@ pub enum UserRequest {
         strict: bool,
         /// What `a` would allow for the session, in words; `None`: no `a`.
         scope: Option<String>,
+        /// `preview` is the only view of the change there will be: show
+        /// all of it, and take a yes only once its end has been shown.
+        whole: bool,
         /// Reply channel.
         reply: mpsc::Sender<Permission>,
     },
@@ -69,6 +72,9 @@ pub struct ToolAsk {
     pub strict: bool,
     /// What `a` would allow for the session; `None`: no `a`.
     pub scope: Option<String>,
+    /// `preview` is the only view of the change there will be: show all of
+    /// it, and take a yes only once its end has been shown.
+    pub whole: bool,
 }
 
 /// Handle held by [`crate::tools::ToolContext`].
@@ -116,6 +122,7 @@ impl UserIo {
                 preview,
                 strict: false,
                 scope: None,
+                whole: false,
             },
             cancel,
         )
@@ -132,6 +139,7 @@ impl UserIo {
             preview: ask.preview.map(Box::new),
             strict: ask.strict,
             scope: ask.scope,
+            whole: ask.whole,
             reply: reply_tx,
         };
         if self.send(req).is_err() {

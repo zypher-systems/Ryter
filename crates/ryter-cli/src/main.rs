@@ -134,12 +134,21 @@ enum Command {
         /// compare tierings.
         #[arg(long)]
         crew: Option<String>,
-        /// Spend cap per task, in USD.
+        /// Spend cap per task, in USD. Must be above 0: a benchmark never
+        /// runs uncapped.
         #[arg(long, default_value_t = 1.0)]
         budget_usd: f64,
-        /// Run each task this many times (models vary run to run).
+        /// Run each task this many times, at least once (models vary run to
+        /// run).
         #[arg(long, default_value_t = 1)]
         repeat: u32,
+        /// Publish the run as `<path>.md` and `<path>.json` (`docs/bench`),
+        /// and compare it with the run published there before. If a task is
+        /// accepted less often or passed wrong more often, or a published task
+        /// was skipped here, the published run is kept and the exit code
+        /// is 1. Not with `--only`.
+        #[arg(long)]
+        publish: Option<std::path::PathBuf>,
     },
     /// Crew model assignments.
     Crew {
@@ -291,8 +300,18 @@ fn main() -> ExitCode {
             crew,
             budget_usd,
             repeat,
-        }) => match bench_cmd(&suite, &only, crew.as_deref(), budget_usd, repeat) {
-            Ok(()) => ExitCode::SUCCESS,
+            publish,
+        }) => match bench_cmd(
+            &suite,
+            &only,
+            crew.as_deref(),
+            budget_usd,
+            repeat,
+            publish.as_deref(),
+        ) {
+            Ok(true) => ExitCode::SUCCESS,
+            // Worse than the run published before.
+            Ok(false) => ExitCode::from(1),
             Err(e) => {
                 eprintln!("{e}");
                 ExitCode::from(1)
@@ -646,8 +665,9 @@ fn bench_cmd(
     crew: Option<&str>,
     budget_usd: f64,
     repeat: u32,
-) -> ryter_core::Result<()> {
-    use ryter_core::bench::{BenchEnv, Summary, load_suite, run_task};
+    publish: Option<&std::path::Path>,
+) -> ryter_core::Result<bool> {
+    use ryter_core::bench::{BenchEnv, Report, Skipped, Summary, load_suite, run_task};
     let cwd = std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?;
     let trusted = config::is_trusted(&cwd);
     let mut cfg = config::load(Some(&cwd), trusted)?;
@@ -655,12 +675,51 @@ fn bench_cmd(
     if let Some(name) = crew {
         config::load_crew_preset(&home, &mut cfg, name)?;
     }
+    // The published run is what the next is compared with: part of the suite
+    // would replace it with fewer tasks.
+    if publish.is_some() && !only.is_empty() {
+        return Err(Error::Config(
+            "--publish is for the whole suite: run it without --only".into(),
+        ));
+    }
+    // A run of nothing is not a run: with --publish it replaced the published
+    // results with none, and exited 0.
+    if repeat == 0 {
+        return Err(Error::Config(
+            "--repeat must be at least 1: zero runs measure nothing".into(),
+        ));
+    }
+    // Zero means "no budget" everywhere else in Ryter.
+    if !budget_usd.is_finite() || budget_usd <= 0.0 {
+        return Err(Error::Config(
+            "--budget-usd must be above 0: a benchmark never runs uncapped".into(),
+        ));
+    }
     let mut tasks = load_suite(suite)?;
     if !only.is_empty() {
         tasks.retain(|t| only.contains(&t.name));
     }
     if tasks.is_empty() {
         return Err(Error::Config(format!("no tasks in {}", suite.display())));
+    }
+    // A task whose tools aren't installed is left out, and said to be.
+    let mut skipped = Vec::new();
+    tasks.retain(|t| match t.missing() {
+        Some(needs) => {
+            println!("{:<24} skipped: needs `{needs}`", t.name);
+            skipped.push(Skipped {
+                task: t.name.clone(),
+                needs,
+            });
+            false
+        }
+        None => true,
+    });
+    // Nothing left to run is a failure, not an empty success.
+    if tasks.is_empty() {
+        return Err(Error::Config(
+            "every task was skipped, so nothing ran: install what they need".into(),
+        ));
     }
     let last = config::load_last_route(&home);
     let (connection, model) = config::resolve_route(&cfg, last.as_ref(), None, None);
@@ -670,8 +729,17 @@ fn bench_cmd(
         .ok_or_else(|| Error::Config(format!("unknown connection {connection}")))?;
     let key = resolve_secret(&cfg, &ConnectionId::new(&connection))?;
     let provider: Arc<dyn ryter_core::Provider> = Arc::new(http_provider(conn, key));
-    let (_, builder) = cfg.route_for(Role::Builder);
-    let (_, auditor) = cfg.route_for(Role::Auditor);
+    // A seat with no model of its own runs on the lead's, which is the last
+    // one used here and not the config file's default: the label said
+    // grok-4.6 for a builder that ran on the lead's model.
+    let seat = |role: Role| {
+        if cfg.follows_orchestrator(role) {
+            model.clone()
+        } else {
+            cfg.route_for(role).1
+        }
+    };
+    let (builder, auditor) = (seat(Role::Builder), seat(Role::Auditor));
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -684,6 +752,7 @@ fn bench_cmd(
         "running   {} task(s) × {repeat}, capped at ${budget_usd:.2} each — this spends real money",
         tasks.len()
     );
+    let max_crew = cfg.subagents.max;
     let env = BenchEnv {
         cfg,
         provider,
@@ -691,6 +760,7 @@ fn bench_cmd(
         model: model.clone(),
         home: run_home.clone(),
         budget_usd,
+        max_crew,
         accept_timeout: std::time::Duration::from_secs(600),
     };
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -725,18 +795,65 @@ fn bench_cmd(
             {
                 let _ = writeln!(f, "{line}");
             }
-            let paused = r.outcome.starts_with("builds paused");
+            // No model answered: a crew that won't start, a refused key, a
+            // model the account can't reach. The crew wasn't measured, so the
+            // run isn't a result, with or without --publish; it used to go on
+            // and exit 0. Stopping here also spends nothing on the tasks left.
+            let stopped = r
+                .unanswered()
+                .then(|| format!("{} ({})", r.task, r.outcome));
             results.push(r);
-            if paused {
-                eprintln!("stopping: the crew cannot run until the auditor is a different model");
+            if let Some(at) = stopped {
                 println!("\n{}", Summary::of(&results).render());
-                return Ok(());
+                return Err(Error::Config(format!(
+                    "the benchmark stopped: no model answered on {at}. The crew wasn't \
+                     measured, so this run isn't a result, and nothing was published."
+                )));
             }
         }
     }
     println!("\n{}", Summary::of(&results).render());
     println!("results   {}", results_path.display());
-    Ok(())
+    let Some(stem) = publish else {
+        return Ok(true);
+    };
+    let report = Report {
+        ryter: VERSION.to_string(),
+        date: ryter_core::bench::today(),
+        lead: model,
+        builder,
+        auditor,
+        budget_usd,
+        results,
+        skipped,
+    };
+    let published = report.publish(stem)?;
+    if !published.lines.is_empty() {
+        println!();
+        for line in &published.lines {
+            println!("{line}");
+        }
+    }
+    let json = stem.with_extension("json");
+    match published.kept {
+        None => {
+            println!(
+                "published {} and {}",
+                stem.with_extension("md").display(),
+                json.display()
+            );
+            Ok(true)
+        }
+        // The run to beat stays the one published before.
+        Some(why) => {
+            eprintln!(
+                "not published: {why}. The published run is kept. If this run is the new \
+                 truth, remove {} and publish again.",
+                json.display()
+            );
+            Ok(false)
+        }
+    }
 }
 
 /// The lead's route and every model the user can reach, for tier suggestions.

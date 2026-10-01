@@ -59,6 +59,8 @@ pub fn decide(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
         "bash" => decide_bash(args, ctx),
         "grep" | "glob" | "todo_write" | "search_tool" | "use_tool" | "ask_user"
         | "request_hat" | "load_skill" | "show_page" => Decision::Allow,
+        // Asks the user itself, every time, whatever the session allows.
+        "update_rules" => Decision::Allow,
         "web_fetch" | "web_search" => {
             if ctx.web {
                 Decision::Allow

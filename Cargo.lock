@@ -1653,18 +1653,19 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "ryter-cli"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "clap",
  "ryter-core",
  "ryter-tui",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 
 [[package]]
 name = "ryter-core"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1694,7 +1695,7 @@ dependencies = [
 
 [[package]]
 name = "ryter-tui"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "crossterm",
  "ratatui",

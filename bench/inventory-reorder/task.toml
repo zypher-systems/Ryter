@@ -1,0 +1,23 @@
+title = "Add reordering to the shop inventory"
+brief = """
+The `shop` package tracks stock. Add reordering, across the package:
+
+- `shop/models.py`: `Item` gains `reorder_level` and `reorder_qty`, both
+  integers defaulting to 0. Negative values raise ValueError.
+- `shop/errors.py` (new): `InsufficientStock(Exception)` with attributes `sku`,
+  `requested` and `available`.
+- `shop/store.py`: `Inventory.remove_stock` raises `InsufficientStock` when asked
+  for more than is in stock, and leaves the stock unchanged. Add
+  `Inventory.needs_reorder()`: the items whose stock is at or below their
+  `reorder_level`, for items with a `reorder_level` above 0, sorted by sku.
+- `shop/report.py`: add `reorder_report(inventory)`, a list of lines, one per
+  item that needs reordering, in the same order:
+  `"<sku> <name>: stock <stock>, order <reorder_qty>"`.
+
+Existing behaviour must not change. Done when
+`python3 -m unittest -q test_shop` passes.
+"""
+files = ["shop/models.py", "shop/errors.py", "shop/store.py", "shop/report.py"]
+checks = ["python3 -m unittest -q test_shop"]
+accept = ["python3 -m unittest -q hidden_test_shop"]
+needs = ["python3 --version"]

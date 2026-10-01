@@ -358,12 +358,45 @@ mod tests {
         (r, start.elapsed())
     }
 
+    /// The process id a test's background job wrote to `file`.
+    #[cfg(unix)]
+    fn pid_in(file: &std::path::Path) -> rustix::process::Pid {
+        let pid: i32 = std::fs::read_to_string(file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        rustix::process::Pid::from_raw(pid).unwrap()
+    }
+
+    /// Whether `pid` is still a running process (not gone, nor a zombie
+    /// waiting for init to reap it).
+    #[cfg(unix)]
+    fn running(pid: rustix::process::Pid) -> bool {
+        rustix::process::test_kill_process(pid).is_ok()
+            && !std::fs::read_to_string(format!("/proc/{}/stat", pid.as_raw_nonzero())).is_ok_and(
+                |s| {
+                    s.split(") ")
+                        .nth(1)
+                        .is_some_and(|rest| rest.starts_with('Z'))
+                },
+            )
+    }
+
     /// A server left running with `&` holds the output pipe open. The command
     /// must still return, with its output, and the server must be stopped.
+    /// The job names itself in a file before the command goes on, so the
+    /// test knows which process to look for without `pgrep -f`.
+    #[cfg(unix)]
     #[test]
     fn a_background_process_does_not_hang_the_command() {
-        let marker = format!("ryter-bg-{}", std::process::id());
-        let cmd = format!("(exec -a {marker} sleep 30 &) && echo started");
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("pid");
+        let cmd = format!(
+            "(bash -c 'echo $$ > {f}; exec sleep 30' &) && while [ ! -s {f} ]; do sleep 0.02; done; \
+             echo started",
+            f = file.display()
+        );
         let (r, took) = run(&cmd, 20);
         assert!(took < Duration::from_secs(5), "hung for {took:?}");
         match r {
@@ -374,12 +407,9 @@ mod tests {
             other => panic!("{other:?}"),
         }
         // SIGKILL is sent, not awaited: give the process a moment to go.
+        let pid = pid_in(&file);
         let gone = (0..100).any(|_| {
-            let alive = Command::new("pgrep")
-                .args(["-f", &marker])
-                .output()
-                .unwrap();
-            alive.stdout.is_empty() || {
+            !running(pid) || {
                 std::thread::sleep(Duration::from_millis(20));
                 false
             }
@@ -456,15 +486,27 @@ mod tests {
         }
     }
 
-    /// A process that leaves the group (`setsid`) can't be stopped with it;
-    /// the command still returns after a short grace, and says why.
-    #[cfg(target_os = "linux")]
+    /// A process that leaves the group can't be stopped with it; the
+    /// command still returns after a short grace, and says why.
+    ///
+    /// The job leaves through job control (`set -m` gives it a process
+    /// group of its own) and names itself in a file before the command goes
+    /// on. A `setsid` job raced the command: under load the group was
+    /// stopped before it had left, and CI saw "stopped the background
+    /// processes" instead.
+    #[cfg(unix)]
     #[test]
     fn a_detached_process_holding_the_pipe_does_not_hang() {
-        let marker = format!("ryter-detached-{}", std::process::id());
-        let cmd = format!("setsid bash -c 'exec -a {marker} sleep 30' & echo detached");
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("pid");
+        let cmd = format!(
+            "set -m; bash -c 'echo $$ > {f}; exec sleep 30' & while [ ! -s {f} ]; do sleep 0.02; \
+             done; echo detached",
+            f = file.display()
+        );
         let (r, took) = run(&cmd, 20);
-        let _ = Command::new("pkill").args(["-f", &marker]).status();
+        // Stopped by the id it wrote, not by a pattern.
+        let _ = rustix::process::kill_process(pid_in(&file), rustix::process::Signal::KILL);
         assert!(took < Duration::from_secs(5), "hung for {took:?}");
         match r {
             Run::Ok(text) => {

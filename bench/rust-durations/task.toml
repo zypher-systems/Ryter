@@ -1,0 +1,26 @@
+title = "Parse and format durations in the durfmt crate"
+brief = """
+`durfmt` turns durations like `1h30m` into seconds and back. It only handles
+seconds today. Finish it:
+
+- `durfmt::parse(&str) -> Result<u64, ParseError>` (src/parse.rs): one or more
+  `<digits><unit>` parts with no spaces. Units are `d` (86400 s), `h`, `m`, `s`.
+  They must come largest first, each at most once: `1d2h`, `90m`, `1h30m15s`.
+- Errors, as variants of `durfmt::ParseError` (src/error.rs), each with a
+  `Display` message:
+  - `Empty`: the input is empty.
+  - `MissingUnit`: digits with no unit after them (`15`, `1h30`).
+  - `UnknownUnit(char)`: a unit that isn't d, h, m or s (`5x`), or a part with
+    no digits (`h`).
+  - `OutOfOrder`: units not largest first, or repeated (`30m1h`, `1h1h`).
+  - `Overflow`: the total doesn't fit in a `u64`.
+- `durfmt::format(u64) -> String` (src/format.rs): the same notation, largest
+  unit first, leaving out units that are zero. `0` is `0s`. So
+  `parse(&format(n)) == Ok(n)` for every `n`.
+
+Add no dependencies. Done when `cargo test -q --test basic` passes.
+"""
+files = ["src/error.rs", "src/parse.rs", "src/format.rs"]
+checks = ["cargo test -q --test basic"]
+accept = ["cargo test -q --test hidden"]
+needs = ["cargo --version"]

@@ -1,0 +1,9 @@
+[package]
+name = "durfmt"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+# Its own workspace, wherever it is copied to.
+[workspace]
