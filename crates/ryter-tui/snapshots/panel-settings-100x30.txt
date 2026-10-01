@@ -7,7 +7,7 @@
               │                                                                      ┃
               │ AGENTS                                                               ┃
               │  subagents max             ‹ 4 ›                             default ┃
-              │  auditor                   [ on ]                            default ┃
+              │  auditor                   [ on ]                            default │
               │  builder steps (def 40)    ‹ 40 ›                            default │
               │  architect steps (def 30)  ‹ 30 ›                            default │
               │  auditor steps (def 12)    ‹ 12 ›                            default │

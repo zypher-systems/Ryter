@@ -18,7 +18,7 @@
                                             │  auditor steps (def 12)    ‹ 12 ›                            default ┃
                                             │                                                                      ┃
                                             │ TOOLS                                                                ┃
-                                            │  permission mode           ‹ ask ›                           default ┃
+                                            │  permission mode           ‹ ask ›                           default │
                                             │  features.web              [ off ]                           default │
                                             │                                                                      │
                                             │ SANDBOX                                                              │

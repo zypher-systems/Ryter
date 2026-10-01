@@ -437,13 +437,10 @@ fn sandbox_table(chosen: &str, width: usize, theme: Theme) -> Vec<Line<'static>>
     out.extend(note(
         "† Ryter refuses to read your keys, but nothing stops a command that tries.",
     ));
-    if cfg!(target_os = "linux") {
-        out.extend(note("A change applies the next time Ryter starts."));
-    } else {
-        out.extend(note(
-            "workspace and read-only need Linux. On this system Ryter won't start with either.",
-        ));
-    }
+    // The same words on every system: the panel is drawn the same everywhere.
+    out.extend(note(
+        "workspace and read-only need Linux, and apply the next time Ryter starts.",
+    ));
     out.push(blank());
     out
 }
