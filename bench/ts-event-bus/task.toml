@@ -26,4 +26,5 @@ Done when `node --test test/basic.test.ts` passes.
 files = ["src/bus.ts", "src/retry.ts"]
 checks = ["node --test test/basic.test.ts"]
 accept = ["node --test test/hidden.test.ts"]
-needs = ["node -e \"require('node:module').stripTypeScriptTypes('let a: number = 1')\""]
+# Whether this Node runs TypeScript as it is: one of the fixture's own modules.
+needs = ["node repo/src/retry.ts"]

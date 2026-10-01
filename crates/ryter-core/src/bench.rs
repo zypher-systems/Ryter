@@ -559,6 +559,17 @@ impl Report {
                 ));
             }
         }
+        // A task that ran then and not now would otherwise drop out unseen.
+        let ran = self.by_task();
+        for o in &old {
+            if !ran.iter().any(|l| l.task == o.task) {
+                let why = match self.skipped.iter().find(|s| s.task == o.task) {
+                    Some(s) => format!("skipped, this machine lacks `{}`", s.needs),
+                    None => "no longer in the suite".into(),
+                };
+                lines.push(format!("  {}: not run this time ({why})", o.task));
+            }
+        }
         if let (Some(a), Some(b)) = (then.usd_per_accepted(), now.usd_per_accepted()) {
             lines.push(format!(
                 "  cost per accepted task: ${a:.3} then, ${b:.3} now (it varies run to run)"
@@ -920,6 +931,25 @@ after = ["first"]
         let (lines, worse) = then.compare(&bad);
         assert!(
             !worse && lines.iter().any(|l| l.contains("b: better")),
+            "{lines:?}"
+        );
+        // A task that ran then and not now is named, with why.
+        let mut fewer = report(vec![result("a", true, true, 0.10)]);
+        let (lines, _) = fewer.compare(&then);
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("b: not run this time (no longer in the suite)")),
+            "{lines:?}"
+        );
+        fewer.skipped = vec![Skipped {
+            task: "b".into(),
+            needs: "cargo --version".into(),
+        }];
+        let (lines, _) = fewer.compare(&then);
+        assert!(
+            lines.iter().any(|l| l
+                .contains("b: not run this time (skipped, this machine lacks `cargo --version`)")),
             "{lines:?}"
         );
     }

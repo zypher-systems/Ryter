@@ -8,7 +8,7 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
   - **The suite** grew from four small Python tasks to nine. The new ones are a feature across four Python modules, bugs in two Python modules that only show together, a Rust crate (three modules, no dependencies), a TypeScript library run by Node's own type stripping (no build, no packages), and one piece of work split into three builder tasks.
   - **`needs`** in `task.toml` lists commands that must succeed for a task to run (`cargo --version`). `ryter bench` and the soundness test skip a task whose tools are missing, by name. The test no longer depends on what is installed.
   - **`[[tasks]]`** splits a benchmark task into builder tasks with `after`. They are queued as an architect's plan would be, and run with the crew's `max` builders.
-  - **`ryter bench --publish <path>`** writes `<path>.md` and `<path>.json` (`bench::Report`), compares the run with the one published there before (`Report::compare`), and exits 1 when a task is accepted less often or false passes went up.
+  - **`ryter bench --publish <path>`** writes `<path>.md` and `<path>.json` (`bench::Report`), compares the run with the one published there before (`Report::compare`), and exits 1 when a task is accepted less often or false passes went up. It names a task that ran before and not now, and refuses `--only`: a partial run would replace the published one with fewer tasks.
 - **Chosen vs rejected:**
   - Cost is reported and never fails the comparison. Measured on twelve past crew runs, the tokens one builder task used varied about a hundredfold, and the same model took between 8 and 126 calls a task. A cost threshold would fail releases at random.
   - Rejected a predicted cost before a crew run, for the same reason. Nothing known at the plan (files named, length of the brief, number of tasks) lined up with what was then used (rank correlations 0.10, 0.27 and 0.03). The benchmark publishes what a run did cost.
@@ -24,7 +24,7 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
 - **Decision:**
   - **The file:** `~/.ryter/RYTER.md` (`rules::path`). `rules::load` returns its text, cut to 32 KB on a line with a note when longer.
   - **The prompt:** `prompt::conversation_system` (solo and the lead) adds a section, "The user's rules (every project)", ahead of the project's instructions. `prompt::reading_messages` (architect, builder, auditor, `/second`) puts the same text ahead of them in the brief. Both say the project's instructions win where they differ.
-  - **The tool:** `update_rules {rules}` replaces the whole file. `Agent::update_rules` asks through `UserIo::ask_tool` with the change as a `FileDiff`, `strict` (only `y` is yes) and no session scope. `--always-approve` and "always" don't reach it, since it doesn't go through the gate. It saves with a write-and-rename, and runs inside `tools::with_hooks`.
+  - **The tool:** `update_rules {rules}` replaces the whole file. `Agent::update_rules` asks through `UserIo::ask_tool` with the change as a `FileDiff`, `strict` (only `y` is yes) and no session scope. `--always-approve` and "always" don't reach it, since it doesn't go through the gate. After a yes it saves only if the file is still what the user was shown, so a hand edit made meanwhile isn't thrown away. It saves with a write-and-rename, and runs inside `tools::with_hooks`.
   - **When it refuses without asking:**
     - there's no change;
     - the new text is over 32 KB;

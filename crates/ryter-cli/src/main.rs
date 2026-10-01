@@ -671,6 +671,13 @@ fn bench_cmd(
     if let Some(name) = crew {
         config::load_crew_preset(&home, &mut cfg, name)?;
     }
+    // The published run is what the next is compared with: part of the suite
+    // would replace it with fewer tasks.
+    if publish.is_some() && !only.is_empty() {
+        return Err(Error::Config(
+            "--publish is for the whole suite: run it without --only".into(),
+        ));
+    }
     let mut tasks = load_suite(suite)?;
     if !only.is_empty() {
         tasks.retain(|t| only.contains(&t.name));

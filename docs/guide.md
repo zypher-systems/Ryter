@@ -492,6 +492,7 @@ Your rules come first, and where the two differ the project's win. You can edit 
 - If you say no, the file is left as it was, and the model is told so.
 - In a headless run (`ryter -p`) nobody can answer, so nothing is saved.
 - Under `--sandbox` the file can be read but not changed. The model's shell commands run in the same sandbox, and a rules file the sandbox could write would need no asking.
+- If you edit the file by hand while the question is on screen, nothing is saved over your edit.
 
 A rule saved this way takes effect from your next message. For a rule that belongs to one project, the model edits that project's `RYTER.md` with its ordinary file tools, under the usual approvals for an edit.
 
@@ -566,7 +567,7 @@ It reports four numbers:
 
 The suite covers Python, Rust and TypeScript, single-file fixes and changes across several files, and one piece of work split into three builder tasks, two of them side by side. A task says what it needs (`cargo`, `node`, `python3`), and is skipped, by name, on a machine without it.
 
-`--publish docs/bench` writes `docs/bench.md` (the page) and `docs/bench.json` (the same run as data). If a run was published there before, it says how this one compares, and exits 1 when a task is accepted less often or false passes went up. Cost is shown but never counted as worse: the same crew can take several times as many steps on one run as on the next. The published run is [docs/bench.md](bench.md), and each release is checked against it this way.
+`--publish docs/bench` writes `docs/bench.md` (the page) and `docs/bench.json` (the same run as data). If a run was published there before, it says how this one compares, and exits 1 when a task is accepted less often or false passes went up. Cost is shown but never counted as worse: the same crew can take several times as many steps on one run as on the next. A task that ran last time and not this time is named. `--publish` takes a run of the whole suite, so it can't be combined with `--only`. The published run is [docs/bench.md](bench.md), and each release is checked against it this way.
 
 To add a task, copy one in `bench/` (see `bench/README.md`). A test proves every task sound: the hidden tests fail on the fixture, and pass on the reference solution.
 

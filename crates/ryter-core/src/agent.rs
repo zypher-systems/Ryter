@@ -1512,6 +1512,16 @@ impl Agent {
         }
         match answer {
             crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
+                // The user said yes to a change from what was on disk then.
+                // If they edited the file meanwhile, saving would throw
+                // that edit away.
+                if crate::rules::read(&self.home) != old {
+                    return Ok(ToolOutput::err(format!(
+                        "{shown} changed while the user was deciding, so nothing was saved. \
+                         Their next message shows you the file as it is now; make the change \
+                         again from that."
+                    )));
+                }
                 crate::rules::save(&self.home, &new)?;
                 self.emit(AgentEvent::Notice {
                     message: format!("rules · saved to {shown}"),
@@ -5098,6 +5108,45 @@ mod tests {
                 assert!(result.contains("the user said no") && !noticed, "{result}");
             }
         }
+    }
+
+    /// A hand edit made while the question is up isn't thrown away: the
+    /// user said yes to a change from the file as it was then.
+    #[tokio::test]
+    async fn a_hand_edit_made_while_deciding_is_kept() {
+        let (home, _cwd, mut agent) = setup(rules_call("- Use British spelling."));
+        crate::rules::save(home.path(), "- Be brief.").unwrap();
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        let file = crate::rules::path(home.path());
+        let answering = std::thread::spawn(move || {
+            while let Ok(req) = rx.recv() {
+                if let crate::user_io::UserRequest::Permission { reply, .. } = req {
+                    // The user edits the file, then says yes.
+                    std::fs::write(&file, "- Be brief.\n- Mine, by hand.\n").unwrap();
+                    let _ = reply.send(crate::user_io::Permission::Allow);
+                }
+            }
+        });
+        agent.turn("go").await.unwrap();
+        agent.ctx.user_io = None;
+        answering.join().unwrap();
+        let result = &agent
+            .session
+            .transcript
+            .iter()
+            .rev()
+            .find(|m| m.role == "tool")
+            .unwrap()
+            .content;
+        assert!(
+            result.contains("changed while the user was deciding"),
+            "{result}"
+        );
+        assert_eq!(
+            crate::rules::read(home.path()).as_deref(),
+            Some("- Be brief.\n- Mine, by hand.\n")
+        );
     }
 
     /// Nothing is saved, and nobody is asked, when there is nothing to ask
