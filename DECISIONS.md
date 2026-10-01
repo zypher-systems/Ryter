@@ -2,6 +2,29 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-30 — Ryter updates itself from signed releases
+- **By:** lead
+- **Decision:**
+  - **`update::check`** reads GitHub's latest release, which never lists drafts, and skips pre-releases and tags that aren't `vMAJOR.MINOR.PATCH`.
+  - **`update::install`** downloads `SHA256SUMS`, `SHA256SUMS.sig` and `ryter-<target>.tar.gz`. It then checks, in order:
+    - the ed25519 signature over `SHA256SUMS` (base64), against the key built in from `release/ryter-release.pub.pem`;
+    - the tarball's sum;
+    - that the unpacked binary runs and reports the release's version.
+
+    Only then does it rename the binary over the installed one, from the same folder.
+  - **The release workflow** signs with `openssl pkeyutl -sign -rawin`, using the `RYTER_SIGNING_KEY` secret. Before drafting, it verifies the signature against the committed public key. A missing secret or a mismatched key fails the release.
+  - **Only binaries the release workflow built replace themselves.** It sets `RYTER_RELEASE_BUILD`, and `update::RELEASE_BUILD` reads it at compile time. A cargo build, installed or in a checkout, is refused and told how to update. Paths under `target/` and the cargo bin folder are refused too.
+  - **The launch check** (`update::on_launch`, `[update] mode`, default `install`) runs on its own thread in the TUI, never the worker's, which may be sandboxed. It runs at most once a day (`~/.ryter/update.json`). Development builds never check, and a failed check says nothing.
+  - **`ryter update [--check]`** runs the same steps on demand.
+- **Chosen vs rejected:**
+  - Rejected checksums alone, as `install.sh` uses them. The sums come from the same release, so they catch a corrupt download but not a tampered release. An installer that runs on every launch, for every user, needs the stronger check.
+  - Chose `openssl` and a raw ed25519 signature over minisign or signify. `openssl` is already on GitHub's runners and on the user's machine, so creating the key and signing need nothing new. `ed25519-dalek` verifies it.
+  - Rejected guessing a development build from its path alone. A live test replaced a cargo build in a `target-updtest/` folder. The release marker replaced that guess.
+  - Rejected a runtime override of the key. `RYTER_UPDATE_PUBKEY` is read at build time only, for forks and tests. An environment variable at run time could swap the key under a released binary.
+- **Why:** the user asked for Ryter to check for, install, and offer to restart into new releases, and for a `ryter update` command.
+- **Where:** `crates/ryter-core/src/update.rs`, `config.rs` (`UpdateMode`, `UpdateConfig`, settings file); `crates/ryter-cli/src/main.rs` (`update_cmd`); `crates/ryter-tui/src/run/mod.rs` (the launch thread), `panel/settings.rs`; `.github/workflows/release.yml`; `release/ryter-release.pub.pem`
+- **Residual risk:** whoever holds the private key, or the `RYTER_SIGNING_KEY` secret, can ship code to every user. Keep the key out of the repository, and rotate it by releasing a build with the new public key before using the new key.
+
 ### 2026-09-30 — A folder of projects is never made one repository
 - **By:** lead
 - **Decision:**

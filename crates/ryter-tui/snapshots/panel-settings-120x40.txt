@@ -21,13 +21,13 @@
                         │  inbound               [ on ]                                default ┃
                         │  bind address                                                default ┃
                         │                                                                      ┃
-                        │ UI                                                                   ┃
-                        │  theme                 ‹ dark ›                              default ┃
-                        │  layout                ‹ classic ›                            config ┃
-                        │  username                                                    default ┃
-                        │  reasoning             ‹ collapsed ›                         default │
-                        │  mouse                 [ on ]                                default │
-                        │  panel · rail          [ on ]                                default │
+                        │ UPDATES                                                              ┃
+                        │  on launch             ‹ install ›                           default ┃
+                        │                                                                      │
+                        │ UI                                                                   │
+                        │  theme                 ‹ dark ›                              default │
+                        │  layout                ‹ classic ›                            config │
+                        │  username                                                    default │
                         │ ↑↓ move   space/←→ change   enter edit   esc done                    │
                         ╰──────────────────────────────────────────────────────────────────────╯
 

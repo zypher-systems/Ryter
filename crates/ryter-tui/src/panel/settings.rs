@@ -135,6 +135,14 @@ impl Settings {
             } else {
                 "config"
             }),
+            Field::new("g_update", "updates", Kind::Header),
+            select(
+                "update",
+                "on launch",
+                &["install", "notify", "off"],
+                view.update_mode.as_str(),
+                ryter_core::config::UpdateMode::default().as_str(),
+            ),
             Field::new("g_ui", "ui", Kind::Header),
             select("theme", "theme", &theme_opts, &view.theme_name, &d.theme),
             select(
@@ -233,6 +241,9 @@ impl Settings {
         }
         if let Some(v) = text("bind") {
             view.mcp_bind = (!v.trim().is_empty()).then(|| v.trim().to_string());
+        }
+        if let Some(v) = sel("update").and_then(|v| ryter_core::config::UpdateMode::parse(&v)) {
+            view.update_mode = v;
         }
         if let Some(v) = sel("theme") {
             view.ui.theme = v;

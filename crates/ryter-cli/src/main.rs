@@ -65,6 +65,13 @@ struct Cli {
 enum Command {
     /// Print the version and exit.
     Version,
+    /// Install the latest release, if it is newer, after checking its
+    /// signature and checksum. Restart Ryter to use it.
+    Update {
+        /// Only say whether a newer release is out.
+        #[arg(long)]
+        check: bool,
+    },
     /// Print spend for a session (default: latest in this directory).
     Spend {
         /// Session id.
@@ -211,6 +218,13 @@ fn main() -> ExitCode {
             println!("ryter {VERSION}");
             ExitCode::SUCCESS
         }
+        Some(Command::Update { check }) => match update_cmd(check) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("ryter update: {e}");
+                ExitCode::from(1)
+            }
+        },
         None if cli.prompt.is_none() => {
             if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
                 eprintln!("ryter: not a tty (use -p for headless, --version for version)");
@@ -925,6 +939,36 @@ fn trust_cmd() -> ryter_core::Result<()> {
     let cwd = std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?;
     config::trust(&cwd)?;
     println!("trusted {}", cwd.display());
+    Ok(())
+}
+
+/// `ryter update [--check]`.
+fn update_cmd(check_only: bool) -> ryter_core::Result<()> {
+    use ryter_core::update::{self, Source, Version};
+    let src = Source::new();
+    let current = Version::current();
+    let Some(avail) = update::check(&src, current)? else {
+        println!("ryter {current} is the latest release");
+        return Ok(());
+    };
+    if check_only {
+        println!(
+            "ryter {} is out (you have {current}). `ryter update` installs it.\nWhat's new: {}",
+            avail.version, avail.notes
+        );
+        return Ok(());
+    }
+    let exe = update::installed_binary()?;
+    println!(
+        "installing ryter {} over {current} at {}",
+        avail.version,
+        exe.display()
+    );
+    update::install(&src, &avail, &exe)?;
+    println!(
+        "installed ryter {}. Restart Ryter to use it.\nWhat's new: {}",
+        avail.version, avail.notes
+    );
     Ok(())
 }
 

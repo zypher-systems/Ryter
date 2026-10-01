@@ -18,6 +18,10 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.9.0 (`0.9.0-patch`) — Ryter updates itself.**
+  - At launch, at most once a day, Ryter installs a newer signed release in the background and says to restart. `[update] mode`: install, notify, or off.
+  - `ryter update [--check]` does the same on demand.
+  - Releases are signed: the workflow signs `SHA256SUMS` with the `RYTER_SIGNING_KEY` secret, and Ryter checks the signature against `release/ryter-release.pub.pem` before it installs. Only release-workflow builds replace themselves.
 - **0.8.2 (`0.8.2-patch`) — an MCP server's last words.** `LiveServer::gone` waits up to 500 ms for the stderr reader to reach its end (`stderr_done`) and for the child to be reaped, so the exit reason reaches the error. Found by a flaky CI run of `a_server_that_exits_says_so` on 0.8.1.
 - **0.8.1 (`0.8.1-patch`) — a folder of projects stays as it is.**
   - `git::holds_repos` finds repositories in a folder's folders, or one level down, when the folder isn't a repository with commits. It skips only folders the folder's own ignore rules leave out, in git's order of precedence (with the first `.gitignore` when Ryter will write it). `ensure_repo` refuses a first commit there, and git checks again at any depth by staging into a private copy of the index. A crew turn stops before its first model call. Solo mode edits without `/undo` there.

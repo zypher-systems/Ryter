@@ -36,6 +36,7 @@ pub mod spend;
 pub mod tiering;
 pub mod tools;
 pub mod trace;
+pub mod update;
 pub mod user_io;
 
 pub use agent::{Agent, ChildHandle, StopReason, TurnResult, tool_summary};
