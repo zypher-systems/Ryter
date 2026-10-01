@@ -641,6 +641,15 @@ mod tests {
         );
     }
 
+    /// The committed release key parses, so a release build can check
+    /// updates: a placeholder or a damaged file fails here, not in a user's
+    /// `ryter update`.
+    #[test]
+    fn the_release_key_is_in_place() {
+        let key = key_from_pem(RELEASE_KEY_PEM).expect("release/ryter-release.pub.pem");
+        assert!(public_key(&key).is_ok());
+    }
+
     /// What the release workflow does, `openssl pkeyutl -sign -rawin`, is
     /// what Ryter verifies. Opt in: `RYTER_OPENSSL=1`, with openssl 3 on
     /// `PATH`.
