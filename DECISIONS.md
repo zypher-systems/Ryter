@@ -2,6 +2,19 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-10-01 — A panel for the user's rules, with no model in it
+- **By:** lead, with the user's choice of layout (two tabs)
+- **Decision:**
+  - **`/rules`** opens `panel/rules.rs`: two tabs, *every project* (`~/.ryter/RYTER.md`, through `rules::read` and `rules::save`) and *this project* (`RYTER.md`, or `AGENTS.md` when that is the file there, the order the prompt reads them in).
+  - **By hand:** `a` adds a rule under the selected line, `d` removes a line after a yes, `e` hands the file to `$VISUAL` or `$EDITOR` through the existing editor action. The panel writes the files itself. There is no approval card: the person typing is the approval.
+  - **`/rules <text>`** still runs the built-in `rules` skill, so the model's path, with its diff and its yes, is unchanged. The palette lists the command and not the skill beside it (`registry::FRONTS_SKILL`).
+- **Chosen vs rejected:**
+  - Rejected two panes side by side (the user chose tabs): rules are long lines, and half the width wraps them all.
+  - Rejected an editor inside the panel. Adding and removing a line covers most changes, and `e` is there for the rest.
+  - Rejected asking for confirmation on add. The line is on screen as soon as it is added, and `d` takes it out.
+- **Why:** the user asked for "an interface such as /rules with a popup" so that anyone can set their global and project rules, not only people who know which files to edit.
+- **Where:** `crates/ryter-tui/src/panel/rules.rs`, `palette/registry.rs` (`run_rules`), `palette/mod.rs`, `run/mod.rs` (`edit_with_editor`)
+
 ### 2026-10-01 — The sandbox reaches the user's tools, and says what it is
 - **By:** lead, with the user's choices (comparison table in `/settings`; "tools and their caches"; the default stays `off`)
 - **Decision:**

@@ -498,6 +498,15 @@ Ryter keeps your standing rules in two plain Markdown files, and puts both into 
 
 Your rules come first, and where the two differ the project's win. You can edit either file by hand at any time. Ryter loads up to 32 KB of the every-project file.
 
+**The `/rules` panel.** `/rules` opens both files, one at a time, with no model involved:
+
+- **Tab** switches between *every project* and *this project*. The line under the tabs names the file and says how many rules it holds.
+- **`a`** adds a rule under the selected line. What you type becomes a bullet; a line you start with `#` is kept as a heading.
+- **`d`** removes the selected line, after you answer `y`.
+- **`e`** opens the file in your editor (`$VISUAL`, then `$EDITOR`, then `vi`).
+
+The first rule you add creates the file. For this project that is `RYTER.md`, unless the project already keeps an `AGENTS.md`, which is then the one read and added to. A change takes effect from your next message.
+
 **Saving a rule from the chat.** Say how you want something done from now on, such as "from now on, answer in British spelling", or type `/rules <what to remember>`. The model loads the built-in `rules` skill and changes the every-project file with the `update_rules` tool. Before anything is saved, Ryter shows you the change line by line and asks:
 
 - **The prompt holds the whole change.** Every added and removed line is there, and long lines are wrapped, not cut. This file isn't in your project, so `/changes` never shows it; the prompt is the only place to read the change.
