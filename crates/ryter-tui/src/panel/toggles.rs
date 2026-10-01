@@ -1,4 +1,4 @@
-//! `/tools` and `/auditor` — small toggles with prose (`R-POP-54`, `R-POP-55`).
+//! `/tools` — a small toggle with prose (`R-POP-54`).
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::style::{Modifier, Style};
@@ -9,12 +9,6 @@ use crate::action::Action;
 use crate::chat::wrap;
 use crate::theme::Theme;
 use crate::view::View;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Which {
-    Tools,
-    Auditor,
-}
 
 struct Opt {
     value: &'static str,
@@ -35,23 +29,9 @@ const TOOLS: [Opt; 2] = [
     },
 ];
 
-const AUDITOR: [Opt; 2] = [
-    Opt {
-        value: "on",
-        prose: "every builder result is reviewed by an auditor before it merges.",
-        warn: false,
-    },
-    Opt {
-        value: "off",
-        prose: "builder results merge as soon as they finish. faster, unreviewed.",
-        warn: true,
-    },
-];
-
 /// Two-row toggle panel.
 #[derive(Debug, Clone)]
 pub struct Toggles {
-    which: Which,
     selected: usize,
 }
 
@@ -59,47 +39,22 @@ impl Toggles {
     /// `/tools`.
     pub fn tools(view: &View) -> Self {
         Self {
-            which: Which::Tools,
             selected: usize::from(view.perm_mode == "always"),
         }
     }
 
-    /// `/auditor`.
-    pub fn auditor(view: &View) -> Self {
-        Self {
-            which: Which::Auditor,
-            selected: usize::from(!view.auditor_on),
-        }
-    }
-
-    fn opts(&self) -> &'static [Opt; 2] {
-        match self.which {
-            Which::Tools => &TOOLS,
-            Which::Auditor => &AUDITOR,
-        }
-    }
-
     fn current(&self, view: &View) -> usize {
-        match self.which {
-            Which::Tools => usize::from(view.perm_mode == "always"),
-            Which::Auditor => usize::from(!view.auditor_on),
-        }
+        usize::from(view.perm_mode == "always")
     }
 }
 
 impl Panel for Toggles {
     fn kind(&self) -> &'static str {
-        match self.which {
-            Which::Tools => "tools",
-            Which::Auditor => "auditor",
-        }
+        "tools"
     }
 
     fn title(&self, _view: &View) -> String {
-        match self.which {
-            Which::Tools => "tool permissions".into(),
-            Which::Auditor => "auditor gate".into(),
-        }
+        "tool permissions".into()
     }
 
     fn legend(&self, _view: &View) -> String {
@@ -114,7 +69,7 @@ impl Panel for Toggles {
         let w = usize::from(width);
         let cur = self.current(view);
         let mut lines: Vec<Line<'static>> = Vec::new();
-        for (i, o) in self.opts().iter().enumerate() {
+        for (i, o) in TOOLS.iter().enumerate() {
             let sel = i == self.selected;
             let bg = if sel {
                 theme.selection_bg
@@ -167,15 +122,9 @@ impl Panel for Toggles {
                 self.selected = 1 - self.selected;
                 Outcome::Stay
             }
-            KeyCode::Enter => {
-                let a = match self.which {
-                    Which::Tools => Action::SetTools {
-                        always: self.selected == 1,
-                    },
-                    Which::Auditor => Action::SetAuditor(self.selected == 0),
-                };
-                Outcome::CloseAct(a)
-            }
+            KeyCode::Enter => Outcome::CloseAct(Action::SetTools {
+                always: self.selected == 1,
+            }),
             _ => Outcome::Stay,
         }
     }

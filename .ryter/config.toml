@@ -1,8 +1,0 @@
-# Project overlay for the Ryter repo. No secrets.
-# Apply with: `ryter trust` in this directory.
-
-[auditor]
-enabled = true
-
-[subagents]
-max = 2

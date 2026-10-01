@@ -22,14 +22,10 @@ pub const RAIL_W: u16 = 34;
 /// seventy-six columns beside it.
 pub const RAIL_MIN_SCREEN: u16 = 110;
 
-/// Whether the rail shows: solo mode on the ledger, the conversation on
-/// screen, wide enough, and not hidden with `^b`.
+/// Whether the rail shows: on the ledger, the conversation on screen, wide
+/// enough, and not hidden with `^b`.
 pub fn shown(view: &View, width: u16) -> bool {
-    !view.ui.classic()
-        && !view.crew_mode()
-        && view.workbench.is_none()
-        && view.panel_visible
-        && width >= RAIL_MIN_SCREEN
+    !view.ui.classic() && view.workbench.is_none() && view.panel_visible && width >= RAIL_MIN_SCREEN
 }
 
 /// What each hat does, in a line.
@@ -477,6 +473,6 @@ fn views_line(view: &View, theme: Theme, bg: Color) -> Line<'static> {
     let off = Style::default().fg(theme.dim).bg(bg);
     Line::from(vec![
         Span::styled("chat", on),
-        Span::styled("  changes ^t  crew /crew", off),
+        Span::styled("  changes ^t", off),
     ])
 }

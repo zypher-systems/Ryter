@@ -30,28 +30,6 @@ impl fmt::Display for SessionId {
     }
 }
 
-/// Identifier for a running specialist (builder, planner, auditor, …).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct SubagentId(String);
-
-impl SubagentId {
-    /// Wrap an already-validated id string.
-    pub fn new(raw: impl Into<String>) -> Self {
-        Self(raw.into())
-    }
-
-    /// Borrow the raw id.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for SubagentId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
 /// Named inference endpoint (for example `spacexai` or `openrouter`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ConnectionId(String);

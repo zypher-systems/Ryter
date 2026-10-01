@@ -2,23 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::SubagentId;
-use crate::phase::Phase;
 use crate::role::Role;
-
-/// What a crew member is doing right now ([`AgentEvent::SubagentLive`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LivePhase {
-    /// Request sent; no byte back yet.
-    Waiting,
-    /// The model is reasoning.
-    Thinking,
-    /// The model is writing: its reply, or a tool call such as a file edit.
-    Writing,
-    /// A tool or command is running.
-    Running,
-}
 
 /// A unit of progress from the session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -63,7 +47,7 @@ pub enum AgentEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         diff: Option<Box<crate::diff::FileDiff>>,
     },
-    /// A user turn began (orchestrator only).
+    /// A user turn began.
     TurnStarted {
         /// Monotonic turn number within the process.
         turn: u64,
@@ -83,13 +67,8 @@ pub enum AgentEvent {
         connection: String,
         /// Model id.
         model: String,
-        /// Who spent it.
+        /// The hat it was spent in.
         role: Role,
-        /// Child id when a specialist spent.
-        subagent_id: Option<SubagentId>,
-        /// The crew task it was spent on, for the board's lanes.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        task: Option<String>,
         /// Prompt tokens.
         input_tokens: u64,
         /// Completion tokens.
@@ -98,54 +77,6 @@ pub enum AgentEvent {
         cached_tokens: u64,
         /// USD total for this call. `None` means unknown price (`$?.??`).
         total_usd: Option<f64>,
-    },
-    /// Orchestrator phase changed.
-    PhaseChanged {
-        /// New phase.
-        phase: Phase,
-    },
-    /// A specialist started.
-    SubagentStarted {
-        /// Child id.
-        id: SubagentId,
-        /// Role.
-        role: Role,
-        /// Short task label.
-        description: String,
-    },
-    /// What a running specialist is doing now (`edit src/store.py`,
-    /// `bash python3 -m unittest`). Progress for the crew card, not chat.
-    SubagentActivity {
-        /// Child id.
-        id: SubagentId,
-        /// Role.
-        role: Role,
-        /// Short description.
-        text: String,
-    },
-    /// What a crew member is doing between its steps, sent a few times a
-    /// second while it works: waiting for the model, thinking, writing, or
-    /// running a command. The board used to sit still for minutes while a
-    /// model thought or wrote a long edit, because only finished tool calls
-    /// were reported.
-    SubagentLive {
-        /// Child id.
-        id: SubagentId,
-        /// Who is acting (an auditor reviews in its builder's lane).
-        role: Role,
-        /// What kind of work.
-        phase: LivePhase,
-        /// What it is on: `edit src/ui.rs`, `$ cargo test`. Empty while it
-        /// thinks or waits.
-        target: String,
-        /// Output tokens this step so far, estimated from the characters
-        /// streamed (usage arrives only when the step ends).
-        tokens: u64,
-        /// Lines of the file being written so far; 0 for anything else.
-        lines: u32,
-        /// The last few lines of what it is producing: its reasoning, the
-        /// file it is writing, a command's output.
-        tail: Vec<String>,
     },
     /// The review hat reviewed the uncommitted work (`/audit`, or the offer
     /// after a build turn). The review itself is the turn's answer.
@@ -164,19 +95,6 @@ pub enum AgentEvent {
         /// What the review cost; `None` when unpriced.
         #[serde(default)]
         total_usd: Option<f64>,
-    },
-    /// A specialist finished.
-    SubagentFinished {
-        /// Child id.
-        id: SubagentId,
-        /// Role (older logs default to builder).
-        #[serde(default = "default_finished_role")]
-        role: Role,
-        /// One-line summary.
-        summary: String,
-        /// Specialist last message for the chat pane (not the orchestrator transcript).
-        #[serde(default)]
-        body: String,
     },
     /// The model switched hats with the user's yes (`request_hat`).
     ModeChanged {
@@ -264,31 +182,13 @@ pub enum AgentEvent {
         #[serde(default)]
         servers: Vec<(String, String)>,
     },
-    /// The crew's task queue changed: every task, and the open patch. The
-    /// crew board draws only from this.
-    Tasks {
-        /// Every task, in queue order.
-        tasks: Vec<crate::queue::TaskView>,
-        /// The checks run on every task and on the patch.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        checks: Vec<String>,
-        /// The open patch, if any.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        patch: Option<crate::queue::PatchView>,
-    },
     /// Active session changed (`/new`, `/resume`).
     Session {
         /// Session id.
         id: String,
-        /// Phase on disk.
-        phase: Phase,
         /// Display title.
         title: String,
     },
-}
-
-fn default_finished_role() -> Role {
-    Role::Builder
 }
 
 #[cfg(test)]
@@ -297,12 +197,12 @@ mod tests {
 
     #[test]
     fn json_tag_is_snake_case() {
-        let ev = AgentEvent::PhaseChanged {
-            phase: Phase::Build,
+        let ev = AgentEvent::ModeChanged {
+            role: Role::SoloReview,
         };
         let v = serde_json::to_value(&ev).unwrap();
-        assert_eq!(v["kind"], "phase_changed");
-        assert_eq!(v["phase"], "build");
+        assert_eq!(v["kind"], "mode_changed");
+        assert_eq!(v["role"], "review");
     }
 
     #[test]

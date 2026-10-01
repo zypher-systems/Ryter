@@ -26,14 +26,6 @@ pub fn handle(view: &mut View, key: KeyEvent) -> Action {
                 view.panel_visible = !view.panel_visible;
                 return Action::None;
             }
-            // On the crew board, the lanes' reasoning; elsewhere the
-            // reasoning pane.
-            KeyAction::ToggleReasoning
-                if crate::crewboard::shown(view) && !view.crew.is_empty() =>
-            {
-                view.lanes_hide_reasoning = !view.lanes_hide_reasoning;
-                return Action::None;
-            }
             KeyAction::ToggleReasoning => {
                 view.activity.toggle();
                 return Action::None;
@@ -253,27 +245,10 @@ fn reasoning_scroll(view: &mut View, dir: i32) {
 
 /// Composer editing and submit (`R-COMP-09..13`).
 fn composer_key(view: &mut View, key: KeyEvent) -> Action {
-    // Tab switches hats in solo mode. In crew mode there is one speaker,
-    // the lead; say how to get back rather than doing nothing.
+    // Tab switches hats.
     if matches!(view.composer.mode, crate::composer::Mode::Normal)
         && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
     {
-        if view.crew_mode() {
-            // On the crew board, tab picks a lane; ⏎ opens its transcript.
-            if !view.ui.classic() && !view.crew.is_empty() {
-                let n = view.crew.len();
-                view.lane_selected = match (view.lane_selected, key.code == KeyCode::BackTab) {
-                    (None, false) => Some(0),
-                    (None, true) => Some(n - 1),
-                    (Some(i), false) if i + 1 < n => Some(i + 1),
-                    (Some(i), true) if i > 0 => Some(i - 1),
-                    _ => None,
-                };
-                return Action::None;
-            }
-            view.system("crew mode · /solo to go back to build, plan, and review");
-            return Action::None;
-        }
         return Action::SetMode(if key.code == KeyCode::BackTab {
             view.mode.prev_hat()
         } else {
@@ -283,19 +258,6 @@ fn composer_key(view: &mut View, key: KeyEvent) -> Action {
     let action = keymap::lookup(Ctx::Composer, key);
     let mut edited = true;
     let result = match action {
-        Some(KeyAction::Send)
-            if view.composer.is_empty() && view.crew_mode() && view.lane_selected.is_some() =>
-        {
-            let lane = view
-                .lane_selected
-                .and_then(|i| view.crew.get(i))
-                .map(|c| c.id.clone());
-            if let Some(id) = lane {
-                view.panels
-                    .push(Box::new(crate::panel::lane::Lane::new(id)));
-            }
-            return Action::None;
-        }
         Some(KeyAction::Send) => return submit(view),
         Some(KeyAction::Newline) => {
             view.composer.newline();
@@ -415,10 +377,9 @@ fn submit(view: &mut View) -> Action {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ryter_core::Phase;
 
     fn v() -> View {
-        let mut v = View::new(Phase::Build, "c".into(), "m".into(), "p".into());
+        let mut v = View::new("c".into(), "m".into(), "p".into());
         v.now_ms = 10_000;
         v
     }

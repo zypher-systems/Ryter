@@ -1,4 +1,4 @@
-//! Agent roles: orchestrator vs specialists.
+//! The hats: what the model may do in a turn.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -6,44 +6,54 @@ use std::str::FromStr;
 
 use crate::error::Error;
 
-/// Who is acting.
+/// The hat a turn is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
-    /// User-facing conversation. Reads, asks, delegates. Never writes `src/`.
-    Orchestrator,
-    /// Plans and designs: scope, shape, risks, and the task list builders
-    /// run. Writes project memory, never product source. Absorbed the old
-    /// planner role; `planner` still parses, and old logs still load.
-    #[serde(alias = "planner")]
-    Architect,
-    /// Writes product code in its own git worktree.
-    Builder,
-    /// Reviews a builder diff; cannot write product code.
-    Auditor,
-    /// Solo mode, plan hat: one model reading and proposing in the user's
-    /// tree. Writes notes and memory only.
+    /// Plan hat: reading and proposing in the user's tree. Writes notes and
+    /// memory only.
     #[serde(rename = "plan")]
     SoloPlan,
-    /// Solo mode, build hat: one model changing the user's tree directly,
-    /// behind the permission gate (edits and non-read-only commands ask).
+    /// Build hat: changing the user's tree directly, behind the permission
+    /// gate (edits and non-read-only commands ask).
     #[serde(rename = "build")]
     SoloBuild,
-    /// Solo mode, review hat: one model critiquing what changed. Runs tests
-    /// and linters; edits nothing.
+    /// Review hat: critiquing what changed. Runs tests and linters; edits
+    /// nothing.
     #[serde(rename = "review")]
     SoloReview,
+    /// A role from crew mode, which was removed. Nothing runs as it: it is
+    /// what a session saved before then names in its spend and its mode, so
+    /// those still load.
+    #[serde(
+        alias = "orchestrator",
+        alias = "architect",
+        alias = "planner",
+        alias = "builder",
+        alias = "auditor"
+    )]
+    Crew,
 }
 
 impl Role {
-    /// Whether this role may mutate product source (not pass notes).
+    /// Whether this hat may change the project's files.
     pub fn writes_source(self) -> bool {
-        matches!(self, Self::Builder | Self::SoloBuild)
+        self == Self::SoloBuild
     }
 
-    /// One of solo mode's hats.
+    /// A hat a turn can be in: everything but [`Role::Crew`].
     pub fn is_solo(self) -> bool {
-        matches!(self, Self::SoloPlan | Self::SoloBuild | Self::SoloReview)
+        self != Self::Crew
+    }
+
+    /// The hat a saved session opens in: its own, or build for a session
+    /// from crew mode.
+    pub fn hat(self) -> Self {
+        if self.is_solo() {
+            self
+        } else {
+            Self::SoloBuild
+        }
     }
 
     /// The hat `Tab` moves to: build → plan → review → build.
@@ -89,10 +99,7 @@ impl Role {
     /// Stable lowercase name.
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Orchestrator => "orchestrator",
-            Self::Architect => "architect",
-            Self::Builder => "builder",
-            Self::Auditor => "auditor",
+            Self::Crew => "crew",
             Self::SoloPlan => "plan",
             Self::SoloBuild => "build",
             Self::SoloReview => "review",
@@ -111,14 +118,12 @@ impl FromStr for Role {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "orchestrator" | "lead" | "crew" => Ok(Self::Orchestrator),
-            "architect" | "planner" => Ok(Self::Architect),
-            "builder" => Ok(Self::Builder),
-            "auditor" | "audit" => Ok(Self::Auditor),
             "plan" => Ok(Self::SoloPlan),
             "build" => Ok(Self::SoloBuild),
             "review" => Ok(Self::SoloReview),
-            other => Err(Error::Config(format!("unknown role {other:?}"))),
+            other => Err(Error::Config(format!(
+                "unknown hat {other:?}: build, plan, or review"
+            ))),
         }
     }
 }
@@ -128,14 +133,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_builder_writes_source() {
-        assert!(!Role::Orchestrator.writes_source());
-        assert!(!Role::Architect.writes_source());
-        assert!(!Role::Architect.writes_source());
-        assert!(Role::Builder.writes_source());
-        assert!(!Role::Auditor.writes_source());
+    fn only_the_build_hat_writes_source() {
         assert!(Role::SoloBuild.writes_source());
         assert!(!Role::SoloPlan.writes_source() && !Role::SoloReview.writes_source());
+        assert!(!Role::Crew.writes_source());
+    }
+
+    /// A session saved in crew mode names roles that are gone. Its spend
+    /// and its mode still load, and it opens in the build hat.
+    #[test]
+    fn roles_from_crew_mode_still_load() {
+        for old in [
+            "orchestrator",
+            "architect",
+            "planner",
+            "builder",
+            "auditor",
+            "crew",
+        ] {
+            let role: Role = serde_json::from_str(&format!("\"{old}\"")).unwrap();
+            assert_eq!(role, Role::Crew, "{old}");
+            assert_eq!(role.hat(), Role::SoloBuild);
+            assert!(!role.is_solo());
+        }
+        assert_eq!(Role::SoloReview.hat(), Role::SoloReview);
+        // Nobody can ask for one.
+        assert!("builder".parse::<Role>().is_err());
+        assert!("crew".parse::<Role>().is_err());
     }
 
     #[test]

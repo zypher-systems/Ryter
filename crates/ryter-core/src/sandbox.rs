@@ -13,7 +13,7 @@
 //! - **The tools' download caches,** to write: a build that fetches a
 //!   dependency writes it there.
 //! - **Part of Ryter's own folder:** its scratch folder, logs, sessions,
-//!   pages and crew worktrees to write; skills and the rules file to read.
+//!   and pages to write; skills and the rules file to read.
 //!
 //! Never the rest of the home folder, `~/.ssh`, the tools' saved logins
 //! (`~/.cargo/credentials.toml`, `~/.npmrc`), Ryter's keys, or `/tmp`.
@@ -448,9 +448,7 @@ fn by_kind(paths: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<PathBuf>) {
 /// negative rules, so any grant on the parent would re-expose `keys/`.
 #[cfg(target_os = "linux")]
 fn writable_set(home: &Path) -> Vec<std::path::PathBuf> {
-    // `worktrees` is where a crew's builders work. Without it, crew mode
-    // could not build anything under a sandbox.
-    made(home, &["tmp", "logs", "sessions", "pages", "worktrees"])
+    made(home, &["tmp", "logs", "sessions", "pages"])
 }
 
 /// What a sandboxed thread may read in `~/.ryter`, beyond what it writes:
@@ -673,8 +671,7 @@ mod tests {
     /// A real toolchain works in the sandbox, and what sits beside it stays
     /// shut. Before this, on a real machine under `workspace`: `git` could
     /// not start (`/dev/null` wasn't writable), `cargo` and `rustc` under
-    /// `~/.cargo` were refused, nothing could make a temporary file, and a
-    /// crew's builders could not write in their worktrees.
+    /// `~/.cargo` were refused, and nothing could make a temporary file.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_real_toolchain_works_in_the_sandbox() {
@@ -800,11 +797,10 @@ mod tests {
             std::fs::rename(home_p.join("tmp/made"), ws_p.join("made")).unwrap();
             // But nothing moves into a folder that is only read.
             assert!(std::fs::rename(ws_p.join("made"), u.join("bin/made")).is_err());
-            // A crew's worktrees are written, and so is the project.
-            let wt = home_p.join("worktrees/sess/t1");
-            std::fs::create_dir_all(&wt).unwrap();
-            std::fs::write(wt.join("a.txt"), "built").unwrap();
+            // The project is written. A folder of Ryter's own that nothing
+            // was granted for is not: `worktrees` was, for crew mode.
             std::fs::write(ws_p.join("a.txt"), "edited").unwrap();
+            assert!(std::fs::create_dir_all(home_p.join("worktrees/sess/t1")).is_err());
             // Temporary files go to Ryter's scratch folder, through the shell tool.
             assert_eq!(scratch().as_deref(), Some(home_p.join("tmp").as_path()));
             let cancel = crate::cancel::Cancel::new();

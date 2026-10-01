@@ -24,10 +24,6 @@ pub enum CardId {
     Spend,
     /// budget
     Budget,
-    /// tasks
-    Tasks,
-    /// crew
-    Crew,
     /// mcp
     Mcp,
 }
@@ -39,10 +35,8 @@ impl CardId {
             CardId::Model => Some(PanelId::Models),
             CardId::Spend => Some(PanelId::Spend),
             CardId::Budget => Some(PanelId::Budget),
-            CardId::Crew => Some(PanelId::Crew),
             CardId::Session => Some(PanelId::Sessions(crate::action::SessionsMode::Browse)),
             CardId::Mcp => Some(PanelId::Mcp),
-            CardId::Tasks => None,
         }
     }
 }
@@ -87,11 +81,6 @@ pub fn cards(view: &View, inner_w: usize, theme: Theme) -> Vec<Card> {
         cards::budget(view, inner_w, theme),
     ];
     // Cards that have nothing to say are absent, not empty (`R-PANEL-18`).
-    // The crew's cards belong to crew mode; solo mode has no crew.
-    if view.crew_mode() {
-        v.extend(cards::tasks(view, inner_w, theme));
-        v.extend(cards::crew(view, inner_w, theme));
-    }
     v.extend(cards::mcp(view, inner_w, theme));
     v
 }
@@ -99,7 +88,7 @@ pub fn cards(view: &View, inner_w: usize, theme: Theme) -> Vec<Card> {
 /// Drop cards / detail rows until the stack fits `height` (`R-PANEL-18`).
 pub fn fit(mut cards: Vec<Card>, height: usize) -> Vec<Card> {
     let total = |c: &[Card]| c.iter().map(Card::height).sum::<usize>();
-    let drop_order = [CardId::Mcp, CardId::Crew, CardId::Tasks];
+    let drop_order = [CardId::Mcp];
     for id in drop_order {
         if total(&cards) <= height {
             return cards;

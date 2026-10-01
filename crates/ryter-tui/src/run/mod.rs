@@ -33,8 +33,7 @@ use ryter_core::sandbox::{self, SandboxProfile};
 use ryter_core::session::Session;
 use ryter_core::spend::PriceBook;
 use ryter_core::{
-    AgentEvent, Cancel, HookSet, InboundHost, Phase, StatusSnapshot, UserIo, UserRequest,
-    load_catalog,
+    AgentEvent, Cancel, HookSet, InboundHost, StatusSnapshot, UserIo, UserRequest, load_catalog,
 };
 
 use crate::action::Action;
@@ -61,8 +60,6 @@ pub struct TuiOpts {
     pub connection: Option<String>,
     /// Model override.
     pub model: Option<String>,
-    /// Phase override.
-    pub phase: Option<String>,
     /// Landlock profile override (`off`/`workspace`/`read-only`).
     pub sandbox: Option<String>,
     /// Resume this session id (`latest` = most recent for cwd). `None` creates a new session.
@@ -123,7 +120,6 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         .get(&conn_name)
         .ok_or_else(|| ryter_core::Error::Config(format!("unknown connection {conn_name}")))?
         .clone();
-    let phase = actions::parse_phase(opts.phase.as_deref())?.unwrap_or(Phase::Build);
     let profile: SandboxProfile = if let Some(s) = opts.sandbox.as_deref() {
         s.parse()?
     } else {
@@ -138,24 +134,20 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         }
     }
 
-    let (mut session, resumed) = match opts.session.as_deref() {
+    let (session, resumed) = match opts.session.as_deref() {
         Some("latest") | Some("") => match Session::latest(&home, &cwd)? {
             Some(s) => (s, true),
             None => (
-                Session::create(&home, &cwd, phase, conn_name.clone(), model.clone())?,
+                Session::create(&home, &cwd, conn_name.clone(), model.clone())?,
                 false,
             ),
         },
         Some(id) => (Session::find(&home, Some(&cwd), id)?, true),
         None => (
-            Session::create(&home, &cwd, phase, conn_name.clone(), model.clone())?,
+            Session::create(&home, &cwd, conn_name.clone(), model.clone())?,
             false,
         ),
     };
-    let phase = if resumed { session.meta.phase } else { phase };
-    if !resumed {
-        session.set_auditor(cfg.auditor.enabled)?;
-    }
     if resumed && cfg.connections.contains_key(&session.meta.connection) {
         conn_name = session.meta.connection.clone();
         model = session.meta.model.clone();
@@ -166,12 +158,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     let key = resolve_secret(&cfg, &ConnectionId::new(&conn_name)).ok();
 
     // -- view -----------------------------------------------------------------
-    let mut view = View::new(
-        phase,
-        conn_name.clone(),
-        model.clone(),
-        display_home_path(&cwd),
-    );
+    let mut view = View::new(conn_name.clone(), model.clone(), display_home_path(&cwd));
     populate_view(
         &mut view,
         &cfg,
@@ -367,18 +354,14 @@ fn populate_view(
     view.hooks = cfg.hooks.clone();
     view.theme_names = Theme::list(home);
     view.has_key = has_key;
-    view.auditor_on = cfg.auditor.enabled;
     view.specialists = cfg.specialists.clone();
     view.budget_usd = cfg.spend.session_budget_usd;
     if view.budget_usd > 0.0 {
         view.budget_last = view.budget_usd;
     }
-    view.task_budget_usd = cfg.spend.task_budget_usd;
     view.review_usd = cfg.spend.review_usd;
     view.model_reasoning = cfg.model_reasoning.clone();
     view.warn_usd = cfg.spend.warn_usd;
-    view.max_crew = cfg.subagents.max;
-    view.steps = cfg.subagents.steps.clamped();
     view.sandbox_profile = cfg.sandbox.profile.clone();
     view.update_mode = cfg.update.mode;
     view.web = cfg.features.web;

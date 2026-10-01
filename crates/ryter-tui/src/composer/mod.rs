@@ -16,7 +16,7 @@ pub const MAX_ROWS: usize = 8;
 /// What the composer is capturing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
-    /// A message for the lead. Everything the user types goes here.
+    /// A message for the model. Everything the user types goes here.
     Normal,
     /// An API key; text is masked and never rendered (`R-COMP-07`).
     Secret {

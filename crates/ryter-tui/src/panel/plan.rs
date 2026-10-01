@@ -271,12 +271,7 @@ mod tests {
     const PLAN: &str = "## Goal\nReports can be downloaded as CSV from the list.\n\n## Steps\n1. Add export_csv() to reports/service.py\n2. Add the /reports/export route\n3. Add the button to the list template\n4. Tests for empty and very large reports\n\n## Files\nreports/service.py · reports/views.py · list.html\n\n## Risks\nLarge reports: stream rows, don't build in memory\n\n## How to verify\npytest tests/test_export.py\n";
 
     fn view() -> View {
-        let mut v = View::new(
-            ryter_core::Phase::Build,
-            "c".into(),
-            "m".into(),
-            "/tmp".into(),
-        );
+        let mut v = View::new("c".into(), "m".into(), "/tmp".into());
         v.now_ms = 10_000;
         v
     }

@@ -9,13 +9,13 @@
                                                     │ ctx █░░░░░░░░░░░░░   5%  │
                                                     │     12.4k / 256k tokens  │
                                                     │ price unknown            │
-╭─ commands ──────────────────────────── 6 of 34 ─╮ │ reasoning  auto · medium │
-│ mo                                              │ ╰──────────────────────────╯
-│›/models         Choose models: one for ever… ▸  │ ╭─ spend ──────────────────╮
-│ /tools          Tool permission mode         ▸  │ │ session            $?.?? │
-│ /crew           Switch to crew mode: a lead… ▸  │ ╰──────────────────────────╯
-│ /review         Review hat: critique what ch…   │ ╭─ budget ─────────── off ─╮
-│ /solo           Leave crew mode: one model, …   │ │ cap                  off │
+                                                    │ reasoning  auto · medium │
+                                                    ╰──────────────────────────╯
+╭─ commands ──────────────────────────── 4 of 29 ─╮ ╭─ spend ──────────────────╮
+│ mo                                              │ │ session            $?.?? │
+│›/models         Choose models: one for ever… ▸  │ ╰──────────────────────────╯
+│ /tools          Tool permission mode         ▸  │ ╭─ budget ─────────── off ─╮
+│ /review         Review hat: critique what ch…   │ │ cap                  off │
 │ /skills         Browse, run, create, and re… ▸  │ ╰──────────────────────────╯
 ╰─ enter run · tab complete · esc close ──────────╯
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮

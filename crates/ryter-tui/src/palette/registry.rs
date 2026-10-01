@@ -11,8 +11,6 @@ pub enum Category {
     Session,
     /// Model & providers.
     Model,
-    /// Agents & phase.
-    Agents,
     /// Context & spend.
     Context,
     /// Configuration.
@@ -27,10 +25,9 @@ pub enum Category {
 
 impl Category {
     /// All categories in order.
-    pub const ALL: [Category; 8] = [
+    pub const ALL: [Category; 7] = [
         Category::Session,
         Category::Model,
-        Category::Agents,
         Category::Context,
         Category::Config,
         Category::Extensions,
@@ -43,7 +40,6 @@ impl Category {
         match self {
             Category::Session => "SESSION",
             Category::Model => "MODEL & PROVIDERS",
-            Category::Agents => "AGENTS & PHASE",
             Category::Context => "CONTEXT",
             Category::Config => "CONFIGURATION",
             Category::Extensions => "EXTENSIONS",
@@ -188,39 +184,6 @@ pub const COMMANDS: &[CommandSpec] = &[
         run_provider,
     ),
     spec(
-        "crew",
-        &[],
-        Category::Model,
-        "Switch to crew mode: a lead, an architect, parallel builders, independent auditors",
-        None,
-        true,
-        None,
-        false,
-        run_crew,
-    ),
-    spec(
-        "crews",
-        &["presets"],
-        Category::Model,
-        "Ready-made and saved crews: preview, apply, save, delete",
-        None,
-        true,
-        None,
-        false,
-        |_, _| Action::OpenPanel(PanelId::Crew),
-    ),
-    spec(
-        "solo",
-        &["normal"],
-        Category::Model,
-        "Leave crew mode: one model, Tab between build, plan, and review",
-        None,
-        false,
-        None,
-        false,
-        |_, _| Action::SetMode(ryter_core::Role::SoloBuild),
-    ),
-    spec(
         "build",
         &[],
         Category::Model,
@@ -312,22 +275,10 @@ pub const COMMANDS: &[CommandSpec] = &[
         false,
         |_, _| Action::OpenPanel(PanelId::Commit),
     ),
-    // Agents & phase
-    spec(
-        "agents",
-        &[],
-        Category::Agents,
-        "Running specialists; kill one",
-        None,
-        true,
-        None,
-        false,
-        |_, _| Action::OpenPanel(PanelId::Agents),
-    ),
     spec(
         "cancel",
         &[],
-        Category::Agents,
+        Category::Session,
         "Stop the in-flight turn",
         None,
         false,
@@ -385,7 +336,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "settings",
         &[],
         Category::Config,
-        "Budget, warn, max crew, sandbox, inbound MCP, web",
+        "Budget, review limit, sandbox, inbound MCP, web, updates, the screen",
         None,
         true,
         None,
@@ -413,17 +364,6 @@ pub const COMMANDS: &[CommandSpec] = &[
         None,
         false,
         run_tools,
-    ),
-    spec(
-        "auditor",
-        &[],
-        Category::Config,
-        "Auditor gate on or off",
-        Some("[on|off]"),
-        true,
-        None,
-        false,
-        run_auditor,
     ),
     spec(
         "ask",
@@ -560,6 +500,14 @@ pub fn run_command(view: &mut View, raw: &str) -> Action {
         };
         return view.submit_user(shown, expanded);
     }
+    // Crew mode's commands, for someone who had them in their hands.
+    if matches!(cmd, "crew" | "crews" | "solo" | "agents" | "auditor") {
+        view.warn(format!(
+            "/{cmd} was part of crew mode, which was removed · the plan, build and review hats \
+             do the work now (Tab) · /models gives each hat its model"
+        ));
+        return Action::None;
+    }
     view.warn(format!("unknown command /{cmd}"));
     Action::None
 }
@@ -582,18 +530,6 @@ fn run_sessions(_view: &mut View, rest: &str) -> Action {
         Action::OpenPanel(PanelId::Sessions(SessionsMode::Browse))
     } else {
         Action::Resume(rest.to_string())
-    }
-}
-
-/// `/crew` switches to crew mode (the crew builder the first time), and
-/// only that. It used to open the crew's settings in crew mode, so the
-/// models were behind typing it twice; they are in `/models` now.
-fn run_crew(view: &mut View, _rest: &str) -> Action {
-    if view.crew_mode() {
-        view.system("already in crew mode · /models sets each role's model · /solo leaves");
-        Action::None
-    } else {
-        Action::EnterCrew
     }
 }
 
@@ -711,20 +647,6 @@ fn run_tools(_view: &mut View, rest: &str) -> Action {
     }
 }
 
-fn run_auditor(view: &mut View, rest: &str) -> Action {
-    match rest {
-        "on" => {
-            view.auditor_on = true;
-            Action::SetAuditor(true)
-        }
-        "off" => {
-            view.auditor_on = false;
-            Action::SetAuditor(false)
-        }
-        _ => Action::OpenPanel(PanelId::Auditor),
-    }
-}
-
 /// Built-in commands that are the way in to a skill of the same name:
 /// the palette lists the command, and not the skill a second time.
 pub const FRONTS_SKILL: &[&str] = &["rules"];
@@ -773,12 +695,7 @@ mod tests {
     #[test]
     fn rules_opens_the_panel_or_runs_the_skill() {
         let home = tempfile::TempDir::new().unwrap();
-        let mut v = View::new(
-            ryter_core::Phase::Build,
-            "c".into(),
-            "m".into(),
-            "/tmp".into(),
-        );
+        let mut v = View::new("c".into(), "m".into(), "/tmp".into());
         v.catalog = ryter_core::load_catalog(home.path(), None, false);
         assert!(matches!(
             run_rules(&mut v, ""),
@@ -817,12 +734,7 @@ mod tests {
 
     #[test]
     fn budget_sets_raises_and_turns_off() {
-        let mut v = View::new(
-            ryter_core::Phase::Build,
-            "c".into(),
-            "m".into(),
-            "/tmp".into(),
-        );
+        let mut v = View::new("c".into(), "m".into(), "/tmp".into());
         v.budget_usd = 5.0;
         v.spend = Some(5.2);
         let set = |v: &mut View, arg: &str| match run_budget(v, arg) {

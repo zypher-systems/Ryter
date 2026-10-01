@@ -3,18 +3,14 @@
 //! Each panel module owns its state, key handling, and rendering. The
 //! framework draws the shared chrome, dims what is behind, and drops a shadow.
 
-pub mod agents;
 pub mod budget;
 pub mod changes;
 pub mod chrome;
 pub mod commit;
 pub mod context;
-pub mod crew;
-pub mod crew_builder;
 pub mod doctor;
 pub mod help;
 pub mod hooks;
-pub mod lane;
 pub mod mcp;
 pub mod modal;
 pub mod models;
@@ -57,7 +53,7 @@ pub enum Outcome {
     Act(Action),
     /// Pop and act.
     CloseAct(Action),
-    /// Push a child and act (e.g. `/crew` → `/models` + fetch).
+    /// Push a child panel and act.
     PushAct(Box<dyn Panel>, Action),
 }
 
@@ -93,12 +89,8 @@ pub enum Notice {
     Doctor(Vec<(String, String, String)>),
     /// A file export finished (`/spend e`, `/doctor c`).
     Exported(String),
-    /// Models arrived for a specific picker (`/models`, `/crew`).
+    /// Models arrived for the picker (`/models`).
     Models(Vec<ryter_core::ModelInfo>),
-    /// Results of [`Action::ProbeModels`](crate::action::Action::ProbeModels).
-    Probed(Vec<(String, String, Result<(), String>)>),
-    /// Crew presets on disk changed.
-    PresetsChanged(Vec<String>),
     /// Sessions list refreshed (after rename/delete).
     SessionsChanged,
 }
@@ -332,9 +324,6 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
     let p: Box<dyn Panel> = match id {
         PanelId::Providers => Box::new(providers::Providers::new(view)),
         PanelId::Models => Box::new(models::Models::new(view, None)),
-        PanelId::Crew => Box::new(crew::Crew::new(env)),
-        PanelId::CrewBuilder => Box::new(crew_builder::CrewBuilder::new(view, false)),
-        PanelId::Agents => Box::new(agents::Agents::default()),
         PanelId::Sessions(mode) => Box::new(sessions::Sessions::new(view, env, mode)),
         PanelId::Spend => Box::new(spend::Spend::default()),
         PanelId::SpendDrawer => Box::new(spend_drawer::SpendDrawer),
@@ -342,7 +331,6 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
         PanelId::Settings => Box::new(settings::Settings::new(view)),
         PanelId::Theme => Box::new(theme::ThemePicker::new(view)),
         PanelId::Tools => Box::new(toggles::Toggles::tools(view)),
-        PanelId::Auditor => Box::new(toggles::Toggles::auditor(view)),
         PanelId::Mcp => Box::new(mcp::Mcp::default()),
         PanelId::Skills => Box::new(skills::Skills::default()),
         PanelId::Rules => Box::new(rules::Rules::new(view, env)),

@@ -203,12 +203,6 @@ impl Panel for SpendDrawer {
         } else {
             budget.push(Span::styled("off", fg));
         }
-        if view.task_budget_usd > 0.0 {
-            budget.push(Span::styled(
-                format!("   task cap ${:.2}", view.task_budget_usd),
-                dim,
-            ));
-        }
         if view.warn_usd > 0.0 {
             budget.push(Span::styled(
                 format!("   warn at ${:.2}", view.warn_usd),

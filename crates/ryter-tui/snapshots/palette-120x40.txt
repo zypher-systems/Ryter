@@ -25,13 +25,13 @@
 
 
 
-╭─ commands ───────────────────────────────────────────────── 6 of 34 ─╮
+
+
+╭─ commands ───────────────────────────────────────────────── 4 of 29 ─╮
 │ mo                                                                   │
 │›/models         Choose models: one for every hat, or one each fo… ▸  │
 │ /tools          Tool permission mode                              ▸  │
-│ /crew           Switch to crew mode: a lead, an architect, paral… ▸  │
 │ /review         Review hat: critique what changed; its model is s…   │
-│ /solo           Leave crew mode: one model, Tab between build, pl…   │
 │ /skills         Browse, run, create, and remove skills and user … ▸  │
 ╰─ enter run · tab complete · esc close ───────────────────────────────╯
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮

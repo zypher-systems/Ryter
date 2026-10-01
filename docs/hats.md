@@ -1,5 +1,11 @@
 # Hats: one model, or a crew, in one app
 
+> **History.** This is the design note that added the hats beside crew mode. Crew mode was
+> removed on 2026-10-01 (see `DECISIONS.md`): the hats are the one mode now, each hat can
+> have its own model, and the review hat took the place of `/audit`'s separate reviewer.
+> The parts below about crew mode, and about switching between the two, no longer apply.
+> The user guide (`guide.md`) describes how it works today.
+
 Status: built (v1), with these decisions from review:
 
 - Ryter starts in **solo mode**, in the **build** hat. `Tab` cycles build → plan → review.

@@ -1,4 +1,4 @@
-  chat     changes  ^t    crew board  /crew
+  chat     changes  ^t
         ●  dusty  trim the query                                         ↑ 2  │
  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥ │
         │  trim the query                                                     ┃

@@ -81,9 +81,8 @@ pub enum Run {
 }
 
 /// Run `cmd` under `bash -c` in `cwd`, in its own process group so cancel and
-/// timeout kill everything it started. Shared by the `bash` tool and by the
-/// merge gate's configured checks, which are not model-chosen and so do not go
-/// through the permission gate.
+/// timeout kill everything it started.
+#[cfg(test)]
 pub fn run_command(
     cmd: &str,
     cwd: &std::path::Path,
@@ -98,8 +97,9 @@ const LIVE_EVERY: Duration = Duration::from_millis(250);
 /// Lines of a running command's output passed on each time.
 const LIVE_LINES: usize = 3;
 
-/// [`run_command`], passing its newest output lines to `live` as they arrive,
-/// so the crew board shows a test run working rather than a frozen lane.
+/// Run `cmd` under `bash -c` in `cwd`, in its own process group so cancel
+/// and timeout kill everything it started, passing its newest output lines
+/// to `live` as they arrive.
 pub fn run_command_live(
     cmd: &str,
     cwd: &std::path::Path,
@@ -243,8 +243,8 @@ pub fn run_command_live(
 
 /// Default and ceiling for a command's wall clock.
 ///
-/// 30s was below a cold `cargo test` or `npm install`, which made the auditor's
-/// own allowlist unrunnable. The model can raise it per command up to the cap.
+/// 30s was below a cold `cargo test` or `npm install`. The model can raise
+/// it per command up to the cap.
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const MAX_TIMEOUT_SECS: u64 = 600;
 
@@ -340,11 +340,9 @@ fn group_alive(pgid: u32) -> bool {
 mod tests {
     use super::*;
     use crate::cancel::Cancel;
-    use crate::queue::TaskQueue;
     use crate::role::Role;
     use crate::tools::ToolContext;
     use serde_json::json;
-    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
     use tempfile::TempDir;
 
@@ -356,9 +354,8 @@ mod tests {
             live: None,
             workspace: dir.path().to_path_buf(),
             notes_dir: dir.path().to_path_buf(),
-            role: Role::Builder,
+            role: Role::SoloBuild,
             always_approve: true,
-            queue: Arc::new(Mutex::new(TaskQueue::open(dir.path().join("tasks.json")))),
             mcp: None,
             hooks: None,
             cancel: cancel.clone(),

@@ -62,7 +62,7 @@ pub fn save_on(root: &Path, day: &str, title: &str, plan: &str) -> Result<PathBu
 
 /// [`save_on`] today.
 pub fn save(root: &Path, title: &str, plan: &str) -> Result<PathBuf> {
-    save_on(root, &crate::bench::today(), title, plan)
+    save_on(root, &crate::prompt::today_utc(), title, plan)
 }
 
 #[cfg(test)]

@@ -1,5 +1,9 @@
 # Product direction
 
+> **History.** Written while Ryter had two modes. Crew mode was removed on 2026-10-01
+> (see `DECISIONS.md` and the direction section of `ROADMAP.md`); what this says about
+> the crew, its auditors and its benchmark describes a product that no longer exists.
+
 A point of view on turning Ryter into something people choose over the tools they
 already have. Opinions are marked as such. Push back on any of them.
 

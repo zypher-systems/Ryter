@@ -1,6 +1,6 @@
 # Decisions
 
-Why, not what. The lead records non-obvious choices, its own and the crew's.
+Why, not what. Non-obvious choices are recorded here, newest first.
 
 ### 2026-10-01 — One mode: crew mode is retired, the user is the lead
 - **By:** the user
@@ -12,8 +12,29 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
 - **Why:** "There is too many unknowns for crew to work effectively without the user." No real project had completed in crew mode; the benchmark's clean runs were on small tasks with checks already set.
 - **Where:** `ROADMAP.md` (Direction). The code to go, when it goes: `crew.rs`, `queue.rs`, `tiering.rs`, `estimate.rs`, the crew parts of `agent.rs`, and the crew panels, about 10,000 of 72,000 lines; `bench.rs` is rebuilt on the hats.
 
+### 2026-10-01 — Crew mode is removed
+- **By:** the user ("I keep wasting money trying to get the crew to work when we already decided to rip it out. That's a bad idea to continue forward"), who chose to remove it now, ahead of the fourth hat and the acceptance run, and to remove `ryter bench` with it and rebuild a benchmark later.
+- **Decision:**
+  - **Removed from the core:** `crew.rs`, `queue.rs`, `meter.rs`, `bench.rs`, `estimate.rs`, `tiering.rs`, `checks.rs`, `phase.rs`; the lead's loop over a task queue and everything it called in `agent.rs` (worktrees, patches, auditor panels, caps, checks, the crew report); the crew's tools (`todo_write`, `propose_edit`); its prompts; its config (`[subagents]`, `[auditor]`, crew presets, the per-task cap); its events; its git helpers; the sandbox's `worktrees` grant; the `Handoff` hook.
+  - **Removed from the TUI and CLI:** the crew board, lanes, the crew builder, the crews panel, `/crew` `/crews` `/solo` `/agents` `/auditor`, the settings' agents section, the budget panel's task cap, `ryter crew …`, `ryter bench`, `--hat crew`, the `phase` launch option.
+  - **`Role`** is the three hats and `Crew`, which stands for every role crew mode had. It exists so saved sessions and spend logs still load (`orchestrator`, `architect`, `planner`, `builder`, `auditor` all read as it). It has no tools, and `Agent::turn` puts a turn in the build hat if it finds one.
+  - **Old files load:** `ConfigFile` and `SettingsFile` simply no longer name the crew's keys, so they are ignored; crew rows under `[specialists]` are left behind; `Meta` drops the crew's fields the same way.
+  - **`ryter serve` / `mcp serve`** run a message in the build hat with in-project asks allowed, as `ryter -p --always-approve` does. They ran the lead before, which could not write source itself.
+  - **Kept, unused:** the shell's live-output hook (`run_command_live`), for streamed `bash` output later. Kept, by name only: `[orchestrator]` and `[specialists.*]` on disk and the `Solo*` names in the code; renaming them is a mechanical patch of its own.
+- **Chosen vs rejected:**
+  - Rejected switching crew mode off and removing it later (offered to the user). Code that is off still has to compile, be tested and be read around.
+  - Rejected keeping the benchmark by rebuilding it on the hats in the same patch (offered to the user): it needs a design of its own and a paid run for its first results.
+  - Rejected keeping the per-model check (`ryter crew check`) by moving it to `/models` in this patch. It is real loss, said in the release notes and put on the roadmap.
+  - Rejected writing a new "What 1.0 means" list. It is the user's to agree; the roadmap carries the old items that never depended on a crew, as candidates.
+- **Why:** no real project completed in crew mode; the one tried with a paid crew spent $4.36 and its first task was rejected seven times; and while it existed it kept taking fixes and the user's money.
+- **Where:** 113 files, about 20,000 lines out; `crates/ryter-core/src/role.rs`, `agent.rs`, `config.rs`, `session.rs`, `event.rs`, `tools/`, `prompt.rs`; `crates/ryter-tui/src/` throughout; `crates/ryter-cli/src/main.rs`; `prompts/solo.md` ("Large work")
+- **Found on the way:**
+  - A session resumed from crew mode sent its next message with no tools and no hat note: the worker ran it as the role it was saved in. Fixed in the worker and guarded in `Agent::turn`.
+  - The updater's version check failed with "Text file busy" about one run in four once the test suite got shorter. `probe` now waits that out for up to two seconds (`ExecutableFileBusy`).
+- **Residual risk:** nothing has been run with a real model since the removal; a headless server now edits the project directly; there is no benchmark.
+
 ### 2026-10-01 — A reviewer runs the tests in the project's containers
-- **By:** lead, from the user's report ("the auditor still is saying … there is no docker or podman in my environment")
+- **By:** lead, from the user's report ("the auditor still is saying … there is no docker or podman in my environment"). Written while crew mode existed: the crew's auditor is gone, and the rule is the review hat's now.
 - **Decision:**
   - **`container_command` (`tools/policy.rs`)**: for the auditor and the review hat, `docker`/`podman` `compose run`, `compose exec` and `exec` are read down to the command they run in the container, and that command is decided by `decide_segment` as it would be outside one. `ps`, `logs` (not followed), `images`, `version`, `info`, `port`, `top` only look and are allowed.
   - **Still refused:** `build`, `up`, `down`, `rm`, `pull`, `push`, `docker run`; a `run`/`exec` that mounts (`-v`), detaches, publishes ports, sets an entrypoint, adds privileges or builds; no command at all (the service's own, which starts the product); `-H`/`--context`, `--project-directory`, `--env-file`; `compose config` and `inspect`, which print the project's `.env` resolved.

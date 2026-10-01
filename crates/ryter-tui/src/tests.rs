@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ryter_core::{AgentEvent, Phase, Role};
+use ryter_core::{AgentEvent, Role};
 
 use crate::action::{Action, PanelId, SessionsMode};
 use crate::activity::Mode as ActivityMode;
@@ -72,7 +72,6 @@ fn env() -> PanelEnv {
 /// Deterministic idle session: no clock, fixed username, one connection.
 fn idle() -> View {
     let mut v = View::new(
-        Phase::Build,
         "spacexai".into(),
         "grok-4.6".into(),
         "~/workspace/ryter".into(),
@@ -132,7 +131,7 @@ fn mid_stream(reasoning: ActivityMode) -> View {
             id: "t1".into(),
             name: "read_file".into(),
             args: serde_json::json!({"path": "crates/ryter-tui/src/run/mod.rs"}),
-            role: Role::Orchestrator,
+            role: Role::SoloBuild,
             summary: Some("read crates/ryter-tui/src/run/mod.rs".into()),
         },
     );
@@ -194,19 +193,15 @@ fn snapshot_palette_open() {
 
 #[test]
 fn snapshot_every_panel() {
-    let panels: [(&str, PanelId); 20] = [
+    let panels: [(&str, PanelId); 16] = [
         ("providers", PanelId::Providers),
         ("models", PanelId::Models),
-        ("crew", PanelId::Crew),
-        ("crew-builder", PanelId::CrewBuilder),
-        ("agents", PanelId::Agents),
         ("sessions", PanelId::Sessions(SessionsMode::Browse)),
         ("spend", PanelId::Spend),
         ("budget", PanelId::Budget),
         ("settings", PanelId::Settings),
         ("theme", PanelId::Theme),
         ("tools", PanelId::Tools),
-        ("auditor", PanelId::Auditor),
         ("mcp", PanelId::Mcp),
         ("skills", PanelId::Skills),
         ("hooks", PanelId::Hooks),
@@ -231,16 +226,12 @@ fn every_panel_fits_the_screen_at_every_width() {
     let panels = [
         PanelId::Providers,
         PanelId::Models,
-        PanelId::Crew,
-        PanelId::CrewBuilder,
-        PanelId::Agents,
         PanelId::Sessions(SessionsMode::Browse),
         PanelId::Spend,
         PanelId::Budget,
         PanelId::Settings,
         PanelId::Theme,
         PanelId::Tools,
-        PanelId::Auditor,
         PanelId::Mcp,
         PanelId::Skills,
         PanelId::Rules,
@@ -389,114 +380,14 @@ fn many_turns(n: usize) -> View {
     v
 }
 
+/// The screen says which hat gets the next message (its badge on the
+/// composer). Never "orchestrator", a phase, or the crew.
 #[test]
-fn crew_suggests_a_tiered_crew_and_applies_it_on_y() {
-    use crate::action::Action;
-    use crate::panel::{Notice, Outcome};
-    let mut view = with_panel(PanelId::Crew);
-    view.connection = "openrouter".into();
-    view.model = "deepseek/deepseek-v4.1-flash".into();
-    let key = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
-    let mut crew = view.panels.stack.pop().unwrap();
-    assert!(matches!(
-        crew.key(key('s'), &mut view),
-        Outcome::Act(Action::ListCrewModels { .. })
-    ));
-    let row = |id: &str, i: f64, o: f64| ryter_core::ModelInfo {
-        id: id.into(),
-        context_length: Some(400_000),
-        input_per_million: Some(i),
-        output_per_million: Some(o),
-        connection: Some("openrouter".into()),
-        created: None,
-        tools: Some(true),
-    };
-    crew.on_notice(
-        &Notice::Models(vec![
-            row("deepseek/deepseek-v4.1-flash", 0.15, 0.6),
-            row("openai/gpt-5.5", 5.0, 30.0),
-        ]),
-        &mut view,
-    );
-    view.panels.stack.push(crew);
-    let frame = render_to_string(&view, 120, 40);
-    assert!(frame.contains("schooner — balanced"), "{frame}");
-    assert!(frame.contains("gpt-5.5"), "{frame}");
-    let mut crew = view.panels.stack.pop().unwrap();
-    match crew.key(key('y'), &mut view) {
-        Outcome::Act(Action::ApplyCrewTiering(rows)) => {
-            assert_eq!(rows["auditor"].model.as_deref(), Some("openai/gpt-5.5"));
-            assert_eq!(
-                rows["builder"].model.as_deref(),
-                Some("deepseek/deepseek-v4.1-flash")
-            );
-        }
-        _ => panic!("y must apply the suggestion"),
-    }
-}
-
-/// The ready-made crews are rows in `/crew`; the galleon puts the strong
-/// model in the builder's seat.
-#[test]
-fn crew_offers_three_ready_made_crews() {
-    use crate::action::Action;
-    use crate::panel::{Notice, Outcome};
-    let mut view = with_panel(PanelId::Crew);
-    view.connection = "openrouter".into();
-    view.model = "deepseek/deepseek-v4.1-flash".into();
-    let frame = render_to_string(&view, 120, 40);
-    for name in ["skiff", "schooner", "galleon", "low cost", "high cost"] {
-        assert!(frame.contains(name), "{name} missing:\n{frame}");
-    }
-    let press = |c: KeyCode| KeyEvent::new(c, KeyModifiers::NONE);
-    let mut crew = view.panels.stack.pop().unwrap();
-    // Three roles, then skiff, schooner, galleon.
-    for _ in 0..5 {
-        crew.key(press(KeyCode::Down), &mut view);
-    }
-    assert!(matches!(
-        crew.key(press(KeyCode::Enter), &mut view),
-        Outcome::Act(Action::ListCrewModels { .. })
-    ));
-    let row = |id: &str, i: f64, o: f64| ryter_core::ModelInfo {
-        id: id.into(),
-        context_length: Some(400_000),
-        input_per_million: Some(i),
-        output_per_million: Some(o),
-        connection: Some("openrouter".into()),
-        created: None,
-        tools: Some(true),
-    };
-    crew.on_notice(
-        &Notice::Models(vec![
-            row("deepseek/deepseek-v4.1-flash", 0.15, 0.6),
-            row("openai/gpt-5.5", 5.0, 30.0),
-            row("anthropic/claude-opus-5", 5.0, 25.0),
-        ]),
-        &mut view,
-    );
-    match crew.key(press(KeyCode::Char('y')), &mut view) {
-        Outcome::Act(Action::ApplyCrewTiering(rows)) => {
-            assert_eq!(rows["builder"].model.as_deref(), Some("openai/gpt-5.5"));
-            assert_eq!(
-                rows["auditor"].model.as_deref(),
-                Some("anthropic/claude-opus-5")
-            );
-        }
-        _ => panic!("y must apply the galleon"),
-    }
-}
-
-/// The screen says who gets the next message: the hat in solo mode (its
-/// badge on the composer), the lead in crew mode. Never "orchestrator" or a
-/// phase.
-#[test]
-fn the_screen_shows_the_mode() {
+fn the_screen_shows_the_hat() {
     for mode in [
         ryter_core::Role::SoloBuild,
         ryter_core::Role::SoloPlan,
         ryter_core::Role::SoloReview,
-        ryter_core::Role::Orchestrator,
     ] {
         for base in [idle(), mid_stream(ActivityMode::Collapsed)] {
             let mut view = base;
@@ -505,43 +396,12 @@ fn the_screen_shows_the_mode() {
                 let frame = render_to_string(&view, w, h);
                 let badge = format!(" {} ", view.mode_label().to_ascii_uppercase());
                 assert!(frame.contains(&badge), "{w}x{h} no {badge:?}:\n{frame}");
-                if mode == ryter_core::Role::Orchestrator {
-                    assert!(frame.contains("crew · lead"), "{w}x{h}:\n{frame}");
-                }
-                for gone in ["orchestrator", "handoff", "phase"] {
+                for gone in ["orchestrator", "handoff", "phase", "crew", "lead"] {
                     assert!(!frame.contains(gone), "{w}x{h} shows {gone:?}:\n{frame}");
                 }
             }
         }
     }
-}
-
-/// Solo mode has no crew, so the crew's cards only appear in crew mode.
-#[test]
-fn crew_cards_only_in_crew_mode() {
-    let mut view = mid_stream(ActivityMode::Collapsed);
-    view.crew.push(crate::view::CrewRow {
-        id: "01".into(),
-        role: "builder".into(),
-        label: "add a flag".into(),
-        spend: None,
-        status: "working".into(),
-        started_ms: 0,
-        acting: "builder".into(),
-        live: None,
-        tools: 0,
-    });
-    let frame = render_to_string(&view, 160, 50);
-    assert!(
-        !frame.contains("╭─ crew"),
-        "solo mode shows the crew card:\n{frame}"
-    );
-    view.mode = ryter_core::Role::Orchestrator;
-    let frame = render_to_string(&view, 160, 50);
-    assert!(
-        frame.contains("╭─ crew"),
-        "crew mode hides the crew card:\n{frame}"
-    );
 }
 
 #[test]
@@ -563,22 +423,18 @@ fn hint_bar_never_drops_cancel_or_quit() {
 
 #[test]
 fn empty_cards_are_absent_not_blank() {
-    // Principle 1: the conversation gets the space. `no tasks yet` and
-    // `no specialists running` used to hold a column open to say nothing (G-03).
+    // Principle 1: the conversation gets the space. An empty card used to
+    // hold a column open to say nothing (G-03).
     let view = idle();
     for (w, h) in SIZES {
         let frame = render_to_string(&view, w, h);
-        assert!(!frame.contains("no tasks yet"), "{w}x{h}: empty tasks card");
-        assert!(
-            !frame.contains("no specialists running"),
-            "{w}x{h}: empty crew card"
-        );
+        assert!(!frame.contains("no servers"), "{w}x{h}: empty mcp card");
     }
 }
 
 /// The raw session id is operator chrome; `/sessions` is where it belongs (G-07).
 #[test]
-fn session_card_leads_with_title_and_crew_state() {
+fn session_card_leads_with_title_and_the_hat() {
     let view = idle();
     let frame = render_to_string(&view, 120, 40);
     let card_line = frame
@@ -600,17 +456,11 @@ fn session_card_leads_with_title_and_crew_state() {
 /// sliced into fragments by its border (G-01, G-02, G-06).
 #[test]
 fn an_open_panel_leaves_no_card_fragments() {
-    for id in [PanelId::Help, PanelId::Settings, PanelId::Crew] {
+    for id in [PanelId::Help, PanelId::Settings, PanelId::Providers] {
         let view = with_panel(id);
         for (w, h) in SIZES {
             let frame = render_to_string(&view, w, h);
-            for needle in [
-                "╭─ session",
-                "╭─ model",
-                "╭─ spend",
-                "auditor ✓",
-                "price unknown",
-            ] {
+            for needle in ["╭─ session", "╭─ model", "╭─ spend", "price unknown"] {
                 assert!(
                     !frame.contains(needle),
                     "{id:?} at {w}x{h} still shows {needle:?}"
@@ -905,7 +755,7 @@ fn the_rail_names_the_session_and_shows_the_hat_and_spend() {
         "budget      off",
         "CHANGED",
         "app/server.js",
-        "chat  changes ^t  crew /crew",
+        "chat  changes ^t",
         "hide rail",
     ] {
         assert!(text.contains(want), "missing {want:?}:\n{text}");
@@ -932,7 +782,7 @@ fn the_rail_names_the_session_and_shows_the_hat_and_spend() {
         let width = if v.panel_visible { 100 } else { 140 };
         let text = render_to_string(&v, width, 44);
         assert!(
-            !text.contains("R Y T E R") && text.contains("crew board"),
+            !text.contains("R Y T E R") && text.contains("chat     changes  ^t"),
             "{text}"
         );
     }
@@ -992,10 +842,10 @@ fn the_project_root_is_noted_only_for_a_folder_inside_a_repository() {
     );
 }
 
-/// The rail and the live lanes draw at every size without losing the
-/// prompt, and the rail steps aside below its width.
+/// The rail draws at every size without losing the prompt, and steps
+/// aside below its width.
 #[test]
-fn rail_and_lanes_fit_every_size() {
+fn the_rail_fits_every_size() {
     for (w, h) in [
         (60, 20),
         (80, 24),
@@ -1011,296 +861,12 @@ fn rail_and_lanes_fit_every_size() {
             "{w}x{h}:\n{text}"
         );
         assert!(text.contains("what should change?"), "{w}x{h}:\n{text}");
-        let text = render_to_string(&crew_live(), w, h);
-        assert!(text.contains("LANES") || h < 24, "{w}x{h}:\n{text}");
     }
 }
 
 #[test]
 fn snapshot_ledger() {
     all_sizes("ledger", &ledger());
-}
-
-/// Mission control: crew mode with a plan puts the board above the lead's
-/// chat, drawn from the queue snapshot and the live lanes.
-fn crew_board() -> View {
-    let mut v = ledger();
-    v.mode = Role::Orchestrator;
-    v.budget_usd = 3.0;
-    v.spend = Some(0.10);
-    v.turn_calls = 43;
-    v.now_ms = 64_000;
-    v.crew_started_ms = Some(0);
-    let t = |id: &str, role: &str, status: &str, by: &str, waits: &[&str], reason: &str| {
-        ryter_core::queue::TaskView {
-            id: id.into(),
-            title: format!("{id} task"),
-            role: role.into(),
-            status: status.into(),
-            by: by.into(),
-            waits_on: waits.iter().map(|s| s.to_string()).collect(),
-            reason: reason.into(),
-            retries: 0,
-            rejections: 0,
-        }
-    };
-    // First snapshot: everything waits on the scaffold.
-    v.set_tasks(
-        vec![
-            t("design", "architect", "done", "orchestrator", &[], ""),
-            t("scaffold", "builder", "running", "architect", &[], ""),
-            t(
-                "greet",
-                "builder",
-                "pending",
-                "architect",
-                &["scaffold"],
-                "waits on scaffold",
-            ),
-            t(
-                "count",
-                "builder",
-                "pending",
-                "architect",
-                &["scaffold"],
-                "waits on scaffold",
-            ),
-        ],
-        None,
-    );
-    // Later: the scaffold landed; greet builds, count is in audit.
-    v.set_tasks(
-        vec![
-            t("design", "architect", "done", "orchestrator", &[], ""),
-            t("scaffold", "builder", "done", "architect", &[], ""),
-            t("greet", "builder", "running", "architect", &[], ""),
-            t("count", "builder", "running", "architect", &[], ""),
-        ],
-        Some(ryter_core::queue::PatchView {
-            branch: "ryter/patch-01a0e642-1".into(),
-            target: "main".into(),
-            tasks: vec!["scaffold".into(), "greet".into(), "count".into()],
-            landed: vec!["scaffold".into()],
-        }),
-    );
-    for (id, title, acting, status, started) in [
-        ("s1", "greet task", "builder", "edit src/greet.rs", 46_000),
-        ("s2", "count task", "auditor", "reviewing (glm-5.3)", 59_000),
-    ] {
-        v.crew.push(crate::view::CrewRow {
-            id: id.into(),
-            role: "builder".into(),
-            label: title.into(),
-            spend: None,
-            status: status.into(),
-            started_ms: started,
-            acting: acting.into(),
-            live: None,
-            tools: 0,
-        });
-    }
-    v
-}
-
-#[test]
-fn snapshot_crew_board() {
-    let v = crew_board();
-    let text = render_to_string(&v, 140, 42);
-    check_snapshot("crew-board-140x42", &text);
-    for want in [
-        "SPEND",
-        "$0.10 of $3.00",
-        "1 of 3 landed",
-        "patch-1 → main",
-        "lead grok-4.6 · builders same · auditor grok-4.6",
-        "1:04",
-        "43 calls · 0 retries",
-        "│ ✓ design",
-        "───▶│ ✓ scaffold",
-        "─┬─▶│ ◐ greet",
-        "└─▶│ ◑ count",
-        "│  landed",
-        "│  building 0:18",
-        "│  in audit 0:05",
-        "patch ▸ main  lands when greet, count land",
-        "builder",
-        "auditor",
-        "reviewing (glm-5.3)",
-        "CREW · LEAD",
-    ] {
-        assert!(text.contains(want), "missing {want:?}:\n{text}");
-    }
-    // Solo mode, or no plan: no board.
-    let mut v = crew_board();
-    v.mode = Role::SoloBuild;
-    assert!(!render_to_string(&v, 140, 42).contains("PLAN"));
-}
-
-/// Design C1: each lane is a live card. What the worker is doing (writing a
-/// file, thinking, running a command) shows as it streams, with the file so
-/// far, its reasoning, or the command's output; the PULSE tile says how fast
-/// the crew is going and when it was last heard from.
-fn crew_live() -> View {
-    let mut v = crew_board();
-    v.budget_usd = 0.0;
-    v.task_spend.insert("greet".into(), 0.09);
-    v.task_spend.insert("count".into(), 0.14);
-    v.crew.push(crate::view::CrewRow {
-        id: "s3".into(),
-        role: "builder".into(),
-        label: "design task".into(),
-        spend: None,
-        status: "read src/app.rs".into(),
-        started_ms: 20_000,
-        acting: "builder".into(),
-        live: None,
-        tools: 0,
-    });
-    let live = |id: &str, role: Role, phase, target: &str, tokens, lines, tail: &[&str]| {
-        AgentEvent::SubagentLive {
-            id: ryter_core::SubagentId::new(id),
-            role,
-            phase,
-            target: target.into(),
-            tokens,
-            lines,
-            tail: tail.iter().map(|t| t.to_string()).collect(),
-        }
-    };
-    use ryter_core::LivePhase::{Running, Thinking, Writing};
-    v.now_ms = 60_000;
-    for (id, role, phase, target, tokens, lines, tail) in [
-        (
-            "s1",
-            Role::Builder,
-            Writing,
-            "edit src/greet.rs",
-            1200,
-            180,
-            &[
-                "fn greet(name: &str) -> String {",
-                "    let who = name.trim();",
-            ][..],
-        ),
-        (
-            "s2",
-            Role::Auditor,
-            Running,
-            "bash cargo test",
-            0,
-            0,
-            &[
-                "test greet::tests::trims ... ok",
-                "     Running unittests src/main.rs",
-            ][..],
-        ),
-        (
-            "s3",
-            Role::Builder,
-            Thinking,
-            "",
-            3000,
-            0,
-            &[
-                "…repeat lives in queue.rs, not in App, so the bar needs a read-only view of the queue. I'll add Queue::mode()",
-            ][..],
-        ),
-    ] {
-        crate::run_events_apply(&mut v, live(id, role, phase, target, tokens, lines, tail));
-    }
-    v.now_ms = 62_000;
-    for (id, role, phase, target, tokens, lines, tail) in [
-        (
-            "s1",
-            Role::Builder,
-            Writing,
-            "edit src/greet.rs",
-            1280,
-            212,
-            &[
-                "fn greet(name: &str) -> String {",
-                "    let who = name.trim();",
-                "    format!(\"hello, {who}\")",
-            ][..],
-        ),
-        (
-            "s3",
-            Role::Builder,
-            Thinking,
-            "",
-            3056,
-            0,
-            &[
-                "…repeat lives in queue.rs, not in App, so the bar needs a read-only view of the queue. I'll add Queue::mode() instead of passing the queue in",
-            ][..],
-        ),
-    ] {
-        crate::run_events_apply(&mut v, live(id, role, phase, target, tokens, lines, tail));
-    }
-    v.crew[0].tools = 9;
-    v.crew[1].tools = 4;
-    if let Some(t) = v.tasks.iter_mut().find(|t| t.id == "count") {
-        t.rejections = 2;
-    }
-    v.spend_log.push((50_000, 0.02));
-    v.tick(62_000);
-    v.now_ms = 62_300;
-    v
-}
-
-#[test]
-fn live_lanes_show_what_each_worker_is_doing() {
-    let v = crew_live();
-    let text = render_to_string(&v, 160, 48);
-    if std::env::var_os("SHOW").is_some() {
-        println!("{text}");
-    }
-    for want in [
-        "PULSE",
-        "tok/s · 3 working",
-        "last byte",
-        "+$0.020 in the last minute",
-        " WRITING  edit src/greet.rs",
-        "212 lines so far · ~1.3k tok · 40 tok/s · task $0.090 · 9 tools so far",
-        "+ fn greet(name: &str) -> String {",
-        "+     format!(\"hello, {who}\")▌",
-        " RUNNING  $ cargo test",
-        "task $0.14 · 4 tools so far · rejected 2 times",
-        "test greet::tests::trims ... ok",
-        " THINKING ",
-        "I'll add Queue::mode()",
-    ] {
-        assert!(text.contains(want), "missing {want:?}:\n{text}");
-    }
-    assert!(
-        text.contains("live · newest output at the bottom of each card"),
-        "{text}"
-    );
-    // ^r hides the reasoning, and shows it again.
-    assert!(text.contains("^r hide reasoning"), "{text}");
-    let mut v = v;
-    let key = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
-    crate::run::keys::handle(&mut v, key);
-    let hidden = render_to_string(&v, 160, 48);
-    assert!(
-        hidden.contains("reasoning hidden · ^r shows it")
-            && !hidden.contains("Queue::mode()")
-            && hidden.contains("+ fn greet"),
-        "{hidden}"
-    );
-    crate::run::keys::handle(&mut v, key);
-    assert!(render_to_string(&v, 160, 48).contains("Queue::mode()"));
-    // Shorter: the cards drop their output, then become one row a worker.
-    let text = render_to_string(&v, 160, 26);
-    assert!(
-        text.contains("lines so far") && !text.contains("+ fn greet"),
-        "{text}"
-    );
-    let text = render_to_string(&v, 160, 20);
-    assert!(
-        text.contains("LANES") && !text.contains("lines so far"),
-        "{text}"
-    );
 }
 
 /// The model picker says where its list stands: from the cache while a
@@ -1320,93 +886,6 @@ fn the_model_picker_says_where_its_list_stands() {
     assert!(text.contains("from 2 h ago · refreshing"), "{text}");
     crate::run_events_apply(&mut v, AgentEvent::ModelsNote { note: None });
     assert!(!render_to_string(&v, 120, 30).contains("refreshing"));
-}
-
-/// Lanes: `tab` picks one, `⏎` opens its transcript, and each shows what
-/// its task has cost.
-#[test]
-fn a_lane_opens_its_transcript() {
-    let mut v = crew_board();
-    v.task_spend.insert("greet".into(), 0.003);
-    v.lane_logs.insert(
-        "s1".into(),
-        (
-            "greet task".into(),
-            vec![
-                "13:47  builder  read src/lib.rs".into(),
-                "13:48  builder  edit src/greet.rs".into(),
-            ],
-        ),
-    );
-    let text = render_to_string(&v, 140, 42);
-    assert!(
-        text.contains("task $0.003"),
-        "the lane shows its task's cost:\n{text}"
-    );
-    let key = |c: KeyCode| KeyEvent::new(c, KeyModifiers::NONE);
-    crate::run::keys::handle(&mut v, key(KeyCode::Tab));
-    assert_eq!(v.lane_selected, Some(0));
-    assert!(render_to_string(&v, 140, 42).contains("on a lane: its transcript"));
-    crate::run::keys::handle(&mut v, key(KeyCode::Enter));
-    assert_eq!(v.panels.top().map(|p| p.kind()), Some("lane"));
-    let text = render_to_string(&v, 140, 42);
-    assert!(
-        text.contains("edit src/greet.rs") && text.contains("lane · greet task"),
-        "{text}"
-    );
-    // Tab past the last lane lets go.
-    v.panels.clear();
-    crate::run::keys::handle(&mut v, key(KeyCode::Tab));
-    crate::run::keys::handle(&mut v, key(KeyCode::Tab));
-    assert_eq!(v.lane_selected, None);
-}
-
-/// Last night's run on the board: the scaffold blocked on a missing system
-/// package, its reason in plain sight, and what waits on it.
-#[test]
-fn a_blocked_scaffold_shows_why_and_what_waits() {
-    let mut v = crew_board();
-    v.crew.clear();
-    let t = |id: &str, status: &str, waits: &[&str], reason: &str| ryter_core::queue::TaskView {
-        id: id.into(),
-        title: format!("{id} task"),
-        role: "builder".into(),
-        status: status.into(),
-        by: "orchestrator".into(),
-        waits_on: waits.iter().map(|s| s.to_string()).collect(),
-        reason: reason.into(),
-        retries: 0,
-        rejections: 0,
-    };
-    v.task_edges.clear();
-    v.set_tasks(
-        vec![
-            t(
-                "scaffold",
-                "blocked",
-                &[],
-                "the builder is blocked: sudo dnf install alsa-lib-devel",
-            ),
-            t("audio", "pending", &["scaffold"], "waits on scaffold"),
-            t("ui", "pending", &["scaffold"], "waits on scaffold"),
-        ],
-        None,
-    );
-    let text = render_to_string(&v, 140, 42);
-    for want in [
-        "│ ✕ scaffold",
-        "─┬─▶│ ○ audio",
-        "└─▶│ ○ ui",
-        "│  waits on scaffold",
-        // The box can't hold the reason; it is under the drawing, whole.
-        "✕ scaffold  blocked: the builder is blocked:",
-        "sudo dnf",
-        "alsa-lib-devel",
-        "0 of 3 landed",
-        "no one is working right now",
-    ] {
-        assert!(text.contains(want), "missing {want:?}:\n{text}");
-    }
 }
 
 /// The commit's receipt says whether the review hat reviewed these files:
@@ -1545,27 +1024,15 @@ fn workbench_shows_changes_and_undoes_one() {
     assert!(v.workbench.is_none());
 }
 
-/// The views are in sight: a strip names them with their keys and lights
-/// the one on screen, and crew mode shows its board before there is a plan.
+/// The strip across the top names the views there are and lights the one
+/// on screen. Crew mode's board is not one of them any more.
 #[test]
 fn the_view_strip_names_every_view() {
     let v = ledger();
     let text = render_to_string(&v, 140, 40);
     let top = text.lines().next().unwrap();
-    assert!(
-        top.contains("chat") && top.contains("changes  ^t") && top.contains("crew board  /crew"),
-        "{top}"
-    );
-    // Crew mode, nothing planned yet: the board is there, saying so.
-    let mut v = ledger();
-    v.mode = Role::Orchestrator;
-    let text = render_to_string(&v, 140, 40);
-    assert!(
-        text.contains("PLAN") && text.contains("no plan yet"),
-        "{text}"
-    );
-    assert!(text.contains("no one is working right now"), "{text}");
-    check_snapshot("crew-board-empty-140x40", &text);
+    assert!(top.contains("chat") && top.contains("changes  ^t"), "{top}");
+    assert!(!text.contains("crew"), "{text}");
     // The workbench lights `changes`.
     let repo = workbench_repo();
     let mut v = ledger();
@@ -1573,64 +1040,10 @@ fn the_view_strip_names_every_view() {
         &v,
         repo.path().to_path_buf(),
     ));
-    let top = render_to_string(&v, 140, 40)
-        .lines()
-        .next()
-        .unwrap()
-        .to_string();
-    assert!(top.contains("chat  esc"), "{top}");
-    // In crew mode too the workbench takes the screen, not a strip under the board.
-    v.mode = Role::Orchestrator;
     let text = render_to_string(&v, 140, 40);
-    assert!(text.contains("CHANGES") && !text.contains("PLAN"), "{text}");
-}
-
-/// The user's plan from a real run: a design and the two tasks it wrote,
-/// drawn as boxes with the design fanning out to both. And a plan too tall to
-/// draw falls back to the tree rather than being cut.
-#[test]
-fn the_plan_is_drawn_and_falls_back_when_it_wont_fit() {
-    let t = |id: &str, role: &str, status: &str, by: &str| ryter_core::queue::TaskView {
-        id: id.into(),
-        title: format!("{id} task"),
-        role: role.into(),
-        status: status.into(),
-        by: by.into(),
-        waits_on: Vec::new(),
-        reason: String::new(),
-        retries: 0,
-        rejections: 0,
-    };
-    let mut v = crew_board();
-    v.crew.clear();
-    v.task_edges.clear();
-    v.patch_view = None;
-    v.set_tasks(
-        vec![
-            t("modern-style", "architect", "done", "orchestrator"),
-            t("style-rewrite", "builder", "running", "architect"),
-            t("brand-markup", "builder", "running", "architect"),
-        ],
-        None,
-    );
-    let text = render_to_string(&v, 140, 42);
-    assert!(text.contains("│ ✓ modern-style"), "{text}");
-    assert!(text.contains("─┬─▶│ ◐ style-rewrite"), "{text}");
-    assert!(text.contains("└─▶│ ◐ brand-markup"), "{text}");
-    // Twelve tasks at 30 rows can't be drawn: the tree, in full.
-    let mut many = vec![t("design", "architect", "done", "orchestrator")];
-    for i in 0..12 {
-        many.push(t(&format!("task-{i}"), "builder", "pending", "architect"));
-    }
-    v.task_edges.clear();
-    v.set_tasks(many, None);
-    let text = render_to_string(&v, 140, 30);
-    assert!(
-        text.contains("✓ design") && text.contains("├▶ ○ task-0") && !text.contains("┌──"),
-        "{text}"
-    );
-    // The plan has the screen's height now: all twelve fit.
-    assert!(text.contains("└▶ ○ task-11"), "{text}");
+    let top = text.lines().next().unwrap().to_string();
+    assert!(top.contains("chat  esc"), "{top}");
+    assert!(text.contains("CHANGES"), "{text}");
 }
 
 /// `$` opens the spend drawer above the composer: the turn, the session, and

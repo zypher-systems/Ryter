@@ -11,7 +11,6 @@ use serde_json::{Value, json};
 
 use crate::error::Result;
 use crate::llm::ToolSpec;
-use crate::queue::TaskQueue;
 use crate::role::Role;
 
 pub use fs::changed_lines;
@@ -35,7 +34,6 @@ pub fn allow_scope(name: &str, args: &Value) -> Option<(String, String)> {
             };
             Some((format!("bash:{scope}"), label))
         }
-        "propose_edit" => None,
         other => Some((other.to_string(), format!("{other} calls"))),
     }
 }
@@ -56,14 +54,12 @@ pub use policy::{Decision, decide};
 pub struct ToolContext {
     /// Project root. All source paths must stay inside it.
     pub workspace: std::path::PathBuf,
-    /// Pass-note directory (writable for non-builders).
+    /// The session's notes folder: the one place the plan hat may write.
     pub notes_dir: std::path::PathBuf,
     /// Who is calling.
     pub role: Role,
     /// Treat Ask as Allow (deny still wins).
     pub always_approve: bool,
-    /// Shared task queue (`todo_write`).
-    pub queue: Arc<Mutex<TaskQueue>>,
     /// Outbound MCP hub.
     pub mcp: Option<Arc<Mutex<crate::mcp::McpHub>>>,
     /// Optional lifecycle hooks.
@@ -77,8 +73,8 @@ pub struct ToolContext {
     pub allowed: Arc<Mutex<std::collections::HashSet<String>>>,
     /// `[features] web`.
     pub web: bool,
-    /// Where a running command's output goes as it arrives: the crew board's
-    /// lane. `None` where only the result matters.
+    /// Where a running command's output goes as it arrives. `None` where
+    /// only the result matters.
     pub live: Option<LiveOutput>,
 }
 
@@ -186,7 +182,6 @@ pub const TOOL_NAMES: &[&str] = &[
     "write",
     "search_replace",
     "bash",
-    "todo_write",
 ];
 
 /// JSON-schema tool specs for this role (what the model is offered).
@@ -247,46 +242,6 @@ fn spec(name: &str) -> Option<ToolSpec> {
              command starts in the background is stopped when it returns: to \
              check a server, start it, test it, and finish in the same command.",
             json!({"type":"object","properties":{"command":{"type":"string"},"timeout_secs":{"type":"integer"}},"required":["command"]}),
-        ),
-        "propose_edit" => (
-            "Fast path for a trivial change (a typo, a one-line fix, a config \
-             value): propose replacing old_string with new_string in one file. The \
-             user sees the diff and approves it with y — their approval is the \
-             sign-off, so it skips the crew. At most 20 lines on each side; \
-             anything larger is a task. Include enough context in old_string to \
-             make it unique.",
-            json!({"type":"object","properties":{
-                "path":{"type":"string"},
-                "old_string":{"type":"string"},
-                "new_string":{"type":"string"},
-                "reason":{"type":"string","description":"one line: why"}
-            },"required":["path","old_string","new_string","reason"]}),
-        ),
-        "todo_write" => (
-            "Queue work for the crew. Updates tasks by id and adds new ones; it \
-             never replaces the list (set status \"dropped\" to remove one). Each \
-             task names who does it: role \"architect\" designs and writes builder \
-             tasks; role \"builder\" (the default) implements one in a git \
-             worktree, gated by checks and auditors before it lands. The crew runs \
-             when your reply ends. A builder's brief is its entire spec: what to \
-             change, the constraints, how to know it is done. Declare the files each \
-             builder task owns: disjoint tasks run in parallel. List in `after` the \
-             tasks one needs done first (a scaffold, a shared module): it starts only \
-             once they have landed. On an architect task, hold: true keeps its \
-             builder tasks proposed until the user approves.",
-            json!({"type":"object","properties":{"items":{"type":"array","items":{
-                "type":"object",
-                "properties":{
-                    "id":{"type":"string","description":"stable id; reuse it to update a task"},
-                    "title":{"type":"string","description":"one line, shown to the user"},
-                    "brief":{"type":"string","description":"the full spec"},
-                    "role":{"type":"string","enum":["architect","builder"]},
-                    "files":{"type":"array","items":{"type":"string"},"description":"paths this builder task owns"},
-                    "hold":{"type":"boolean","description":"architect only: wait for approval before building"},
-                    "after":{"type":"array","items":{"type":"string"},"description":"ids of tasks that must land before this one starts"},
-                    "status":{"type":"string","enum":["pending","proposed","done","blocked","dropped"]}
-                }
-            }}},"required":["items"]}),
         ),
         "search_tool" => (
             "Search connected MCP servers for tools.",
@@ -398,50 +353,8 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "web_fetch",
             "web_search",
         ],
-        Role::Orchestrator => &[
-            "propose_edit",
-            "read_file",
-            "list_dir",
-            "grep",
-            "glob",
-            "write",
-            "search_replace",
-            "todo_write",
-            "load_skill",
-            "show_page",
-            "update_rules",
-            "search_tool",
-            "use_tool",
-            "ask_user",
-            "web_fetch",
-            "web_search",
-        ],
-        Role::Architect => &[
-            "read_file",
-            "list_dir",
-            "grep",
-            "glob",
-            "todo_write",
-            "write",
-            "search_replace",
-            "web_fetch",
-            "web_search",
-        ],
-        Role::Builder => &[
-            "read_file",
-            "list_dir",
-            "grep",
-            "glob",
-            "write",
-            "search_replace",
-            "bash",
-            "todo_write",
-            "web_fetch",
-            "web_search",
-        ],
-        // Read-only. It reviews in a worktree that is discarded after the
-        // merge, so anything it wrote was lost; its findings are its reply.
-        Role::Auditor => &["read_file", "list_dir", "grep", "glob", "bash"],
+        // A role from crew mode, which is gone: nothing runs as it.
+        Role::Crew => &[],
     }
 }
 
@@ -453,9 +366,8 @@ pub fn execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput
         "grep" => fs::grep(args, ctx),
         "glob" => fs::glob_files(args, ctx),
         "write" => fs::write_file(args, ctx),
-        "search_replace" | "propose_edit" => fs::search_replace(args, ctx),
+        "search_replace" => fs::search_replace(args, ctx),
         "bash" => shell::bash(args, ctx),
-        "todo_write" => todo_write(args, ctx),
         "search_tool" => mcp_search(args, ctx),
         "use_tool" => mcp_use(args, ctx),
         "ask_user" => ask_user(args, ctx),
@@ -539,22 +451,6 @@ fn ask_user(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     Ok(ToolOutput::ok(answer))
 }
 
-fn todo_write(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
-    let mut q = ctx
-        .queue
-        .lock()
-        .map_err(|e| crate::error::Error::Config(e.to_string()))?;
-    q.apply_todo_as(args, ctx.role.as_str())?;
-    let summary = q
-        .tasks
-        .iter()
-        .map(|t| format!("{:?} {} {}", t.status, t.id, t.title))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let n = q.tasks.len();
-    Ok(ToolOutput::ok(format!("{n} tasks\n{summary}")))
-}
-
 /// What a reviewer may do with containers, for a refusal: a model refused
 /// `docker compose up` otherwise concludes it has no Docker at all.
 const CONTAINER_CHECKS: &str = " Docker is here, and tests and linters do run in the \
@@ -569,30 +465,6 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
     }
     match decide(name, args, ctx) {
         Decision::Allow => run_with_hooks(name, args, ctx),
-        // A proposed edit skips the crew because a person approves it. No
-        // blanket approval stands in for that person: not --always-approve,
-        // not the session-wide `a`.
-        Decision::Ask if name == "propose_edit" => match &ctx.user_io {
-            Some(io) => {
-                let summary = crate::user_io::summary_args(name, args);
-                match io.permission_with(name, &summary, fs::preview(name, args, ctx), &ctx.cancel)
-                {
-                    crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
-                        run_with_hooks(name, args, ctx)
-                    }
-                    crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
-                        Err(crate::error::Error::Cancelled)
-                    }
-                    crate::user_io::Permission::Deny => Ok(ToolOutput::err(
-                        "the user declined the edit; ask what they want instead",
-                    )),
-                }
-            }
-            None => Ok(ToolOutput::err(
-                "a proposed edit needs a person to approve it and none is attached; \
-                 queue it as a task instead",
-            )),
-        },
         // Outside the project: a person answers every time. "Allow all" and
         // --always-approve cover the project, not the rest of the machine.
         Decision::AskOutside => match &ctx.user_io {
@@ -631,10 +503,9 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
         }
         // Say which gate refused. "not allowed for <role>" on every denial
         // taught models a tool was forbidden when only the arguments were.
-        Decision::Deny if !tools_for(ctx.role).contains(&name) => Ok(ToolOutput::err(format!(
-            "denied: the {} role does not have the {name} tool",
-            ctx.role
-        ))),
+        Decision::Deny if !tools_for(ctx.role).contains(&name) => {
+            Ok(ToolOutput::err(format!("denied: there is no {name} tool")))
+        }
         // A hat that can't do this: say which one can, so the model tells the
         // user instead of hunting for a way round.
         Decision::Deny
@@ -664,38 +535,6 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
                 "denied: bash {} — {}",
                 crate::user_io::summary_args(name, args),
                 policy::bash_hint(args).unwrap_or_default()
-            )))
-        }
-        // An auditor's shell is narrower than a builder's. "A blocked
-        // command" read as the machine's limit: an auditor refused `docker`
-        // reported that Docker was blocked, the lead told the user so, and
-        // sent the builder to Podman. Say whose limit it is, and what to do.
-        // Only where a builder could run it: `sudo` is nobody's to run.
-        Decision::Deny
-            if ctx.role == Role::Auditor
-                && name == "bash"
-                && decide(
-                    name,
-                    args,
-                    &ToolContext {
-                        live: None,
-                        role: Role::Builder,
-                        ..ctx.clone()
-                    },
-                ) != Decision::Deny =>
-        {
-            Ok(ToolOutput::err(format!(
-                "denied: bash {} — the auditor's shell runs only test runners, linters and \
-                 read-only commands, and this isn't one. That is a limit on the auditor, not \
-                 on this machine or the project: the builder can run it.{} Don't look for \
-                 another way to run it. Judge what you can from the diff, the checks and the \
-                 builder's handback, and say in your review what you could not confirm.",
-                crate::user_io::summary_args(name, args),
-                if policy::names_containers(args) {
-                    CONTAINER_CHECKS
-                } else {
-                    ""
-                }
             )))
         }
         Decision::Deny => Ok(ToolOutput::err(format!(
@@ -799,9 +638,6 @@ mod tests {
             notes_dir: notes,
             role,
             always_approve: false,
-            queue: Arc::new(Mutex::new(crate::queue::TaskQueue::open(
-                root.join("tasks.json"),
-            ))),
             mcp: None,
             hooks: None,
             cancel: crate::cancel::Cancel::new(),
@@ -812,10 +648,10 @@ mod tests {
     }
 
     #[test]
-    fn orchestrator_can_write_roadmap_not_src() {
+    fn the_plan_hat_writes_memory_not_source() {
         let dir = TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
-        let c = ctx(Role::Orchestrator, dir.path());
+        let c = ctx(Role::SoloPlan, dir.path());
         let road = json!({"path": "ROADMAP.md", "content": "# Roadmap\n"});
         assert_eq!(decide("write", &road, &c), Decision::Allow);
         let out = gated_execute("write", &road, &c).unwrap();
@@ -826,11 +662,11 @@ mod tests {
     }
 
     #[test]
-    fn orchestrator_cannot_write_src() {
+    fn the_plan_hat_cannot_write_source() {
         let dir = TempDir::new().unwrap();
         let src = dir.path().join("src");
         std::fs::create_dir_all(&src).unwrap();
-        let c = ctx(Role::Orchestrator, dir.path());
+        let c = ctx(Role::SoloPlan, dir.path());
         let args = json!({"path": "src/lib.rs", "content": "fn x() {}"});
         assert_eq!(decide("write", &args, &c), Decision::Deny);
         let out = gated_execute("write", &args, &c).unwrap();
@@ -839,12 +675,13 @@ mod tests {
     }
 
     #[test]
-    fn builder_can_write_src() {
+    fn the_build_hat_writes_source_once_allowed() {
         let dir = TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
-        let c = ctx(Role::Builder, dir.path());
+        let mut c = ctx(Role::SoloBuild, dir.path());
         let args = json!({"path": "src/lib.rs", "content": "fn x() {}"});
-        assert_eq!(decide("write", &args, &c), Decision::Allow);
+        assert_eq!(decide("write", &args, &c), Decision::Ask);
+        c.always_approve = true;
         let out = gated_execute("write", &args, &c).unwrap();
         assert!(!out.is_error);
         assert_eq!(
@@ -854,20 +691,9 @@ mod tests {
     }
 
     #[test]
-    fn todo_write_feeds_queue() {
+    fn the_plan_hat_writes_its_notes() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Orchestrator, dir.path());
-        let out = gated_execute("todo_write", &json!({"items":["a","b"]}), &c).unwrap();
-        assert!(!out.is_error);
-        let q = c.queue.lock().unwrap();
-        assert_eq!(q.tasks.len(), 2);
-        assert_eq!(q.tasks[0].title, "a");
-    }
-
-    #[test]
-    fn planner_can_write_notes_only() {
-        let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Architect, dir.path());
+        let c = ctx(Role::SoloPlan, dir.path());
         let note = c.notes_dir.join("plan.md");
         let args = json!({"path": note.to_string_lossy(), "content": "# plan\n"});
         assert_eq!(decide("write", &args, &c), Decision::Allow);
@@ -876,10 +702,10 @@ mod tests {
     }
 
     #[test]
-    fn env_file_is_denied_even_for_builder() {
+    fn env_file_is_denied_even_for_the_build_hat() {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join(".env"), "SECRET=1").unwrap();
-        let c = ctx(Role::Builder, dir.path());
+        let c = ctx(Role::SoloBuild, dir.path());
         let args = json!({"path": ".env"});
         assert_eq!(decide("read_file", &args, &c), Decision::Deny);
     }
@@ -901,7 +727,8 @@ mod tests {
             url: None,
             matcher: Some("write".into()),
         }]);
-        let mut c = ctx(Role::Builder, dir.path());
+        let mut c = ctx(Role::SoloBuild, dir.path());
+        c.always_approve = true;
         c.hooks = Some(Arc::new(hooks));
         let args = json!({"path": "src/lib.rs", "content": "fn x() {}"});
         let out = gated_execute("write", &args, &c).unwrap();
@@ -911,10 +738,10 @@ mod tests {
     }
 
     #[test]
-    fn orchestrator_read_is_allowed() {
+    fn reading_is_allowed() {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("README.md"), "hello").unwrap();
-        let c = ctx(Role::Orchestrator, dir.path());
+        let c = ctx(Role::SoloPlan, dir.path());
         let out = gated_execute("read_file", &json!({"path": "README.md"}), &c).unwrap();
         assert!(!out.is_error);
         assert!(out.text.contains("hello"));
@@ -922,20 +749,20 @@ mod tests {
 
     #[test]
     fn web_tools_are_opt_in() {
-        let names: Vec<_> = specs_for_opts(Role::Orchestrator, false)
+        let names: Vec<_> = specs_for_opts(Role::SoloPlan, false)
             .into_iter()
             .map(|s| s.name)
             .collect();
         assert!(names.contains(&"ask_user".into()));
         assert!(!names.contains(&"web_fetch".into()));
-        let names: Vec<_> = specs_for_opts(Role::Orchestrator, true)
+        let names: Vec<_> = specs_for_opts(Role::SoloPlan, true)
             .into_iter()
             .map(|s| s.name)
             .collect();
         assert!(names.contains(&"web_fetch".into()));
         assert!(names.contains(&"web_search".into()));
         let dir = TempDir::new().unwrap();
-        let mut c = ctx(Role::Orchestrator, dir.path());
+        let mut c = ctx(Role::SoloPlan, dir.path());
         let out = execute("web_fetch", &json!({"url": "https://example.com"}), &c).unwrap();
         assert!(out.is_error);
         c.web = true;
@@ -948,7 +775,7 @@ mod tests {
     #[test]
     fn oversized_tool_output_is_capped_at_both_ends() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Builder, dir.path());
+        let c = ctx(Role::SoloBuild, dir.path());
         let big = "x".repeat(MAX_TOOL_OUTPUT_BYTES * 3);
         std::fs::write(dir.path().join("big.txt"), &big).unwrap();
         let out = execute("read_file", &json!({"path": "big.txt"}), &c).unwrap();
@@ -972,7 +799,7 @@ mod tests {
     #[test]
     fn read_file_pages_a_long_file() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Builder, dir.path());
+        let c = ctx(Role::SoloBuild, dir.path());
         let body: String = (1..=5_000).map(|i| format!("line {i}\n")).collect();
         std::fs::write(dir.path().join("long.txt"), body).unwrap();
 
@@ -1007,7 +834,7 @@ mod tests {
     #[test]
     fn bash_timeout_is_raisable_and_clamped() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Builder, dir.path());
+        let c = ctx(Role::SoloBuild, dir.path());
         let out = execute(
             "bash",
             &json!({"command": "sleep 2", "timeout_secs": 1}),
@@ -1026,7 +853,7 @@ mod tests {
     #[test]
     fn bash_is_not_a_login_shell() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Builder, dir.path());
+        let c = ctx(Role::SoloBuild, dir.path());
         let out = execute(
             "bash",
             &json!({"command": "shopt -q login_shell; echo $?"}),
@@ -1034,61 +861,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.text.trim(), "1", "should not be a login shell");
-    }
-
-    fn propose(dir: &std::path::Path) -> Value {
-        std::fs::write(dir.join("config.toml"), "retries = 3\n").unwrap();
-        json!({"path": "config.toml", "old_string": "retries = 3", "new_string": "retries = 5", "reason": "user asked"})
-    }
-
-    /// The fast path: a person sees the diff and approves it.
-    #[test]
-    fn a_proposed_edit_applies_when_the_user_approves() {
-        let dir = TempDir::new().unwrap();
-        let args = propose(dir.path());
-        let (io, rx) = crate::user_io::UserIo::pair();
-        let mut c = ctx(Role::Orchestrator, dir.path());
-        c.user_io = Some(io);
-        let allowed = c.allowed.clone();
-        let worker = std::thread::spawn(move || gated_execute("propose_edit", &args, &c).unwrap());
-        match rx.recv_timeout(std::time::Duration::from_secs(2)) {
-            Ok(crate::user_io::UserRequest::Permission { summary, reply, .. }) => {
-                assert!(
-                    summary.contains("-retries = 3") && summary.contains("+retries = 5"),
-                    "{summary}"
-                );
-                reply.send(crate::user_io::Permission::Always).unwrap();
-            }
-            other => panic!("expected the diff for approval, got {other:?}"),
-        }
-        let out = worker.join().unwrap();
-        assert!(!out.is_error, "{out:?}");
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("config.toml")).unwrap(),
-            "retries = 5\n"
-        );
-        // "allow for the session" must not turn later proposals into
-        // silent writes: a proposal has no scope to allow.
-        assert!(allowed.lock().unwrap().is_empty());
-    }
-
-    /// No person, no fast path — whatever blanket approval is configured.
-    #[test]
-    fn a_proposed_edit_is_refused_without_a_person() {
-        let dir = TempDir::new().unwrap();
-        let args = propose(dir.path());
-        let mut c = ctx(Role::Orchestrator, dir.path());
-        c.always_approve = true;
-        c.allowed.lock().unwrap().insert("edit".into());
-        let out = gated_execute("propose_edit", &args, &c).unwrap();
-        assert!(
-            out.is_error && out.text.contains("queue it as a task"),
-            "{out:?}"
-        );
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("config.toml")).unwrap(),
-            "retries = 3\n"
-        );
     }
 
     /// "Allow all" and --always-approve don't reach outside the project:
@@ -1130,7 +902,8 @@ mod tests {
     #[test]
     fn refused_inline_code_points_at_a_probe_file() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Auditor, dir.path());
+        let mut c = ctx(Role::SoloBuild, dir.path());
+        c.always_approve = true;
         for cmd in ["python3 -c 'print(1)'", "python3 - <<'EOF'"] {
             let out = gated_execute("bash", &json!({ "command": cmd }), &c).unwrap();
             assert!(out.is_error && out.text.contains("probe.py"), "{out:?}");
@@ -1147,39 +920,12 @@ mod tests {
         assert!(out.text.contains("outside policy"), "{out:?}");
     }
 
-    /// An auditor refused a command a builder may run is told whose limit
-    /// that is. The general wording ("a blocked command") read as the
-    /// machine's: an auditor refused `docker` reported Docker as blocked,
-    /// and the lead sent the builder to Podman.
+    /// A reviewer refused a container command is told what does run in
+    /// containers. Told only "refused", an auditor reported that the
+    /// machine had no Docker, and the user was told so.
     #[test]
-    fn an_auditors_refusal_says_the_limit_is_the_auditors() {
+    fn a_refused_container_command_says_what_does_run() {
         let dir = TempDir::new().unwrap();
-        let auditor = ctx(Role::Auditor, dir.path());
-        for cmd in [
-            "docker compose build web",
-            "podman compose up -d --wait",
-            "./dev test",
-            "docker run --rm alpine true",
-        ] {
-            let out = gated_execute("bash", &json!({ "command": cmd }), &auditor).unwrap();
-            assert!(out.is_error, "{cmd}: {out:?}");
-            assert!(
-                out.text
-                    .contains("a limit on the auditor, not on this machine")
-                    && out.text.contains("the builder can run it")
-                    && out.text.contains("Don't look for another way"),
-                "{cmd}: {out:?}"
-            );
-            // A refused container command says what does run in
-            // containers, so "no Docker here" isn't the conclusion.
-            assert_eq!(
-                out.text
-                    .contains("Docker is here, and tests and linters do run in the project's"),
-                cmd != "./dev test",
-                "{cmd}: {out:?}"
-            );
-        }
-        // The review hat is told the same.
         let reviewer = ctx(Role::SoloReview, dir.path());
         for (cmd, containers) in [
             ("docker compose up -d --wait", true),
@@ -1199,50 +945,14 @@ mod tests {
             );
         }
         // What it may run still runs.
-        let out = gated_execute("bash", &json!({ "command": "true" }), &auditor).unwrap();
+        let out = gated_execute("bash", &json!({ "command": "true" }), &reviewer).unwrap();
         assert!(!out.is_error, "{out:?}");
-        // What nobody may run isn't blamed on the role.
-        let out = gated_execute("bash", &json!({ "command": "sudo docker ps" }), &auditor).unwrap();
-        assert!(!out.text.contains("the builder can run it"), "{out:?}");
     }
 
-    #[test]
-    fn only_small_edits_take_the_fast_path() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("big.rs"), "x\n".repeat(50)).unwrap();
-        let big = "x\n".repeat(crate::tools::policy::FAST_PATH_MAX_LINES + 1);
-        let c = ctx(Role::Orchestrator, dir.path());
-        let d = decide(
-            "propose_edit",
-            &json!({"path": "big.rs", "old_string": big, "new_string": "y", "reason": "r"}),
-            &c,
-        );
-        assert_eq!(d, Decision::Deny);
-        std::fs::write(dir.path().join(".env"), "K=1").unwrap();
-        let d = decide(
-            "propose_edit",
-            &json!({"path": ".env", "old_string": "K=1", "new_string": "K=2", "reason": "r"}),
-            &c,
-        );
-        assert_eq!(d, Decision::Deny, "secrets never take the fast path");
-        // Builders have the crew's gate; the fast path is the lead's alone.
-        let b = ctx(Role::Builder, dir.path());
-        assert_eq!(
-            decide(
-                "propose_edit",
-                &json!({"path": "big.rs", "old_string": "x", "new_string": "y", "reason": "r"}),
-                &b
-            ),
-            Decision::Deny
-        );
-    }
-
-    /// Live run 2: a builder reading a file that did not exist yet, or a
-    /// compiled .pyc, ended its whole task. The model must see the error.
     #[test]
     fn a_failing_tool_is_an_error_result_not_a_dead_task() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Builder, dir.path());
+        let c = ctx(Role::SoloBuild, dir.path());
         let missing = gated_execute("read_file", &json!({"path": "not/yet.py"}), &c).unwrap();
         assert!(missing.is_error, "{missing:?}");
         std::fs::write(dir.path().join("x.pyc"), [0xff_u8, 0xfe, 0x00, 0x01]).unwrap();
@@ -1256,7 +966,7 @@ mod tests {
     #[test]
     fn ask_is_fail_closed_without_tui() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Builder, dir.path());
+        let c = ctx(Role::SoloBuild, dir.path());
         let out = gated_execute(
             "bash",
             &json!({"command": "rm -rf /nonexistent-ryter-ask-fixture"}),
@@ -1271,7 +981,7 @@ mod tests {
     fn permission_allow_from_user_io() {
         let dir = TempDir::new().unwrap();
         let (io, rx) = crate::user_io::UserIo::pair();
-        let mut c = ctx(Role::Builder, dir.path());
+        let mut c = ctx(Role::SoloBuild, dir.path());
         c.user_io = Some(io);
         let worker = std::thread::spawn(move || {
             gated_execute(
@@ -1294,7 +1004,7 @@ mod tests {
     #[test]
     fn ask_user_needs_tui() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Orchestrator, dir.path());
+        let c = ctx(Role::SoloPlan, dir.path());
         let out = gated_execute("ask_user", &json!({"question": "ok?"}), &c).unwrap();
         assert!(out.is_error);
         assert!(out.text.contains("TUI"), "{out:?}");

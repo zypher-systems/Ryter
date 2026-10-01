@@ -446,15 +446,9 @@ fn match_line(m: &Match, selected: bool, width: usize, theme: Theme) -> Line<'st
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ryter_core::Phase;
 
     fn view() -> View {
-        View::new(
-            Phase::Build,
-            "spacexai".into(),
-            "grok-4.6".into(),
-            "p".into(),
-        )
+        View::new("spacexai".into(), "grok-4.6".into(), "p".into())
     }
 
     #[test]

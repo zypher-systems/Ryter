@@ -1,36 +1,38 @@
 # Roadmap
 
-Living plan for Ryter. The lead updates this as work lands.
+Living plan for Ryter.
 
 ## What 1.0 means
 
-*This list was written around crew mode, which is being retired (see Direction, under Next). It is to be rewritten with the user once the one-mode flow has completed a real project.*
+**There is no agreed list yet.** The list that stood here was written around crew mode, which was removed on 2026-10-01; it is in this file's history. A new one is to be written with the user once the plan, build and review flow has taken a real project from a plan to a reviewed change. Until there is one, Ryter stays below 1.0, and releases go 0.11, 0.12 and on.
 
-1.0 is a finished, workable product: someone new installs Ryter, points a crew at a real project, and can stop watching it. Every item below has to be true first. Until then releases go 0.8, 0.9, 0.10 and on, since minor numbers have no ceiling. When the list is done, the user decides whether that is 1.0.
+From the old list, what did not depend on a crew, as candidates for the user to keep, change or drop:
 
-- [ ] **Setup works the first time.** Install, add a key, choose a crew, and land a first task on Linux and macOS, with no step the guide doesn't cover. Only models the account can use are offered (done in 0.6.5).
-- [ ] **Review means something.** The crew can look at what it built before it signs off: the terminal viewer for terminal apps, the browser for web apps, with screenshots for models that take images.
-- [ ] **Ryter only touches the project it was started in.** It never creates a repository in a folder that holds other projects (done in 0.8.1), never commits outside the project, and says what it set up. (On 2026-09-28 it made `~/workspace` a repository and committed 29 other projects into it.)
-- [ ] **Cost is predictable.** A task's cap asks before it stops (done in 0.7.1), project cost counts only the project, and a crew run shows what it is likely to cost before it starts.
-- [ ] **A failed run loses nothing that was paid for.** Work stays on its branch and resumes where it stopped (done in 0.6.5 and 0.7.1), and no failure path deletes committed work.
-- [x] **The benchmark says it works.** `ryter bench` runs a suite of real multi-file tasks. The land rate and the cost per task are published (`docs/bench.md`), and every release is checked against them with `ryter bench --publish` (done in 0.10.0).
-- [ ] **The model has the tools the job needs:** skills it loads itself, pages it can show the user, and images it can see.
-- [ ] **No known data-loss or wrong-number bugs are open.**
-- [ ] **The guide matches the product:** every command and screen in `docs/guide.md` works as the release does.
+- Setup works the first time: install, add a key, and make a first change on Linux and macOS, with no step the guide doesn't cover. Only models the account can use are offered.
+- Ryter only touches the project it was started in: it never creates a repository in a folder that holds other projects, never commits anything itself, and says what it set up.
+- Cost is predictable: what a review or a model switch will cost is said before it is spent, and project cost counts only the project.
+- Review means something: the reviewer can look at what was built before it gives a verdict (the terminal for terminal apps, the browser for web apps).
+- The model has the tools the job needs: skills it loads itself, pages it can show the user, and images it can see.
+- No known data-loss or wrong-number bugs are open.
+- The guide matches the product: every command and screen in `docs/guide.md` works as the release does.
 
 ## Now
 
 Work that is in `dev` and not yet released is marked *Unreleased*, and its notes collect in `docs/releases/next.md`. An entry gets its version when it's released.
 
-- **Unreleased: a reviewer tests in the project's containers.** The auditor and the review hat may run a test or lint command with `docker compose run` or `exec`, and look at what is running. `docker build` works under a sandbox profile. Before this a reviewer on a Docker project reported that the machine had no Docker.
+- **Unreleased: crew mode is removed.** Ryter is one mode: one model in the project, in the plan, build or review hat, each hat on its own model if the user wants.
+  - Gone: the lead, architect, builders and auditors; the task queue, worktrees and patches; the crew board, the crew builder, `/crew`, `/crews`, `/solo`, `/agents`, `/auditor`; the per-task cap and step limits; `ryter crew …`; and `ryter bench` with its published results. About 20,000 lines.
+  - Kept working: configuration and sessions written for crew mode still load (a crew session opens in the build hat), and a project's total still shows what crew mode spent there.
+  - `ryter serve` and `ryter mcp serve` run a message in the build hat, where they used to hand it to the lead.
+  - The ten benchmark tasks stay in `bench/` for a benchmark on the hats; nothing runs them today.
+- **Unreleased: a reviewer tests in the project's containers.** The review hat may run a test or lint command with `docker compose run` or `exec`, and look at what is running. `docker build` works under a sandbox profile. Before this a reviewer on a Docker project reported that the machine had no Docker.
 - **Unreleased: one reviewer.** The review hat takes the audit's place: `/audit` and the offer after a build turn run a review in that hat, on its model, against the approved plan. The commit receipt says whether the work was reviewed. The 0.10.0 audit model and limit carry over.
 - **Unreleased: a model for each hat.** `/models` lists *All hats*, *Plan*, *Build* and *Review*; a hat follows *All hats* until it has its own. The hats share one conversation, and the chat says what re-reading it costs when another model takes over.
 - **Unreleased: no panel is drawn off the screen.** `/models` crashed the program beside the rail on a terminal under about 158 columns wide (since 0.9.1). Panels are sized to the space they are drawn in.
 - **Unreleased: a plan is approved in its own panel.** The model shows a plan with `present_plan`; the user approves (it is saved under `.ryter/plans/` and built in the same turn), says what to change, or rejects it.
 - **Unreleased: a `/rules` panel.** Two tabs, the rules for every project and for this one: read them, add a rule, remove a line, open the file in an editor. No model call; `/rules <text>` still asks the model to save one.
-- **Unreleased: sandbox profiles explained, and `workspace` made usable.** `/settings` compares `off`, `workspace` and `read-only` under the field. Under a profile, commands can write `/dev/null`, read and run toolchains under the home folder, write their download caches, make temporary files in `~/.ryter/tmp`, and write crew worktrees; saved logins, `~/.ssh` and the rest of the home folder stay shut. `ryter --sandbox workspace bench` runs the suite under it. The default stays `off`.
-- **Unreleased: step limits you can set.** `/settings` → agents has builder, architect and auditor steps (defaults 40, 30, 12; 4 to 400), also `[subagents.steps]` in `config.toml`. A change applies from the next task.
-- **Unreleased: the crew behaves when a specialist stops short.** A specialist's last step is for writing up, with or without a spending limit. An audit with no verdict is asked for one once, and without it the task stops at the gate unrejected: no retry is spent and the builder isn't run again. The auditor is told what its shell can't run (containers, servers, the project's own scripts), that the limit is its own, and to review by reading and say `UNVERIFIED` where that stops it. The benchmark has a tenth task, `runner-script`, whose tests the auditor can't run.
+- **Unreleased: sandbox profiles explained, and `workspace` made usable.** `/settings` compares `off`, `workspace` and `read-only` under the field. Under a profile, commands can write `/dev/null`, read and run toolchains under the home folder, write their download caches, make temporary files in `~/.ryter/tmp`, and move a file from one folder to another. Keys read from the environment stay out of every command.
+- **Unreleased: the updater waits for a file that is still being written.** Its version check of a downloaded release failed now and then with "Text file busy", when another thread started a process at that moment. It waits that out.
 - **0.10.0 — the benchmark.** The suite is nine tasks: a feature across four Python modules, bugs in two modules that only show together, a Rust crate, a TypeScript library, and one piece of work split into three builder tasks, two side by side. A task says what it `needs` and is skipped where that's missing. `ryter bench --publish docs/bench` writes the page and the data, compares the run with the last one published, and exits 1 on fewer accepted or more false passes; cost is shown and never fails it. The published run is replaced only by one as good, and a run that measured nothing (no task ran, or no model answered) fails.
 - **0.10.0 — your rules for every project.** `~/.ryter/RYTER.md` goes into every role's instructions, ahead of the project's `RYTER.md`. The model changes it with `update_rules` (taught by the built-in `rules` skill, also `/rules`), and only after the user has seen the change and said yes: the prompt holds the whole change and takes `y` once its end has been on screen, `--always-approve` doesn't skip it, a headless run saves nothing, and the sandbox keeps the file read-only.
 - **0.10.0 — the shell tests are race-free.** `a_detached_process_holding_the_pipe_does_not_hang` raced `setsid` against the group kill under CI load. Its job now leaves the group with `set -m` and writes its pid before the command goes on. Both background tests find and stop their process by that pid (`rustix`), not `pkill -f`, `pgrep -f` or `setsid`.
@@ -148,39 +150,33 @@ Work that is in `dev` and not yet released is marked *Unreleased*, and its notes
 
 ## Next
 
-Product direction: `docs/product-direction.md`. Crew contract: `crew.md`. Cost model: `docs/cost.md`.
+Product direction, as it was written with two modes: `docs/product-direction.md`.
 
 ### Direction (decided 2026-10-01): one mode, with the user as the lead
 
-Crew mode is being retired. Ryter becomes one mode: the solo interface, with a hat for each stage of the work and, if the user wants, a different model for each hat.
+Ryter is one mode: one model in the project, with a hat for each stage of the work and, if the user wants, a different model for each hat. Crew mode is removed.
 
-**Why.** Crew mode ran a lead, an architect, builders and an auditor without the user, and no real project has completed that way. On the first one tried with a paid crew (a Docker CMS, 2026-10-01), every failure was a missing person: the architect made the first task too big, the auditor could not verify it, and the lead reported a limit the machine didn't have. Cost can't be predicted for an unattended run either: the tokens one builder task used varied about a hundredfold across twelve runs. The benchmark's 9 of 9 was on small tasks with checks already set.
+**Why.** Crew mode ran a lead, an architect, builders and an auditor without the user, and no real project completed that way. On the one tried with a paid crew (a Docker CMS, 2026-10-01), every failure was a missing person: the architect made the first task too big, the auditor could not verify it, and the lead reported a limit the machine didn't have. That session spent $4.36 and its first task was rejected seven times. Cost can't be predicted for an unattended run either: the tokens one builder task used varied about a hundredfold across twelve runs. The user's words: "I keep wasting money trying to get the crew to work when we already decided to rip it out."
 
-**What is kept,** as hats the user moves between: a second model reviewing before the work is called done, checks run before review, spend that is capped and shown, and changes that can be undone as one.
-
-**What goes:** the lead's own loop over a task queue, parallel builders, the crew board, the crew builder, tiering and the cost estimate.
+**What was kept,** as hats the user moves between: a second model reviewing before the work is called done, spend that is capped and shown, and changes that can be undone as one.
 
 **The order:**
 
 1. **Plan approval in a popout** (in `dev`). The plan hat writes a plan; it opens in a scrolling panel with approve, adjust and reject, and is written to disk on approve. The build hat works from that file.
 2. **A model for each hat** (in `dev`), set in `/models`. By default every hat follows one model. The hats share one conversation, and a switch to another model shows what re-reading it will cost.
 3. **Review as a gate** (in `dev`). The review hat, on a different model when the user sets one, checks the change against the plan and for bugs before it is called done. It took `/audit`'s place: there is one reviewer.
-4. **A fourth hat that uses the product as a user would** (working name: Test). It starts from the plan and the product, not the conversation. The project says how to start, stop and test itself, and Ryter runs those commands and stops what it started.
-5. **The acceptance test:** the CMS project, taken from a plan to a tested change this way.
-6. **Crew mode is removed** in one patch once that passes, the benchmark is rebuilt on the hats, and the list of what 1.0 means is rewritten with the user. It is written around a crew today.
+4. **Crew mode removed** (in `dev`), moved ahead of the rest on 2026-10-01 so that no more time or money goes into it.
+5. **A fourth hat that uses the product as a user would** (working name: Test; the name and whether it starts from a fresh conversation are the user's to decide). It starts from the plan and the product. The project says how to start, stop and test itself, and Ryter runs those commands and stops what it started.
+6. **The acceptance test:** the CMS project, taken from a plan to a tested change this way.
+7. **A benchmark on the hats,** using the tasks in `bench/`, and the list of what 1.0 means written with the user.
 
-Until step 6, crew mode stays as it is and gets no new work. The crew fixes and step limits already in `dev` ship as they are, since people on 0.10.0 have crew mode.
-
-- **Narrow the sandbox's grant on Ryter's own folder.** Under a profile, commands can read and write every project's sessions and crew worktrees under `~/.ryter`, not only this project's. Grant this project's alone.
-- **Make the benchmark harder.** The nine-task suite ran clean on its first published run (9 of 9 accepted, about 2 cents a task), and a later run of the same crew had one false pass in nine. So it proves the pipeline and catches a release that breaks it, but one run of each task is too small a sample to compare crews or to say how often an auditor is wrong. Add tasks a crew can fail: larger fixtures, vague briefs, a planted bug the visible checks miss, and a task that needs the architect. Then run each candidate crew with `--repeat`, and fold the measurements into `docs/cost.md`.
-- **The updater's version probe can hit "Text file busy".** Seen once in `update::tests::the_launch_check_installs_or_notifies` during the 0.10.0 review, and once in `a_release_that_doesnt_check_out_is_refused` on 2026-10-01 (one run in four), with the tests running side by side. The likely cause: another thread starts a process while the downloaded program is still open for writing, the child inherits that handle, and running the program is refused until the child lets go. Retry the probe briefly on that error, and make the test steady.
-- **Checks auto-detect** on first use (`Cargo.toml` → `cargo test`, `package.json` → its test script, `pyproject.toml` → `pytest`, `go.mod` → `go test`), written to `.ryter/config.toml` after the user confirms.
+- **Narrow the sandbox's grant on Ryter's own folder.** Under a profile, commands can read and write every project's sessions under `~/.ryter`, not only this project's. Grant this project's alone.
+- **A hat's model is checked before it is used.** `ryter crew check` and the crew builder sent each seat's model one tiny request with a tool, to catch a data policy that refuses it, missing tool support, or no credits. That went with crew mode. Today such a model fails on its first message. Check a hat's model when it is chosen in `/models`.
+- **The project says how to test itself.** Detect it on first use (`Cargo.toml` → `cargo test`, `package.json` → its test script, `pyproject.toml` → `pytest`, `go.mod` → `go test`, a compose file → the command in its container), confirmed by the user and kept in the project. The fourth hat needs it, and a review can run it before it reads the diff.
 - **Recorded wire fixtures + a live smoke test.** Tool calling was broken on two backends while 212 tests passed, because every test used idealized deltas. Record real SSE per provider (tool calls, parallel calls, truncation) and replay those; add one nightly live round trip per built-in provider.
-- **From the live runs:** a task is recorded as landed on the patch only when its whole batch finishes (batch barrier); parallel jobs can overshoot the session budget by about one round each (~$0.10 seen); the retry brief says "start clean" but the worktree is reused; the architect is the slowest and dearest role (~$0.70 per design on Opus), so measure whether a cheaper architect designs as well.
-- **Streamed `bash` output**, and **reconcile the context gauge** with the provider's real `input_tokens` rather than bytes/4.
-- **`ryter run tasks.toml`** unattended, producing branches or PRs with the audit as the description.
+- **Streamed `bash` output** (the shell already passes a running command's newest lines to a hook nothing listens on), and **reconcile the context gauge** with the provider's real `input_tokens` rather than bytes/4.
 - **macOS without the sandbox**, labelled Linux-only.
-- Anthropic extended thinking + tools (thinking blocks must be echoed back on `messages`); compaction that keeps a summary rather than a file list; `ryter-cli` tests; confirm grok-4.6's context window (500k in `window_for`, 256k in fixtures).
+- Anthropic extended thinking + tools (thinking blocks must be echoed back on `messages`); compaction that keeps a summary rather than a file list; `ryter-cli` tests; confirm grok-4.6's context window (500k in `window_for`, 256k in fixtures); a hat on a model with a smaller window than the main one can overflow before the conversation is compacted; rename `[orchestrator]`, `[specialists.*]` and the `Solo*` names in the code now that there is one mode.
 
 Previously listed:
 

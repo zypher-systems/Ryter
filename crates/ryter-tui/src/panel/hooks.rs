@@ -53,7 +53,6 @@ fn describe_event(e: HookEvent) -> &'static str {
         HookEvent::PreToolUse => "before a tool runs · exit 2 / 4xx denies",
         HookEvent::PostToolUse => "after a tool returns",
         HookEvent::SessionStart => "when the agent starts a session",
-        HookEvent::Handoff => "on every phase handoff",
     }
 }
 

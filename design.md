@@ -1,5 +1,10 @@
 # Ryter TUI — Design Contract
 
+> **History.** This is the 0.2.0 design contract. Crew mode, which its crew card, `/crew`,
+> `/agents`, `/auditor` and merge-notice requirements describe, was removed on 2026-10-01
+> (see `DECISIONS.md`). Those requirements no longer apply; the rest still describes the
+> classic screen.
+
 Status: **proposed / not implemented**
 Target release: **0.2.0** (feature add — new UI surface, no product rename)
 Work branch: `0.2.0-patch` → `dev` → `main`

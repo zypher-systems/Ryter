@@ -3,31 +3,31 @@
  · system
    welcome · /help for k╭─ settings ───────────────────────────────────────────────────────────╮
                         │ SPEND                                                                ┃
-                        │› budget usd (0 = off)      ‹ 0.00 ›                          default ┃
-                        │  warn usd                  ‹ 1.00 ›                          default ┃
-                        │  review usd (0 = off)      ‹ 0.00 ›                          default ┃
+                        │› budget usd (0 = off)  ‹ 0.00 ›                              default ┃
+                        │  warn usd              ‹ 1.00 ›                              default ┃
+                        │  review usd (0 = off)  ‹ 0.00 ›                              default ┃
                         │                                                                      ┃
-                        │ AGENTS                                                               ┃
-                        │  subagents max             ‹ 4 ›                             default ┃
-                        │  auditor                   [ on ]                            default ┃
-                        │  builder steps (def 40)    ‹ 40 ›                            default ┃
-                        │  architect steps (def 30)  ‹ 30 ›                            default ┃
-                        │  auditor steps (def 12)    ‹ 12 ›                            default ┃
+                        │ TOOLS                                                                ┃
+                        │  permission mode       ‹ ask ›                               default ┃
+                        │  features.web          [ off ]                               default ┃
                         │                                                                      ┃
-                        │ TOOLS                                                                │
-                        │  permission mode           ‹ ask ›                           default │
-                        │  features.web              [ off ]                           default │
-                        │                                                                      │
-                        │ SANDBOX                                                              │
-                        │  profile                   ‹ off ›                           default │
-                        │                                                                      │
-                        │                 OFF           workspace     read-only                │
-                        │ project files   read, write   read, write   read                     │
+                        │ SANDBOX                                                              ┃
+                        │  profile               ‹ off ›                               default ┃
+                        │                                                                      ┃
+                        │                 OFF           workspace     read-only                ┃
+                        │ project files   read, write   read, write   read                     ┃
                         │ rest of home    read, write   no            no                       │
                         │ your tools      yes           yes           yes                      │
                         │ your keys       rule only †   never         never                    │
                         │ /tmp            read, write   no            no                       │
                         │ network         yes           yes           yes                      │
+                        │ docker          yes           yes *         yes *                    │
+                        │                                                                      │
+                        │ use it when     you watch     tools run     you only want            │
+                        │                 each step     unasked       a review                 │
+                        │                                                                      │
+                        │ * docker can reach the whole machine; the sandbox does not stop it.  │
+                        │ Rootless podman can't run under workspace or read-only.              │
                         │ ↑↓ move   space/←→ change   enter edit   esc done                    │
                         ╰──────────────────────────────────────────────────────────────────────╯
 

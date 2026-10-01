@@ -111,16 +111,9 @@ pub enum SystemLevel {
 pub enum MessageKind {
     /// The person at the keyboard.
     User,
-    /// Orchestrator model output.
+    /// The model's reply.
     Assistant {
         /// Model id.
-        model: String,
-    },
-    /// Specialist output (display only; not orchestrator context).
-    Specialist {
-        /// `planner` / `architect` / `builder` / `auditor`.
-        role: String,
-        /// Model id if known.
         model: String,
     },
     /// Collapsed tool row.
@@ -130,8 +123,6 @@ pub enum MessageKind {
         /// Outcome.
         status: ToolStatus,
     },
-    /// Merge notice after a builder finished.
-    Merge,
     /// TUI / slash output.
     System {
         /// Severity.
@@ -148,7 +139,7 @@ pub struct MessageMeta {
     pub duration_ms: Option<u64>,
     /// What a tool step came to: `new · 48 lines`, `✓ 12 passed`, `✗ exit 1`.
     pub detail: Option<String>,
-    /// Secondary label: specialist task, tool summary.
+    /// Secondary label: a tool's summary.
     pub label: Option<String>,
     /// Provider tool-call id (to match `ToolResult`).
     pub tool_id: Option<String>,
@@ -201,9 +192,6 @@ impl Message {
         match (&self.kind, &other.kind) {
             (MessageKind::User, MessageKind::User) => true,
             (MessageKind::Assistant { model: a }, MessageKind::Assistant { model: b }) => a == b,
-            (MessageKind::Specialist { role: a, .. }, MessageKind::Specialist { role: b, .. }) => {
-                a == b
-            }
             _ => false,
         }
     }
@@ -213,9 +201,7 @@ impl Message {
         match &self.kind {
             MessageKind::User => wrap::truncate(username, 20),
             MessageKind::Assistant { model } => short_model(model).to_string(),
-            MessageKind::Specialist { role, .. } => role.clone(),
             MessageKind::Tool { name, .. } => name.clone(),
-            MessageKind::Merge => "merge".into(),
             MessageKind::System { level } => match level {
                 SystemLevel::Info => "system".into(),
                 SystemLevel::Warn => "warning".into(),
@@ -230,13 +216,11 @@ impl Message {
         match &self.kind {
             MessageKind::User => "",
             MessageKind::Assistant { .. } => "",
-            MessageKind::Specialist { .. } => "⇢ ",
             MessageKind::Tool { status, .. } => match status {
                 ToolStatus::Running => "◌ ",
                 ToolStatus::Ok => "· ",
                 ToolStatus::Error => "! ",
             },
-            MessageKind::Merge => "⇄ ",
             MessageKind::System { level } => match level {
                 SystemLevel::Info => "· ",
                 SystemLevel::Warn => "! ",
@@ -251,12 +235,10 @@ impl Message {
         match &self.kind {
             MessageKind::User => theme.user,
             MessageKind::Assistant { .. } => theme.assistant,
-            MessageKind::Specialist { role, .. } => theme.role(role),
             MessageKind::Tool { status, .. } => match status {
                 ToolStatus::Error => theme.error,
                 _ => theme.tool,
             },
-            MessageKind::Merge => theme.build,
             MessageKind::System { level } => match level {
                 SystemLevel::Info | SystemLevel::Rule | SystemLevel::Receipt => theme.dim,
                 SystemLevel::Warn => theme.warn,
@@ -293,7 +275,7 @@ impl Message {
                     parts.push(self.at.hhmm());
                 }
             }
-            MessageKind::Assistant { .. } | MessageKind::Specialist { .. } | MessageKind::Merge => {
+            MessageKind::Assistant { .. } => {
                 if timestamps {
                     parts.push(self.at.hhmm());
                 }
@@ -426,7 +408,7 @@ pub fn render_message(msg: &Message, opts: &RenderOpts, theme: Theme) -> Vec<Lin
     let inner = width.saturating_sub(2).max(8);
     let body_rows: Vec<Line<'static>> = match &msg.kind {
         MessageKind::User => markdown::render_inline_only(&msg.body, inner, theme),
-        MessageKind::Assistant { .. } | MessageKind::Specialist { .. } | MessageKind::Merge => {
+        MessageKind::Assistant { .. } => {
             let md = markdown::MdOptions {
                 width: inner,
                 line_numbers: opts.line_numbers,

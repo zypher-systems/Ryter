@@ -198,10 +198,7 @@ fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
         // names it again: unnamed, its words read as the other's. Each
         // step's cost is in the turn's closing line.
         let speaks = |m: &super::Message| {
-            matches!(
-                m.kind,
-                MessageKind::Assistant { .. } | MessageKind::Specialist { .. }
-            ) && !m.body.trim().is_empty()
+            matches!(m.kind, MessageKind::Assistant { .. }) && !m.body.trim().is_empty()
         };
         let named_before = ledger
             && speaks(msg)
@@ -439,14 +436,13 @@ fn gutter_spans(g: &Gutter, first: bool, theme: Theme) -> Vec<Span<'static>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ryter_core::Phase;
 
     fn text(l: &Line) -> String {
         l.spans.iter().map(|s| s.content.as_ref()).collect()
     }
 
     fn view_with_turns(n: usize) -> View {
-        let mut v = View::new(Phase::Build, "x".into(), "m".into(), "p".into());
+        let mut v = View::new("x".into(), "m".into(), "p".into());
         for i in 0..n {
             v.submit_user(format!("question {i}"), format!("question {i}"));
             v.on_token(&format!("answer {i}\n").repeat(6));

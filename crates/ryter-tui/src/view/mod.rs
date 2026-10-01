@@ -6,7 +6,7 @@ pub mod scroll;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use ryter_core::{Phase, SlashCatalog, UiConfig, format_usd};
+use ryter_core::{SlashCatalog, UiConfig, format_usd};
 
 use crate::action::Action;
 use crate::activity::{Activity, Mode as ActivityMode};
@@ -31,81 +31,10 @@ pub struct ConnRow {
     pub has_key: bool,
 }
 
-/// A task queue row for the info panel.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TodoRow {
-    /// Title.
-    pub title: String,
-    /// `pending` / `running` / `done` / `blocked`.
-    pub status: String,
-}
-
-/// Seconds of pulse the board keeps.
-pub const PULSE_SAMPLES: usize = 30;
-
-/// A running specialist row.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CrewRow {
-    /// Subagent id (for `/agents` kill).
-    pub id: String,
-    /// builder / planner / …
-    pub role: String,
-    /// Short task label.
-    pub label: String,
-    /// Optional spend for this child.
-    pub spend: Option<f64>,
-    /// Status word (`running`, `auditing`, …).
-    pub status: String,
-    /// `now_ms` when it started.
-    pub started_ms: u64,
-    /// Who is acting on the task right now (`builder`, `auditor`): the
-    /// builder's worktree is reviewed in the same lane.
-    pub acting: String,
-    /// What it is doing this moment, as it streams.
-    pub live: Option<LaneLive>,
-    /// Tool calls it has made.
-    pub tools: u32,
-}
-
-/// A worker's current step, from `AgentEvent::SubagentLive`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct LaneLive {
-    /// Waiting, thinking, writing, running.
-    pub phase: ryter_core::LivePhase,
-    /// What it is on (`edit src/ui.rs`); empty while it thinks or waits.
-    pub target: String,
-    /// `now_ms` when this phase and target began.
-    pub since_ms: u64,
-    /// `now_ms` of the last word from it.
-    pub last_ms: u64,
-    /// Output tokens this step, estimated.
-    pub tokens: u64,
-    /// Lines of the file it is writing.
-    pub lines: u32,
-    /// The last lines of what it is producing.
-    pub tail: Vec<String>,
-    /// Tokens a second, smoothed.
-    pub rate: f64,
-}
-
-impl LaneLive {
-    /// Streaming now: thinking or writing, and heard from in the last few
-    /// seconds.
-    pub fn streaming(&self, now_ms: u64) -> bool {
-        matches!(
-            self.phase,
-            ryter_core::LivePhase::Thinking | ryter_core::LivePhase::Writing
-        ) && now_ms.saturating_sub(self.last_ms) < 3_000
-    }
-}
-
 /// Everything the draw path needs.
 #[derive(Debug, Clone)]
 pub struct View {
-    /// Current phase.
-    pub phase: Phase,
-    /// Who the user is talking to: a hat in solo mode (build, plan,
-    /// review), or the crew's lead (`Orchestrator`) in crew mode.
+    /// The hat the next message goes out in: build, plan, or review.
     pub mode: ryter_core::Role,
     /// Connection name.
     pub connection: String,
@@ -145,8 +74,6 @@ pub struct View {
     pub username: String,
     /// Local UTC offset in seconds.
     pub tz_offset: i32,
-    /// Parallel specialists.
-    pub crew: Vec<CrewRow>,
     /// Model is running.
     pub busy: bool,
     /// Cancel requested.
@@ -173,36 +100,11 @@ pub struct View {
     pub connections: Vec<ConnRow>,
     /// Whether the active connection has a key.
     pub has_key: bool,
-    /// Auditor gate.
-    pub auditor_on: bool,
-    /// Task list.
-    pub todos: Vec<TodoRow>,
     /// Where the model list stands (`AgentEvent::ModelsNote`): from the
     /// cache and refreshing, or why the fresh one didn't come.
     pub models_note: Option<String>,
     /// The workbench, when open (`^T`).
     pub workbench: Option<crate::workbench::Workbench>,
-    /// The crew's queue, as the agent last reported it (`AgentEvent::Tasks`).
-    pub tasks: Vec<ryter_core::queue::TaskView>,
-    /// Every "waits on" edge seen this session, `(before, after)`: an edge
-    /// stays drawn once its prerequisite has landed.
-    pub task_edges: Vec<(String, String)>,
-    /// The open patch.
-    pub patch_view: Option<ryter_core::queue::PatchView>,
-    /// The checks run on each task and the patch (`[auditor] checks`).
-    pub crew_checks: Vec<String>,
-    /// USD spent per crew task, as the meter charged it.
-    pub task_spend: BTreeMap<String, f64>,
-    /// Every lane's activity this session, by subagent id: `(task, lines)`.
-    /// A lane's transcript outlives the lane.
-    pub lane_logs: BTreeMap<String, (String, Vec<String>)>,
-    /// The lane `tab` picked on the crew board.
-    pub lane_selected: Option<usize>,
-    /// When the crew started working this turn, and the model calls since
-    /// the turn began, for the board's clock.
-    pub crew_started_ms: Option<u64>,
-    /// Model calls this turn.
-    pub turn_calls: u32,
     /// The chat's folded lookup row and what it has counted, while lookups
     /// keep coming.
     pub lookups: Option<(u64, crate::chat::toolview::Lookups)>,
@@ -226,8 +128,8 @@ pub struct View {
     pub price_in: Option<f64>,
     /// Last known USD / million output.
     pub price_out: Option<f64>,
-    /// Prices from the model lists providers returned (`/models`, the crew
-    /// builder): the fallback when the built-in price book doesn't know a
+    /// Prices from the model lists providers returned (`/models`): the
+    /// fallback when the built-in price book doesn't know a
     /// model, which is most of OpenRouter's catalog.
     pub catalog_rates: BTreeMap<String, (f64, f64)>,
     /// What this project (its git repository) has cost across sessions.
@@ -250,7 +152,7 @@ pub struct View {
     /// The user's reasoning level per model (`low` / `medium` / `high` /
     /// `default`); a model not listed is "auto".
     pub model_reasoning: BTreeMap<String, String>,
-    /// Live `[specialists.*]` assignment (edited by `/crew`).
+    /// Each hat's own model, where it has one (set in `/models`).
     pub specialists: BTreeMap<String, ryter_core::RoleModel>,
     /// Unix socket path if inbound MCP is listening.
     pub mcp_listen: Option<String>,
@@ -286,16 +188,10 @@ pub struct View {
     pub budget_usd: f64,
     /// The cap to restore when the budget is switched back on.
     pub budget_last: f64,
-    /// `[spend] task_budget_usd`: one task's cap, budget or not.
-    pub task_budget_usd: f64,
     /// `[spend] review_usd`: the most one review may spend (0 = no limit).
     pub review_usd: f64,
     /// Warn threshold.
     pub warn_usd: f64,
-    /// `[subagents] max`.
-    pub max_crew: u32,
-    /// `[subagents.steps]`: steps each kind of specialist gets.
-    pub steps: ryter_core::config::Steps,
     /// Sandbox profile name.
     pub sandbox_profile: String,
     /// `[update] mode`: what Ryter does about a newer release at launch.
@@ -312,14 +208,6 @@ pub struct View {
     pub last_export: Option<String>,
     /// Monotonic clock in ms, advanced by the loop.
     pub now_ms: u64,
-    /// The lanes hide the workers' reasoning (`^r` on the crew board).
-    pub lanes_hide_reasoning: bool,
-    /// The crew's tokens a second, one sample a second (the PULSE tile).
-    pub pulse: Vec<u64>,
-    /// `now_ms` of the last pulse sample.
-    pub pulse_at: u64,
-    /// Spend in the last minute, `(now_ms, usd)` per call.
-    pub spend_log: Vec<(u64, f64)>,
     /// `Ctrl+C` armed for quit until this time (`R-COMP-14`).
     pub quit_armed_until: Option<u64>,
     /// Render cache (derived; clones start empty).
@@ -347,27 +235,15 @@ pub struct SpendRow {
 
 impl View {
     /// Empty session chrome for tests / startup.
-    /// In crew mode: messages go to the lead, and the crew does the work.
-    pub fn crew_mode(&self) -> bool {
-        self.mode == ryter_core::Role::Orchestrator
-    }
-
     /// The seats that can have a model of their own, after the first (the
-    /// model the rest follow): the hats, or in crew mode the crew's roles.
+    /// model the rest follow): the hats.
     pub fn seat_roles(&self) -> &'static [&'static str] {
-        if self.crew_mode() {
-            CREW_ROLES
-        } else {
-            HAT_ROLES
-        }
+        HAT_ROLES
     }
 
     /// The model the next message goes to: this hat's own where it has
     /// one, otherwise the one every hat uses.
     pub fn hat_model(&self) -> &str {
-        if self.crew_mode() {
-            return &self.model;
-        }
         self.specialists
             .get(self.mode.as_str())
             .filter(|r| r.is_override())
@@ -375,13 +251,9 @@ impl View {
             .unwrap_or(&self.model)
     }
 
-    /// `build`, `plan`, `review`, or `crew`.
+    /// `build`, `plan`, or `review`.
     pub fn mode_label(&self) -> &'static str {
-        if self.crew_mode() {
-            "crew"
-        } else {
-            self.mode.as_str()
-        }
+        self.mode.as_str()
     }
 
     /// `model`'s reasoning choice for people: `auto`, `low`, … .
@@ -395,9 +267,8 @@ impl View {
             .unwrap_or_else(|| "model's own".into())
     }
 
-    pub fn new(phase: Phase, connection: String, model: String, cwd: String) -> Self {
+    pub fn new(connection: String, model: String, cwd: String) -> Self {
         Self {
-            phase,
             mode: ryter_core::Role::SoloBuild,
             connection,
             model,
@@ -418,7 +289,6 @@ impl View {
             queued_prompt: None,
             username: "you".into(),
             tz_offset: 0,
-            crew: Vec::new(),
             busy: false,
             cancelling: false,
             diffs_expanded: false,
@@ -435,19 +305,8 @@ impl View {
             theme_generation: 0,
             connections: Vec::new(),
             has_key: false,
-            auditor_on: true,
-            todos: Vec::new(),
             workbench: None,
             models_note: None,
-            tasks: Vec::new(),
-            task_edges: Vec::new(),
-            patch_view: None,
-            crew_checks: Vec::new(),
-            task_spend: BTreeMap::new(),
-            lane_logs: BTreeMap::new(),
-            lane_selected: None,
-            crew_started_ms: None,
-            turn_calls: 0,
             lookups: None,
             tally: Default::default(),
             turn_spend_from: None,
@@ -485,11 +344,8 @@ impl View {
             unpriced_calls: 0,
             budget_usd: 0.0,
             budget_last: 5.0,
-            task_budget_usd: 3.0,
             review_usd: 0.0,
             warn_usd: 1.0,
-            max_crew: 4,
-            steps: ryter_core::config::Steps::default(),
             sandbox_profile: "off".into(),
             update_mode: ryter_core::config::UpdateMode::default(),
             web: false,
@@ -503,10 +359,6 @@ impl View {
             conn_tests: BTreeMap::new(),
             last_export: None,
             now_ms: 0,
-            lanes_hide_reasoning: false,
-            pulse: Vec::new(),
-            pulse_at: 0,
-            spend_log: Vec::new(),
             quit_armed_until: None,
             cache: RefCell::new(RenderCache::new()),
             pending_warnings: Vec::new(),
@@ -524,41 +376,9 @@ impl View {
     pub fn tick(&mut self, now_ms: u64) {
         self.now_ms = now_ms;
         self.activity.tick(now_ms);
-        // The crew's pulse: one sample a second while anyone works.
-        if self.crew.is_empty() {
-            self.pulse.clear();
-        } else if now_ms.saturating_sub(self.pulse_at) >= 1_000 {
-            self.pulse_at = now_ms;
-            let rate = self.crew_rate().round() as u64;
-            self.pulse.push(rate);
-            if self.pulse.len() > PULSE_SAMPLES {
-                self.pulse.remove(0);
-            }
-        }
-        self.spend_log
-            .retain(|(at, _)| now_ms.saturating_sub(*at) < 60_000);
         if self.quit_armed_until.is_some_and(|t| now_ms > t) {
             self.quit_armed_until = None;
         }
-    }
-
-    /// Tokens a second across the crew, now.
-    pub fn crew_rate(&self) -> f64 {
-        self.crew
-            .iter()
-            .filter_map(|c| c.live.as_ref())
-            .filter(|l| l.streaming(self.now_ms))
-            .map(|l| l.rate)
-            .sum()
-    }
-
-    /// When any worker was last heard from.
-    pub fn crew_last_ms(&self) -> Option<u64> {
-        self.crew
-            .iter()
-            .filter_map(|c| c.live.as_ref())
-            .map(|l| l.last_ms)
-            .max()
     }
 
     // -- messages -------------------------------------------------------------
@@ -713,42 +533,6 @@ impl View {
             .map(|(_, top)| *top)
     }
 
-    /// Take a queue snapshot: the board's tasks, the edges between them, and
-    /// the tasks card's rows.
-    pub fn set_tasks(
-        &mut self,
-        tasks: Vec<ryter_core::queue::TaskView>,
-        patch: Option<ryter_core::queue::PatchView>,
-    ) {
-        for t in &tasks {
-            for b in &t.waits_on {
-                let e = (b.clone(), t.id.clone());
-                if e.0 != e.1 && !self.task_edges.contains(&e) {
-                    self.task_edges.push(e);
-                }
-            }
-        }
-        // A design's builder tasks come out of it: drawn under the design
-        // when they wait on nothing else, which is not the same as waiting.
-        for t in tasks.iter().filter(|t| t.by == "architect") {
-            if self.task_edges.iter().any(|(_, b)| *b == t.id) {
-                continue;
-            }
-            if let Some(d) = tasks.iter().find(|d| d.role == "architect") {
-                self.task_edges.push((d.id.clone(), t.id.clone()));
-            }
-        }
-        self.todos = tasks
-            .iter()
-            .map(|t| TodoRow {
-                title: t.title.clone(),
-                status: t.status.clone(),
-            })
-            .collect();
-        self.tasks = tasks;
-        self.patch_view = patch;
-    }
-
     /// Whether the ledger folds any finished turn right now.
     pub fn has_folded_turns(&self) -> bool {
         let latest = self.messages.iter().map(|m| m.turn).max().unwrap_or(0);
@@ -802,8 +586,8 @@ impl View {
     }
 }
 
-/// What a role is called on screen. The code and logs say `orchestrator`; the
-/// user talks to the lead.
+/// What a row of spend is called on screen. A total saved while crew mode
+/// existed names its roles, and its lead was `orchestrator` in the logs.
 pub fn role_label(role: &str) -> &str {
     match role {
         "orchestrator" => "lead",
@@ -811,29 +595,8 @@ pub fn role_label(role: &str) -> &str {
     }
 }
 
-/// Specialist kinds shown in `/crew`.
-pub const CREW_ROLES: &[&str] = &["architect", "builder", "auditor"];
-
 /// The hats that can have a model of their own, in the order the work goes.
 pub const HAT_ROLES: &[&str] = &["plan", "build", "review"];
-
-/// Label under a crew role (`default (grok-4.6)` or a short model id).
-pub fn crew_role_label(view: &View, role: &str) -> String {
-    let orch = crate::chat::short_model(&view.model).to_string();
-    let Some(rm) = view.specialists.get(role) else {
-        return format!("default ({orch})");
-    };
-    if !rm.is_override() {
-        return format!("default ({orch})");
-    }
-    let conn = rm.connection.as_deref().unwrap_or(view.connection.as_str());
-    let model = rm.model.as_deref().unwrap_or(view.model.as_str());
-    if conn == view.connection && model == view.model {
-        format!("default ({orch})")
-    } else {
-        format!("{} · {conn}", crate::chat::short_model(model))
-    }
-}
 
 /// Shipped model list when `GET /models` is unavailable.
 pub fn fallback_models(kind: &str, default_model: &str) -> Vec<ryter_core::ModelInfo> {
@@ -896,54 +659,6 @@ pub fn resolve_username(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ryter_core::RoleModel;
-
-    #[test]
-    fn crew_roles_default_to_orchestrator_model() {
-        let v = View::new(
-            Phase::Build,
-            "openrouter".into(),
-            "anthropic/claude-sonnet-4.6".into(),
-            "p".into(),
-        );
-        for role in CREW_ROLES {
-            assert_eq!(
-                crew_role_label(&v, role),
-                "default (claude-sonnet-4.6)",
-                "{role}"
-            );
-        }
-    }
-
-    #[test]
-    fn crew_override_is_shown_until_it_matches_orchestrator() {
-        let mut v = View::new(
-            Phase::Build,
-            "spacexai".into(),
-            "grok-4.6".into(),
-            "p".into(),
-        );
-        v.specialists.insert(
-            "architect".into(),
-            RoleModel {
-                connection: Some("openrouter".into()),
-                model: Some("anthropic/claude-sonnet-4.6".into()),
-            },
-        );
-        v.specialists.insert(
-            "builder".into(),
-            RoleModel {
-                connection: Some("spacexai".into()),
-                model: Some("grok-4.6".into()),
-            },
-        );
-        assert_eq!(
-            crew_role_label(&v, "architect"),
-            "claude-sonnet-4.6 · openrouter"
-        );
-        assert_eq!(crew_role_label(&v, "builder"), "default (grok-4.6)");
-        assert_eq!(crew_role_label(&v, "auditor"), "default (grok-4.6)");
-    }
 
     #[test]
     fn username_resolution_order() {
@@ -964,7 +679,7 @@ mod tests {
 
     #[test]
     fn submit_streams_into_one_assistant_message() {
-        let mut v = View::new(Phase::Build, "x".into(), "m".into(), "p".into());
+        let mut v = View::new("x".into(), "m".into(), "p".into());
         let a = v.submit_user("hi".into(), "hi".into());
         assert_eq!(a, Action::Submit("hi".into()));
         assert_eq!(v.turn, 1);

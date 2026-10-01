@@ -21,9 +21,9 @@ pub struct StatusSnapshot {
     pub last_error: String,
 }
 
-/// Host the inbound tools talk to (session + lead).
+/// Host the inbound tools talk to (the session and its agent).
 pub trait InboundHost: Send + Sync {
-    /// Run one user turn: a normal user message to the lead.
+    /// Run one user turn: a normal user message, worked on in the build hat.
     fn prompt(&self, text: &str) -> Result<String>;
     /// Status line.
     fn status(&self) -> StatusSnapshot;
@@ -139,7 +139,7 @@ fn inbound_tools() -> Value {
     json!([
         {
             "name": "ryter_prompt",
-            "description": "Send a user message to Ryter's lead.",
+            "description": "Send a user message to Ryter. It is worked on in the build hat, in the project Ryter was started in.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

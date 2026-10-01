@@ -51,29 +51,6 @@ fn num(
     .origin(origin(&value, &default))
 }
 
-/// One specialist's step limit, with its default in the label (short: the
-/// label column is 25 wide, and "architect steps (default 30)" lost its
-/// number there).
-fn steps_field(id: &'static str, who: &str, value: u32, step: f64) -> Field {
-    use ryter_core::config::Steps;
-    let d = Steps::default();
-    let default = match who {
-        "builder" => d.builder,
-        "architect" => d.architect,
-        _ => d.auditor,
-    };
-    num(
-        id,
-        &format!("{who} steps (def {default})"),
-        f64::from(value),
-        f64::from(Steps::MIN),
-        f64::from(Steps::MAX),
-        step,
-        true,
-        f64::from(default),
-    )
-}
-
 fn select(id: &'static str, label: &str, options: &[&str], cur: &str, default: &str) -> Field {
     let idx = options.iter().position(|o| *o == cur).unwrap_or(0);
     Field::new(
@@ -127,25 +104,6 @@ impl Settings {
                 false,
                 0.0,
             ),
-            Field::new("g_agents", "agents", Kind::Header),
-            num(
-                "max",
-                "subagents max",
-                f64::from(view.max_crew),
-                1.0,
-                16.0,
-                1.0,
-                true,
-                4.0,
-            ),
-            Field::new("auditor", "auditor", Kind::Toggle(view.auditor_on))
-                .origin(origin(&view.auditor_on, &true)),
-            // A step is one call to the specialist's model; the last is for
-            // writing up. The defaults are in the labels: a crew stuck at a
-            // limit is the reason to come here.
-            steps_field("steps_builder", "builder", view.steps.builder, 5.0),
-            steps_field("steps_architect", "architect", view.steps.architect, 5.0),
-            steps_field("steps_auditor", "auditor", view.steps.auditor, 2.0),
             Field::new("g_tools", "tools", Kind::Header),
             select(
                 "perm",
@@ -266,24 +224,6 @@ impl Settings {
         if let Some(v) = number("review") {
             view.review_usd = v;
         }
-        if let Some(v) = number("max") {
-            view.max_crew = v.round().clamp(1.0, 16.0) as u32;
-        }
-        if let Some(v) = toggle("auditor") {
-            view.auditor_on = v;
-        }
-        let steps = |id: &str, cur: u32| {
-            number(id).map_or(cur, |v| {
-                use ryter_core::config::Steps;
-                v.round()
-                    .clamp(f64::from(Steps::MIN), f64::from(Steps::MAX)) as u32
-            })
-        };
-        view.steps = ryter_core::config::Steps {
-            builder: steps("steps_builder", view.steps.builder),
-            architect: steps("steps_architect", view.steps.architect),
-            auditor: steps("steps_auditor", view.steps.auditor),
-        };
         if let Some(v) = sel("perm") {
             view.perm_mode = v;
         }
@@ -381,7 +321,7 @@ const SANDBOX_ROWS: &[(&str, [&str; 3])] = &[
 /// When each profile is the one to use, in two short lines.
 const SANDBOX_WHEN: [[&str; 2]; 3] = [
     ["you watch", "each step"],
-    ["a crew runs", "unattended"],
+    ["tools run", "unasked"],
     ["you only want", "a review"],
 ];
 
@@ -650,15 +590,9 @@ impl Panel for Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ryter_core::config::Steps;
 
     fn view() -> View {
-        View::new(
-            ryter_core::Phase::Build,
-            "c".into(),
-            "m".into(),
-            "/tmp".into(),
-        )
+        View::new("c".into(), "m".into(), "/tmp".into())
     }
 
     fn set(s: &mut Settings, id: &str, to: f64) {
@@ -666,48 +600,6 @@ mod tests {
             Kind::Number { value, .. } => *value = to,
             other => panic!("{id} is not a number: {other:?}"),
         }
-    }
-
-    /// The crew's step limits are in `/settings`, with their defaults in
-    /// the labels, and a saved value is kept within range.
-    #[test]
-    fn step_limits_are_set_here() {
-        let mut v = view();
-        v.steps = Steps {
-            auditor: 20,
-            ..Steps::default()
-        };
-        let mut s = Settings::new(&v);
-        let labels: Vec<String> = ["steps_builder", "steps_architect", "steps_auditor"]
-            .iter()
-            .map(|id| s.form.get(id).unwrap().label.clone())
-            .collect();
-        assert_eq!(
-            labels,
-            [
-                "builder steps (def 40)",
-                "architect steps (def 30)",
-                "auditor steps (def 12)"
-            ]
-        );
-        assert!(labels.iter().all(|l| l.chars().count() <= 25), "{labels:?}");
-        assert_eq!(s.form.get("steps_auditor").unwrap().value_text(), "20");
-        // Untouched, applying changes nothing.
-        s.apply(&mut v);
-        assert_eq!(v.steps.auditor, 20);
-        assert_eq!(v.steps.builder, 40);
-        set(&mut s, "steps_builder", 120.0);
-        set(&mut s, "steps_architect", 0.0);
-        set(&mut s, "steps_auditor", 100_000.0);
-        s.apply(&mut v);
-        assert_eq!(
-            v.steps,
-            Steps {
-                builder: 120,
-                architect: Steps::MIN,
-                auditor: Steps::MAX,
-            }
-        );
     }
 
     /// The most a review may spend is set here; 0 is no limit.
@@ -764,9 +656,9 @@ mod tests {
             (9, "docker          yes           yes *         yes *"),
             (
                 11,
-                "use it when     you watch     a crew runs   you only want",
+                "use it when     you watch     tools run     you only want",
             ),
-            (12, "each step     unattended    a review"),
+            (12, "each step     unasked       a review"),
         ] {
             assert!(
                 shown[field + below].contains(want),

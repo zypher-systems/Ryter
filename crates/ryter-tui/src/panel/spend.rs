@@ -45,13 +45,20 @@ fn project_lines(view: &View, w: usize, theme: Theme) -> Vec<Line<'static>> {
         ),
         theme,
     ));
+    // Crew mode is gone; what it spent here before is still in the
+    // project's total, and is said when there is any.
+    let crew = p.crew_usd();
     lines.push(widgets::note(
-        &format!(
-            "this month {} · solo {} · crew {}",
-            format_usd(Some(p.this_month())),
-            format_usd(Some(p.solo_usd())),
-            format_usd(Some(p.crew_usd()))
-        ),
+        &if crew > 0.005 {
+            format!(
+                "this month {} · hats {} · crew mode (removed) {}",
+                format_usd(Some(p.this_month())),
+                format_usd(Some(p.solo_usd())),
+                format_usd(Some(crew))
+            )
+        } else {
+            format!("this month {}", format_usd(Some(p.this_month())))
+        },
         theme,
     ));
     if p.unpriced_calls > 0 {
@@ -354,16 +361,11 @@ mod tests {
     /// unpriced calls are said, not hidden.
     #[test]
     fn p_shows_the_project_across_sessions() {
-        let mut v = View::new(
-            ryter_core::Phase::Build,
-            "c".into(),
-            "m".into(),
-            "/tmp".into(),
-        );
+        let mut v = View::new("c".into(), "m".into(), "/tmp".into());
         let mut p = ryter_core::project::ProjectSpend::default();
-        p.add(ryter_core::Role::Architect, "opus", Some(0.91));
+        p.add(ryter_core::Role::SoloPlan, "opus", Some(0.91));
         p.add(ryter_core::Role::SoloBuild, "flash", Some(0.09));
-        p.add(ryter_core::Role::Builder, "grok", None);
+        p.add(ryter_core::Role::SoloReview, "grok", None);
         v.project_spend = Some(p);
         let theme = Theme::truecolor_dark();
         let mut panel = Spend::default();
@@ -374,9 +376,19 @@ mod tests {
         );
         let t = text(panel.render(&v, 78, 26, theme));
         assert!(t.contains("$1.00+"), "{t}");
-        assert!(t.contains("solo $0.09") && t.contains("crew $0.91"), "{t}");
+        assert!(t.contains("this month $1.00") && !t.contains("crew"), "{t}");
         assert!(t.contains("1 of 3 calls had no known rate"), "{t}");
-        assert!(t.contains("architect") && t.contains("opus"), "{t}");
+        assert!(t.contains("plan") && t.contains("opus"), "{t}");
         assert_eq!(panel.title(&v), "spend · project");
+        // A project worked on in crew mode, before it was removed: what
+        // that cost is still in the total, and is said.
+        if let Some(p) = v.project_spend.as_mut() {
+            p.add(ryter_core::Role::Crew, "glm", Some(2.0));
+        }
+        let t = text(panel.render(&v, 78, 26, theme));
+        assert!(
+            t.contains("hats $1.00") && t.contains("crew mode (removed) $2.00"),
+            "{t}"
+        );
     }
 }

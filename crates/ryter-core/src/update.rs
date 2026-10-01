@@ -551,9 +551,25 @@ fn probe(binary: &Path, limit: Duration) -> Result<String> {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| Error::Config(format!("the new binary didn't run: {e}")))?;
+    // "Text file busy": the file is still open for writing somewhere. Ryter
+    // closed it, but a process another thread started at that moment holds
+    // a copy of the handle until it has loaded its own program, a few
+    // milliseconds later. Wait that out rather than refuse a good update.
+    let busy_until = Instant::now() + limit.min(Duration::from_secs(2));
+    let mut child = loop {
+        match cmd.spawn() {
+            Ok(child) => break child,
+            Err(e)
+                if e.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && Instant::now() < busy_until =>
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => {
+                return Err(Error::Config(format!("the new binary didn't run: {e}")));
+            }
+        }
+    };
     let said = Arc::new(Mutex::new(Vec::new()));
     let ended = Arc::new(AtomicBool::new(false));
     if let Some(mut out) = child.stdout.take() {
@@ -859,6 +875,34 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ryter 9.9.9");
         let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().flatten().collect();
         assert_eq!(left.len(), 1, "no update file left behind");
+    }
+
+    /// A downloaded program still open for writing somewhere can't be run
+    /// yet ("Text file busy"). That lasts only until whoever holds it lets
+    /// go, so the probe waits it out. Refusing at once failed good updates
+    /// when another thread happened to start a process at that moment.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_program_still_being_written_is_waited_for() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe = dir.path().join("new");
+        std::fs::write(&exe, "#!/bin/sh\necho ryter 9.9.9\n").unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Held open for writing, and let go a moment later.
+        let held = std::fs::OpenOptions::new().write(true).open(&exe).unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            drop(held);
+        });
+        let said = probe(&exe, Duration::from_secs(5)).expect("waited for the file");
+        assert_eq!(said.trim(), "ryter 9.9.9");
+        release.join().unwrap();
+        // Held for as long as the probe may take: it gives up and says why.
+        let held = std::fs::OpenOptions::new().write(true).open(&exe).unwrap();
+        let err = probe(&exe, Duration::from_millis(200)).unwrap_err();
+        assert!(err.to_string().contains("didn't run"), "{err}");
+        drop(held);
     }
 
     /// Nothing is installed unless the signature, the sum, and the binary

@@ -10,9 +10,7 @@ use ryter_core::ids::ConnectionId;
 use ryter_core::sandbox::SandboxProfile;
 use ryter_core::session::Session;
 use ryter_core::spend::PriceBook;
-use ryter_core::{
-    Config, HookSet, InboundHost, Permission, Phase, Provider, format_usd, load_catalog,
-};
+use ryter_core::{Config, HookSet, InboundHost, Permission, Provider, format_usd, load_catalog};
 
 use super::worker::Work;
 use crate::action::{Action, PanelId};
@@ -152,8 +150,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             cx.notice(Notice::SessionsChanged);
         }
         Action::SetBudget(usd) => set_budget(view, cx, usd),
-        Action::SaveBudget { usd, warn, task } => save_budget(view, cx, usd, warn, task),
-        Action::ProbeModels(seats) => probe_models(cx, seats),
+        Action::SaveBudget { usd, warn } => save_budget(view, cx, usd, warn),
         Action::SetMode(role) => set_mode(view, cx, role),
         Action::SetModelReasoning { model, level } => {
             match &level {
@@ -169,17 +166,6 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 view.error(e.to_string());
             }
             cx.send(Work::SetModelReasoning(view.model_reasoning.clone()));
-        }
-        Action::EnterCrew => {
-            if config::crew_unconfigured(&cx.home, &cx.cfg) && view.specialists.is_empty() {
-                // First time: build the crew, then drop into crew mode.
-                view.panels
-                    .push(Box::new(panel::crew_builder::CrewBuilder::new(view, true)));
-                panel::sync_composer(view);
-                cx.send(Work::ListCrewModels);
-            } else {
-                set_mode(view, cx, ryter_core::Role::Orchestrator);
-            }
         }
         Action::Undo { .. } | Action::Redo { .. } if view.busy => {
             view.warn("wait for this turn to end: it may still be changing files");
@@ -224,39 +210,6 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 view.error(e.to_string());
             }
         }
-        Action::SaveCrewSetup {
-            lead_connection,
-            lead_model,
-            crew,
-            budget,
-            task_cap,
-        } => save_crew_setup(
-            view,
-            cx,
-            lead_connection,
-            lead_model,
-            crew,
-            (budget, task_cap),
-        ),
-        Action::KillAgent(id) => {
-            if let Some(c) = view.crew.iter().find(|c| c.id == id) {
-                view.system(format!("killing {} · {}", c.role, c.label));
-            }
-            cx.send(Work::Kill(id));
-        }
-        Action::KillAllAgents => {
-            let n = view.crew.len();
-            if n > 0 {
-                view.system(format!("killing {n} specialists"));
-                cx.send(Work::KillAll);
-            }
-        }
-        Action::SetAuditor(on) => {
-            view.auditor_on = on;
-            cx.cfg.auditor.enabled = on;
-            let _ = config::save_settings(&cx.home, &cx.cfg);
-            cx.send(Work::SetAuditor(on));
-        }
         Action::SetTools { always } => {
             view.perm_mode = if always { "always" } else { "ask" }.into();
             cx.send(Work::SetTools { always });
@@ -298,7 +251,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         Action::AddConnection { name, conn } => add_connection(view, cx, &name, conn),
         Action::RemoveConnection(name) => remove_connection(view, cx, &name),
         Action::SetModel(model) => set_model(view, cx, model),
-        Action::SetCrewRole {
+        Action::SetHatModel {
             role,
             connection,
             model,
@@ -314,53 +267,13 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                     },
                 );
             }
-            save_crew(view, cx);
+            save_hats(view, cx);
         }
-        Action::ApplyCrewTiering(rows) => {
-            // Keep what was there, so a suggestion is one keypress to undo.
-            match config::save_crew_preset(&cx.home, "before-suggest", &view.specialists) {
-                Ok(()) => {
-                    view.specialists.extend(rows);
-                    save_crew(view, cx);
-                    view.system(
-                        "applied the suggested crew · your previous crew is the `before-suggest` preset",
-                    );
-                }
-                Err(e) => view.error(format!("not applied: could not save the current crew: {e}")),
-            }
-            cx.notice(Notice::PresetsChanged(config::list_crew_presets(&cx.home)));
-        }
-        Action::ResetCrewRole(role) => {
+        Action::ResetHatModel(role) => {
             view.specialists.remove(&role);
-            save_crew(view, cx);
+            save_hats(view, cx);
         }
-        Action::SaveCrewPreset(name) => {
-            match config::save_crew_preset(&cx.home, &name, &view.specialists) {
-                Ok(()) => view.system(format!("saved crew preset {name}")),
-                Err(e) => view.error(e.to_string()),
-            }
-            cx.notice(Notice::PresetsChanged(config::list_crew_presets(&cx.home)));
-        }
-        Action::LoadCrewPreset(name) => {
-            let mut c = cx.cfg.clone();
-            match config::load_crew_preset(&cx.home, &mut c, &name) {
-                Ok(()) => {
-                    view.specialists = c.specialists.clone();
-                    save_crew(view, cx);
-                    view.system(format!("loaded crew preset {name}"));
-                }
-                Err(e) => view.error(e.to_string()),
-            }
-        }
-        Action::DeleteCrewPreset(name) => {
-            let path = config::crews_dir(&cx.home).join(format!("{name}.toml"));
-            match std::fs::remove_file(&path) {
-                Ok(()) => view.system(format!("deleted crew preset {name}")),
-                Err(e) => view.error(format!("{}: {e}", path.display())),
-            }
-            cx.notice(Notice::PresetsChanged(config::list_crew_presets(&cx.home)));
-        }
-        Action::ListCrewModels { .. } => cx.send(Work::ListCrewModels),
+        Action::ListAllModels { .. } => cx.send(Work::ListAllModels),
         Action::SaveMcp => {
             persist_mcp(view, cx);
             cx.send(Work::SetMcp {
@@ -486,7 +399,6 @@ fn open_panel(view: &mut View, cx: &mut Ctx, id: PanelId) {
     }
     match id {
         PanelId::Models => cx.send(Work::ListModels),
-        PanelId::CrewBuilder => cx.send(Work::ListCrewModels),
         // The logs are the truth; replace the live running copy with them.
         PanelId::Spend | PanelId::SpendDrawer => {
             load_project_spend(view, &cx.home, &cx.workspace);
@@ -528,8 +440,6 @@ fn new_session(view: &mut View, cx: &mut Ctx) {
     view.panels.clear();
     panel::sync_composer(view);
     view.reset_transcript();
-    view.crew.clear();
-    view.todos.clear();
     view.spend = None;
     view.spend_unknown = false;
     view.unpriced_calls = 0;
@@ -561,9 +471,9 @@ fn resume(view: &mut View, cx: &mut Ctx, id: &str) {
                 "resumed {} · {}",
                 short_id(&s),
                 if s.meta.title.is_empty() {
-                    s.meta.phase.to_string()
+                    "untitled"
                 } else {
-                    s.meta.title.clone()
+                    s.meta.title.as_str()
                 }
             ));
         }
@@ -608,14 +518,15 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
     view.reset_transcript();
     view.session_id = session.meta.id.to_string();
     view.session_title = session.meta.title.clone();
-    view.phase = session.meta.phase;
-    view.mode = session.meta.mode.unwrap_or(ryter_core::Role::SoloBuild);
+    // A session left in crew mode, before it was removed, opens in build.
+    view.mode = session
+        .meta
+        .mode
+        .map_or(ryter_core::Role::SoloBuild, ryter_core::Role::hat);
     view.spend = session.meta.spend_usd_total;
     view.spend_unknown = session.meta.spend_unknown;
-    view.auditor_on = session.meta.auditor_enabled;
     view.connection = session.meta.connection.clone();
     view.model = session.meta.model.clone();
-    view.crew.clear();
     let model = view.model.clone();
     for m in &session.transcript {
         match m.role.as_str() {
@@ -675,26 +586,6 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
     }
     view.turn = view.turn.max(1);
     view.scroll.to_bottom();
-    let q = ryter_core::queue::TaskQueue::open(session.dir.join("tasks.json"));
-    view.task_edges.clear();
-    let tree = session
-        .meta
-        .patch
-        .as_ref()
-        .map(|p| p.worktree.clone())
-        // The TUI runs in the project.
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    let patch = session
-        .meta
-        .patch
-        .as_ref()
-        .map(|p| ryter_core::queue::PatchView {
-            branch: p.branch.clone(),
-            target: p.target.clone(),
-            tasks: p.tasks.clone(),
-            landed: p.landed.clone(),
-        });
-    view.set_tasks(q.views(|p| tree.join(p).exists()), patch);
     view.spend_by_role.clear();
     view.spend_by_conn.clear();
     view.spend_rows_role.clear();
@@ -833,115 +724,10 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
     }
 }
 
-/// Switch hats, or between solo and crew mode. A switch while a turn runs
-/// applies to the next message.
+/// Switch hats. A switch while a turn runs applies to the next message.
 fn set_mode(view: &mut View, cx: &mut Ctx, role: ryter_core::Role) {
-    let entering_crew = role == ryter_core::Role::Orchestrator && !view.crew_mode();
-    let leaving_crew = role.is_solo() && view.crew_mode();
     view.mode = role;
     cx.send(Work::SetRole(role));
-    if entering_crew {
-        view.system(
-            "crew mode · your messages go to the lead, and the crew does the work · /models \
-             for each role's model · /solo to go back",
-        );
-    } else if leaving_crew {
-        view.system("solo mode · Tab switches between build, plan, and review");
-    }
-}
-
-/// One tiny request per model, off the UI thread; results come back as a
-/// notice. Unknown connections and missing keys fail without a request.
-fn probe_models(cx: &mut Ctx, seats: Vec<(String, String)>) {
-    let tx = cx.notice_tx.clone();
-    let cfg = cx.cfg.clone();
-    std::thread::spawn(move || {
-        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        else {
-            return;
-        };
-        let results = rt.block_on(async {
-            let mut out = Vec::new();
-            for (conn, model) in seats {
-                let r = match (
-                    cfg.connections.get(&conn),
-                    resolve_secret(&cfg, &ConnectionId::new(&conn)),
-                ) {
-                    (Some(c), Ok(key)) => {
-                        let p = ryter_core::http_provider(c, key);
-                        ryter_core::tiering::probe(&p, &model).await
-                    }
-                    (None, _) => Err(format!("unknown connection {conn}")),
-                    (_, Err(_)) => Err(format!("no key for {conn}")),
-                };
-                out.push((conn, model, r));
-            }
-            out
-        });
-        let _ = tx.send(Notice::Probed(results));
-    });
-}
-
-/// Save the crew builder's choices: the crew (the old one kept as a preset),
-/// the lead's route, and the budget.
-fn save_crew_setup(
-    view: &mut View,
-    cx: &mut Ctx,
-    lead_connection: String,
-    lead_model: String,
-    crew: std::collections::BTreeMap<String, ryter_core::RoleModel>,
-    (budget, task_cap): (f64, f64),
-) {
-    if !view.specialists.is_empty() {
-        if let Err(e) = config::save_crew_preset(&cx.home, "before-builder", &view.specialists) {
-            view.error(format!("not saved: could not keep the current crew: {e}"));
-            return;
-        }
-    }
-    // The crew builder sets the crew's seats: the hats keep their models.
-    let hats: Vec<_> = view
-        .specialists
-        .iter()
-        .filter(|(k, _)| config::HAT_ROLES.contains(&k.as_str()))
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    view.specialists = crew;
-    view.specialists.extend(hats);
-    save_crew(view, cx);
-    if lead_connection != view.connection || lead_model != view.model {
-        match (
-            cx.cfg.connections.get(&lead_connection).cloned(),
-            resolve_secret(&cx.cfg, &ConnectionId::new(&lead_connection)),
-        ) {
-            (Some(_), Ok(key)) => {
-                view.connection = lead_connection.clone();
-                view.model = lead_model.clone();
-                view.has_key = true;
-                view.ctx_window = Some(ryter_core::window_for(&lead_model));
-                apply_pricing(view, &cx.cfg, &lead_model);
-                let _ = config::save_last_route(&cx.home, &route_from_view(view));
-                cx.send(Work::Reconnect {
-                    name: lead_connection,
-                    model: lead_model,
-                    key,
-                });
-            }
-            _ => view.error(format!("lead not changed: no key for {lead_connection}")),
-        }
-    }
-    let warn = view.warn_usd;
-    save_budget(view, cx, budget, warn, task_cap);
-    set_mode(view, cx, ryter_core::Role::Orchestrator);
-    cx.notice(Notice::PresetsChanged(config::list_crew_presets(&cx.home)));
-    view.system(format!(
-        "crew saved · lead {} · architect {} · builder {} · auditor {}",
-        view.model,
-        crate::view::crew_role_label(view, "architect"),
-        crate::view::crew_role_label(view, "builder"),
-        crate::view::crew_role_label(view, "auditor"),
-    ));
 }
 
 fn test_connection(view: &mut View, cx: &mut Ctx, name: &str) {
@@ -1025,18 +811,15 @@ fn remove_connection(view: &mut View, cx: &mut Ctx, name: &str) {
     }
 }
 
-// -- crew -----------------------------------------------------------------------
+// -- hats -----------------------------------------------------------------------
 
-fn save_crew(view: &mut View, cx: &mut Ctx) {
-    if let Err(e) = config::save_crew(&cx.home, &view.specialists) {
-        view.error(e.to_string());
-    }
-    // The hats' own models are kept apart from the crew's.
+/// Save each hat's own model, and tell the worker.
+fn save_hats(view: &mut View, cx: &mut Ctx) {
     if let Err(e) = config::save_hats(&cx.home, &view.specialists) {
         view.error(e.to_string());
     }
     cx.cfg.specialists = view.specialists.clone();
-    cx.send(Work::SetCrew {
+    cx.send(Work::SetHats {
         specialists: view.specialists.clone(),
     });
 }
@@ -1047,12 +830,9 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
     cx.cfg.spend.session_budget_usd = view.budget_usd;
     cx.cfg.spend.warn_usd = view.warn_usd;
     cx.cfg.spend.review_usd = view.review_usd;
-    cx.cfg.subagents.max = view.max_crew;
-    cx.cfg.subagents.steps = view.steps;
     cx.cfg.sandbox.profile = view.sandbox_profile.clone();
     cx.cfg.mcp.inbound = view.mcp_inbound;
     cx.cfg.features.web = view.web;
-    cx.cfg.auditor.enabled = view.auditor_on;
     cx.cfg.ui = view.ui.clone();
     cx.cfg.update.mode = view.update_mode;
     match config::save_settings(&cx.home, &cx.cfg) {
@@ -1074,10 +854,7 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
     }
     cx.send(Work::SetSettings {
         budget_usd: view.budget_usd,
-        task_budget_usd: view.task_budget_usd,
         review_usd: view.review_usd,
-        max_crew: view.max_crew,
-        steps: view.steps,
         web: view.web,
         open_pages: view.ui.open_pages,
     });
@@ -1085,30 +862,25 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
 }
 
 fn set_budget(view: &mut View, cx: &mut Ctx, usd: f64) {
-    let (warn, task) = (view.warn_usd, view.task_budget_usd);
-    save_budget(view, cx, usd, warn, task);
+    let warn = view.warn_usd;
+    save_budget(view, cx, usd, warn);
 }
 
 /// Apply spend limits to the running session and save them as the default.
-fn save_budget(view: &mut View, cx: &mut Ctx, usd: f64, warn: f64, task: f64) {
+fn save_budget(view: &mut View, cx: &mut Ctx, usd: f64, warn: f64) {
     view.budget_usd = usd;
     if usd > 0.0 {
         view.budget_last = usd;
     }
     view.warn_usd = warn;
-    view.task_budget_usd = task;
     cx.cfg.spend.session_budget_usd = usd;
     cx.cfg.spend.warn_usd = warn;
-    cx.cfg.spend.task_budget_usd = task;
     if let Err(e) = config::save_settings(&cx.home, &cx.cfg) {
         view.error(e.to_string());
     }
     cx.send(Work::SetSettings {
         budget_usd: usd,
-        task_budget_usd: task,
         review_usd: view.review_usd,
-        max_crew: view.max_crew,
-        steps: view.steps,
         web: view.web,
         open_pages: view.ui.open_pages,
     });
@@ -1126,9 +898,8 @@ fn save_budget(view: &mut View, cx: &mut Ctx, usd: f64, warn: f64, task: f64) {
         ));
     } else {
         view.system(format!(
-            "budget off · spent {} · nothing stops on cost now; each task is still capped at {}",
-            format_usd(view.spend),
-            format_usd(Some(task))
+            "budget off · spent {} · nothing stops on cost now",
+            format_usd(view.spend)
         ));
     }
 }
@@ -1251,12 +1022,6 @@ pub fn display_home_path(cwd: &Path) -> String {
     cwd.display().to_string()
 }
 
-/// Phase override parsing shared with startup.
-pub fn parse_phase(s: Option<&str>) -> ryter_core::Result<Option<Phase>> {
-    use std::str::FromStr;
-    s.map(Phase::from_str).transpose()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1266,7 +1031,6 @@ mod tests {
     #[test]
     fn the_sidebar_uses_the_catalog_price() {
         let mut v = View::new(
-            ryter_core::Phase::Build,
             "openrouter".into(),
             "vendor/new-model".into(),
             "/tmp".into(),

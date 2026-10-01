@@ -35,7 +35,9 @@ pub struct ProjectSpend {
     pub unpriced_calls: u64,
     /// Sessions with any spend.
     pub sessions: u64,
-    /// USD by role (`build`, `plan`, `review`, `orchestrator`, `architect`, …).
+    /// USD by hat (`build`, `plan`, `review`). A project worked on in crew
+    /// mode, before it was removed, also has that spend here: as `crew`,
+    /// or under the crew's role names in a total saved back then.
     pub by_role: BTreeMap<String, f64>,
     /// USD by model.
     pub by_model: BTreeMap<String, f64>,
@@ -47,7 +49,7 @@ pub struct ProjectSpend {
 }
 
 impl ProjectSpend {
-    /// Solo mode's share (the build, plan, and review hats).
+    /// The hats' share (build, plan, and review).
     pub fn solo_usd(&self) -> f64 {
         self.by_role
             .iter()
@@ -56,7 +58,7 @@ impl ProjectSpend {
             .sum()
     }
 
-    /// Crew mode's share: the lead and every specialist.
+    /// What crew mode spent here, before it was removed.
     pub fn crew_usd(&self) -> f64 {
         self.total_usd - self.solo_usd()
     }
@@ -276,7 +278,6 @@ fn month_of_now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::phase::Phase;
     use crate::session::Session;
     use tempfile::TempDir;
 
@@ -293,7 +294,7 @@ mod tests {
     }
 
     fn session(home: &Path, cwd: &Path) -> Session {
-        Session::create(home, cwd, Phase::Build, "c".into(), "m".into()).unwrap()
+        Session::create(home, cwd, "c".into(), "m".into()).unwrap()
     }
 
     /// Sessions anywhere in the repository count; other projects don't.
@@ -307,8 +308,8 @@ mod tests {
         let mut a = session(home.path(), repo.path());
         spend(&mut a, Role::SoloBuild, "cheap", Some(0.25));
         let mut b = session(home.path(), &repo.path().join("web/src"));
-        spend(&mut b, Role::Architect, "strong", Some(1.0));
-        spend(&mut b, Role::Builder, "cheap", None);
+        spend(&mut b, Role::Crew, "strong", Some(1.0));
+        spend(&mut b, Role::SoloBuild, "cheap", None);
         let mut c = session(home.path(), other.path());
         spend(&mut c, Role::SoloBuild, "cheap", Some(9.0));
 

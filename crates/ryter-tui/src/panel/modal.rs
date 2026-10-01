@@ -863,12 +863,7 @@ mod tests {
     #[test]
     fn an_audit_offer_can_stop_the_offers_and_has_no_allow_all() {
         use crossterm::event::{KeyEvent, KeyModifiers};
-        let mut v = crate::view::View::new(
-            ryter_core::Phase::Build,
-            "openrouter".into(),
-            "m".into(),
-            "/tmp".into(),
-        );
+        let mut v = crate::view::View::new("openrouter".into(), "m".into(), "/tmp".into());
         let mut m = PermissionModal::new("review offer".into(), "Review this work?".into());
         assert!(m.legend(&v).contains("s stop offering"));
         let press = |m: &mut PermissionModal, v: &mut crate::view::View, c: char| {
@@ -886,12 +881,7 @@ mod tests {
     use crossterm::event::KeyModifiers;
 
     fn view() -> View {
-        View::new(
-            ryter_core::Phase::Build,
-            "c".into(),
-            "m".into(),
-            "/tmp".into(),
-        )
+        View::new("c".into(), "m".into(), "/tmp".into())
     }
 
     fn press(m: &mut PermissionModal, c: char) -> Outcome {
@@ -953,12 +943,7 @@ mod tests {
     #[test]
     fn enter_approves_after_a_moment_and_never_destruction() {
         use crossterm::event::KeyModifiers;
-        let mut v = crate::view::View::new(
-            ryter_core::Phase::Build,
-            "spacexai".into(),
-            "grok-4.6".into(),
-            "/tmp".into(),
-        );
+        let mut v = crate::view::View::new("spacexai".into(), "grok-4.6".into(), "/tmp".into());
         let enter = |m: &mut PermissionModal, v: &mut crate::view::View| {
             m.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), v)
         };

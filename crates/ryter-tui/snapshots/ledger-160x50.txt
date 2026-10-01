@@ -1,4 +1,4 @@
-  chat     changes  ^t    crew board  /crew
+  chat     changes  ^t
                                ·  welcome · /help for keys
                                ●  why does load() ignore a missing file? ······························· ✓ answered · 1.8s · $0.002  ▸
 

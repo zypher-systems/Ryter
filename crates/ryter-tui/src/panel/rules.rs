@@ -539,12 +539,7 @@ mod tests {
     fn fixture() -> Fixture {
         let home = TempDir::new().unwrap();
         let project = TempDir::new().unwrap();
-        let mut view = View::new(
-            ryter_core::Phase::Build,
-            "c".into(),
-            "m".into(),
-            project.path().display().to_string(),
-        );
+        let mut view = View::new("c".into(), "m".into(), project.path().display().to_string());
         view.project_root = Some(project.path().display().to_string());
         Fixture {
             home,

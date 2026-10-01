@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::ids::ConnectionId;
-use crate::phase::Phase;
 
 const KEYRING_SERVICE: &str = "ryter";
 
@@ -21,14 +20,12 @@ pub struct Config {
     pub default_connection: String,
     /// Named inference endpoints.
     pub connections: BTreeMap<String, ConnectionConfig>,
-    /// User-facing orchestrator model routing.
+    /// The model every hat uses. `[orchestrator]` on disk: the name is from
+    /// crew mode, and is kept so existing configuration still loads.
     pub orchestrator: RoleModel,
-    /// Per-specialist model routing.
+    /// A hat's own model, by hat (`plan`, `build`, `review`): `[specialists.*]`
+    /// on disk, and `~/.ryter/hats.toml`.
     pub specialists: BTreeMap<String, RoleModel>,
-    /// Parallelism cap for specialists.
-    pub subagents: SubagentsConfig,
-    /// Automatic merge auditor.
-    pub auditor: AuditorConfig,
     /// Spend accounting.
     pub spend: SpendConfig,
     /// Per-model USD rates; always wins over shipped / catalog prices.
@@ -55,15 +52,14 @@ pub struct Config {
     /// Updating Ryter itself (`[update]`).
     #[serde(default)]
     pub update: UpdateConfig,
-    /// `[reasoning_effort]`: `low` / `medium` / `high` / `default` per role
-    /// (`build`, `plan`, `review`, `lead`, `architect`, `builder`,
-    /// `auditor`), overriding [`reasoning_effort`]'s defaults.
+    /// `[reasoning_effort]`: `low` / `medium` / `high` / `default` per hat
+    /// (`build`, `plan`, `review`), overriding [`reasoning_effort`]'s
+    /// defaults.
     #[serde(default)]
     pub reasoning_effort: BTreeMap<String, String>,
     /// `[model_reasoning]`: the user's reasoning level per model id, set in
-    /// the model picker, the crew builder, or `/crew` (saved to
-    /// `~/.ryter/reasoning.toml`). Wins over the role default wherever the
-    /// model is used.
+    /// the model picker (saved to `~/.ryter/reasoning.toml`). Wins over the
+    /// hat's default wherever the model is used.
     #[serde(default)]
     pub model_reasoning: BTreeMap<String, String>,
     /// Non-fatal load warnings (unknown `[ui]` keys). Never serialized.
@@ -84,32 +80,6 @@ struct OldReviewer {
 /// audit's place.
 pub fn review_path(home: &Path) -> PathBuf {
     home.join("review.toml")
-}
-
-/// Set `[auditor] checks` in the project's `.ryter/config.toml`, keeping the
-/// rest of the file (comments included) as it is. The caller knows no checks
-/// are set yet.
-pub fn save_project_checks(root: &Path, checks: &[String]) -> Result<()> {
-    let dir = root.join(".ryter");
-    fs::create_dir_all(&dir).map_err(|e| Error::Config(e.to_string()))?;
-    let path = dir.join("config.toml");
-    let text = fs::read_to_string(&path).unwrap_or_default();
-    let list = toml::Value::Array(checks.iter().cloned().map(toml::Value::String).collect());
-    let line = format!("checks = {list}");
-    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-    match lines.iter().position(|l| l.trim() == "[auditor]") {
-        Some(i) => lines.insert(i + 1, line),
-        None => {
-            if lines.last().is_some_and(|l| !l.trim().is_empty()) {
-                lines.push(String::new());
-            }
-            lines.push("[auditor]".into());
-            lines.push(line);
-        }
-    }
-    let mut body = lines.join("\n");
-    body.push('\n');
-    fs::write(&path, body).map_err(|e| Error::Config(e.to_string()))
 }
 
 /// The audit's model and limit carry over to the review hat, which took
@@ -158,8 +128,6 @@ impl Default for Config {
                 model: Some("grok-4.6".into()),
             },
             specialists: BTreeMap::new(),
-            subagents: SubagentsConfig::default(),
-            auditor: AuditorConfig::default(),
             spend: SpendConfig::default(),
             pricing: BTreeMap::new(),
             mcp: McpSettings::default(),
@@ -337,7 +305,7 @@ fn default_backend() -> String {
     "chat_completions".into()
 }
 
-/// Model routing for orchestrator or a specialist kind.
+/// A connection and a model: the one every hat uses, or one hat's own.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct RoleModel {
     /// Connection name.
@@ -346,139 +314,6 @@ pub struct RoleModel {
     /// Model id.
     #[serde(default)]
     pub model: Option<String>,
-}
-
-/// How many specialists may run at once, and how long each may go on.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SubagentsConfig {
-    /// Parallelism cap. Must be ≥ 1.
-    pub max: u32,
-    /// `[subagents.steps]`: steps each kind of specialist gets.
-    #[serde(default)]
-    pub steps: Steps,
-}
-
-impl Default for SubagentsConfig {
-    fn default() -> Self {
-        Self {
-            max: 4,
-            steps: Steps::default(),
-        }
-    }
-}
-
-/// How many steps each kind of specialist gets on one run. A step is one
-/// call to its model, with the tool calls that reply asks for. The last
-/// step is for writing up: it has no tools. More steps let a specialist
-/// finish a bigger task, and cost more when it wanders.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Steps {
-    /// A builder, on one attempt at its task.
-    pub builder: u32,
-    /// The architect, on one plan.
-    pub architect: u32,
-    /// An auditor, on one review.
-    pub auditor: u32,
-}
-
-impl Default for Steps {
-    fn default() -> Self {
-        Self {
-            builder: 40,
-            architect: 30,
-            auditor: 12,
-        }
-    }
-}
-
-impl Steps {
-    /// The fewest a specialist can work in: a look, a change, a check, and
-    /// the write-up.
-    pub const MIN: u32 = 4;
-    /// The most. A run this long has gone wrong some other way.
-    pub const MAX: u32 = 400;
-
-    /// The steps `role` gets, within [`Self::MIN`] and [`Self::MAX`].
-    /// Reviewers of every kind get the auditor's.
-    pub fn for_role(&self, role: crate::role::Role) -> usize {
-        let n = match role {
-            crate::role::Role::Builder => self.builder,
-            crate::role::Role::Architect => self.architect,
-            _ => self.auditor,
-        };
-        n.clamp(Self::MIN, Self::MAX) as usize
-    }
-
-    /// Each limit brought within [`Self::MIN`] and [`Self::MAX`].
-    #[must_use]
-    pub fn clamped(self) -> Self {
-        let c = |n: u32| n.clamp(Self::MIN, Self::MAX);
-        Self {
-            builder: c(self.builder),
-            architect: c(self.architect),
-            auditor: c(self.auditor),
-        }
-    }
-}
-
-/// Automatic auditor gate.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AuditorConfig {
-    /// When true, builders cannot merge / complete without a pass.
-    pub enabled: bool,
-    /// Builder fix-turns after a failed audit.
-    #[serde(default = "default_retries")]
-    pub max_retries: u32,
-    /// Commands the harness runs in the builder's worktree before the auditor
-    /// sees the work (`["cargo test --workspace"]`). All must exit 0. Run by
-    /// the runtime, not chosen by a model, so passing does not depend on the
-    /// auditor deciding to test. Usually set per project in `.ryter/config.toml`.
-    #[serde(default)]
-    pub checks: Vec<String>,
-    /// Wall clock for each check.
-    #[serde(default = "default_check_timeout")]
-    pub check_timeout_secs: u64,
-    /// Auditors that must all sign off, in order. They stop at the first
-    /// FAIL, so put the cheapest first. Empty = one auditor from `/crew`.
-    #[serde(default)]
-    pub panel: Vec<AuditorSeatConfig>,
-}
-
-/// One seat on the auditor panel.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AuditorSeatConfig {
-    /// Connection name; the orchestrator's when omitted.
-    #[serde(default)]
-    pub connection: Option<String>,
-    /// Model id. Must differ from the lead's and the builder's.
-    pub model: String,
-    /// What this seat looks for, e.g. `"security"`. Empty = general review.
-    #[serde(default)]
-    pub focus: String,
-    /// Only review changes touching these globs. Empty = every change.
-    #[serde(default)]
-    pub paths: Vec<String>,
-}
-
-fn default_retries() -> u32 {
-    2
-}
-
-fn default_check_timeout() -> u64 {
-    1200
-}
-
-impl Default for AuditorConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            max_retries: 2,
-            checks: Vec::new(),
-            check_timeout_secs: default_check_timeout(),
-            panel: Vec::new(),
-        }
-    }
 }
 
 /// Spend tracking knobs.
@@ -495,28 +330,10 @@ pub struct SpendConfig {
     /// Status-line warning threshold.
     #[serde(default)]
     pub warn_usd: f64,
-    /// USD cap per crew task, builder and auditors together (`0` = none).
-    #[serde(default = "default_task_usd")]
-    pub task_budget_usd: f64,
-    /// Billable-token cap per crew task: uncached input plus output. Unlike a
-    /// dollar cap it also stops unpriced models (`0` = none).
-    #[serde(default = "default_task_tokens")]
-    pub task_max_tokens: u64,
     /// Most one turn in the review hat may spend, in USD (`0` = no limit).
     /// Near it the reviewer is told to write up; at it the turn stops.
     #[serde(default)]
     pub review_usd: f64,
-}
-
-fn default_task_tokens() -> u64 {
-    1_000_000
-}
-
-/// One task's cap. With no session budget by default this is the only
-/// spending guard, so it must fit a normal task or design on a strong crew
-/// (a gpt-5.5 design is estimated at ~$1.04) while still stopping a runaway.
-fn default_task_usd() -> f64 {
-    3.0
 }
 
 fn usd() -> String {
@@ -685,11 +502,9 @@ impl Default for SpendConfig {
         Self {
             enabled: true,
             currency: usd(),
-            // Off: a budget is the user's choice (`/budget`, the crew builder).
+            // Off: a budget is the user's choice (`/budget`).
             session_budget_usd: 0.0,
             warn_usd: 1.0,
-            task_budget_usd: default_task_usd(),
-            task_max_tokens: default_task_tokens(),
             review_usd: 0.0,
         }
     }
@@ -794,47 +609,32 @@ pub fn connection_template(kind: &str) -> Result<ConnectionConfig> {
 }
 
 impl RoleModel {
-    /// True when this row actually overrides the orchestrator.
+    /// True when this row names a model of its own.
     pub fn is_override(&self) -> bool {
         self.connection.is_some() || self.model.is_some()
     }
 }
 
 impl Config {
-    fn specialist_row(&self, role: crate::role::Role) -> RoleModel {
-        let key = match role {
-            crate::role::Role::Orchestrator => return self.orchestrator.clone(),
-            // A hat with no model of its own follows the one every hat uses.
-            crate::role::Role::SoloPlan => "plan",
-            crate::role::Role::SoloBuild => "build",
-            crate::role::Role::SoloReview => "review",
-            crate::role::Role::Architect => "architect",
-            crate::role::Role::Builder => "builder",
-            crate::role::Role::Auditor => "auditor",
-        };
-        let row = self.specialists.get(key).cloned().unwrap_or_default();
-        // The planner folded into the architect. A crew saved before the merge
-        // may only have a `planner` row; honour it rather than silently
-        // dropping the user's model choice.
-        if role == crate::role::Role::Architect && !row.is_override() {
-            if let Some(old) = self.specialists.get("planner") {
-                return old.clone();
-            }
+    /// A hat's own row, empty when it follows the model every hat uses.
+    fn hat_row(&self, role: crate::role::Role) -> RoleModel {
+        if !role.is_solo() {
+            return RoleModel::default();
         }
-        row
+        self.specialists
+            .get(role.as_str())
+            .cloned()
+            .unwrap_or_default()
     }
 
-    /// True when this role uses the live orchestrator provider and model.
+    /// True when this hat runs on the model every hat uses.
     pub fn follows_orchestrator(&self, role: crate::role::Role) -> bool {
-        role == crate::role::Role::Orchestrator || !self.specialist_row(role).is_override()
+        !self.hat_row(role).is_override()
     }
 
-    /// Connection + model for a role. Empty specialist rows follow the orchestrator.
+    /// Connection + model for a hat: its own, or the one every hat uses.
     pub fn route_for(&self, role: crate::role::Role) -> (String, String) {
-        if self.follows_orchestrator(role) && role != crate::role::Role::Orchestrator {
-            return self.route_for(crate::role::Role::Orchestrator);
-        }
-        let rm = self.specialist_row(role);
+        let rm = self.hat_row(role);
         let conn = rm
             .connection
             .filter(|c| self.connections.contains_key(c))
@@ -908,7 +708,6 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
             }
         }
     }
-    apply_crew_file(&mut cfg, &home.join("crew.toml"));
     apply_hats_file(&mut cfg, &hats_path(home));
     apply_mcp_file(&mut cfg, &home.join("mcp.toml"));
     apply_hooks_file(&mut cfg, &home.join("hooks.toml"));
@@ -926,8 +725,6 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
     Ok(cfg)
 }
 
-const CREW_ROLES: &[&str] = &["architect", "builder", "auditor"];
-
 /// The hats that can have a model of their own, as `specialists` names them.
 pub const HAT_ROLES: &[&str] = &["plan", "build", "review"];
 
@@ -940,7 +737,7 @@ fn apply_hats_file(cfg: &mut Config, path: &Path) {
     let Ok(text) = fs::read_to_string(path) else {
         return;
     };
-    let Ok(map) = parse_crew_map(&text) else {
+    let Ok(map) = parse_hats(&text) else {
         return;
     };
     for (k, v) in map {
@@ -967,61 +764,13 @@ pub fn save_hats(home: &Path, specialists: &BTreeMap<String, RoleModel>) -> Resu
     fs::write(hats_path(home), body).map_err(|e| Error::Config(e.to_string()))
 }
 
-/// No crew was ever saved (no `crew.toml`) and none is configured in
-/// `[specialists]`: the first-launch crew builder should run.
-pub fn crew_unconfigured(home: &Path, cfg: &Config) -> bool {
-    !crew_path(home).exists() && cfg.specialists.is_empty()
-}
-
-/// Live crew assignment file (`~/.ryter/crew.toml`).
-pub fn crew_path(home: &Path) -> PathBuf {
-    home.join("crew.toml")
-}
-
-/// Preset directory (`~/.ryter/crews/`).
-pub fn crews_dir(home: &Path) -> PathBuf {
-    home.join("crews")
-}
-
-fn apply_crew_file(cfg: &mut Config, path: &Path) {
-    let Ok(text) = fs::read_to_string(path) else {
-        return;
-    };
-    let map = match parse_crew_map(&text) {
-        Ok(m) => m,
-        Err(_) => return,
-    };
-    apply_crew_map(cfg, map);
-}
-
-fn parse_crew_map(text: &str) -> Result<BTreeMap<String, RoleModel>> {
+fn parse_hats(text: &str) -> Result<BTreeMap<String, RoleModel>> {
     if text.trim().is_empty() {
         return Ok(BTreeMap::new());
     }
     toml::from_str(text).map_err(|e| Error::Config(e.to_string()))
 }
 
-fn apply_crew_map(cfg: &mut Config, map: BTreeMap<String, RoleModel>) {
-    for (k, v) in map {
-        if CREW_ROLES.contains(&k.as_str()) {
-            cfg.specialists.insert(k, v);
-        }
-    }
-}
-
-fn crew_overrides(specialists: &BTreeMap<String, RoleModel>) -> BTreeMap<String, RoleModel> {
-    let mut map = BTreeMap::new();
-    for role in CREW_ROLES {
-        if let Some(rm) = specialists.get(*role) {
-            if rm.is_override() {
-                map.insert((*role).to_string(), rm.clone());
-            }
-        }
-    }
-    map
-}
-
-/// Persist the live crew assignment (does not rewrite `config.toml`).
 /// `~/.ryter/reasoning.toml`: reasoning level per model, set in the TUI.
 pub fn model_reasoning_path(home: &Path) -> PathBuf {
     home.join("reasoning.toml")
@@ -1077,61 +826,6 @@ pub fn reasoning_label(choice: Option<&str>) -> &'static str {
         Some("high") => "high",
         Some(_) => "model's own",
     }
-}
-
-pub fn save_crew(home: &Path, specialists: &BTreeMap<String, RoleModel>) -> Result<()> {
-    fs::create_dir_all(home).map_err(|e| Error::Config(e.to_string()))?;
-    let map = crew_overrides(specialists);
-    let body = toml::to_string(&map).map_err(|e| Error::Config(e.to_string()))?;
-    fs::write(crew_path(home), body).map_err(|e| Error::Config(e.to_string()))
-}
-
-/// Save a named preset.
-pub fn save_crew_preset(
-    home: &Path,
-    name: &str,
-    specialists: &BTreeMap<String, RoleModel>,
-) -> Result<()> {
-    let name = sanitize_preset_name(name)?;
-    let dir = crews_dir(home);
-    fs::create_dir_all(&dir).map_err(|e| Error::Config(e.to_string()))?;
-    let map = crew_overrides(specialists);
-    let body = toml::to_string(&map).map_err(|e| Error::Config(e.to_string()))?;
-    fs::write(dir.join(format!("{name}.toml")), body).map_err(|e| Error::Config(e.to_string()))
-}
-
-/// Load a named preset into `cfg.specialists` and write `crew.toml`.
-pub fn load_crew_preset(home: &Path, cfg: &mut Config, name: &str) -> Result<()> {
-    let name = sanitize_preset_name(name)?;
-    let path = crews_dir(home).join(format!("{name}.toml"));
-    let text =
-        fs::read_to_string(&path).map_err(|_| Error::Config(format!("no crew preset {name:?}")))?;
-    let map = parse_crew_map(&text)?;
-    for role in CREW_ROLES {
-        cfg.specialists.remove(*role);
-    }
-    apply_crew_map(cfg, map);
-    save_crew(home, &cfg.specialists)?;
-    Ok(())
-}
-
-/// Stem names of `~/.ryter/crews/*.toml`.
-pub fn list_crew_presets(home: &Path) -> Vec<String> {
-    let mut names = Vec::new();
-    let Ok(rd) = fs::read_dir(crews_dir(home)) else {
-        return names;
-    };
-    for ent in rd.flatten() {
-        let p = ent.path();
-        if p.extension().and_then(|e| e.to_str()) != Some("toml") {
-            continue;
-        }
-        if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-            names.push(stem.to_string());
-        }
-    }
-    names.sort();
-    names
 }
 
 /// Live MCP UI file (`~/.ryter/mcp.toml`). Overlays inbound flags and outbound servers.
@@ -1304,18 +998,11 @@ pub fn user_connection_names(home: &Path) -> Vec<String> {
 struct SettingsFile {
     session_budget_usd: Option<f64>,
     warn_usd: Option<f64>,
-    #[serde(default)]
-    task_budget_usd: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     review_usd: Option<f64>,
-    max: Option<u32>,
-    #[serde(default)]
-    steps: Option<Steps>,
     sandbox: Option<String>,
     inbound: Option<bool>,
     web: Option<bool>,
-    #[serde(default)]
-    auditor: Option<bool>,
     #[serde(default)]
     ui: Option<UiFile>,
     #[serde(default)]
@@ -1329,9 +1016,6 @@ fn apply_settings_file(cfg: &mut Config, path: &Path) {
     let Ok(file) = toml::from_str::<SettingsFile>(&text) else {
         return;
     };
-    if let Some(v) = file.auditor {
-        cfg.auditor.enabled = v;
-    }
     if let Some(ui) = file.ui {
         ui.apply(&mut cfg.ui);
     }
@@ -1341,17 +1025,8 @@ fn apply_settings_file(cfg: &mut Config, path: &Path) {
     if let Some(v) = file.warn_usd {
         cfg.spend.warn_usd = v;
     }
-    if let Some(v) = file.task_budget_usd {
-        cfg.spend.task_budget_usd = v;
-    }
     if let Some(v) = file.review_usd {
         cfg.spend.review_usd = v.max(0.0);
-    }
-    if let Some(v) = file.max {
-        cfg.subagents.max = v;
-    }
-    if let Some(v) = file.steps {
-        cfg.subagents.steps = v.clamped();
     }
     if let Some(v) = file.sandbox {
         cfg.sandbox.profile = v;
@@ -1373,14 +1048,10 @@ pub fn save_settings(home: &Path, cfg: &Config) -> Result<()> {
     let file = SettingsFile {
         session_budget_usd: Some(cfg.spend.session_budget_usd),
         warn_usd: Some(cfg.spend.warn_usd),
-        task_budget_usd: Some(cfg.spend.task_budget_usd),
         review_usd: Some(cfg.spend.review_usd),
-        max: Some(cfg.subagents.max),
-        steps: Some(cfg.subagents.steps.clamped()),
         sandbox: Some(cfg.sandbox.profile.clone()),
         inbound: Some(cfg.mcp.inbound),
         web: Some(cfg.features.web),
-        auditor: Some(cfg.auditor.enabled),
         ui: Some(UiFile::from(&cfg.ui)),
         update: Some(cfg.update.mode),
     };
@@ -1396,26 +1067,6 @@ pub fn save_hooks(home: &Path, hooks: &[HookConfig]) -> Result<()> {
     })
     .map_err(|e| Error::Config(e.to_string()))?;
     fs::write(home.join("hooks.toml"), body).map_err(|e| Error::Config(e.to_string()))
-}
-
-fn sanitize_preset_name(name: &str) -> Result<String> {
-    let s = name
-        .trim()
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-    let s = s.trim_matches('-').to_string();
-    if s.is_empty() {
-        Err(Error::Config("preset name is empty".into()))
-    } else {
-        Ok(s)
-    }
 }
 
 fn merge_file(cfg: &mut Config, path: &Path) -> Result<()> {
@@ -1456,10 +1107,8 @@ struct ConfigFile {
     connections: BTreeMap<String, ConnectionConfig>,
     orchestrator: Option<RoleModel>,
     specialists: BTreeMap<String, RoleModel>,
-    subagents: Option<SubagentsConfig>,
-    // Kept as raw tables and merged field by field: a project that sets only
-    // `[auditor] checks` must not need every other key, nor wipe the user's.
-    auditor: Option<toml::Value>,
+    // Kept as a raw table and merged field by field: a file that sets one
+    // key must not need every other, nor wipe the user's.
     spend: Option<toml::Value>,
     pricing: BTreeMap<String, PriceOverride>,
     mcp: Option<McpSettings>,
@@ -1574,23 +1223,18 @@ impl ConfigFile {
         if let Some(o) = self.orchestrator {
             cfg.orchestrator = o;
         }
+        // Only the hats: a row for a crew role (`[specialists.builder]`,
+        // from before crew mode was removed) is left behind.
         for (k, v) in self.specialists {
-            cfg.specialists.insert(k, v);
+            if HAT_ROLES.contains(&k.as_str()) {
+                cfg.specialists.insert(k, v);
+            }
         }
         for (k, v) in self.reasoning_effort {
             cfg.reasoning_effort.insert(k, v);
         }
         for (k, v) in self.model_reasoning {
             cfg.model_reasoning.insert(k, v);
-        }
-        if let Some(s) = self.subagents {
-            cfg.subagents = s;
-        }
-        if let Some(a) = self.auditor {
-            match merge_table(&cfg.auditor, a) {
-                Ok(v) => cfg.auditor = v,
-                Err(e) => cfg.warnings.push(format!("[auditor] ignored: {e}")),
-            }
         }
         if let Some(s) = self.spend {
             match merge_table(&cfg.spend, s) {
@@ -1624,11 +1268,6 @@ impl ConfigFile {
 }
 
 fn validate(cfg: &Config) -> Result<()> {
-    if cfg.subagents.max < 1 {
-        return Err(Error::Config(
-            "[subagents] max must be >= 1 (the orchestrator cannot write source)".into(),
-        ));
-    }
     if !cfg.connections.contains_key(&cfg.default_connection) {
         return Err(Error::Config(format!(
             "default_connection {:?} is not a known connection",
@@ -1872,19 +1511,15 @@ pub fn effort_for(
             _ => {}
         }
     }
-    let key = match role {
-        Role::Orchestrator => "lead",
-        r => r.as_str(),
-    };
     let chosen = overrides
-        .and_then(|m| m.get(key))
+        .and_then(|m| m.get(role.as_str()))
         .map(|v| v.trim().to_ascii_lowercase());
     match chosen.as_deref() {
         Some("default" | "none" | "off" | "") => None,
         Some(v @ ("low" | "medium" | "high")) => Some(v.to_string()),
         _ => Some(
             match role {
-                Role::SoloPlan | Role::Architect => "high",
+                Role::SoloPlan => "high",
                 _ => "medium",
             }
             .to_string(),
@@ -2071,11 +1706,6 @@ pub fn trust(root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Default phase for a new session.
-pub fn default_phase() -> Phase {
-    Phase::Build
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2119,112 +1749,89 @@ mod tests {
         assert!(cfg.connections.contains_key("spacexai"));
         assert!(cfg.connections.contains_key("openrouter"));
         assert_eq!(cfg.connections["spacexai"].api_backend, "responses");
-        assert_eq!(cfg.subagents.max, 4);
-        assert!(cfg.auditor.enabled);
         assert!(
             cfg.specialists.is_empty(),
-            "crew must not ship a factory provider split"
+            "every hat follows one model until the user says otherwise"
         );
     }
 
+    /// Configuration written for crew mode still loads, and what was the
+    /// crew's is left behind: its roles' models, its limits, its checks.
+    /// The model the lead ran on is the one every hat uses.
     #[test]
-    fn max_zero_is_rejected() {
+    fn a_config_written_for_crew_mode_still_loads() {
+        use crate::role::Role;
         let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("config.toml"), "[subagents]\nmax = 0\n").unwrap();
-        let err = load_at(dir.path(), None, false).unwrap_err();
-        assert!(err.to_string().contains("max must be >= 1"));
+        fs::write(
+            dir.path().join("config.toml"),
+            "[orchestrator]\nconnection = \"openrouter\"\nmodel = \"deepseek/deepseek-v4.1-flash\"\n\
+             [specialists.builder]\nconnection = \"openrouter\"\nmodel = \"z-ai/glm-5.3\"\n\
+             [specialists.auditor]\nmodel = \"x-ai/grok-4.7\"\n\
+             [specialists.review]\nconnection = \"openrouter\"\nmodel = \"x-ai/grok-4.7\"\n\
+             [subagents]\nmax = 0\n[subagents.steps]\nbuilder = 120\n\
+             [auditor]\nenabled = true\nmax_retries = 4\nchecks = [\"cargo test\"]\n\
+             [[auditor.panel]]\nmodel = \"claude-sonnet-4.6\"\n\
+             [spend]\nenabled = true\nsession_budget_usd = 9.0\ntask_budget_usd = 0.25\ntask_max_tokens = 5\n\
+             [reasoning_effort]\nlead = \"low\"\nbuilder = \"high\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("settings.toml"),
+            "session_budget_usd = 4.0\nwarn_usd = 1.0\ntask_budget_usd = 3.0\nmax = 4\n\
+             sandbox = \"off\"\ninbound = false\nweb = false\nauditor = true\n\
+             [steps]\nbuilder = 40\narchitect = 30\nauditor = 12\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("crew.toml"),
+            "[architect]\nconnection = \"openrouter\"\nmodel = \"openai/gpt-5.5\"\n",
+        )
+        .unwrap();
+        let cfg = load_at(dir.path(), None, false).expect("old configuration must load");
+        assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+        assert_eq!(
+            cfg.route_for(Role::SoloBuild),
+            ("openrouter".into(), "deepseek/deepseek-v4.1-flash".into())
+        );
+        assert!(cfg.follows_orchestrator(Role::SoloBuild));
+        assert!(cfg.follows_orchestrator(Role::SoloPlan));
+        // A hat's row is kept; the crew's rows are not.
+        assert_eq!(
+            cfg.route_for(Role::SoloReview),
+            ("openrouter".into(), "x-ai/grok-4.7".into())
+        );
+        assert_eq!(
+            cfg.specialists.keys().collect::<Vec<_>>(),
+            ["review"],
+            "only the hats"
+        );
+        assert_eq!(cfg.spend.session_budget_usd, 4.0);
+        // A role that is gone runs on nothing of its own.
+        assert!(cfg.follows_orchestrator(Role::Crew));
     }
 
     #[test]
-    fn crew_preset_round_trip() {
-        let dir = TempDir::new().unwrap();
-        let mut specs = BTreeMap::new();
-        specs.insert(
-            "builder".into(),
-            RoleModel {
-                connection: Some("openrouter".into()),
-                model: Some("anthropic/claude-sonnet-4.6".into()),
-            },
-        );
-        save_crew_preset(dir.path(), "web apps", &specs).unwrap();
-        assert!(list_crew_presets(dir.path()).contains(&"web-apps".to_string()));
+    fn route_for_a_hat_with_no_model_follows_the_rest() {
+        use crate::role::Role;
         let mut cfg = Config::default();
-        load_crew_preset(dir.path(), &mut cfg, "web-apps").unwrap();
-        assert_eq!(
-            cfg.specialists.get("builder").and_then(|r| r.model.clone()),
-            Some("anthropic/claude-sonnet-4.6".into())
-        );
-        let live = load_at(dir.path(), None, false).unwrap();
-        assert_eq!(
-            live.specialists
-                .get("builder")
-                .and_then(|r| r.model.clone()),
-            Some("anthropic/claude-sonnet-4.6".into())
-        );
-    }
-
-    #[test]
-    fn route_for_empty_specialists_follows_orchestrator() {
-        let cfg = Config::default();
-        let orch = cfg.route_for(crate::role::Role::Orchestrator);
-        assert_eq!(orch, ("spacexai".into(), "grok-4.6".into()));
-        assert_eq!(cfg.route_for(crate::role::Role::Architect), orch);
-        assert_eq!(cfg.route_for(crate::role::Role::Builder), orch);
-        assert_eq!(cfg.route_for(crate::role::Role::Auditor), orch);
-        let mut cfg = cfg;
+        let all: (String, String) = ("spacexai".into(), "grok-4.6".into());
+        for hat in [Role::SoloPlan, Role::SoloBuild, Role::SoloReview] {
+            assert_eq!(cfg.route_for(hat), all);
+        }
         cfg.specialists.insert(
-            "architect".into(),
+            "plan".into(),
             RoleModel {
                 connection: Some("openrouter".into()),
                 model: Some("anthropic/claude-sonnet-4.6".into()),
             },
         );
-        let (conn, model) = cfg.route_for(crate::role::Role::Architect);
+        let (conn, model) = cfg.route_for(Role::SoloPlan);
         assert_eq!(conn, "openrouter");
         assert_eq!(model, "anthropic/claude-sonnet-4.6");
-        // Assigning one role leaves the others following the orchestrator.
-        assert_eq!(cfg.route_for(crate::role::Role::Builder), orch);
-        assert!(cfg.follows_orchestrator(crate::role::Role::Builder));
-        assert!(!cfg.follows_orchestrator(crate::role::Role::Architect));
-    }
-
-    #[test]
-    fn a_saved_planner_row_routes_the_architect() {
-        let mut cfg = Config::default();
-        cfg.specialists.insert(
-            "planner".into(),
-            RoleModel {
-                connection: Some("openrouter".into()),
-                model: Some("anthropic/claude-sonnet-4.6".into()),
-            },
-        );
-        let (_, model) = cfg.route_for(crate::role::Role::Architect);
-        assert_eq!(model, "anthropic/claude-sonnet-4.6");
-    }
-
-    #[test]
-    fn save_crew_omits_empty_rows() {
-        let dir = TempDir::new().unwrap();
-        let mut specs = BTreeMap::new();
-        specs.insert("planner".into(), RoleModel::default());
-        specs.insert(
-            "builder".into(),
-            RoleModel {
-                connection: Some("openrouter".into()),
-                model: Some("anthropic/claude-sonnet-4.6".into()),
-            },
-        );
-        save_crew(dir.path(), &specs).unwrap();
-        let live = load_at(dir.path(), None, false).unwrap();
-        assert!(!live.specialists.contains_key("planner"));
-        assert_eq!(
-            live.specialists
-                .get("builder")
-                .and_then(|r| r.model.clone()),
-            Some("anthropic/claude-sonnet-4.6".into())
-        );
-        assert!(live.follows_orchestrator(crate::role::Role::Architect));
-        assert!(!live.follows_orchestrator(crate::role::Role::Builder));
+        // Giving one hat a model leaves the others where they were.
+        assert_eq!(cfg.route_for(Role::SoloBuild), all);
+        assert!(cfg.follows_orchestrator(Role::SoloBuild));
+        assert!(!cfg.follows_orchestrator(Role::SoloPlan));
     }
 
     #[test]
@@ -2264,8 +1871,6 @@ mod tests {
         let mut cfg = Config::default();
         cfg.features.web = true;
         cfg.spend.session_budget_usd = 9.0;
-        cfg.spend.task_budget_usd = 2.5;
-        cfg.subagents.max = 2;
         save_settings(dir.path(), &cfg).unwrap();
         let extra = connection_template("openai").unwrap();
         let mut map = BTreeMap::new();
@@ -2274,8 +1879,6 @@ mod tests {
         let live = load_at(dir.path(), None, false).unwrap();
         assert!(live.features.web);
         assert!((live.spend.session_budget_usd - 9.0).abs() < f64::EPSILON);
-        assert!((live.spend.task_budget_usd - 2.5).abs() < f64::EPSILON);
-        assert_eq!(live.subagents.max, 2);
         assert_eq!(live.connections["local"].kind, "openai_compat");
         assert!(user_connection_names(dir.path()).contains(&"local".to_string()));
     }
@@ -2565,14 +2168,13 @@ mod tests {
     }
 
     /// A hat runs on its own model when it has one, and on the one every hat
-    /// uses when it doesn't. The choice is kept in `hats.toml`, apart from
-    /// the crew's.
+    /// uses when it doesn't. The choice is kept in `hats.toml`.
     #[test]
     fn a_hat_has_its_own_model_or_follows_the_rest() {
         use crate::role::Role;
         let dir = TempDir::new().unwrap();
         let mut cfg = load_at(dir.path(), None, false).unwrap();
-        let all = cfg.route_for(Role::Orchestrator);
+        let all: (String, String) = ("spacexai".into(), "grok-4.6".into());
         for hat in [Role::SoloPlan, Role::SoloBuild, Role::SoloReview] {
             assert!(cfg.follows_orchestrator(hat));
             assert_eq!(cfg.route_for(hat), all);
@@ -2584,13 +2186,6 @@ mod tests {
                 model: Some("x-ai/grok-4.7".into()),
             },
         );
-        cfg.specialists.insert(
-            "auditor".into(),
-            RoleModel {
-                connection: Some("openrouter".into()),
-                model: Some("qwen/qwen3.8-max".into()),
-            },
-        );
         assert!(!cfg.follows_orchestrator(Role::SoloReview));
         assert_eq!(
             cfg.route_for(Role::SoloReview),
@@ -2598,86 +2193,15 @@ mod tests {
         );
         assert_eq!(cfg.route_for(Role::SoloPlan), all);
         assert_eq!(cfg.route_for(Role::SoloBuild), all);
-        // Saved and read back, each to its own file.
+        // Saved and read back.
         save_hats(dir.path(), &cfg.specialists).unwrap();
-        save_crew(dir.path(), &cfg.specialists).unwrap();
         let hats = fs::read_to_string(hats_path(dir.path())).unwrap();
-        assert!(
-            hats.contains("[review]") && !hats.contains("auditor"),
-            "{hats}"
-        );
-        let crew = fs::read_to_string(crew_path(dir.path())).unwrap();
-        assert!(
-            crew.contains("[auditor]") && !crew.contains("review"),
-            "{crew}"
-        );
+        assert!(hats.contains("[review]"), "{hats}");
         let again = load_at(dir.path(), None, false).unwrap();
         assert_eq!(
             again.route_for(Role::SoloReview),
             ("openrouter".into(), "x-ai/grok-4.7".into())
         );
-        assert_eq!(
-            again.route_for(Role::Auditor),
-            ("openrouter".into(), "qwen/qwen3.8-max".into())
-        );
-    }
-
-    /// `[subagents.steps]` sets how long each specialist may go on. A table
-    /// that names one keeps the defaults for the rest, `/settings` saves
-    /// over it, and nothing gets fewer steps than it can work in.
-    #[test]
-    fn step_limits_are_read_saved_and_kept_in_range() {
-        use crate::role::Role;
-        let dir = TempDir::new().unwrap();
-        // None set: the defaults.
-        let cfg = load_at(dir.path(), None, false).unwrap();
-        assert_eq!(cfg.subagents.steps, Steps::default());
-        assert_eq!(
-            (
-                cfg.subagents.steps.for_role(Role::Builder),
-                cfg.subagents.steps.for_role(Role::Architect),
-                cfg.subagents.steps.for_role(Role::Auditor),
-            ),
-            (40, 30, 12)
-        );
-        fs::write(
-            dir.path().join("config.toml"),
-            "[subagents]\nmax = 2\n\n[subagents.steps]\nauditor = 30\n",
-        )
-        .unwrap();
-        let mut cfg = load_at(dir.path(), None, false).unwrap();
-        assert_eq!(cfg.subagents.max, 2);
-        assert_eq!(
-            cfg.subagents.steps,
-            Steps {
-                auditor: 30,
-                ..Steps::default()
-            }
-        );
-        // Saved from /settings, it wins over config.toml, within range.
-        cfg.subagents.steps = Steps {
-            builder: 80,
-            architect: 1,
-            auditor: 9_000,
-        };
-        save_settings(dir.path(), &cfg).unwrap();
-        let cfg = load_at(dir.path(), None, false).unwrap();
-        assert_eq!(
-            cfg.subagents.steps,
-            Steps {
-                builder: 80,
-                architect: Steps::MIN,
-                auditor: Steps::MAX,
-            }
-        );
-        // A hand-written limit out of range is used within it.
-        let wild = Steps {
-            builder: 0,
-            ..Steps::default()
-        };
-        assert_eq!(wild.for_role(Role::Builder), Steps::MIN as usize);
-        // Every kind of reviewer gets the auditor's.
-        assert_eq!(Steps::default().for_role(Role::SoloReview), 12);
     }
 
     #[test]
@@ -2710,30 +2234,27 @@ mod tests {
         assert_eq!(cfg.hooks[0].matcher.as_deref(), Some("bash"));
     }
 
-    /// A project sets its own checks with a sparse table — which is what the
-    /// docs tell people to write — without breaking config load or wiping the
-    /// user's other auditor and spend settings.
+    /// A project file that sets one key of `[spend]` keeps the user's
+    /// others: the table is merged key by key, not replaced.
     #[test]
-    fn a_sparse_project_auditor_table_merges_field_by_field() {
+    fn a_sparse_project_spend_table_merges_field_by_field() {
         let home = TempDir::new().unwrap();
         let proj = TempDir::new().unwrap();
         fs::write(
             home.path().join("config.toml"),
-            "[auditor]\nenabled = true\nmax_retries = 4\n[[auditor.panel]]\nmodel = \"claude-sonnet-4.6\"\n[spend]\nenabled = true\nsession_budget_usd = 9.0\n",
+            "[spend]\nenabled = true\nsession_budget_usd = 9.0\nwarn_usd = 2.0\n",
         )
         .unwrap();
         fs::create_dir_all(proj.path().join(".ryter")).unwrap();
         fs::write(
             proj.path().join(".ryter/config.toml"),
-            "[auditor]\nchecks = [\"python3 -m unittest\"]\n[spend]\ntask_budget_usd = 0.25\n",
+            "[spend]\nreview_usd = 0.25\n",
         )
         .unwrap();
         let cfg = load_at(home.path(), Some(proj.path()), true).expect("a sparse table must load");
-        assert_eq!(cfg.auditor.checks, vec!["python3 -m unittest".to_string()]);
-        assert_eq!(cfg.auditor.max_retries, 4, "user setting survives");
-        assert_eq!(cfg.auditor.panel.len(), 1, "user panel survives");
-        assert_eq!(cfg.spend.task_budget_usd, 0.25);
+        assert_eq!(cfg.spend.review_usd, 0.25);
         assert_eq!(cfg.spend.session_budget_usd, 9.0, "user budget survives");
+        assert_eq!(cfg.spend.warn_usd, 2.0);
     }
 
     /// `/budget` saves a default; a project's own cap still applies there.
@@ -2771,26 +2292,18 @@ mod tests {
             Some("high")
         );
         assert_eq!(
-            effort_for(None, None, Role::Architect, "m").as_deref(),
-            Some("high")
-        );
-        assert_eq!(
-            effort_for(None, None, Role::Builder, "m").as_deref(),
-            Some("medium")
-        );
-        assert_eq!(
-            effort_for(None, None, Role::Orchestrator, "m").as_deref(),
+            effort_for(None, None, Role::SoloReview, "m").as_deref(),
             Some("medium")
         );
         let mut m = BTreeMap::new();
         m.insert("build".to_string(), "Low".to_string());
-        m.insert("lead".to_string(), "default".to_string());
+        m.insert("plan".to_string(), "default".to_string());
         m.insert("review".to_string(), "bogus".to_string());
         assert_eq!(
             effort_for(Some(&m), None, Role::SoloBuild, "m").as_deref(),
             Some("low")
         );
-        assert_eq!(effort_for(Some(&m), None, Role::Orchestrator, "m"), None);
+        assert_eq!(effort_for(Some(&m), None, Role::SoloPlan, "m"), None);
         assert_eq!(
             effort_for(Some(&m), None, Role::SoloReview, "m").as_deref(),
             Some("medium"),
@@ -2812,7 +2325,7 @@ mod tests {
             Some("low")
         );
         assert_eq!(
-            effort_for(None, m, Role::Architect, "anthropic/claude-opus-5"),
+            effort_for(None, m, Role::SoloBuild, "anthropic/claude-opus-5"),
             None
         );
         assert_eq!(

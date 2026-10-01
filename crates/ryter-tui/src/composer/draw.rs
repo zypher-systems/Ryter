@@ -37,7 +37,7 @@ pub fn border_color(view: &View, theme: Theme) -> Color {
         Mode::Normal => {}
     }
     // The mode's color, always: it is how the user knows, at the point of
-    // typing, which hat (or the crew) gets this message.
+    // typing, which hat gets this message.
     theme.mode(view.mode)
 }
 
@@ -61,16 +61,15 @@ fn placeholder(view: &View) -> String {
     match &view.composer.mode {
         Mode::Normal if view.busy => "type to queue the next message, / for commands".into(),
         Mode::Normal => match view.mode {
-            ryter_core::Role::SoloBuild => {
+            ryter_core::Role::SoloBuild | ryter_core::Role::Crew => {
                 "what should change? · Tab: plan · / for commands".into()
             }
             ryter_core::Role::SoloPlan => {
                 "what are we planning? nothing changes here · Tab: review".into()
             }
             ryter_core::Role::SoloReview => {
-                "what should be reviewed? · /audit: a second model reviews · Tab: build".into()
+                "what should be reviewed? · /audit reviews what changed · Tab: build".into()
             }
-            _ => "ask the lead; the crew does the work · /solo to leave".into(),
         },
         Mode::Secret { connection } => format!("paste the API key for {connection}"),
         Mode::Field { label } => format!("type {label}…"),

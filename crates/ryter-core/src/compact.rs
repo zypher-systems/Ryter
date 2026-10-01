@@ -164,7 +164,8 @@ pub fn should_compact(rep: &ContextReport) -> bool {
 }
 
 /// Replace the prefix with a deterministic extract. No-op when already short.
-pub fn compact(messages: &[Message], pass_note: &str, keep_user_turns: usize) -> Vec<Message> {
+/// `note` is kept in the extract: what must outlive the messages dropped.
+pub fn compact(messages: &[Message], note: &str, keep_user_turns: usize) -> Vec<Message> {
     let user_idx: Vec<usize> = messages
         .iter()
         .enumerate()
@@ -178,7 +179,7 @@ pub fn compact(messages: &[Message], pass_note: &str, keep_user_turns: usize) ->
     if cut == 0 {
         return messages.to_vec();
     }
-    let extract = extract_prefix(&messages[..cut], pass_note);
+    let extract = extract_prefix(&messages[..cut], note);
     let mut out = vec![Message {
         role: "user".into(),
         content: extract,
@@ -189,7 +190,7 @@ pub fn compact(messages: &[Message], pass_note: &str, keep_user_turns: usize) ->
     out
 }
 
-fn extract_prefix(old: &[Message], pass_note: &str) -> String {
+fn extract_prefix(old: &[Message], note: &str) -> String {
     let mut tools = BTreeSet::new();
     let mut files = BTreeSet::new();
     for m in old {
@@ -219,9 +220,8 @@ fn extract_prefix(old: &[Message], pass_note: &str) -> String {
         s.push_str(&files.into_iter().collect::<Vec<_>>().join(", "));
         s.push('\n');
     }
-    let note = pass_note.trim();
+    let note = note.trim();
     if !note.is_empty() {
-        s.push_str("Latest pass note:\n");
         s.push_str(note);
         if !note.ends_with('\n') {
             s.push('\n');

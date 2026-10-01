@@ -10,11 +10,9 @@ use crate::chat::wrap;
 use crate::theme::Theme;
 use crate::view::View;
 
-const ON: &str = "the crew stops when session spend reaches the cap, says what finished and what \
-                  didn't, and waits. raise the cap and tell the lead to continue.";
+const ON: &str = "the turn stops when session spend reaches the cap, and says so. raise the cap \
+                  and say continue.";
 const OFF: &str = "nothing stops on cost. the spend card keeps count; watch it yourself.";
-const TASK: &str = "one task stops at this, budget or not, and keeps its work on its branch. \
-                    it catches a single runaway task.";
 
 /// Budget form with a live status header.
 #[derive(Debug, Clone)]
@@ -34,7 +32,7 @@ fn num(id: &'static str, label: &str, value: f64, min: f64, default: f64) -> Fie
             value,
             min,
             max: 10_000.0,
-            step: if id == "task" { 0.25 } else { 0.5 },
+            step: 0.5,
             int: false,
         },
     )
@@ -63,8 +61,6 @@ impl Budget {
             }),
             num("amount", "cap usd", amount, 0.5, 5.0),
             num("warn", "warn at usd", view.warn_usd, 0.0, 1.0),
-            Field::new("g_task", "per task", Kind::Header),
-            num("task", "task cap usd", view.task_budget_usd, 0.25, 3.0),
         ];
         Self {
             form: Form::new(fields),
@@ -95,7 +91,6 @@ impl Budget {
                 0.0
             },
             warn: self.number("warn"),
-            task: self.number("task"),
         }
     }
 
@@ -208,11 +203,7 @@ impl Panel for Budget {
         lines.extend(self.form.render(w, theme, true));
         lines.push(widgets::blank(theme));
         // Explain the field under the cursor's group, in words.
-        let prose = match self.form.current().map(|f| f.id) {
-            Some("task") => TASK,
-            _ if self.on() => ON,
-            _ => OFF,
-        };
+        let prose = if self.on() { ON } else { OFF };
         for row in wrap::wrap_plain(prose, w.saturating_sub(2)) {
             lines.push(widgets::note(&row, theme));
         }
@@ -343,12 +334,7 @@ mod tests {
     use crossterm::event::KeyEvent;
 
     fn view() -> View {
-        View::new(
-            ryter_core::Phase::Build,
-            "c".into(),
-            "m".into(),
-            "/tmp".into(),
-        )
+        View::new("c".into(), "m".into(), "/tmp".into())
     }
 
     fn press(p: &mut Budget, v: &mut View, code: KeyCode) -> Outcome {
@@ -375,7 +361,6 @@ mod tests {
             Action::SaveBudget {
                 usd: 0.0,
                 warn: 1.0,
-                task: 3.0
             }
         );
         v.budget_usd = 0.0;

@@ -18,7 +18,6 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::agent::{Agent, StopReason};
-use crate::crew;
 use crate::error::Result;
 use crate::event::AgentEvent;
 use crate::role::Role;
@@ -132,17 +131,38 @@ fn remember(home: &Path, past: &Past) {
     let _ = crate::session::append_jsonl(&history_path(home), past);
 }
 
-/// `Some(true)` for a `VERDICT: PASS` line, `Some(false)` for FAIL, `None`
-/// when the review gave no verdict. The merge gate reads "no verdict" as a
-/// fail; here it is only reported.
+/// `Some(true)` for a `VERDICT: PASS` line, `Some(false)` for any other
+/// verdict, `None` when the review gave none. The last `VERDICT` line
+/// wins: reviewers often restate the choices before deciding.
 pub fn verdict(text: &str) -> Option<bool> {
-    let has = text.lines().any(|l| {
-        l.trim()
-            .trim_matches(|c: char| matches!(c, '*' | '#' | '`' | '_' | '>' | ' '))
-            .to_ascii_uppercase()
-            .starts_with("VERDICT")
-    });
-    has.then(|| crew::parse_verdict(text))
+    text.lines()
+        .filter_map(|l| {
+            let l = l
+                .trim()
+                .trim_matches(|c: char| matches!(c, '*' | '#' | '`' | '_' | '>' | ' '))
+                .to_ascii_uppercase();
+            let said = l.strip_prefix("VERDICT")?;
+            Some(
+                said.trim_start_matches([':', ' ', '*', '-'])
+                    .starts_with("PASS"),
+            )
+        })
+        .next_back()
+}
+
+/// The same model, whichever route reached it: `x-ai/grok-4.6`, `grok-4.6`,
+/// and `grok-4.6-latest` are one model.
+pub fn same_model(a: &str, b: &str) -> bool {
+    let norm = |m: &str| {
+        let m = m
+            .rsplit('/')
+            .next()
+            .unwrap_or(m)
+            .trim()
+            .to_ascii_lowercase();
+        m.trim_end_matches("-latest").to_string()
+    };
+    norm(a) == norm(b)
 }
 
 impl Agent {
@@ -234,12 +254,6 @@ impl Agent {
     /// is offering at the end of a build turn, so a "no" says nothing, and
     /// the prompt can stop the offers.
     async fn review(&mut self, offered: bool) -> Result<String> {
-        if !self.role.is_solo() {
-            return self.say(
-                "a review is the review hat's, in solo mode; in crew mode every task already \
-                 has an auditor",
-            );
-        }
         let mut offered = offered;
         let mut last = String::new();
         loop {
@@ -264,8 +278,8 @@ impl Agent {
             Err(why) => return self.say(why).map(|_| None),
         };
         let cfg = self.cfg.clone().unwrap_or_default();
-        let (_, model, connection) = self.specialist_stack(Role::SoloReview);
-        let (_, builder, _) = self.specialist_stack(Role::SoloBuild);
+        let (_, model, connection) = self.stack_for(Role::SoloReview);
+        let (_, builder, _) = self.stack_for(Role::SoloBuild);
         let local = cfg
             .connections
             .get(&connection)
@@ -316,7 +330,7 @@ impl Agent {
         };
         // A second opinion is another model's. The same one may still
         // review; the user is told which they are getting.
-        let who = if crew::same_model(&model, &builder) {
+        let who = if same_model(&model, &builder) {
             format!(
                 "{model} on {connection}, the model that built it\n\
                  (give the review hat its own in /models for a second opinion)"
@@ -461,6 +475,22 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_last_verdict_line_is_the_verdict() {
+        assert_eq!(
+            verdict("VERDICT: PASS or VERDICT: FAIL?\n\n- a bug\n\n**VERDICT: FAIL**"),
+            Some(false)
+        );
+        assert_eq!(
+            verdict("VERDICT: FAIL\nOn reflection:\nVERDICT: PASS"),
+            Some(true)
+        );
+        // A verdict that isn't a pass is not one.
+        assert_eq!(verdict("VERDICT: UNVERIFIED"), Some(false));
+        assert!(same_model("x-ai/grok-4.6", "grok-4.6-latest"));
+        assert!(!same_model("x-ai/grok-4.6", "x-ai/grok-4.7"));
+    }
 
     #[test]
     fn a_verdict_is_read_and_its_absence_is_not_a_fail() {
