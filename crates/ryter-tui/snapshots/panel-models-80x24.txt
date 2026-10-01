@@ -13,7 +13,7 @@
     │                          │                                           │
     │                          │                                           │
     │                          │                                           │
-    │                          │ grok-4.6 · 500k ctx · $2/M input / $6/M … │
+    │                          │ grok-4.6 · spacexai · reasoning auto (me… │
     │ ↑↓ seat   → models       │ enter set   ← seats   esc done            │
     ╰──────────────────────────────────────────────────────────────────────╯
 

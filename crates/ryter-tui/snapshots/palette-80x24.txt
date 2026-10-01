@@ -11,7 +11,7 @@
                                                     │ price unknown            │
 ╭─ commands ──────────────────────────── 6 of 33 ─╮ │ reasoning  auto · medium │
 │ mo                                              │ ╰──────────────────────────╯
-│›/models         Choose models: the lead's, … ▸  │ ╭─ spend ──────────────────╮
+│›/models         Choose models: the lead's a… ▸  │ ╭─ spend ──────────────────╮
 │ /tools          Tool permission mode         ▸  │ │ session            $?.?? │
 │ /audit          A second model reviews your …   │ ╰──────────────────────────╯
 │ /crew           Switch to crew mode: a lead… ▸  │ ╭─ budget ─────────── off ─╮

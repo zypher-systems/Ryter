@@ -19,7 +19,7 @@
     │                              │                                                           │
     │                              │                                                           │
     │                              │                                                           │
-    │                              │ grok-4.6 · 500k ctx · $2/M input / $6/M output · reasoni… │
+    │                              │ grok-4.6 · spacexai · reasoning auto (medium in build) ·… │
     │ ↑↓ seat   → models           │ enter set   ← seats   esc done   tab reasoning   s sort   │
     ╰──────────────────────────────────────────────────────────────────────────────────────────╯
 

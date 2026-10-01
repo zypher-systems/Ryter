@@ -8,6 +8,9 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
   - The panel has two panes. On the left are the seats, each with its model, a `›` cursor and a `✓` once set here. On the right are the chosen seat's models, with the search row at the top of that pane. `Focus` decides which side the keys move.
   - On the right, Enter sets the model (`SetModel`, `SetCrewRole` or `ResetCrewRole`). The panel stays open, focus returns to the seats, and the cursor moves to the next seat. When that seat is the first role reached, the same Enter also asks for every connection's models (`Action::Many`).
   - Opened from the crew panel on a role, the panel starts on that role's models.
+  - The highlight returns to the first match only when the filter's text changes (`Models::filter_key`). Keys that only move within the text (→, Home, End) fall through to the filter, and they used to reset it: on a role the first row is `default`, so → then Enter dropped the role's model.
+  - Setting the last seat keeps the highlight on the model just set. Re-reading the seat would find the old model, because the set action hasn't been applied when the panel returns it.
+  - Narrow (right pane under 64 columns), the list drops reasoning and connection, and the facts line leads with them.
 - **Chosen vs rejected:** the user chose this from three mockups, over "Enter moves to the next tab" and "Enter sets and stays". They asked for Enter to return the cursor to SEATS. Before, every Enter closed the panel, so a crew took four visits.
 - **Where:** `crates/ryter-tui/src/panel/models.rs`; `panel/mod.rs` (`Panel::input_indent`, `Panel::keys_in_body`)
 

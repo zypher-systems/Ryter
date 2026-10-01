@@ -17,7 +17,7 @@
                                                                 ╭─ budget ─────────────────── off ─╮
 ╭─ commands ──────────────────────────────────────── 6 of 33 ─╮ │ cap                          off │
 │ mo                                                          │ ╰──────────────────────────────────╯
-│›/models         Choose models: the lead's, and each cre… ▸  │
+│›/models         Choose models: the lead's and each crew… ▸  │
 │ /tools          Tool permission mode                     ▸  │
 │ /audit          A second model reviews your uncommitted …   │
 │ /crew           Switch to crew mode: a lead, an archite… ▸  │

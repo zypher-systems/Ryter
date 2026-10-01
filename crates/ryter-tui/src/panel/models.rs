@@ -88,8 +88,7 @@ pub enum Focus {
 
 /// Model picker: the seats on the left, the models for the chosen seat on
 /// the right. Enter sets the model and goes back to the seats, on the next
-/// one, so a whole crew is chosen without leaving the panel. It used to
-/// close after each seat.
+/// one, so a whole crew is chosen without leaving the panel.
 #[derive(Debug, Clone)]
 pub struct Models {
     /// Catalog rows (row 0 is the `default` sentinel in crew mode).
@@ -446,6 +445,19 @@ fn hints(keys: &[(&str, &str)], width: usize, theme: Theme) -> Vec<Span<'static>
 }
 
 impl Models {
+    /// A key for the filter. The highlight goes back to the first match only
+    /// when the filter's text changed: a key that only moves within it (→,
+    /// home, end) leaves the highlight where it was. → used to reset it, and
+    /// on a role the first row is `default`, so → then enter dropped the
+    /// role's model.
+    fn filter_key(&mut self, key: KeyEvent, view: &mut View) {
+        let before = view.composer.text().to_string();
+        super::edit_field(&mut view.composer, key);
+        if view.composer.text() != before {
+            self.selected = 0;
+        }
+    }
+
     /// Keys on the seats side: ↑↓ chooses a seat, → or enter goes to its
     /// models, and typing starts a filter there.
     fn seat_key(&mut self, key: KeyEvent, view: &mut View) -> Outcome {
@@ -464,11 +476,14 @@ impl Models {
                     role: String::new(),
                 },
             ),
-            KeyCode::Char(_) | KeyCode::Backspace => {
+            KeyCode::Char(_) => {
                 self.focus = Focus::Models;
-                if super::edit_field(&mut view.composer, key) {
-                    self.selected = 0;
-                }
+                self.filter_key(key, view);
+                Outcome::Stay
+            }
+            KeyCode::Backspace if !view.composer.is_empty() => {
+                self.focus = Focus::Models;
+                self.filter_key(key, view);
                 Outcome::Stay
             }
             _ => Outcome::Stay,
@@ -673,21 +688,29 @@ impl Panel for Models {
                     (Some(i), Some(o)) => format_rates(Some(ryter_core::Rates::per_million(i, o))),
                     _ => "price unknown".into(),
                 };
-                format!(
-                    "{} · {} · {rates} · reasoning {}",
-                    m.id,
-                    m.context_length
-                        .map(|c| format!("{} ctx", format_tokens(c)))
-                        .unwrap_or_else(|| "ctx ?".into()),
-                    match view.reasoning_label(&m.id) {
-                        "auto" => format!(
-                            "auto ({} in {})",
-                            view.reasoning_effective(view.mode, &m.id),
-                            view.mode_label()
-                        ),
-                        l => l.to_string(),
-                    }
-                )
+                let reasoning = match view.reasoning_label(&m.id) {
+                    "auto" => format!(
+                        "auto ({} in {})",
+                        view.reasoning_effective(view.mode, &m.id),
+                        view.mode_label()
+                    ),
+                    l => l.to_string(),
+                };
+                // Narrow, the table has no connection or reasoning column:
+                // they come first here, so a cut at the edge can't hide the
+                // connection, which picks the provider a role is set on.
+                if cols < 6 {
+                    let conn = m.connection.as_deref().unwrap_or(&view.connection);
+                    format!("{} · {conn} · reasoning {reasoning} · {rates}", m.id)
+                } else {
+                    format!(
+                        "{} · {} · {rates} · reasoning {reasoning}",
+                        m.id,
+                        m.context_length
+                            .map(|c| format!("{} ctx", format_tokens(c)))
+                            .unwrap_or_else(|| "ctx ?".into()),
+                    )
+                }
             }
         });
         right.push(match facts {
@@ -808,15 +831,26 @@ impl Panel for Models {
                 let seat = self.seat();
                 self.changed[seat] = true;
                 self.focus = Focus::Seats;
+                if seat + 1 == SEATS {
+                    // The last seat stays chosen. Its list must open on the
+                    // model just set: reading the seat now would find the
+                    // one before, as the set hasn't been applied yet.
+                    let set_id = match &set {
+                        Action::SetModel(id) | Action::SetCrewRole { model: id, .. } => id.clone(),
+                        _ => String::new(),
+                    };
+                    if let Some(i) = self.filtered(view).iter().position(|m| m.id == set_id) {
+                        self.selected = i;
+                    }
+                    return Outcome::Act(set);
+                }
                 match self.choose_seat(view, seat + 1) {
                     Some(list) => Outcome::Act(Action::Many(vec![set, list])),
                     None => Outcome::Act(set),
                 }
             }
             _ => {
-                if super::edit_field(&mut view.composer, key) {
-                    self.selected = 0;
-                }
+                self.filter_key(key, view);
                 Outcome::Stay
             }
         }
@@ -1193,7 +1227,8 @@ mod tests {
         v.composer.set_text("qwen");
         assert!(matches!(
             key(&mut p, &mut v, KeyCode::Enter),
-            Outcome::Act(_)
+            Outcome::Act(Action::SetCrewRole { role, model, .. })
+                if role == "auditor" && model == "qwen/qwen3.7-max"
         ));
         assert_eq!((p.focus, p.seat()), (Focus::Seats, 3));
 
@@ -1235,6 +1270,109 @@ mod tests {
 
         let p = Models::new(&mut v, Some("builder".into()));
         assert_eq!((p.focus, p.seat()), (Focus::Models, 2));
+    }
+
+    /// Keys that only move within the filter (→, home, end) leave the
+    /// highlight where it is. → used to send it to the first row, which on
+    /// a role is `default`: → then enter dropped the role's model.
+    #[test]
+    fn moving_in_the_filter_keeps_the_highlight() {
+        let mut v = crew_view();
+        let mut p = Models::new(&mut v, Some("builder".into()));
+        p.set_models(&v, &catalog());
+        let minimax = p
+            .filtered(&v)
+            .iter()
+            .position(|m| m.id == "minimax/minimax-m2.7")
+            .unwrap();
+        p.selected = minimax;
+        for code in [KeyCode::Right, KeyCode::Home, KeyCode::End] {
+            assert!(matches!(key(&mut p, &mut v, code), Outcome::Stay));
+            assert_eq!(p.selected, minimax, "{code:?}");
+        }
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetCrewRole { role, model, .. })
+                if role == "builder" && model == "minimax/minimax-m2.7"
+        ));
+        // With a filter, typing goes to the first match, and moving within
+        // the text doesn't.
+        let mut p = Models::new(&mut v, Some("builder".into()));
+        p.set_models(&v, &catalog());
+        key(&mut p, &mut v, KeyCode::Char('o'));
+        assert_eq!(p.selected, 0);
+        key(&mut p, &mut v, KeyCode::Down);
+        let on = p.selected;
+        assert!(on > 0);
+        key(&mut p, &mut v, KeyCode::Right);
+        key(&mut p, &mut v, KeyCode::Home);
+        assert_eq!(p.selected, on);
+        key(&mut p, &mut v, KeyCode::Left);
+        assert_eq!(p.focus, Focus::Seats, "← on the list goes to the seats");
+    }
+
+    /// Setting the last seat keeps it chosen, and its list opens on the
+    /// model just set: it used to read the seat before the set landed, so
+    /// enter again saved the old model back.
+    #[test]
+    fn the_last_seat_opens_on_the_model_just_set() {
+        let mut v = crew_view();
+        let mut p = Models::new(&mut v, Some("auditor".into()));
+        p.set_models(&v, &catalog());
+        assert_eq!(
+            p.filtered(&v)[p.selected].id,
+            "qwen/qwen3.7-max",
+            "its model now"
+        );
+        v.composer.set_text("minimax");
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetCrewRole { role, model, .. })
+                if role == "auditor" && model == "minimax/minimax-m2.7"
+        ));
+        assert_eq!((p.focus, p.seat()), (Focus::Seats, 3));
+        assert_eq!(p.filtered(&v)[p.selected].id, "minimax/minimax-m2.7");
+        key(&mut p, &mut v, KeyCode::Right);
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetCrewRole { model, .. }) if model == "minimax/minimax-m2.7"
+        ));
+    }
+
+    /// Narrow, the list drops its connection and reasoning columns, and the
+    /// facts line leads with them.
+    #[test]
+    fn narrow_the_facts_line_names_the_connection() {
+        let mut v = crew_view();
+        let mut p = Models::new(&mut v, Some("builder".into()));
+        p.set_models(&v, &catalog());
+        p.selected = p
+            .filtered(&v)
+            .iter()
+            .position(|m| m.id == "grok-4.6")
+            .unwrap();
+        let narrow: String = p
+            .render(&v, 78, 16, Theme::truecolor_dark())
+            .lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect();
+        assert!(!narrow.contains("connection"), "no column: {narrow}");
+        assert!(
+            narrow.contains("grok-4.6 · spacexai · reasoning"),
+            "{narrow}"
+        );
+        let wide = text(&p, &v);
+        assert!(
+            wide.contains("connection") && wide.contains("spacexai"),
+            "{wide}"
+        );
     }
 
     /// The chooser: every catalog model but the one doing the work, each

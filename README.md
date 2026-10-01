@@ -44,7 +44,7 @@ Full usage: [docs/guide.md](docs/guide.md).
 
 Before each build turn Ryter checkpoints your files, and `/undo` puts them back. `/changes` shows what changed, file by file with diffs, and can undo a single file. `/commit` drafts the message from the diff and from what the model said about why, and commits the files you choose. Its receipt trailer records the model, the cost, and the test result (`Ryter: deepseek-pro-latest · $0.34 · tests ✓ 13 passed`). Nothing is committed unless you commit it.
 
-**Crew mode**: type `/crew`. The first time, the crew builder walks you through choosing the lead, architect, builder, and auditor, with a recommendation for each, and a budget. `/solo` goes back. Every model, the lead's and each role's, is changed in `/models` (`←→` between the roles). In crew mode you talk to the lead, which reads the repo, answers questions, and decides who does the work. It does **not** edit `src/`.
+**Crew mode**: type `/crew`. The first time, the crew builder walks you through choosing the lead, architect, builder, and auditor, with a recommendation for each, and a budget. `/solo` goes back. Every model, the lead's and each role's, is changed in `/models`, with the seats beside the list. In crew mode you talk to the lead, which reads the repo, answers questions, and decides who does the work. It does **not** edit `src/`.
 
 - A precise change: the lead writes builder tasks.
 - Something that needs a design: the lead asks the architect, whose tasks go straight to builders.
