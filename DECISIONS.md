@@ -2,6 +2,16 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-10-01 — One mode: crew mode is retired, the user is the lead
+- **By:** the user
+- **Decision:** Ryter becomes one mode, the solo interface with a hat per stage (plan, build, review, test) and optionally a model per hat. Crew mode gets no further work and is removed once the one-mode flow has taken a real project from a plan to a tested change.
+- **Chosen vs rejected:**
+  - Rejected fixing crew mode further. Four patches went into it on the day of the decision. Each closed a real fault, and none touched the cause: the unknowns of a real project need a person to settle them, and crew mode was built to run without one.
+  - Kept, as hats: review by a second model, checks before review, capped and visible spend. The auditor's findings on the project that failed were real bugs; what failed was the orchestration around it.
+  - Given up: unattended runs and parallel builders, which were the main draw.
+- **Why:** "There is too many unknowns for crew to work effectively without the user." No real project had completed in crew mode; the benchmark's clean runs were on small tasks with checks already set.
+- **Where:** `ROADMAP.md` (Direction). The code to go, when it goes: `crew.rs`, `queue.rs`, `tiering.rs`, `estimate.rs`, the crew parts of `agent.rs`, and the crew panels, about 10,000 of 72,000 lines; `bench.rs` is rebuilt on the hats.
+
 ### 2026-10-01 — A panel for the user's rules, with no model in it
 - **By:** lead, with the user's choice of layout (two tabs)
 - **Decision:**

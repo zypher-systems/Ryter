@@ -4,6 +4,8 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## What 1.0 means
 
+*This list was written around crew mode, which is being retired (see Direction, under Next). It is to be rewritten with the user once the one-mode flow has completed a real project.*
+
 1.0 is a finished, workable product: someone new installs Ryter, points a crew at a real project, and can stop watching it. Every item below has to be true first. Until then releases go 0.8, 0.9, 0.10 and on, since minor numbers have no ceiling. When the list is done, the user decides whether that is 1.0.
 
 - [ ] **Setup works the first time.** Install, add a key, choose a crew, and land a first task on Linux and macOS, with no step the guide doesn't cover. Only models the account can use are offered (done in 0.6.5).
@@ -143,39 +145,32 @@ Work that is in `dev` and not yet released is marked *Unreleased*, and its notes
 
 Product direction: `docs/product-direction.md`. Crew contract: `crew.md`. Cost model: `docs/cost.md`.
 
-### The plan (agreed 2026-10-01)
+### Direction (decided 2026-10-01): one mode, with the user as the lead
 
-On its first real project with a paid crew (a Docker CMS, 2026-10-01), crew mode never got past the first builder task, while the benchmark scored 9 of 9. Crew is the main draw, so it comes first. Each numbered item is its own patch branch; the first four collect in `dev` for one release.
+Crew mode is being retired. Ryter becomes one mode: the solo interface, with a hat for each stage of the work and, if the user wants, a different model for each hat.
 
-**Crew behaviour**
+**Why.** Crew mode ran a lead, an architect, builders and an auditor without the user, and no real project has completed that way. On the first one tried with a paid crew (a Docker CMS, 2026-10-01), every failure was a missing person: the architect made the first task too big, the auditor could not verify it, and the lead reported a limit the machine didn't have. Cost can't be predicted for an unattended run either: the tokens one builder task used varied about a hundredfold across twelve runs. The benchmark's 9 of 9 was on small tasks with checks already set.
 
-1. **The crew behaves** (in `dev`, except the acceptance test). What went wrong on that project, and the fix for each:
-   - A specialist ran out of steps (40 for a builder, 12 for an auditor) with no warning unless a dollar limit was set, and its last half-sentence became its report. It always gets a last turn to write up.
-   - An audit that ended with no verdict counted as a rejection: the builder was run again and the user was told to choose a stronger builder. It is asked once more for a verdict, and is never counted against the builder.
-   - With no checks configured, the auditor is told to run the tests itself, and its shell refuses `docker` and `podman`. It spent its steps trying. It is told what it can't run, and a refusal names the role, so the lead doesn't report "Docker is blocked" for everyone.
-   - A project with no checks: Ryter already offered the checks it could detect, once there is a manifest. A new project has none until its first task lands, and work passed on review alone already waits on the patch until checks are set. The auditor is now sent down that path, where it used to be told to build the project itself.
-   - The benchmark gets a task that reproduces this, so the fix can be measured. The acceptance test is the CMS project getting past its first task.
-2. **Turn limits you can set** (in `dev`). Builder, architect and auditor steps in `/settings`, with the defaults shown. A run that reaches its limit says so in its report.
-3. **Sandbox profiles explained, and `workspace` made usable** (in `dev`). `/settings` compares `off`, `workspace` and `read-only`: what each can read, write and run, and when to use it. The default stays `off`. Under `workspace` today `git` can't run (`/dev/null` isn't writable), toolchains under the home folder are refused, `/tmp` is unwritable, and crew worktrees can't be written, so the profile is fixed in the same patch and the benchmark is run under it.
-4. **A `/rules` panel** (in `dev`). The rules for every project and the rules for this one in one popup: read them, add and remove a rule, open either file in an editor. No model call.
+**What is kept,** as hats the user moves between: a second model reviewing before the work is called done, checks run before review, spend that is capped and shown, and changes that can be undone as one.
 
-**Solo, after that.** Solo with a plan, a build, a review and a test stage is a crew of one with the user as the lead, so it is built on the crew's machinery: one engine, two levels of autonomy.
+**What goes:** the lead's own loop over a task queue, parallel builders, the crew board, the crew builder, tiering and the cost estimate.
 
-5. **Plan approval in a popout.** The plan in a scrolling panel with approve, adjust and reject, written to disk on approve. The architect's plan in crew mode uses the same panel.
-6. **A model for each hat,** set in `/models`. Plan, build and review share one conversation; a switch to another model shows what re-reading it will cost.
-7. **A fourth hat that uses the product as a user would** (working name: Test). It starts from the plan and the product, not the conversation. It needs the project to say how to start, stop and test itself, with Ryter running those commands and stopping what it started. The same capability is the 1.0 item "Review means something".
+**The order:**
+
+1. **Plan approval in a popout.** The plan hat writes a plan; it opens in a scrolling panel with approve, adjust and reject, and is written to disk on approve. The build hat works from that file.
+2. **A model for each hat,** set in `/models`. By default every hat follows one model. The hats share one conversation, and a switch to another model shows what re-reading it will cost.
+3. **Review as a gate.** The review hat, on a different model when the user sets one, checks the change against the plan and for bugs before it is called done.
+4. **A fourth hat that uses the product as a user would** (working name: Test). It starts from the plan and the product, not the conversation. The project says how to start, stop and test itself, and Ryter runs those commands and stops what it started.
+5. **The acceptance test:** the CMS project, taken from a plan to a tested change this way.
+6. **Crew mode is removed** in one patch once that passes, the benchmark is rebuilt on the hats, and the list of what 1.0 means is rewritten with the user. It is written around a crew today.
+
+Until step 6, crew mode stays as it is and gets no new work. The crew fixes and step limits already in `dev` ship as they are, since people on 0.10.0 have crew mode.
 
 - **Narrow the sandbox's grant on Ryter's own folder.** Under a profile, commands can read and write every project's sessions and crew worktrees under `~/.ryter`, not only this project's. Grant this project's alone.
 - **Make the benchmark harder.** The nine-task suite ran clean on its first published run (9 of 9 accepted, about 2 cents a task), and a later run of the same crew had one false pass in nine. So it proves the pipeline and catches a release that breaks it, but one run of each task is too small a sample to compare crews or to say how often an auditor is wrong. Add tasks a crew can fail: larger fixtures, vague briefs, a planted bug the visible checks miss, and a task that needs the architect. Then run each candidate crew with `--repeat`, and fold the measurements into `docs/cost.md`.
 - **The updater's version probe can hit "Text file busy".** Seen once in `update::tests::the_launch_check_installs_or_notifies` during the 0.10.0 review, with the tests running side by side. The likely cause: another thread starts a process while the downloaded program is still open for writing, the child inherits that handle, and running the program is refused until the child lets go. Retry the probe briefly on that error, and make the test steady.
-- **Tiered defaults at first run.** `ryter crew suggest` exists; first-run setup and the builds-paused message should offer it directly rather than pointing at it.
-- **Crew spend where people look.** Per-role lines (builder / auditor / architect) on the spend card and `/spend`; per-task cost on the crew review surface. A cost preview before a batch, with a threshold that asks.
-- **`/patch` surface.** Show the open patch (tasks, what it waits on), land now, drop it.
 - **Checks auto-detect** on first use (`Cargo.toml` → `cargo test`, `package.json` → its test script, `pyproject.toml` → `pytest`, `go.mod` → `go test`), written to `.ryter/config.toml` after the user confirms.
 - **Recorded wire fixtures + a live smoke test.** Tool calling was broken on two backends while 212 tests passed, because every test used idealized deltas. Record real SSE per provider (tool calls, parallel calls, truncation) and replay those; add one nightly live round trip per built-in provider.
-- **Crew review surface.** One panel for every task: state, diff, handback, checks, audit, cost; merge a waiting branch, retry with a note, reject, revert a merged task (`git revert -m 1`). The tasks card opens it.
-- **Refuse unpriced models** in the crew without an explicit opt-in: the dollar caps cannot trip on unknown spend (the token cap still does).
-- **Keep specialist transcripts** in the session directory. Live run 3's auditor was refused a command, and there was no record of which one.
 - **From the live runs:** a task is recorded as landed on the patch only when its whole batch finishes (batch barrier); parallel jobs can overshoot the session budget by about one round each (~$0.10 seen); the retry brief says "start clean" but the worktree is reused; the architect is the slowest and dearest role (~$0.70 per design on Opus), so measure whether a cheaper architect designs as well.
 - **Streamed `bash` output**, and **reconcile the context gauge** with the provider's real `input_tokens` rather than bytes/4.
 - **`ryter run tasks.toml`** unattended, producing branches or PRs with the audit as the description.
