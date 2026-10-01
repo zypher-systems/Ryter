@@ -1679,6 +1679,7 @@ dependencies = [
  "landlock",
  "regex",
  "reqwest",
+ "rustix 1.1.5",
  "serde",
  "serde_json",
  "sha2",

@@ -12,7 +12,7 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use ed25519_dalek::{Signature, VerifyingKey};
@@ -64,6 +64,21 @@ fn key_from_pem(pem: &str) -> Option<String> {
 /// replace themselves; a cargo build (installed or in a checkout, wherever
 /// its target folder is) updates the way it was built.
 const RELEASE_BUILD: bool = option_env!("RYTER_RELEASE_BUILD").is_some();
+
+/// Whether this binary came from a release, and so may replace itself.
+pub fn is_release_build() -> bool {
+    RELEASE_BUILD
+}
+
+/// What to say when a newer release is out and this build can't take it:
+/// one built with cargo updates the way it was built.
+pub fn built_with_cargo(avail: &Available, current: Version) -> String {
+    format!(
+        "Ryter {} is out (you have {current}). This Ryter was built with cargo, so update it \
+         the way you built it, or install the release: {INSTALL}. What's new: {}",
+        avail.version, avail.notes
+    )
+}
 
 /// The launch check runs at most this often.
 const CHECK_EVERY_SECS: u64 = 24 * 60 * 60;
@@ -243,6 +258,11 @@ fn is_dev_build(exe: &Path) -> bool {
 
 /// Download `avail`, check it, and put it in place of `exe`.
 pub fn install(src: &Source, avail: &Available, exe: &Path) -> Result<()> {
+    install_within(src, avail, exe, PROBE_LIMIT)
+}
+
+/// [`install`], giving the new binary `limit` to report its version.
+fn install_within(src: &Source, avail: &Available, exe: &Path, limit: Duration) -> Result<()> {
     let target = target().ok_or_else(|| {
         Error::Config(format!(
             "there's no prebuilt Ryter for {} {}",
@@ -271,7 +291,7 @@ pub fn install(src: &Source, avail: &Available, exe: &Path) -> Result<()> {
         )));
     }
     let binary = unpack(&tarball, &format!("ryter-{target}/ryter"))?;
-    replace(exe, &binary, avail.version)
+    replace_within(exe, &binary, avail.version, limit)
 }
 
 /// When it last checked, and whether the launch check is due.
@@ -307,13 +327,15 @@ pub fn on_launch(home: &Path, mode: UpdateMode) -> Option<String> {
         return None;
     }
     let src = Source::new();
+    let current = Version::current();
     launch(
         home,
         mode,
         &src,
-        Version::current(),
+        current,
         installed_binary,
         now(),
+        RELEASE_BUILD,
     )
 }
 
@@ -325,6 +347,7 @@ fn launch(
     current: Version,
     exe: impl FnOnce() -> Result<PathBuf>,
     now: u64,
+    release_build: bool,
 ) -> Option<String> {
     if mode == UpdateMode::Off || !due(home, now) {
         return None;
@@ -333,6 +356,8 @@ fn launch(
     record(home, now);
     let avail = found?;
     Some(match mode {
+        // A cargo build is told it's out, and how to update it.
+        _ if !release_build => built_with_cargo(&avail, current),
         UpdateMode::Install => match exe().and_then(|exe| install(src, &avail, &exe)) {
             Ok(()) => format!(
                 "Ryter {} is installed. Restart Ryter to use it. What's new: {}",
@@ -454,12 +479,20 @@ fn unpack(tarball: &[u8], path: &str) -> Result<Vec<u8>> {
     Err(Error::Config(format!("the download has no {path}")))
 }
 
-/// Put `binary` in place of `exe`, once it runs and reports `version`. The
-/// swap is a rename in the same folder, so a running Ryter isn't disturbed.
-fn replace(exe: &Path, binary: &[u8], version: Version) -> Result<()> {
+/// How long a new binary has to report its version.
+const PROBE_LIMIT: Duration = Duration::from_secs(10);
+
+/// How much of its output is read.
+const PROBE_OUTPUT: usize = 4 << 10;
+
+/// Put `binary` in place of `exe`, once it runs and reports `version`
+/// within `limit`. The swap is a rename in the same folder, so a running
+/// Ryter isn't disturbed.
+fn replace_within(exe: &Path, binary: &[u8], version: Version, limit: Duration) -> Result<()> {
     let dir = exe
         .parent()
         .ok_or_else(|| Error::Config(format!("{} has no folder", exe.display())))?;
+    clear_leftovers(dir);
     let tmp = dir.join(format!(".ryter.update-{}", std::process::id()));
     if let Err(e) = std::fs::write(&tmp, binary) {
         let _ = std::fs::remove_file(&tmp);
@@ -479,12 +512,8 @@ fn replace(exe: &Path, binary: &[u8], version: Version) -> Result<()> {
             std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
                 .map_err(|e| Error::Io(e.to_string()))?;
         }
-        let out = std::process::Command::new(&tmp)
-            .arg("--version")
-            .output()
-            .map_err(|e| Error::Config(format!("the new binary didn't run: {e}")))?;
-        let said = String::from_utf8_lossy(&out.stdout);
-        if !out.status.success() || said.split_whitespace().nth(1) != Some(&version.to_string()) {
+        let said = probe(&tmp, limit)?;
+        if said.split_whitespace().nth(1) != Some(&version.to_string()) {
             return Err(Error::Config(format!(
                 "the new binary reported {:?}, not ryter {version}; nothing was installed",
                 said.trim()
@@ -497,6 +526,114 @@ fn replace(exe: &Path, binary: &[u8], version: Version) -> Result<()> {
         let _ = std::fs::remove_file(&tmp);
     }
     checked
+}
+
+/// What `binary --version` prints, within `limit`.
+///
+/// Nothing it does can hold the update up. It gets no input, so it can't
+/// read the terminal. Its output is read up to [`PROBE_OUTPUT`] by a reader
+/// that is never waited on: a flood ends when that reader stops, and a
+/// child left holding the output open doesn't block. Past `limit`, it and
+/// everything it started (its own process group) are killed and reaped.
+/// `Command::output` had no deadline: a signed binary that hung on
+/// `--version` hung `ryter update`, and the update file stayed behind.
+fn probe(binary: &Path, limit: Duration) -> Result<String> {
+    use std::process::Stdio;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    let mut cmd = std::process::Command::new(binary);
+    cmd.arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| Error::Config(format!("the new binary didn't run: {e}")))?;
+    let said = Arc::new(Mutex::new(Vec::new()));
+    let ended = Arc::new(AtomicBool::new(false));
+    if let Some(mut out) = child.stdout.take() {
+        let (said, ended) = (said.clone(), ended.clone());
+        std::thread::spawn(move || {
+            let mut chunk = [0u8; 1024];
+            while let Ok(n @ 1..) = out.read(&mut chunk) {
+                let Ok(mut said) = said.lock() else { break };
+                said.extend_from_slice(&chunk[..n]);
+                if said.len() >= PROBE_OUTPUT {
+                    break;
+                }
+            }
+            ended.store(true, Ordering::Release);
+        });
+    }
+    let until = Instant::now() + limit;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(20)),
+            _ => {
+                end_group(&mut child);
+                return Err(Error::Config(format!(
+                    "the new binary didn't report its version within {} s; nothing was installed",
+                    limit.as_secs_f32()
+                )));
+            }
+        }
+    };
+    // Its output is in the pipe by now; a child of its own may hold the
+    // pipe open, so don't wait for the end for long.
+    let grace = Instant::now() + Duration::from_millis(500);
+    while !ended.load(Ordering::Acquire) && Instant::now() < grace {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if !status.success() {
+        return Err(Error::Config(format!(
+            "the new binary failed ({status}); nothing was installed"
+        )));
+    }
+    let said = said.lock().map(|s| s.clone()).unwrap_or_default();
+    Ok(String::from_utf8_lossy(&said[..said.len().min(PROBE_OUTPUT)]).into_owned())
+}
+
+/// Kill a probe that ran out of time, and everything it started, then reap
+/// it. The group is killed while its leader is unreaped, so its id can't
+/// have passed to another process.
+fn end_group(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        let group = rustix::process::Pid::from_child(child);
+        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Update files an interrupted update left in `dir` (Ryter quit mid-way),
+/// once they are an hour old: a newer one may be another Ryter's, at work.
+fn clear_leftovers(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > Duration::from_secs(60 * 60));
+        if stale
+            && entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".ryter.update-")
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -517,7 +654,11 @@ mod tests {
     /// A release's tarball holding `ryter-<target>/ryter`: a script that
     /// reports `version`.
     fn tarball(target: &str, version: &str) -> Vec<u8> {
-        let script = format!("#!/bin/sh\necho 'ryter {version}'\n");
+        tarball_of(target, &format!("#!/bin/sh\necho 'ryter {version}'\n"))
+    }
+
+    /// A release's tarball holding `ryter-<target>/ryter` as `script`.
+    fn tarball_of(target: &str, script: &str) -> Vec<u8> {
         let mut tar = tar::Builder::new(Vec::new());
         let mut header = tar::Header::new_gnu();
         header.set_size(script.len() as u64);
@@ -865,7 +1006,7 @@ mod tests {
             // Running as root: permissions don't apply, so there's nothing to see.
             let _ = std::fs::remove_file(probe);
         } else {
-            let err = replace(&exe, b"#!/bin/sh\n", Version(9, 9, 9))
+            let err = replace_within(&exe, b"#!/bin/sh\n", Version(9, 9, 9), PROBE_LIMIT)
                 .unwrap_err()
                 .to_string();
             assert!(
@@ -874,6 +1015,97 @@ mod tests {
             );
         }
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// A signed 9.9.9 release whose binary is `script`.
+    fn signed_script(script: &'static str) -> Source {
+        release("9.9.9", move |f| {
+            let target = target().unwrap();
+            let tgz = tarball_of(target, script);
+            let sums = format!("{}  ryter-{target}.tar.gz\n", hex(&Sha256::digest(&tgz)));
+            let sig = b64(&signing_key().sign(sums.as_bytes()).to_bytes());
+            for (p, body) in f.iter_mut() {
+                if p.ends_with(".tar.gz") {
+                    *body = tgz.clone();
+                } else if p.ends_with("SHA256SUMS") {
+                    *body = sums.clone().into_bytes();
+                } else if p.ends_with(".sig") {
+                    *body = sig.clone().into_bytes();
+                }
+            }
+        })
+    }
+
+    /// A signed binary that hangs, or floods its output, when asked its
+    /// version can't hold the update up: a timely error, the installed
+    /// binary untouched, and no update file left behind. One whose child
+    /// holds its output open after it answers installs at once. The probe
+    /// used to wait for ever (a reviewer's signed `sleep 30`).
+    #[test]
+    fn a_binary_that_hangs_cant_hold_the_update_up() {
+        let limit = Duration::from_secs(1);
+        for (why, script) in [
+            ("hangs", "#!/bin/sh\nsleep 30 & sleep 30\n"),
+            (
+                "floods",
+                "#!/bin/sh\nwhile :; do echo 'ryter 9.9.9 and more'; done\n",
+            ),
+        ] {
+            let src = signed_script(script);
+            let avail = check(&src, Version(0, 1, 0)).unwrap().unwrap();
+            let (dir, exe) = installed();
+            let started = Instant::now();
+            let err = install_within(&src, &avail, &exe, limit)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "{why}: took {:?}",
+                started.elapsed()
+            );
+            assert!(err.contains("nothing was installed"), "{why}: {err}");
+            assert_eq!(
+                std::fs::read_to_string(&exe).unwrap(),
+                "#!/bin/sh\necho 'ryter 0.1.0'\n",
+                "{why}: the installed binary is untouched"
+            );
+            let left: Vec<_> = std::fs::read_dir(dir.path())
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name())
+                .collect();
+            assert_eq!(left.len(), 1, "{why}: {left:?}");
+        }
+        let src = signed_script("#!/bin/sh\nsleep 3 &\necho 'ryter 9.9.9'\n");
+        let avail = check(&src, Version(0, 1, 0)).unwrap().unwrap();
+        let (_dir, exe) = installed();
+        let started = Instant::now();
+        install_within(&src, &avail, &exe, limit).unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "took {:?}",
+            started.elapsed()
+        );
+        assert!(std::fs::read_to_string(&exe).unwrap().contains("sleep 3"));
+    }
+
+    /// An update file an interrupted update left behind goes once it's an
+    /// hour old; a newer one may be another Ryter's, at work.
+    #[test]
+    fn leftovers_of_an_interrupted_update_are_cleared() {
+        let (dir, exe) = installed();
+        let old = dir.path().join(".ryter.update-1");
+        let new = dir.path().join(".ryter.update-2");
+        std::fs::write(&old, "x").unwrap();
+        std::fs::write(&new, "x").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - Duration::from_secs(2 * 60 * 60))
+            .unwrap();
+        clear_leftovers(dir.path());
+        assert!(!old.exists() && new.exists() && exe.exists());
     }
 
     /// At launch: install mode installs and says to restart, notify mode
@@ -890,7 +1122,16 @@ mod tests {
         };
 
         let home = TempDir::new().unwrap();
-        let said = launch(home.path(), UpdateMode::Notify, &src, old, at(&exe), 100).unwrap();
+        let said = launch(
+            home.path(),
+            UpdateMode::Notify,
+            &src,
+            old,
+            at(&exe),
+            100,
+            true,
+        )
+        .unwrap();
         assert!(
             said.contains("9.9.9 is out (you have 0.1.0). `ryter update` installs it"),
             "{said}"
@@ -900,12 +1141,29 @@ mod tests {
             "notify installs nothing"
         );
         assert_eq!(
-            launch(home.path(), UpdateMode::Install, &src, old, at(&exe), 200),
+            launch(
+                home.path(),
+                UpdateMode::Install,
+                &src,
+                old,
+                at(&exe),
+                200,
+                true
+            ),
             None
         );
 
         let home = TempDir::new().unwrap();
-        let said = launch(home.path(), UpdateMode::Install, &src, old, at(&exe), 100).unwrap();
+        let said = launch(
+            home.path(),
+            UpdateMode::Install,
+            &src,
+            old,
+            at(&exe),
+            100,
+            true,
+        )
+        .unwrap();
         assert!(
             said.starts_with("Ryter 9.9.9 is installed. Restart Ryter to use it."),
             "{said}"
@@ -918,11 +1176,40 @@ mod tests {
 
         let home = TempDir::new().unwrap();
         let refused = || Err(Error::Config("built with cargo".into()));
-        let said = launch(home.path(), UpdateMode::Install, &src, old, refused, 100).unwrap();
+        let said = launch(
+            home.path(),
+            UpdateMode::Install,
+            &src,
+            old,
+            refused,
+            100,
+            true,
+        )
+        .unwrap();
         assert!(
             said.contains("couldn't be installed") && said.contains("built with cargo"),
             "{said}"
         );
+
+        // A cargo build copied anywhere is told how to update, not that
+        // `ryter update` installs it, and nothing is downloaded or replaced.
+        let home = TempDir::new().unwrap();
+        let before = std::fs::read(&exe).unwrap();
+        let said = launch(
+            home.path(),
+            UpdateMode::Install,
+            &src,
+            old,
+            at(&exe),
+            100,
+            false,
+        )
+        .unwrap();
+        assert!(
+            said.contains("built with cargo") && !said.contains("`ryter update` installs"),
+            "{said}"
+        );
+        assert_eq!(std::fs::read(&exe).unwrap(), before, "untouched");
 
         let home = TempDir::new().unwrap();
         let mut offline = src.clone();
@@ -934,7 +1221,8 @@ mod tests {
                 &offline,
                 old,
                 at(&exe),
-                100
+                100,
+                true
             ),
             None
         );

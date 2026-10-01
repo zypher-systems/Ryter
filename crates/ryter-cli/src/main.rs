@@ -951,6 +951,15 @@ fn update_cmd(check_only: bool) -> ryter_core::Result<()> {
         println!("ryter {current} is the latest release");
         return Ok(());
     };
+    // A cargo build is told how to update; asked to install, that's a failure.
+    if !update::is_release_build() {
+        let how = update::built_with_cargo(&avail, current);
+        if check_only {
+            println!("{how}");
+            return Ok(());
+        }
+        return Err(ryter_core::Error::Config(how));
+    }
     if check_only {
         println!(
             "ryter {} is out (you have {current}). `ryter update` installs it.\nWhat's new: {}",

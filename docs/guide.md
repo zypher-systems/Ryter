@@ -34,13 +34,13 @@ Before it installs anything, Ryter checks:
 
 1. **The signature.** `SHA256SUMS.sig` must be an ed25519 signature over the release's `SHA256SUMS`, made with Ryter's release key. Ryter is built with the public half of that key (`release/ryter-release.pub.pem`), so a tampered release, or one signed with any other key, is refused. Releases before 0.9.0 aren't signed and are never installed this way.
 2. **The checksum.** The download must match its line in `SHA256SUMS`.
-3. **The binary itself.** It must run and report the version the release says.
+3. **The binary itself.** It must run and report the version the release says, within 10 seconds. A binary that hangs is stopped, along with anything it started, and nothing is installed.
 
 Only then does it replace the installed binary, the way `install.sh` does. Ryter writes the new one next to the old one and renames it into place.
 
 Ryter won't replace itself in these cases, and says what to do instead:
 
-- **A build from source** (`cargo build`, `cargo install`): only binaries the release workflow built update themselves.
+- **A build from source** (`cargo build`, `cargo install`): only binaries the release workflow built update themselves. At launch, and from `ryter update --check`, a build from source is told when a newer release is out and how to update it.
 - **A folder you can't write to:** for example, a binary installed under `/usr/local/bin` by another account. Ryter never uses `sudo`. Rerun the install script as the account that installed it.
 
 `RYTER_UPDATE_URL` points the check at a mirror (`<url>/latest`, files under `<url>/download/<tag>/`). A mirror's releases must still carry a valid signature from the release key.
