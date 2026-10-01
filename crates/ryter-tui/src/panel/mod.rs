@@ -540,7 +540,9 @@ fn draw_one(
         border,
         heavy: p.modal().is_some(),
     };
-    let mut inner = chrome::draw_frame(frame, area, &ch, theme);
+    // Only what is on the screen: a panel taller than a very short terminal
+    // must not be told it drew rows that fell off the bottom.
+    let mut inner = chrome::draw_frame(frame, area, &ch, theme).intersection(frame.area());
     // The keys, as the panel's last row: in color, where the eye reads,
     // rather than dim text in the border. A panel that draws its own keys
     // still gets the full list when asked for it.

@@ -8,7 +8,7 @@ user-invocable: true
 
 The user keeps standing rules in two files. Ryter puts both in your instructions on every message, so a rule written there holds in later sessions.
 
-- **Every project:** `~/.ryter/RYTER.md`, shown in your instructions under "The user's rules". You change it with `update_rules`. Your file tools can't reach it.
+- **Every project:** `RYTER.md` in Ryter's home folder. That is `~/.ryter/RYTER.md` unless `RYTER_HOME` puts the folder elsewhere, and your instructions name the file where it really is, under "The user's rules". You change it with `update_rules`. Your file tools can't reach it.
 - **This project only:** `RYTER.md` at the top of the project, shown under "Project instructions". Edit it with your ordinary file tools.
 
 Where the two differ, the project's wins.

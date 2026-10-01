@@ -15,6 +15,10 @@ use crate::view::View;
 /// press meant to send a message can't approve what appeared under it.
 pub const ENTER_GUARD_MS: u64 = 500;
 
+/// The narrowest card that can show a change whole: a line number, its
+/// sign, and text beside them.
+const MIN_WHOLE_WIDTH: usize = 16;
+
 /// Permission prompt (`R-POP-76`, `R-POP-77`): a card docked above the
 /// composer, where the eyes already are, saying what the call does, why the
 /// model says it wants it, what's at risk, and whether `/undo` reaches it.
@@ -39,14 +43,19 @@ pub struct PermissionModal {
     /// All of it is here to scroll through, and `y` answers only once its
     /// end has been on screen.
     pub whole: bool,
-    /// First row of the change shown, when it is longer than the card.
+    /// First row of the change asked for, when it is longer than the card.
+    /// Where the window really starts is this, held to `seen`.
     top: usize,
     /// The furthest `top` can go, and the rows of the change that fit, as
     /// last drawn.
     max_top: std::cell::Cell<usize>,
     page: std::cell::Cell<usize>,
-    /// The end of the change has been on screen. The card moves by a row
-    /// or by less than a page, so every row before the end has been too.
+    /// Rows of the change drawn so far, counted from its first: rows
+    /// `0..seen` have each been in a frame. Only drawing moves it. Keys
+    /// arrive in batches between frames, so a count kept by the keys would
+    /// run ahead of what was shown.
+    seen: std::cell::Cell<usize>,
+    /// Every row of the change has been drawn.
     read: std::cell::Cell<bool>,
     /// The whole change as rows, for the width it was last drawn at: a long
     /// one is not laid out again on every frame.
@@ -70,6 +79,7 @@ impl PermissionModal {
             top: 0,
             max_top: std::cell::Cell::new(0),
             page: std::cell::Cell::new(1),
+            seen: std::cell::Cell::new(0),
             read: std::cell::Cell::new(false),
             rows: std::cell::RefCell::new(None),
             nudge: None,
@@ -293,7 +303,10 @@ impl Panel for PermissionModal {
             )],
             theme,
         ));
-        if let Some(why) = &self.why {
+        // On a short card, a change that must be read whole gets the row
+        // the model's reason would take.
+        let short = self.whole && usize::from(height) < 6;
+        if let Some(why) = self.why.as_ref().filter(|_| !short) {
             lines.push(Self::row(
                 "why",
                 vec![Span::styled(
@@ -318,6 +331,7 @@ impl Panel for PermissionModal {
         let room = h
             .saturating_sub(lines.len() + 1 + usize::from(self.nudge.is_some()))
             .max(1);
+        let mut show_nudge = self.nudge.is_some();
         if let Some(diff) = self.preview.as_deref().filter(|d| !d.hunks.is_empty()) {
             let what = if diff.created {
                 format!("new file · {} lines", diff.added)
@@ -350,25 +364,57 @@ impl Panel for PermissionModal {
                         "",
                     );
                     *laid_out = Some((w, rows));
+                    // Rows are numbered by this layout. What was drawn at
+                    // another width is read again from the top.
+                    self.seen.set(0);
                 }
                 let all = laid_out.as_ref().map_or(&[][..], |(_, rows)| rows);
                 let total = all.len();
-                let shown = if total <= room {
-                    room
+                // The rows really left under the ones above: the height as
+                // given. A row that doesn't fit isn't drawn, so it can't
+                // count as shown.
+                let avail = usize::from(height).saturating_sub(lines.len());
+                // The reminder to read on gets a row only where that leaves
+                // two for the change: it must not crowd out what it is
+                // asking the user to read.
+                show_nudge = show_nudge && avail > 2;
+                let avail = avail - usize::from(show_nudge);
+                // Too narrow for a line number, a sign and some text: the
+                // rows would run off the side, so none is shown or counted.
+                let avail = if w < MIN_WHOLE_WIDTH { 0 } else { avail };
+                if avail == 0 && !self.read.get() {
+                    // No room for any of it: say so where the path was,
+                    // since `y` will do nothing here.
+                    lines.truncate(usize::from(height).saturating_sub(1));
+                    lines.push(widgets::colored(
+                        "no room to show the change · make the window bigger to read it",
+                        theme.warn,
+                        theme,
+                    ));
+                }
+                let shown = if total <= avail {
+                    total
+                } else if avail >= 2 {
+                    // One row says how much is left.
+                    avail - 1
                 } else {
-                    room.saturating_sub(1).max(1)
+                    avail
                 };
-                let max_top = total.saturating_sub(shown);
-                let top = self.top.min(max_top);
+                let max_top = total.saturating_sub(shown.max(1));
+                // The window starts no further down than what has been
+                // drawn, however many keys were pressed since the last
+                // frame: nothing is passed over unseen.
+                let top = self.top.min(max_top).min(self.seen.get());
                 self.max_top.set(max_top);
                 self.page.set(shown);
-                if top == max_top {
+                self.seen.set(self.seen.get().max(top + shown));
+                if total > 0 && self.seen.get() >= total {
                     self.read.set(true);
                 }
                 let mut rows: Vec<Line<'static>> =
                     all.iter().skip(top).take(shown).cloned().collect();
-                if total > room {
-                    let below = max_top - top;
+                if total > shown && avail >= 2 {
+                    let below = total - (top + shown);
                     let note = if below > 0 {
                         format!(
                             "↓ {below} more row{} · read to the end (↓ PgDn), then y",
@@ -420,8 +466,12 @@ impl Panel for PermissionModal {
                 ));
             }
         }
-        if let Some(n) = self.nudge {
+        if let Some(n) = self.nudge.filter(|_| show_nudge) {
             lines.push(widgets::colored(n, theme.warn, theme));
+        }
+        if self.whole {
+            // Exactly what fits: the rows of the change were counted to.
+            lines.truncate(usize::from(height));
         }
         Body {
             lines,
@@ -442,10 +492,12 @@ impl Panel for PermissionModal {
             }
             KeyCode::Enter if view.now_ms < self.opened_ms + ENTER_GUARD_MS => Outcome::Stay,
             // A change that must be read whole: move through it, a row at a
-            // time or a page less a row, so nothing is jumped over.
+            // time or a page less a row. Several of these can arrive before
+            // the next frame, so none goes past what has been drawn: the
+            // next frame starts there at the furthest.
             KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown if self.whole => {
-                let max = self.max_top.get();
-                let top = self.top.min(max);
+                let furthest = self.max_top.get().min(self.seen.get());
+                let top = self.top.min(furthest);
                 let page = self.page.get().saturating_sub(1).max(1);
                 self.top = match key.code {
                     KeyCode::Up => top.saturating_sub(1),
@@ -453,13 +505,13 @@ impl Panel for PermissionModal {
                     KeyCode::PageUp => top.saturating_sub(page),
                     _ => top + page,
                 }
-                .min(max);
+                .min(furthest);
                 self.nudge = None;
                 Outcome::Stay
             }
-            // And `y` is a yes to all of it, so it answers only once the
-            // end has been on screen, and not in the moment the card
-            // appeared under whatever was being typed.
+            // And `y` is a yes to all of it, so it answers only once every
+            // row has been drawn, and not in the moment the card appeared
+            // under whatever was being typed.
             KeyCode::Char('y' | 'Y') if self.whole && !self.read.get() => {
                 self.nudge =
                     Some("There's more of this change below: read to its end (↓ PgDn), then y");
@@ -1084,6 +1136,156 @@ mod tests {
         // Paging doesn't move it, and `y` answers.
         key(&mut m, &mut v, KeyCode::PageDown);
         assert_eq!(text(&m.render(&v, 90, 12, theme)), rows);
+        assert!(is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
+    }
+    fn hundred_rules() -> String {
+        (0..100).map(|i| format!("- rule number {i};\n")).collect()
+    }
+
+    /// Which of the hundred rules a drawn card shows.
+    fn rules_in(rows: &[String]) -> Vec<usize> {
+        (0..100)
+            .filter(|i| {
+                rows.iter()
+                    .any(|r| r.contains(&format!("- rule number {i};")))
+            })
+            .collect()
+    }
+
+    /// Keys arrive in batches: the screen takes every key that is waiting
+    /// before it draws again. Thirty PgDn presses between two frames used
+    /// to land on the last window, which counted as having read to the
+    /// end, and `y` then saved the ninety rules in between unseen. The card
+    /// counts only rows a frame has drawn, and never starts a window past
+    /// them.
+    #[test]
+    fn keys_pressed_between_frames_skip_nothing() {
+        let theme = Theme::truecolor_dark();
+        let mut v = view();
+        v.now_ms = 10_000;
+        let mut m = rules_card(&hundred_rules(), 0);
+        let (width, height) = (70, 12);
+        let first = rules_in(&text(&m.render(&v, width, height, theme)));
+        assert_eq!(first, (0..=7).collect::<Vec<_>>());
+        // Thirty presses, and no frame between them.
+        for _ in 0..30 {
+            key(&mut m, &mut v, KeyCode::PageDown);
+        }
+        let second = rules_in(&text(&m.render(&v, width, height, theme)));
+        assert_eq!(
+            second.first(),
+            Some(&8),
+            "the next frame starts where the last one ended: {second:?}"
+        );
+        assert!(!is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
+        // Batches of keys all the way down: every rule is drawn before `y`
+        // answers, and `y` answers nothing until then.
+        let mut seen = [first, second].concat();
+        for _ in 0..200 {
+            if m.read.get() {
+                break;
+            }
+            for _ in 0..30 {
+                key(&mut m, &mut v, KeyCode::PageDown);
+                key(&mut m, &mut v, KeyCode::Down);
+                assert!(!is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
+            }
+            seen.extend(rules_in(&text(&m.render(&v, width, height, theme))));
+        }
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen, (0..100).collect::<Vec<_>>(), "a rule was never drawn");
+        assert!(is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
+    }
+
+    /// A card too short to show any of the change shows none of it, and
+    /// counts none of it: `y` waits for a card that can.
+    #[test]
+    fn a_card_with_no_room_for_the_change_cannot_be_approved() {
+        let theme = Theme::truecolor_dark();
+        let mut v = view();
+        v.now_ms = 10_000;
+        let mut m = rules_card("- Be brief.\n- Use British spelling.\n", 0);
+        for height in [0, 1, 2] {
+            let rows = text(&m.render(&v, 70, height, theme));
+            assert!(
+                !rows.iter().any(|r| r.contains("British"))
+                    || rows.iter().position(|r| r.contains("British")) >= Some(usize::from(height)),
+                "{rows:?}"
+            );
+            for _ in 0..5 {
+                key(&mut m, &mut v, KeyCode::PageDown);
+            }
+            assert!(
+                !is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))),
+                "at {height} rows"
+            );
+        }
+        let last = text(&m.render(&v, 70, 2, theme));
+        assert!(
+            last.iter()
+                .any(|r| r.contains("no room to show the change")),
+            "{last:?}"
+        );
+        assert!(last.len() <= 2, "{last:?}");
+        // Nor one too narrow for a row of it.
+        m.render(&v, 12, 20, theme);
+        assert!(
+            !is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))),
+            "12 columns"
+        );
+        // One row of it at a time is still all of it, in the end. The
+        // reminder that `y` sets off doesn't take that row.
+        let mut m = rules_card("- Be brief.\n- Use British spelling.\n- Ask first.\n", 0);
+        let mut drawn = Vec::new();
+        for _ in 0..10 {
+            let rows = text(&m.render(&v, 70, 3, theme));
+            assert!(rows.len() <= 3, "{rows:?}");
+            drawn.extend(rows);
+            if m.read.get() {
+                break;
+            }
+            assert!(!is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
+            let nudged = text(&m.render(&v, 70, 3, theme));
+            assert!(
+                !nudged.iter().any(|r| r.contains("no room")) && nudged.len() == 3,
+                "{nudged:?}"
+            );
+            key(&mut m, &mut v, KeyCode::Down);
+        }
+        let drawn = drawn.join("\n");
+        assert!(
+            drawn.contains("British") && drawn.contains("Ask first"),
+            "{drawn}"
+        );
+        assert!(is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
+    }
+
+    /// At another width the rows are different rows, so a change part-read
+    /// is read again from the top. One read to the end stays read.
+    #[test]
+    fn a_resize_part_way_starts_the_reading_again() {
+        let theme = Theme::truecolor_dark();
+        let mut v = view();
+        v.now_ms = 10_000;
+        let mut m = rules_card(&hundred_rules(), 0);
+        m.render(&v, 70, 12, theme);
+        key(&mut m, &mut v, KeyCode::PageDown);
+        let before = rules_in(&text(&m.render(&v, 70, 12, theme)));
+        assert!(before.first() > Some(&0), "{before:?}");
+        // Narrower: the window is back at the first rule.
+        let after = rules_in(&text(&m.render(&v, 40, 12, theme)));
+        assert_eq!(after.first(), Some(&0), "{after:?}");
+        assert!(!is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
+        // Read to the end, then resized: it has all been shown.
+        for _ in 0..200 {
+            if m.read.get() {
+                break;
+            }
+            key(&mut m, &mut v, KeyCode::PageDown);
+            m.render(&v, 40, 12, theme);
+        }
+        m.render(&v, 70, 12, theme);
         assert!(is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
     }
 }

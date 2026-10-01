@@ -490,7 +490,8 @@ Your rules come first, and where the two differ the project's win. You can edit 
 
 - **The prompt holds the whole change.** Every added and removed line is there, and long lines are wrapped, not cut. This file isn't in your project, so `/changes` never shows it; the prompt is the only place to read the change.
 - **A change longer than the prompt scrolls.** `↓` and `PgDn` move through it, `↑` and `PgUp` go back, and a line under the change says how many rows are left.
-- **Only `y` saves it, and only once the end of the change has been on screen.** Before that, `y` tells you there is more to read. There's no "always" for this prompt, and `--always-approve` doesn't skip it, because the file steers every later session.
+- **Only `y` saves it, and only once every row of the change has been on screen.** Before that, `y` tells you there is more to read. Ryter counts the rows it has drawn, not the keys pressed, so holding `PgDn` or pressing it many times at once skips nothing: each screenful starts where the last one ended. If you resize the window part-way through, the reading starts again from the top.
+- **In a window too small to show any of the change,** the prompt says so, and `y` does nothing until there is room. There's no "always" for this prompt, and `--always-approve` doesn't skip it, because the file steers every later session.
 - **The rules are plain text.** A change holding a character the screen wouldn't show as it is (a control code, an invisible character, or one that reverses the direction of text) is refused before you are asked.
 - If you say no, the file is left as it was, and the model is told so.
 - In a headless run (`ryter -p`) nobody can answer, so nothing is saved.

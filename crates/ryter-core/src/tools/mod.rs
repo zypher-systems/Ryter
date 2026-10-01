@@ -317,7 +317,8 @@ fn spec(name: &str) -> Option<ToolSpec> {
             },"required":["title","html"]}),
         ),
         "update_rules" => (
-            "Change the user's own rules for every project (~/.ryter/RYTER.md), shown in \
+            "Change the user's own rules for every project: RYTER.md in Ryter's home folder \
+             (~/.ryter/RYTER.md, unless RYTER_HOME puts that folder elsewhere), shown in \
              your instructions under \"The user's rules\". Pass the whole file as it should \
              be after the change: every rule already there, word for word, with yours added, \
              changed or removed. Ryter shows the user the difference and asks before it \
