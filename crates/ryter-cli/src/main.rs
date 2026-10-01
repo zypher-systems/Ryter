@@ -134,15 +134,19 @@ enum Command {
         /// compare tierings.
         #[arg(long)]
         crew: Option<String>,
-        /// Spend cap per task, in USD.
+        /// Spend cap per task, in USD. Must be above 0: a benchmark never
+        /// runs uncapped.
         #[arg(long, default_value_t = 1.0)]
         budget_usd: f64,
-        /// Run each task this many times (models vary run to run).
+        /// Run each task this many times, at least once (models vary run to
+        /// run).
         #[arg(long, default_value_t = 1)]
         repeat: u32,
         /// Publish the run as `<path>.md` and `<path>.json` (`docs/bench`),
-        /// and compare it with the run published there before. Exits 1 if a
-        /// task is accepted less often, or false passes went up.
+        /// and compare it with the run published there before. If a task is
+        /// accepted less often, false passes went up, or a published task
+        /// was skipped here, the published run is kept and the exit code
+        /// is 1. Not with `--only`.
         #[arg(long)]
         publish: Option<std::path::PathBuf>,
     },
@@ -678,6 +682,19 @@ fn bench_cmd(
             "--publish is for the whole suite: run it without --only".into(),
         ));
     }
+    // A run of nothing is not a run: with --publish it replaced the published
+    // results with none, and exited 0.
+    if repeat == 0 {
+        return Err(Error::Config(
+            "--repeat must be at least 1: zero runs measure nothing".into(),
+        ));
+    }
+    // Zero means "no budget" everywhere else in Ryter.
+    if !budget_usd.is_finite() || budget_usd <= 0.0 {
+        return Err(Error::Config(
+            "--budget-usd must be above 0: a benchmark never runs uncapped".into(),
+        ));
+    }
     let mut tasks = load_suite(suite)?;
     if !only.is_empty() {
         tasks.retain(|t| only.contains(&t.name));
@@ -698,6 +715,12 @@ fn bench_cmd(
         }
         None => true,
     });
+    // Nothing left to run is a failure, not an empty success.
+    if tasks.is_empty() {
+        return Err(Error::Config(
+            "every task was skipped, so nothing ran: install what they need".into(),
+        ));
+    }
     let last = config::load_last_route(&home);
     let (connection, model) = config::resolve_route(&cfg, last.as_ref(), None, None);
     let conn = cfg
@@ -772,12 +795,20 @@ fn bench_cmd(
             {
                 let _ = writeln!(f, "{line}");
             }
-            let paused = r.outcome.starts_with("builds paused");
+            // No model answered: a crew that won't start, a refused key, a
+            // model the account can't reach. The crew wasn't measured, so the
+            // run isn't a result, with or without --publish; it used to go on
+            // and exit 0. Stopping here also spends nothing on the tasks left.
+            let stopped = r
+                .unanswered()
+                .then(|| format!("{} ({})", r.task, r.outcome));
             results.push(r);
-            if paused {
-                eprintln!("stopping: the crew cannot run until the auditor is a different model");
+            if let Some(at) = stopped {
                 println!("\n{}", Summary::of(&results).render());
-                return Ok(true);
+                return Err(Error::Config(format!(
+                    "the benchmark stopped: no model answered on {at}. The crew wasn't \
+                     measured, so this run isn't a result, and nothing was published."
+                )));
             }
         }
     }
@@ -796,33 +827,33 @@ fn bench_cmd(
         results,
         skipped,
     };
-    let (md, json) = (stem.with_extension("md"), stem.with_extension("json"));
-    // Compared with the run published there before, then replaced by this
-    // one: git keeps the old, and shows what changed.
-    let before = std::fs::read_to_string(&json)
-        .ok()
-        .and_then(|t| serde_json::from_str::<Report>(&t).ok());
-    let mut same_or_better = true;
-    if let Some(before) = &before {
-        let (lines, worse) = report.compare(before);
+    let published = report.publish(stem)?;
+    if !published.lines.is_empty() {
         println!();
-        for line in lines {
+        for line in &published.lines {
             println!("{line}");
         }
-        same_or_better = !worse;
     }
-    let io = |e: std::io::Error| Error::Io(e.to_string());
-    if let Some(dir) = md.parent() {
-        std::fs::create_dir_all(dir).map_err(io)?;
+    let json = stem.with_extension("json");
+    match published.kept {
+        None => {
+            println!(
+                "published {} and {}",
+                stem.with_extension("md").display(),
+                json.display()
+            );
+            Ok(true)
+        }
+        // The run to beat stays the one published before.
+        Some(why) => {
+            eprintln!(
+                "not published: {why}. The published run is kept. If this run is the new \
+                 truth, remove {} and publish again.",
+                json.display()
+            );
+            Ok(false)
+        }
     }
-    std::fs::write(&md, report.markdown()).map_err(io)?;
-    let body = serde_json::to_string_pretty(&report).map_err(|e| Error::Io(e.to_string()))?;
-    std::fs::write(&json, format!("{body}\n")).map_err(io)?;
-    println!("published {} and {}", md.display(), json.display());
-    if !same_or_better {
-        eprintln!("this run is worse than the one published before");
-    }
-    Ok(same_or_better)
 }
 
 /// The lead's route and every model the user can reach, for tier suggestions.

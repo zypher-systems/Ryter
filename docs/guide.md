@@ -567,7 +567,15 @@ It reports four numbers:
 
 The suite covers Python, Rust and TypeScript, single-file fixes and changes across several files, and one piece of work split into three builder tasks, two of them side by side. A task says what it needs (`cargo`, `node`, `python3`), and is skipped, by name, on a machine without it.
 
-`--publish docs/bench` writes `docs/bench.md` (the page) and `docs/bench.json` (the same run as data). If a run was published there before, it says how this one compares, and exits 1 when a task is accepted less often or false passes went up. Cost is shown but never counted as worse: the same crew can take several times as many steps on one run as on the next. A task that ran last time and not this time is named. `--publish` takes a run of the whole suite, so it can't be combined with `--only`. The published run is [docs/bench.md](bench.md), and each release is checked against it this way.
+`--publish docs/bench` writes `docs/bench.md` (the page) and `docs/bench.json` (the same run as data). If a run was published there before, it says how this one compares. Cost is shown but never counted as worse: the same crew can take several times as many steps on one run as on the next. A task that ran last time and not this time is named. The published run is [docs/bench.md](bench.md), and each release is checked against it this way.
+
+The published run is what the next one is measured against, so it is replaced only by a run that can stand in for it. Otherwise it is left exactly as it was, and `ryter bench` exits 1:
+
+- **The run is worse:** a task is accepted less often, or false passes went up. If the new run is the truth, remove `docs/bench.json` and publish again.
+- **A published task was skipped** because this machine lacks its tools.
+- **Only part of the suite ran:** `--publish` can't be combined with `--only`.
+
+A run that measured nothing is a failure whether you publish or not. `ryter bench` exits 1 when every task was skipped, and it stops at the first task no model answered: a key the provider refuses, a model your account can't reach, or a crew that won't start because the auditor is the same model as the builder. It says which, and spends nothing on the tasks left. `--repeat` must be at least 1 and `--budget-usd` above 0.
 
 To add a task, copy one in `bench/` (see `bench/README.md`). A test proves every task sound: the hidden tests fail on the fixture, and pass on the reference solution.
 

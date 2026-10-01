@@ -1659,6 +1659,7 @@ dependencies = [
  "ryter-core",
  "ryter-tui",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 

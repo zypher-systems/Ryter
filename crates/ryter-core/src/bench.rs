@@ -111,8 +111,21 @@ pub struct BenchResult {
     pub usd_by_role: std::collections::BTreeMap<String, f64>,
     /// Wall-clock seconds.
     pub secs: f64,
-    /// First line of the crew report, or the error.
+    /// First line of the crew report, or the error. Where no model answered,
+    /// the reason follows it.
     pub outcome: String,
+    /// Model calls that were answered, across the crew.
+    #[serde(default)]
+    pub calls: u64,
+}
+
+impl BenchResult {
+    /// No model answered, so the crew wasn't measured: a refused key, a
+    /// model the account can't reach, a crew that won't start. Such a run
+    /// says nothing about the crew, and isn't a result.
+    pub fn unanswered(&self) -> bool {
+        self.calls == 0 && !self.landed
+    }
 }
 
 impl BenchTask {
@@ -206,6 +219,7 @@ pub async fn run_task(task: &BenchTask, env: &BenchEnv) -> BenchResult {
         usd_by_role: Default::default(),
         secs: 0.0,
         outcome: String::new(),
+        calls: 0,
     };
     match run_inner(task, env, &mut result).await {
         Ok(()) => {}
@@ -283,13 +297,20 @@ async fn run_inner(task: &BenchTask, env: &BenchEnv, result: &mut BenchResult) -
     let report = agent.drain_crew().await;
     tally(&agent.session, result)?;
     let report = report?;
-    result.outcome = report
-        .lines()
-        .find(|l| l.starts_with("### "))
-        .map(|l| l.trim_start_matches("### ").to_string())
-        .unwrap_or_else(|| report.lines().next().unwrap_or("").to_string());
+    let mut lines = report.lines().skip_while(|l| !l.starts_with("### "));
+    result.outcome = match lines.next() {
+        Some(heading) => heading.trim_start_matches("### ").to_string(),
+        None => report.lines().next().unwrap_or("").to_string(),
+    };
     result.landed = crate::git::head(&work)? != before && agent.session.meta.patch.is_none();
     if !result.landed {
+        // Why no model answered is the line under the heading.
+        if let Some(why) = lines
+            .find(|l| !l.trim().is_empty())
+            .filter(|_| result.calls == 0)
+        {
+            result.outcome = format!("{}: {}", result.outcome, why.trim());
+        }
         return Ok(());
     }
     // Ground truth: tests the crew never saw, on exactly what landed.
@@ -313,6 +334,8 @@ async fn run_inner(task: &BenchTask, env: &BenchEnv, result: &mut BenchResult) -
 
 fn tally(session: &Session, result: &mut BenchResult) -> Result<()> {
     for rec in session.spend_log()? {
+        // One record per call a model answered.
+        result.calls += 1;
         result.billable_tokens +=
             rec.input_tokens.saturating_sub(rec.cached_tokens) + rec.output_tokens;
         match rec.total_usd {
@@ -579,6 +602,95 @@ impl Report {
     }
 }
 
+/// What publishing a run did.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Published {
+    /// How the run compares with the one published before, in lines.
+    pub lines: Vec<String>,
+    /// Why the published run was kept and this one not written, if it was.
+    pub kept: Option<String>,
+}
+
+impl Report {
+    /// Publish this run as `<stem>.md` and `<stem>.json`.
+    ///
+    /// The published run is what the next is compared with, so it is
+    /// replaced only by a run that can stand in for it: one that ran
+    /// something, had a model answer on every task, ran every task of the
+    /// published run that is still in the suite, and did no worse. Otherwise
+    /// the published run is kept: an error where this run measured nothing,
+    /// and `kept` saying why where it measured something worse. Writing
+    /// regardless let an empty run (`--repeat 0`, every task skipped) wipe
+    /// the baseline and report success.
+    pub fn publish(&self, stem: &Path) -> Result<Published> {
+        let (md, json) = (stem.with_extension("md"), stem.with_extension("json"));
+        if self.results.is_empty() {
+            return Err(Error::Config(format!(
+                "no task ran, so there is nothing to publish; {} is kept",
+                json.display()
+            )));
+        }
+        if let Some(r) = self.results.iter().find(|r| r.unanswered()) {
+            return Err(Error::Config(format!(
+                "no model answered on {} ({}), so the run isn't a result; {} is kept",
+                r.task,
+                r.outcome,
+                json.display()
+            )));
+        }
+        let mut published = Published {
+            lines: Vec::new(),
+            kept: None,
+        };
+        if json.exists() {
+            let before: Report = std::fs::read_to_string(&json)
+                .map_err(|e| Error::Io(format!("{}: {e}", json.display())))
+                .and_then(|t| {
+                    serde_json::from_str(&t).map_err(|e| {
+                        Error::Config(format!(
+                            "{} isn't a published run ({e}); move it aside to publish afresh",
+                            json.display()
+                        ))
+                    })
+                })?;
+            let (lines, worse) = self.compare(&before);
+            published.lines = lines;
+            let unrun: Vec<&str> = before
+                .by_task()
+                .iter()
+                .filter_map(|o| self.skipped.iter().find(|s| s.task == o.task))
+                .map(|s| s.task.as_str())
+                .collect();
+            if worse {
+                published.kept = Some("this run is worse than the published one".into());
+            } else if !unrun.is_empty() {
+                published.kept = Some(format!(
+                    "{} of the published run didn't run here",
+                    unrun.join(", ")
+                ));
+            }
+        }
+        if published.kept.is_none() {
+            let io = |e: std::io::Error| Error::Io(e.to_string());
+            if let Some(dir) = md.parent().filter(|d| !d.as_os_str().is_empty()) {
+                std::fs::create_dir_all(dir).map_err(io)?;
+            }
+            let body = serde_json::to_string_pretty(self).map_err(|e| Error::Io(e.to_string()))?;
+            // Each file is written beside itself and renamed into place, the
+            // data last: a failure part-way leaves the published run whole.
+            for (ext, text) in [("md", self.markdown()), ("json", format!("{body}\n"))] {
+                let tmp = stem.with_extension(format!("{ext}.{}.tmp", std::process::id()));
+                std::fs::write(&tmp, text).map_err(io)?;
+                std::fs::rename(&tmp, stem.with_extension(ext)).map_err(|e| {
+                    let _ = std::fs::remove_file(&tmp);
+                    io(e)
+                })?;
+            }
+        }
+        Ok(published)
+    }
+}
+
 /// Today, `YYYY-MM-DD` (UTC), for a report.
 pub fn today() -> String {
     let secs = std::time::SystemTime::now()
@@ -704,6 +816,66 @@ accept = ["python3 hidden_check.py"]
             r.usd > 0.0 && r.usd_by_role.contains_key("auditor"),
             "{r:?}"
         );
+    }
+
+    /// A task no model answered isn't a result: the crew was never measured.
+    /// It says why, and a run published before this field existed reads as
+    /// it always did.
+    #[tokio::test]
+    async fn a_task_no_model_answered_is_not_a_result() {
+        let s = suite();
+        let home = TempDir::new().unwrap();
+        let tasks = load_suite(s.path()).unwrap();
+        // The provider refuses every call: a key it doesn't know.
+        struct Refuses;
+        #[async_trait::async_trait]
+        impl Provider for Refuses {
+            async fn stream(
+                &self,
+                _req: crate::llm::CompletionRequest,
+            ) -> Result<crate::llm::DeltaStream> {
+                Err(Error::Provider("401: no such key".into()))
+            }
+            async fn list_models(&self) -> Result<Vec<crate::llm::ModelInfo>> {
+                Ok(Vec::new())
+            }
+        }
+        let mut e = env(home.path(), Vec::new());
+        e.provider = Arc::new(Refuses);
+        let r = run_task(&tasks[0], &e).await;
+        assert!(r.unanswered() && r.calls == 0 && !r.landed, "{r:?}");
+        assert!(
+            r.outcome.starts_with("t1 — failed: ") && r.outcome.contains("key was refused"),
+            "{}",
+            r.outcome
+        );
+        // Every seat on one model: the crew won't start.
+        let mut e = env(home.path(), Vec::new());
+        e.cfg.specialists.clear();
+        let r = run_task(&tasks[0], &e).await;
+        assert!(r.unanswered(), "{r:?}");
+        assert!(r.outcome.starts_with("builds paused: "), "{}", r.outcome);
+        // A seat the account can't reach: the crew is paused before a call.
+        let mut e = env(home.path(), Vec::new());
+        e.provider = Arc::new(ReplayProvider::scripted(Vec::new()).refusing(&["auditor-model"]));
+        let r = run_task(&tasks[0], &e).await;
+        assert!(r.unanswered(), "{r:?}");
+        assert!(r.outcome.starts_with("crew paused: "), "{}", r.outcome);
+        // A rejected fix was answered, and is a result.
+        let e = env(
+            home.path(),
+            vec![
+                write("def add(a, b):\n    return a - b\n"),
+                say("STATUS: DONE"),
+            ],
+        );
+        let r = run_task(&tasks[0], &e).await;
+        assert!(!r.landed && r.calls > 0 && !r.unanswered(), "{r:?}");
+        // A result saved before `calls` was counted still loads.
+        let old = r#"{"task":"t","landed":true,"accepted":true,"usd":0.1,"unpriced":false,
+            "billable_tokens":9,"usd_by_role":{},"secs":1.0,"outcome":"t1 (merged)"}"#;
+        let old: BenchResult = serde_json::from_str(old).unwrap();
+        assert!(old.calls == 0 && !old.unanswered());
     }
 
     /// The case the benchmark exists for: the visible check and the auditor
@@ -846,6 +1018,7 @@ after = ["first"]
             usd_by_role: Default::default(),
             secs: 30.0,
             outcome: String::new(),
+            calls: 1,
         }
     }
 
@@ -954,6 +1127,102 @@ after = ["first"]
         );
     }
 
+    /// The published run is replaced only by a run that can stand in for
+    /// it. An empty run, a worse one, and one that skipped a published task
+    /// all leave it as it was. A reviewer's case: `--repeat 0` published
+    /// nothing over nine results and exited 0.
+    #[test]
+    fn the_published_run_is_replaced_only_by_one_as_good() {
+        let dir = TempDir::new().unwrap();
+        let stem = dir.path().join("docs/bench");
+        let json = stem.with_extension("json");
+        let good = report(vec![
+            result("a", true, true, 0.10),
+            result("b", true, true, 0.10),
+        ]);
+        // The first run publishes: nothing to compare with.
+        let first = good.publish(&stem).unwrap();
+        assert_eq!((first.lines.len(), first.kept), (0, None));
+        let published = std::fs::read_to_string(&json).unwrap();
+        assert!(stem.with_extension("md").exists());
+
+        // No results: an error, and the published run untouched.
+        let err = report(Vec::new()).publish(&stem).unwrap_err().to_string();
+        assert!(err.contains("no task ran"), "{err}");
+        assert_eq!(std::fs::read_to_string(&json).unwrap(), published);
+
+        // A task no model answered: an error too. The reviewer's other
+        // case, a crew that wouldn't start, exited 0.
+        let mut dead = result("b", false, false, 0.0);
+        dead.calls = 0;
+        dead.outcome = "t1 — failed: provider: invalid api key".into();
+        let err = report(vec![result("a", true, true, 0.10), dead])
+            .publish(&stem)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("no model answered on b") && err.contains("invalid api key"),
+            "{err}"
+        );
+        assert_eq!(std::fs::read_to_string(&json).unwrap(), published);
+
+        // Worse: kept.
+        let worse = report(vec![
+            result("a", true, true, 0.10),
+            result("b", false, false, 0.10),
+        ]);
+        let out = worse.publish(&stem).unwrap();
+        assert!(
+            out.kept.as_deref().is_some_and(|k| k.contains("worse")),
+            "{out:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&json).unwrap(), published);
+
+        // A published task skipped here: kept, however well the rest did.
+        let mut partial = report(vec![result("a", true, true, 0.10)]);
+        partial.skipped = vec![Skipped {
+            task: "b".into(),
+            needs: "cargo --version".into(),
+        }];
+        let out = partial.publish(&stem).unwrap();
+        assert!(
+            out.kept
+                .as_deref()
+                .is_some_and(|k| k.contains("b of the published run")),
+            "{out:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&json).unwrap(), published);
+
+        // As good, with a task gone from the suite and another added: replaced.
+        let mut next = report(vec![
+            result("a", true, true, 0.50),
+            result("c", true, true, 0.50),
+        ]);
+        next.skipped.clear();
+        next.ryter = "0.2.0".into();
+        let out = next.publish(&stem).unwrap();
+        assert_eq!(out.kept, None, "{out:?}");
+        assert!(
+            out.lines
+                .iter()
+                .any(|l| l.contains("b: not run this time (no longer in the suite)"))
+        );
+        let now: Report = serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
+        assert_eq!(now.ryter, "0.2.0");
+        let mut left: Vec<_> = std::fs::read_dir(stem.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["bench.json", "bench.md"], "no temporary file left");
+
+        // A file there that isn't a published run is never overwritten.
+        std::fs::write(&json, "not json").unwrap();
+        assert!(good.publish(&stem).is_err());
+        assert_eq!(std::fs::read_to_string(&json).unwrap(), "not json");
+    }
+
     /// Every shipped task is sound: the work is not already done (the hidden
     /// tests fail on the fixture), and the reference solution passes both the
     /// gate's checks and the hidden tests. Without this, a benchmark number
@@ -1051,6 +1320,7 @@ after = ["first"]
             usd_by_role: Default::default(),
             secs: 0.0,
             outcome: String::new(),
+            calls: 1,
         };
         let s = Summary::of(&[r(true, 0.10), r(true, 0.20), r(false, 0.30)]);
         assert_eq!(s.accepted, 2);

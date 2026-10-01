@@ -2,8 +2,10 @@
 
 `ryter bench` runs each task here through the real crew and reports what
 landed, what passed the hidden tests, and what it cost. The last published run
-is `docs/bench.md`; `ryter bench --publish docs/bench` replaces it and says how
-the new run compares. See the guide's Benchmark section, and `docs/cost.md`.
+is `docs/bench.md`; `ryter bench --publish docs/bench` says how the new run
+compares and replaces it, unless the new run is worse, skipped a published
+task, or measured nothing. See the guide's Benchmark section, and
+`docs/cost.md`.
 
 Each task:
 
