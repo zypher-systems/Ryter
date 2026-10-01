@@ -34,6 +34,23 @@ pub struct PermissionModal {
     pub why: Option<String>,
     /// `view.now_ms` when the prompt opened, for the Enter guard.
     pub opened_ms: u64,
+    /// The card is the only view of the change there will be (the user's
+    /// rules: the file isn't in the project, so `/changes` never has it).
+    /// All of it is here to scroll through, and `y` answers only once its
+    /// end has been on screen.
+    pub whole: bool,
+    /// First row of the change shown, when it is longer than the card.
+    top: usize,
+    /// The furthest `top` can go, and the rows of the change that fit, as
+    /// last drawn.
+    max_top: std::cell::Cell<usize>,
+    page: std::cell::Cell<usize>,
+    /// The end of the change has been on screen. The card moves by a row
+    /// or by less than a page, so every row before the end has been too.
+    read: std::cell::Cell<bool>,
+    /// The whole change as rows, for the width it was last drawn at: a long
+    /// one is not laid out again on every frame.
+    rows: std::cell::RefCell<Option<(usize, Vec<Line<'static>>)>>,
     /// Enter was pressed where it can't answer: say what can.
     nudge: Option<&'static str>,
 }
@@ -49,8 +66,22 @@ impl PermissionModal {
             scope: None,
             why: None,
             opened_ms: 0,
+            whole: false,
+            top: 0,
+            max_top: std::cell::Cell::new(0),
+            page: std::cell::Cell::new(1),
+            read: std::cell::Cell::new(false),
+            rows: std::cell::RefCell::new(None),
             nudge: None,
         }
+    }
+
+    /// The card is the only view of the change: show all of it, and take
+    /// `y` only once its end has been shown.
+    #[must_use]
+    pub fn showing_whole(mut self, whole: bool) -> Self {
+        self.whole = whole;
+        self
     }
 
     /// Show the change an edit would make, not just its path.
@@ -217,7 +248,9 @@ impl Panel for PermissionModal {
     fn size(&self, _view: &View) -> (u16, u16) {
         let mut rows = 2 + usize::from(self.why.is_some()) + usize::from(self.nudge.is_some());
         if let Some(d) = self.preview.as_deref().filter(|d| !d.hunks.is_empty()) {
-            rows += 1 + (d.len() + d.hunks.len() - 1).clamp(1, 16);
+            // A change that must be read whole gets all the room there is.
+            let most = if self.whole { 400 } else { 16 };
+            rows += 1 + (d.len() + d.hunks.len() - 1).clamp(1, most);
         } else if !self.is_hat() {
             rows += 1 + self.summary.lines().count().clamp(1, 8);
         } else {
@@ -303,13 +336,59 @@ impl Panel for PermissionModal {
                 bg: theme.panel_bg,
                 ..theme
             };
-            let diff_rows = crate::chat::diff::render_folded(
-                diff,
-                room.saturating_sub(1).max(1),
-                w.saturating_sub(1),
-                on_panel,
-                "/changes shows it whole once it's made",
-            );
+            let diff_rows = if self.whole {
+                // Every row of it, long lines wrapped, and a window on that
+                // when the card is shorter. Nothing is folded away: there
+                // is nowhere else to see it.
+                let mut laid_out = self.rows.borrow_mut();
+                if laid_out.as_ref().is_none_or(|(at, _)| *at != w) {
+                    let rows = crate::chat::diff::render_folded(
+                        diff,
+                        usize::MAX,
+                        w.saturating_sub(1),
+                        on_panel,
+                        "",
+                    );
+                    *laid_out = Some((w, rows));
+                }
+                let all = laid_out.as_ref().map_or(&[][..], |(_, rows)| rows);
+                let total = all.len();
+                let shown = if total <= room {
+                    room
+                } else {
+                    room.saturating_sub(1).max(1)
+                };
+                let max_top = total.saturating_sub(shown);
+                let top = self.top.min(max_top);
+                self.max_top.set(max_top);
+                self.page.set(shown);
+                if top == max_top {
+                    self.read.set(true);
+                }
+                let mut rows: Vec<Line<'static>> =
+                    all.iter().skip(top).take(shown).cloned().collect();
+                if total > room {
+                    let below = max_top - top;
+                    let note = if below > 0 {
+                        format!(
+                            "↓ {below} more row{} · read to the end (↓ PgDn), then y",
+                            if below == 1 { "" } else { "s" }
+                        )
+                    } else {
+                        "the end of the change · ↑ PgUp to go back".to_string()
+                    };
+                    rows.push(widgets::note(&note, theme));
+                }
+                rows
+            } else {
+                crate::chat::diff::render_folded(
+                    diff,
+                    room.saturating_sub(1).max(1),
+                    w.saturating_sub(1),
+                    on_panel,
+                    "/changes shows it whole once it's made",
+                )
+            };
             for row in diff_rows {
                 let mut spans = vec![Span::styled(" ", theme.panel())];
                 spans.extend(row.spans);
@@ -362,6 +441,35 @@ impl Panel for PermissionModal {
                 Outcome::Stay
             }
             KeyCode::Enter if view.now_ms < self.opened_ms + ENTER_GUARD_MS => Outcome::Stay,
+            // A change that must be read whole: move through it, a row at a
+            // time or a page less a row, so nothing is jumped over.
+            KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown if self.whole => {
+                let max = self.max_top.get();
+                let top = self.top.min(max);
+                let page = self.page.get().saturating_sub(1).max(1);
+                self.top = match key.code {
+                    KeyCode::Up => top.saturating_sub(1),
+                    KeyCode::Down => top + 1,
+                    KeyCode::PageUp => top.saturating_sub(page),
+                    _ => top + page,
+                }
+                .min(max);
+                self.nudge = None;
+                Outcome::Stay
+            }
+            // And `y` is a yes to all of it, so it answers only once the
+            // end has been on screen, and not in the moment the card
+            // appeared under whatever was being typed.
+            KeyCode::Char('y' | 'Y') if self.whole && !self.read.get() => {
+                self.nudge =
+                    Some("There's more of this change below: read to its end (↓ PgDn), then y");
+                Outcome::Stay
+            }
+            KeyCode::Char('y' | 'Y')
+                if self.whole && view.now_ms < self.opened_ms + ENTER_GUARD_MS =>
+            {
+                Outcome::Stay
+            }
             KeyCode::Enter | KeyCode::Char('y' | 'Y') => reply(Permission::Allow),
             KeyCode::Char('n' | 'N') | KeyCode::Esc => reply(Permission::Deny),
             KeyCode::Char('s' | 'S') if self.is_offer() => {
@@ -831,5 +939,151 @@ mod tests {
             .collect();
         assert!(shown.contains("press y to allow it"), "{shown}");
         assert!(shown.contains("/undo may not reach it"), "{shown}");
+    }
+    fn text(body: &Body) -> Vec<String> {
+        body.lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    /// A change to the user's rules, as `update_rules` sends it: the whole
+    /// difference, to be read on this card and nowhere else.
+    fn rules_card(new: &str, opened_ms: u64) -> PermissionModal {
+        let diff =
+            ryter_core::diff::FileDiff::whole("~/.ryter/RYTER.md", Some("- Be brief.\n"), new)
+                .unwrap();
+        PermissionModal::new("update_rules".into(), "change your rules".into())
+            .with_preview(Some(Box::new(diff)))
+            .with_answers(true, None)
+            .showing_whole(true)
+            .with_context(None, opened_ms)
+    }
+
+    fn key(m: &mut PermissionModal, v: &mut View, code: KeyCode) -> Outcome {
+        m.key(KeyEvent::new(code, crossterm::event::KeyModifiers::NONE), v)
+    }
+
+    fn is_yes(o: &Outcome) -> bool {
+        matches!(
+            o,
+            Outcome::CloseAct(Action::PermissionReply(Permission::Allow))
+        )
+    }
+
+    /// A long change to the user's rules is all on the card, and `y` saves
+    /// it only once its end has been shown. The card used to fold it to
+    /// sixteen rows and point at `/changes`, which never has this file: a
+    /// `y` saved lines nobody had been shown.
+    #[test]
+    fn a_long_rules_change_is_read_to_the_end_before_y() {
+        let theme = Theme::truecolor_dark();
+        let mut v = view();
+        v.now_ms = 10_000;
+        let long = format!("- {}the-last-word", "word ".repeat(60));
+        let new: String = (0..40)
+            .map(|i| format!("- rule number {i};\n"))
+            .chain([format!("{long}\n")])
+            .collect();
+        let mut m = rules_card(&new, 0);
+        // Not drawn yet: nothing has been shown.
+        assert!(!is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
+        let (width, height) = (70, 12);
+        let first = text(&m.render(&v, width, height, theme));
+        assert!(
+            first
+                .iter()
+                .any(|l| l.contains("more rows · read to the end")),
+            "{first:?}"
+        );
+        assert!(!first.iter().any(|l| l.contains("/changes")), "{first:?}");
+        assert!(first.len() <= usize::from(height), "{first:?}");
+        // `y` at the top answers nothing, and says why.
+        assert!(!is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
+        let nudged = text(&m.render(&v, width, height, theme));
+        assert!(
+            nudged.iter().any(|l| l.contains("read to its end")),
+            "{nudged:?}"
+        );
+        // Paging to the end passes every row of the change on the way.
+        let mut seen: Vec<String> = Vec::new();
+        for _ in 0..200 {
+            for row in text(&m.render(&v, width, height, theme)) {
+                if !seen.contains(&row) {
+                    seen.push(row);
+                }
+            }
+            if m.read.get() {
+                break;
+            }
+            assert!(!is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
+            key(&mut m, &mut v, KeyCode::PageDown);
+        }
+        assert!(m.read.get(), "the end was never reached");
+        let all = seen.join("\n");
+        for i in 0..40 {
+            assert!(
+                all.contains(&format!("- rule number {i};")),
+                "rule {i} was skipped:\n{all}"
+            );
+        }
+        // The long line is wrapped, not cut: its last word is there.
+        assert!(all.contains("the-last-word"), "{all}");
+        assert!(all.contains("the end of the change"), "{all}");
+        assert!(!all.contains("/changes"), "{all}");
+        assert!(is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
+    }
+
+    /// A short change is all there at once, and `y` answers, though not in
+    /// the moment the card appeared under whatever was being typed.
+    #[test]
+    fn a_short_rules_change_takes_y_once_it_has_been_up_a_moment() {
+        let theme = Theme::truecolor_dark();
+        let mut v = view();
+        v.now_ms = 10_000;
+        let mut m = rules_card("- Be brief.\n- Use British spelling.\n", 10_000);
+        let rows = text(&m.render(&v, 90, 12, theme));
+        assert!(
+            rows.iter().any(|l| l.contains("Use British spelling")),
+            "{rows:?}"
+        );
+        assert!(!rows.iter().any(|l| l.contains("more row")), "{rows:?}");
+        v.now_ms = 10_100;
+        assert!(
+            !is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))),
+            "too soon"
+        );
+        // Enter never answers this card.
+        v.now_ms = 11_000;
+        assert!(!is_yes(&key(&mut m, &mut v, KeyCode::Enter)));
+        assert!(is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
+        assert!(matches!(
+            key(&mut m, &mut v, KeyCode::Char('n')),
+            Outcome::CloseAct(Action::PermissionReply(Permission::Deny))
+        ));
+    }
+
+    /// An edit in the project is folded as before: `/changes` has it whole,
+    /// and `y` answers at once.
+    #[test]
+    fn a_project_edit_is_still_folded() {
+        let theme = Theme::truecolor_dark();
+        let mut v = view();
+        v.now_ms = 10_000;
+        let new: String = (0..40).map(|i| format!("line {i}\n")).collect();
+        let diff = ryter_core::diff::FileDiff::new("src/a.rs", Some(""), &new);
+        let mut m = PermissionModal::new("write".into(), "src/a.rs".into())
+            .with_preview(Some(Box::new(diff)))
+            .with_answers(false, Some("edits to files in the project".into()))
+            .with_context(None, 0);
+        let rows = text(&m.render(&v, 90, 12, theme));
+        assert!(
+            rows.iter().any(|l| l.contains("/changes shows it whole")),
+            "{rows:?}"
+        );
+        // Paging doesn't move it, and `y` answers.
+        key(&mut m, &mut v, KeyCode::PageDown);
+        assert_eq!(text(&m.render(&v, 90, 12, theme)), rows);
+        assert!(is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
     }
 }

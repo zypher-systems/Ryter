@@ -697,6 +697,7 @@ fn drain_user_prompts(
             preview,
             strict,
             scope,
+            whole,
             reply,
         } => {
             cx.perm_reply = Some(reply);
@@ -706,6 +707,7 @@ fn drain_user_prompts(
                 PermissionModal::new(tool, summary)
                     .with_preview(preview)
                     .with_answers(strict, scope)
+                    .showing_whole(whole)
                     .with_context(why, opened),
             ));
         }

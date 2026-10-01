@@ -654,6 +654,7 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
                         preview: fs::preview(name, args, ctx),
                         strict: strict_prompt(name, args),
                         scope: scope.as_ref().map(|(_, label)| label.clone()),
+                        whole: false,
                     },
                     &ctx.cancel,
                 );

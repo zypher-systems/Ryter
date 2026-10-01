@@ -75,7 +75,27 @@ pub struct FileDiff {
 impl FileDiff {
     /// Diff `old` (none for a new file) against `new`.
     pub fn new(path: impl Into<String>, old: Option<&str>, new: &str) -> Self {
-        let path = path.into();
+        Self::build(path.into(), old, new, MAX_LINES, MAX_LINE_CHARS)
+    }
+
+    /// [`Self::new`] with nothing left out: every changed line, and every
+    /// line to its end. For a change whose only view is this diff, where a
+    /// yes to it is a yes to all of it. `None` when a side is too large to
+    /// diff at all.
+    pub fn whole(path: impl Into<String>, old: Option<&str>, new: &str) -> Option<Self> {
+        if old.is_some_and(|o| o.len() > MAX_BYTES) || new.len() > MAX_BYTES {
+            return None;
+        }
+        Some(Self::build(path.into(), old, new, usize::MAX, usize::MAX))
+    }
+
+    fn build(
+        path: String,
+        old: Option<&str>,
+        new: &str,
+        max_lines: usize,
+        max_line_chars: usize,
+    ) -> Self {
         let created = old.is_none();
         let old = old.unwrap_or("");
         if old.len() > MAX_BYTES || new.len() > MAX_BYTES {
@@ -111,7 +131,7 @@ impl FileDiff {
             let mut lines = Vec::new();
             for op in &group {
                 for change in diff.iter_changes(op) {
-                    if kept >= MAX_LINES {
+                    if kept >= max_lines {
                         elided += 1;
                         continue;
                     }
@@ -126,7 +146,7 @@ impl FileDiff {
                         kind,
                         old: change.old_index().map(|i| i + 1),
                         new: change.new_index().map(|i| i + 1),
-                        text: text.chars().take(MAX_LINE_CHARS).collect(),
+                        text: text.chars().take(max_line_chars).collect(),
                     });
                 }
             }

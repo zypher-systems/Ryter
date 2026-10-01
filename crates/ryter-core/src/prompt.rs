@@ -168,12 +168,13 @@ pub fn conversation_system(
     // are part of the prompt, not a file to go and read: a model told to
     // read one may skip it, and tools can't read Ryter's home folder.
     if let Some(rules) = crate::rules::load(home) {
-        s.push_str(
+        s.push_str(&format!(
             "\n## The user's rules (every project)\nThe user's own standing rules, from \
-             `~/.ryter/RYTER.md`. Follow them in every project. Where this project's \
+             `{}`. Follow them in every project. Where this project's \
              instructions say otherwise, the project's win. Change them only with \
              `update_rules`, after loading the `rules` skill.\n\n",
-        );
+            crate::rules::shown(home)
+        ));
         s.push_str(&rules);
         s.push('\n');
     }

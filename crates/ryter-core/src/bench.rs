@@ -544,9 +544,10 @@ impl Report {
     }
 
     /// How this run compares with `before`, in lines, and whether it is
-    /// worse where it counts: fewer accepted on a task, or more false
-    /// passes. Cost is reported and never counted as worse: it varies run to
-    /// run by more than any change to Ryter is likely to move it.
+    /// worse where it counts: a task accepted less often, or passed wrong
+    /// more often. Both are rates per run of the task. Cost is reported and
+    /// never counted as worse: it varies run to run by more than any change
+    /// to Ryter is likely to move it.
     pub fn compare(&self, before: &Report) -> (Vec<String>, bool) {
         let (now, then) = (self.summary(), before.summary());
         let mut lines = vec![format!(
@@ -560,14 +561,29 @@ impl Report {
             then.false_passes,
             now.false_passes
         )];
-        let mut worse = now.false_passes > then.false_passes;
+        let mut worse = false;
         let old = before.by_task();
         for l in self.by_task() {
             let Some(o) = old.iter().find(|o| o.task == l.task) else {
                 lines.push(format!("  {}: new", l.task));
                 continue;
             };
-            // Rates, so a different --repeat still compares.
+            // Rates, so a different --repeat still compares. False passes
+            // were compared as a total over the run: more repeats of the
+            // same crew then read as worse, and fewer could hide a rise.
+            let wrong = |t: &TaskLine| t.landed.saturating_sub(t.accepted);
+            let wrong_rate = |t: &TaskLine| wrong(t) as f64 / t.runs.max(1) as f64;
+            if wrong_rate(&l) > wrong_rate(o) {
+                worse = true;
+                lines.push(format!(
+                    "  {}: WORSE, false passes {}/{} then, {}/{} now",
+                    l.task,
+                    wrong(o),
+                    o.runs,
+                    wrong(&l),
+                    l.runs
+                ));
+            }
             let rate = |t: &TaskLine| t.accepted as f64 / t.runs.max(1) as f64;
             if rate(&l) < rate(o) {
                 worse = true;
@@ -1106,6 +1122,24 @@ after = ["first"]
             !worse && lines.iter().any(|l| l.contains("b: better")),
             "{lines:?}"
         );
+        // False passes are a rate per run too. One wrong in four runs, then
+        // one wrong in one: the count didn't rise, and it is worse.
+        let wrong = |n| vec![result("a", true, false, 0.1); n];
+        let rejected = |n| vec![result("a", false, false, 0.1); n];
+        let one_in_four = report([wrong(1), rejected(3)].concat());
+        let (lines, worse) = report(wrong(1)).compare(&one_in_four);
+        assert!(worse, "{lines:?}");
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("a: WORSE, false passes 1/4 then, 1/1 now")),
+            "{lines:?}"
+        );
+        // One wrong in one run, then two wrong and one right in three: the
+        // count rose, and it is better.
+        let two_in_three = report([wrong(2), vec![result("a", true, true, 0.1)]].concat());
+        let (lines, worse) = two_in_three.compare(&report(wrong(1)));
+        assert!(!worse, "{lines:?}");
         // A task that ran then and not now is named, with why.
         let mut fewer = report(vec![result("a", true, true, 0.10)]);
         let (lines, _) = fewer.compare(&then);

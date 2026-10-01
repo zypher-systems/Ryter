@@ -9,7 +9,7 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
   - **`needs`** in `task.toml` lists commands that must succeed for a task to run (`cargo --version`). `ryter bench` and the soundness test skip a task whose tools are missing, by name. The test no longer depends on what is installed.
   - **`[[tasks]]`** splits a benchmark task into builder tasks with `after`. They are queued as an architect's plan would be, and run with the crew's `max` builders.
   - **`ryter bench --publish <path>`** writes `<path>.md` and `<path>.json` (`bench::Report`), compares the run with the one published there before (`Report::compare`), and names a task that ran before and not now.
-  - **The published run is replaced only by a run that can stand in for it** (`Report::publish`). It is kept, and the exit code is 1, when the new run is worse (a task accepted less often, or more false passes), when a published task was skipped here, and when only part of the suite ran (`--only` is refused). Both files are written beside themselves and renamed into place.
+  - **The published run is replaced only by a run that can stand in for it** (`Report::publish`). It is kept, and the exit code is 1, when the new run is worse (a task accepted less often, or passed wrong more often, both as rates per run of the task), when a published task was skipped here, and when only part of the suite ran (`--only` is refused). Both files are written beside themselves and renamed into place.
   - **A run that measured nothing is a failure,** published or not. `BenchResult::calls` counts the calls a model answered; a task with none that didn't land is `unanswered()`. `ryter bench` stops there with exit 1 and the reason (a refused key, a model the account can't reach, a crew that won't start). It also refuses `--repeat 0`, `--budget-usd 0`, and a suite whose every task was skipped.
 - **Chosen vs rejected:**
   - Cost is reported and never fails the comparison. Measured on twelve past crew runs, the tokens one builder task used varied about a hundredfold, and the same model took between 8 and 126 calls a task. A cost threshold would fail releases at random.
@@ -28,23 +28,29 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
 - **Decision:**
   - **The file:** `~/.ryter/RYTER.md` (`rules::path`). `rules::load` returns its text, cut to 32 KB on a line with a note when longer.
   - **The prompt:** `prompt::conversation_system` (solo and the lead) adds a section, "The user's rules (every project)", ahead of the project's instructions. `prompt::reading_messages` (architect, builder, auditor, `/second`) puts the same text ahead of them in the brief. Both say the project's instructions win where they differ.
-  - **The tool:** `update_rules {rules}` replaces the whole file. `Agent::update_rules` asks through `UserIo::ask_tool` with the change as a `FileDiff`, `strict` (only `y` is yes) and no session scope. `--always-approve` and "always" don't reach it, since it doesn't go through the gate. After a yes it saves only if the file is still what the user was shown, so a hand edit made meanwhile isn't thrown away. It saves with a write-and-rename, and runs inside `tools::with_hooks`.
+  - **The tool:** `update_rules {rules}` replaces the whole file. `Agent::update_rules` asks through `UserIo::ask_tool` with the change as a `FileDiff`, `strict` (only `y` is yes) and no session scope. The diff is `FileDiff::whole`, with no cap on lines or line length, and the ask is marked `whole`: the prompt (`PermissionModal`) shows all of it, scrolling by a row or by less than a page, and takes `y` only once its end has been drawn. `--always-approve` and "always" don't reach it, since it doesn't go through the gate. After a yes it saves only if the file is still what the user was shown, so a hand edit made meanwhile isn't thrown away. It saves with a write-and-rename, and runs inside `tools::with_hooks`.
   - **When it refuses without asking:**
     - there's no change;
     - the new text is over 32 KB;
     - the file on disk is over 32 KB, since the model saw only part of it and would drop the rest;
     - nobody is attached (headless);
-    - a sandbox is active.
+    - a sandbox is active;
+    - the text holds a character a screen won't show as it is (`rules::unshowable`): a control character other than a newline or a tab, a bidirectional control, or an invisible character (zero-width, or a Unicode tag, which a model reads as text).
   - **The skill:** `rules` is built in (`skills/rules/SKILL.md`), listed for the model and as `/rules`. It covers when a rule is worth saving, which file, how to write one, and that the user is asked.
-  - **Sandbox:** the rules file is added to the read set when it exists (`sandbox::readable_set`), and never to the write set.
+  - **Sandbox:** the rules file is added to the read set when it exists as a real file (`sandbox::readable_set`), and never to the write set. A link there is not followed.
+  - **Links:** `rules::read` follows a link to a file elsewhere, and refuses one that resolves inside Ryter's own folder.
+  - **The name:** `rules::shown` gives `~/.ryter/RYTER.md`, or the real path when `RYTER_HOME` is set, to the prompt, the model and the user.
 - **Chosen vs rejected:**
   - Rejected telling the model to read the file. A model can skip a read, and `read_file` refuses `~/.ryter` as a secret. The text goes into the prompt.
   - Rejected `~/.ryter/prompts/` as the place for rules. A file there replaces Ryter's own prompt for a role and doesn't add to it.
   - Rejected an append-only tool. Rules also need rewording and removing, and one whole-file tool shows the user every kind of change the same way, as a diff.
   - Rejected letting the sandbox write the file. The model's shell commands run in the same Landlock domain, so a writable rules file there could be changed by `bash` with no question asked.
+  - Rejected the folded diff an ordinary edit gets. It keeps sixteen rows on the prompt, and 400 lines of 400 characters in all, and points at `/changes` for the rest. This file is never in `/changes`, so a yes saved lines nobody had been shown. The first release candidate did this, and a reviewer caught it.
+  - Rejected refusing long changes. Reorganising the file, or writing it for the first time, is a long change. The prompt scrolls.
+  - Rejected a jump to the end. With only row and page moves, the end on screen means every row has been.
   - Rejected saving on the session's "always". The file steers every later session and is a target for instructions planted in a file the model reads, so each change is the user's own yes.
 - **Why:** the user asked whether Ryter had a global rules file as well as a repo one. It had only the repo's. They asked for the global file, a skill or tool to update it, and for the prompt to carry it.
-- **Where:** `crates/ryter-core/src/rules.rs`, `prompt.rs`, `agent.rs` (`update_rules`), `tools/mod.rs`, `tools/policy.rs`, `skill.rs`, `skills/rules/SKILL.md`, `sandbox.rs`
+- **Where:** `crates/ryter-core/src/rules.rs`, `prompt.rs`, `agent.rs` (`update_rules`), `diff.rs` (`FileDiff::whole`), `user_io.rs`, `tools/mod.rs`, `tools/policy.rs`, `skill.rs`, `skills/rules/SKILL.md`, `sandbox.rs`, `crates/ryter-tui/src/panel/modal.rs`
 - **Residual risk:**
   - Outside the sandbox, a `bash` command the user approves can still write the file directly, as it can any file of theirs.
   - The project's rules are still read only from the folder Ryter starts in, not the repository's top.

@@ -144,7 +144,7 @@ enum Command {
         repeat: u32,
         /// Publish the run as `<path>.md` and `<path>.json` (`docs/bench`),
         /// and compare it with the run published there before. If a task is
-        /// accepted less often, false passes went up, or a published task
+        /// accepted less often or passed wrong more often, or a published task
         /// was skipped here, the published run is kept and the exit code
         /// is 1. Not with `--only`.
         #[arg(long)]

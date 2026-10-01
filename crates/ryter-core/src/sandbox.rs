@@ -201,9 +201,15 @@ fn writable_set(home: &Path) -> Vec<std::path::PathBuf> {
 #[cfg(target_os = "linux")]
 fn readable_set(home: &Path) -> Vec<std::path::PathBuf> {
     let mut set = made(home, &["skills"]);
-    let rules = crate::rules::path(home);
-    if rules.is_file() {
-        set.push(canonicalize_or(&rules));
+    // The file itself, and only a real one. A link there would be followed,
+    // and one pointing at `keys/<connection>` would hand the key to the
+    // sandbox. `home` is resolved; the name is joined on and not resolved.
+    let rules = canonicalize_or(home).join(crate::rules::FILE);
+    if rules
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_file())
+    {
+        set.push(rules);
     }
     set
 }
@@ -271,6 +277,21 @@ mod tests {
         assert!(
             ro.iter().any(|p| p.ends_with("RYTER.md")) && !ro.iter().any(|p| p.ends_with("keys")),
             "{ro:?}"
+        );
+        // A rules file that is a link is never followed: one pointing at a
+        // key would put the key in the sandbox's reach.
+        std::fs::create_dir_all(home.path().join("keys")).unwrap();
+        std::fs::write(home.path().join("keys/openrouter"), "sk-secret").unwrap();
+        std::fs::remove_file(crate::rules::path(home.path())).unwrap();
+        std::os::unix::fs::symlink(
+            home.path().join("keys/openrouter"),
+            crate::rules::path(home.path()),
+        )
+        .unwrap();
+        let ro = readable_set(home.path());
+        assert!(
+            ro.iter().all(|p| p.ends_with("skills")),
+            "a linked rules file adds nothing: {ro:?}"
         );
         let _ = ws;
     }

@@ -488,11 +488,16 @@ Your rules come first, and where the two differ the project's win. You can edit 
 
 **Saving a rule from the chat.** Say how you want something done from now on, such as "from now on, answer in British spelling", or type `/rules <what to remember>`. The model loads the built-in `rules` skill and changes the every-project file with the `update_rules` tool. Before anything is saved, Ryter shows you the change line by line and asks:
 
-- Only `y` saves it. There's no "always" for this prompt, and `--always-approve` doesn't skip it, because the file steers every later session.
+- **The prompt holds the whole change.** Every added and removed line is there, and long lines are wrapped, not cut. This file isn't in your project, so `/changes` never shows it; the prompt is the only place to read the change.
+- **A change longer than the prompt scrolls.** `↓` and `PgDn` move through it, `↑` and `PgUp` go back, and a line under the change says how many rows are left.
+- **Only `y` saves it, and only once the end of the change has been on screen.** Before that, `y` tells you there is more to read. There's no "always" for this prompt, and `--always-approve` doesn't skip it, because the file steers every later session.
+- **The rules are plain text.** A change holding a character the screen wouldn't show as it is (a control code, an invisible character, or one that reverses the direction of text) is refused before you are asked.
 - If you say no, the file is left as it was, and the model is told so.
 - In a headless run (`ryter -p`) nobody can answer, so nothing is saved.
 - Under `--sandbox` the file can be read but not changed. The model's shell commands run in the same sandbox, and a rules file the sandbox could write would need no asking.
 - If you edit the file by hand while the question is on screen, nothing is saved over your edit.
+
+The file may be a link to one you keep elsewhere, such as in a dotfiles folder. A link to anything inside Ryter's own folder is not read as rules, because that folder holds your keys. Under `--sandbox` a link isn't followed, so linked rules are left out there unless the file they point at is inside the project. If `RYTER_HOME` puts Ryter's folder somewhere else, the prompt and the model name the file where it really is.
 
 A rule saved this way takes effect from your next message. For a rule that belongs to one project, the model edits that project's `RYTER.md` with its ordinary file tools, under the usual approvals for an edit.
 
@@ -571,7 +576,7 @@ The suite covers Python, Rust and TypeScript, single-file fixes and changes acro
 
 The published run is what the next one is measured against, so it is replaced only by a run that can stand in for it. Otherwise it is left exactly as it was, and `ryter bench` exits 1:
 
-- **The run is worse:** a task is accepted less often, or false passes went up. If the new run is the truth, remove `docs/bench.json` and publish again.
+- **The run is worse:** a task is accepted less often, or is passed wrong more often. Both are counted per run of the task, so runs with a different `--repeat` still compare. If the new run is the truth, remove `docs/bench.json` and publish again.
 - **A published task was skipped** because this machine lacks its tools.
 - **Only part of the suite ran:** `--publish` can't be combined with `--only`.
 
