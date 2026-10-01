@@ -139,6 +139,28 @@ Work that is in `dev` and not yet released is marked *Unreleased*, and its notes
 
 Product direction: `docs/product-direction.md`. Crew contract: `crew.md`. Cost model: `docs/cost.md`.
 
+### The plan (agreed 2026-10-01)
+
+On its first real project with a paid crew (a Docker CMS, 2026-10-01), crew mode never got past the first builder task, while the benchmark scored 9 of 9. Crew is the main draw, so it comes first. Each numbered item is its own patch branch; the first four collect in `dev` for one release.
+
+**Crew behaviour**
+
+1. **The crew behaves.** What went wrong on that project, and the fix for each:
+   - A specialist ran out of steps (40 for a builder, 12 for an auditor) with no warning unless a dollar limit was set, and its last half-sentence became its report. It always gets a last turn to write up.
+   - An audit that ended with no verdict counted as a rejection: the builder was run again and the user was told to choose a stronger builder. It is asked once more for a verdict, and is never counted against the builder.
+   - With no checks configured, the auditor is told to run the tests itself, and its shell refuses `docker` and `podman`. It spent its steps trying. It is told what it can't run, and a refusal names the role, so the lead doesn't report "Docker is blocked" for everyone.
+   - A project with no checks is asked for them before its first build.
+   - The benchmark gets a task that reproduces this, so the fix can be measured. The acceptance test is the CMS project getting past its first task.
+2. **Turn limits you can set.** Builder, architect and auditor steps in `/settings`, with the defaults shown. A run that reaches its limit says so in its report.
+3. **Sandbox profiles explained, and `workspace` made usable.** `/settings` compares `off`, `workspace` and `read-only`: what each can read, write and run, and when to use it. The default stays `off`. Under `workspace` today `git` can't run (`/dev/null` isn't writable), toolchains under the home folder are refused, `/tmp` is unwritable, and crew worktrees can't be written, so the profile is fixed in the same patch and the benchmark is run under it.
+4. **A `/rules` panel.** The rules for every project and the rules for this one in one popup: read them, add and remove a rule, open either file in an editor. No model call.
+
+**Solo, after that.** Solo with a plan, a build, a review and a test stage is a crew of one with the user as the lead, so it is built on the crew's machinery: one engine, two levels of autonomy.
+
+5. **Plan approval in a popout.** The plan in a scrolling panel with approve, adjust and reject, written to disk on approve. The architect's plan in crew mode uses the same panel.
+6. **A model for each hat,** set in `/models`. Plan, build and review share one conversation; a switch to another model shows what re-reading it will cost.
+7. **A fourth hat that uses the product as a user would** (working name: Test). It starts from the plan and the product, not the conversation. It needs the project to say how to start, stop and test itself, with Ryter running those commands and stopping what it started. The same capability is the 1.0 item "Review means something".
+
 - **Make the benchmark harder.** The nine-task suite ran clean on its first published run (9 of 9 accepted, about 2 cents a task), and a later run of the same crew had one false pass in nine. So it proves the pipeline and catches a release that breaks it, but one run of each task is too small a sample to compare crews or to say how often an auditor is wrong. Add tasks a crew can fail: larger fixtures, vague briefs, a planted bug the visible checks miss, and a task that needs the architect. Then run each candidate crew with `--repeat`, and fold the measurements into `docs/cost.md`.
 - **The updater's version probe can hit "Text file busy".** Seen once in `update::tests::the_launch_check_installs_or_notifies` during the 0.10.0 review, with the tests running side by side. The likely cause: another thread starts a process while the downloaded program is still open for writing, the child inherits that handle, and running the program is refused until the child lets go. Retry the probe briefly on that error, and make the test steady.
 - **Tiered defaults at first run.** `ryter crew suggest` exists; first-run setup and the builds-paused message should offer it directly rather than pointing at it.
