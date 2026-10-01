@@ -1035,6 +1035,7 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
     cx.cfg.spend.session_budget_usd = view.budget_usd;
     cx.cfg.spend.warn_usd = view.warn_usd;
     cx.cfg.subagents.max = view.max_crew;
+    cx.cfg.subagents.steps = view.steps;
     cx.cfg.sandbox.profile = view.sandbox_profile.clone();
     cx.cfg.mcp.inbound = view.mcp_inbound;
     cx.cfg.features.web = view.web;
@@ -1062,6 +1063,7 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
         budget_usd: view.budget_usd,
         task_budget_usd: view.task_budget_usd,
         max_crew: view.max_crew,
+        steps: view.steps,
         web: view.web,
         open_pages: view.ui.open_pages,
     });
@@ -1091,6 +1093,7 @@ fn save_budget(view: &mut View, cx: &mut Ctx, usd: f64, warn: f64, task: f64) {
         budget_usd: usd,
         task_budget_usd: task,
         max_crew: view.max_crew,
+        steps: view.steps,
         web: view.web,
         open_pages: view.ui.open_pages,
     });

@@ -115,6 +115,8 @@ pub enum Work {
         task_budget_usd: f64,
         /// Max parallel specialists.
         max_crew: u32,
+        /// Steps each kind of specialist gets.
+        steps: ryter_core::config::Steps,
         /// Web tools.
         web: bool,
         /// Open pages the model shows in the browser.
@@ -644,6 +646,7 @@ pub fn run(init: WorkerInit) {
                 budget_usd,
                 task_budget_usd,
                 max_crew,
+                steps,
                 web,
                 open_pages,
             }) => {
@@ -653,6 +656,7 @@ pub fn run(init: WorkerInit) {
                     c.spend.session_budget_usd = budget_usd;
                     c.spend.task_budget_usd = task_budget_usd;
                     c.subagents.max = max_crew;
+                    c.subagents.steps = steps;
                     c.features.web = web;
                     c.ui.open_pages = open_pages;
                 };

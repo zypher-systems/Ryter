@@ -324,7 +324,7 @@ Crew roles default to the lead’s current provider and model. Assign a differen
 Each builder task:
 
 1. `git worktree add` under `~/.ryter/worktrees/<session>/<task>/` on branch `ryter-<8hex>-<slug>`
-2. The builder implements its brief and ends with a handback (`STATUS / FILES / DECISIONS / NOTES`). `STATUS: BLOCKED` means something outside the task stopped it (a missing system package, a module another task owns): the work is kept on its branch, nothing is checked or audited, no retry is spent, and the lead tells you what to do (`sudo dnf install libpq-devel`). A builder has 40 steps, an architect 30 and an auditor 12. The last one is for writing up: the specialist is told so, gets no tools for it, and its report says it reached its limit
+2. The builder implements its brief and ends with a handback (`STATUS / FILES / DECISIONS / NOTES`). `STATUS: BLOCKED` means something outside the task stopped it (a missing system package, a module another task owns): the work is kept on its branch, nothing is checked or audited, no retry is spent, and the lead tells you what to do (`sudo dnf install libpq-devel`). A builder has 40 steps, an architect 30 and an auditor 12, unless you set your own (below). The last one is for writing up: the specialist is told so, gets no tools for it, and its report says it reached its limit
 3. The runtime commits, then merges **your branch into the worktree**. Conflicts are resolved there by a builder — never in your checkout — and the resolution is re-audited
 4. **Checks**: `[auditor] checks` run in the worktree (set them per project in `.ryter/config.toml`). A failure rejects the work before any audit. With none set, Ryter reads the project's files once there is a manifest (`Cargo.toml` → `cargo test`, `package.json` → its `build` and `test` scripts, `go.mod` → `go build`/`go test`, pytest or unittest for Python) and asks once whether to use them, for the session or saved to the project
 5. **Auditor**: reviews the brief, handback, check output, and full diff, and ends with `VERDICT: PASS`, `VERDICT: FAIL`, or `VERDICT: UNVERIFIED`. `UNVERIFIED` is for code that reads right but that the auditor couldn't build or test, and only when no checks ran. Either something outside the task hasn't landed, or running it needs a command the auditor's shell refuses. It isn't a rejection. The task lands on the patch marked, and the patch doesn't reach your branch until checks have built and tested it
@@ -332,6 +332,16 @@ Each builder task:
    - **A review with no verdict decides nothing.** The auditor is asked once for its verdict, with no tools. If it still gives none, the task stops at the gate with its work kept on its branch: it isn't rejected, no retry is spent, and the builder isn't run again. Setting the task to pending audits it again without rebuilding it
 6. **Land**: one `--no-ff` merge commit (undo with `git revert -m 1`). If your branch moved meanwhile, it re-integrates and re-checks first. If you have uncommitted edits to the same files, it stops and keeps the branch
 7. Rejected → retry with the findings, up to `[auditor] max_retries`, then `blocked`
+
+**Step limits.** A step is one call to a specialist's model, with the tool calls that reply asks for. `/settings` → *agents* has *builder steps*, *architect steps* and *auditor steps*, each showing its default, from 4 to 400. They apply from the next task. The same limits are `[subagents.steps]` in `~/.ryter/config.toml`:
+
+```toml
+[subagents.steps]
+builder = 60
+auditor = 20
+```
+
+Raise a limit when reports keep saying a specialist reached it on tasks that are a sensible size. More steps cost more when a specialist wanders, and a task that needs many more is usually one the architect should have split.
 
 Tasks land on a patch branch (`ryter/patch-…`), not yours. When every task in the patch is done and the combined checks pass, the patch lands on your branch as **one commit** (`git revert -m 1` undoes it all). A blocked task holds the patch until you retry or drop it; the lead says what it is waiting on.
 

@@ -334,16 +334,77 @@ pub struct RoleModel {
     pub model: Option<String>,
 }
 
-/// How many specialists may run at once.
+/// How many specialists may run at once, and how long each may go on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubagentsConfig {
     /// Parallelism cap. Must be ≥ 1.
     pub max: u32,
+    /// `[subagents.steps]`: steps each kind of specialist gets.
+    #[serde(default)]
+    pub steps: Steps,
 }
 
 impl Default for SubagentsConfig {
     fn default() -> Self {
-        Self { max: 4 }
+        Self {
+            max: 4,
+            steps: Steps::default(),
+        }
+    }
+}
+
+/// How many steps each kind of specialist gets on one run. A step is one
+/// call to its model, with the tool calls that reply asks for. The last
+/// step is for writing up: it has no tools. More steps let a specialist
+/// finish a bigger task, and cost more when it wanders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Steps {
+    /// A builder, on one attempt at its task.
+    pub builder: u32,
+    /// The architect, on one plan.
+    pub architect: u32,
+    /// An auditor, on one review.
+    pub auditor: u32,
+}
+
+impl Default for Steps {
+    fn default() -> Self {
+        Self {
+            builder: 40,
+            architect: 30,
+            auditor: 12,
+        }
+    }
+}
+
+impl Steps {
+    /// The fewest a specialist can work in: a look, a change, a check, and
+    /// the write-up.
+    pub const MIN: u32 = 4;
+    /// The most. A run this long has gone wrong some other way.
+    pub const MAX: u32 = 400;
+
+    /// The steps `role` gets, within [`Self::MIN`] and [`Self::MAX`].
+    /// Reviewers of every kind get the auditor's.
+    pub fn for_role(&self, role: crate::role::Role) -> usize {
+        let n = match role {
+            crate::role::Role::Builder => self.builder,
+            crate::role::Role::Architect => self.architect,
+            _ => self.auditor,
+        };
+        n.clamp(Self::MIN, Self::MAX) as usize
+    }
+
+    /// Each limit brought within [`Self::MIN`] and [`Self::MAX`].
+    #[must_use]
+    pub fn clamped(self) -> Self {
+        let c = |n: u32| n.clamp(Self::MIN, Self::MAX);
+        Self {
+            builder: c(self.builder),
+            architect: c(self.architect),
+            auditor: c(self.auditor),
+        }
     }
 }
 
@@ -1179,6 +1240,8 @@ struct SettingsFile {
     #[serde(default)]
     task_budget_usd: Option<f64>,
     max: Option<u32>,
+    #[serde(default)]
+    steps: Option<Steps>,
     sandbox: Option<String>,
     inbound: Option<bool>,
     web: Option<bool>,
@@ -1215,6 +1278,9 @@ fn apply_settings_file(cfg: &mut Config, path: &Path) {
     if let Some(v) = file.max {
         cfg.subagents.max = v;
     }
+    if let Some(v) = file.steps {
+        cfg.subagents.steps = v.clamped();
+    }
     if let Some(v) = file.sandbox {
         cfg.sandbox.profile = v;
     }
@@ -1237,6 +1303,7 @@ pub fn save_settings(home: &Path, cfg: &Config) -> Result<()> {
         warn_usd: Some(cfg.spend.warn_usd),
         task_budget_usd: Some(cfg.spend.task_budget_usd),
         max: Some(cfg.subagents.max),
+        steps: Some(cfg.subagents.steps.clamped()),
         sandbox: Some(cfg.sandbox.profile.clone()),
         inbound: Some(cfg.mcp.inbound),
         web: Some(cfg.features.web),
@@ -2375,6 +2442,64 @@ mod tests {
             UpdateMode::Install.next().next().next(),
             UpdateMode::Install
         );
+    }
+
+    /// `[subagents.steps]` sets how long each specialist may go on. A table
+    /// that names one keeps the defaults for the rest, `/settings` saves
+    /// over it, and nothing gets fewer steps than it can work in.
+    #[test]
+    fn step_limits_are_read_saved_and_kept_in_range() {
+        use crate::role::Role;
+        let dir = TempDir::new().unwrap();
+        // None set: the defaults.
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(cfg.subagents.steps, Steps::default());
+        assert_eq!(
+            (
+                cfg.subagents.steps.for_role(Role::Builder),
+                cfg.subagents.steps.for_role(Role::Architect),
+                cfg.subagents.steps.for_role(Role::Auditor),
+            ),
+            (40, 30, 12)
+        );
+        fs::write(
+            dir.path().join("config.toml"),
+            "[subagents]\nmax = 2\n\n[subagents.steps]\nauditor = 30\n",
+        )
+        .unwrap();
+        let mut cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(cfg.subagents.max, 2);
+        assert_eq!(
+            cfg.subagents.steps,
+            Steps {
+                auditor: 30,
+                ..Steps::default()
+            }
+        );
+        // Saved from /settings, it wins over config.toml, within range.
+        cfg.subagents.steps = Steps {
+            builder: 80,
+            architect: 1,
+            auditor: 9_000,
+        };
+        save_settings(dir.path(), &cfg).unwrap();
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(
+            cfg.subagents.steps,
+            Steps {
+                builder: 80,
+                architect: Steps::MIN,
+                auditor: Steps::MAX,
+            }
+        );
+        // A hand-written limit out of range is used within it.
+        let wild = Steps {
+            builder: 0,
+            ..Steps::default()
+        };
+        assert_eq!(wild.for_role(Role::Builder), Steps::MIN as usize);
+        // Every kind of reviewer gets the auditor's.
+        assert_eq!(Steps::default().for_role(Role::SoloReview), 12);
     }
 
     #[test]

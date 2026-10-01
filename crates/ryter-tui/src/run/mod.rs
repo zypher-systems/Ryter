@@ -376,6 +376,7 @@ fn populate_view(
     view.model_reasoning = cfg.model_reasoning.clone();
     view.warn_usd = cfg.spend.warn_usd;
     view.max_crew = cfg.subagents.max;
+    view.steps = cfg.subagents.steps.clamped();
     view.sandbox_profile = cfg.sandbox.profile.clone();
     view.update_mode = cfg.update.mode;
     view.web = cfg.features.web;

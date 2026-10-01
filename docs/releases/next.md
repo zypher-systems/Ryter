@@ -22,6 +22,7 @@ added at the top, and this comment removed.
   - Setting the task to pending audits it again without rebuilding it.
 - **The auditor knows what it can't run.** Its instructions and each refusal say that its shell runs test runners, linters and read-only commands, and refuses containers, servers, installs and the project's own shell scripts. They also say the limit is the auditor's own and that a builder can run those commands.
 - **Work the auditor can't run goes on as "reviewed, not run".** It ends with `VERDICT: UNVERIFIED`, the task lands on the patch marked, and the patch waits until checks have built and tested it. That rule already existed for code that can't be built until another task lands. For a project tested in a container, put those commands in `[auditor] checks` and Ryter runs them itself.
+- **You can set how many steps each specialist gets.** `/settings` → *agents* has builder, architect and auditor steps, with the defaults (40, 30, 12) in the labels. They are also `[subagents.steps]` in `config.toml`. A change applies from the next task.
 - **The benchmark has a tenth task, `runner-script`:** a feature in a project whose tests run only through its own script, which the auditor's shell refuses.
 
 ## Tried before release
@@ -33,4 +34,7 @@ added at the top, and this comment removed.
   - With no checks, the auditor's brief names what its shell refuses, and no longer says to build the project itself.
   - `docker compose build`, `podman compose up` and `./dev test` are refused to an auditor with "a limit on the auditor, not on this machine". `sudo` is not blamed on the role.
 - **The new benchmark task, once, with a real crew** (lead deepseek-v4.1-flash, builder glm-5.3, auditor grok-4.7): it landed and passed the hidden tests in 75 seconds for $0.098. The auditor used 7 of its 12 steps: it read the change, wrote a scratch test for the rounding and the unknown currency, and gave its verdict. It didn't try the project's script.
+- **Step limits:**
+  - In the TUI, `/settings` showed the three limits with their defaults. I raised the builder's to 50 and lowered the auditor's to 10, saved, and restarted: both were kept, and marked as set by you.
+  - With scripted models, an auditor given six steps was told "this is the last of your 6 steps" on its sixth, and a builder given five was stopped on its fifth, with the report saying so.
 - **Not yet tried:** the project this came from. It needs this build run against it, which is the next step.

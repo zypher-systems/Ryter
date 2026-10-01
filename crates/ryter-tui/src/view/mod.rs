@@ -292,6 +292,8 @@ pub struct View {
     pub warn_usd: f64,
     /// `[subagents] max`.
     pub max_crew: u32,
+    /// `[subagents.steps]`: steps each kind of specialist gets.
+    pub steps: ryter_core::config::Steps,
     /// Sandbox profile name.
     pub sandbox_profile: String,
     /// `[update] mode`: what Ryter does about a newer release at launch.
@@ -461,6 +463,7 @@ impl View {
             task_budget_usd: 3.0,
             warn_usd: 1.0,
             max_crew: 4,
+            steps: ryter_core::config::Steps::default(),
             sandbox_profile: "off".into(),
             update_mode: ryter_core::config::UpdateMode::default(),
             web: false,

@@ -31,6 +31,13 @@ model = "grok-4.6"
 [subagents]
 max = 4
 
+# Steps each specialist gets on one run. A step is one call to its model. The
+# last one is for writing up, with no tools. Also in /settings → agents.
+# [subagents.steps]
+# builder = 40
+# architect = 30
+# auditor = 12
+
 [auditor]
 # Work merges only after the checks pass and the auditor signs off.
 # With the auditor off, finished work is left on its branch for you to merge.

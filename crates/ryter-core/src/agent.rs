@@ -818,6 +818,12 @@ impl Agent {
                     .as_ref()
                     .map(|c| c.model_reasoning.clone())
                     .unwrap_or_default(),
+            )
+            .with_steps(
+                self.cfg
+                    .as_ref()
+                    .map(|c| c.subagents.steps)
+                    .unwrap_or_default(),
             );
         if let Some(sink) = &self.sink {
             meter = meter.with_sink(sink.clone());
@@ -3604,6 +3610,36 @@ mod tests {
         let report = agent.drain_crew().await.unwrap();
         assert!(report.contains("merged"), "{report}");
         assert_eq!(agent.session.meta.rejections.get("t1"), None);
+    }
+
+    /// The step limits in the config are the ones a crew run keeps: a
+    /// builder given five steps is stopped on its fifth, and the lead is
+    /// told it ran out of steps.
+    #[tokio::test]
+    async fn the_configured_step_limit_reaches_the_crew() {
+        let p = ReplayProvider::scripted(vec![
+            write("a.txt", "a\n"),
+            write("a.txt", "a\nb\n"),
+            write("a.txt", "a\nb\nc\n"),
+            write("a.txt", "a\nb\nc\nd\n"),
+            say("STATUS: PARTIAL\nFILES: a.txt\nNOTES: e is left"),
+            say("- a.txt: e is missing (blocking)\n\nVERDICT: FAIL"),
+        ]);
+        let (_home, _cwd, mut agent) = crew_setup(p);
+        agent.max_crew = 1;
+        agent.max_retries = 0;
+        agent.checks = vec!["true".into()];
+        let mut cfg = agent.cfg.clone().unwrap_or_default();
+        cfg.subagents.steps.builder = 5;
+        agent.cfg = Some(cfg);
+        let todo =
+            serde_json::json!({"items": [{"id": "t1", "title": "add a", "files": ["a.txt"]}]});
+        agent.queue.lock().unwrap().apply_todo(&todo).unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert!(
+            report.contains("[Ryter] The builder reached its limit of 5 steps"),
+            "{report}"
+        );
     }
 
     /// A paused crew is reported to the lead once a turn. Only the user can

@@ -1893,16 +1893,17 @@ fn partial_str(json: &str, key: &str) -> Option<String> {
 
 /// Tool rounds and output ceiling per role. A builder writing a whole file puts
 /// it in its tool arguments, so it needs room; an auditor reviewing one diff
-/// with the checks already run does not need forty rounds.
+/// with the checks already run does not need forty rounds. The rounds are
+/// the defaults: the user sets their own in `[subagents.steps]`, which the
+/// run's meter carries.
 fn limits(role: Role) -> (usize, u32) {
     // Output ceilings, not budgets: only what is generated is billed. Models
     // that reason spend output tokens before they answer, and on the first
     // live run an architect used its whole 8k on that and returned nothing.
     // The per-task caps are what bound spend.
     match role {
-        Role::Builder => (40, 32_768),
-        Role::Architect => (30, 32_768),
-        _ => (12, 16_384),
+        Role::Builder | Role::Architect => (crate::config::Steps::default().for_role(role), 32_768),
+        _ => (crate::config::Steps::default().for_role(role), 16_384),
     }
 }
 
@@ -1938,7 +1939,8 @@ pub(crate) async fn run_specialist(
     ctx: &ToolContext,
     bill: &Bill<'_>,
 ) -> Result<String> {
-    let (rounds, max_tokens) = limits(role);
+    let (_, max_tokens) = limits(role);
+    let rounds = bill.meter.steps(role);
     let mut last = String::new();
     let mut cutoffs = 0usize;
     // Why the specialist has been told to stop and write up, once it has.
@@ -3040,6 +3042,43 @@ mod tests {
         // Reviewed by reading: it goes on to the patch, marked as not run.
         assert_eq!(out.status, TaskStatus::Done, "{out:?}");
         assert!(out.unverified, "{out:?}");
+    }
+
+    /// The step limits are the user's to set: an auditor given six steps is
+    /// told so on its sixth, and its report says six.
+    #[tokio::test]
+    async fn a_step_limit_the_user_set_is_the_one_kept() {
+        let f = fixture();
+        let mut turns = vec![write_call("extra.txt", "built\n"), say("STATUS: DONE")];
+        turns.extend((1..6).map(|_| bash_call("true")));
+        turns.push(say(
+            "- nothing wrong found; I ran out of steps\n\nVERDICT: FAIL",
+        ));
+        let p = Scripted::new(turns);
+        let panel = vec![seat(&p, "auditor-m", "", &[])];
+        let meter = Meter::new(
+            crate::spend::PriceBook::new(),
+            crate::meter::Caps::default(),
+        )
+        .with_steps(crate::config::Steps {
+            auditor: 6,
+            ..Default::default()
+        });
+        let out = run_with(&f, &p, &task("t1", "x"), true, &[], &panel, &meter, 0).await;
+        assert_eq!(p.calls(), 2 + 6);
+        assert!(
+            p.request(7)
+                .contains("[Ryter] This is the last of your 6 steps"),
+            "{}",
+            p.request(7)
+        );
+        assert!(!p.request(6).contains("the last of your"));
+        assert!(
+            out.findings
+                .contains("[Ryter] The auditor reached its limit of 6 steps"),
+            "{}",
+            out.findings
+        );
     }
 
     /// Every specialist's last step is for writing up, with no tools,

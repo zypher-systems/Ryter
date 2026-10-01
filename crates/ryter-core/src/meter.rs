@@ -61,6 +61,8 @@ pub struct Meter {
     efforts: BTreeMap<String, String>,
     /// The user's reasoning level per model.
     model_efforts: BTreeMap<String, String>,
+    /// Steps each kind of specialist gets on this run.
+    steps: crate::config::Steps,
     lines: Mutex<Vec<SpendLine>>,
     /// What each task spent on earlier runs. Its caps count that too, so a
     /// retried task doesn't start again from $0.
@@ -124,6 +126,7 @@ impl Meter {
             sink: None,
             efforts: BTreeMap::new(),
             model_efforts: BTreeMap::new(),
+            steps: crate::config::Steps::default(),
             lines: Mutex::new(Vec::new()),
             prior: BTreeMap::new(),
             recorded: Mutex::new(0),
@@ -204,6 +207,18 @@ impl Meter {
         self.efforts = roles;
         self.model_efforts = models;
         self
+    }
+
+    /// The steps each kind of specialist gets (`[subagents.steps]`).
+    #[must_use]
+    pub fn with_steps(mut self, steps: crate::config::Steps) -> Self {
+        self.steps = steps;
+        self
+    }
+
+    /// How many steps `role` gets on one run, the write-up included.
+    pub fn steps(&self, role: Role) -> usize {
+        self.steps.for_role(role)
     }
 
     /// How hard `model`, in `role`, should reason on this run.
