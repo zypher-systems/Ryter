@@ -367,7 +367,12 @@ pub fn rect(full: Rect, body: Rect, pref_w: u16, content_rows: u16, modal: bool)
     if full.width < 60 || full.height < 20 {
         return body;
     }
-    let w = pref_w.clamp(40, full.width.saturating_sub(8));
+    // No wider than the body it is drawn in. Beside the rail the body is
+    // narrower than the screen, and a panel sized to the screen ran off
+    // its right edge: `/models` there crashed the whole program.
+    let w = pref_w
+        .clamp(40, full.width.saturating_sub(8).max(40))
+        .min(body.width);
     // A panel may use the body it now owns. Reserving ten rows of the terminal
     // meant `/help` got 20 rows for 40 rows of keybindings at 100x30 and
     // clipped the first thing a new user reads; two rows of breathing room
@@ -469,6 +474,8 @@ pub fn draw(
         } else {
             rect(full, body, pw, rows + extra, modal.is_some())
         };
+        // Whatever a panel asks for, nothing is drawn off the screen.
+        let area = area.intersection(full);
         if !focused {
             // Under-panels render dimmed with no shadow.
             draw_one(frame, area, p.as_ref(), view, theme, false);

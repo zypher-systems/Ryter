@@ -7,6 +7,8 @@ added at the top, and this comment removed.
 
 ## What was wrong
 
+- **`/models` crashed Ryter beside the rail.** With the side rail showing and a terminal narrower than about 158 columns, opening `/models` ended the program with "index outside of buffer". The panel asks for 124 columns and was sized to the whole screen, not to the space beside the rail, so it was drawn past the right edge. It has done this since 0.9.1. Hiding the rail (`^b`) or a wider terminal avoided it.
+
 - **A crew could not get past a task whose auditor ran out of steps.** On a real project (a Docker web app) the first builder task never landed, after six rounds and $2.83:
   - **Specialists stopped without warning.** A builder has 40 steps and an auditor 12. They were told to stop and write up only when a spending limit was set. With none, the run just ended, and the half-sentence beside its last tool call became its report.
   - **A review with no verdict counted as a rejection.** The auditor's last words were "I'll use Podman to build and run the six checks". That was read as a FAIL. The builder was run again on work nobody had faulted, the round was added to its rejections, and you were told to choose a stronger builder.
@@ -22,6 +24,8 @@ added at the top, and this comment removed.
 - **A plan was a message, approved by a question about something else.** The plan hat wrote its plan into the chat, and work started when you answered a yes/no card about switching hats. There was no way to say "change this part first", and the plan was nowhere but the chat's history.
 
 ## What changed
+
+- **No panel is drawn off the screen.** A panel is sized to the space it is drawn in, and whatever it asks for is cut to the screen. `/models` opens beside the rail at any width.
 
 - **A specialist's last step is for writing up.** On the last of its steps it is told so, gets no tools, and is told what its answer must contain. Its report says it reached its limit. This now happens with or without a spending limit.
 - **A review with no verdict decides nothing.**
@@ -55,6 +59,8 @@ added at the top, and this comment removed.
 - **The benchmark has a tenth task, `runner-script`:** a feature in a project whose tests run only through its own script, which the auditor's shell refuses.
 
 ## Tried before release
+
+- **`/models` beside the rail,** in the TUI at 110 columns, where 0.10.0 crashes: it opened, with every model's name and prices in view. A new test opens every panel at every width from 40 to 200 columns, with and without the rail; it crashes on 0.10.0.
 
 - **The crew's new behaviour, with scripted models:** six new tests, each of which fails on 0.10.0:
   - An auditor that ends on "I'll use Podman to build and run the six checks" is asked once for a verdict. With none, the task is blocked and unrejected, the builder isn't called again, and the next run calls only the auditor.

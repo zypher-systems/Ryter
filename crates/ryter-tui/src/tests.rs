@@ -223,6 +223,62 @@ fn snapshot_every_panel() {
     }
 }
 
+/// Every panel opens at every width, beside the rail and without it.
+/// `/models` asks for 124 columns; beside the rail, on a screen under 158
+/// wide, it was drawn past the right edge and the program crashed.
+#[test]
+fn every_panel_fits_the_screen_at_every_width() {
+    let panels = [
+        PanelId::Providers,
+        PanelId::Models,
+        PanelId::Crew,
+        PanelId::CrewBuilder,
+        PanelId::Agents,
+        PanelId::Sessions(SessionsMode::Browse),
+        PanelId::Spend,
+        PanelId::Budget,
+        PanelId::Settings,
+        PanelId::Theme,
+        PanelId::Tools,
+        PanelId::Auditor,
+        PanelId::Mcp,
+        PanelId::Skills,
+        PanelId::Rules,
+        PanelId::Hooks,
+        PanelId::Context,
+        PanelId::Help,
+        PanelId::Doctor,
+        PanelId::Changes,
+        PanelId::Commit,
+    ];
+    for id in panels {
+        for (layout, rail) in [("ledger", true), ("ledger", false), ("classic", true)] {
+            let mut v = with_panel(id);
+            v.ui.layout = layout.into();
+            v.panel_visible = rail;
+            for width in (40..=200).step_by(6) {
+                for height in [12, 24, 40] {
+                    // Drawing off the screen panics.
+                    let drawn = render_to_string(&v, width, height);
+                    assert!(
+                        drawn
+                            .lines()
+                            .all(|l| l.chars().count() <= usize::from(width)),
+                        "{id:?} at {width}x{height}, {layout}, rail {rail}"
+                    );
+                }
+            }
+        }
+    }
+    // The case that crashed: its right border is on the screen.
+    let mut v = with_panel(PanelId::Models);
+    v.ui.layout = "ledger".into();
+    v.panel_visible = true;
+    let drawn = render_to_string(&v, 110, 32);
+    let top = drawn.lines().find(|l| l.contains("models")).unwrap_or("");
+    assert!(top.trim_end().ends_with('╮'), "{drawn}");
+}
+
 #[test]
 fn snapshot_permission_modal() {
     let mut v = mid_stream(ActivityMode::Collapsed);

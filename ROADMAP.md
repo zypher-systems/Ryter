@@ -22,6 +22,7 @@ Living plan for Ryter. The lead updates this as work lands.
 
 Work that is in `dev` and not yet released is marked *Unreleased*, and its notes collect in `docs/releases/next.md`. An entry gets its version when it's released.
 
+- **Unreleased: no panel is drawn off the screen.** `/models` crashed the program beside the rail on a terminal under about 158 columns wide (since 0.9.1). Panels are sized to the space they are drawn in.
 - **Unreleased: a plan is approved in its own panel.** The model shows a plan with `present_plan`; the user approves (it is saved under `.ryter/plans/` and built in the same turn), says what to change, or rejects it.
 - **Unreleased: a `/rules` panel.** Two tabs, the rules for every project and for this one: read them, add a rule, remove a line, open the file in an editor. No model call; `/rules <text>` still asks the model to save one.
 - **Unreleased: sandbox profiles explained, and `workspace` made usable.** `/settings` compares `off`, `workspace` and `read-only` under the field. Under a profile, commands can write `/dev/null`, read and run toolchains under the home folder, write their download caches, make temporary files in `~/.ryter/tmp`, and write crew worktrees; saved logins, `~/.ssh` and the rest of the home folder stay shut. `ryter --sandbox workspace bench` runs the suite under it. The default stays `off`.
