@@ -22,6 +22,7 @@ Living plan for Ryter. The lead updates this as work lands.
 
 Work that is in `dev` and not yet released is marked *Unreleased*, and its notes collect in `docs/releases/next.md`. An entry gets its version when it's released.
 
+- **Unreleased: a plan is approved in its own panel.** The model shows a plan with `present_plan`; the user approves (it is saved under `.ryter/plans/` and built in the same turn), says what to change, or rejects it.
 - **Unreleased: a `/rules` panel.** Two tabs, the rules for every project and for this one: read them, add a rule, remove a line, open the file in an editor. No model call; `/rules <text>` still asks the model to save one.
 - **Unreleased: sandbox profiles explained, and `workspace` made usable.** `/settings` compares `off`, `workspace` and `read-only` under the field. Under a profile, commands can write `/dev/null`, read and run toolchains under the home folder, write their download caches, make temporary files in `~/.ryter/tmp`, and write crew worktrees; saved logins, `~/.ssh` and the rest of the home folder stay shut. `ryter --sandbox workspace bench` runs the suite under it. The default stays `off`.
 - **Unreleased: step limits you can set.** `/settings` → agents has builder, architect and auditor steps (defaults 40, 30, 12; 4 to 400), also `[subagents.steps]` in `config.toml`. A change applies from the next task.
@@ -157,7 +158,7 @@ Crew mode is being retired. Ryter becomes one mode: the solo interface, with a h
 
 **The order:**
 
-1. **Plan approval in a popout.** The plan hat writes a plan; it opens in a scrolling panel with approve, adjust and reject, and is written to disk on approve. The build hat works from that file.
+1. **Plan approval in a popout** (in `dev`). The plan hat writes a plan; it opens in a scrolling panel with approve, adjust and reject, and is written to disk on approve. The build hat works from that file.
 2. **A model for each hat,** set in `/models`. By default every hat follows one model. The hats share one conversation, and a switch to another model shows what re-reading it will cost.
 3. **Review as a gate.** The review hat, on a different model when the user sets one, checks the change against the plan and for bugs before it is called done.
 4. **A fourth hat that uses the product as a user would** (working name: Test). It starts from the plan and the product, not the conversation. The project says how to start, stop and test itself, and Ryter runs those commands and stops what it started.

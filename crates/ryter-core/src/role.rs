@@ -75,8 +75,8 @@ impl Role {
                 "[hat: build — you may change files and run commands when the request calls for it]",
             ),
             Self::SoloPlan => Some(
-                "[hat: plan — nothing may change; read and think. When asked for a plan, end with \
-                 files, steps, risks, and how to verify]",
+                "[hat: plan — nothing may change; read and think. When you have a plan, show it \
+                 with present_plan: goal, steps, files, risks, and how to verify]",
             ),
             Self::SoloReview => Some(
                 "[hat: review — nothing may change; read and run tests. When asked for a review, \

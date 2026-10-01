@@ -24,6 +24,17 @@ pub enum Permission {
     Always,
 }
 
+/// What the user said to a plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanAnswer {
+    /// Carry it out.
+    Approve,
+    /// Change it first; what to change, in their words.
+    Adjust(String),
+    /// Don't.
+    Reject,
+}
+
 /// A prompt the TUI must answer.
 #[derive(Debug)]
 pub enum UserRequest {
@@ -44,6 +55,15 @@ pub enum UserRequest {
         whole: bool,
         /// Reply channel.
         reply: mpsc::Sender<Permission>,
+    },
+    /// A plan to approve before any work on it starts.
+    Plan {
+        /// A few words: the panel's title.
+        title: String,
+        /// The plan, in Markdown.
+        plan: String,
+        /// Reply channel.
+        reply: mpsc::Sender<PlanAnswer>,
     },
     /// A question: the model's `ask_user`, or Ryter's own.
     Question {
@@ -174,6 +194,32 @@ impl UserIo {
         wait(&reply_rx, cancel).unwrap_or_default()
     }
 
+    /// Show the user a plan and wait for their answer. A plan takes reading,
+    /// so this waits as long as they take: a prompt's five-minute limit
+    /// would reject a plan the user was still on. No answer (the turn was
+    /// cancelled, or nobody is there) is a rejection.
+    pub fn present_plan(&self, title: &str, plan: &str, cancel: &Cancel) -> PlanAnswer {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        let req = UserRequest::Plan {
+            title: title.to_string(),
+            plan: plan.to_string(),
+            reply: reply_tx,
+        };
+        if self.send(req).is_err() {
+            return PlanAnswer::Reject;
+        }
+        loop {
+            if cancel.is_cancelled() {
+                return PlanAnswer::Reject;
+            }
+            match reply_rx.recv_timeout(POLL) {
+                Ok(answer) => return answer,
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return PlanAnswer::Reject,
+            }
+        }
+    }
+
     fn send(&self, req: UserRequest) -> Result<(), ()> {
         let tx = self.tx.lock().map_err(|_| ())?;
         tx.send(req).map_err(|_| ())
@@ -292,8 +338,39 @@ mod tests {
             UserRequest::Permission { reply, .. } => {
                 reply.send(Permission::Always).unwrap();
             }
-            UserRequest::Question { .. } => panic!("expected permission"),
+            other => panic!("expected permission, got {other:?}"),
         }
         assert_eq!(worker.join().unwrap(), Permission::Always);
+    }
+
+    /// A plan is waited on for as long as the user reads it, and no answer
+    /// is a rejection: the turn cancelled, or nobody there.
+    #[test]
+    fn a_plan_waits_for_its_answer() {
+        let (io, rx) = UserIo::pair();
+        let worker =
+            std::thread::spawn(move || io.present_plan("Title", "## Goal", &Cancel::new()));
+        match rx.recv().unwrap() {
+            UserRequest::Plan { title, plan, reply } => {
+                assert_eq!((title.as_str(), plan.as_str()), ("Title", "## Goal"));
+                reply.send(PlanAnswer::Adjust("more".into())).unwrap();
+            }
+            other => panic!("expected a plan, got {other:?}"),
+        }
+        assert_eq!(worker.join().unwrap(), PlanAnswer::Adjust("more".into()));
+        // The panel closed without an answer.
+        let (io, rx) = UserIo::pair();
+        let worker = std::thread::spawn(move || io.present_plan("T", "p", &Cancel::new()));
+        drop(rx.recv().unwrap());
+        assert_eq!(worker.join().unwrap(), PlanAnswer::Reject);
+        // The turn was cancelled while it was up.
+        let (io, rx) = UserIo::pair();
+        let cancel = Cancel::new();
+        let c = cancel.clone();
+        let worker = std::thread::spawn(move || io.present_plan("T", "p", &c));
+        let held = rx.recv().unwrap();
+        cancel.cancel();
+        assert_eq!(worker.join().unwrap(), PlanAnswer::Reject);
+        drop(held);
     }
 }

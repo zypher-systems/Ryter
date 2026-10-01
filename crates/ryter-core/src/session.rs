@@ -95,6 +95,9 @@ pub struct Meta {
     /// asks once.
     #[serde(default)]
     pub checks_offered: bool,
+    /// The plan the user last approved, as a path in the project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_file: Option<String>,
     /// Audit and check rejections per task id, in all: a task the lead
     /// requeues or recreates keeps its count.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -216,6 +219,7 @@ impl Session {
             patch: None,
             patches_opened: 0,
             checks_offered: false,
+            plan_file: None,
             rejections: Default::default(),
             checkpoints: Vec::new(),
             turn_records: Default::default(),
@@ -602,6 +606,12 @@ impl Session {
         let c = self.meta.checkpoints.pop();
         self.touch()?;
         Ok(c)
+    }
+
+    /// Remember the plan the user approved.
+    pub fn set_plan_file(&mut self, path: Option<String>) -> Result<()> {
+        self.meta.plan_file = path;
+        self.touch()
     }
 
     /// Remember that the detected checks were offered.

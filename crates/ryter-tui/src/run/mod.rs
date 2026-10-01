@@ -295,6 +295,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         mcp_host: attach_host,
         perm_reply: None,
         ask_reply: None,
+        plan_reply: None,
         mouse_grabbed: mouse,
         theme,
         theme_before_preview: None,
@@ -711,6 +712,14 @@ fn drain_user_prompts(
                     .showing_whole(whole)
                     .with_context(why, opened),
             ));
+        }
+        UserRequest::Plan { title, plan, reply } => {
+            cx.plan_reply = Some(reply);
+            let opened = view.now_ms;
+            view.panels
+                .push(Box::new(crate::panel::plan::PlanModal::new(
+                    title, plan, opened,
+                )));
         }
         UserRequest::Question {
             title,

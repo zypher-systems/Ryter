@@ -18,6 +18,7 @@ pub mod lane;
 pub mod mcp;
 pub mod modal;
 pub mod models;
+pub mod plan;
 pub mod providers;
 pub mod rules;
 pub mod sessions;

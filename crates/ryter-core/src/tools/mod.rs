@@ -328,6 +328,20 @@ fn spec(name: &str) -> Option<ToolSpec> {
                 "rules":{"type":"string","description":"the whole rules file, in Markdown, as it should be after the change"}
             },"required":["rules"]}),
         ),
+        "present_plan" => (
+            "Show the user a plan to approve before any work on it starts. Use it whenever \
+             the user asks for a plan, and before work that is more than a small change. \
+             Write the plan in Markdown under these headings: Goal, Steps (numbered, each \
+             small enough to check), Files, Risks, How to verify. The user reads it in a \
+             panel and answers. Approve: the plan is saved in the project and you carry it \
+             out in the build hat, in this same turn. Adjust: they say what to change; \
+             revise the plan and present it again. Reject: nothing is saved. Never ask in \
+             plain text whether a plan is acceptable: present it.",
+            json!({"type":"object","properties":{
+                "title":{"type":"string","description":"a few words: the panel's title and the file's name"},
+                "plan":{"type":"string","description":"the plan, in Markdown"}
+            },"required":["title","plan"]}),
+        ),
         "request_hat" => (
             "Ask the user to switch your hat, e.g. to build once a plan is ready or once a \
              review found things to fix. They answer yes or no; on yes you continue in the \
@@ -375,6 +389,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "bash",
             "ask_user",
             "request_hat",
+            "present_plan",
             "load_skill",
             "show_page",
             "update_rules",
@@ -445,9 +460,9 @@ pub fn execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput
         "use_tool" => mcp_use(args, ctx),
         "ask_user" => ask_user(args, ctx),
         // The agent loop answers this itself: it changes who the agent is.
-        "request_hat" | "load_skill" | "show_page" | "update_rules" => Ok(ToolOutput::err(
-            format!("{name} is handled by the agent loop"),
-        )),
+        "request_hat" | "present_plan" | "load_skill" | "show_page" | "update_rules" => Ok(
+            ToolOutput::err(format!("{name} is handled by the agent loop")),
+        ),
         "web_fetch" => web::web_fetch(args, ctx),
         "web_search" => web::web_search(args, ctx),
         other => Ok(ToolOutput::err(format!("unknown tool {other}"))),
@@ -1300,7 +1315,7 @@ mod edit_tests {
                 let _ = reply.send(crate::user_io::Permission::Deny);
                 preview
             }
-            crate::user_io::UserRequest::Question { .. } => None,
+            _ => None,
         });
         let out = gated_execute("search_replace", &args, &c).unwrap();
         assert!(out.is_error, "denied");

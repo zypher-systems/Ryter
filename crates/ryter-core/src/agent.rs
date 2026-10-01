@@ -599,13 +599,18 @@ impl Agent {
                     Ok(_)
                         if matches!(
                             call.name.as_str(),
-                            "request_hat" | "load_skill" | "show_page" | "update_rules"
+                            "request_hat"
+                                | "present_plan"
+                                | "load_skill"
+                                | "show_page"
+                                | "update_rules"
                         ) =>
                     {
                         let ctx = self.ctx.clone();
                         crate::tools::with_hooks(&call.name, &args, &ctx, || {
                             match call.name.as_str() {
                                 "request_hat" => self.request_hat(&args),
+                                "present_plan" => self.present_plan(&args),
                                 "load_skill" => Ok(self.load_skill(&args)),
                                 "update_rules" => self.update_rules(&args),
                                 _ => self.show_page(&args),
@@ -1628,6 +1633,110 @@ impl Agent {
             }
             crate::user_io::Permission::Deny => Ok(ToolOutput::err(format!(
                 "the user said no: stay in the {} hat, and ask what they want instead",
+                self.role
+            ))),
+        }
+    }
+
+    /// `present_plan`: show the user a plan, and on their yes save it in the
+    /// project and go on to build it.
+    ///
+    /// The plan used to be written into the chat, and work on it started
+    /// when the user answered a yes/no about switching hats. Here they read
+    /// the plan itself, in a panel, and say approve, adjust or reject. An
+    /// approved plan is a file in the project: the build works from it, and
+    /// a later review can hold the work against it.
+    fn present_plan(&mut self, args: &Value) -> Result<crate::tools::ToolOutput> {
+        use crate::tools::ToolOutput;
+        use crate::user_io::PlanAnswer;
+        let text = |key: &str| {
+            args.get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        };
+        let (Some(title), Some(plan)) = (text("title"), text("plan")) else {
+            return Ok(ToolOutput::err(
+                "present_plan needs `title` (a few words) and `plan` (the plan, in Markdown)",
+            ));
+        };
+        if !self.role.is_solo() {
+            return Ok(ToolOutput::err(
+                "plans are presented from the plan and build hats",
+            ));
+        }
+        if plan.len() > crate::plan::MAX_BYTES {
+            return Ok(ToolOutput::err(format!(
+                "that plan is {} KB. A plan the user has to approve is one they can read: \
+                 keep it under {} KB, and leave the detail for the work itself",
+                plan.len() / 1024,
+                crate::plan::MAX_BYTES / 1024
+            )));
+        }
+        let Some(io) = self.ctx.user_io.clone() else {
+            return Ok(ToolOutput::err(
+                "nobody can approve a plan here (headless), so nothing was saved. Give the \
+                 plan as your answer instead.",
+            ));
+        };
+        let answer = io.present_plan(title, plan, &self.ctx.cancel);
+        if self.ctx.cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        match answer {
+            PlanAnswer::Approve => {
+                let root = self
+                    .project_root
+                    .clone()
+                    .unwrap_or_else(|| self.ctx.workspace.clone());
+                let saved = match crate::plan::save(&root, title, plan) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Ok(ToolOutput::err(format!(
+                            "the user approved the plan, but it could not be saved ({e}), so \
+                             nothing has started. Tell them."
+                        )));
+                    }
+                };
+                let shown = saved
+                    .strip_prefix(&root)
+                    .unwrap_or(&saved)
+                    .display()
+                    .to_string();
+                self.session.set_plan_file(Some(shown.clone()))?;
+                self.emit(AgentEvent::Notice {
+                    message: format!("plan · approved and saved to {shown}"),
+                })?;
+                let from = self.role;
+                if from != Role::SoloBuild {
+                    self.role = Role::SoloBuild;
+                    self.ctx.role = Role::SoloBuild;
+                    self.session.set_mode(Role::SoloBuild)?;
+                    self.emit(AgentEvent::ModeChanged {
+                        role: Role::SoloBuild,
+                    })?;
+                }
+                Ok(ToolOutput::ok(format!(
+                    "The user approved the plan. It is saved at `{shown}`, and you are in the \
+                     build hat{}: you may change files and run commands. Carry the plan out \
+                     now, in this turn, a step at a time, and check each step the way the \
+                     plan says. If the plan turns out to be wrong, stop and say so: don't \
+                     improvise a different one.",
+                    if from == Role::SoloBuild {
+                        String::new()
+                    } else {
+                        format!(" now (was {from})")
+                    }
+                )))
+            }
+            PlanAnswer::Adjust(what) => Ok(ToolOutput::ok(format!(
+                "The user wants the plan changed before they approve it:\n\n{}\n\nNothing \
+                 was saved. Revise the plan and present it again with present_plan.",
+                what.trim()
+            ))),
+            PlanAnswer::Reject => Ok(ToolOutput::err(format!(
+                "the user rejected the plan: nothing was saved, and you are still in the {} \
+                 hat. Ask what they would like instead; don't present the same plan again",
                 self.role
             ))),
         }
@@ -3021,6 +3130,192 @@ mod tests {
         let asked = asked.join().unwrap();
         let _ = _home;
         (cwd, agent, events.try_iter().collect(), asked)
+    }
+
+    const A_PLAN: &str = "## Goal\nThe readme says what this is.\n\n## Steps\n1. Write README.md\n\n## Files\nREADME.md\n\n## Risks\nNone.\n\n## How to verify\nRead it.";
+
+    /// The plan hat presents a plan; the user answers `answer`. What they
+    /// were shown (title and plan), the tool's result, and the events.
+    async fn plan_presented(
+        answer: Option<crate::user_io::PlanAnswer>,
+    ) -> (
+        TempDir,
+        Agent,
+        Vec<(String, String)>,
+        String,
+        Vec<AgentEvent>,
+    ) {
+        let p = ReplayProvider::scripted(vec![
+            call(
+                "present_plan",
+                serde_json::json!({"title": "Say what this is", "plan": A_PLAN}),
+            ),
+            write("README.md", "built\n"),
+            say("done"),
+        ]);
+        let (_home, cwd, mut agent) = crew_setup(p);
+        agent.role = Role::SoloPlan;
+        agent.ctx.role = Role::SoloPlan;
+        agent.ctx.always_approve = true;
+        let shown = match answer {
+            Some(answer) => {
+                let (io, rx) = crate::user_io::UserIo::pair();
+                agent.ctx.user_io = Some(io);
+                Some(std::thread::spawn(move || {
+                    let mut shown = Vec::new();
+                    while let Ok(req) = rx.recv() {
+                        if let crate::user_io::UserRequest::Plan { title, plan, reply } = req {
+                            shown.push((title, plan));
+                            let _ = reply.send(answer.clone());
+                        }
+                    }
+                    shown
+                }))
+            }
+            // Headless: nobody to show it to.
+            None => None,
+        };
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("plan the readme").await.unwrap();
+        agent.ctx.user_io = None;
+        let shown = shown.map(|t| t.join().unwrap()).unwrap_or_default();
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        let _ = _home;
+        (cwd, agent, shown, result, events.try_iter().collect())
+    }
+
+    fn plans_in(cwd: &TempDir) -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(cwd.path().join(crate::plan::DIR))
+            .map(|d| d.flatten().map(|e| e.path()).collect())
+            .unwrap_or_default()
+    }
+
+    /// An approved plan is saved in the project and built in the same turn:
+    /// the user read the plan itself and said yes to it, where they used to
+    /// answer a yes/no about switching hats under a plan in the chat.
+    #[tokio::test]
+    async fn an_approved_plan_is_saved_and_built() {
+        use crate::user_io::PlanAnswer;
+        let (cwd, agent, shown, result, events) = plan_presented(Some(PlanAnswer::Approve)).await;
+        assert_eq!(
+            shown,
+            [("Say what this is".to_string(), A_PLAN.to_string())]
+        );
+        let files = plans_in(&cwd);
+        assert_eq!(files.len(), 1, "{files:?}");
+        let name = files[0].file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.ends_with("-say-what-this-is.md"), "{name}");
+        assert_eq!(
+            std::fs::read_to_string(&files[0]).unwrap(),
+            format!("# Say what this is\n\n{A_PLAN}\n")
+        );
+        let saved = format!("{}/{name}", crate::plan::DIR);
+        assert_eq!(
+            agent.session.meta.plan_file.as_deref(),
+            Some(saved.as_str())
+        );
+        assert!(
+            result.contains("The user approved the plan")
+                && result.contains(&saved)
+                && result.contains("build hat now (was plan)"),
+            "{result}"
+        );
+        // It went on to build, in the same turn.
+        assert_eq!(agent.role, Role::SoloBuild);
+        assert_eq!(agent.session.meta.mode, Some(Role::SoloBuild));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::ModeChanged {
+                role: Role::SoloBuild
+            }
+        )));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Notice { message } if message.contains("plan · approved and saved to")
+        )));
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("README.md")).unwrap(),
+            "built\n"
+        );
+    }
+
+    /// Asked to change it, the model gets the user's words and nothing is
+    /// saved. Rejected, nothing is saved either, and the hat stays.
+    #[tokio::test]
+    async fn a_plan_adjusted_or_rejected_saves_nothing() {
+        use crate::user_io::PlanAnswer;
+        let (cwd, agent, _, result, _) =
+            plan_presented(Some(PlanAnswer::Adjust("Add a licence section too".into()))).await;
+        assert!(
+            result.contains("wants the plan changed")
+                && result.contains("Add a licence section too")
+                && result.contains("present it again"),
+            "{result}"
+        );
+        assert!(plans_in(&cwd).is_empty());
+        assert_eq!(agent.session.meta.plan_file, None);
+
+        let (cwd, agent, _, result, events) = plan_presented(Some(PlanAnswer::Reject)).await;
+        assert!(result.contains("the user rejected the plan"), "{result}");
+        assert!(plans_in(&cwd).is_empty());
+        assert_eq!(agent.session.meta.plan_file, None);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::ModeChanged { .. }))
+        );
+        // The build it scripted next was refused: still the plan hat.
+        assert!(
+            !cwd.path().join("README.md").exists()
+                || std::fs::read_to_string(cwd.path().join("README.md")).unwrap() != "built\n"
+        );
+    }
+
+    /// With nobody to show it to, a plan is not approved by default, and a
+    /// plan too long to read is not shown at all.
+    #[tokio::test]
+    async fn a_plan_nobody_can_read_is_not_approved() {
+        let (cwd, agent, shown, result, _) = plan_presented(None).await;
+        assert!(shown.is_empty());
+        assert!(
+            result.contains("nobody can approve a plan here"),
+            "{result}"
+        );
+        assert!(plans_in(&cwd).is_empty());
+        assert_eq!(agent.role, Role::SoloPlan);
+
+        let long = "- a step\n".repeat(crate::plan::MAX_BYTES / 9 + 10);
+        let p = ReplayProvider::scripted(vec![
+            call(
+                "present_plan",
+                serde_json::json!({"title": "Everything", "plan": long}),
+            ),
+            say("done"),
+        ]);
+        let (_home, cwd, mut agent) = crew_setup(p);
+        agent.role = Role::SoloPlan;
+        agent.ctx.role = Role::SoloPlan;
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        agent.turn("plan everything").await.unwrap();
+        agent.ctx.user_io = None;
+        assert!(rx.try_recv().is_err(), "it was shown");
+        assert!(plans_in(&cwd).is_empty());
+        let result = &agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .unwrap()
+            .content;
+        assert!(result.contains("keep it under 64 KB"), "{result}");
     }
 
     /// "Want me to switch to build?" used to be a question the user couldn't

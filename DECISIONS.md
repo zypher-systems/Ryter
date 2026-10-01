@@ -12,6 +12,19 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
 - **Why:** "There is too many unknowns for crew to work effectively without the user." No real project had completed in crew mode; the benchmark's clean runs were on small tasks with checks already set.
 - **Where:** `ROADMAP.md` (Direction). The code to go, when it goes: `crew.rs`, `queue.rs`, `tiering.rs`, `estimate.rs`, the crew parts of `agent.rs`, and the crew panels, about 10,000 of 72,000 lines; `bench.rs` is rebuilt on the hats.
 
+### 2026-10-01 — A plan is approved on its own panel, and saved as a file
+- **By:** lead, with the user's choices (one scrolling plan; approve saves and starts the build; `.ryter/plans/` in the project)
+- **Decision:**
+  - **`present_plan {title, plan}`** is a tool of the solo hats. `Agent::present_plan` sends `UserRequest::Plan` and waits for a `PlanAnswer`, with no time limit: a prompt's five minutes would reject a plan the user was still reading.
+  - **Approve** saves the plan (`plan::save`, `.ryter/plans/<date>-<title>.md`, never over an earlier one), records it on the session (`meta.plan_file`), switches to the build hat and tells the model to build from the file in the same turn. **Adjust** returns the user's words and saves nothing. **Reject**, and no answer, save nothing and leave the hat.
+  - **The panel** (`panel/plan.rs`) draws each heading as a bold line with its section under it, scrolls, and takes `y`, `e` and `n`. Enter approves nothing, and `y` waits half a second after the panel opens.
+- **Chosen vs rejected:**
+  - Rejected steps beside their detail (the user chose one scrolling plan): it needs the model to write a plan as structured data, and any plan it writes can be read as text.
+  - Rejected holding `y` until the end of the plan has been drawn, as the rules prompt does. Approving a plan starts work the user watches and can stop; saving a rule changes every later session unseen.
+  - Rejected `PLAN.md` and Ryter's own folder for the file (the user chose `.ryter/plans/`): one overwrites the last plan, the other is gone with the session.
+- **Why:** the first step of the one-mode direction. The user asked for "a popout window with the plan that you can scroll through with an approve, reject or adjust option", and for the plan to be written to disk so that the build executes it and a review can check the work against it.
+- **Where:** `crates/ryter-core/src/plan.rs`, `agent.rs` (`present_plan`), `user_io.rs`, `tools/mod.rs`, `prompts/solo.md`, `crates/ryter-tui/src/panel/plan.rs`, `run/mod.rs`, `run/actions.rs`
+
 ### 2026-10-01 — A panel for the user's rules, with no model in it
 - **By:** lead, with the user's choice of layout (two tabs)
 - **Decision:**

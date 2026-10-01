@@ -47,6 +47,8 @@ pub struct Ctx {
     pub perm_reply: Option<mpsc::Sender<Permission>>,
     /// Pending `ask_user` reply.
     pub ask_reply: Option<mpsc::Sender<String>>,
+    /// The plan popout's reply channel, while one is open.
+    pub plan_reply: Option<mpsc::Sender<ryter_core::user_io::PlanAnswer>>,
     /// Mouse capture currently held. Released to let the terminal select
     /// text, since capture takes click-drag away from the user.
     pub mouse_grabbed: bool,
@@ -123,6 +125,8 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                     let _ = tx.send(Permission::Deny);
                 }
                 cx.ask_reply = None;
+                // Dropped unanswered, a plan is rejected.
+                cx.plan_reply = None;
                 while view.panels.has_modal() {
                     view.panels.pop();
                 }
@@ -429,6 +433,14 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         Action::PermissionReply(p) => {
             if let Some(tx) = cx.perm_reply.take() {
                 let _ = tx.send(p);
+            }
+            if view.activity.busy() {
+                view.activity.verb = Verb::Thinking;
+            }
+        }
+        Action::PlanReply(answer) => {
+            if let Some(tx) = cx.plan_reply.take() {
+                let _ = tx.send(answer);
             }
             if view.activity.busy() {
                 view.activity.verb = Verb::Thinking;

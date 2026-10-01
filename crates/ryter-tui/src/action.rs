@@ -277,6 +277,8 @@ pub enum Action {
     SaveSettings,
     /// Reply to a permission prompt.
     PermissionReply(Permission),
+    /// Reply to a plan.
+    PlanReply(ryter_core::user_io::PlanAnswer),
     /// Reply to `ask_user`.
     AskUserReply(String),
     /// Trust or skip project `.ryter/`.

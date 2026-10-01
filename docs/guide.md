@@ -208,13 +208,21 @@ A folder of projects is different. That's a folder like `~/workspace` that isn't
 
 ## Solo mode and hats
 
-Ryter starts in solo mode: one model in your project. `Tab` switches its hat (build → plan → review), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. The header, the message box's badge, and its border all show the hat in its own color. A switch applies to your next message. The model can also offer a switch itself: after a plan ("carry out the plan?") or a review ("fix these?") it asks with a yes/no prompt, and on `y` it carries on in the new hat in the same turn.
+Ryter starts in solo mode: one model in your project. `Tab` switches its hat (build → plan → review), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. The header, the message box's badge, and its border all show the hat in its own color. A switch applies to your next message. The model can also offer a switch itself: after a review ("fix these?") it asks with a yes/no prompt, and on `y` it carries on in the new hat in the same turn. A plan has its own panel, below.
 
 | Hat | May | May not |
 | --- | --- | --- |
 | **build** (default) | edit files and run commands; edits and commands that change things ask (or run with `a` for that kind of action / `--always-approve`); destructive commands always ask; outside the project, writes ask **every time** (see below) | read secrets, push, run inline interpreter code |
-| **plan** | read, search, run read-only commands, write `notes/` and project memory | edit source, run anything that changes the project |
+| **plan** | read, search, run read-only commands, and show you a plan to approve | edit source, run anything that changes the project |
 | **review** | read, run the tests and linters, read-only git | write anything, not even by redirect; install, format, or fix |
+
+**Approving a plan.** When the model has a plan, it shows it in a panel instead of writing it into the chat: the goal, the steps, the files, the risks, and how to verify it. `↑`/`↓` and `PgUp`/`PgDn` scroll a long one. You answer:
+
+- **`y` approves.** The plan is saved in the project as `.ryter/plans/<date>-<title>.md`, Ryter switches to the build hat, and the model builds from that file in the same turn. Earlier plans are kept beside it, and whether to commit them is yours to decide.
+- **`e` adjusts.** Type what should change. The model revises the plan and shows it again. Nothing is saved yet.
+- **`n` (or `Esc`) rejects.** Nothing is saved, and the hat stays as it was.
+
+`Enter` approves nothing here. The panel waits as long as you take to read. A headless run (`ryter -p`) has nobody to approve a plan, so nothing is saved and the plan comes back as the answer.
 
 **Audits: a second opinion.** `/audit` asks a different model to review your uncommitted changes before you commit (`/second` also works). You choose the model and how much one audit may spend; Ryter never chooses either.
 
