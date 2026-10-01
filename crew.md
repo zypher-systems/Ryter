@@ -21,7 +21,7 @@ Every rule below exists to keep that sentence true.
 | **Lead** (`orchestrator` in code) | your tree, conversational | the session transcript | project memory only | answers; tasks via `todo_write`; memory updates |
 | **Architect** | your tree, one-shot | fresh: memory + brief | project memory only; never source | `notes/architect.md`, tasks, DECISIONS, a short summary |
 | **Builder** | its own worktree, parallel | fresh: memory + its brief | product source in its owned paths | a structured handback |
-| **Auditor** (one or a panel) | the builder's worktree | fresh: brief + handback + checks + diff | nothing | findings + `VERDICT: PASS/FAIL` |
+| **Auditor** (one or a panel) | the builder's worktree | fresh: brief + handback + checks + diff | nothing | findings + `VERDICT: PASS/FAIL/UNVERIFIED` |
 
 - **Auditors must be different models from the lead and the builder.** A pass from
   the model that directs or wrote the code isn't a second opinion. Builds refuse
@@ -114,6 +114,9 @@ users and models alike.
 | C-15 | Every specialist round is metered and counts against the session budget and task caps. | `every_specialist_round_is_metered`, `crew_spend_reaches_the_session`, `a_task_cap_stops_the_task_and_keeps_its_branch` |
 | C-16 | A rejected task is fixed in its own worktree, not rebuilt. | `a_retry_fixes_the_rejected_attempt_in_place` |
 | C-17 | The fast path needs a person: no blanket approval stands in, and headless it is refused. | `a_proposed_edit_is_refused_without_a_person` |
+| C-18 | Every specialist's last step is for writing up: it is told so, has no tools for it, and its report says it reached its limit. | `the_last_step_is_for_writing_up` |
+| C-19 | An audit with no verdict rejects nothing: the auditor is asked once, and without one the work stays at the gate, uncounted, with the builder not run again. | `an_audit_with_no_verdict_rejects_nothing`, `a_missing_verdict_is_not_counted_against_the_builder` |
+| C-20 | An auditor refused a command a builder may run is told the limit is its own. | `an_auditors_refusal_says_the_limit_is_the_auditors` |
 
 **Re-gating rule.** The checks re-run whenever the tree changes. Auditors re-run
 only when *someone else's* code enters a task (a resolver ran). A clean merge of

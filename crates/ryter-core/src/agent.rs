@@ -3556,6 +3556,56 @@ mod tests {
         )));
     }
 
+    /// An audit that ends with no verdict isn't a rejection: it isn't
+    /// counted, the builder isn't run again, and nobody is told to choose a
+    /// stronger builder. Requeued, the task goes straight back to the audit.
+    #[tokio::test]
+    async fn a_missing_verdict_is_not_counted_against_the_builder() {
+        let p = ReplayProvider::scripted(vec![
+            write("a.txt", "a\n"),
+            say("STATUS: DONE"),
+            say("Podman is available. I'll use it to build and run the six checks."),
+            say("Starting the build."),
+            // Requeued: only the audit runs.
+            say("- a.txt:1 fine\n\nVERDICT: PASS"),
+        ]);
+        let (_home, cwd, mut agent) = crew_setup(p);
+        agent.max_crew = 1;
+        agent.max_retries = 2;
+        agent.checks = vec!["true".into()];
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let todo =
+            serde_json::json!({"items": [{"id": "t1", "title": "add a", "files": ["a.txt"]}]});
+        agent.queue.lock().unwrap().apply_todo(&todo).unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert!(
+            report.contains("ended without a verdict") && report.contains("It was not rejected"),
+            "{report}"
+        );
+        assert!(!report.contains("stronger builder"), "{report}");
+        assert_eq!(agent.session.meta.rejections.get("t1"), None);
+        {
+            let q = agent.queue.lock().unwrap();
+            let t = q.tasks.iter().find(|t| t.id == "t1").unwrap();
+            assert_eq!(t.status, TaskStatus::Blocked);
+            assert_eq!(t.retries, 0, "no retry was spent");
+            assert!(t.gate_next, "the next run goes to the audit");
+        }
+        let events: Vec<AgentEvent> = rx.try_iter().collect();
+        assert!(!events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Notice { message } if message.contains("stronger builder")
+        )));
+        assert!(!cwd.path().join("a.txt").exists());
+
+        let requeue = serde_json::json!({"items": [{"id": "t1", "status": "pending"}]});
+        agent.queue.lock().unwrap().apply_todo(&requeue).unwrap();
+        let report = agent.drain_crew().await.unwrap();
+        assert!(report.contains("merged"), "{report}");
+        assert_eq!(agent.session.meta.rejections.get("t1"), None);
+    }
+
     /// A paused crew is reported to the lead once a turn. Only the user can
     /// unpause it, and every re-drain was another paid round for the lead,
     /// up to the round cap.

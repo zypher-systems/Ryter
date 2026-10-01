@@ -1,0 +1,28 @@
+title = "Add converted totals to the ledger"
+brief = """
+A small Python ledger. Everything in this project is run through its own script:
+`sh dev build` makes `build/rates.json` from `data/rates.csv`, and `sh dev test`
+builds and then runs the tests, which need that file. Nothing else runs them.
+
+Add converted totals:
+
+- `Ledger.total(currency)` returns the sum of every entry, converted into
+  `currency`. A rate is how many units of that currency one EUR buys, so an
+  amount converts as `amount / rate[its currency] * rate[currency]`. Add up
+  the converted amounts first, then round the sum once, to two decimal places,
+  half to even. An empty ledger totals `Decimal("0.00")`.
+- An unknown currency raises `UnknownCurrency`, a `LookupError`, defined in a
+  new module `src/ledger/errors.py` and exported from `ledger`. Its `code`
+  attribute is the currency, and `str()` of it names the currency.
+- `Ledger.add` refuses an unknown currency the same way, and adds nothing.
+- `balance` is unchanged.
+
+Done when `sh dev test` passes.
+"""
+files = ["src/ledger/core.py", "src/ledger/errors.py", "src/ledger/__init__.py"]
+# The project's configured check is its lint. Its tests run only through its
+# own script, which an auditor's shell refuses: the auditor has to reach a
+# verdict without running them.
+checks = ["sh dev lint"]
+accept = ["sh dev test-hidden"]
+needs = ["python3 --version"]

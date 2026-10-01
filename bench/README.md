@@ -51,6 +51,7 @@ what exists at every stage. The hidden tests cover the whole.
 | `rust-durations` | Rust | a parser, its errors and a formatter, across three modules |
 | `ts-event-bus` | TypeScript | new behaviour in two modules, run by Node with no build |
 | `split-stats-report` | Python | three builder tasks: two side by side, one waiting on both |
+| `runner-script` | Python | a feature in a project whose tests run only through its own script, which the auditor's shell refuses |
 
 A test (`bench::tests::the_suite_is_sound`) proves every task is sound: the
 hidden tests fail on the fixture, and the reference solution passes both the

@@ -69,6 +69,14 @@ pub fn parse_verdict(text: &str) -> bool {
 /// The auditor's verdict: the last `VERDICT:` line wins; a bare first-line
 /// `PASS` still counts; anything else is a fail.
 pub fn verdict(text: &str) -> Verdict {
+    stated_verdict(text).unwrap_or(Verdict::Fail)
+}
+
+/// The verdict the auditor gave, or `None` when it gave none: it ran out of
+/// steps, or stopped at "I'll now run the tests". No verdict must not merge
+/// ([`verdict`] reads it as a fail), and it isn't a finding against the
+/// work either: nothing was decided.
+pub fn stated_verdict(text: &str) -> Option<Verdict> {
     let clean = |l: &str| {
         l.trim()
             .trim_matches(|c: char| matches!(c, '*' | '#' | '`' | '_' | '>' | ' '))
@@ -88,18 +96,65 @@ pub fn verdict(text: &str) -> Verdict {
             }
         }
     }
-    if let Some(v) = verdict {
-        return v;
+    if verdict.is_some() {
+        return verdict;
     }
-    let first_pass = text
-        .lines()
-        .map(clean)
-        .find(|l| !l.is_empty())
-        .is_some_and(|l| l.starts_with("PASS"));
-    if first_pass {
-        Verdict::Pass
-    } else {
-        Verdict::Fail
+    // A bare first line still counts.
+    let first = text.lines().map(clean).find(|l| !l.is_empty())?;
+    if first.starts_with("PASS") {
+        return Some(Verdict::Pass);
+    }
+    if first.starts_with("FAIL") {
+        return Some(Verdict::Fail);
+    }
+    None
+}
+
+/// How a specialist's last message has to end. A run that stops short of it
+/// is asked for it once, with no tools, before the message is taken as it
+/// is: an auditor that ends on "I'll run the checks now" has decided
+/// nothing, and a builder cut off mid-sentence has handed nothing back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Closing {
+    /// A builder's handback: a `STATUS:` line.
+    Handback,
+    /// An auditor's review: a `VERDICT:` line.
+    Verdict,
+}
+
+impl Closing {
+    /// The message can be taken as it is. Only a review is held to its
+    /// line: without a verdict nothing can be done with it. A handback
+    /// without its `STATUS:` line still says what the builder did, and the
+    /// checks and the audit judge the work itself.
+    fn met(self, text: &str) -> bool {
+        match self {
+            Self::Verdict => stated_verdict(text).is_some(),
+            Self::Handback => true,
+        }
+    }
+
+    /// What to write, said to a specialist that is being stopped.
+    fn shape(self) -> &'static str {
+        match self {
+            Self::Verdict => {
+                "List your findings and end with your verdict line. If you could not confirm \
+                 the work by running it, say what you did and did not confirm, and give \
+                 `VERDICT: UNVERIFIED` if that is why you can't pass it. A review with no \
+                 verdict line decides nothing."
+            }
+            Self::Handback => {
+                "Use the handback shape. If the task isn't finished, hand back \
+                 `STATUS: PARTIAL` and say exactly what is done and what is left."
+            }
+        }
+    }
+
+    fn missing(self) -> &'static str {
+        match self {
+            Self::Verdict => "no verdict yet: asking for one",
+            Self::Handback => "no handback yet: asking for one",
+        }
     }
 }
 
@@ -426,6 +481,7 @@ async fn build_inner(
         wrap_up_usd: None,
         last_text: None,
         ask: job.ask,
+        closing: None,
     };
     let ctx = ToolContext {
         live: None,
@@ -477,7 +533,10 @@ async fn build_inner(
             Role::Builder,
             msgs,
             &ctx,
-            &bill,
+            &Bill {
+                closing: Some(Closing::Handback),
+                ..bill
+            },
         )
         .await?;
         git::commit_all(wt, &format!("ryter: {}", task.title))?;
@@ -565,7 +624,9 @@ async fn build_inner(
                 SignOff::Failed(findings) => {
                     return Ok(failed(job, task, wt, branch, &findings, &handback, &gate));
                 }
-                SignOff::Unreachable(why) => {
+                // Neither is a finding against the work: it stays at the
+                // gate, no retry is spent, and the builder isn't run again.
+                SignOff::Unreachable(why) | SignOff::NoVerdict(why) => {
                     return Ok(keep_branch(job, task, wt, branch, why, &handback, &gate));
                 }
                 SignOff::Uncovered => {
@@ -730,6 +791,9 @@ enum SignOff {
     /// A seat's provider refused or failed the call: no verdict on the work,
     /// which stays. Why, for a person.
     Unreachable(String),
+    /// A seat ended without a verdict, even when asked for one: nothing was
+    /// decided about the work, which stays. Why, for a person.
+    NoVerdict(String),
 }
 
 /// Run the panel over everything `wt` would land on top of `target`. Seats run
@@ -772,12 +836,6 @@ async fn sign_off(
             }
             Err(e) => return Err(e),
         };
-        let v = verdict(&text);
-        // Checks that ran and passed on this tree verified it already.
-        if v == Verdict::Unverified && gate.checks.trim().is_empty() {
-            unverified = true;
-        }
-        let pass = v != Verdict::Fail;
         let lens = if seat.focus.is_empty() {
             "review"
         } else {
@@ -785,6 +843,24 @@ async fn sign_off(
         };
         reviews.push(format!("[{} · {lens}]\n{}", seat.model, text.trim()));
         gate.audit = reviews.join("\n\n");
+        // No verdict is not a FAIL. It used to count as one: the builder was
+        // run again on work nobody had faulted, the round was added to its
+        // rejections, and the user was told to choose a stronger builder.
+        let Some(v) = stated_verdict(&text) else {
+            return Ok(SignOff::NoVerdict(format!(
+                "the auditor ({}) ended without a verdict, even when asked for one, so \
+                 nothing was decided about this work. It was not rejected, and the builder \
+                 was not run again. Setting the task to pending audits it again without \
+                 rebuilding it. If the same thing happens, the audit needs more steps than \
+                 it has, or the user needs to choose another auditor in /models → auditor",
+                seat.model
+            )));
+        };
+        // Checks that ran and passed on this tree verified it already.
+        if v == Verdict::Unverified && gate.checks.trim().is_empty() {
+            unverified = true;
+        }
+        let pass = v != Verdict::Fail;
         if !pass {
             return Ok(SignOff::Failed(gate.audit.clone()));
         }
@@ -923,6 +999,7 @@ pub async fn land_patch(job: &BuildJob<'_>, patch: &crate::session::Patch) -> Re
         wrap_up_usd: None,
         last_text: None,
         ask: job.ask,
+        closing: None,
     };
     let mut gate = Gate::default();
     let user_head = git::rev(user, &patch.target)?;
@@ -959,7 +1036,9 @@ pub async fn land_patch(job: &BuildJob<'_>, patch: &crate::session::Patch) -> Re
                         "no auditor covers the files the conflict resolution changed".into(),
                     ));
                 }
-                SignOff::Unreachable(why) => return Ok(PatchLanding::Waiting(why)),
+                SignOff::Unreachable(why) | SignOff::NoVerdict(why) => {
+                    return Ok(PatchLanding::Waiting(why));
+                }
             }
         }
     }
@@ -1123,10 +1202,17 @@ async fn audit(
     // invisible and a builder's own commits dropped out.
     let diff = crate::tools::cap_output(git::diff_range(wt, target, "HEAD"));
     let checks = if job.checks.is_empty() {
-        "No checks are configured for this project. Build it and run its tests yourself before \
-         you pass the work. If it can't be built yet because something outside this task hasn't \
-         landed (the manifest or module another task creates), review it by reading and end with \
-         `VERDICT: UNVERIFIED`; the patch builds and tests it before it reaches the user."
+        "No checks are configured for this project, so nothing has built or tested this code. \
+         Run its tests yourself if your shell can: it runs test runners, linters and read-only \
+         commands (`pytest`, `cargo test`, `npm test`, `go test`, `ruff check`), and refuses \
+         everything else, including containers (`docker`, `podman`), servers, installs and \
+         the project's own shell scripts. That is a limit on you, not on the project: the builder \
+         can run those, and its handback says what it ran. If confirming the work needs a \
+         command your shell refuses, or something outside this task that hasn't landed (the \
+         manifest or module another task creates), don't look for a way round: review it by \
+         reading, list what you could not confirm, and end with `VERDICT: UNVERIFIED`. The \
+         work then waits on the patch, and reaches the user's branch only once checks have \
+         built and tested it."
             .to_string()
     } else {
         format!(
@@ -1176,6 +1262,7 @@ async fn audit(
         wrap_up_usd: None,
         last_text: None,
         ask: job.ask,
+        closing: Some(Closing::Verdict),
     };
     run_specialist(
         seat.provider.as_ref(),
@@ -1369,6 +1456,7 @@ pub async fn run_note_task(
         wrap_up_usd: None,
         last_text: None,
         ask,
+        closing: None,
     };
     let wrote =
         |q: &crate::queue::TaskQueue| q.tasks.iter().filter(|t| t.by == "architect").count();
@@ -1457,6 +1545,7 @@ fn first_line(text: &str) -> Option<String> {
 }
 
 /// Who a specialist's tokens are charged to, and where its progress goes.
+#[derive(Clone, Copy)]
 pub struct Bill<'a> {
     /// The crew run's meter.
     pub meter: &'a Meter,
@@ -1477,6 +1566,8 @@ pub struct Bill<'a> {
     pub last_text: Option<&'a std::sync::Mutex<String>>,
     /// Who to ask when the task reaches its cap; `None` stops it there.
     pub ask: Option<&'a CapAsk>,
+    /// How the specialist's last message has to end, when it has to.
+    pub closing: Option<Closing>,
 }
 
 /// Asks the user whether to raise a task's cap when it reaches it. The task
@@ -1850,8 +1941,22 @@ pub(crate) async fn run_specialist(
     let (rounds, max_tokens) = limits(role);
     let mut last = String::new();
     let mut cutoffs = 0usize;
-    let mut wrapping = false;
-    let mut told = false;
+    // Why the specialist has been told to stop and write up, once it has.
+    let mut wrap: Option<Wrap> = None;
+    let mut asked_closing = false;
+    // What it had said when it was asked for its verdict or handback.
+    let mut before_asking: Option<String> = None;
+    // What the run gave back, with a line from Ryter when it was stopped at
+    // its step limit: the lead and the user read "it ran out of steps", not
+    // a report that trails off.
+    let finish = |text: String, wrap: Option<Wrap>| match wrap {
+        Some(Wrap::Steps) => format!(
+            "{}\n\n[Ryter] The {role} reached its limit of {rounds} steps and was told to \
+             write up on the last one.",
+            text.trim_end()
+        ),
+        _ => text,
+    };
     for round in 0..rounds {
         if ctx.cancel.is_cancelled() {
             return Err(Error::Cancelled);
@@ -1880,29 +1985,45 @@ pub(crate) async fn run_specialist(
                      (${spent:.2} spent)"
                 )));
             }
-            if !wrapping
-                && (round + 1 == rounds
-                    || spent >= limit * WRAP_UP_SHARE
-                    || spent + 2.0 * step > limit)
-            {
-                wrapping = true;
+            if wrap.is_none() && (spent >= limit * WRAP_UP_SHARE || spent + 2.0 * step > limit) {
+                wrap = Some(Wrap::Spend);
+                if let Some(p) = bill.progress {
+                    p.say(role, "near the limit: writing up");
+                }
+                messages.push(crate::llm::Message {
+                    role: "user".into(),
+                    content: "[Ryter] You are near the spending limit the user set for this. \
+                              Stop now: use no more tools, and write your answer from what you \
+                              have, saying what you didn't get to check."
+                        .into(),
+                    tool_call_id: None,
+                    tool_calls: None,
+                });
             }
         }
-        if wrapping && !told {
-            told = true;
+        // The last step is for writing up, whether or not there is a
+        // spending limit. Without one, a specialist used to run out of steps
+        // unwarned, and the text beside its last tool call became its report:
+        // an auditor's "I'll use Podman to run the six checks" was read as a
+        // review with no verdict, and counted against the builder.
+        if wrap.is_none() && round + 1 == rounds {
+            wrap = Some(Wrap::Steps);
             if let Some(p) = bill.progress {
-                p.say(role, "near the limit: writing up");
+                p.say(role, "out of steps: writing up");
             }
             messages.push(crate::llm::Message {
                 role: "user".into(),
-                content: "[Ryter] You are near the spending limit the user set for this. \
-                          Stop now: use no more tools, and write your answer from what you \
-                          have, saying what you didn't get to check."
-                    .into(),
+                content: format!(
+                    "[Ryter] This is the last of your {rounds} steps. Use no more tools: \
+                     write your answer now from what you have, and say what you didn't get \
+                     to. {}",
+                    bill.closing.map_or("", Closing::shape)
+                ),
                 tool_call_id: None,
                 tool_calls: None,
             });
         }
+        let wrapping = wrap.is_some();
         let req = CompletionRequest {
             model: model.to_string(),
             system: None,
@@ -2043,7 +2164,46 @@ pub(crate) async fn run_specialist(
         cutoffs = 0;
         // Wrapping up: whatever it asked to run, this is the answer.
         if calls.is_empty() || (wrapping && !last.trim().is_empty()) {
-            return Ok(last);
+            // An answer that stops short of its verdict or handback is asked
+            // for it once, with no tools, while a step is left to ask in.
+            if let Some(closing) = bill.closing.filter(|c| !c.met(&last)) {
+                if !asked_closing && round + 1 < rounds {
+                    asked_closing = true;
+                    before_asking = Some(last.clone());
+                    if let Some(p) = bill.progress {
+                        p.say(role, closing.missing());
+                    }
+                    messages.push(crate::llm::Message {
+                        role: "assistant".into(),
+                        content: if last.trim().is_empty() {
+                            "(no answer)".into()
+                        } else {
+                            text
+                        },
+                        tool_call_id: None,
+                        tool_calls: None,
+                    });
+                    messages.push(crate::llm::Message {
+                        role: "user".into(),
+                        content: format!(
+                            "[Ryter] That isn't a finished answer: nothing can be done with \
+                             it as it is. Use no more tools, and write your final message \
+                             now from what you have. {}",
+                            closing.shape()
+                        ),
+                        tool_call_id: None,
+                        tool_calls: None,
+                    });
+                    wrap = wrap.or(Some(Wrap::Closing));
+                    continue;
+                }
+                // Asked, and still short of it: both answers are the
+                // record of what it was doing when it stopped.
+                if let Some(first) = before_asking.filter(|f| !f.trim().is_empty()) {
+                    last = format!("{}\n\n{}", first.trim_end(), last.trim_start());
+                }
+            }
+            return Ok(finish(last, wrap));
         }
         messages.push(crate::llm::Message {
             role: "assistant".into(),
@@ -2071,7 +2231,19 @@ pub(crate) async fn run_specialist(
             });
         }
     }
-    Ok(last)
+    // Cut off on the last step itself: there was no step left to write up in.
+    Ok(finish(last, Some(Wrap::Steps)))
+}
+
+/// Why a specialist was told to stop using tools and write its answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Wrap {
+    /// Near the task's spending limit.
+    Spend,
+    /// On the last of its steps.
+    Steps,
+    /// Its answer stopped short of its verdict or handback.
+    Closing,
 }
 
 /// Notify the UI that a child started/finished.
@@ -2746,6 +2918,198 @@ mod tests {
         assert!(!out.summary.contains('{'), "no JSON: {}", out.summary);
         assert!(!f.repo.path().join("extra.txt").exists(), "nothing merged");
         assert_eq!(kept(&f, "extra.txt"), "built\n");
+    }
+
+    fn bash_call(command: &str) -> Vec<StreamDelta> {
+        vec![
+            StreamDelta::ToolCall {
+                id: "b".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({ "command": command }).to_string(),
+            },
+            StreamDelta::Done,
+        ]
+    }
+
+    /// An audit that ends with no verdict decides nothing. From a live crew
+    /// run: the auditor's last words were "I'll use Podman to build and run
+    /// the six checks". That was read as a FAIL: the builder was run again
+    /// on work nobody had faulted, six times, and the user was told to
+    /// choose a stronger builder. The auditor is asked once for its verdict,
+    /// with no tools; without one the work stays at the gate, unrejected.
+    #[tokio::test]
+    async fn an_audit_with_no_verdict_rejects_nothing() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            write_call("extra.txt", "built\n"),
+            say("STATUS: DONE\nFILES: extra.txt"),
+            say("Podman is available. I'll use it to build and run the six checks."),
+            say("Starting the build now."),
+        ]);
+        let mut t = task("t1", "x");
+        // Retries are there to be spent: none is.
+        let panel = vec![seat(&p, "auditor-m", "", &[])];
+        let meter = Meter::new(
+            crate::spend::PriceBook::new(),
+            crate::meter::Caps::default(),
+        );
+        let out = run_with(&f, &p, &t, true, &[], &panel, &meter, 2).await;
+        assert_eq!(p.calls(), 4, "the builder was not run again");
+        assert_eq!(out.status, TaskStatus::Blocked, "{out:?}");
+        assert!(!out.rejected, "{out:?}");
+        for want in [
+            "the auditor (auditor-m) ended without a verdict, even when asked for one",
+            "It was not rejected",
+            "has the work",
+        ] {
+            assert!(out.summary.contains(want), "{want}: {}", out.summary);
+        }
+        assert!(
+            out.report.contains("I'll use it to build"),
+            "{}",
+            out.report
+        );
+        // It was asked once, with nothing to run.
+        assert!(
+            p.request(3)
+                .contains("[Ryter] That isn't a finished answer")
+                && p.request(3).contains("end with your verdict line"),
+            "{}",
+            p.request(3)
+        );
+        assert!(p.seen.lock().unwrap()[3].tools.is_empty());
+        assert!(!p.seen.lock().unwrap()[2].tools.is_empty());
+        assert!(!f.repo.path().join("extra.txt").exists(), "nothing merged");
+        assert_eq!(kept(&f, "extra.txt"), "built\n");
+
+        // The next run goes straight to the audit, and a verdict lands it.
+        assert!(out.gate_next, "{out:?}");
+        t.gate_next = out.gate_next;
+        t.handback = out.handback;
+        let p = Scripted::new(vec![say("- extra.txt:1 fine\n\nVERDICT: PASS")]);
+        let out = run(&f, &p, &t, true, &["true".into()]).await;
+        assert_eq!(out.status, TaskStatus::Done, "{out:?}");
+        assert_eq!(p.calls(), 1, "only the audit ran");
+    }
+
+    /// Asked for its verdict, an auditor that gives one is taken at it.
+    #[tokio::test]
+    async fn an_auditor_asked_for_its_verdict_can_give_it() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            write_call("extra.txt", "built\n"),
+            say("STATUS: DONE"),
+            say("I'll run the tests now."),
+            say("- extra.txt reads right; I could not run it\n\nVERDICT: PASS"),
+        ]);
+        let out = run(&f, &p, &task("t1", "x"), true, &["true".into()]).await;
+        assert_eq!(out.status, TaskStatus::Done, "{out:?}");
+        assert_eq!(p.calls(), 4);
+        assert!(f.repo.path().join("extra.txt").exists(), "merged");
+    }
+
+    /// With no checks set, the auditor is told what its shell runs and what
+    /// it refuses, and to review by reading where that stops it. It used to
+    /// be told to "build it and run its tests yourself", which sent it after
+    /// a container build its shell refuses until its steps ran out.
+    #[tokio::test]
+    async fn with_no_checks_the_auditor_is_told_what_it_cannot_run() {
+        let f = fixture();
+        let p = Scripted::new(vec![
+            write_call("extra.txt", "built\n"),
+            say("STATUS: DONE"),
+            say(
+                "- reads right; the stack needs `docker compose`, which I can't run\n\nVERDICT: UNVERIFIED",
+            ),
+        ]);
+        let out = run(&f, &p, &task("t1", "x"), true, &[]).await;
+        let brief = p.request(2);
+        for want in [
+            "No checks are configured for this project",
+            "including containers (`docker`, `podman`)",
+            "That is a limit on you, not on the project",
+            "don't look for a way round",
+            "`VERDICT: UNVERIFIED`",
+        ] {
+            assert!(brief.contains(want), "{want}:\n{brief}");
+        }
+        assert!(
+            !brief.contains("Build it and run its tests yourself"),
+            "{brief}"
+        );
+        // Reviewed by reading: it goes on to the patch, marked as not run.
+        assert_eq!(out.status, TaskStatus::Done, "{out:?}");
+        assert!(out.unverified, "{out:?}");
+    }
+
+    /// Every specialist's last step is for writing up, with no tools,
+    /// whether or not a spending limit is set. Without one there was no
+    /// warning: a run stopped at its step limit, and the text beside its
+    /// last tool call became its report.
+    #[tokio::test]
+    async fn the_last_step_is_for_writing_up() {
+        let f = fixture();
+        let (builder_steps, _) = limits(Role::Builder);
+        let (auditor_steps, _) = limits(Role::Auditor);
+        let mut turns = vec![write_call("extra.txt", "built\n")];
+        // The builder works until one step is left, then hands back.
+        turns.extend((2..builder_steps).map(|_| bash_call("true")));
+        turns.push(say(
+            "STATUS: PARTIAL\nFILES: extra.txt\nNOTES: the migrations are left",
+        ));
+        // The auditor does the same, and still gives a verdict.
+        turns.extend((1..auditor_steps).map(|_| bash_call("true")));
+        turns.push(say(
+            "- extra.txt: the task isn't finished (blocking)\n\nVERDICT: FAIL",
+        ));
+        let p = Scripted::new(turns);
+        let out = run(&f, &p, &task("t1", "x"), true, &[]).await;
+        assert_eq!(p.calls(), builder_steps + auditor_steps);
+
+        let last_build = builder_steps - 1;
+        let told = p.request(last_build);
+        assert!(
+            told.contains(&format!(
+                "[Ryter] This is the last of your {builder_steps} steps"
+            )) && told.contains("Use no more tools")
+                && told.contains("`STATUS: PARTIAL`"),
+            "{told}"
+        );
+        assert!(!p.request(last_build - 1).contains("the last of your"));
+        let seen = p.seen.lock().unwrap();
+        assert!(
+            seen[last_build].tools.is_empty(),
+            "no tools on the last step"
+        );
+        assert!(!seen[last_build - 1].tools.is_empty());
+        drop(seen);
+
+        // The auditor is given a handback that says why it stops where it does.
+        let brief = p.request(builder_steps);
+        assert!(
+            brief.contains(&format!(
+                "[Ryter] The builder reached its limit of {builder_steps} steps"
+            )),
+            "{brief}"
+        );
+        let last_audit = builder_steps + auditor_steps - 1;
+        let told = p.request(last_audit);
+        assert!(
+            told.contains(&format!(
+                "[Ryter] This is the last of your {auditor_steps} steps"
+            )) && told.contains("end with your verdict line"),
+            "{told}"
+        );
+        assert!(p.seen.lock().unwrap()[last_audit].tools.is_empty());
+        // A verdict given on the last step is a verdict.
+        assert!(out.rejected, "{out:?}");
+        assert!(
+            out.findings.contains(&format!(
+                "[Ryter] The auditor reached its limit of {auditor_steps} steps"
+            )),
+            "{}",
+            out.findings
+        );
     }
 
     /// Any other call that fails after the builder committed keeps the work

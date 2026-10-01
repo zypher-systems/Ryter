@@ -2,6 +2,22 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-10-01 — A specialist that stops short decides nothing, and is never read as a rejection
+- **By:** lead
+- **Decision:**
+  - **The last step is for writing up** (`crew::run_specialist`). On the last of its steps (40 for a builder, 30 for an architect, 12 for an auditor) a specialist is told so, gets no tools, and is told the shape its answer needs. Ryter adds a line to the result saying it reached its limit. This used to happen only when a dollar limit was set.
+  - **A review is held to its verdict line** (`crew::Closing`). An auditor's final message with no verdict is answered once with "that isn't a finished answer", with no tools. If it still has none, both answers are kept as the record.
+  - **No verdict is its own outcome** (`crew::stated_verdict`, `SignOff::NoVerdict`). The task stops at the gate as `blocked`, with its work on its branch and `gate_next` set, so the next run audits it without rebuilding it. It isn't a rejection: no retry is spent, the count of rejections doesn't move, and the builder isn't run again.
+  - **The auditor is told what it can't run.** Its prompt, the brief for a project with no checks, and the refusal itself all say that its shell runs test runners, linters and read-only commands only, that the limit is the auditor's and not the machine's, and to review by reading and end with `VERDICT: UNVERIFIED` where that stops it. The refusal says "the builder can run it" only when a builder could.
+  - **`UNVERIFIED` covers "I had no way to run it".** It was for code that can't be built until another task lands. Either way the work waits on the patch until checks have built and tested it, which was already the rule.
+- **Chosen vs rejected:**
+  - Rejected letting the auditor run `docker` or `podman`. Whoever can reach the Docker socket can mount the whole machine, and the auditor's shell is narrow on purpose. A project tested in a container puts those commands in `[auditor] checks`, which Ryter runs itself.
+  - Rejected re-running the audit from scratch when it gives no verdict. The same auditor with the same steps is likely to stop in the same place, and each run is paid for. It is asked once, in the conversation it already has, and then the work waits for a person.
+  - Rejected holding a builder's handback to its `STATUS:` line the same way. A handback without it still says what was done, and the checks and the audit judge the work itself.
+  - Rejected raising the step limits as the fix. More steps cost more and move the cliff; the write-up turn removes it. The limits become settings in the next patch.
+- **Why:** on the user's first real project with a paid crew (a Docker CMS, 2026-10-01) the first task never landed. Every builder run stopped at 40 calls and every auditor run at 12. The brief told the auditor to "build it and run its tests yourself", its shell refused `docker` and `podman`, and it spent its steps looking for a way round. Its last words, "I'll use Podman to build and run the six checks", were read as a FAIL. The builder was run six times on work that had no findings against it, for $2.83, and the user was told to choose a stronger builder. The lead reported that Docker was blocked on the machine, which it was not.
+- **Where:** `crates/ryter-core/src/crew.rs` (`run_specialist`, `Closing`, `Wrap`, `stated_verdict`, `sign_off`, `audit`), `crates/ryter-core/src/tools/mod.rs` (`gated_execute`), `prompts/auditor.md`, `bench/runner-script/`
+
 ### 2026-10-01 — The benchmark: real multi-file tasks, published, and compared run to run
 - **By:** lead
 - **Decision:**

@@ -638,6 +638,33 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
                 policy::bash_hint(args).unwrap_or_default()
             )))
         }
+        // An auditor's shell is narrower than a builder's. "A blocked
+        // command" read as the machine's limit: an auditor refused `docker`
+        // reported that Docker was blocked, the lead told the user so, and
+        // sent the builder to Podman. Say whose limit it is, and what to do.
+        // Only where a builder could run it: `sudo` is nobody's to run.
+        Decision::Deny
+            if ctx.role == Role::Auditor
+                && name == "bash"
+                && decide(
+                    name,
+                    args,
+                    &ToolContext {
+                        live: None,
+                        role: Role::Builder,
+                        ..ctx.clone()
+                    },
+                ) != Decision::Deny =>
+        {
+            Ok(ToolOutput::err(format!(
+                "denied: bash {} — the auditor's shell runs only test runners, linters and \
+                 read-only commands, and this isn't one. That is a limit on the auditor, not \
+                 on this machine or the project: the builder can run it. Don't look for \
+                 another way to run it. Judge what you can from the diff, the checks and the \
+                 builder's handback, and say in your review what you could not confirm.",
+                crate::user_io::summary_args(name, args)
+            )))
+        }
         Decision::Deny => Ok(ToolOutput::err(format!(
             "denied: {name} {} — the arguments are outside policy (missing or \
              out-of-workspace path, a secret file, or a blocked command). \
@@ -1085,6 +1112,38 @@ mod tests {
         // Other refusals keep the general wording.
         let out = gated_execute("bash", &json!({ "command": "sudo ls" }), &c).unwrap();
         assert!(out.text.contains("outside policy"), "{out:?}");
+    }
+
+    /// An auditor refused a command a builder may run is told whose limit
+    /// that is. The general wording ("a blocked command") read as the
+    /// machine's: an auditor refused `docker` reported Docker as blocked,
+    /// and the lead sent the builder to Podman.
+    #[test]
+    fn an_auditors_refusal_says_the_limit_is_the_auditors() {
+        let dir = TempDir::new().unwrap();
+        let auditor = ctx(Role::Auditor, dir.path());
+        for cmd in [
+            "docker compose build web",
+            "podman compose up -d --wait",
+            "./dev test",
+            "docker compose run --rm web pytest",
+        ] {
+            let out = gated_execute("bash", &json!({ "command": cmd }), &auditor).unwrap();
+            assert!(out.is_error, "{cmd}: {out:?}");
+            assert!(
+                out.text
+                    .contains("a limit on the auditor, not on this machine")
+                    && out.text.contains("the builder can run it")
+                    && out.text.contains("Don't look for another way"),
+                "{cmd}: {out:?}"
+            );
+        }
+        // What it may run still runs.
+        let out = gated_execute("bash", &json!({ "command": "true" }), &auditor).unwrap();
+        assert!(!out.is_error, "{out:?}");
+        // What nobody may run isn't blamed on the role.
+        let out = gated_execute("bash", &json!({ "command": "sudo docker ps" }), &auditor).unwrap();
+        assert!(!out.text.contains("the builder can run it"), "{out:?}");
     }
 
     #[test]

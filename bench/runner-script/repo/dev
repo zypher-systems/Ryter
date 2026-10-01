@@ -1,0 +1,11 @@
+#!/bin/sh
+# The one way to build and test this project. The tests read build/rates.json,
+# which `build` makes from data/rates.csv.
+set -e
+cd "$(dirname "$0")"
+case "${1:-}" in
+  build) python3 tools/gen_rates.py ;;
+  lint) python3 -m compileall -q src tools tests >/dev/null ;;
+  test) python3 tools/gen_rates.py && PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py' -q ;;
+  *) echo "usage: sh dev build|lint|test" >&2; exit 2 ;;
+esac
