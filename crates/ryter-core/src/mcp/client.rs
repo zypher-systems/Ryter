@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -59,6 +60,8 @@ pub struct LiveServer {
     stdin: ChildStdin,
     lines: Receiver<String>,
     stderr: Arc<Mutex<VecDeque<u8>>>,
+    /// The server's stderr reached its end: the tail is all it said.
+    stderr_done: Arc<AtomicBool>,
     next_id: i64,
     timeout: Duration,
 }
@@ -144,8 +147,11 @@ impl McpHub {
         // Drained so a chatty server never blocks on a full pipe; the tail
         // explains an exit.
         let stderr = Arc::new(Mutex::new(VecDeque::new()));
+        let stderr_done = Arc::new(AtomicBool::new(true));
         if let Some(mut err) = child.stderr.take() {
             let tail = stderr.clone();
+            let done = stderr_done.clone();
+            done.store(false, Ordering::Release);
             std::thread::spawn(move || {
                 let mut buf = [0u8; 1024];
                 while let Ok(n) = err.read(&mut buf) {
@@ -158,6 +164,7 @@ impl McpHub {
                         t.drain(..over);
                     }
                 }
+                done.store(true, Ordering::Release);
             });
         }
         let mut live = LiveServer {
@@ -166,6 +173,7 @@ impl McpHub {
             stdin,
             lines,
             stderr,
+            stderr_done,
             next_id: 1,
             timeout: Duration::from_secs(cfg.timeout_secs.unwrap_or(CALL_TIMEOUT_SECS)),
         };
@@ -295,6 +303,17 @@ impl LiveServer {
 
     /// The server's stdout closed: say so, with what it last wrote to stderr.
     fn gone(&mut self) -> Error {
+        // Its stdout closing can reach us before the reader has the last of
+        // its stderr, which says why it stopped ("token expired"). Give the
+        // reader a moment to finish; a server that closed stdout but lives on
+        // doesn't hold the error up for long.
+        let until = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < until
+            && !(self.stderr_done.load(Ordering::Acquire)
+                && self.child.try_wait().is_ok_and(|s| s.is_some()))
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let status = match self.child.try_wait() {
             Ok(Some(s)) => format!(" ({s})"),
             _ => String::new(),
@@ -584,6 +603,27 @@ mod tests {
             .to_string();
         assert!(err.contains("MCP server fake exited"), "{err}");
         assert!(err.contains("token expired"), "{err}");
+    }
+
+    /// The reason a server gives on its way out reaches the error even
+    /// when it writes it after its stdout has closed. CI caught the reader
+    /// behind the exit, and the reason was lost.
+    #[test]
+    fn a_server_that_exits_is_heard_to_the_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = server(dir.path(), &[INIT, LIST], None);
+        cfg.args[1] = format!(
+            "printf '%s\\n%s\\n' '{INIT}' '{LIST}'; read _; read _; read _; exec 1>&-; \
+             sleep 0.2; echo 'token expired' >&2; exit 2"
+        );
+        let hub = McpHub::connect(&[("fake".to_string(), cfg)].into()).unwrap();
+        let err = use_tool(&hub, "fake__echo", json!({}))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("exited (exit status: 2): token expired"),
+            "{err}"
+        );
     }
 
     /// `isError` is the tool failing, not a result.
