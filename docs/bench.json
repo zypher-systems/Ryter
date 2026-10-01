@@ -1,0 +1,137 @@
+{
+  "ryter": "0.10.0",
+  "date": "2026-10-01",
+  "lead": "deepseek/deepseek-v4.1-flash",
+  "builder": "deepseek/deepseek-v4.1-flash",
+  "auditor": "deepseek/deepseek-v4-pro-0813",
+  "budget_usd": 1.0,
+  "results": [
+    {
+      "task": "cli-limit-flag",
+      "landed": true,
+      "accepted": true,
+      "usd": 0.011960626,
+      "unpriced": false,
+      "billable_tokens": 8048,
+      "usd_by_role": {
+        "auditor": 0.01035775,
+        "builder": 0.001602876
+      },
+      "secs": 14.967385508,
+      "outcome": "t1 — Add --limit to the lines CLI (merged)"
+    },
+    {
+      "task": "inventory-reorder",
+      "landed": true,
+      "accepted": true,
+      "usd": 0.026463622,
+      "unpriced": false,
+      "billable_tokens": 19713,
+      "usd_by_role": {
+        "auditor": 0.022430026,
+        "builder": 0.0040335959999999995
+      },
+      "secs": 23.459258997,
+      "outcome": "t1 — Add reordering to the shop inventory (merged)"
+    },
+    {
+      "task": "pager-off-by-one",
+      "landed": true,
+      "accepted": true,
+      "usd": 0.0063574140000000005,
+      "unpriced": false,
+      "billable_tokens": 4182,
+      "usd_by_role": {
+        "auditor": 0.005510526,
+        "builder": 0.000846888
+      },
+      "secs": 9.211646139,
+      "outcome": "t1 — Fix paginate() so page 1 is the first page (merged)"
+    },
+    {
+      "task": "rename-across-files",
+      "landed": true,
+      "accepted": true,
+      "usd": 0.004222432,
+      "unpriced": false,
+      "billable_tokens": 3641,
+      "usd_by_role": {
+        "auditor": 0.003121552,
+        "builder": 0.00110088
+      },
+      "secs": 4.757368537,
+      "outcome": "t1 — Rename calc_total to order_total (merged)"
+    },
+    {
+      "task": "rust-durations",
+      "landed": true,
+      "accepted": true,
+      "usd": 0.020480754,
+      "unpriced": false,
+      "billable_tokens": 15674,
+      "usd_by_role": {
+        "auditor": 0.013857162,
+        "builder": 0.006623591999999999
+      },
+      "secs": 24.521545581,
+      "outcome": "t1 — Parse and format durations in the durfmt crate (merged)"
+    },
+    {
+      "task": "settings-overrides",
+      "landed": true,
+      "accepted": true,
+      "usd": 0.01925839,
+      "unpriced": false,
+      "billable_tokens": 13062,
+      "usd_by_role": {
+        "auditor": 0.015020638000000001,
+        "builder": 0.004237752
+      },
+      "secs": 24.092706302,
+      "outcome": "t1 — Fix environment overrides in the settings package (merged)"
+    },
+    {
+      "task": "slugify",
+      "landed": true,
+      "accepted": true,
+      "usd": 0.028856816,
+      "unpriced": false,
+      "billable_tokens": 15193,
+      "usd_by_role": {
+        "auditor": 0.026421356,
+        "builder": 0.00243546
+      },
+      "secs": 36.209068673,
+      "outcome": "t1 — Add slugify() to textutil (merged)"
+    },
+    {
+      "task": "split-stats-report",
+      "landed": true,
+      "accepted": true,
+      "usd": 0.04483071599999999,
+      "unpriced": false,
+      "billable_tokens": 29096,
+      "usd_by_role": {
+        "auditor": 0.034682784,
+        "builder": 0.010147931999999998
+      },
+      "secs": 55.824529065,
+      "outcome": "parse — Parse name,value lines (merged)"
+    },
+    {
+      "task": "ts-event-bus",
+      "landed": true,
+      "accepted": true,
+      "usd": 0.041902805999999994,
+      "unpriced": false,
+      "billable_tokens": 25792,
+      "usd_by_role": {
+        "auditor": 0.032728721999999995,
+        "builder": 0.009174083999999999
+      },
+      "secs": 61.186199185,
+      "outcome": "t1 — Grow the event bus, and have retry report on it (merged)"
+    }
+  ],
+  "skipped": []
+}

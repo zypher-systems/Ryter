@@ -1,0 +1,29 @@
+title = "Grow the event bus, and have retry report on it"
+brief = """
+A small TypeScript library, run by Node itself (`node --test`; no build step and
+no packages). Imports name the `.ts` file. Change two modules:
+
+`src/bus.ts`, the `EventBus`:
+- `on(event, handler)` returns a function that removes that handler.
+- `once(event, handler)`: the handler is called for the next emit only.
+- Handlers on `"*"` get every event, after that event's own handlers. Every
+  handler is called with `(payload, event)`.
+- `emit(event, payload)` returns how many handlers it called.
+- A handler that throws doesn't stop the others. Once all have run, `emit`
+  throws an `AggregateError` holding what was thrown, in order.
+- A handler removed while an emit is under way doesn't make that emit skip
+  another handler.
+
+`src/retry.ts`, `retry(fn, options)`:
+- `options.bus` is an optional `EventBus`. Before each retry (not after the last
+  failure) emit `"retry"` on it with `{ attempt, error }`: the attempt that just
+  failed, counting from 1. When every attempt has failed, emit `"gave-up"` with
+  `{ attempts, error }`, then throw the last error as before.
+- `options.attempts` below 1 throws a `RangeError` without calling `fn`.
+
+Done when `node --test test/basic.test.ts` passes.
+"""
+files = ["src/bus.ts", "src/retry.ts"]
+checks = ["node --test test/basic.test.ts"]
+accept = ["node --test test/hidden.test.ts"]
+needs = ["node -e \"require('node:module').stripTypeScriptTypes('let a: number = 1')\""]

@@ -11,7 +11,7 @@ Living plan for Ryter. The lead updates this as work lands.
 - [ ] **Ryter only touches the project it was started in.** It never creates a repository in a folder that holds other projects (done in 0.8.1), never commits outside the project, and says what it set up. (On 2026-09-28 it made `~/workspace` a repository and committed 29 other projects into it.)
 - [ ] **Cost is predictable.** A task's cap asks before it stops (done in 0.7.1), project cost counts only the project, and a crew run shows what it is likely to cost before it starts.
 - [ ] **A failed run loses nothing that was paid for.** Work stays on its branch and resumes where it stopped (done in 0.6.5 and 0.7.1), and no failure path deletes committed work.
-- [ ] **The benchmark says it works.** `ryter bench` runs a suite of real multi-file tasks. The land rate and the cost per task are published, and every release is checked against them.
+- [x] **The benchmark says it works.** `ryter bench` runs a suite of real multi-file tasks. The land rate and the cost per task are published (`docs/bench.md`), and every release is checked against them with `ryter bench --publish` (done in 0.10.0).
 - [ ] **The model has the tools the job needs:** skills it loads itself, pages it can show the user, and images it can see.
 - [ ] **No known data-loss or wrong-number bugs are open.**
 - [ ] **The guide matches the product:** every command and screen in `docs/guide.md` works as the release does.
@@ -20,8 +20,9 @@ Living plan for Ryter. The lead updates this as work lands.
 
 Work that is in `dev` and not yet released is marked *Unreleased*, and its notes collect in `docs/releases/next.md`. An entry gets its version when it's released.
 
-- **Unreleased: your rules for every project.** `~/.ryter/RYTER.md` goes into every role's instructions, ahead of the project's `RYTER.md`. The model changes it with `update_rules` (taught by the built-in `rules` skill, also `/rules`), and only after the user has seen the change and said yes: `--always-approve` doesn't skip it, a headless run saves nothing, and the sandbox keeps the file read-only.
-- **Unreleased: the shell tests are race-free.** `a_detached_process_holding_the_pipe_does_not_hang` raced `setsid` against the group kill under CI load. Its job now leaves the group with `set -m` and writes its pid before the command goes on. Both background tests find and stop their process by that pid (`rustix`), not `pkill -f`, `pgrep -f` or `setsid`.
+- **0.10.0 — the benchmark.** The suite is nine tasks: a feature across four Python modules, bugs in two modules that only show together, a Rust crate, a TypeScript library, and one piece of work split into three builder tasks, two side by side. A task says what it `needs` and is skipped where that's missing. `ryter bench --publish docs/bench` writes the page and the data, compares the run with the last one published, and exits 1 on fewer accepted or more false passes; cost is shown and never fails it.
+- **0.10.0 — your rules for every project.** `~/.ryter/RYTER.md` goes into every role's instructions, ahead of the project's `RYTER.md`. The model changes it with `update_rules` (taught by the built-in `rules` skill, also `/rules`), and only after the user has seen the change and said yes: `--always-approve` doesn't skip it, a headless run saves nothing, and the sandbox keeps the file read-only.
+- **0.10.0 — the shell tests are race-free.** `a_detached_process_holding_the_pipe_does_not_hang` raced `setsid` against the group kill under CI load. Its job now leaves the group with `set -m` and writes its pid before the command goes on. Both background tests find and stop their process by that pid (`rustix`), not `pkill -f`, `pgrep -f` or `setsid`.
 - **0.9.1 (`0.9.1-patch`) — the crew is chosen in one visit to `/models`.** Two panes: the seats (lead or solo, architect, builder, auditor) with their models, and the chosen seat's models. Enter sets the model and goes back to the seats on the next one, rather than closing. The panel chrome gained `input_indent` (the search row beside a left column) and `keys_in_body` (per-pane key hints). Also the first release that 0.9.0 can update to.
 - **0.9.0 (`0.9.0-patch`) — Ryter updates itself.**
   - At launch, at most once a day, Ryter installs a newer signed release in the background and says to restart. `[update] mode`: install, notify, or off.
@@ -138,7 +139,7 @@ Work that is in `dev` and not yet released is marked *Unreleased*, and its notes
 
 Product direction: `docs/product-direction.md`. Crew contract: `crew.md`. Cost model: `docs/cost.md`.
 
-- **Grow the benchmark, then run it.** `ryter bench` and a 4-task starter suite exist; before its numbers mean much it needs multi-file and multi-task (parallel) cases, a Rust and a TypeScript task, and a run per candidate tiering. Then fold the measurements back into `docs/cost.md` and the suggester's ceiling and band.
+- **Make the benchmark harder.** The nine-task suite ran clean on its first published run (9 of 9 accepted, about 2 cents a task), so it proves the pipeline and catches a release that breaks it, but it doesn't yet stretch a crew or measure how often an auditor is wrong. Add tasks a crew can fail: larger fixtures, vague briefs, a planted bug the visible checks miss, and a task that needs the architect. Then run each candidate crew with `--repeat`, and fold the measurements into `docs/cost.md`.
 - **Tiered defaults at first run.** `ryter crew suggest` exists; first-run setup and the builds-paused message should offer it directly rather than pointing at it.
 - **Crew spend where people look.** Per-role lines (builder / auditor / architect) on the spend card and `/spend`; per-task cost on the crew review surface. A cost preview before a batch, with a threshold that asks.
 - **`/patch` surface.** Show the open patch (tasks, what it waits on), land now, drop it.

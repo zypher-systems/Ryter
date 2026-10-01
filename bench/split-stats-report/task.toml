@@ -1,0 +1,60 @@
+title = "Build the stats report in three parts"
+brief = """
+The `stats` package turns "name,value" lines into a report. Three modules are
+stubs. They are built as three tasks: `parse` and `summarize` are independent,
+and `report` needs both.
+"""
+files = ["stats/parse.py", "stats/summarize.py", "stats/report.py"]
+# The gate runs at every stage, so it covers only what exists at every stage.
+checks = ["python3 -m unittest -q test_text"]
+accept = ["python3 -m unittest -q hidden_test_stats"]
+needs = ["python3 --version"]
+
+[[tasks]]
+id = "parse"
+title = "Parse name,value lines"
+brief = """
+Implement `parse_rows(lines)` in stats/parse.py. `lines` is an iterable of
+strings. Return a list of `(name, value)` tuples, `value` a float.
+- Surrounding whitespace on a line, a name or a value is ignored.
+- Blank lines and lines starting with `#` are skipped.
+- A first data line of exactly `name,value` (any case) is a header: skip it.
+- Anything else that isn't `name,value` with a non-empty name and a number
+  raises ValueError whose message starts with `line N:`, N counting every line
+  from 1.
+Done when `python3 -m unittest -q test_parse` passes.
+"""
+files = ["stats/parse.py"]
+
+[[tasks]]
+id = "summarize"
+title = "Summarize rows by name"
+brief = """
+Implement `summarize(rows)` in stats/summarize.py. `rows` is a list of
+`(name, value)` tuples. Return a dict from name to `Summary`, in the order each
+name is first seen. `Summary` is a frozen dataclass with `count`, `total`,
+`mean`, `minimum` and `maximum`. No rows gives an empty dict.
+Done when `python3 -m unittest -q test_summarize` passes.
+"""
+files = ["stats/summarize.py"]
+
+[[tasks]]
+id = "report"
+title = "Render the report"
+brief = """
+Implement stats/report.py, using `pad_left` and `pad_right` from stats/text.py.
+
+`render(summaries)` takes what `summarize` returns and gives a list of lines:
+- A header: `name`, `count`, `total`, `mean`.
+- A line per name, largest total first; equal totals by name.
+- The name column is left-aligned and as wide as the longest name (at least 4).
+  `count` is right-aligned in 5 columns; `total` and `mean` are right-aligned
+  in 10 with two decimals. Columns are joined by two spaces. No trailing
+  whitespace.
+- No summaries: only the header.
+
+`report(lines)` is `render(summarize(parse_rows(lines)))`.
+Done when `python3 -m unittest -q test_report` passes.
+"""
+files = ["stats/report.py"]
+after = ["parse", "summarize"]

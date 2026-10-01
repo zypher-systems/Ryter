@@ -10,3 +10,4 @@ Done when `python3 -m unittest -q test_textutil` passes.
 files = ["textutil.py"]
 checks = ["python3 -m unittest -q test_textutil"]
 accept = ["python3 -m unittest -q hidden_test_textutil"]
+needs = ["python3 --version"]
