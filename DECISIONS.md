@@ -2,6 +2,25 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-10-01 — The sandbox reaches the user's tools, and says what it is
+- **By:** lead, with the user's choices (comparison table in `/settings`; "tools and their caches"; the default stays `off`)
+- **Decision:**
+  - **What a profile grants** is listed in `sandbox.rs`: system folders to read (`SYSTEM_READ`), devices to read and write (`DEVICES`), toolchains under the home folder to read and run (`TOOL_HOMES`, plus each folder on `PATH` there), their download caches to write (`TOOL_CACHES`), and Ryter's scratch, logs, sessions, pages and worktrees.
+  - **Granted by name, never by parent.** `~/.cargo/bin` and `~/.cargo/registry` are granted; `~/.cargo` is not, because `credentials.toml` is in it. A `PATH` entry under the home folder is granted as itself, and the home folder on `PATH` is ignored.
+  - **A linked tool folder is left out** (`tool_reach`): a grant on a link is a grant on its target, and a cache planted as a link to `~/.ssh` would open the keys. The same rule as the rules file.
+  - **The process is closed to its children** under a profile (`PR_SET_DUMPABLE` off). `/proc` is readable in the sandbox, and `/proc/<ryter>/environ` and `/proc/<ryter>/mem` held the keys.
+  - **`TMPDIR`** points a sandboxed command at `~/.ryter/tmp` (`sandbox::scratch`, set by the shell tool). A thread started by the sandboxed one doesn't know its profile, so it is recognised by what the sandbox does: the temporary folder can't be listed.
+  - **`/settings`** shows the three profiles side by side under the field (`panel/settings.rs`, `sandbox_table`), with the chosen one in capitals and colour.
+  - **`ryter --sandbox <profile> bench`** copies the suite into the run's folder and runs the crew on a sandboxed thread. Publishing happens on the main thread, outside it.
+- **Chosen vs rejected:**
+  - Rejected making `workspace` the default. The user asked; the profile was unusable, so the question was premature. It stays `off` until the fixed profile has been used on real projects.
+  - Rejected granting the whole home folder to read. It holds `~/.ssh`, browser profiles and every other project.
+  - Rejected read-only tools with no caches (the user chose caches). A build that needs a new dependency would fail under the sandbox, and people would turn it off.
+  - Not solved: Docker. Landlock doesn't mediate a connection to the Docker socket, and whoever reaches it can mount the machine. The table and the guide say so.
+  - The table's `off` column says keys are kept "by rule only". The mockup said "asks first", which was wrong: Ryter refuses to read key files, and nothing stops a command that tries.
+- **Why:** the user asked why the sandbox was off by default and what the profiles were. Probed on their machine, `workspace` could not run `git` (it opens `/dev/null` for writing), `cargo` or `rustc` (under `~/.cargo`), could not make a temporary file, and could not write a crew's worktrees.
+- **Where:** `crates/ryter-core/src/sandbox.rs`, `crates/ryter-core/src/tools/shell.rs`, `crates/ryter-tui/src/panel/settings.rs`, `crates/ryter-cli/src/main.rs` (`bench_cmd`), `docs/guide.md`
+
 ### 2026-10-01 — A specialist that stops short decides nothing, and is never read as a rejection
 - **By:** lead
 - **Decision:**

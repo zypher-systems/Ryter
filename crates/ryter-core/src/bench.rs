@@ -717,7 +717,7 @@ pub fn today() -> String {
 }
 
 /// Copy a directory tree (files and subdirectories).
-fn copy_dir(from: &Path, to: &Path) -> Result<()> {
+pub fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     std::fs::create_dir_all(to).map_err(|e| Error::Io(e.to_string()))?;
     let rd = std::fs::read_dir(from).map_err(|e| Error::Io(format!("{}: {e}", from.display())))?;
     for ent in rd.flatten() {

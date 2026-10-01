@@ -532,7 +532,47 @@ When a terminal isn't the right place for an answer (a report, a comparison, a c
 
 `ryter doctor` (and the `/doctor` panel, which runs the checks off-thread and can save the report with `c`) checks OS, tty, home, config, both built-in connections (key set/missing, never printed), spend catalog, git, Landlock, sandbox profile, and whether `.ryter/` is trusted. No network.
 
-`--sandbox workspace` Landlock-restricts the tool thread to the project tree (writable) plus `~/.ryter/{tmp,logs,sessions,pages}`, and reads `~/.ryter/skills`. It never grants `~/.ryter/keys`. The sandbox is filesystem-only; it does not restrict network. `--sandbox read-only` makes the project tree read-only. `--sandbox off` is the default. A non-off profile **refuses to start** if the kernel cannot enforce Landlock. `/tmp` itself is not granted; scratch is `~/.ryter/tmp`. Sandboxed runs use a current-thread tokio runtime.
+### Sandbox profiles
+
+A sandbox limits which files the model's commands can reach. It is enforced by the system (Linux's Landlock), not by Ryter's own rules, so it holds even for a command Ryter would have allowed. Choose a profile with `--sandbox <profile>`, or in `/settings` → *sandbox*, which shows this comparison. A change applies the next time Ryter starts. The default is `off`.
+
+| | `off` | `workspace` | `read-only` |
+|---|---|---|---|
+| Project files | read, write | read, write | read |
+| The rest of your home folder | read, write | no | no |
+| Your tools | yes | yes | yes |
+| Your keys | by rule only | never | never |
+| `/tmp` | read, write | no | no |
+| Network | yes | yes | yes |
+| Docker | yes | yes | yes |
+
+**When to use each:**
+
+- **`off`:** you are watching each step. Ryter's own rules still apply: it asks before a command that changes things, and refuses to read your keys. Nothing stops a command you approved from reaching the rest of your machine.
+- **`workspace`:** a crew is running unattended, or you are working on code you don't trust. Commands can change only the project. Crew builders run commands in their worktree without asking, so this is the profile that contains them.
+- **`read-only`:** you only want a review. Nothing in the project can be changed either, which also means nothing can be built into it.
+
+**What "your tools" means.** Under `workspace` and `read-only`, commands can read and run:
+
+- system folders (`/usr`, `/bin`, `/etc`), and where package managers install (`/opt`, `/nix`, `/snap`, Homebrew);
+- toolchains under your home folder: `~/.cargo/bin`, `~/.rustup`, node version managers (`~/.nvm`, `~/.volta`, `fnm`, `asdf`, `mise`), `~/.pyenv`, `~/.bun`, `~/.deno`, `~/go/bin`, `~/.local/bin`, pipx and uv;
+- any other folder on your `PATH` that is under your home folder, as that folder alone;
+- your git identity (`~/.gitconfig` and `~/.config/git/config`).
+
+A tool folder that is a symbolic link is left out, since a grant on a link is a grant on what it points at. If your `~/.npm` or `~/.cargo/registry` is a link to another disk, builds under the sandbox can't use that cache.
+
+They can also write the tools' download caches (`~/.cargo/registry`, `~/.npm`, pip's, uv's, Go's and others), so a build that fetches a dependency works.
+
+**What stays shut:** the rest of your home folder, `~/.ssh`, the tools' saved logins (`~/.cargo/credentials.toml`, `~/.npmrc`, `~/.config/git/credentials`), Ryter's keys, and `/tmp`. Ryter also closes its own process to the commands it runs, so a key held in its memory or its environment can't be read from `/proc`. Temporary files go to `~/.ryter/tmp`, and `TMPDIR` points commands there.
+
+**What a sandbox doesn't do:**
+
+- **It doesn't limit the network.**
+- **It doesn't contain Docker.** A command that can reach the Docker socket can mount the whole machine. If that matters, don't give the account Docker access.
+- **It needs Linux.** Elsewhere Ryter refuses to start with `workspace` or `read-only`, and it also refuses on a Linux kernel that can't enforce Landlock.
+- **Some of Ryter's own features are off under it:** your every-project rules can't be changed, and pages aren't opened in a browser.
+
+`ryter --sandbox workspace bench` runs the benchmark's crew under the profile.
 
 ## Safety
 
@@ -574,6 +614,7 @@ ryter bench --budget-usd 2          # the cap per task (default $1)
 ryter bench --repeat 3              # each task three times
 ryter bench --crew <preset>         # a saved crew, to compare
 ryter bench --publish docs/bench    # write the results page and compare with the last
+ryter --sandbox workspace bench     # the crew runs inside the sandbox
 ```
 
 It reports four numbers:

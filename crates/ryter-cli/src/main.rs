@@ -308,6 +308,7 @@ fn main() -> ExitCode {
             budget_usd,
             repeat,
             publish.as_deref(),
+            cli.sandbox.as_deref(),
         ) {
             Ok(true) => ExitCode::SUCCESS,
             // Worse than the run published before.
@@ -666,6 +667,7 @@ fn bench_cmd(
     budget_usd: f64,
     repeat: u32,
     publish: Option<&std::path::Path>,
+    sandbox_flag: Option<&str>,
 ) -> ryter_core::Result<bool> {
     use ryter_core::bench::{BenchEnv, Report, Skipped, Summary, load_suite, run_task};
     let cwd = std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?;
@@ -747,6 +749,18 @@ fn bench_cmd(
     let run_home = home.join("bench").join(stamp.to_string());
     std::fs::create_dir_all(&run_home).map_err(|e| Error::Io(e.to_string()))?;
     let results_path = run_home.join("results.jsonl");
+    // `--sandbox workspace` runs the crew as a sandboxed session runs it:
+    // only this run's folder can be changed. The suite is copied in first,
+    // since the sandbox can't read it where it is.
+    let profile = resolve_sandbox(sandbox_flag, &cfg)?;
+    if profile != SandboxProfile::Off {
+        for task in &mut tasks {
+            let copy = run_home.join("suite").join(&task.name);
+            ryter_core::bench::copy_dir(&task.dir, &copy)?;
+            task.dir = copy;
+        }
+        println!("sandbox   {profile}");
+    }
     println!("crew      lead {model} · builder {builder} · auditor {auditor}");
     println!(
         "running   {} task(s) × {repeat}, capped at ${budget_usd:.2} each — this spends real money",
@@ -763,55 +777,67 @@ fn bench_cmd(
         max_crew,
         accept_timeout: std::time::Duration::from_secs(600),
     };
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| Error::Io(e.to_string()))?;
-    let mut results = Vec::new();
-    for task in &tasks {
-        for _ in 0..repeat {
-            // A real task takes minutes; say what is running.
-            print!("{:<24} running…\r", task.name);
-            let _ = io::stdout().flush();
-            let r = rt.block_on(run_task(task, &env));
-            let mark = match (r.landed, r.accepted) {
-                (true, true) => "accepted",
-                (true, false) => "FALSE PASS",
-                _ => "not landed",
-            };
-            let bound = if r.unpriced { "≥" } else { "" };
-            println!(
-                "{:<24} {mark:<11} {bound}${:.3}  {:>7} tok  {:>5.0}s  {}",
-                r.task, r.usd, r.billable_tokens, r.secs, r.outcome
-            );
-            let line = serde_json::json!({
-                "lead": model, "builder": builder, "auditor": auditor, "result": r,
-            });
-            use std::io::Write as _;
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&results_path)
-            {
-                let _ = writeln!(f, "{line}");
-            }
-            // No model answered: a crew that won't start, a refused key, a
-            // model the account can't reach. The crew wasn't measured, so the
-            // run isn't a result, with or without --publish; it used to go on
-            // and exit 0. Stopping here also spends nothing on the tasks left.
-            let stopped = r
-                .unanswered()
-                .then(|| format!("{} ({})", r.task, r.outcome));
-            results.push(r);
-            if let Some(at) = stopped {
-                println!("\n{}", Summary::of(&results).render());
-                return Err(Error::Config(format!(
-                    "the benchmark stopped: no model answered on {at}. The crew wasn't \
+    // The runs, on the thread the sandbox (if any) is put on: publishing
+    // afterwards writes outside it, from this one.
+    let run_all = || -> ryter_core::Result<Vec<ryter_core::bench::BenchResult>> {
+        sandbox::apply(profile, &run_home, &home)?;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| Error::Io(e.to_string()))?;
+        let mut results = Vec::new();
+        for task in &tasks {
+            for _ in 0..repeat {
+                // A real task takes minutes; say what is running.
+                print!("{:<24} running…\r", task.name);
+                let _ = io::stdout().flush();
+                let r = rt.block_on(run_task(task, &env));
+                let mark = match (r.landed, r.accepted) {
+                    (true, true) => "accepted",
+                    (true, false) => "FALSE PASS",
+                    _ => "not landed",
+                };
+                let bound = if r.unpriced { "≥" } else { "" };
+                println!(
+                    "{:<24} {mark:<11} {bound}${:.3}  {:>7} tok  {:>5.0}s  {}",
+                    r.task, r.usd, r.billable_tokens, r.secs, r.outcome
+                );
+                let line = serde_json::json!({
+                    "lead": model, "builder": builder, "auditor": auditor, "result": r,
+                });
+                use std::io::Write as _;
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&results_path)
+                {
+                    let _ = writeln!(f, "{line}");
+                }
+                // No model answered: a crew that won't start, a refused key, a
+                // model the account can't reach. The crew wasn't measured, so the
+                // run isn't a result, with or without --publish; it used to go on
+                // and exit 0. Stopping here also spends nothing on the tasks left.
+                let stopped = r
+                    .unanswered()
+                    .then(|| format!("{} ({})", r.task, r.outcome));
+                results.push(r);
+                if let Some(at) = stopped {
+                    println!("\n{}", Summary::of(&results).render());
+                    return Err(Error::Config(format!(
+                        "the benchmark stopped: no model answered on {at}. The crew wasn't \
                      measured, so this run isn't a result, and nothing was published."
-                )));
+                    )));
+                }
             }
         }
-    }
+        Ok(results)
+    };
+    let results = if profile == SandboxProfile::Off {
+        run_all()?
+    } else {
+        std::thread::scope(|s| s.spawn(run_all).join())
+            .map_err(|_| Error::Config("the benchmark's thread stopped".into()))??
+    };
     println!("\n{}", Summary::of(&results).render());
     println!("results   {}", results_path.display());
     let Some(stem) = publish else {

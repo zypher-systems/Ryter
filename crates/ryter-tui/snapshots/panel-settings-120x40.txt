@@ -15,19 +15,19 @@
                         │                                                                      ┃
                         │ TOOLS                                                                ┃
                         │  permission mode           ‹ ask ›                           default ┃
-                        │  features.web              [ off ]                           default ┃
-                        │                                                                      ┃
-                        │ SANDBOX                                                              ┃
-                        │  profile                   ‹ off ›                           default ┃
-                        │                                                                      ┃
-                        │ MCP                                                                  ┃
-                        │  inbound                   [ on ]                            default │
-                        │  bind address                                                default │
+                        │  features.web              [ off ]                           default │
                         │                                                                      │
-                        │ UPDATES                                                              │
-                        │  on launch                 ‹ install ›                       default │
+                        │ SANDBOX                                                              │
+                        │  profile                   ‹ off ›                           default │
                         │                                                                      │
-                        │ UI                                                                   │
+                        │                 OFF           workspace     read-only                │
+                        │ project files   read, write   read, write   read                     │
+                        │ rest of home    read, write   no            no                       │
+                        │ your tools      yes           yes           yes                      │
+                        │ your keys       rule only †   never         never                    │
+                        │ /tmp            read, write   no            no                       │
+                        │ network         yes           yes           yes                      │
+                        │ docker          yes           yes *         yes *                    │
                         │ ↑↓ move   space/←→ change   enter edit   esc done                    │
                         ╰──────────────────────────────────────────────────────────────────────╯
 

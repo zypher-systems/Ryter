@@ -104,6 +104,12 @@ pub fn run_command_live(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Under a sandbox `/tmp` is shut, so temporary files go to Ryter's
+    // scratch folder: `mktemp`, and every tool that calls it, failed.
+    if let Some(dir) = crate::sandbox::scratch() {
+        let _ = std::fs::create_dir_all(&dir);
+        command.env("TMPDIR", dir);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

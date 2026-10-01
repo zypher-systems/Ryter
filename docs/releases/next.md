@@ -12,6 +12,11 @@ added at the top, and this comment removed.
   - **A review with no verdict counted as a rejection.** The auditor's last words were "I'll use Podman to build and run the six checks". That was read as a FAIL. The builder was run again on work nobody had faulted, the round was added to its rejections, and you were told to choose a stronger builder.
   - **The auditor was told to do what it can't.** With no checks set, its instructions said "build it and run its tests yourself". Its shell runs test commands only, and refuses `docker` and `podman`, so it spent its steps looking for a way round.
   - **A refusal read as the machine's limit.** The auditor was told the command was "blocked". It reported that Docker was blocked, the lead told you so, and it sent the builder to Podman. Docker worked on that machine all along.
+- **The `workspace` sandbox was unusable, and nothing said what the profiles meant.** `/settings` had a `profile` field with three names and no explanation. Under `workspace` on a real machine:
+  - `git` could not start, because it opens `/dev/null` for writing and `/dev` was read-only;
+  - `cargo`, `rustc` and anything else installed under the home folder were refused;
+  - nothing could make a temporary file, since `/tmp` is shut and `TMPDIR` pointed nowhere;
+  - a crew's builders could not write in their worktrees.
 
 ## What changed
 
@@ -23,6 +28,17 @@ added at the top, and this comment removed.
 - **The auditor knows what it can't run.** Its instructions and each refusal say that its shell runs test runners, linters and read-only commands, and refuses containers, servers, installs and the project's own shell scripts. They also say the limit is the auditor's own and that a builder can run those commands.
 - **Work the auditor can't run goes on as "reviewed, not run".** It ends with `VERDICT: UNVERIFIED`, the task lands on the patch marked, and the patch waits until checks have built and tested it. That rule already existed for code that can't be built until another task lands. For a project tested in a container, put those commands in `[auditor] checks` and Ryter runs them itself.
 - **You can set how many steps each specialist gets.** `/settings` → *agents* has builder, architect and auditor steps, with the defaults (40, 30, 12) in the labels. They are also `[subagents.steps]` in `config.toml`. A change applies from the next task.
+- **`/settings` compares the sandbox profiles.** Under the `profile` field is a table of what `off`, `workspace` and `read-only` each let commands read, write and run, with the chosen one picked out, when to use each, and what a sandbox doesn't stop (the network, and Docker). The default is still `off`. The guide has the same comparison, with what "your tools" covers.
+- **The `workspace` and `read-only` profiles work with a real toolchain.** Commands can now:
+  - write to `/dev/null` and the other standard devices, so `git` runs;
+  - read and run your toolchains under your home folder (`~/.cargo/bin`, `~/.rustup`, node managers, `~/.local/bin`, pipx, uv), and any folder on your `PATH` there;
+  - write those tools' download caches, so a build that fetches a dependency works;
+  - make temporary files, in `~/.ryter/tmp`;
+  - write a crew's worktrees.
+
+  The rest of your home folder, `~/.ssh`, the tools' saved logins and Ryter's keys stay shut.
+- **Under a sandbox, Ryter's keys can't be read from its own process.** `/proc` is readable in the sandbox, and a command could read a key from Ryter's environment or memory there. Ryter now closes its process to other processes when a profile is on.
+- **`ryter --sandbox workspace bench`** runs the benchmark's crew inside the sandbox.
 - **The benchmark has a tenth task, `runner-script`:** a feature in a project whose tests run only through its own script, which the auditor's shell refuses.
 
 ## Tried before release
