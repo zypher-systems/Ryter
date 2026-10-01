@@ -230,10 +230,20 @@ impl Agent {
     /// What the reviewer is asked, as a message in the conversation.
     fn review_brief(&self, job: &Job) -> String {
         let plan = match self.session.meta.plan_file.as_deref() {
-            Some(file) => format!(
-                "The plan the user approved is in `{file}`. Read it, and check the change \
-                 does what it says: all of it, and nothing it doesn't call for."
-            ),
+            Some(file) => {
+                let root = self
+                    .project_root
+                    .clone()
+                    .unwrap_or_else(|| self.ctx.workspace.clone());
+                let decided = crate::decisions::pointer(&root, file)
+                    .map(|p| format!(" {p}"))
+                    .unwrap_or_default();
+                format!(
+                    "The plan the user approved is in `{file}`. Read it, and check the \
+                     change does what it says: all of it, and nothing it doesn't call \
+                     for.{decided}"
+                )
+            }
             None => "No plan was approved for this work: check it against what the user \
                      asked for in this conversation."
                 .to_string(),

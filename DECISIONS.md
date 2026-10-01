@@ -12,6 +12,31 @@ Why, not what. Non-obvious choices are recorded here, newest first.
 - **Why:** "There is too many unknowns for crew to work effectively without the user." No real project had completed in crew mode; the benchmark's clean runs were on small tasks with checks already set.
 - **Where:** `ROADMAP.md` (Direction). The code to go, when it goes: `crew.rs`, `queue.rs`, `tiering.rs`, `estimate.rs`, the crew parts of `agent.rs`, and the crew panels, about 10,000 of 72,000 lines; `bench.rs` is rebuilt on the hats.
 
+### 2026-10-01 — The Test hat's design, and decisions recorded against the plan
+- **By:** the user, choice by choice from mockups (2026-10-01). The approved design is in `docs/test-hat.md`.
+- **The user's decisions:**
+  - The fourth hat is named **Test**. It is a real hat on Tab with its model in `/models`.
+  - It gets its own thread, not the shared conversation, and that thread continues through the session ("so it has context of what it did before"). I had suggested a fresh thread for every run, seeded with the last report; the user chose continuity.
+  - Its report comes back into the main conversation with failures written out and passes as one line each; the full report is a file in `.ryter/tests/`.
+  - A test is offered after a review that passed, and `/test` asks for one.
+  - The project's start, ready, test and stop commands are drafted by the model and approved by the user, in `.ryter/run.toml`.
+  - Beyond those, the tester asks before any command that isn't read-only, a test runner or a request to the project's own address. It never writes project files.
+  - What the tester started is left running until the user says; Ryter asks on quit.
+  - **`.ryter/decisions.md` was the user's idea**, in place of mine. I had proposed editing the plan file when the plan changed after approval, so the plan stayed the one source of truth. The user's way keeps the approved plan as approved and puts each difference, with its reason, where the reviewer and the tester read it.
+- **Built now (decisions only):**
+  - `record_decision` is a tool the model calls; Ryter writes the entry (`decisions.rs`). The model never formats the file, so its shape holds: one `## plan:` section per plan, entries appended to their own plan's section, each field cut to one line.
+  - No prompt before an entry is written (the user's choice). The chat line is the notice.
+  - Only the plan and build hats record. A reviewer that could record a decision could explain away what it was sent to find.
+  - A decision needs `plan_file` in the session. With no approved plan there is nothing to differ from.
+  - The review's brief names the section and how many entries it has, and says nothing when there are none, so a reviewer isn't sent to read a file that isn't there.
+  - The stamp is local time, from `date +%z` (`clock.rs`, which the chat's clock now shares). No date library was added for it.
+- **Chosen vs rejected:**
+  - Rejected letting the model edit `.ryter/decisions.md` with `write`: two models format differently, and the review needs to find a plan's entries by a heading it can be told.
+  - Rejected putting the entries in the system prompt. They would be paid for on every message, and the hats that need them are told where they are.
+  - Rejected recording against "no plan". It would make the file a general log.
+- **Where:** `crates/ryter-core/src/decisions.rs`, `clock.rs`, `agent.rs` (`record_decision`), `gate.rs` (`review_brief`), `tools/mod.rs`; `prompts/solo.md`; `crates/ryter-tui/src/run/events.rs`, `chat/toolview.rs`
+- **Residual risk:** whether a model calls `record_decision` when it should is the prompt's doing, and has only been run with a scripted provider. A plan approved in an earlier session can't have decisions recorded against it (on the roadmap).
+
 ### 2026-10-01 — Crew mode is removed
 - **By:** the user ("I keep wasting money trying to get the crew to work when we already decided to rip it out. That's a bad idea to continue forward"), who chose to remove it now, ahead of the fourth hat and the acceptance run, and to remove `ryter bench` with it and rebuild a benchmark later.
 - **Decision:**

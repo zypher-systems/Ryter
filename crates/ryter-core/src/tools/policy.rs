@@ -60,6 +60,8 @@ pub fn decide(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
         | "load_skill" | "show_page" => Decision::Allow,
         // Each asks the user itself, every time, whatever the session allows.
         "update_rules" | "present_plan" => Decision::Allow,
+        // Ryter writes the entry itself, in one file, and says so in the chat.
+        "record_decision" => Decision::Allow,
         "web_fetch" | "web_search" => {
             if ctx.web {
                 Decision::Allow

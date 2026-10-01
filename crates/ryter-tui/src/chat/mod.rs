@@ -63,22 +63,6 @@ impl OffsetTimestamp {
     }
 }
 
-/// Parse `+0530` / `-0400` (`date +%z`) into seconds.
-pub fn parse_tz_offset(s: &str) -> Option<i32> {
-    let s = s.trim();
-    let (sign, digits) = match s.chars().next()? {
-        '+' => (1, &s[1..]),
-        '-' => (-1, &s[1..]),
-        _ => (1, s),
-    };
-    if digits.len() != 4 || !digits.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    let h: i32 = digits[0..2].parse().ok()?;
-    let m: i32 = digits[2..4].parse().ok()?;
-    Some(sign * (h * 3600 + m * 60))
-}
-
 /// Outcome of a tool call for its row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolStatus {
@@ -636,9 +620,6 @@ mod tests {
             offset_secs: -4 * 3600,
         };
         assert_eq!(t.hhmm(), "20:00");
-        assert_eq!(parse_tz_offset("+0530"), Some(19_800));
-        assert_eq!(parse_tz_offset("-0400"), Some(-14_400));
-        assert_eq!(parse_tz_offset("garbage"), None);
     }
 
     #[test]

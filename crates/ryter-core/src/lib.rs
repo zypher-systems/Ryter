@@ -4,8 +4,10 @@
 
 pub mod agent;
 pub mod cancel;
+pub mod clock;
 pub mod compact;
 pub mod config;
+pub mod decisions;
 pub mod diff;
 pub mod doctor;
 pub mod error;

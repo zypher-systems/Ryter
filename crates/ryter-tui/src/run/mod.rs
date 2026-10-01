@@ -38,7 +38,6 @@ use ryter_core::{
 
 use crate::action::Action;
 use crate::activity::{Mode as ActivityMode, Verb};
-use crate::chat::parse_tz_offset;
 use crate::draw::{Hit, draw};
 use crate::panel::modal::{AskModal, PermissionModal, TrustModal};
 use crate::panel::{self, Notice};
@@ -343,7 +342,7 @@ fn populate_view(
         ryter_core::git::git(cwd, &["config", "user.name"]).ok(),
         std::env::var("USER").ok(),
     );
-    view.tz_offset = local_tz_offset();
+    view.tz_offset = ryter_core::clock::local_offset();
     view.git_branch = ryter_core::git::branch(cwd).ok();
     view.perm_mode = if opts.always_approve {
         "always".into()
@@ -390,17 +389,6 @@ fn populate_view(
         })
         .collect();
     let _ = HookSet::from_config(&cfg.hooks);
-}
-
-/// Local UTC offset via `date +%z` (no chrono dependency); UTC on failure.
-fn local_tz_offset() -> i32 {
-    std::process::Command::new("date")
-        .arg("+%z")
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|s| parse_tz_offset(&s))
-        .unwrap_or(0)
 }
 
 /// Start inbound MCP listeners (unix socket, optional TCP) if enabled.

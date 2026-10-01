@@ -219,13 +219,31 @@ One model works in your project, in the build hat to start with. `Tab` switches 
 
 `Enter` approves nothing here. The panel waits as long as you take to read. A headless run (`ryter -p`) has nobody to approve a plan, so nothing is saved and the plan comes back as the answer.
 
+**When the work differs from the plan.** An approved plan is not edited afterwards. Where the work comes to differ from it, the difference and its reason are recorded in `.ryter/decisions.md` in the project, under the plan they belong to:
+
+```
+## plan: 2026-10-01-cms.md
+
+### No export button in this pass
+- Plan said: step 4, an Export button on the page list
+- Built instead: no export
+- Why: you said "skip the export button for now"
+- Decided by: you · 2026-10-01 14:20
+```
+
+- **When an entry is added:** when you tell the model to leave out, add or change something the plan says, and when the model finds a step can't be done as written and takes another way to the same goal. Those are signed "build hat" with the model's name.
+- **You see each one.** The chat says "decision recorded: No export button in this pass". Nothing stops and nothing is asked.
+- **A review reads them.** A difference recorded there was decided, so the reviewer doesn't report it as a defect. A difference with no entry is still a finding.
+- **The file is yours.** Remove an entry you don't agree with, or add your own under the plan's heading. Whether to commit it is yours to decide, as with the plans.
+- **Limits:** a decision needs a plan approved in this session, and only the plan and build hats record one. A reviewer can't.
+
 **Review before you commit.** The review hat is the check on work before it is committed. Give it its own model in `/models` and it is a second opinion: a different model from the one that built the work. There is one reviewer, and it is this hat.
 
 - **Offered after your changes.** When a build turn finishes having changed files, Ryter offers a review with what it should cost: `⏎` runs it, with no second question; `n` passes; `s` stops the offers. `/settings` (review offers) or `[ui] offer_audit` turns them back on. Nothing is offered after a turn that only talked or read, or one that was cancelled or cut short.
 - **Asked for:** `/audit` (or `/second`) runs the same review whenever you want one.
 - **Every review asks first,** naming the model, what it will read, and a cost range. After a few reviews it also shows what your last ones with that model cost. `n` spends nothing. If the review hat follows the model every hat uses, the prompt says the reviewer is the model that built the work.
 - **It is a turn in the conversation,** in the review hat, and the hat you were in comes back when it ends. The reviewer has read what you asked for, and the model you build with reads the findings next, so "fix those" works. Because it reads the conversation, a reviewer on another model pays to read it once; the chat says what that costs.
-- **It checks against the plan.** If you approved a plan, the reviewer is pointed at its file and checks that the change does what it says, all of it and nothing more. With no plan it checks against what you asked for. Then correctness, tests and safety.
+- **It checks against the plan.** If you approved a plan, the reviewer is pointed at its file and checks that the change does what it says, all of it and nothing more. It is also pointed at that plan's entries in `.ryter/decisions.md`: what you decided to do differently is not held against the work. With no plan it checks against what you asked for. Then correctness, tests and safety.
 - **It ends with a verdict:** `VERDICT: PASS` or `VERDICT: FAIL`, with findings marked **blocking** or **note**. The chat repeats it under the review: "review · grok-4.7 · ✗ blocking problems · $0.04".
 - **A failed review offers its fixes.** The reviewer asks to switch to the build hat; say yes and the build hat fixes them in the same turn. The fixes are new work, so a review of them is offered.
 - **The commit says whether the work was reviewed.** The receipt on `/commit` ends with "review ✓ grok-4.7", "review ✗ grok-4.7", "not reviewed", or "not reviewed after the last change". A verdict holds for the files the reviewer read: change one afterwards, by hand or with the model, and the receipt says so.

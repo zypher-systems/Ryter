@@ -11,6 +11,7 @@ added at the top, and this comment removed.
 - **Every hat ran on one model.** You could not plan with a strong model and build with a cheap one, or have a different model review the work, without changing the model by hand at each step.
 - **There were two reviewers.** The review hat critiqued your changes on the model you were working with, and `/audit` ran a second model apart from the conversation, with its own chooser, its own limit and its own card in the chat. Neither checked the work against a plan, and a commit didn't say whether the work had been reviewed.
 - **A plan was a message, approved by a question about something else.** The plan hat wrote its plan into the chat, and work started when you answered a yes/no card about switching hats. There was no way to say "change this part first", and the plan was nowhere but the chat's history.
+- **What you agreed after a plan was approved lived only in the chat.** Tell the builder "skip the export button for now" and the plan still said to build it. A reviewer holding the work against the plan had no way to tell that from a mistake.
 - **A reviewer couldn't test a project that tests in containers.** The review hat's shell refused every `docker` and `podman` command, so on a Docker project it could not run the tests, and the model said there was no Docker on the machine.
 - **`/models` crashed Ryter beside the rail.** With the side rail showing and a terminal narrower than about 158 columns, opening `/models` ended the program with "index outside of buffer". The panel asks for 124 columns and was sized to the whole screen, not to the space beside the rail, so it was drawn past the right edge. It has done this since 0.9.1. Hiding the rail (`^b`) or a wider terminal avoided it.
 - **The `workspace` sandbox was unusable, and nothing said what the profiles meant.** `/settings` had a `profile` field with three names and no explanation. Under `workspace` on a real machine:
@@ -42,6 +43,11 @@ added at the top, and this comment removed.
   - `y` approves: the plan is saved as `.ryter/plans/<date>-<title>.md` in the project, and the model builds from it in the build hat, in the same turn.
   - `e` adjusts: you type what to change, and the model shows the revised plan.
   - `n` rejects: nothing is saved.
+- **Where the work differs from the plan, the difference and its reason are recorded.** An approved plan is not edited. The entries go in `.ryter/decisions.md` in the project, under the plan they belong to: what the plan said, what is built instead, why, and who decided.
+  - An entry is added when you tell the model to leave out, add or change something the plan says, and when the model finds a step can't be done as written and takes another way to the same goal.
+  - The chat says "decision recorded: No export button in this pass". Nothing is asked.
+  - A review is pointed at the plan's entries: a difference recorded there is not reported as a defect. One with no entry still is.
+  - The file is yours to edit. A decision needs a plan approved in the same session, and a reviewer can't record one.
 - **One reviewer: the review hat.** `/audit`, and the offer after a build turn that changed files, run a review in the review hat, on the model you gave it in `/models`.
   - **It asks first,** as before: the model, what it reviews, and a cost range. If the review hat has no model of its own, the prompt says the reviewer is the model that built the work.
   - **It is a turn in the conversation.** The reviewer has read what you asked for, and the model you build with reads its findings next. The hat you were in comes back when it ends.
@@ -103,6 +109,11 @@ added at the top, and this comment removed.
   - In the TUI, in the review hat, against a stand-in provider on a machine with Docker: `docker ps` ran and listed the containers; `docker compose run --rm web pytest -q` ran (Docker answered that the test folder has no compose file); `docker compose up -d --wait` and `docker run -v /:/host …` were refused, each with "Docker is here, and tests and linters do run in the project's containers".
   - Under the real `workspace` sandbox on this machine: `docker version`, `docker ps`, `docker compose version` and `docker buildx ls` all worked. Without the new grant `docker buildx ls` failed with "buildx/.lock: permission denied".
   - Rootless Podman under the sandbox: `podman ps` failed on its database, and a user namespace could not be set up at all (`unshare -Urm` failed where it works outside the sandbox).
+- **Decisions,** in the TUI against a stand-in provider, with the review hat on a second model:
+  - I approved a two-step plan and the model built step 1. I typed "skip the export button for now": the chat said "decision recorded: No export button in this pass", and `.ryter/decisions.md` held the entry under the plan's name, signed "you" with the local time.
+  - A second one, made by the model, was signed "build hat (main-model)".
+  - `/audit`: the request to the reviewer's model named the plan and said "is recorded in `.ryter/decisions.md`, under `## plan: 2026-10-01-page-list-with-export.md` (2 entries). Read them".
+  - The stand-in provider called the tool because its script said to. Whether a real model records a decision when it should, without being told, has not been tried.
 - **The plan panel,** in the TUI against a stand-in provider that presented a five-section plan:
   - The panel showed the plan under its title, each heading with its section under it, all on screen without scrolling.
   - `e`, then "Stream the rows; skip the button for now": the model was told those words and showed a revised plan. Nothing had been saved.

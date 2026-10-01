@@ -517,6 +517,7 @@ impl Agent {
                             call.name.as_str(),
                             "request_hat"
                                 | "present_plan"
+                                | "record_decision"
                                 | "load_skill"
                                 | "show_page"
                                 | "update_rules"
@@ -527,6 +528,7 @@ impl Agent {
                             match call.name.as_str() {
                                 "request_hat" => self.request_hat(&args),
                                 "present_plan" => self.present_plan(&args),
+                                "record_decision" => self.record_decision(&args),
                                 "load_skill" => Ok(self.load_skill(&args)),
                                 "update_rules" => self.update_rules(&args),
                                 _ => self.show_page(&args),
@@ -1000,8 +1002,10 @@ impl Agent {
                     "The user approved the plan. It is saved at `{shown}`, and you are in the \
                      build hat{}: you may change files and run commands. Carry the plan out \
                      now, in this turn, a step at a time, and check each step the way the \
-                     plan says. If the plan turns out to be wrong, stop and say so: don't \
-                     improvise a different one.",
+                     plan says. Where the work has to differ from the plan and still meets \
+                     its goal, record the difference with record_decision before you build \
+                     it. If the plan's goal or a whole step can't be done, stop and say so: \
+                     don't improvise a different plan.",
                     if from == Role::SoloBuild {
                         String::new()
                     } else {
@@ -1020,6 +1024,89 @@ impl Agent {
                 self.role
             ))),
         }
+    }
+
+    /// `record_decision`: one place where the work differs from the approved
+    /// plan, and why, written to `.ryter/decisions.md` under that plan.
+    ///
+    /// The plan stays as the user approved it. Without this, what they and
+    /// the builder agreed afterwards lived only in the chat, and a reviewer
+    /// holding the work against the plan reported it as a defect.
+    fn record_decision(&mut self, args: &Value) -> Result<crate::tools::ToolOutput> {
+        use crate::tools::ToolOutput;
+        let text = |key: &str| {
+            args.get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        };
+        let (Some(title), Some(plan_said), Some(built_instead), Some(why)) = (
+            text("title"),
+            text("plan_said"),
+            text("built_instead"),
+            text("why"),
+        ) else {
+            return Ok(ToolOutput::err(
+                "record_decision needs `title`, `plan_said`, `built_instead` and `why`, \
+                 each a short line",
+            ));
+        };
+        let by = match text("decided_by") {
+            Some("user") => "you".to_string(),
+            Some("model") => format!(
+                "{} hat ({})",
+                self.role,
+                self.model.rsplit('/').next().unwrap_or(&self.model)
+            ),
+            _ => {
+                return Ok(ToolOutput::err(
+                    "record_decision needs `decided_by`: `user` when they told you to, \
+                     `model` when you chose",
+                ));
+            }
+        };
+        // A reviewer that could record a decision could explain away what
+        // it was asked to find.
+        if !matches!(self.role, Role::SoloPlan | Role::SoloBuild) {
+            return Ok(ToolOutput::err(format!(
+                "decisions are recorded from the plan and build hats, not the {} hat. Say \
+                 in your answer what differs from the plan.",
+                self.role
+            )));
+        }
+        let Some(plan_file) = self.session.meta.plan_file.clone() else {
+            return Ok(ToolOutput::err(
+                "no plan has been approved in this session, so there is no plan for the \
+                 work to differ from. Nothing was recorded.",
+            ));
+        };
+        let root = self
+            .project_root
+            .clone()
+            .unwrap_or_else(|| self.ctx.workspace.clone());
+        let entry = crate::decisions::Entry {
+            title: title.to_string(),
+            plan_said: plan_said.to_string(),
+            built_instead: built_instead.to_string(),
+            why: why.to_string(),
+            by,
+        };
+        if let Err(e) = crate::decisions::record(&root, &plan_file, &entry) {
+            return Ok(ToolOutput::err(format!(
+                "the decision could not be recorded ({e}). Tell the user what differs from \
+                 the plan, and why."
+            )));
+        }
+        self.emit(AgentEvent::Notice {
+            message: format!(
+                "decision recorded: {}",
+                title.split_whitespace().collect::<Vec<_>>().join(" ")
+            ),
+        })?;
+        Ok(ToolOutput::ok(format!(
+            "Recorded in `{}`, under the plan `{plan_file}`. A review will read it.",
+            crate::decisions::FILE
+        )))
     }
 
     /// Whether a tool call may change the user's files: an edit, or a command
@@ -1561,7 +1648,13 @@ impl Agent {
             .meta
             .plan_file
             .as_deref()
-            .map(|f| format!("The plan the user approved is in `{f}`."))
+            .map(|f| {
+                format!(
+                    "The plan the user approved is in `{f}`. Where the work differs from \
+                     it is recorded in `{}`.",
+                    crate::decisions::FILE
+                )
+            })
             .unwrap_or_default();
         let next = crate::compact::compact(
             &self.session.transcript,
@@ -2201,6 +2294,123 @@ mod tests {
         );
     }
 
+    const CMS_PLAN: &str = ".ryter/plans/2026-10-01-cms.md";
+
+    fn decision(by: &str) -> Vec<StreamDelta> {
+        call(
+            "record_decision",
+            serde_json::json!({
+                "title": "No export button in this pass",
+                "plan_said": "step 4, an Export button on the page list",
+                "built_instead": "no export",
+                "why": "you said \"skip the export button for now\"",
+                "decided_by": by,
+            }),
+        )
+    }
+
+    /// One turn in `hat` in which the model records a decision. The
+    /// decisions file (if any), the tool's result, and the notices.
+    async fn decision_recorded(
+        hat: Role,
+        plan: Option<&str>,
+        by: &str,
+    ) -> (Option<String>, String, Vec<String>) {
+        let p = ReplayProvider::scripted(vec![decision(by), say("done")]);
+        let (_home, cwd, mut agent) = repo_setup(p);
+        agent.role = hat;
+        agent.ctx.role = hat;
+        agent
+            .session
+            .set_plan_file(plan.map(str::to_string))
+            .unwrap();
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("skip the export button for now").await.unwrap();
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        let notices = events
+            .try_iter()
+            .filter_map(|e| match e {
+                AgentEvent::Notice { message } => Some(message),
+                _ => None,
+            })
+            .collect();
+        let file = std::fs::read_to_string(cwd.path().join(crate::decisions::FILE)).ok();
+        (file, result, notices)
+    }
+
+    /// What the user and the builder agree after a plan is approved is
+    /// written down under that plan, and the chat says so. It used to live
+    /// only in the conversation, where a reviewer holding the work against
+    /// the plan could not tell it from a mistake.
+    #[tokio::test]
+    async fn a_decision_is_recorded_under_the_approved_plan() {
+        let (file, result, notices) =
+            decision_recorded(Role::SoloBuild, Some(CMS_PLAN), "user").await;
+        let file = file.expect("the decisions file");
+        assert!(
+            file.contains(
+                "## plan: 2026-10-01-cms.md\n\n\
+                 ### No export button in this pass\n\
+                 - Plan said: step 4, an Export button on the page list\n\
+                 - Built instead: no export\n\
+                 - Why: you said \"skip the export button for now\"\n\
+                 - Decided by: you · 20"
+            ),
+            "{file}"
+        );
+        assert_eq!(
+            notices,
+            ["decision recorded: No export button in this pass"]
+        );
+        assert!(
+            result.contains(
+                "Recorded in `.ryter/decisions.md`, under the plan `.ryter/plans/2026-10-01-cms.md`"
+            ),
+            "{result}"
+        );
+        // One the model made is signed by its hat and its model.
+        let (file, _, _) = decision_recorded(Role::SoloBuild, Some(CMS_PLAN), "model").await;
+        let file = file.expect("the decisions file");
+        assert!(
+            file.contains("- Decided by: build hat (grok-4.6) · 20"),
+            "{file}"
+        );
+    }
+
+    /// A decision is a difference from a plan: with no plan there is nothing
+    /// to record. And a reviewer can't record one, or it could explain away
+    /// what it was asked to find.
+    #[tokio::test]
+    async fn a_decision_needs_a_plan_and_a_hat_that_does_the_work() {
+        let (file, result, notices) = decision_recorded(Role::SoloBuild, None, "user").await;
+        assert_eq!(file, None);
+        assert!(result.contains("no plan has been approved"), "{result}");
+        assert!(notices.is_empty(), "{notices:?}");
+        let (file, result, notices) =
+            decision_recorded(Role::SoloReview, Some(CMS_PLAN), "user").await;
+        assert_eq!(file, None);
+        assert!(
+            result.contains("recorded from the plan and build hats, not the review hat"),
+            "{result}"
+        );
+        assert!(notices.is_empty(), "{notices:?}");
+        // The plan hat may: the user can change their mind while planning
+        // the next step.
+        let (file, _, _) = decision_recorded(Role::SoloPlan, Some(CMS_PLAN), "user").await;
+        assert!(file.is_some());
+        // Who decided has to be said.
+        let (file, result, _) = decision_recorded(Role::SoloBuild, Some(CMS_PLAN), "me").await;
+        assert_eq!(file, None);
+        assert!(result.contains("needs `decided_by`"), "{result}");
+    }
+
     /// With nobody to show it to, a plan is not approved by default, and a
     /// plan too long to read is not shown at all.
     #[tokio::test]
@@ -2763,6 +2973,8 @@ mod tests {
         own_model: bool,
         /// The plan the user approved, if any.
         plan: Option<&'static str>,
+        /// A decision is recorded against that plan.
+        decided: bool,
     }
 
     impl Default for ReviewRun {
@@ -2775,6 +2987,7 @@ mod tests {
                 offers_on: true,
                 own_model: true,
                 plan: None,
+                decided: false,
             }
         }
     }
@@ -2814,6 +3027,16 @@ mod tests {
         agent.ctx.role = Role::SoloBuild;
         if let Some(plan) = run.plan {
             agent.session.set_plan_file(Some(plan.to_string())).unwrap();
+            if run.decided {
+                let entry = crate::decisions::Entry {
+                    title: "No export button in this pass".into(),
+                    plan_said: "step 4".into(),
+                    built_instead: "no export".into(),
+                    why: "the user said to skip it".into(),
+                    by: "you".into(),
+                };
+                crate::decisions::record(cwd.path(), plan, &entry).unwrap();
+            }
         }
         std::fs::write(cwd.path().join("hello.txt"), "hi there\nand more\n").unwrap();
         let (io, rx) = crate::user_io::UserIo::pair();
@@ -3012,6 +3235,41 @@ mod tests {
         for f in ["ROADMAP.md", "DECISIONS.md", "notes"] {
             assert!(!cwd.path().join(f).exists(), "{f} was created");
         }
+    }
+
+    /// Where the work differs from the plan on purpose, the reviewer is sent
+    /// to the reasons, so a decided difference is not reported as a defect.
+    /// With nothing recorded, the brief says nothing about decisions.
+    #[tokio::test]
+    async fn a_review_is_pointed_at_the_decisions_for_its_plan() {
+        let plan = ".ryter/plans/2026-10-01-greeting.md";
+        let (_home, _cwd, agent, _events, _) = review_run(
+            ReviewRun {
+                plan: Some(plan),
+                decided: true,
+                ..ReviewRun::default()
+            },
+            vec![say("VERDICT: PASS")],
+        )
+        .await;
+        let brief = &agent.session.transcript[0].content;
+        assert!(
+            brief.contains(
+                "is recorded in `.ryter/decisions.md`, under `## plan: 2026-10-01-greeting.md` \
+                 (1 entry). Read it: a difference explained there was decided"
+            ),
+            "{brief}"
+        );
+        let (_home, _cwd, agent, _events, _) = review_run(
+            ReviewRun {
+                plan: Some(plan),
+                ..ReviewRun::default()
+            },
+            vec![say("VERDICT: PASS")],
+        )
+        .await;
+        let brief = &agent.session.transcript[0].content;
+        assert!(!brief.contains("decisions.md"), "{brief}");
     }
 
     /// With no plan approved, the reviewer checks the work against what the

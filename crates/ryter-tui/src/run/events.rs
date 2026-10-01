@@ -398,6 +398,14 @@ fn on_tool_result(
         return;
     }
     view.finish_tool(id, is_error, duration_ms);
+    // A decision that was recorded is said once, by the line Ryter adds
+    // ("decision recorded: …"). Only one that wasn't keeps its step, with
+    // the reason.
+    if tool == "record_decision" && !is_error {
+        view.messages
+            .retain(|m| m.meta.tool_id.as_deref() != Some(id));
+        return;
+    }
     let (detail, body) = toolview::result(&tool, output, is_error);
     if let Some(m) = view
         .messages
@@ -558,6 +566,83 @@ pub fn apply_model_catalog(view: &mut View, m: &ryter_core::ModelInfo) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A decision that was recorded is one line in the chat: Ryter's
+    /// "decision recorded". One that wasn't keeps its step and its reason.
+    #[test]
+    fn a_recorded_decision_is_said_once() {
+        let call = |v: &mut View, id: &str| {
+            apply(
+                v,
+                AgentEvent::ToolCall {
+                    id: id.into(),
+                    name: "record_decision".into(),
+                    args: serde_json::json!({"title": "No export button in this pass"}),
+                    role: Role::SoloBuild,
+                    summary: None,
+                },
+            );
+        };
+        let result = |v: &mut View, id: &str, output: &str, is_error: bool| {
+            apply(
+                v,
+                AgentEvent::ToolResult {
+                    id: id.into(),
+                    output: output.into(),
+                    is_error,
+                    duration_ms: Some(2),
+                    diff: None,
+                },
+            );
+        };
+        let lines = |v: &View| -> Vec<String> {
+            v.messages
+                .iter()
+                .filter(|m| !matches!(m.kind, MessageKind::User))
+                .map(|m| {
+                    format!("{} {}", m.meta.label.clone().unwrap_or_default(), m.body)
+                        .trim()
+                        .to_string()
+                })
+                .collect()
+        };
+        let mut v = view();
+        call(&mut v, "d1");
+        apply(
+            &mut v,
+            AgentEvent::Notice {
+                message: "decision recorded: No export button in this pass".into(),
+            },
+        );
+        result(&mut v, "d1", "Recorded in `.ryter/decisions.md`", false);
+        assert_eq!(
+            lines(&v),
+            ["decision recorded: No export button in this pass"]
+        );
+        // Refused: the step stays, named in plain words, with why.
+        let mut v = view();
+        call(&mut v, "d2");
+        result(
+            &mut v,
+            "d2",
+            "no plan has been approved in this session",
+            true,
+        );
+        let tool = v
+            .messages
+            .iter()
+            .find(|m| matches!(m.kind, MessageKind::Tool { .. }))
+            .expect("the step");
+        assert!(
+            matches!(&tool.kind, MessageKind::Tool { name, status: ToolStatus::Error } if name == "decide"),
+            "{:?}",
+            tool.kind
+        );
+        assert_eq!(
+            tool.meta.label.as_deref(),
+            Some("No export button in this pass")
+        );
+    }
 
     fn view() -> View {
         let mut v = View::new("spacexai".into(), "grok-4.6".into(), "~/p".into());

@@ -297,6 +297,22 @@ fn spec(name: &str) -> Option<ToolSpec> {
                 "plan":{"type":"string","description":"the plan, in Markdown"}
             },"required":["title","plan"]}),
         ),
+        "record_decision" => (
+            "Record one place where the work differs from the plan the user approved, and \
+             why. Call it when the user tells you to leave out, add or change something the \
+             plan says, and when the plan can't be followed as written and you take another \
+             way to the same goal. One call for each difference, when it is decided, before \
+             you build it. The entry goes in `.ryter/decisions.md` in the project, and a \
+             review reads it: a difference recorded there is not held against the work. \
+             Don't record work that follows the plan, or things the plan doesn't speak to.",
+            json!({"type":"object","properties":{
+                "title":{"type":"string","description":"a few words: what was decided"},
+                "plan_said":{"type":"string","description":"what the plan says, with its step"},
+                "built_instead":{"type":"string","description":"what is built instead"},
+                "why":{"type":"string","description":"the reason, in a sentence; the user's own words when they decided"},
+                "decided_by":{"type":"string","enum":["user","model"],"description":"`user` when they told you to; `model` when you chose"}
+            },"required":["title","plan_said","built_instead","why","decided_by"]}),
+        ),
         "request_hat" => (
             "Ask the user to switch your hat, e.g. to build once a plan is ready or once a \
              review found things to fix. They answer yes or no; on yes you continue in the \
@@ -345,6 +361,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "ask_user",
             "request_hat",
             "present_plan",
+            "record_decision",
             "load_skill",
             "show_page",
             "update_rules",
@@ -372,9 +389,10 @@ pub fn execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput
         "use_tool" => mcp_use(args, ctx),
         "ask_user" => ask_user(args, ctx),
         // The agent loop answers this itself: it changes who the agent is.
-        "request_hat" | "present_plan" | "load_skill" | "show_page" | "update_rules" => Ok(
-            ToolOutput::err(format!("{name} is handled by the agent loop")),
-        ),
+        "request_hat" | "present_plan" | "record_decision" | "load_skill" | "show_page"
+        | "update_rules" => Ok(ToolOutput::err(format!(
+            "{name} is handled by the agent loop"
+        ))),
         "web_fetch" => web::web_fetch(args, ctx),
         "web_search" => web::web_search(args, ctx),
         other => Ok(ToolOutput::err(format!("unknown tool {other}"))),
