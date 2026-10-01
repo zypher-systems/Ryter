@@ -784,10 +784,11 @@ impl RoleModel {
 impl Config {
     fn specialist_row(&self, role: crate::role::Role) -> RoleModel {
         let key = match role {
-            crate::role::Role::Orchestrator
-            | crate::role::Role::SoloPlan
-            | crate::role::Role::SoloBuild
-            | crate::role::Role::SoloReview => return self.orchestrator.clone(),
+            crate::role::Role::Orchestrator => return self.orchestrator.clone(),
+            // A hat with no model of its own follows the one every hat uses.
+            crate::role::Role::SoloPlan => "plan",
+            crate::role::Role::SoloBuild => "build",
+            crate::role::Role::SoloReview => "review",
             crate::role::Role::Architect => "architect",
             crate::role::Role::Builder => "builder",
             crate::role::Role::Auditor => "auditor",
@@ -889,6 +890,7 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
         }
     }
     apply_crew_file(&mut cfg, &home.join("crew.toml"));
+    apply_hats_file(&mut cfg, &hats_path(home));
     apply_mcp_file(&mut cfg, &home.join("mcp.toml"));
     apply_hooks_file(&mut cfg, &home.join("hooks.toml"));
     apply_connections_file(&mut cfg, &home.join("connections.toml"));
@@ -906,6 +908,45 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
 }
 
 const CREW_ROLES: &[&str] = &["architect", "builder", "auditor"];
+
+/// The hats that can have a model of their own, as `specialists` names them.
+pub const HAT_ROLES: &[&str] = &["plan", "build", "review"];
+
+/// `~/.ryter/hats.toml`: the model each hat runs on, where it has its own.
+pub fn hats_path(home: &Path) -> PathBuf {
+    home.join("hats.toml")
+}
+
+fn apply_hats_file(cfg: &mut Config, path: &Path) {
+    let Ok(text) = fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(map) = parse_crew_map(&text) else {
+        return;
+    };
+    for (k, v) in map {
+        if HAT_ROLES.contains(&k.as_str()) {
+            cfg.specialists.insert(k, v);
+        }
+    }
+}
+
+/// Save the hats' own models (does not rewrite `config.toml`). A hat that
+/// follows the others is left out.
+pub fn save_hats(home: &Path, specialists: &BTreeMap<String, RoleModel>) -> Result<()> {
+    fs::create_dir_all(home).map_err(|e| Error::Config(e.to_string()))?;
+    let map: BTreeMap<String, RoleModel> = HAT_ROLES
+        .iter()
+        .filter_map(|role| {
+            specialists
+                .get(*role)
+                .filter(|rm| rm.is_override())
+                .map(|rm| ((*role).to_string(), rm.clone()))
+        })
+        .collect();
+    let body = toml::to_string(&map).map_err(|e| Error::Config(e.to_string()))?;
+    fs::write(hats_path(home), body).map_err(|e| Error::Config(e.to_string()))
+}
 
 /// No crew was ever saved (no `crew.toml`) and none is configured in
 /// `[specialists]`: the first-launch crew builder should run.
@@ -2448,6 +2489,64 @@ mod tests {
         assert_eq!(
             UpdateMode::Install.next().next().next(),
             UpdateMode::Install
+        );
+    }
+
+    /// A hat runs on its own model when it has one, and on the one every hat
+    /// uses when it doesn't. The choice is kept in `hats.toml`, apart from
+    /// the crew's.
+    #[test]
+    fn a_hat_has_its_own_model_or_follows_the_rest() {
+        use crate::role::Role;
+        let dir = TempDir::new().unwrap();
+        let mut cfg = load_at(dir.path(), None, false).unwrap();
+        let all = cfg.route_for(Role::Orchestrator);
+        for hat in [Role::SoloPlan, Role::SoloBuild, Role::SoloReview] {
+            assert!(cfg.follows_orchestrator(hat));
+            assert_eq!(cfg.route_for(hat), all);
+        }
+        cfg.specialists.insert(
+            "review".into(),
+            RoleModel {
+                connection: Some("openrouter".into()),
+                model: Some("x-ai/grok-4.7".into()),
+            },
+        );
+        cfg.specialists.insert(
+            "auditor".into(),
+            RoleModel {
+                connection: Some("openrouter".into()),
+                model: Some("qwen/qwen3.8-max".into()),
+            },
+        );
+        assert!(!cfg.follows_orchestrator(Role::SoloReview));
+        assert_eq!(
+            cfg.route_for(Role::SoloReview),
+            ("openrouter".into(), "x-ai/grok-4.7".into())
+        );
+        assert_eq!(cfg.route_for(Role::SoloPlan), all);
+        assert_eq!(cfg.route_for(Role::SoloBuild), all);
+        // Saved and read back, each to its own file.
+        save_hats(dir.path(), &cfg.specialists).unwrap();
+        save_crew(dir.path(), &cfg.specialists).unwrap();
+        let hats = fs::read_to_string(hats_path(dir.path())).unwrap();
+        assert!(
+            hats.contains("[review]") && !hats.contains("auditor"),
+            "{hats}"
+        );
+        let crew = fs::read_to_string(crew_path(dir.path())).unwrap();
+        assert!(
+            crew.contains("[auditor]") && !crew.contains("review"),
+            "{crew}"
+        );
+        let again = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(
+            again.route_for(Role::SoloReview),
+            ("openrouter".into(), "x-ai/grok-4.7".into())
+        );
+        assert_eq!(
+            again.route_for(Role::Auditor),
+            ("openrouter".into(), "qwen/qwen3.8-max".into())
         );
     }
 

@@ -216,6 +216,12 @@ Ryter starts in solo mode: one model in your project. `Tab` switches its hat (bu
 | **plan** | read, search, run read-only commands, and show you a plan to approve | edit source, run anything that changes the project |
 | **review** | read, run the tests and linters, read-only git | write anything, not even by redirect; install, format, or fix |
 
+**A model for each hat.** Every hat runs on one model until you give a hat its own. `/models` lists the seats on the left: *All hats*, then *Plan*, *Build* and *Review*, each showing its model or "follows all hats". Pick a seat, pick a model, `⏎`, and the cursor moves to the next seat, so one visit sets them all. To put a hat back, choose `default` at the top of its list. The choice is kept in `~/.ryter/hats.toml`.
+
+- **Where it shows:** the rail and the status line name the model your next message goes to, which is the current hat's.
+- **What a switch costs:** the hats share one conversation. A model that hasn't read it yet reads all of it at the full price the first time, and Ryter says so in the chat as it happens: "review hat · grok-4.7 re-reads 42k tokens, about $0.13". Nothing stops; the line is there so the cost isn't a surprise. Going back to a model that has read the conversation costs the same again if its provider's cache has lapsed.
+- **A use for it:** a strong model for the plan, a cheaper one to build it, and a different one to review, so the review isn't the builder marking its own work.
+
 **Approving a plan.** When the model has a plan, it shows it in a panel instead of writing it into the chat: the goal, the steps, the files, the risks, and how to verify it. `↑`/`↓` and `PgUp`/`PgDn` scroll a long one. You answer:
 
 - **`y` approves.** The plan is saved in the project as `.ryter/plans/<date>-<title>.md`, Ryter switches to the build hat, and the model builds from that file in the same turn. Earlier plans are kept beside it, and whether to commit them is yours to decide.
@@ -298,7 +304,7 @@ Headless, `ryter -p` runs in build; `--hat plan|review|crew` picks another. Head
 
 `/crew` switches to crew mode, and that's all it does. The first time, the crew builder opens (below); once a crew is saved, `/crew` switches straight to it. `/solo` goes back. In crew mode the right-hand panel adds the tasks and crew cards.
 
-**Every model is chosen in `/models`.** The seats are on the left: the lead (`Solo` in solo mode), architect, builder and auditor, each with the model it runs on now. The models for the chosen seat are on the right.
+**Every model is chosen in `/models`.** The seats are on the left, each with the model it runs on now: *All hats*, *Plan*, *Build* and *Review*, or in crew mode the lead, architect, builder and auditor. The models for the chosen seat are on the right.
 - **Choosing a seat:** `↑↓` picks one. `→` or `⏎` moves to its models, and typing starts a filter there straight away.
 - **Setting a model:** `⏎` sets the highlighted model for the seat and takes you back to the seats, on the next one. You can set the whole crew in one visit: pick, `⏎`, pick, `⏎`. A `✓` marks each seat you've set.
 - **Other keys:** `←` goes back to the seats without setting anything. `Tab` steps the highlighted model's reasoning, `s` sorts, `b` opens the guided crew builder, and `Esc` closes.

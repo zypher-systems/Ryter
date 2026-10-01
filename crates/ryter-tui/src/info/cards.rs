@@ -126,7 +126,7 @@ pub fn model(view: &View, w: usize, theme: Theme) -> Card {
     } else {
         theme.warn
     };
-    let model = short_model(&view.model).to_string();
+    let model = short_model(view.hat_model()).to_string();
     let mut rows = Vec::new();
     let conn_w = w.saturating_sub(wrap::width(&model) + 3);
     let conn = wrap::truncate(&view.connection, conn_w);

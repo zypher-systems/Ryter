@@ -267,8 +267,9 @@ fn short_count(n: u64) -> String {
 
 fn model(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>> {
     let dim = Style::default().fg(theme.dim).bg(bg);
-    let name = crate::chat::short_model(&view.model).to_string();
-    let reasoning = format!(" · reasoning {}", view.reasoning_label(&view.model));
+    // The model this hat's next message goes to.
+    let name = crate::chat::short_model(view.hat_model()).to_string();
+    let reasoning = format!(" · reasoning {}", view.reasoning_label(view.hat_model()));
     let name = wrap::truncate(&name, w);
     let reasoning = wrap::truncate(&reasoning, w.saturating_sub(wrap::width(&name)));
     let frac = view.ctx_frac();

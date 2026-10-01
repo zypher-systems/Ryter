@@ -22,6 +22,7 @@ Living plan for Ryter. The lead updates this as work lands.
 
 Work that is in `dev` and not yet released is marked *Unreleased*, and its notes collect in `docs/releases/next.md`. An entry gets its version when it's released.
 
+- **Unreleased: a model for each hat.** `/models` lists *All hats*, *Plan*, *Build* and *Review*; a hat follows *All hats* until it has its own. The hats share one conversation, and the chat says what re-reading it costs when another model takes over.
 - **Unreleased: no panel is drawn off the screen.** `/models` crashed the program beside the rail on a terminal under about 158 columns wide (since 0.9.1). Panels are sized to the space they are drawn in.
 - **Unreleased: a plan is approved in its own panel.** The model shows a plan with `present_plan`; the user approves (it is saved under `.ryter/plans/` and built in the same turn), says what to change, or rejects it.
 - **Unreleased: a `/rules` panel.** Two tabs, the rules for every project and for this one: read them, add a rule, remove a line, open the file in an editor. No model call; `/rules <text>` still asks the model to save one.
@@ -160,7 +161,7 @@ Crew mode is being retired. Ryter becomes one mode: the solo interface, with a h
 **The order:**
 
 1. **Plan approval in a popout** (in `dev`). The plan hat writes a plan; it opens in a scrolling panel with approve, adjust and reject, and is written to disk on approve. The build hat works from that file.
-2. **A model for each hat,** set in `/models`. By default every hat follows one model. The hats share one conversation, and a switch to another model shows what re-reading it will cost.
+2. **A model for each hat** (in `dev`), set in `/models`. By default every hat follows one model. The hats share one conversation, and a switch to another model shows what re-reading it will cost.
 3. **Review as a gate.** The review hat, on a different model when the user sets one, checks the change against the plan and for bugs before it is called done.
 4. **A fourth hat that uses the product as a user would** (working name: Test). It starts from the plan and the product, not the conversation. The project says how to start, stop and test itself, and Ryter runs those commands and stops what it started.
 5. **The acceptance test:** the CMS project, taken from a plan to a tested change this way.

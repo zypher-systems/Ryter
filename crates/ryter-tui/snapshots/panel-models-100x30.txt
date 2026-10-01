@@ -2,14 +2,14 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  · s╭─ models ─────────────────────────────────────────────────────────────────── 4 · loading ─╮
    w│ SEATS                │ ⌕ type to filter                                                  │
-    │›  Solo               │ model            in/M  out/M  connection                          │
+    │›  All hats           │ model            in/M  out/M  connection                          │
     │   grok-4.6           │ grok-4.6           $2     $6  spacexai                            │
-    │   Architect          │ grok-4.5           $2     $6  spacexai                            │
-    │   follows lead       │ grok-4.3        $1.25   $2.5  spacexai                            │
-    │   Builder            │ grok-build-0.1     $1     $2  spacexai                            │
-    │   follows lead       │                                                                   │
-    │   Auditor            │                                                                   │
-    │   follows lead       │                                                                   │
+    │   Plan               │ grok-4.5           $2     $6  spacexai                            │
+    │   follows all hats   │ grok-4.3        $1.25   $2.5  spacexai                            │
+    │   Build              │ grok-build-0.1     $1     $2  spacexai                            │
+    │   follows all hats   │                                                                   │
+    │   Review             │                                                                   │
+    │   follows all hats   │                                                                   │
     │                      │                                                                   │
     │                      │                                                                   │
     │                      │                                                                   │

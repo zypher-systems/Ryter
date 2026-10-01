@@ -912,7 +912,15 @@ fn save_crew_setup(
             return;
         }
     }
+    // The crew builder sets the crew's seats: the hats keep their models.
+    let hats: Vec<_> = view
+        .specialists
+        .iter()
+        .filter(|(k, _)| config::HAT_ROLES.contains(&k.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     view.specialists = crew;
+    view.specialists.extend(hats);
     save_crew(view, cx);
     if lead_connection != view.connection || lead_model != view.model {
         match (
@@ -1033,6 +1041,10 @@ fn remove_connection(view: &mut View, cx: &mut Ctx, name: &str) {
 
 fn save_crew(view: &mut View, cx: &mut Ctx) {
     if let Err(e) = config::save_crew(&cx.home, &view.specialists) {
+        view.error(e.to_string());
+    }
+    // The hats' own models are kept apart from the crew's.
+    if let Err(e) = config::save_hats(&cx.home, &view.specialists) {
         view.error(e.to_string());
     }
     cx.cfg.specialists = view.specialists.clone();

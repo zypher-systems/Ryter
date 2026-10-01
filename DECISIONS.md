@@ -12,6 +12,20 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
 - **Why:** "There is too many unknowns for crew to work effectively without the user." No real project had completed in crew mode; the benchmark's clean runs were on small tasks with checks already set.
 - **Where:** `ROADMAP.md` (Direction). The code to go, when it goes: `crew.rs`, `queue.rs`, `tiering.rs`, `estimate.rs`, the crew parts of `agent.rs`, and the crew panels, about 10,000 of 72,000 lines; `bench.rs` is rebuilt on the hats.
 
+### 2026-10-01 — A model for each hat, in one conversation
+- **By:** lead, with the user's choices (the hats are the seats in `/models`; the re-read cost is said in the chat, and nothing stops)
+- **Decision:**
+  - **A hat's model** is a row in `cfg.specialists` under `plan`, `build` or `review`, kept in `~/.ryter/hats.toml` (`config::save_hats`), apart from the crew's `crew.toml`. A hat with no row follows the model every hat uses.
+  - **The solo loop** asks for the hat's route before each call (`Agent::hat_stack`), so a hat that changes mid-turn (an approved plan going on to build) changes model with it. The spend log and the budget use the model that ran.
+  - **The re-read line** (`Agent::reread_notice`) is said when the model about to be called is not the one that last read the conversation: the hat, the model, an estimate of the tokens (instructions, tools and conversation) and their price.
+  - **`/models`** shows *All hats*, *Plan*, *Build*, *Review* outside crew mode (`View::seat_roles`), and the crew's seats in it. The rail and status line name `View::hat_model`.
+- **Chosen vs rejected:**
+  - Rejected a conversation per hat. It saves the re-read, and the build hat would then know nothing of what was said to the plan hat but the plan file. The user chose one conversation for plan, build and review.
+  - Rejected asking before a switch (the user chose a line in the chat): a hat change would take a second key press every time.
+  - Not done: the context window is still the main model's. A hat on a model with a smaller window can overflow it before the conversation is compacted.
+- **Why:** the second step of the one-mode direction: "Plan, Build and Review should have an interface to set different models for each."
+- **Where:** `crates/ryter-core/src/config.rs` (`specialist_row`, `save_hats`), `agent.rs` (`hat_stack`, `reread_notice`), `crates/ryter-tui/src/panel/models.rs`, `view/mod.rs`, `run/actions.rs`, `run/events.rs`
+
 ### 2026-10-01 — A plan is approved on its own panel, and saved as a file
 - **By:** lead, with the user's choices (one scrolling plan; approve saves and starts the build; `.ryter/plans/` in the project)
 - **Decision:**

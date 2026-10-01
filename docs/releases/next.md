@@ -21,6 +21,7 @@ added at the top, and this comment removed.
   - no file could be moved from one folder to another, so `cargo` could not build a library ("Invalid cross-device link");
   - a crew's builders could not write in their worktrees.
 - **Your rules could only be read or changed by hand outside Ryter, or through the model.** There was no place in Ryter to see what your rules were, and `/rules` did nothing without something to remember.
+- **Every hat ran on one model.** You could not plan with a strong model and build with a cheap one, or have a different model review the work, without changing the model by hand at each step.
 - **A plan was a message, approved by a question about something else.** The plan hat wrote its plan into the chat, and work started when you answered a yes/no card about switching hats. There was no way to say "change this part first", and the plan was nowhere but the chat's history.
 
 ## What changed
@@ -35,6 +36,10 @@ added at the top, and this comment removed.
 - **The auditor knows what it can't run.** Its instructions and each refusal say that its shell runs test runners, linters and read-only commands, and refuses containers, servers, installs and the project's own shell scripts. They also say the limit is the auditor's own and that a builder can run those commands.
 - **Work the auditor can't run goes on as "reviewed, not run".** It ends with `VERDICT: UNVERIFIED`, the task lands on the patch marked, and the patch waits until checks have built and tested it. That rule already existed for code that can't be built until another task lands. For a project tested in a container, put those commands in `[auditor] checks` and Ryter runs them itself.
 - **You can set how many steps each specialist gets.** `/settings` → *agents* has builder, architect and auditor steps, with the defaults (40, 30, 12) in the labels. They are also `[subagents.steps]` in `config.toml`. A change applies from the next task.
+- **Each hat can have its own model.** `/models` now lists *All hats*, *Plan*, *Build* and *Review*. A hat follows *All hats* until you give it a model.
+  - The rail and the status line show the model your next message goes to.
+  - The hats share one conversation. When a model that hasn't read it takes over, the chat says what re-reading it costs: "review hat · grok-4.7 re-reads 42k tokens, about $0.13".
+  - In crew mode `/models` shows the crew's seats, as before.
 - **A plan is read and approved in its own panel.** The model shows its plan (goal, steps, files, risks, how to verify) in a scrolling panel:
   - `y` approves: the plan is saved as `.ryter/plans/<date>-<title>.md` in the project, and the model builds from it in the build hat, in the same turn.
   - `e` adjusts: you type what to change, and the model shows the revised plan.
@@ -77,6 +82,11 @@ added at the top, and this comment removed.
     - The tenth, the TypeScript task, was a false pass, on the same hidden test a crew missed once before without a sandbox (`off` must still remove a `once` handler). It is not the sandbox's doing.
     - It took two runs. The first stopped the Rust task with "Invalid cross-device link", which is how the missing right to move files was found. Its builder spent 120 steps and $0.45 trying to work round it. Fixed, the same task landed in 7 builder steps.
     - Cost: $1.87 over both runs.
+- **A model per hat,** in the TUI against a stand-in provider with three models:
+  - `/models` listed *All hats*, *Plan*, *Build* and *Review*, each hat "follows all hats". I gave Review its own model; the seat showed it with a ✓, and `hats.toml` held it.
+  - A message in the build hat went to the main model, one in the review hat to the reviewer's, and the next in build back to the main one: the provider's log showed each.
+  - On the switch the chat said "review hat · reviewer-x re-reads 3.1k tokens, about $0.01". The provider reported 3,000 tokens read.
+  - With Review selected, the rail's MODEL line named the reviewer's model.
 - **The plan panel,** in the TUI against a stand-in provider that presented a five-section plan:
   - The panel showed the plan under its title, each heading with its section under it, all on screen without scrolling.
   - `e`, then "Stream the rows; skip the button for now": the model was told those words and showed a revised plan. Nothing had been saved.

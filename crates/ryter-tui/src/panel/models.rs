@@ -9,7 +9,7 @@ use crate::action::Action;
 use crate::activity::SPINNER;
 use crate::chat::{short_model, wrap};
 use crate::theme::Theme;
-use crate::view::{CREW_ROLES, View};
+use crate::view::{CREW_ROLES, HAT_ROLES, View};
 
 /// Sort order (`R-POP-26`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,8 +113,10 @@ pub struct Models {
     changed: [bool; SEATS],
 }
 
-/// The lead (or solo) and each crew role.
+/// The model the rest follow, and each seat that can have its own: the
+/// three hats, or in crew mode the three crew roles.
 const SEATS: usize = CREW_ROLES.len() + 1;
+const _: () = assert!(HAT_ROLES.len() == CREW_ROLES.len());
 
 /// The list's width with every column showing.
 const LIST_WIDTH: usize = 80;
@@ -229,7 +231,7 @@ impl Models {
                 // `default` stays unless the filter rules it out: typing a
                 // model's name and pressing enter picked `default` above it.
                 if m.id.is_empty() {
-                    return f.is_empty() || "default follows the lead".contains(&f);
+                    return f.is_empty() || "default follows the lead all hats".contains(&f);
                 }
                 if f.is_empty() {
                     return true;
@@ -322,11 +324,13 @@ impl Models {
         }
     }
 
-    /// The seats: the lead (the solo model in solo mode), then the roles.
+    /// The seats: the model the rest follow, then each that can have its
+    /// own. In crew mode that is the lead and the crew's roles; otherwise
+    /// "All hats" and the hats.
     fn seats(view: &View) -> Vec<(Option<&'static str>, String)> {
-        let lead = if view.crew_mode() { "Lead" } else { "Solo" };
+        let lead = if view.crew_mode() { "Lead" } else { "All hats" };
         let mut v = vec![(None, lead.to_string())];
-        for r in CREW_ROLES {
+        for r in view.seat_roles() {
             let mut label = r.to_string();
             label[..1].make_ascii_uppercase();
             v.push((Some(*r), label));
@@ -338,7 +342,11 @@ impl Models {
     fn seat(&self) -> usize {
         match &self.assign_role {
             None => 0,
-            Some(r) => CREW_ROLES.iter().position(|c| c == r).map_or(0, |i| i + 1),
+            Some(r) => CREW_ROLES
+                .iter()
+                .position(|c| c == r)
+                .or_else(|| HAT_ROLES.iter().position(|c| c == r))
+                .map_or(0, |i| i + 1),
         }
     }
 
@@ -346,7 +354,7 @@ impl Models {
     /// models (the lead's list is its own connection's).
     fn choose_seat(&mut self, view: &View, to: usize) -> Option<Action> {
         let to = to.min(SEATS - 1);
-        self.assign_role = (to > 0).then(|| CREW_ROLES[to - 1].to_string());
+        self.assign_role = (to > 0).then(|| view.seat_roles()[to - 1].to_string());
         self.selected = 0;
         self.refusal = None;
         self.select_current(view);
@@ -371,7 +379,8 @@ impl Models {
                 .and_then(|r| r.model.as_deref())
             {
                 Some(m) => (short_model(m).to_string(), false),
-                None => ("follows lead".into(), true),
+                None if view.crew_mode() => ("follows lead".into(), true),
+                None => ("follows all hats".into(), true),
             },
         }
     }
@@ -634,7 +643,11 @@ impl Panel for Models {
             .map(|m| {
                 if m.id.is_empty() {
                     return vec![
-                        "default (follows the lead)".into(),
+                        if view.crew_mode() {
+                            "default (follows the lead)".into()
+                        } else {
+                            "default (follows all hats)".into()
+                        },
                         String::new(),
                         String::new(),
                         String::new(),
@@ -731,7 +744,12 @@ impl Panel for Models {
         // however long the model's id.
         let facts = list.get(sel).map(|m| {
             if m.id.is_empty() {
-                format!("{} · follows the lead: {}", view.connection, view.model)
+                let whom = if view.crew_mode() {
+                    "the lead"
+                } else {
+                    "all hats"
+                };
+                format!("{} · follows {whom}: {}", view.connection, view.model)
             } else {
                 let rates = match (m.input_per_million, m.output_per_million) {
                     // A router's price varies by where it routes (listed as
@@ -1198,6 +1216,72 @@ mod tests {
             row("minimax/minimax-m2.7", "openrouter", Some((0.3, 1.2))),
             row("grok-4.6", "spacexai", Some((2.0, 6.0))),
         ]
+    }
+
+    /// In the one mode the seats are the hats: "All hats", then Plan, Build
+    /// and Review, each following it until it has a model of its own. One
+    /// visit sets them all, and a hat's seat names the hat when it is set.
+    #[test]
+    fn the_hats_are_the_seats() {
+        let mut v = crew_view();
+        v.mode = ryter_core::Role::SoloBuild;
+        v.specialists.clear();
+        let mut p = Models::new(&mut v, None);
+        p.set_models(&v, &catalog());
+        let t = text(&p, &v);
+        assert!(t.contains("›  All hats  grok-4.7"), "{t}");
+        for hat in ["Plan", "Build", "Review"] {
+            assert!(
+                t.contains(&format!("{hat:<9} follows all hats")),
+                "{hat}:\n{t}"
+            );
+        }
+        assert!(!t.contains("Architect") && !t.contains("Auditor"), "{t}");
+        assert_eq!(p.title(&v), "models");
+
+        // Down to Plan, across to its models, and enter gives it one: the
+        // cursor goes on to Build.
+        key(&mut p, &mut v, KeyCode::Down);
+        p.set_models(&v, &catalog());
+        assert_eq!(p.seat(), 1);
+        key(&mut p, &mut v, KeyCode::Right);
+        v.composer.set_text("qwen");
+        match key(&mut p, &mut v, KeyCode::Enter) {
+            Outcome::Act(set) => assert!(
+                matches!(
+                    &set,
+                    Action::SetCrewRole { role, model, connection }
+                        if role == "plan" && model == "qwen/qwen3.7-max" && connection == "openrouter"
+                ),
+                "{set:?}"
+            ),
+            _ => panic!("set the plan hat's model"),
+        }
+        assert_eq!((p.focus, p.seat()), (Focus::Seats, 2));
+        // As the loop applies it, the seat shows it, and the hat it is on
+        // says so wherever the model is named.
+        v.specialists.insert(
+            "plan".into(),
+            ryter_core::RoleModel {
+                connection: Some("openrouter".into()),
+                model: Some("qwen/qwen3.7-max".into()),
+            },
+        );
+        let t = text(&p, &v);
+        assert!(t.contains("Plan      qwen3.7-max"), "{t}");
+        assert!(t.contains("Build     follows all hats"), "{t}");
+        assert_eq!(v.hat_model(), "x-ai/grok-4.7", "the build hat follows");
+        v.mode = ryter_core::Role::SoloPlan;
+        assert_eq!(v.hat_model(), "qwen/qwen3.7-max");
+        // In crew mode the crew's seats are the ones shown, as before.
+        v.mode = ryter_core::Role::Orchestrator;
+        let p = Models::new(&mut v, None);
+        let t = text(&p, &v);
+        assert!(
+            t.contains("Lead") && t.contains("Architect follows lead"),
+            "{t}"
+        );
+        assert!(!t.contains("All hats"), "{t}");
     }
 
     /// The crew is chosen in one visit: the seats beside the list, and

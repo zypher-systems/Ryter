@@ -350,6 +350,29 @@ impl View {
         self.mode == ryter_core::Role::Orchestrator
     }
 
+    /// The seats that can have a model of their own, after the first (the
+    /// model the rest follow): the hats, or in crew mode the crew's roles.
+    pub fn seat_roles(&self) -> &'static [&'static str] {
+        if self.crew_mode() {
+            CREW_ROLES
+        } else {
+            HAT_ROLES
+        }
+    }
+
+    /// The model the next message goes to: this hat's own where it has
+    /// one, otherwise the one every hat uses.
+    pub fn hat_model(&self) -> &str {
+        if self.crew_mode() {
+            return &self.model;
+        }
+        self.specialists
+            .get(self.mode.as_str())
+            .filter(|r| r.is_override())
+            .and_then(|r| r.model.as_deref())
+            .unwrap_or(&self.model)
+    }
+
     /// `build`, `plan`, `review`, or `crew`.
     pub fn mode_label(&self) -> &'static str {
         if self.crew_mode() {
@@ -786,6 +809,9 @@ pub fn role_label(role: &str) -> &str {
 
 /// Specialist kinds shown in `/crew`.
 pub const CREW_ROLES: &[&str] = &["architect", "builder", "auditor"];
+
+/// The hats that can have a model of their own, in the order the work goes.
+pub const HAT_ROLES: &[&str] = &["plan", "build", "review"];
 
 /// Label under a crew role (`default (grok-4.6)` or a short model id).
 pub fn crew_role_label(view: &View, role: &str) -> String {

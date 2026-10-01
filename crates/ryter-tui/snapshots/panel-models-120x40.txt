@@ -5,14 +5,14 @@
 
     ╭─ models ─────────────────────────────────────────────────────────────────────────────────────── 4 · loading ─╮
     │ SEATS                       │ ⌕ type to filter                                                               │
-    │›  Solo                      │ model           context   in/M  out/M  reasoning  connection                   │
+    │›  All hats                  │ model           context   in/M  out/M  reasoning  connection                   │
     │   grok-4.6                  │ grok-4.6           500k     $2     $6  auto       spacexai                     │
-    │   Architect                 │ grok-4.5           256k     $2     $6  auto       spacexai                     │
-    │   follows lead              │ grok-4.3           256k  $1.25   $2.5  auto       spacexai                     │
-    │   Builder                   │ grok-build-0.1     256k     $1     $2  auto       spacexai                     │
-    │   follows lead              │                                                                                │
-    │   Auditor                   │                                                                                │
-    │   follows lead              │                                                                                │
+    │   Plan                      │ grok-4.5           256k     $2     $6  auto       spacexai                     │
+    │   follows all hats          │ grok-4.3           256k  $1.25   $2.5  auto       spacexai                     │
+    │   Build                     │ grok-build-0.1     256k     $1     $2  auto       spacexai                     │
+    │   follows all hats          │                                                                                │
+    │   Review                    │                                                                                │
+    │   follows all hats          │                                                                                │
     │                             │                                                                                │
     │                             │                                                                                │
     │                             │                                                                                │

@@ -351,8 +351,15 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
         AgentEvent::Notice { message } => view.system(message.clone()),
         AgentEvent::ModeChanged { role } => {
             view.mode = *role;
+            // A hat on a model of its own says which: the next message
+            // goes to it.
+            let own = if view.hat_model() == view.model {
+                String::new()
+            } else {
+                format!(" ({})", crate::chat::short_model(view.hat_model()))
+            };
             view.system(format!(
-                "switched to the {role} hat · Tab to change it again"
+                "switched to the {role} hat{own} · Tab to change it again"
             ));
         }
         AgentEvent::Checkpoint { sha } => view.last_checkpoint = sha.clone(),

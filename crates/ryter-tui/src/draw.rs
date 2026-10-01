@@ -493,7 +493,7 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         Some(b) => format!(" {project}  {b} "),
         None => format!(" {project} "),
     };
-    let model = format!(" {} ", crate::chat::short_model(&view.model));
+    let model = format!(" {} ", crate::chat::short_model(view.hat_model()));
     let frac = view.ctx_frac();
     let filled = ((frac * 8.0).round() as usize).min(8);
     let gauge = [
@@ -702,7 +702,7 @@ fn draw_header(frame: &mut Frame, area: Rect, view: &View, theme: Theme, compact
     let mut right: Vec<Span<'static>> = Vec::new();
     if compact_facts {
         right.push(Span::styled(
-            crate::chat::short_model(&view.model).to_string(),
+            crate::chat::short_model(view.hat_model()).to_string(),
             theme.body(),
         ));
         right.push(Span::styled(" · ", theme.muted()));

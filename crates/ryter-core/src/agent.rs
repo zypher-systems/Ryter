@@ -331,6 +331,9 @@ impl Agent {
         // the whole conversation, every time memory was touched.
         let mut system = self.system_prompt()?;
         let mut compactions = self.session.transcript.len();
+        // The model that has read this conversation so far. A hat on another
+        // model reads it all again, uncached: the user is told what that is.
+        let mut reader = self.last_reader();
         for _round in 0..self.max_turns {
             if self.ctx.cancel.is_cancelled() {
                 return self.finish_cancelled(last_text).await;
@@ -345,8 +348,20 @@ impl Agent {
             }
             compactions = self.session.transcript.len();
 
+            // The hat's own model, when it has one. Worked out each round: a
+            // hat can change mid-turn (an approved plan goes on to build).
+            let (provider, model, connection) = self.hat_stack();
+            if reader.as_deref() != Some(model.as_str()) {
+                if reader.is_some() {
+                    if let Some(message) = self.reread_notice(&model, &system) {
+                        self.emit(AgentEvent::Notice { message })?;
+                    }
+                }
+                reader = Some(model.clone());
+            }
+
             let req = CompletionRequest {
-                model: self.model.clone(),
+                model: model.clone(),
                 system: Some(system.clone()),
                 messages: self.session.transcript.clone(),
                 tools: crate::tools::specs_for_opts(self.role, self.ctx.web),
@@ -355,11 +370,7 @@ impl Agent {
                 // spent the whole budget drafting code in its reasoning and
                 // returned nothing.
                 max_tokens: Some(CONVERSATION_MAX_OUTPUT),
-                reasoning: crate::config::reasoning_effort(
-                    self.cfg.as_ref(),
-                    self.role,
-                    &self.model,
-                ),
+                reasoning: crate::config::reasoning_effort(self.cfg.as_ref(), self.role, &model),
             };
 
             let mut stream = tokio::select! {
@@ -367,7 +378,7 @@ impl Agent {
                 () = self.ctx.cancel.cancelled() => {
                     return self.finish_cancelled(last_text).await;
                 }
-                s = self.provider.stream(req) => s?,
+                s = provider.stream(req) => s?,
             };
             let mut text = String::new();
             let mut calls = ToolCallAccumulator::default();
@@ -413,25 +424,25 @@ impl Agent {
             let local = self
                 .cfg
                 .as_ref()
-                .and_then(|c| c.connections.get(&self.connection))
+                .and_then(|c| c.connections.get(&connection))
                 .is_some_and(|c| c.is_local());
             let total_usd = reported_cost.or_else(|| {
                 if local {
                     Some(0.0)
                 } else {
-                    self.book.cost(&self.model, usage)
+                    self.book.cost(&model, usage)
                 }
             });
             self.session.record_spend(spend_record(
-                self.connection.clone(),
-                self.model.clone(),
+                connection.clone(),
+                model.clone(),
                 self.role,
                 usage,
                 total_usd,
             ))?;
             self.emit(AgentEvent::Spend {
-                connection: self.connection.clone(),
-                model: self.model.clone(),
+                connection: connection.clone(),
+                model: model.clone(),
                 role: self.role,
                 subagent_id: None,
                 task: None,
@@ -452,7 +463,7 @@ impl Agent {
                         "{} has no price, so the ${:.2} budget can't see what it \
                          costs. Ryter won't call it again until it has one \
                          ([pricing] in config.toml) or the budget is off.",
-                        self.model, self.budget_usd
+                        model, self.budget_usd
                     ),
                 })?;
             }
@@ -2396,6 +2407,73 @@ impl Agent {
     }
 
     /// Provider, model, and connection for a crew role.
+    /// The provider, model and connection this turn's hat runs on: its own
+    /// where the user gave it one, otherwise the one every hat uses.
+    fn hat_stack(&self) -> (Arc<dyn Provider>, String, String) {
+        if self.role.is_solo() {
+            self.specialist_stack(self.role)
+        } else {
+            (
+                self.provider.clone(),
+                self.model.clone(),
+                self.connection.clone(),
+            )
+        }
+    }
+
+    /// The model that last read this conversation, from the spend log: a
+    /// different one now reads all of it again, at the full price.
+    fn last_reader(&self) -> Option<String> {
+        self.session
+            .spend_log()
+            .ok()?
+            .into_iter()
+            .rev()
+            .find(|r| r.role.is_solo() || r.role == Role::Orchestrator)
+            .map(|r| r.model)
+    }
+
+    /// What it costs `model` to read the conversation for the first time:
+    /// a line for the chat, or `None` when there is little to read.
+    fn reread_notice(&self, model: &str, system: &str) -> Option<String> {
+        // Everything the model is sent: its instructions, the tools it is
+        // offered, and the conversation.
+        let tools = serde_json::to_string(&crate::tools::specs_for_opts(self.role, self.ctx.web))
+            .map_or(0, |t| t.len());
+        let bytes: usize = system.len()
+            + tools
+            + self
+                .session
+                .transcript
+                .iter()
+                .map(|m| m.content.len())
+                .sum::<usize>();
+        let tokens = (bytes / 4) as u64;
+        if tokens < 2_000 {
+            return None;
+        }
+        let cost = self.book.cost(
+            model,
+            Usage {
+                input_tokens: tokens,
+                ..Usage::default()
+            },
+        );
+        let short = model.rsplit('/').next().unwrap_or(model);
+        let size = if tokens >= 10_000 {
+            format!("{}k", tokens / 1_000)
+        } else {
+            format!("{:.1}k", tokens as f64 / 1_000.0)
+        };
+        Some(match cost {
+            Some(usd) => format!(
+                "{} hat · {short} re-reads {size} tokens, about ${usd:.2}",
+                self.role
+            ),
+            None => format!("{} hat · {short} re-reads {size} tokens", self.role),
+        })
+    }
+
     pub(crate) fn specialist_stack(&self, role: Role) -> (Arc<dyn Provider>, String, String) {
         let lead = || {
             (
@@ -2919,8 +2997,10 @@ The auditor is off, so the patch stays on `{}`.
     /// none, so with a budget set it would spend where the budget can't see.
     fn unpriced_stop(&self) -> Option<Error> {
         let unpriced = self.session.meta.unpriced_model.as_deref()?;
-        (self.budget_usd > 0.0 && unpriced == self.model && self.book.rates(&self.model).is_none())
-            .then(|| self.budget_error(Some(self.model.clone())))
+        // The model about to be called: this hat's.
+        let (_, model, _) = self.hat_stack();
+        (self.budget_usd > 0.0 && unpriced == model && self.book.rates(&model).is_none())
+            .then(|| self.budget_error(Some(model.clone())))
     }
 
     fn budget_error(&self, unpriced: Option<String>) -> Error {
@@ -3130,6 +3210,118 @@ mod tests {
         let asked = asked.join().unwrap();
         let _ = _home;
         (cwd, agent, events.try_iter().collect(), asked)
+    }
+
+    /// Answers every call with one line, and keeps the model each was for.
+    #[derive(Default)]
+    struct Asked {
+        models: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for Asked {
+        async fn stream(&self, req: CompletionRequest) -> Result<crate::llm::DeltaStream> {
+            self.models.lock().unwrap().push(req.model.clone());
+            let deltas = vec![
+                StreamDelta::Text("ok".into()),
+                StreamDelta::Usage(Usage {
+                    input_tokens: 100,
+                    output_tokens: 5,
+                    cached_tokens: 0,
+                    cache_write_tokens: 0,
+                }),
+                StreamDelta::Done,
+            ];
+            Ok(Box::pin(futures_util::stream::iter(
+                deltas.into_iter().map(Ok),
+            )))
+        }
+        async fn list_models(&self) -> Result<Vec<crate::llm::ModelInfo>> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// A hat with a model of its own is run on it; the others follow the
+    /// one every hat uses. The spend log names the model that ran, and the
+    /// first call on a different model says what re-reading the
+    /// conversation costs.
+    #[tokio::test]
+    async fn each_hat_runs_on_its_own_model() {
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        let asked = Arc::new(Asked::default());
+        agent.provider = asked.clone();
+        let mut cfg = agent.cfg.clone().unwrap_or_default();
+        cfg.specialists.insert(
+            "review".into(),
+            crate::config::RoleModel {
+                connection: Some(agent.connection.clone()),
+                model: Some("vendor/reviewer-model".into()),
+            },
+        );
+        agent.cfg = Some(cfg);
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let main = agent.model.clone();
+        let hat = |agent: &mut Agent, role: Role| {
+            agent.role = role;
+            agent.ctx.role = role;
+        };
+        // Something worth re-reading: about 3,000 tokens of conversation.
+        hat(&mut agent, Role::SoloBuild);
+        agent.turn(&"a long request. ".repeat(800)).await.unwrap();
+        hat(&mut agent, Role::SoloPlan);
+        agent.turn("plan it").await.unwrap();
+        hat(&mut agent, Role::SoloReview);
+        agent.turn("review it").await.unwrap();
+        hat(&mut agent, Role::SoloBuild);
+        agent.turn("fix it").await.unwrap();
+        assert_eq!(
+            *asked.models.lock().unwrap(),
+            [
+                main.clone(),
+                main.clone(),
+                "vendor/reviewer-model".to_string(),
+                main.clone()
+            ]
+        );
+        let log = agent.session.spend_log().unwrap();
+        let ran: Vec<(String, &str)> = log
+            .iter()
+            .map(|r| (r.role.to_string(), r.model.as_str()))
+            .collect();
+        assert_eq!(
+            ran,
+            [
+                ("build".to_string(), main.as_str()),
+                ("plan".to_string(), main.as_str()),
+                ("review".to_string(), "vendor/reviewer-model"),
+                ("build".to_string(), main.as_str()),
+            ]
+        );
+        // Said twice: into the reviewer's model, and back out of it. Not for
+        // the plan hat, which ran on the model that had already read it.
+        let said: Vec<String> = events
+            .try_iter()
+            .filter_map(|e| match e {
+                AgentEvent::Notice { message } if message.contains("re-reads") => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(said.len(), 2, "{said:?}");
+        assert!(
+            said[0].starts_with("review hat · reviewer-model re-reads ")
+                && said[0].contains("k tokens"),
+            "{said:?}"
+        );
+        let short = main.rsplit('/').next().unwrap();
+        assert!(
+            said[1].starts_with(&format!("build hat · {short} re-reads ")),
+            "{said:?}"
+        );
+        // Where the model has a price, the line says what the re-read costs.
+        if agent.book.rates(&main).is_some() {
+            assert!(said[1].contains(", about $"), "{said:?}");
+        }
     }
 
     const A_PLAN: &str = "## Goal\nThe readme says what this is.\n\n## Steps\n1. Write README.md\n\n## Files\nREADME.md\n\n## Risks\nNone.\n\n## How to verify\nRead it.";
