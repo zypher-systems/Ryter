@@ -2,6 +2,15 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-30 — `/models` keeps the seats beside the list
+- **By:** lead
+- **Decision:**
+  - The panel has two panes. On the left are the seats, each with its model, a `›` cursor and a `✓` once set here. On the right are the chosen seat's models, with the search row at the top of that pane. `Focus` decides which side the keys move.
+  - On the right, Enter sets the model (`SetModel`, `SetCrewRole` or `ResetCrewRole`). The panel stays open, focus returns to the seats, and the cursor moves to the next seat. When that seat is the first role reached, the same Enter also asks for every connection's models (`Action::Many`).
+  - Opened from the crew panel on a role, the panel starts on that role's models.
+- **Chosen vs rejected:** the user chose this from three mockups, over "Enter moves to the next tab" and "Enter sets and stays". They asked for Enter to return the cursor to SEATS. Before, every Enter closed the panel, so a crew took four visits.
+- **Where:** `crates/ryter-tui/src/panel/models.rs`; `panel/mod.rs` (`Panel::input_indent`, `Panel::keys_in_body`)
+
 ### 2026-09-30 — Ryter updates itself from signed releases
 - **By:** lead
 - **Decision:**

@@ -2,32 +2,32 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  · system
    welcome · /help for keys
-        ╭─ models ─────────────────────────────────────────────────────────────────────────────── 4 · loading ─╮
-        │ ⌕ type to filter                                                                                     │
-        │ ‹ Solo ›   Architect     Builder     Auditor     ←→                                                  │
-        │ now: grok-4.6                                                                                        │
-        │ model           context   in/M  out/M  reasoning  connection  used by                                │
-        │›grok-4.6           500k     $2     $6  auto       spacexai    lead                                   │
-        │ grok-4.5           256k     $2     $6  auto       spacexai                                           │
-        │ grok-4.3           256k  $1.25   $2.5  auto       spacexai                                           │
-        │ grok-build-0.1     256k     $1     $2  auto       spacexai                                           │
-        │                                                                                                      │
-        │                                                                                                      │
-        │                                                                                                      │
-        │                                                                                                      │
-        │                                                                                                      │
-        │                                                                                                      │
-        │                                                                                                      │
-        │                                                                                                      │
-        │                                                                                                      │
-        │                                                                                                      │
-        │                                                                                                      │
-        │                                                                                                      │
-        │                                                                                                      │
-        │                                                                                                      │
-        │ grok-4.6 · 500k ctx · $2/M input / $6/M output · reasoning auto (medium in build)                    │
-        │ ↑↓ move   enter set   ←→ role   tab reasoning   b guided setup   s sort   esc close                  │
-        ╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+    ╭─ models ─────────────────────────────────────────────────────────────────────────────────────── 4 · loading ─╮
+    │ SEATS                            │ ⌕ type to filter                                                          │
+    │›  Solo      grok-4.6             │ model           context   in/M  out/M  reasoning  connection              │
+    │   Architect follows lead         │ grok-4.6           500k     $2     $6  auto       spacexai                │
+    │   Builder   follows lead         │ grok-4.5           256k     $2     $6  auto       spacexai                │
+    │   Auditor   follows lead         │ grok-4.3           256k  $1.25   $2.5  auto       spacexai                │
+    │                                  │ grok-build-0.1     256k     $1     $2  auto       spacexai                │
+    │                                  │                                                                           │
+    │                                  │                                                                           │
+    │                                  │                                                                           │
+    │                                  │                                                                           │
+    │                                  │                                                                           │
+    │                                  │                                                                           │
+    │                                  │                                                                           │
+    │                                  │                                                                           │
+    │                                  │                                                                           │
+    │                                  │                                                                           │
+    │                                  │                                                                           │
+    │                                  │                                                                           │
+    │                                  │                                                                           │
+    │                                  │                                                                           │
+    │                                  │ grok-4.6 · 500k ctx · $2/M input / $6/M output · reasoning auto (medium … │
+    │ ↑↓ seat   → models               │ enter set   ← seats   esc done   tab reasoning   s sort                   │
+    ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
 
 
 
@@ -37,4 +37,4 @@
 ╭─ filter ─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› typing goes to the search in the panel above                                                                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter set    ←→ role    tab reasoning    b guided setup    s sort    esc close
+ ↑↓ seat    → models    b guided setup    esc done

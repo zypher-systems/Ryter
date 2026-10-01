@@ -18,6 +18,7 @@ Living plan for Ryter. The lead updates this as work lands.
 
 ## Now
 
+- **0.9.1 (`0.9.1-patch`) — the crew is chosen in one visit to `/models`.** Two panes: the seats (lead or solo, architect, builder, auditor) with their models, and the chosen seat's models. Enter sets the model and goes back to the seats on the next one, rather than closing. The panel chrome gained `input_indent` (the search row beside a left column) and `keys_in_body` (per-pane key hints). Also the first release that 0.9.0 can update to.
 - **0.9.0 (`0.9.0-patch`) — Ryter updates itself.**
   - At launch, at most once a day, Ryter installs a newer signed release in the background and says to restart. `[update] mode`: install, notify, or off.
   - `ryter update [--check]` does the same on demand.
