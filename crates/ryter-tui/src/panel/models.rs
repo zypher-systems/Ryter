@@ -116,6 +116,9 @@ pub struct Models {
 /// The lead (or solo) and each crew role.
 const SEATS: usize = CREW_ROLES.len() + 1;
 
+/// The list's width with every column showing.
+const LIST_WIDTH: usize = 80;
+
 impl Models {
     /// Open for the active connection (or a crew role).
     pub fn new(view: &mut View, assign_role: Option<String>) -> Self {
@@ -288,17 +291,33 @@ impl Models {
         if self.review.is_some() || !view.composer.text().is_empty() {
             return;
         }
-        let now = match &self.assign_role {
-            None => view.model.clone(),
+        let (model, connection) = match &self.assign_role {
+            None => (view.model.clone(), Some(view.connection.clone())),
             // A role that follows the lead is on the `default` row.
             Some(role) => view
                 .specialists
                 .get(role)
                 .filter(|r| r.is_override())
-                .and_then(|r| r.model.clone())
+                .map(|r| (r.model.clone().unwrap_or_default(), r.connection.clone()))
                 .unwrap_or_default(),
         };
-        if let Some(i) = self.filtered(view).iter().position(|m| m.id == now) {
+        self.highlight(view, &model, connection.as_deref());
+    }
+
+    /// Put the highlight on `model` from `connection`: one model can be on
+    /// two connections, and the connection decides which provider runs it.
+    /// Matching the id alone put it on the first connection's row, and
+    /// enter then moved the seat there.
+    fn highlight(&mut self, view: &View, model: &str, connection: Option<&str>) {
+        let list = self.filtered(view);
+        let same = |m: &&ModelInfo| {
+            m.id == model
+                && connection
+                    .is_none_or(|c| m.connection.as_deref().unwrap_or(&view.connection) == c)
+        };
+        if let Some(i) = list.iter().position(same) {
+            self.selected = i;
+        } else if let Some(i) = list.iter().position(|m| m.id == model) {
             self.selected = i;
         }
     }
@@ -358,8 +377,11 @@ impl Models {
     }
 
     /// The seats column's width in a body `width` wide.
+    /// The list comes first: it gets 80 columns, enough for a long model
+    /// name, both prices, and its connection, before the seats take more
+    /// than their narrowest.
     fn seats_width(width: usize) -> usize {
-        (width / 3).clamp(26, 34)
+        width.saturating_sub(LIST_WIDTH + 1).clamp(22, 34)
     }
 
     /// The seats column, a line per row of the body.
@@ -377,6 +399,9 @@ impl Models {
             pad(" SEATS".into(), width),
             theme.panel_muted().add_modifier(Modifier::BOLD),
         )]];
+        // Narrow, each seat's model goes on a line of its own, so its
+        // name isn't cut to a few letters.
+        let stacked = width < 30;
         for (i, (role, label)) in Self::seats(view).into_iter().enumerate() {
             let here = i == on;
             let cursor = if here { "›" } else { " " };
@@ -390,19 +415,32 @@ impl Models {
                 _ => theme.on_panel(theme.fg),
             };
             let mark_style = theme.on_panel(theme.success);
-            rows.push(vec![
-                Span::styled(cursor.to_string(), label_style),
-                Span::styled(mark.to_string(), mark_style),
-                Span::styled(format!(" {label:<9} "), label_style),
-                Span::styled(
-                    pad(model, room),
-                    if follows {
-                        theme.panel_muted()
-                    } else {
-                        theme.on_panel(theme.fg)
-                    },
-                ),
-            ]);
+            let model_style = if follows {
+                theme.panel_muted()
+            } else {
+                theme.on_panel(theme.fg)
+            };
+            if stacked {
+                rows.push(vec![
+                    Span::styled(cursor.to_string(), label_style),
+                    Span::styled(mark.to_string(), mark_style),
+                    Span::styled(
+                        pad(format!(" {label}"), width.saturating_sub(2)),
+                        label_style,
+                    ),
+                ]);
+                rows.push(vec![Span::styled(
+                    pad(format!("   {model}"), width),
+                    model_style,
+                )]);
+            } else {
+                rows.push(vec![
+                    Span::styled(cursor.to_string(), label_style),
+                    Span::styled(mark.to_string(), mark_style),
+                    Span::styled(format!(" {label:<9} "), label_style),
+                    Span::styled(pad(model, room), model_style),
+                ]);
+            }
         }
         while rows.len() < h.saturating_sub(1) {
             rows.push(vec![Span::styled(" ".repeat(width), theme.panel())]);
@@ -628,28 +666,40 @@ impl Panel for Models {
             .collect();
         // The cursor shows on the side the keys move.
         let cursor = (self.focus == Focus::Models).then(|| sel.saturating_sub(first));
-        // Narrow: the model's name before its reasoning and connection,
-        // which the facts line below gives for the one highlighted.
-        let cols = if right_w < 64 { 4 } else { 6 };
-        let rows: Vec<Vec<String>> = rows.into_iter().map(|r| r[..cols].to_vec()).collect();
+        // The model's name and its prices show at every width. Short of
+        // room, reasoning and context go first, then the connection; the
+        // facts line below gives all three for the one highlighted.
+        let shown: &[usize] = if right_w >= LIST_WIDTH {
+            &[0, 1, 2, 3, 4, 5]
+        } else if right_w >= 60 {
+            &[0, 2, 3, 5]
+        } else {
+            &[0, 2, 3]
+        };
+        let pick = |all: &[&'static str]| shown.iter().map(|&i| all[i]).collect::<Vec<_>>();
+        let rows: Vec<Vec<String>> = rows
+            .into_iter()
+            .map(|r| shown.iter().map(|&i| r[i].clone()).collect())
+            .collect();
+        let aligns = [
+            widgets::Al::L,
+            widgets::Al::R,
+            widgets::Al::R,
+            widgets::Al::R,
+            widgets::Al::L,
+            widgets::Al::L,
+        ];
         let mut table = widgets::table(
-            &[
+            &pick(&[
                 "model",
                 "context",
                 "in/M",
                 "out/M",
                 "reasoning",
                 "connection",
-            ][..cols],
+            ]),
             &rows,
-            &[
-                widgets::Al::L,
-                widgets::Al::R,
-                widgets::Al::R,
-                widgets::Al::R,
-                widgets::Al::L,
-                widgets::Al::L,
-            ][..cols],
+            &shown.iter().map(|&i| aligns[i]).collect::<Vec<_>>(),
             cursor,
             right_w,
             theme,
@@ -677,9 +727,11 @@ impl Panel for Models {
         }
         right.truncate(h.saturating_sub(2));
         // The highlighted model's facts (R-POP-29).
+        // The connection leads, so no cut at the edge hides the provider,
+        // however long the model's id.
         let facts = list.get(sel).map(|m| {
             if m.id.is_empty() {
-                format!("follows the lead: {} · {}", view.model, view.connection)
+                format!("{} · follows the lead: {}", view.connection, view.model)
             } else {
                 let rates = match (m.input_per_million, m.output_per_million) {
                     // A router's price varies by where it routes (listed as
@@ -696,21 +748,14 @@ impl Panel for Models {
                     ),
                     l => l.to_string(),
                 };
-                // Narrow, the table has no connection or reasoning column:
-                // they come first here, so a cut at the edge can't hide the
-                // connection, which picks the provider a role is set on.
-                if cols < 6 {
-                    let conn = m.connection.as_deref().unwrap_or(&view.connection);
-                    format!("{} · {conn} · reasoning {reasoning} · {rates}", m.id)
-                } else {
-                    format!(
-                        "{} · {} · {rates} · reasoning {reasoning}",
-                        m.id,
-                        m.context_length
-                            .map(|c| format!("{} ctx", format_tokens(c)))
-                            .unwrap_or_else(|| "ctx ?".into()),
-                    )
-                }
+                let conn = m.connection.as_deref().unwrap_or(&view.connection);
+                format!(
+                    "{conn} · {} · reasoning {reasoning} · {} · {rates}",
+                    m.id,
+                    m.context_length
+                        .map(|c| format!("{} ctx", format_tokens(c)))
+                        .unwrap_or_else(|| "ctx ?".into()),
+                )
             }
         });
         right.push(match facts {
@@ -835,13 +880,14 @@ impl Panel for Models {
                     // The last seat stays chosen. Its list must open on the
                     // model just set: reading the seat now would find the
                     // one before, as the set hasn't been applied yet.
-                    let set_id = match &set {
-                        Action::SetModel(id) | Action::SetCrewRole { model: id, .. } => id.clone(),
-                        _ => String::new(),
+                    let (model, connection) = match &set {
+                        Action::SetModel(id) => (id.clone(), Some(view.connection.clone())),
+                        Action::SetCrewRole {
+                            model, connection, ..
+                        } => (model.clone(), Some(connection.clone())),
+                        _ => (String::new(), None),
                     };
-                    if let Some(i) = self.filtered(view).iter().position(|m| m.id == set_id) {
-                        self.selected = i;
-                    }
+                    self.highlight(view, &model, connection.as_deref());
                     return Outcome::Act(set);
                 }
                 match self.choose_seat(view, seat + 1) {
@@ -1113,7 +1159,8 @@ mod tests {
     }
 
     fn text(p: &Models, v: &View) -> String {
-        p.render(v, 104, 20, Theme::truecolor_dark())
+        // The panel's full width: seats on one line each.
+        p.render(v, 122, 20, Theme::truecolor_dark())
             .lines
             .iter()
             .map(|l| {
@@ -1365,7 +1412,7 @@ mod tests {
             .collect();
         assert!(!narrow.contains("connection"), "no column: {narrow}");
         assert!(
-            narrow.contains("grok-4.6 · spacexai · reasoning"),
+            narrow.contains("spacexai · grok-4.6 · reasoning"),
             "{narrow}"
         );
         let wide = text(&p, &v);
@@ -1373,6 +1420,105 @@ mod tests {
             wide.contains("connection") && wide.contains("spacexai"),
             "{wide}"
         );
+    }
+
+    /// One model can be on two connections. The highlight follows the
+    /// connection as well as the id, when a seat opens on its model and
+    /// after the last seat is set; by id alone it went to the first
+    /// connection's row, and enter then moved the seat there. A reviewer's
+    /// case: `shared-model` on openrouter and on spacexai.
+    #[test]
+    fn a_model_on_two_connections_keeps_its_connection() {
+        let mut v = crew_view();
+        let mut models = catalog();
+        models.push(row("shared-model", "openrouter", Some((1.0, 2.0))));
+        models.push(row("shared-model", "spacexai", Some((1.0, 2.0))));
+        let mut p = Models::new(&mut v, Some("auditor".into()));
+        p.set_models(&v, &models);
+        for c in "shared".chars() {
+            key(&mut p, &mut v, KeyCode::Char(c));
+        }
+        assert_eq!(p.selected, 0, "openrouter's copy first");
+        key(&mut p, &mut v, KeyCode::Down);
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetCrewRole { connection, model, .. })
+                if connection == "spacexai" && model == "shared-model"
+        ));
+        let on = p.filtered(&v)[p.selected];
+        assert_eq!(
+            (on.id.as_str(), on.connection.as_deref()),
+            ("shared-model", Some("spacexai"))
+        );
+        key(&mut p, &mut v, KeyCode::Right);
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetCrewRole { connection, .. }) if connection == "spacexai"
+        ));
+        // Opening on a seat set to the second connection's copy.
+        v.specialists.insert(
+            "auditor".into(),
+            ryter_core::RoleModel {
+                connection: Some("spacexai".into()),
+                model: Some("shared-model".into()),
+            },
+        );
+        let mut p = Models::new(&mut v, Some("auditor".into()));
+        p.set_models(&v, &models);
+        assert_eq!(
+            p.filtered(&v)[p.selected].connection.as_deref(),
+            Some("spacexai")
+        );
+    }
+
+    /// The model's name and its prices show at every width; the facts line
+    /// leads with the connection, so a long id can't push it out of sight.
+    #[test]
+    fn names_and_prices_show_at_every_width() {
+        let mut v = crew_view();
+        let models = vec![
+            row(
+                "deepseek/deepseek-v4.1-flash",
+                "openrouter",
+                Some((0.02, 0.6)),
+            ),
+            row(
+                "anthropic/claude-3.7-sonnet:thinking",
+                "openrouter",
+                Some((3.0, 15.0)),
+            ),
+        ];
+        let mut p = Models::new(&mut v, Some("builder".into()));
+        p.set_models(&v, &models);
+        p.selected = p
+            .filtered(&v)
+            .iter()
+            .position(|m| m.id.starts_with("anthropic"))
+            .unwrap();
+        // The body widths of an 80, 100 and 120 column terminal.
+        for width in [70u16, 90, 110] {
+            let t: String = p
+                .render(&v, width, 16, Theme::truecolor_dark())
+                .lines
+                .iter()
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| s.content.as_ref())
+                        .collect::<String>()
+                        + "\n"
+                })
+                .collect();
+            assert!(t.contains("deepseek/deepseek-v4.1-flash "), "{width}: {t}");
+            assert!(
+                t.contains("$0.02") && t.contains("$0.6") && t.contains("$15"),
+                "{width}: {t}"
+            );
+            assert!(
+                t.contains("openrouter · anthropic/claude-3.7-sonnet"),
+                "{width}: {t}"
+            );
+        }
     }
 
     /// The chooser: every catalog model but the one doing the work, each

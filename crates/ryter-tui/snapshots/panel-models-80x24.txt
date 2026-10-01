@@ -1,20 +1,20 @@
  ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  · s╭─ models ─────────────────────────────────────────────── 4 · loading ─╮
-   w│ SEATS                    │ ⌕ type to filter                          │
-    │›  Solo      grok-4.6     │ model           context   in/M  out/M     │
-    │   Architect follows lead │ grok-4.6           500k     $2     $6     │
-    │   Builder   follows lead │ grok-4.5           256k     $2     $6     │
-    │   Auditor   follows lead │ grok-4.3           256k  $1.25   $2.5     │
-    │                          │ grok-build-0.1     256k     $1     $2     │
-    │                          │                                           │
-    │                          │                                           │
-    │                          │                                           │
-    │                          │                                           │
-    │                          │                                           │
-    │                          │                                           │
-    │                          │ grok-4.6 · spacexai · reasoning auto (me… │
-    │ ↑↓ seat   → models       │ enter set   ← seats   esc done            │
+   w│ SEATS                │ ⌕ type to filter                              │
+    │›  Solo               │ model            in/M  out/M                  │
+    │   grok-4.6           │ grok-4.6           $2     $6                  │
+    │   Architect          │ grok-4.5           $2     $6                  │
+    │   follows lead       │ grok-4.3        $1.25   $2.5                  │
+    │   Builder            │ grok-build-0.1     $1     $2                  │
+    │   follows lead       │                                               │
+    │   Auditor            │                                               │
+    │   follows lead       │                                               │
+    │                      │                                               │
+    │                      │                                               │
+    │                      │                                               │
+    │                      │ spacexai · grok-4.6 · reasoning auto (medium… │
+    │ ↑↓ seat   → models   │ enter set   ← seats   esc done   tab reasoning│
     ╰──────────────────────────────────────────────────────────────────────╯
 
 

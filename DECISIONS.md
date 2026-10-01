@@ -10,7 +10,8 @@ Why, not what. The lead records non-obvious choices, its own and the crew's.
   - Opened from the crew panel on a role, the panel starts on that role's models.
   - The highlight returns to the first match only when the filter's text changes (`Models::filter_key`). Keys that only move within the text (→, Home, End) fall through to the filter, and they used to reset it: on a role the first row is `default`, so → then Enter dropped the role's model.
   - Setting the last seat keeps the highlight on the model just set. Re-reading the seat would find the old model, because the set action hasn't been applied when the panel returns it.
-  - Narrow (right pane under 64 columns), the list drops reasoning and connection, and the facts line leads with them.
+  - The list takes width first. It gets 80 columns (`LIST_WIDTH`), and the seats get what's left, between 22 and 34 columns; under 30 they stack each seat's model on its own line. The model's name and its prices always show. Short of 80 columns, reasoning and context are dropped; short of 60, the connection too. The facts line always starts with the connection, so no model ID, however long, hides it.
+  - The highlight matches a seat's model by id and connection together (`Models::highlight`), both when a seat opens and after the last seat is set. One model can be on two connections, and the connection picks the provider.
 - **Chosen vs rejected:** the user chose this from three mockups, over "Enter moves to the next tab" and "Enter sets and stays". They asked for Enter to return the cursor to SEATS. Before, every Enter closed the panel, so a crew took four visits.
 - **Where:** `crates/ryter-tui/src/panel/models.rs`; `panel/mod.rs` (`Panel::input_indent`, `Panel::keys_in_body`)
 
