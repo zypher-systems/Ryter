@@ -164,6 +164,19 @@ pub fn conversation_system(
             let _ = crate::memory::ensure_project_memory(root);
         }
     }
+    // The user's rules come before the project's, and say which wins. They
+    // are part of the prompt, not a file to go and read: a model told to
+    // read one may skip it, and tools can't read Ryter's home folder.
+    if let Some(rules) = crate::rules::load(home) {
+        s.push_str(
+            "\n## The user's rules (every project)\nThe user's own standing rules, from \
+             `~/.ryter/RYTER.md`. Follow them in every project. Where this project's \
+             instructions say otherwise, the project's win. Change them only with \
+             `update_rules`, after loading the `rules` skill.\n\n",
+        );
+        s.push_str(&rules);
+        s.push('\n');
+    }
     if let Some(inst) = load_project_instructions(project_root) {
         s.push_str("\n## Project instructions\n");
         s.push_str(&inst);
@@ -246,6 +259,14 @@ pub fn reading_messages(
     let kind = PromptKind::for_role(role).unwrap_or(PromptKind::Builder);
     let system = load(kind, home, project_root, trusted);
     let mut user = String::new();
+    if let Some(rules) = crate::rules::load(home) {
+        user.push_str(
+            "The user's rules (every project; the project's instructions win where they \
+             differ):\n",
+        );
+        user.push_str(&rules);
+        user.push_str("\n\n");
+    }
     if let Some(inst) = load_project_instructions(project_root) {
         user.push_str("Project instructions:\n");
         user.push_str(&inst);
@@ -432,6 +453,49 @@ mod tests {
             &[],
         );
         assert!(msgs[1].content.contains("never invent APIs"));
+    }
+
+    /// The user's rules are in every role's instructions, ahead of the
+    /// project's, with which wins said; no file, no section.
+    #[test]
+    fn the_users_rules_are_in_every_prompt() {
+        let home = TempDir::new().unwrap();
+        let cwd = TempDir::new().unwrap();
+        fs::write(cwd.path().join("RYTER.md"), "never invent APIs").unwrap();
+        let s = Session::create(
+            home.path(),
+            cwd.path(),
+            Phase::Build,
+            "spacexai".into(),
+            "grok-4.6".into(),
+        )
+        .unwrap();
+        let solo = |home: &Path| {
+            conversation_system(PromptKind::Solo, home, Some(cwd.path()), false, &s).unwrap()
+        };
+        assert!(!solo(home.path()).contains("The user's rules"), "no file");
+        crate::rules::save(home.path(), "- Use British spelling.").unwrap();
+        for sys in [
+            solo(home.path()),
+            orchestrator_system(home.path(), Some(cwd.path()), false, &s).unwrap(),
+        ] {
+            let rules = sys
+                .find("## The user's rules (every project)")
+                .expect("section");
+            let project = sys.find("## Project instructions").unwrap();
+            assert!(rules < project, "the user's rules come first");
+            assert!(sys.contains("- Use British spelling."));
+            assert!(sys.contains("the project's win") && sys.contains("`update_rules`"));
+        }
+        for role in [Role::Architect, Role::Builder, Role::Auditor] {
+            let msgs =
+                specialist_messages(home.path(), Some(cwd.path()), false, role, "", "t", &[]);
+            let brief = &msgs[1].content;
+            let rules = brief
+                .find("- Use British spelling.")
+                .expect("rules in the brief");
+            assert!(rules < brief.find("never invent APIs").unwrap(), "{role:?}");
+        }
     }
 
     #[test]

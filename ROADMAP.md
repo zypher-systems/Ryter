@@ -20,6 +20,7 @@ Living plan for Ryter. The lead updates this as work lands.
 
 Work that is in `dev` and not yet released is marked *Unreleased*, and its notes collect in `docs/releases/next.md`. An entry gets its version when it's released.
 
+- **Unreleased: your rules for every project.** `~/.ryter/RYTER.md` goes into every role's instructions, ahead of the project's `RYTER.md`. The model changes it with `update_rules` (taught by the built-in `rules` skill, also `/rules`), and only after the user has seen the change and said yes: `--always-approve` doesn't skip it, a headless run saves nothing, and the sandbox keeps the file read-only.
 - **Unreleased: the shell tests are race-free.** `a_detached_process_holding_the_pipe_does_not_hang` raced `setsid` against the group kill under CI load. Its job now leaves the group with `set -m` and writes its pid before the command goes on. Both background tests find and stop their process by that pid (`rustix`), not `pkill -f`, `pgrep -f` or `setsid`.
 - **0.9.1 (`0.9.1-patch`) — the crew is chosen in one visit to `/models`.** Two panes: the seats (lead or solo, architect, builder, auditor) with their models, and the chosen seat's models. Enter sets the model and goes back to the seats on the next one, rather than closing. The panel chrome gained `input_indent` (the search row beside a left column) and `keys_in_body` (per-pane key hints). Also the first release that 0.9.0 can update to.
 - **0.9.0 (`0.9.0-patch`) — Ryter updates itself.**

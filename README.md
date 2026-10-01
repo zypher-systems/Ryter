@@ -30,6 +30,8 @@ ryter -p "say hi"               # one headless turn
 
 Copy `config.example.toml` to `~/.ryter/config.toml`. If you put `api_key` in that file, `chmod 600` it.
 
+Your standing rules for every project go in `~/.ryter/RYTER.md`, and a project's own go in `RYTER.md` at its top. Ryter gives both to the model on every message. Tell it "from now on…" or type `/rules`, and it offers to save the rule: you see the change and say yes before anything is written.
+
 Full usage: [docs/guide.md](docs/guide.md).
 
 ## How it works

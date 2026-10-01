@@ -2,6 +2,33 @@
 
 Why, not what. The lead records non-obvious choices, its own and the crew's.
 
+### 2026-09-30 — The user's rules for every project, changed only with their yes
+- **By:** lead
+- **Decision:**
+  - **The file:** `~/.ryter/RYTER.md` (`rules::path`). `rules::load` returns its text, cut to 32 KB on a line with a note when longer.
+  - **The prompt:** `prompt::conversation_system` (solo and the lead) adds a section, "The user's rules (every project)", ahead of the project's instructions. `prompt::reading_messages` (architect, builder, auditor, `/second`) puts the same text ahead of them in the brief. Both say the project's instructions win where they differ.
+  - **The tool:** `update_rules {rules}` replaces the whole file. `Agent::update_rules` asks through `UserIo::ask_tool` with the change as a `FileDiff`, `strict` (only `y` is yes) and no session scope. `--always-approve` and "always" don't reach it, since it doesn't go through the gate. It saves with a write-and-rename, and runs inside `tools::with_hooks`.
+  - **When it refuses without asking:**
+    - there's no change;
+    - the new text is over 32 KB;
+    - the file on disk is over 32 KB, since the model saw only part of it and would drop the rest;
+    - nobody is attached (headless);
+    - a sandbox is active.
+  - **The skill:** `rules` is built in (`skills/rules/SKILL.md`), listed for the model and as `/rules`. It covers when a rule is worth saving, which file, how to write one, and that the user is asked.
+  - **Sandbox:** the rules file is added to the read set when it exists (`sandbox::readable_set`), and never to the write set.
+- **Chosen vs rejected:**
+  - Rejected telling the model to read the file. A model can skip a read, and `read_file` refuses `~/.ryter` as a secret. The text goes into the prompt.
+  - Rejected `~/.ryter/prompts/` as the place for rules. A file there replaces Ryter's own prompt for a role and doesn't add to it.
+  - Rejected an append-only tool. Rules also need rewording and removing, and one whole-file tool shows the user every kind of change the same way, as a diff.
+  - Rejected letting the sandbox write the file. The model's shell commands run in the same Landlock domain, so a writable rules file there could be changed by `bash` with no question asked.
+  - Rejected saving on the session's "always". The file steers every later session and is a target for instructions planted in a file the model reads, so each change is the user's own yes.
+- **Why:** the user asked whether Ryter had a global rules file as well as a repo one. It had only the repo's. They asked for the global file, a skill or tool to update it, and for the prompt to carry it.
+- **Where:** `crates/ryter-core/src/rules.rs`, `prompt.rs`, `agent.rs` (`update_rules`), `tools/mod.rs`, `tools/policy.rs`, `skill.rs`, `skills/rules/SKILL.md`, `sandbox.rs`
+- **Residual risk:**
+  - Outside the sandbox, a `bash` command the user approves can still write the file directly, as it can any file of theirs.
+  - The project's rules are still read only from the folder Ryter starts in, not the repository's top.
+  - Only one of `RYTER.md` and `AGENTS.md` is read.
+
 ### 2026-09-30 — `/models` keeps the seats beside the list
 - **By:** lead
 - **Decision:**

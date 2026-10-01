@@ -316,6 +316,17 @@ fn spec(name: &str) -> Option<ToolSpec> {
                 "html":{"type":"string","description":"the whole page, starting <!doctype html>"}
             },"required":["title","html"]}),
         ),
+        "update_rules" => (
+            "Change the user's own rules for every project (~/.ryter/RYTER.md), shown in \
+             your instructions under \"The user's rules\". Pass the whole file as it should \
+             be after the change: every rule already there, word for word, with yours added, \
+             changed or removed. Ryter shows the user the difference and asks before it \
+             saves; they may say no. Load the rules skill first. A rule for this project \
+             alone goes in the project's RYTER.md instead.",
+            json!({"type":"object","properties":{
+                "rules":{"type":"string","description":"the whole rules file, in Markdown, as it should be after the change"}
+            },"required":["rules"]}),
+        ),
         "request_hat" => (
             "Ask the user to switch your hat, e.g. to build once a plan is ready or once a \
              review found things to fix. They answer yes or no; on yes you continue in the \
@@ -365,6 +376,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "request_hat",
             "load_skill",
             "show_page",
+            "update_rules",
             "search_tool",
             "use_tool",
             "web_fetch",
@@ -381,6 +393,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "todo_write",
             "load_skill",
             "show_page",
+            "update_rules",
             "search_tool",
             "use_tool",
             "ask_user",
@@ -431,9 +444,9 @@ pub fn execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput
         "use_tool" => mcp_use(args, ctx),
         "ask_user" => ask_user(args, ctx),
         // The agent loop answers this itself: it changes who the agent is.
-        "request_hat" | "load_skill" | "show_page" => Ok(ToolOutput::err(format!(
-            "{name} is handled by the agent loop"
-        ))),
+        "request_hat" | "load_skill" | "show_page" | "update_rules" => Ok(ToolOutput::err(
+            format!("{name} is handled by the agent loop"),
+        )),
         "web_fetch" => web::web_fetch(args, ctx),
         "web_search" => web::web_search(args, ctx),
         other => Ok(ToolOutput::err(format!("unknown tool {other}"))),

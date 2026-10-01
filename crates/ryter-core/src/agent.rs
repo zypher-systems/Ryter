@@ -599,7 +599,7 @@ impl Agent {
                     Ok(_)
                         if matches!(
                             call.name.as_str(),
-                            "request_hat" | "load_skill" | "show_page"
+                            "request_hat" | "load_skill" | "show_page" | "update_rules"
                         ) =>
                     {
                         let ctx = self.ctx.clone();
@@ -607,6 +607,7 @@ impl Agent {
                             match call.name.as_str() {
                                 "request_hat" => self.request_hat(&args),
                                 "load_skill" => Ok(self.load_skill(&args)),
+                                "update_rules" => self.update_rules(&args),
                                 _ => self.show_page(&args),
                             }
                         })
@@ -1441,6 +1442,89 @@ impl Agent {
             "{how} {url} ({} KB). Showing a page with the same title replaces it.",
             page.len().div_ceil(1024)
         )))
+    }
+
+    /// `update_rules`: replace the user's rules for every project, once
+    /// they have seen the change and said yes.
+    ///
+    /// The file steers every later session, so the user is asked each time
+    /// and only `y` saves: `--always-approve` and a session's "always" don't
+    /// reach it. With nobody at the screen nothing is saved. Under the
+    /// sandbox nothing is either: the model's shell runs in the same
+    /// sandbox, and a rules file it could write there would need no asking.
+    fn update_rules(&mut self, args: &Value) -> Result<crate::tools::ToolOutput> {
+        use crate::tools::ToolOutput;
+        let Some(new) = args.get("rules").and_then(Value::as_str) else {
+            return Ok(ToolOutput::err(
+                "update_rules needs `rules`: the whole file as it should be after the change",
+            ));
+        };
+        let new = format!("{}\n", new.trim());
+        let shown = "~/.ryter/RYTER.md";
+        let max_kb = crate::rules::MAX_BYTES / 1024;
+        let old = crate::rules::read(&self.home);
+        // A file larger than Ryter loads was cut in the prompt: sending that
+        // back would drop the rest of it.
+        if old
+            .as_ref()
+            .is_some_and(|o| o.len() > crate::rules::MAX_BYTES)
+        {
+            return Ok(ToolOutput::err(format!(
+                "{shown} is larger than the {max_kb} KB Ryter loads, so you have seen only part \
+                 of it and can't rewrite it safely. Tell the user to shorten it by hand."
+            )));
+        }
+        if new.len() > crate::rules::MAX_BYTES {
+            return Ok(ToolOutput::err(format!(
+                "that is {} KB; rules are read on every call, so keep them under {max_kb} KB",
+                new.len() / 1024
+            )));
+        }
+        if old.as_deref().map(str::trim) == Some(new.trim())
+            || (old.is_none() && new.trim().is_empty())
+        {
+            return Ok(ToolOutput::ok("no change: the rules already read that way"));
+        }
+        if crate::sandbox::active() != crate::sandbox::SandboxProfile::Off {
+            return Ok(ToolOutput::err(format!(
+                "the sandbox keeps {shown} read-only, so the rules weren't changed. Tell the \
+                 user to edit the file, or to run without --sandbox to change it from here."
+            )));
+        }
+        let Some(io) = self.ctx.user_io.clone() else {
+            return Ok(ToolOutput::err(format!(
+                "nobody can confirm a change to the user's rules here (headless), so nothing \
+                 was saved. Tell the user what you would add to {shown}."
+            )));
+        };
+        let answer = io.ask_tool(
+            crate::user_io::ToolAsk {
+                tool: "update_rules".into(),
+                summary: format!("change your rules for every project ({shown})"),
+                preview: Some(crate::diff::FileDiff::new(shown, old.as_deref(), &new)),
+                strict: true,
+                scope: None,
+            },
+            &self.ctx.cancel,
+        );
+        if self.ctx.cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        match answer {
+            crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
+                crate::rules::save(&self.home, &new)?;
+                self.emit(AgentEvent::Notice {
+                    message: format!("rules · saved to {shown}"),
+                })?;
+                Ok(ToolOutput::ok(format!(
+                    "The user said yes: {shown} is saved. The rules are in your instructions \
+                     from their next message; follow them now too."
+                )))
+            }
+            crate::user_io::Permission::Deny => Ok(ToolOutput::err(
+                "the user said no: their rules are unchanged. Ask what they would like instead",
+            )),
+        }
     }
 
     fn request_hat(&mut self, args: &Value) -> Result<crate::tools::ToolOutput> {
@@ -4925,6 +5009,159 @@ mod tests {
         );
     }
 
+    /// What the user was asked about a rules change: the tool, the summary,
+    /// whether only `y` says yes, whether "always" was left off, and how
+    /// many lines the shown change touches.
+    type RulesAsk = (String, String, bool, bool, usize);
+
+    /// One `update_rules` turn with someone at the screen answering
+    /// `answer`: what they were asked, the tool's result, and the events.
+    async fn update_rules_turn(
+        agent: &mut Agent,
+        answer: crate::user_io::Permission,
+    ) -> (Vec<RulesAsk>, String, Vec<AgentEvent>) {
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        let asked = std::thread::spawn(move || {
+            let mut asked = Vec::new();
+            while let Ok(req) = rx.recv() {
+                if let crate::user_io::UserRequest::Permission {
+                    tool,
+                    summary,
+                    preview,
+                    strict,
+                    scope,
+                    reply,
+                } = req
+                {
+                    let changed = preview.map_or(0, |d| d.added + d.removed);
+                    asked.push((tool, summary, strict, scope.is_none(), changed));
+                    let _ = reply.send(answer);
+                }
+            }
+            asked
+        });
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent
+            .turn("from now on, use British spelling")
+            .await
+            .unwrap();
+        agent.ctx.user_io = None;
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .rev()
+            .find(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        (asked.join().unwrap(), result, events.try_iter().collect())
+    }
+
+    fn rules_call(text: &str) -> ReplayProvider {
+        ReplayProvider::scripted(vec![
+            call("update_rules", serde_json::json!({"rules": text})),
+            say("done"),
+        ])
+    }
+
+    /// The user's rules change only when they say yes to the change they
+    /// are shown: asked every time, even with `--always-approve`, with the
+    /// difference, and with no "always" on offer.
+    #[tokio::test]
+    async fn the_users_rules_change_only_when_they_say_yes() {
+        use crate::user_io::Permission;
+        for (answer, saved) in [(Permission::Allow, true), (Permission::Deny, false)] {
+            let (home, _cwd, mut agent) = setup(rules_call("- Use British spelling."));
+            // The plan hat changes nothing in the project; rules aren't in it.
+            agent.role = Role::SoloPlan;
+            agent.ctx.role = Role::SoloPlan;
+            agent.ctx.always_approve = true;
+            crate::rules::save(home.path(), "- Be brief.").unwrap();
+            let (asked, result, events) = update_rules_turn(&mut agent, answer).await;
+            assert_eq!(asked.len(), 1, "asked once: {asked:?}");
+            let (tool, summary, strict, no_always, changed) = &asked[0];
+            assert_eq!(tool, "update_rules");
+            assert!(summary.contains("~/.ryter/RYTER.md"), "{summary}");
+            assert!(*strict && *no_always, "only y saves, and no always");
+            assert!(*changed > 0, "the change is shown");
+            let on_disk = crate::rules::read(home.path()).unwrap();
+            let noticed = events.iter().any(|e| {
+                matches!(e, AgentEvent::Notice { message } if message.contains("rules · saved"))
+            });
+            if saved {
+                assert_eq!(on_disk, "- Use British spelling.\n");
+                assert!(result.contains("The user said yes") && noticed, "{result}");
+            } else {
+                assert_eq!(on_disk, "- Be brief.\n", "unchanged");
+                assert!(result.contains("the user said no") && !noticed, "{result}");
+            }
+        }
+    }
+
+    /// Nothing is saved, and nobody is asked, when there is nothing to ask
+    /// about or nobody to ask: no change, no one at the screen, too much
+    /// text, a file too long to have been seen whole, or a hook's refusal.
+    #[tokio::test]
+    async fn the_users_rules_are_left_alone_otherwise() {
+        use crate::user_io::Permission;
+        let big = "- a rule\n".repeat(crate::rules::MAX_BYTES / 9 + 10);
+        // (what is on disk, what the model sends, what the reply says)
+        let cases: [(&str, &str, &str); 3] = [
+            ("- Be brief.", "- Be brief.\n\n", "no change"),
+            ("- Be brief.", &big, "keep them under 32 KB"),
+            (&big, "- Be brief.", "can't rewrite it safely"),
+        ];
+        for (on_disk, sent, says) in cases {
+            let (home, _cwd, mut agent) = setup(rules_call(sent));
+            std::fs::write(crate::rules::path(home.path()), on_disk).unwrap();
+            let (asked, result, _) = update_rules_turn(&mut agent, Permission::Allow).await;
+            assert!(asked.is_empty(), "{says}: asked {asked:?}");
+            assert!(result.contains(says), "{says}: {result}");
+            assert_eq!(crate::rules::read(home.path()).as_deref(), Some(on_disk));
+        }
+        // Headless: nobody can confirm, so nothing is saved.
+        let (home, _cwd, mut agent) = setup(rules_call("- Use British spelling."));
+        agent.turn("go").await.unwrap();
+        let result = &agent
+            .session
+            .transcript
+            .iter()
+            .rev()
+            .find(|m| m.role == "tool")
+            .unwrap()
+            .content;
+        assert!(
+            result.contains("headless") && result.contains("nothing"),
+            "{result}"
+        );
+        assert_eq!(crate::rules::read(home.path()), None);
+        // A hook's refusal comes before the question.
+        let (home, _cwd, mut agent) = setup(rules_call("- Use British spelling."));
+        let deny = home.path().join("deny.sh");
+        std::fs::write(&deny, "#!/bin/sh\necho not-here\nexit 2\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&deny, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        agent.ctx.hooks = Some(Arc::new(crate::hooks::HookSet::from_config(&[
+            crate::config::HookConfig {
+                event: "PreToolUse".into(),
+                command: Some(deny.to_string_lossy().into_owned()),
+                url: None,
+                matcher: Some("update_rules".into()),
+            },
+        ])));
+        let (asked, result, _) = update_rules_turn(&mut agent, Permission::Allow).await;
+        assert!(
+            asked.is_empty() && result.contains("hook denied: not-here"),
+            "{result}"
+        );
+        assert_eq!(crate::rules::read(home.path()), None);
+    }
+
     /// Under the sandbox, the model still loads the user's skills and shows
     /// pages; the browser is left closed (it would start inside the sandbox)
     /// and the model is told so. Both tools failed there before.
@@ -4941,9 +5178,11 @@ mod tests {
                     "show_page",
                     serde_json::json!({"title": "Report", "html": "<p>x</p>"}),
                 ),
+                call("update_rules", serde_json::json!({"rules": "- a new rule"})),
                 say("done"),
             ]);
             let (home, cwd, mut agent) = setup(p);
+            crate::rules::save(home.path(), "- Be brief.").unwrap();
             let dir = home.path().join("skills/mine");
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join("SKILL.md"), "---\ndescription: d\n---\nbody\n").unwrap();
@@ -4971,6 +5210,13 @@ mod tests {
             assert!(
                 results[1].contains("sandbox can't start a browser"),
                 "{results:?}"
+            );
+            // The rules are in the prompt, and can't be changed from here.
+            assert!(agent.system_prompt().unwrap().contains("- Be brief."));
+            assert!(results[2].contains("read-only"), "{results:?}");
+            assert_eq!(
+                crate::rules::read(home.path()).as_deref(),
+                Some("- Be brief.\n")
             );
             let page =
                 crate::page::dir(&agent.home, agent.session.meta.id.as_str()).join("report.html");

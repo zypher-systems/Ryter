@@ -194,11 +194,18 @@ fn writable_set(home: &Path) -> Vec<std::path::PathBuf> {
     made(home, &["tmp", "logs", "sessions", "pages"])
 }
 
-/// Directories a sandboxed thread may read in `~/.ryter`, beyond the ones it
-/// writes: the user's skills, which the model loads.
+/// What a sandboxed thread may read in `~/.ryter`, beyond what it writes:
+/// the user's skills, which the model loads, and their rules file, which
+/// goes in every prompt. Read only: a rules file the sandboxed shell could
+/// write would change without the user being asked.
 #[cfg(target_os = "linux")]
 fn readable_set(home: &Path) -> Vec<std::path::PathBuf> {
-    made(home, &["skills"])
+    let mut set = made(home, &["skills"]);
+    let rules = crate::rules::path(home);
+    if rules.is_file() {
+        set.push(canonicalize_or(&rules));
+    }
+    set
 }
 
 #[cfg(target_os = "linux")]
@@ -257,6 +264,13 @@ mod tests {
         assert!(
             ro.iter().all(|p| p.ends_with("skills")),
             "only skills is read beyond the writable set: {ro:?}"
+        );
+        // With a rules file, that one file too, and never the keys.
+        crate::rules::save(home.path(), "- a rule").unwrap();
+        let ro = readable_set(home.path());
+        assert!(
+            ro.iter().any(|p| p.ends_with("RYTER.md")) && !ro.iter().any(|p| p.ends_with("keys")),
+            "{ro:?}"
         );
         let _ = ws;
     }
@@ -329,6 +343,7 @@ mod tests {
         std::fs::write(home.path().join("skills/mine/SKILL.md"), "body").unwrap();
         std::fs::create_dir_all(home.path().join("keys")).unwrap();
         std::fs::write(home.path().join("keys/spacexai"), "xai-secret").unwrap();
+        crate::rules::save(home.path(), "- a rule").unwrap();
         let (ws_p, home_p) = (ws.path().to_path_buf(), home.path().to_path_buf());
         let handle = std::thread::spawn(move || {
             if let Err(e) = apply(SandboxProfile::ReadOnly, &ws_p, &home_p) {
@@ -336,6 +351,11 @@ mod tests {
                 return;
             }
             assert_eq!(active(), SandboxProfile::ReadOnly);
+            // The user's rules are read for every prompt, and can't be
+            // written from in here, by Ryter or by a shell command.
+            assert_eq!(crate::rules::load(&home_p).as_deref(), Some("- a rule"));
+            assert!(crate::rules::save(&home_p, "- another").is_err());
+            assert!(std::fs::write(crate::rules::path(&home_p), "x").is_err());
             let page = home_p.join("pages/s1/report.html");
             std::fs::create_dir_all(page.parent().unwrap()).unwrap();
             std::fs::write(&page, "<p>x</p>").unwrap();

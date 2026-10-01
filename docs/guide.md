@@ -311,7 +311,7 @@ In crew mode every message you send goes to the lead. You never talk to a specia
 
 There is no mode to switch. Specialists get a **fresh window**: their task brief, `RYTER.md` / `AGENTS.md`, and the project memory scoped to their files, not the chat history.
 
-Project markdown is loaded from the working tree without a trust gate: `RYTER.md`, or `AGENTS.md` if `RYTER.md` is absent.
+Project markdown is loaded from the working tree without a trust gate: `RYTER.md`, or `AGENTS.md` if `RYTER.md` is absent. Your own rules for every project come before it: see [Your rules](#your-rules).
 
 ## Build workers, auditor, merge
 
@@ -451,6 +451,7 @@ TCP requires `--token` (or `RYTER_MCP_TOKEN`) on `initialize.params.token`. Bind
 | Kind | Where |
 | --- | --- |
 | Prompts | `prompts/*.md`; override `~/.ryter/prompts/` then trusted `.ryter/prompts/` |
+| Rules | `~/.ryter/RYTER.md` for every project; `RYTER.md` (or `AGENTS.md`) at a project's top for that project. See [Your rules](#your-rules). |
 | Skills | `/skills` panel. Files: `~/.ryter/skills/<name>/SKILL.md` (frontmatter `user-invocable`, `model-invocable`). `Enter` runs (optional args), `e` opens the file in `$EDITOR`, `a` writes a stub, `d` deletes a user skill (not a project overlay or a built-in one). |
 | User slash | Same `/skills` list (`command` rows). `~/.ryter/commands/<name>.md` (`$ARGUMENTS`) |
 | Hooks | `/hooks` panel. `a` adds: event → command or URL → optional matcher. `d` removes. Live list is `~/.ryter/hooks.toml` (does not rewrite `config.toml`). Command gets JSON on stdin; exit 2 or HTTP 403 denies. |
@@ -474,7 +475,25 @@ Look at `git diff` and report findings.
 
 **A skill's own files.** A skill kept as a folder (`<name>/SKILL.md`) can hold more files, such as a template, a checklist or a script. When the model loads the skill it sees their names, and it reads one with `load_skill` and `file`. It can read only files inside that skill's folder: no `..`, no absolute paths, and no links that lead out. Each file can be up to 256 KB.
 
-**Built-in skills:** Ryter ships with one, `canvas`.
+**Built-in skills:** Ryter ships with two, `canvas` and `rules`.
+
+### Your rules
+
+Ryter keeps your standing rules in two plain Markdown files, and puts both into the instructions of every role (solo, the lead, the architect, builders and auditors) on every message:
+
+- **`~/.ryter/RYTER.md`:** your rules for every project. How you like work reported, what to ask before doing, spelling, tone.
+- **`RYTER.md` at the top of a project** (or `AGENTS.md` when there's no `RYTER.md`): rules for that project.
+
+Your rules come first, and where the two differ the project's win. You can edit either file by hand at any time. Ryter loads up to 32 KB of the every-project file.
+
+**Saving a rule from the chat.** Say how you want something done from now on, such as "from now on, answer in British spelling", or type `/rules <what to remember>`. The model loads the built-in `rules` skill and changes the every-project file with the `update_rules` tool. Before anything is saved, Ryter shows you the change line by line and asks:
+
+- Only `y` saves it. There's no "always" for this prompt, and `--always-approve` doesn't skip it, because the file steers every later session.
+- If you say no, the file is left as it was, and the model is told so.
+- In a headless run (`ryter -p`) nobody can answer, so nothing is saved.
+- Under `--sandbox` the file can be read but not changed. The model's shell commands run in the same sandbox, and a rules file the sandbox could write would need no asking.
+
+A rule saved this way takes effect from your next message. For a rule that belongs to one project, the model edits that project's `RYTER.md` with its ordinary file tools, under the usual approvals for an edit.
 
 ### Pages (the canvas skill)
 
