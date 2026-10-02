@@ -1,8 +1,8 @@
 # Ryter user guide
 
-Ryter is a Bring-Your-Own-Key terminal coding harness. One model works in your project, with you. It wears one of three hats at a time (**plan**, **build**, **review**), and each hat can run on a model of its own.
+Ryter is a Bring-Your-Own-Key terminal coding harness. One model works in your project, with you. It wears one of four hats at a time (**plan**, **build**, **review**, **test**), and each hat can run on a model of its own.
 
-Linux is the first platform. macOS and Windows are later ports.
+Linux is the first platform. Release binaries also support macOS; Landlock requires Linux. Windows is not currently supported.
 
 ## Install
 
@@ -510,7 +510,7 @@ Esc stops a call at once. Ryter then tells the server it stopped waiting, and sk
 
 Enter on **token** creates or rotates a `ryt_…` secret stored in `~/.ryter/keys/mcp-inbound.toml` (mode 0600); it is masked until you press `v`. Enter on a link copies it into the chat so you can paste it. Live flags persist in `~/.ryter/mcp.toml` (does not rewrite `config.toml`).
 
-Another agent can also spawn `ryter mcp serve` (stdio), or `ryter serve --socket` / `--bind`. Tools: `ryter_prompt`, `ryter_status`, `ryter_spend`, `ryter_cancel`. Resources: `ryter://session/transcript`, `ryter://session/spend`. Keys are never returned.
+Another agent can also spawn `ryter mcp serve` (stdio), or `ryter serve --socket /tmp/ryter.sock` or `ryter serve --bind 127.0.0.1:8765`. Tools: `ryter_prompt`, `ryter_status`, `ryter_spend`, `ryter_cancel`. Resources: `ryter://session/transcript`, `ryter://session/spend`. The transcript is a plain-text snapshot of the active conversation, refreshed after worker operations. During a running turn it shows the previous snapshot. It retains recent messages within 64 KiB, at most 4 KiB per message, with explicit omission notices. Stored provider credentials are not included; conversation content is shared with authorized MCP clients.
 
 TCP requires `--token` (or `RYTER_MCP_TOKEN`) on `initialize.params.token`. Binding `0.0.0.0` / `::` requires `--i-mean-it`.
 
@@ -623,8 +623,8 @@ A sandbox limits which files the model's commands can reach. It is enforced by t
 
 **When to use each:**
 
-- **`off`:** you are watching each step. Ryter's own rules still apply: it asks before a command that changes things, and refuses to read your keys. Nothing stops a command you approved from reaching the rest of your machine.
-- **`workspace`:** tools run without asking (`/tools always`, `--always-approve`, `ryter serve`), or you are working on code you don't trust. Commands can change only the project.
+- **`off`:** you are watching each step. Ryter's own rules still apply: file edits and destructive commands ask; supported toolchains and project commands can run without asking. The gate refuses direct reads of protected credentials. Nothing stops a command you approved from reaching the rest of your machine.
+- **`workspace`:** tools run without asking (`/tools always`, `--always-approve`, `ryter serve`), or you are working on code you don't trust. Commands can write the project, scratch directories, allowed tool caches, and the active session’s notes and pages.
 - **`read-only`:** you only want a review. Nothing in the project can be changed either, which also means nothing can be built into it.
 
 **What "your tools" means.** Under `workspace` and `read-only`, commands can read and run:
@@ -656,7 +656,7 @@ They can also write the tools' download caches (`~/.cargo/registry`, `~/.npm`, p
 ## Safety
 
 - One gate: `decide(hat, tool, args)` → Allow / Ask / Deny. Every hat is offered the same tools; the gate decides what each may do with them.
-- **Build:** reading runs; edits and commands that change things ask; destruction always asks.
+- **Build:** reading and supported toolchains/project commands run without asking; file edits, publishing and unclassified commands ask; destruction always asks.
 - **Plan:** reading and read-only commands; it may write the project's memory files and its own notes, nothing else.
 - **Review:** reading, tests, linters and read-only git; no writes at all.
 - Denied in every hat: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files. An example file (`.env.example`, `.env.sample`) is not a secret.

@@ -70,7 +70,7 @@ ryter models [connection]
 ryter sessions
 ryter resume [id]
 ryter mcp serve               inbound MCP on stdio
-ryter serve --socket          inbound MCP on a unix socket
+ryter serve --socket /tmp/ryter.sock  inbound MCP on a unix socket
 ryter serve --bind HOST:PORT --token …
 ryter doctor
 ryter trust                   trust this dir’s .ryter/

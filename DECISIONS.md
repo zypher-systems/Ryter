@@ -2,6 +2,11 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Publish bounded conversation snapshots through MCP
+- **Decision:** Refresh a plain-text snapshot of the active thread alongside status/spend after worker operations. Readers take only a small snapshot mutex, not the running agent lock. Keep recent messages within 64 KiB with a 4 KiB per-message limit and explicit omission notices; include role, tool IDs, names and arguments.
+- **Why:** The advertised transcript resource returned only a session ID. Reading the live agent would reintroduce the cancellation deadlock repaired in stage 6. Snapshot staleness during a turn is documented, and no other session or parked thread is read.
+- **Where:** `mcp/transcript.rs`, inbound dispatch, CLI/TUI snapshots; resource-content, Unicode/bounds and cancellation regressions. Public guidance now names all four hats, supplies socket paths, and distinguishes permitted toolchain execution from edits that ask.
+
 ### 2026-10-02 — Bound memory while reading, before formatting tool results
 - **Decision:** Retain 32 KB per shell pipe, split between its head and most recent tail, while counting and draining every byte. Live output uses the bounded tail. File paging retains at most 32 KB per line and stops when its output budget is reached; skipped offsets allocate no line content. Grep streams lines up to 64 KB, reports longer lines skipped, and stops at its result budget or 200 hits.
 - **Why:** Truncating a result after collecting all output does not bound the memory used by a noisy process or a giant file. The first command output and final error/summary are both useful, so pipe capture retains both ends and reports the omitted byte count.
