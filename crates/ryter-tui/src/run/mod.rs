@@ -68,6 +68,7 @@ pub struct TuiOpts {
 }
 
 struct TuiAttach {
+    prompting: Mutex<()>,
     work: mpsc::Sender<Work>,
     cancel: Arc<Cancel>,
     status: Arc<Mutex<StatusSnapshot>>,
@@ -76,6 +77,9 @@ struct TuiAttach {
 
 impl InboundHost for TuiAttach {
     fn prompt(&self, text: &str) -> ryter_core::Result<String> {
+        let _turn = self.prompting.try_lock().map_err(|_| {
+            ryter_core::Error::Config("busy; an MCP prompt is already running".into())
+        })?;
         let (tx, rx) = mpsc::channel();
         self.work
             .send(Work::Turn {
@@ -262,6 +266,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     std::thread::spawn(move || worker::run(init));
 
     let attach_host: Arc<dyn InboundHost> = Arc::new(TuiAttach {
+        prompting: Mutex::new(()),
         work: work_tx.clone(),
         cancel: cancel.clone(),
         status: live_status,

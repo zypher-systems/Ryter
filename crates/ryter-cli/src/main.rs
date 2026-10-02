@@ -652,33 +652,72 @@ struct ServeHost {
     agent: std::sync::Mutex<Agent>,
     rt: std::sync::Mutex<tokio::runtime::Runtime>,
     cancel: Arc<ryter_core::Cancel>,
+    snapshot: std::sync::Mutex<(ryter_core::StatusSnapshot, String)>,
+}
+
+impl ServeHost {
+    fn new(agent: Agent, rt: tokio::runtime::Runtime) -> Self {
+        let snapshot = Self::snapshot(&agent, String::new());
+        Self {
+            cancel: agent.ctx.cancel.clone(),
+            agent: std::sync::Mutex::new(agent),
+            rt: std::sync::Mutex::new(rt),
+            snapshot: std::sync::Mutex::new(snapshot),
+        }
+    }
+
+    fn snapshot(agent: &Agent, last_error: String) -> (ryter_core::StatusSnapshot, String) {
+        let mut spend = format_usd(agent.session.meta.spend_usd_total);
+        if agent.session.meta.spend_unknown {
+            spend.push_str(" + unknown");
+        }
+        if agent.session.meta.spend_incomplete {
+            spend.push_str(" (incomplete)");
+        }
+        (
+            ryter_core::StatusSnapshot {
+                model: agent.model.clone(),
+                connection: agent.connection.clone(),
+                session: agent.session.meta.id.to_string(),
+                last_error,
+            },
+            spend,
+        )
+    }
 }
 
 impl ryter_core::InboundHost for ServeHost {
     fn prompt(&self, text: &str) -> ryter_core::Result<String> {
-        self.cancel.reset();
         let mut agent = self
             .agent
-            .lock()
-            .map_err(|e| Error::Config(e.to_string()))?;
+            .try_lock()
+            .map_err(|_| Error::Config("busy; a prompt is already running".into()))?;
+        self.cancel.reset();
         let rt = self.rt.lock().map_err(|e| Error::Config(e.to_string()))?;
-        let r = rt.block_on(agent.turn(text))?;
-        Ok(r.text)
+        let result = rt.block_on(agent.turn(text));
+        let last_error = result
+            .as_ref()
+            .err()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            *snapshot = Self::snapshot(&agent, last_error);
+        }
+        result.map(|r| r.text)
     }
 
     fn status(&self) -> ryter_core::StatusSnapshot {
-        let agent = self.agent.lock().expect("serve host");
-        ryter_core::StatusSnapshot {
-            model: agent.model.clone(),
-            connection: agent.connection.clone(),
-            session: agent.session.meta.id.to_string(),
-            last_error: String::new(),
-        }
+        self.snapshot
+            .lock()
+            .map(|s| s.0.clone())
+            .unwrap_or_default()
     }
 
     fn spend(&self) -> String {
-        let agent = self.agent.lock().expect("serve host");
-        format_usd(agent.session.meta.spend_usd_total)
+        self.snapshot
+            .lock()
+            .map(|s| s.1.clone())
+            .unwrap_or_default()
     }
 
     fn cancel(&self) {
@@ -755,12 +794,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
         eprintln!("{e}");
         return Err(e);
     }
-    let cancel = agent.ctx.cancel.clone();
-    let host = ServeHost {
-        agent: std::sync::Mutex::new(agent),
-        rt: std::sync::Mutex::new(rt),
-        cancel,
-    };
+    let host = ServeHost::new(agent, rt);
     eprintln!("ryter mcp serve on stdio");
     ryter_core::serve_inbound(&host)
 }
@@ -874,11 +908,7 @@ fn serve_host_from_config(
         filed: Default::default(),
     };
     agent.fire_session_start()?;
-    Ok(ServeHost {
-        agent: std::sync::Mutex::new(agent),
-        rt: std::sync::Mutex::new(rt),
-        cancel,
-    })
+    Ok(ServeHost::new(agent, rt))
 }
 
 fn project_spend_cmd() -> ryter_core::Result<()> {

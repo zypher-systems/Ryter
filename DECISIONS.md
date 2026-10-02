@@ -2,6 +2,12 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — MCP observers cannot hold the cancellation dispatcher
+- **Decision:** Dispatch host-dependent requests on at most eight workers per connection, with a bounded incoming queue. Handle authentication, cancellation and protocol discovery on the connection thread. Reject a second prompt while one is pending; CLI and TUI hosts also reject overlapping MCP prompts across connections.
+- **Why:** A host can hold its agent lock for an entire turn. Serving status or spend synchronously behind that lock prevented the same connection from delivering cancellation. The CLI now exposes a separate last-completed-turn snapshot, including incomplete spending, refreshed on both success and error.
+- **Lifetime:** Input closure cancels that connection's pending prompt and joins its request workers. Hosts must cooperate with cancellation; arbitrary blocking host code cannot be forcibly terminated safely. Status-only connections do not cancel another connection's work on disconnect.
+- **Where:** `mcp/server.rs`, CLI `ServeHost`, TUI `TuiAttach`; loopback regressions cover blocked observers, worker saturation, second prompts, cancellation calls/notifications, disconnect and authentication.
+
 ### 2026-10-02 — Stream identity survives each independent SSE frame
 - **Decision:** Carry a stream key alongside a tool call’s result ID. Chat and Messages use their wire index; Responses uses its item ID and returns the distinct `call_id` with the tool result. The accumulator uses keys before its legacy serial fallback.
 - **Why:** Argument fragments often omit the call ID. Assigning them to the most recent call combines parallel requests into invalid JSON or the wrong arguments. Parsing each HTTP frame independently must preserve enough identity to reconstruct the calls later.
