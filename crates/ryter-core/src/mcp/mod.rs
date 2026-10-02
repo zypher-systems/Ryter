@@ -4,6 +4,9 @@ mod client;
 mod listen;
 mod rpc;
 mod server;
+mod transcript;
+
+pub use transcript::transcript_snapshot;
 
 pub use client::{LiveServer, McpHub, RemoteTool, call_tool, search_tools, use_tool};
 pub use listen::{check_tcp, default_socket_path, serve_tcp};

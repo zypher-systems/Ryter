@@ -661,7 +661,7 @@ struct ServeHost {
     agent: std::sync::Mutex<Agent>,
     rt: std::sync::Mutex<tokio::runtime::Runtime>,
     cancel: Arc<ryter_core::Cancel>,
-    snapshot: std::sync::Mutex<(ryter_core::StatusSnapshot, String)>,
+    snapshot: std::sync::Mutex<(ryter_core::StatusSnapshot, String, String)>,
 }
 
 impl ServeHost {
@@ -675,7 +675,7 @@ impl ServeHost {
         }
     }
 
-    fn snapshot(agent: &Agent, last_error: String) -> (ryter_core::StatusSnapshot, String) {
+    fn snapshot(agent: &Agent, last_error: String) -> (ryter_core::StatusSnapshot, String, String) {
         let mut spend = format_usd(agent.session.meta.spend_usd_total);
         if agent.session.meta.spend_unknown {
             spend.push_str(" + unknown");
@@ -691,6 +691,7 @@ impl ServeHost {
                 last_error,
             },
             spend,
+            ryter_core::mcp::transcript_snapshot(&agent.session.transcript),
         )
     }
 }
@@ -729,6 +730,13 @@ impl ryter_core::InboundHost for ServeHost {
         self.snapshot
             .lock()
             .map(|s| s.1.clone())
+            .unwrap_or_default()
+    }
+
+    fn transcript(&self) -> String {
+        self.snapshot
+            .lock()
+            .map(|s| s.2.clone())
             .unwrap_or_default()
     }
 
