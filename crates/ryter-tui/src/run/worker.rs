@@ -798,6 +798,7 @@ fn session_event(a: &Agent) -> AgentEvent {
 
 fn swap_session(a: &mut Agent, s: Session) {
     a.session = s;
+    a.announce_recovery();
     a.ctx.notes_dir = a.session.notes_dir();
 }
 

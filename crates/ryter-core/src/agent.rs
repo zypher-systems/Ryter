@@ -2334,8 +2334,22 @@ impl Agent {
         Ok(())
     }
 
+    /// Surface any repairs made while opening the session.
+    pub fn announce_recovery(&self) {
+        for message in &self.session.recovery_notices {
+            if let Some(sink) = &self.sink {
+                let _ = sink.send(AgentEvent::Notice {
+                    message: message.clone(),
+                });
+            } else {
+                eprintln!("ryter: {message}");
+            }
+        }
+    }
+
     /// Run SessionStart hooks. Call once after the agent is constructed.
     pub fn fire_session_start(&self) -> Result<()> {
+        self.announce_recovery();
         let Some(hooks) = &self.ctx.hooks else {
             return Ok(());
         };

@@ -2,6 +2,13 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Recover only a torn JSONL tail, preserving the original
+- **Decision:** Inspect both conversation files and the spend ledger before repair. An unterminated final record that ends during JSON or UTF-8 decoding can be removed after syncing an exact backup. A malformed complete record or corruption before another line remains an error. A complete final record without a newline is retained and separated from the next append.
+- **Why:** Interrupted appends should not hide valid history, but silently skipping arbitrary corruption would manufacture a different conversation or spending total. Recovery announces its backup path in CLI/TUI. Metadata and transcript replacement use unique staging files, synced before atomic rename. On Linux/macOS, append, recovery and replacement share an advisory file lock so a live append cannot be mistaken for an interrupted one.
+- **Spending:** Recompute the ledger total and retain the greater of it and the old cached total. Cached spending above the ledger, incomplete rows, or a recovered tail mark accounting incomplete. Persist that uncertainty before removing the tail, so interruption during recovery cannot unlock a budget.
+- **Limits:** A process killed before any usage or spend record reaches disk still has no reconstructable charge. Session writers must not share a live session; unique staging names prevent staging-file collisions but are not a multi-writer transaction protocol.
+- **Where:** `session.rs`, recovery notices in agent startup and TUI session switching; regressions cover both threads, split UTF-8, backups, append/resume, malformed records and both ledger/meta interruption orders.
+
 ### 2026-10-02 — MCP observers cannot hold the cancellation dispatcher
 - **Decision:** Dispatch host-dependent requests on at most eight workers per connection, with a bounded incoming queue. Handle authentication, cancellation and protocol discovery on the connection thread. Reject a second prompt while one is pending; CLI and TUI hosts also reject overlapping MCP prompts across connections.
 - **Why:** A host can hold its agent lock for an entire turn. Serving status or spend synchronously behind that lock prevented the same connection from delivering cancellation. The CLI now exposes a separate last-completed-turn snapshot, including incomplete spending, refreshed on both success and error.

@@ -677,6 +677,8 @@ When these files exist, the model **reads** them on every turn (capped), and is 
 
 ## Sessions
 
+If an interrupted append leaves a torn final record, resume keeps the valid history and reports the path of an exact backup. Complete or middle-of-file corruption stops resume for deliberate recovery. Recovered or inconsistent spending remains marked incomplete, so an enabled budget stops further requests.
+
 ```
 ~/.ryter/sessions/<cwd-slug>/<id>/
   meta.json
