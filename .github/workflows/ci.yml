@@ -30,3 +30,18 @@ jobs:
         run: cargo test --workspace
       - name: version
         run: cargo run -p ryter-cli -- --version
+      - name: Installer signature fixtures
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = macOS ]; then
+            export RYTER_INSTALL_OPENSSL="$(brew --prefix openssl@3)/bin/openssl"
+          fi
+          python3 scripts/test_install.py
+      - name: Dependency advisories, licenses and sources
+        if: runner.os == 'Linux'
+        run: |
+          cargo install cargo-deny --version 0.20.2 --locked
+          cargo deny --locked check advisories licenses sources
+      - name: Dependency notice bundle
+        if: runner.os == 'Linux'
+        run: python3 scripts/license_bundle.py target/dependency-notices

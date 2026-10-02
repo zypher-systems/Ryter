@@ -175,6 +175,8 @@ pub struct WorkerInit {
     pub live_status: Arc<Mutex<StatusSnapshot>>,
     /// Spend text for inbound MCP.
     pub live_spend: Arc<Mutex<String>>,
+    /// Bounded active conversation for inbound MCP.
+    pub live_transcript: Arc<Mutex<String>>,
     /// Permission / question channel to the UI.
     pub user_io: UserIo,
 }
@@ -261,6 +263,7 @@ pub fn run(init: WorkerInit) {
         cancel,
         live_status,
         live_spend,
+        live_transcript,
         user_io,
     } = init;
     if let Some(scope) = sandbox::Scope::for_profile(profile, &home) {
@@ -299,7 +302,7 @@ pub fn run(init: WorkerInit) {
             send_err(&ev_tx, e.to_string());
         }
         emit_mcp_status(&a, &ev_tx);
-        refresh_live(&a, &live_status, &live_spend);
+        refresh_live(&a, &live_status, &live_spend, &live_transcript);
         let _ = ev_tx.send(a.checkpoint_event());
         let mut a = a;
         // A product an earlier session left running is still Ryter's to stop.
@@ -406,7 +409,7 @@ pub fn run(init: WorkerInit) {
                     if let Some(ticket) = &inbound {
                         ticket.finish();
                     }
-                    refresh_live(a, &live_status, &live_spend);
+                    refresh_live(a, &live_status, &live_spend, &live_transcript);
                     if let Some(reply) = reply {
                         let _ = reply.send(out);
                     }
@@ -448,7 +451,7 @@ pub fn run(init: WorkerInit) {
                             let _ = a.put_on(role);
                             a.model = a.session.meta.model.clone();
                             a.connection = a.session.meta.connection.clone();
-                            refresh_live(a, &live_status, &live_spend);
+                            refresh_live(a, &live_status, &live_spend, &live_transcript);
                             let _ = ev_tx.send(session_event(a));
                             let _ = ev_tx.send(a.checkpoint_event());
                         }
@@ -547,7 +550,7 @@ pub fn run(init: WorkerInit) {
                     if let Err(e) = rt.block_on(a.test_now()) {
                         send_err(&ev_tx, e.to_string());
                     }
-                    refresh_live(a, &live_status, &live_spend);
+                    refresh_live(a, &live_status, &live_spend, &live_transcript);
                 } else {
                     send_err(&ev_tx, "no API key — /provider set-key".into());
                 }
@@ -558,7 +561,7 @@ pub fn run(init: WorkerInit) {
                     if let Err(e) = rt.block_on(a.review_now()) {
                         send_err(&ev_tx, e.to_string());
                     }
-                    refresh_live(a, &live_status, &live_spend);
+                    refresh_live(a, &live_status, &live_spend, &live_transcript);
                 } else {
                     send_err(&ev_tx, "no API key — /provider set-key".into());
                 }
@@ -753,7 +756,7 @@ pub fn run(init: WorkerInit) {
                     a.connection = name.clone();
                     a.model = new_model.clone();
                     let _ = a.session.set_route(name, new_model);
-                    refresh_live(a, &live_status, &live_spend);
+                    refresh_live(a, &live_status, &live_spend, &live_transcript);
                 } else if let Some(mut s) = session_hold.take() {
                     let _ = s.set_route(name.clone(), new_model.clone());
                     let a = build_agent(BuildAgent {
@@ -776,7 +779,7 @@ pub fn run(init: WorkerInit) {
                         send_err(&ev_tx, e.to_string());
                     }
                     emit_mcp_status(&a, &ev_tx);
-                    refresh_live(&a, &live_status, &live_spend);
+                    refresh_live(&a, &live_status, &live_spend, &live_transcript);
                     let _ = ev_tx.send(a.checkpoint_event());
                     let mut a = a;
                     // As at startup: a product an earlier session left
@@ -834,7 +837,16 @@ fn emit_mcp_status(a: &Agent, tx: &mpsc::Sender<AgentEvent>) {
     let _ = tx.send(AgentEvent::McpStatus { servers });
 }
 
-fn refresh_live(agent: &Agent, status: &Mutex<StatusSnapshot>, spend: &Mutex<String>) {
+fn refresh_live(
+    agent: &Agent,
+    status: &Mutex<StatusSnapshot>,
+    spend: &Mutex<String>,
+    transcript: &Mutex<String>,
+) {
+    let text = ryter_core::mcp::transcript_snapshot(&agent.session.transcript);
+    if let Ok(mut saved) = transcript.lock() {
+        *saved = text;
+    }
     if let Ok(mut s) = status.lock() {
         *s = StatusSnapshot {
             model: agent.model.clone(),
