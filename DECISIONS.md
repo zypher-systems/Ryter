@@ -2,6 +2,18 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — The solo screen is a hat rack, and a session starts in plan
+- **Decision:** Replace the ledger's rail with two side columns: a hat rack on the left (four fixed blocks, one a hat) and instruments on the right (model, context, session and project spend, guard, uncommitted changes). The hat that is on sets the screen's one accent color, and a fedora in that color sits behind the conversation as a background tint. A bar across the top names the four hats and which have been worn. A new session opens in the plan hat; `[ui] start_hat` picks build, review or the last hat used. The contract, with every requirement and its test, is `docs/hat-rack-design.md`.
+- **Why one fedora, colored by the hat:** hats are the product's callsign. Four different hats were drawn and read as clutter at a terminal's resolution; one shape that changes color is a stronger mark. A second copy of it in a side card showed the same thing twice and cost five rows.
+- **Why the rack does not list turns:** a list of turns repeats the conversation and outgrows its column in a long session. Four fixed blocks hold their height at forty turns.
+- **Why the top bar is not a pipeline:** `Tab` reaches any hat at any time. Arrows, step numbers or ticks between hats would claim an order nothing enforces.
+- **Why only the accent changes:** recoloring the whole screen on every `Tab` is disorienting. Neutral chrome keeps the screen still and lets the one color mean "this hat".
+- **Why plan first:** the user's choice: read and propose before changing anything. Headless runs (`ryter -p`) still default to build, because scripts that call it expect the work done; that default is not `start_hat`'s to change.
+- **Why no new key:** the free control keys are taken or unsafe (`Ctrl+H` is backspace in many terminals, `Ctrl+G` releases the mouse). `Ctrl+B` hides the columns on a wide screen and opens them as a panel on a narrow one.
+- **Why the rack reads the event log on resume:** the saved conversation is replayed without its hats or its measured diffs, so a rack rebuilt from it would differ from the one the session had. The event log has what happened. One event was added, `planned`, because a plan's approval was recorded only as a sentence.
+- **Why the changes card does not snapshot:** `review::changes` writes a snapshot of the files into the repository. That is right for a review and for the workbench, which the user asks for, and wrong for a column that is read at every startup. `review::uncommitted` only reads, and counts lines for at most fifty new files so an unignored `node_modules` does not stall a turn (a real run produced 605 new files).
+- **Limits:** The watermark is a background tint, so it is left out on 16-color and no-color terminals, where the active hat is told apart by its mark and by reverse video. The classic layout is unchanged. The light theme keeps its hat colors and has not been looked at with the watermark by a person.
+
 ### 2026-10-02 — Keep implementation success separate from verification claims
 - **Decision:** Preserve the first paid run, including failures, and distinguish hidden acceptance from a complete passing hat flow. Align benchmark verdict parsing with the app’s Markdown handling; support offline rescoring from saved events while retaining the original report and cost.
 - **Evidence:** Six of ten implementations passed hidden acceptance; five completed all hats with passing verification. Three incorrect implementations received both review and Test passes. Total recorded cost was $0.418755831 with complete accounting; no repeat paid run was used to change the score.

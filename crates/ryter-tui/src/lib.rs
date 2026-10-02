@@ -8,6 +8,7 @@ mod chat;
 mod composer;
 mod draw;
 mod info;
+mod instruments;
 mod keymap;
 mod palette;
 mod panel;
@@ -15,6 +16,7 @@ mod rail;
 mod run;
 mod theme;
 mod view;
+mod watermark;
 mod workbench;
 
 pub use draw::{render_to_string, render_with_theme};

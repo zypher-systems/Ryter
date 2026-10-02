@@ -18,6 +18,8 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 
 ## Now
 
+- **Unreleased — the hat rack screen.** The solo screen is redesigned to `docs/hat-rack-design.md`: a bar naming the four hats, a hat rack on the left (each hat's model, turns, spend and its own figures), instruments on the right (model, context, session and project spend, guard, uncommitted changes), one accent color set by the hat, and a fedora watermark in that color behind the conversation. Side columns fold away on narrow screens and `^b` opens them as a panel. A new session starts in the plan hat; `[ui] start_hat` and `/settings` choose build, review or the last hat used, and `ryter --hat` overrides for a run. Headless runs still default to build. Left open: whether to keep the classic layout, and a person's look at the light theme with the watermark.
+
 - **Live acceptance evidence:** [ten-task OpenRouter run](docs/acceptance-2026-10-02.md), $0.418755831 of $5: six hidden-test passes, five complete passing hat flows, three false review passes and three false Test passes. Keep external review and improve requirement coverage before treating model verdicts as completion evidence.
 
 - **0.12.0 — fixes from the release's external reviews.** Parallel tool calls a provider sends under one index with their own IDs stay separate calls. A project's `.docker/` folder is its work again; only `.docker/config.json` is protected at any depth. The commit panel's commit, and reverts made before a provider is connected, run inside the sandbox scope, so Git hooks do. Under a budget, every unpriced model is stopped after one call, not only the last one seen.

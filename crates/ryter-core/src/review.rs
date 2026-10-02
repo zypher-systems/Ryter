@@ -215,6 +215,93 @@ pub fn changes(dir: &Path, base: &str) -> Result<Changes> {
     })
 }
 
+/// What differs from the last commit, the work only, read without writing
+/// anything: [`changes`] snapshots the files into the repository first,
+/// which is more than a glance at the screen's side should do.
+pub fn uncommitted(dir: &Path) -> Result<Vec<FileChange>> {
+    if !git::is_repo(dir) {
+        return Err(Error::Io("not a git repository".into()));
+    }
+    let dir = &root(dir)?;
+    let mut files = Vec::new();
+    // Before a first commit there is no `HEAD` to compare with, and every
+    // file is new.
+    if git::head(dir).is_ok() {
+        let numstat = git(dir, &["diff", "--no-renames", "--numstat", "-z", "HEAD"])?;
+        let mut counts = std::collections::HashMap::new();
+        for rec in numstat.split('\0').filter(|r| !r.is_empty()) {
+            let mut parts = rec.splitn(3, '\t');
+            if let (Some(a), Some(r), Some(path)) = (parts.next(), parts.next(), parts.next()) {
+                counts.insert(path, (a.parse::<u32>().ok(), r.parse::<u32>().ok()));
+            }
+        }
+        let status = git(
+            dir,
+            &["diff", "--no-renames", "--name-status", "-z", "HEAD"],
+        )?;
+        let mut fields = status.split('\0').filter(|f| !f.is_empty());
+        while let (Some(code), Some(path)) = (fields.next(), fields.next()) {
+            let status = match code.chars().next() {
+                Some('A') => Status::Added,
+                Some('D') => Status::Deleted,
+                _ => Status::Modified,
+            };
+            let (added, removed) = counts.get(path).copied().unwrap_or((None, None));
+            files.push(FileChange {
+                path: path.to_string(),
+                status,
+                added: added.unwrap_or(0),
+                removed: removed.unwrap_or(0),
+                binary: added.is_none(),
+            });
+        }
+    }
+    // Files git has never seen: the diff above leaves them out.
+    let seen = if files.is_empty() && git::head(dir).is_err() {
+        git(
+            dir,
+            &[
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ],
+        )?
+    } else {
+        git(dir, &["ls-files", "-z", "--others", "--exclude-standard"])?
+    };
+    // A new file's length in lines, for one small enough to count, and
+    // for the first few only: a folder of installed packages nobody has
+    // ignored yet is thousands of files, and this runs between turns.
+    const COUNTED_BYTES: u64 = 1 << 20;
+    const COUNTED_FILES: usize = 50;
+    let mut counted = 0;
+    for path in seen.split('\0').filter(|p| !p.is_empty()) {
+        if files.iter().any(|f| f.path == path) {
+            continue;
+        }
+        let full = dir.join(path);
+        let lines = (counted < COUNTED_FILES)
+            .then(|| std::fs::metadata(&full).ok())
+            .flatten()
+            .filter(|m| m.len() <= COUNTED_BYTES)
+            .and_then(|_| std::fs::read_to_string(&full).ok())
+            .map(|t| u32::try_from(t.lines().count()).unwrap_or(u32::MAX));
+        counted += 1;
+        files.push(FileChange {
+            path: path.to_string(),
+            status: Status::Added,
+            added: lines.unwrap_or(0),
+            removed: 0,
+            binary: lines.is_none(),
+        });
+    }
+    files.retain(|f| !is_bookkeeping(&f.path));
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
 /// The patch for one file.
 pub fn file_diff(dir: &Path, c: &Changes, path: &str) -> String {
     let Ok(top) = root(dir) else {
@@ -564,6 +651,45 @@ mod tests {
         assert!(file_diff(p, &c, "keep.txt").contains("+three"));
         // Looking doesn't stage anything.
         assert_eq!(git(p, &["diff", "--cached", "--name-only"]).unwrap(), "");
+    }
+
+    #[test]
+    fn uncommitted_lists_the_work_and_writes_nothing() {
+        let d = repo();
+        let p = d.path();
+        assert!(uncommitted(p).unwrap().is_empty());
+        fs::write(p.join("keep.txt"), "one\n2\nthree\n").unwrap();
+        fs::remove_file(p.join("gone.txt")).unwrap();
+        fs::write(p.join("new.txt"), "a\nb\n").unwrap();
+        fs::create_dir_all(p.join(".ryter/plans")).unwrap();
+        fs::write(p.join(".ryter/plans/a.md"), "plan\n").unwrap();
+        let objects = || git(p, &["count-objects"]).unwrap();
+        let before = objects();
+        let got: Vec<(char, String, u32, u32)> = uncommitted(p)
+            .unwrap()
+            .iter()
+            .map(|f| (f.status.letter(), f.path.clone(), f.added, f.removed))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ('D', "gone.txt".to_string(), 0, 1),
+                ('M', "keep.txt".to_string(), 2, 1),
+                ('A', "new.txt".to_string(), 2, 0)
+            ]
+        );
+        assert_eq!(objects(), before, "a glance wrote to the repository");
+        assert_eq!(git(p, &["diff", "--cached", "--name-only"]).unwrap(), "");
+        // Before a first commit every file is new.
+        let fresh = tempfile::TempDir::new().unwrap();
+        git(fresh.path(), &["init", "-q"]).unwrap();
+        fs::write(fresh.path().join("a.txt"), "x\n").unwrap();
+        let got = uncommitted(fresh.path()).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!((got[0].status, got[0].added), (Status::Added, 1));
+        // Not a repository: nothing to compare with.
+        let plain = tempfile::TempDir::new().unwrap();
+        assert!(uncommitted(plain.path()).is_err());
     }
 
     #[test]

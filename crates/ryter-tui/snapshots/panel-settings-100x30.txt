@@ -1,13 +1,17 @@
  ryter  ·  build                            grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  · system     ╭─ settings ───────────────────────────────────────────────────────────╮
-   welcome · /│ SPEND                                                                ┃
-              │› budget usd (0 = off)  ‹ 0.00 ›                              default ┃
-              │  warn usd              ‹ 1.00 ›                              default ┃
-              │  review usd (0 = off)  ‹ 0.00 ›                              default ┃
+   welcome · /│ STARTUP                                                              ┃
+              │› start in              ‹ plan ›                              default ┃
+              │    read and propose first                                            ┃
               │                                                                      ┃
-              │ TOOLS                                                                ┃
-              │  permission mode       ‹ ask ›                               default ┃
+              │ SPEND                                                                ┃
+              │  budget usd (0 = off)  ‹ 0.00 ›                              default ┃
+              │  warn usd              ‹ 1.00 ›                              default │
+              │  review usd (0 = off)  ‹ 0.00 ›                              default │
+              │                                                                      │
+              │ TOOLS                                                                │
+              │  permission mode       ‹ ask ›                               default │
               │  features.web          [ off ]                               default │
               │                                                                      │
               │ SANDBOX                                                              │
@@ -16,10 +20,6 @@
               │                 OFF           workspace     read-only                │
               │ project files   read, write   read, write   read                     │
               │ rest of home    read, write   no            no                       │
-              │ your tools      yes           yes           yes                      │
-              │ your keys       rule only †   never         never                    │
-              │ /tmp            read, write   read, write   read, write              │
-              │ network         yes           yes           yes                      │
               │ ↑↓ move   space/←→ change   enter edit   esc done                    │
               ╰──────────────────────────────────────────────────────────────────────╯
 

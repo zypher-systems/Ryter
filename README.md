@@ -26,7 +26,7 @@ From source (Rust 1.88+): `cargo install --git https://github.com/zypher-systems
 export OPENROUTER_API_KEY=...   # or XAI_API_KEY, or a local model: see below
 cd your-project
 ryter doctor                    # checks keys, terminal, sandbox; no network
-ryter                           # the TUI, in the build hat
+ryter                           # the TUI, in the plan hat ([ui] start_hat picks another)
 ryter -p "say hi"               # one headless turn
 ```
 
@@ -63,6 +63,7 @@ ryter                         TUI
 ryter -p TEXT [--json]        one headless turn
 ryter -c -p TEXT              continue the latest session headless
 ryter --hat build|plan|review -p TEXT   (default build)
+ryter --hat build             the TUI in that hat, for this run
 ryter --connection spacexai|openrouter
 ryter --sandbox off|workspace|read-only
 ryter spend [session]

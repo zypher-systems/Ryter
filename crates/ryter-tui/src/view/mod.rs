@@ -293,6 +293,16 @@ pub struct View {
     pub retest: Option<usize>,
     /// The report filed in the running turn, for that turn's closing line.
     pub turn_report: Option<String>,
+    /// What each hat has done this session: the hat rack.
+    pub rack: ryter_core::rack::Rack,
+    /// What differs from the last commit, for the instruments: `None`
+    /// where there is no repository to compare with.
+    pub uncommitted: Option<Vec<ryter_core::review::FileChange>>,
+    /// The project's folder, to read those from.
+    pub workspace: Option<std::path::PathBuf>,
+    /// The screen's size at the last frame: a key that depends on what is
+    /// on screen (`^b`) reads it.
+    pub screen: std::cell::Cell<(u16, u16)>,
 }
 
 /// Aggregated spend row for `/spend`.
@@ -453,6 +463,10 @@ impl View {
             test_runs: 0,
             retest: None,
             turn_report: None,
+            rack: ryter_core::rack::Rack::default(),
+            uncommitted: None,
+            workspace: None,
+            screen: std::cell::Cell::new((0, 0)),
         }
     }
 
@@ -526,7 +540,10 @@ impl View {
             kind,
             body: body.into(),
             at,
-            meta: MessageMeta::default(),
+            meta: MessageMeta {
+                hat: Some(self.agent_hat),
+                ..MessageMeta::default()
+            },
             rev: 0,
         });
         self.messages.last_mut().expect("just pushed")
@@ -647,6 +664,7 @@ impl View {
         self.retest = None;
         self.turn_report = None;
         self.last_test = None;
+        self.rack = ryter_core::rack::Rack::default();
         self.messages.clear();
         self.reasoning.clear();
         self.history.clear();
@@ -657,6 +675,14 @@ impl View {
         self.busy = false;
         self.cancelling = false;
         self.cache.borrow_mut().clear();
+    }
+
+    /// Read what is uncommitted again, for the instruments. Nothing is
+    /// written to the repository.
+    pub fn refresh_uncommitted(&mut self) {
+        if let Some(root) = &self.workspace {
+            self.uncommitted = ryter_core::review::uncommitted(root).ok();
+        }
     }
 
     /// Mark the last running tool row with its result.

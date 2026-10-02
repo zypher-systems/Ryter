@@ -25,6 +25,7 @@ pub mod plan;
 pub mod project;
 mod project_file;
 pub mod prompt;
+pub mod rack;
 pub mod review;
 pub mod role;
 pub mod rules;

@@ -6,19 +6,23 @@
 
 
                                             ╭─ settings ───────────────────────────────────────────────────────────╮
+                                            │ STARTUP                                                              ┃
+                                            │› start in              ‹ plan ›                              default ┃
+                                            │    read and propose first                                            ┃
+                                            │                                                                      ┃
                                             │ SPEND                                                                ┃
-                                            │› budget usd (0 = off)  ‹ 0.00 ›                              default ┃
+                                            │  budget usd (0 = off)  ‹ 0.00 ›                              default ┃
                                             │  warn usd              ‹ 1.00 ›                              default ┃
                                             │  review usd (0 = off)  ‹ 0.00 ›                              default ┃
                                             │                                                                      ┃
                                             │ TOOLS                                                                ┃
                                             │  permission mode       ‹ ask ›                               default ┃
                                             │  features.web          [ off ]                               default ┃
-                                            │                                                                      ┃
-                                            │ SANDBOX                                                              ┃
-                                            │  profile               ‹ off ›                               default ┃
-                                            │                                                                      ┃
-                                            │                 OFF           workspace     read-only                ┃
+                                            │                                                                      │
+                                            │ SANDBOX                                                              │
+                                            │  profile               ‹ off ›                               default │
+                                            │                                                                      │
+                                            │                 OFF           workspace     read-only                │
                                             │ project files   read, write   read, write   read                     │
                                             │ rest of home    read, write   no            no                       │
                                             │ your tools      yes           yes           yes                      │
@@ -28,10 +32,6 @@
                                             │ docker          yes           yes *         yes *                    │
                                             │                                                                      │
                                             │ use it when     you watch     tools run     you only want            │
-                                            │                 each step     unasked       a review                 │
-                                            │                                                                      │
-                                            │ * docker can reach the whole machine; the sandbox does not stop it.  │
-                                            │ Rootless podman can't run under workspace or read-only.              │
                                             │ ↑↓ move   space/←→ change   enter edit   esc done                    │
                                             ╰──────────────────────────────────────────────────────────────────────╯
 

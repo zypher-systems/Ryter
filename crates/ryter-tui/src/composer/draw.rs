@@ -65,14 +65,14 @@ fn placeholder(view: &View) -> String {
                 "what should change? · Tab: review · / for commands".into()
             }
             ryter_core::Role::SoloPlan => {
-                "what are we planning? nothing changes here · Tab: build".into()
+                "what should we plan? · Tab: build · / for commands".into()
             }
             ryter_core::Role::SoloReview => {
-                "what should be reviewed? · /audit reviews what changed · Tab: test".into()
+                "ask about the review · Tab: test · / for commands".into()
             }
             ryter_core::Role::SoloTest => match view.retest {
-                Some(n) => format!("ask the tester, or: retest {n} · Tab: plan"),
-                None => "ask the tester · Tab: plan · / for commands".into(),
+                Some(n) => format!("what should be tried? or: retest {n} · Tab: plan"),
+                None => "what should be tried? · Tab: plan · / for commands".into(),
             },
         },
         Mode::Secret { connection } => format!("paste the API key for {connection}"),
@@ -106,41 +106,75 @@ fn edge_notes(view: &View, theme: Theme) -> Vec<Span<'static>> {
     right
 }
 
-/// Rows the boxed prompt needs at `width`, its box included.
-pub fn boxed_height(view: &View, width: u16) -> u16 {
-    let inner = usize::from(width.saturating_sub(4));
-    let rows = view.composer.rows(inner).clamp(1, MAX_ROWS);
-    u16::try_from(rows).unwrap_or(1) + 2
+/// The hat's chip at the head of the solo screen's prompt: ` BUILD `. None
+/// while the prompt is taking something other than a message.
+fn chip(view: &View) -> Option<String> {
+    matches!(view.composer.mode, Mode::Normal)
+        .then(|| format!(" {} ", crate::rail::hat_name(view.mode)))
 }
 
-/// The prompt in a box of the hat's color (the solo screen's rail layout):
-/// the notes on its top edge, `keys` on its lower one. Returns the cursor
-/// cell, if visible.
-pub fn draw_boxed(
-    frame: &mut Frame,
-    area: Rect,
-    view: &View,
-    theme: Theme,
-    keys: Line<'static>,
-) -> Option<(u16, u16)> {
-    if area.height < 3 || area.width < 8 {
+/// Columns the prompt's text has on the solo screen, `width` wide.
+fn solo_text_width(view: &View, width: u16) -> usize {
+    let chip_w = chip(view).map_or(0, |c| wrap::width(&c) + 1);
+    usize::from(width).saturating_sub(1 + chip_w + 4)
+}
+
+/// Rows the solo screen's prompt needs at `width`: a rule in the hat's
+/// color, then the text.
+pub fn solo_height(view: &View, width: u16) -> u16 {
+    let rows = view
+        .composer
+        .rows(solo_text_width(view, width))
+        .clamp(1, MAX_ROWS);
+    u16::try_from(rows).unwrap_or(1) + 1
+}
+
+/// The solo screen's prompt (`docs/hat-rack-design.md` §10): a rule in
+/// the hat's color across the screen, then the hat's chip, the prompt
+/// mark in that color, and the text. No box, and no name: whose message it
+/// is shows on the message. Returns the cursor cell, if visible.
+pub fn draw_solo(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Option<(u16, u16)> {
+    if area.height < 2 || area.width < 8 {
         return None;
     }
-    let b = ratatui::widgets::Block::default()
-        .borders(ratatui::widgets::Borders::ALL)
-        .border_type(ratatui::widgets::BorderType::Rounded)
-        .border_style(Style::default().fg(border_color(view, theme)).bg(theme.bg))
-        .title_top(Line::from(edge_notes(view, theme)).right_aligned())
-        .title_bottom(keys.right_aligned())
-        .style(Style::default().bg(theme.bg));
-    let inner = b.inner(area);
-    frame.render_widget(b, area);
-    let inner = Rect {
-        x: inner.x + 1,
-        width: inner.width.saturating_sub(2),
-        ..inner
+    let color = border_color(view, theme);
+    frame.render_widget(
+        Paragraph::new("").style(Style::default().bg(theme.bg)),
+        area,
+    );
+    let right = edge_notes(view, theme);
+    let right_w: usize = right.iter().map(|s| wrap::width(&s.content)).sum();
+    let rule = Style::default().fg(color).bg(theme.bg);
+    let mut spans = vec![Span::styled(
+        "─".repeat(usize::from(area.width).saturating_sub(right_w + 2)),
+        rule,
+    )];
+    spans.extend(right);
+    spans.push(Span::styled("──", rule));
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)),
+        Rect { height: 1, ..area },
+    );
+    let mut inner = Rect {
+        x: area.x + 1,
+        y: area.y + 1,
+        width: area.width.saturating_sub(2),
+        height: area.height - 1,
     };
-    body(frame, inner, view, theme, theme.bg)
+    if let Some(c) = chip(view) {
+        let w = wrap::width(&c) as u16;
+        frame.render_widget(
+            Paragraph::new(Span::styled(c, theme.chip(theme.mode(view.mode)))),
+            Rect {
+                width: w.min(inner.width),
+                height: 1,
+                ..inner
+            },
+        );
+        inner.x += w + 1;
+        inner.width = inner.width.saturating_sub(w + 1);
+    }
+    body(frame, inner, view, theme, theme.bg, color)
 }
 
 fn ledger_frame(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Rect {
@@ -183,7 +217,7 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Option<
     } else {
         classic_frame(frame, area, view, theme, bs, bg, w)
     };
-    body(frame, inner, view, theme, bg)
+    body(frame, inner, view, theme, bg, theme.prompt)
 }
 
 fn classic_frame(
@@ -281,20 +315,22 @@ fn classic_frame(
     }
 }
 
-/// The prompt and the text, inside whatever frame the layout drew.
+/// The prompt and the text, inside whatever frame the layout drew. `mark`
+/// is the prompt mark's color.
 fn body(
     frame: &mut Frame,
     inner: Rect,
     view: &View,
     theme: Theme,
     bg: Color,
+    mark: Color,
 ) -> Option<(u16, u16)> {
     let g = glyph(view);
     let gw = wrap::width(g);
     let text_x = inner.x + gw as u16 + 1;
     let text_w = usize::from(inner.width).saturating_sub(gw + 2);
     let gstyle = Style::default()
-        .fg(theme.prompt)
+        .fg(mark)
         .bg(bg)
         .add_modifier(Modifier::BOLD);
     let text_style = Style::default().fg(theme.fg).bg(bg);

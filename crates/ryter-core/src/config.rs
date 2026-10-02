@@ -180,6 +180,11 @@ pub struct UiConfig {
     /// Open a page the model shows (`show_page`) in the browser. Off, the
     /// chat gives its link only.
     pub open_pages: bool,
+    /// The hat a new session opens in: `plan` | `build` | `review` | `last`
+    /// (the hat this project's latest session ended in).
+    pub start_hat: String,
+    /// The fedora behind the conversation, in the hat's color.
+    pub watermark: bool,
 }
 
 impl UiConfig {
@@ -205,6 +210,8 @@ impl Default for UiConfig {
             offer_test: true,
             layout: "ledger".into(),
             open_pages: true,
+            start_hat: "plan".into(),
+            watermark: true,
         }
     }
 }
@@ -224,6 +231,8 @@ pub const UI_KEYS: &[&str] = &[
     "offer_test",
     "layout",
     "open_pages",
+    "start_hat",
+    "watermark",
 ];
 
 /// Unknown keys under `[ui]` in a TOML document (empty when none).
@@ -1088,6 +1097,15 @@ fn merge_file(cfg: &mut Config, path: &Path) -> Result<()> {
         ));
     }
     overlay.apply(cfg);
+    let start = cfg.ui.start_hat.trim().to_ascii_lowercase();
+    if !crate::role::START_HATS.contains(&start.as_str()) {
+        cfg.warnings.push(format!(
+            "{}: [ui] start_hat = {:?} is not plan, build, review or last; starting in plan",
+            path.display(),
+            cfg.ui.start_hat
+        ));
+        cfg.ui.start_hat = "plan".into();
+    }
     Ok(())
 }
 
@@ -1161,6 +1179,10 @@ struct UiFile {
     layout: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     open_pages: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_hat: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    watermark: Option<bool>,
 }
 
 impl From<&UiConfig> for UiFile {
@@ -1179,6 +1201,8 @@ impl From<&UiConfig> for UiFile {
             offer_test: Some(ui.offer_test),
             layout: Some(ui.layout.clone()),
             open_pages: Some(ui.open_pages),
+            start_hat: Some(ui.start_hat.clone()),
+            watermark: Some(ui.watermark),
         }
     }
 }
@@ -1223,6 +1247,12 @@ impl UiFile {
         }
         if let Some(v) = self.layout {
             ui.layout = v;
+        }
+        if let Some(v) = self.start_hat {
+            ui.start_hat = v;
+        }
+        if let Some(v) = self.watermark {
+            ui.watermark = v;
         }
     }
 }
@@ -1794,6 +1824,38 @@ mod tests {
         let again = load_at(home.path(), None, false).unwrap();
         assert_eq!(again.ui.theme, "light");
         assert_eq!(again.ui.username, "Dusty");
+    }
+
+    /// `[ui] start_hat`: plan unless it says otherwise, and a value that is
+    /// not a hat to start in is said and falls back to plan.
+    #[test]
+    fn the_start_hat_is_plan_unless_the_file_names_another() {
+        let home = TempDir::new().unwrap();
+        let load = |body: &str| {
+            fs::write(home.path().join("config.toml"), body).unwrap();
+            load_at(home.path(), None, false).unwrap()
+        };
+        let cfg = load("");
+        assert_eq!(cfg.ui.start_hat, "plan");
+        assert!(cfg.ui.watermark);
+        assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+        for hat in ["build", "review", "last", "plan"] {
+            let cfg = load(&format!("[ui]\nstart_hat = \"{hat}\"\nwatermark = false\n"));
+            assert_eq!(cfg.ui.start_hat, hat);
+            assert!(!cfg.ui.watermark);
+            assert!(cfg.warnings.is_empty(), "{hat}: {:?}", cfg.warnings);
+        }
+        // The test hat needs something to test; a typo is not a hat.
+        for bad in ["test", "bulid"] {
+            let cfg = load(&format!("[ui]\nstart_hat = \"{bad}\"\n"));
+            assert_eq!(cfg.ui.start_hat, "plan", "{bad}");
+            assert_eq!(cfg.warnings.len(), 1, "{bad}: {:?}", cfg.warnings);
+            assert!(cfg.warnings[0].contains("start_hat"), "{:?}", cfg.warnings);
+        }
+        // The shipped example names both keys, so neither is a stranger.
+        let example = include_str!("../../../config.example.toml");
+        assert!(unknown_ui_keys(example).is_empty());
+        assert!(example.contains("start_hat = \"plan\"") && example.contains("watermark = true"));
     }
 
     #[test]

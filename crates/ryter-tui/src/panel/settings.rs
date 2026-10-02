@@ -64,6 +64,16 @@ fn select(id: &'static str, label: &str, options: &[&str], cur: &str, default: &
     .origin(origin(&cur, &default))
 }
 
+/// What a value of `start in` means, in a line.
+fn start_hat_note(value: &str) -> &'static str {
+    match value {
+        "build" => "straight to work",
+        "review" => "open on a critique",
+        "last" => "the hat this project closed in",
+        _ => "read and propose first",
+    }
+}
+
 impl Settings {
     /// Build from the live view.
     pub fn new(view: &View) -> Self {
@@ -73,6 +83,14 @@ impl Settings {
             theme_opts = vec!["dark"];
         }
         let fields = vec![
+            Field::new("g_startup", "startup", Kind::Header),
+            select(
+                "start_hat",
+                "start in",
+                ryter_core::role::START_HATS,
+                &view.ui.start_hat,
+                &d.start_hat,
+            ),
             Field::new("g_spend", "spend", Kind::Header),
             num(
                 "budget",
@@ -163,8 +181,10 @@ impl Settings {
             ),
             Field::new("mouse", "mouse", Kind::Toggle(view.ui.mouse))
                 .origin(origin(&view.ui.mouse, &d.mouse)),
-            Field::new("panel", "panel · rail", Kind::Toggle(view.ui.panel))
+            Field::new("panel", "side columns", Kind::Toggle(view.ui.panel))
                 .origin(origin(&view.ui.panel, &d.panel)),
+            Field::new("watermark", "watermark", Kind::Toggle(view.ui.watermark))
+                .origin(origin(&view.ui.watermark, &d.watermark)),
             Field::new("timestamps", "timestamps", Kind::Toggle(view.ui.timestamps))
                 .origin(origin(&view.ui.timestamps, &d.timestamps)),
             Field::new(
@@ -265,6 +285,12 @@ impl Settings {
         }
         if let Some(v) = toggle("panel") {
             view.ui.panel = v;
+        }
+        if let Some(v) = toggle("watermark") {
+            view.ui.watermark = v;
+        }
+        if let Some(v) = sel("start_hat") {
+            view.ui.start_hat = v;
         }
         if let Some(v) = toggle("timestamps") {
             view.ui.timestamps = v;
@@ -450,6 +476,21 @@ impl Panel for Settings {
 
     fn render(&self, _view: &View, width: u16, height: u16, theme: Theme) -> Body {
         let mut rows = self.form.render(usize::from(width), theme, true);
+        // What the chosen starting hat means, under the field that picks it.
+        let start = self.form.fields.iter().position(|f| f.id == "start_hat");
+        let mut start_rows = 0;
+        if let Some(at) = start {
+            let note = start_hat_note(&self.form.fields[at].value_text());
+            let after = (self.row_of(at) + 1).min(rows.len());
+            rows.insert(
+                after,
+                ratatui::text::Line::from(ratatui::text::Span::styled(
+                    format!("    {note}"),
+                    theme.panel_muted(),
+                )),
+            );
+            start_rows = 1;
+        }
         // The sandbox profiles, compared, under the field that picks one.
         let sandbox = self.form.fields.iter().position(|f| f.id == "sandbox");
         let mut table_rows = 0;
@@ -457,7 +498,10 @@ impl Panel for Settings {
             let chosen = self.form.fields[at].value_text();
             let table = sandbox_table(&chosen, usize::from(width), theme);
             table_rows = table.len();
-            let after = self.row_of(at) + 1 + usize::from(self.form.fields[at].error.is_some());
+            let after = self.row_of(at)
+                + 1
+                + usize::from(self.form.fields[at].error.is_some())
+                + start_rows;
             let after = after.min(rows.len());
             rows.splice(after..after, table);
         }
@@ -466,6 +510,9 @@ impl Panel for Settings {
         // Keep the selected row visible. On the sandbox field, that is the
         // table under it too: aim at its middle.
         let mut sel_row = self.row_of(self.form.selected);
+        if start.is_some_and(|at| self.form.selected > at) {
+            sel_row += start_rows;
+        }
         match sandbox {
             Some(at) if self.form.selected > at => sel_row += table_rows,
             Some(at) if self.form.selected == at => sel_row += table_rows.div_ceil(2),
@@ -475,7 +522,7 @@ impl Panel for Settings {
         // On a short panel the field itself stays in view, above as much of
         // the table as fits.
         if let Some(at) = sandbox.filter(|at| *at == self.form.selected) {
-            first = first.min(self.row_of(at));
+            first = first.min(self.row_of(at) + start_rows);
         }
         let mut lines: Vec<_> = rows.into_iter().skip(first).take(h).collect();
         if self.confirm_discard {

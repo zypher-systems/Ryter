@@ -97,32 +97,30 @@ ryter models [connection]
 
 `ryter` on a tty opens the TUI in the **ledger** layout (`[ui] layout = "ledger"`, the default since 0.6.0).
 
-**A rail runs down the left** (screens 110 columns and wider). It carries:
-- the Ryter name, the project and branch;
-- the session's title, when it began, and how many turns it has had;
-- **the hat**, as a block in its color: `BUILD` green, `PLAN` cyan, `REVIEW` yellow, with what it does (`edits files, runs commands`) and `tab` to switch;
-- the model, its reasoning level, and the context gauge with tokens used of the window;
-- **spend**: this turn, the session, the project, the budget, and a bar per turn;
-- the files the last turn changed, with `+`/`−` counts.
+The hat that is on sets the screen's one accent color: plan is cyan, build green, review amber, test violet. Everything else stays the same under every hat. A fedora in that color sits faintly behind the conversation (`[ui] watermark = false`, or *watermark* in `/settings`, turns it off; it is left out on 16-color and no-color terminals).
 
-The prompt sits in a box of the hat's color, with the keys that matter now on its lower edge. The rail replaces the view strip and the bottom bar, which come back when the rail is hidden (`^b`, or `[ui] panel = false`) or the screen is narrower than 110 columns. The rest is the same either way:
+- **The bar across the top** names the four hats in the order `Tab` goes round them. The hat that is on is a filled chip marked `◆`; a hat that has had a turn this session is marked `●` in its own color, and one that hasn't is `○`. The bar says which hats have been worn, not an order to wear them in. Then the session's title, the folder and the branch.
+- **The hat rack** runs down the left (screens 132 columns and wider). It has one block a hat, always the same four in the same place: the hat's model, how many turns it has had this session and what it has cost, and the figures that are its own. Plan: plans approved and rejected. Build: files and lines it changed in the session, and the latest test run. Review: verdicts, passed and failed. Test: checks passed and failed. A hat with no turns yet says `not worn yet`. The block of the hat that is on is tinted.
+- **The instruments** run down the right (100 columns and wider): the model your next message goes to, its connection and reasoning level; the context gauge with tokens used of the window; **spend** for the session and for the project, and the budget; the sandbox and what this hat may do; and what is **uncommitted**, a file a line, with the latest test run.
+- **The prompt** sits under a rule in the hat's color, after the hat's name as a chip. The keys that matter now are on the last row.
 
-- **A view strip** across the top names the views and lights the one on screen: `chat` and `changes ^t` (the workbench).
+The side columns give way to the conversation. Under 132 columns the hat rack folds away, and the bar counts each hat's turns instead. Under 100 the instruments fold away too, and the last row becomes a status line: the model, the context gauge, the session's cost and the budget. `^b` hides and shows the columns on a wide screen; on a narrower one it opens the hat rack and the instruments as a panel (`↑↓` scroll, `esc` or `^b` closes). `[ui] panel = false` starts with them hidden. A panel too wide to fit beside the columns, such as `/models`, takes the whole screen while it is open.
+
+The rest of the screen:
+
 - **One reading column on a timeline**, centered, at most 112 columns wide. Each question starts with its time and `●`. The model's text hangs off `◆`, each tool step off `├─` (`edit   src/config.rs ······· +9 −1`, `run    npm test ····· ✓ 4 passed`), and edits show as full-row green and red diffs.
 - **Every turn closes with what it came to**, measured by Ryter: `└─ ✓ 5 tools · 2 files (2 changed, +3 −0) · 1 command (1 ok) · 7.9s · $0.001`.
 - **Finished turns fold to one line:** what was asked, led by dots to that summary, ending in `▸`. The newest turn stays open. `^o` opens every turn and every edit whole, and folds them again.
-- **The composer** is a rule and a `›` prompt beneath the column. The rule's left end takes the hat's color.
-- **The bottom bar** holds what the header and cards used to show: the hat (`BUILD`, `PLAN`, `REVIEW`), the project and branch, the model, the context gauge, and the cost this turn, this session, and for the project, against the budget. The keys that matter now are on its right. When space runs short, it drops keys first, then the project, the model, and the gauge. The hat and the costs stay.
 - **`$`** on an empty composer opens the **spend drawer** above it. It shows this turn, the session, and the project side by side, with spend by hat for the session and the project, and the budget and warning level. `b` sets a budget, `⏎` opens the full `/spend` table.
 
-**The workbench** (`^T`, or `/changes` on the ledger) shows what changed beside the chat, in three panes:
+**The workbench** (`^T`, or `/changes` on the ledger) shows what changed beside the chat, in three panes. It has the screen to itself, with a strip across the top naming the views (`chat`, `changes ^t`) and one bar at the foot:
 - **Left:** the files changed (this turn, or since the last commit with `tab`), the turn's commands and what came of them, and the turns.
 - **Middle:** the chat.
 - **Right:** the selected file's changes, one at a time, with line numbers on both sides.
 
 Its keys: `↑↓` pick a file, `j`/`k` move between its changes, `x` undoes the selected change alone, `X` undoes the whole file (after a `y`), and `u` undoes the turn. `x` and `X` are recorded like a turn, so `/undo` brings them back. While the workbench is open, keys go to it and not the composer; `esc` or `^T` returns to the chat.
 
-`[ui] layout = "classic"` (also in `/settings`, applied at once) brings back the 0.5 screen. That's a header row, the chat with a right-hand **info panel** of cards (session, model + context gauge, spend + budget gauge, mcp), the **activity strip** while a turn runs, the bordered **composer**, and a hint bar. `^b` shows or hides the info panel there (it also drops automatically under 80 columns), and the rail on the ledger.
+`[ui] layout = "classic"` (also in `/settings`, applied at once) brings back the 0.5 screen. That's a header row, the chat with a right-hand **info panel** of cards (session, model + context gauge, spend + budget gauge, mcp), the **activity strip** while a turn runs, the bordered **composer**, and a hint bar. `^b` shows or hides the info panel there (it also drops automatically under 80 columns).
 
 Every message is a left-aligned block under a speaker header — your name (from `[ui] username`, then `git user.name`, then `$USER`), the model name, `· system`, or a one-line tool row (`· read_file  path  0.1s`). Markdown renders with headings, lists, quotes, tables, and fenced code with syntax highlighting and a line-number gutter. Long model turns end with a summary line (`3 tools · 12.4k tok · 0:42 · $0.01`).
 
@@ -172,7 +170,7 @@ The keys are on the card's last row:
 | `^c` | clear composer → cancel turn → quit (press twice within 2 s) |
 | `^d` | quit when the composer is empty |
 | `^r` | toggle the reasoning pane |
-| `^b` | show or hide the rail (ledger) or the info panel (classic) |
+| `^b` | show or hide the hat rack and the instruments (ledger; on a screen under 132 columns, open them as a panel), or the info panel (classic) |
 | `^o` | show every edit and finished turn whole, or folded |
 | `$` | the spend drawer (ledger, when the composer is empty) |
 | `^t` | the workbench (ledger); `/changes` on the classic screen |
@@ -199,7 +197,9 @@ ryter -c -p "continue"               # continue the latest session
 
 ## Hats
 
-One model works in your project, in the build hat to start with. `Tab` switches its hat in the order the work goes (plan → build → review → test, then round to plan), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. From build, where a session opens, `Tab` goes to review and `Shift+Tab` to plan. The header, the message box's badge, and its border all show the hat in its own color. A switch applies to your next message. The model can also offer a switch itself: after a review ("fix these?") it asks with a yes/no prompt, and on `y` it carries on in the new hat in the same turn. A plan has its own panel, below.
+One model works in your project, in the plan hat to start with. `Tab` switches its hat in the order the work goes (plan → build → review → test, then round to plan), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. The bar across the top, the hat rack, the prompt's chip and its rule all show the hat in its own color.
+
+**The hat a session starts in** is `[ui] start_hat`, also *start in* at the top of `/settings`: `plan` (the default: read and propose first), `build` (straight to work), `review` (open on a critique), or `last` (the hat this project's most recent session ended in; plan when there is none, or when that was the test hat, which needs something to test). A resumed session opens in the hat it was left in. `ryter --hat build` opens in that hat for one run, whatever the setting. `/new` keeps the hat you are in. Headless runs (`ryter -p`) are not affected: they are in the build hat unless `--hat` says otherwise. A switch applies to your next message. The model can also offer a switch itself: after a review ("fix these?") it asks with a yes/no prompt, and on `y` it carries on in the new hat in the same turn. A plan has its own panel, below.
 
 | Hat | May | May not |
 | --- | --- | --- |
@@ -210,7 +210,7 @@ One model works in your project, in the build hat to start with. `Tab` switches 
 
 **A model for each hat.** Every hat runs on one model until you give a hat its own. `/models` lists the seats on the left: *All hats*, then *Plan*, *Build*, *Review* and *Test*, each showing its model or "follows all hats". Pick a seat, pick a model, `⏎`, and the cursor moves to the next seat, so one visit sets them all. To put a hat back, choose `default` at the top of its list. The choice is kept in `~/.ryter/hats.toml`.
 
-- **Where it shows:** the rail and the status line name the model your next message goes to, which is the current hat's.
+- **Where it shows:** the hat rack names each hat's model, and the instruments (or the status line on a narrow screen) name the one your next message goes to, which is the current hat's.
 - **What a switch costs:** the hats share one conversation. A model that hasn't read it yet reads all of it at the full price the first time, and Ryter says so in the chat as it happens: "review hat · grok-4.7 re-reads 42k tokens, about $0.13". Nothing stops; the line is there so the cost isn't a surprise. Going back to a model that has read the conversation costs the same again if its provider's cache has lapsed.
 - **A use for it:** a strong model for the plan, a cheaper one to build it, and a different one to review, so the review isn't the model that built it marking its own work.
 
@@ -478,7 +478,7 @@ A session budget is optional. With one, the turn stops when spend reaches it and
 
 The **budget** card on the right shows the cap, how much is used and left, or `off`; click it to open the panel. Changes apply at once and are saved as your default (`~/.ryter/settings.toml`, the same value as *budget usd* in `/settings`). A trusted project's `[spend] session_budget_usd` overrides your default in that project. There is no session budget until you set one. `[spend] enabled = false` still counts in memory and prints a warning.
 
-**Project cost.** A project is its git repository (the folder, outside one), so sessions started in any subfolder count toward it. The spend card shows `project` under the session total. When the project is a repository around the folder you started in, the rail says which folder, for example `in ~/workspace`, and the `$` drawer names its project column for it. `p` in `/spend` switches to the project view: the total across sessions, this month, and breakdowns by hat, model, and month. A project that was worked on in crew mode, before it was removed, also shows what that cost. `ryter spend --project` prints the same. Nothing extra is recorded: every call is already in its session's `spend.jsonl`, and a running total in `~/.ryter/projects/` means only new lines are read. Calls with no known price are counted and shown (`$14.20+`), never added as $0.
+**Project cost.** A project is its git repository (the folder, outside one), so sessions started in any subfolder count toward it. The instruments show `project` under the session total. When the project is a repository around the folder you started in, the `$` drawer names its project column for that folder. `p` in `/spend` switches to the project view: the total across sessions, this month, and breakdowns by hat, model, and month. A project that was worked on in crew mode, before it was removed, also shows what that cost. `ryter spend --project` prints the same. Nothing extra is recorded: every call is already in its session's `spend.jsonl`, and a running total in `~/.ryter/projects/` means only new lines are read. Calls with no known price are counted and shown (`$14.20+`), never added as $0.
 
 `/spend` is a panel: session total, a budget gauge, and tables by hat and by connection; `p` switches to the project; `e` exports CSV. The info panel’s spend card shows the total, and the budget card below it shows the cap. `ryter spend` prints the roll-up on the CLI.
 

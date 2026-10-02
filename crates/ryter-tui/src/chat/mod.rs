@@ -135,6 +135,9 @@ pub struct MessageMeta {
     pub tool_id: Option<String>,
     /// What an edit did to its file, measured by the tool.
     pub diff: Option<Box<ryter_core::diff::FileDiff>>,
+    /// The hat the agent was in when this was said: a model's words are
+    /// named in that hat's color.
+    pub hat: Option<ryter_core::Role>,
 }
 
 /// One transcript entry.
@@ -226,7 +229,10 @@ impl Message {
     pub fn accent(&self, theme: Theme) -> Color {
         match &self.kind {
             MessageKind::User => theme.user,
-            MessageKind::Assistant { .. } => theme.assistant,
+            // In the color of the hat it spoke in, where that is known.
+            MessageKind::Assistant { .. } => {
+                self.meta.hat.map_or(theme.assistant, |h| theme.mode(h))
+            }
             MessageKind::Tool { status, .. } => match status {
                 ToolStatus::Error => theme.error,
                 _ => theme.tool,

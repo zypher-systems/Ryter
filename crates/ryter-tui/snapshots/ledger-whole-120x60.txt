@@ -1,4 +1,5 @@
-  chat     changes  ^t
+ RYTER │ ○ PLAN    ◆ BUILD 1    ○ REVIEW   ○ TEST                                                          muzak · main
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
            ·  welcome · /help for keys
            ●  why does load() ignore a missing file? ······························· ✓ answered · 1.8s · $0.002  ▸
 
@@ -21,6 +22,17 @@
            │    5 +   assert.deepEqual(await search(''), [])
            │    6 + })
            └─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s · $0.004
+                                           ▄                                ▄
+
+
+
+
+
+                                  ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄
+                            ▄▄                                                            ▄▄
+                            ▀                                                              ▀
+                                ▀▀▀▀▀▀                                            ▀▀▀▀▀▀
+                                              ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 
 
 
@@ -42,19 +54,7 @@
 
 
 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  BUILD  › what should change? · Tab: review · / for commands
 
-
-
-
-
-
-
-
-
-
-
-
-
-   ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   › what should change? · Tab: review · / for commands
- BUILD  muzak  main  grok-4.6  ctx ▱▱▱▱▱▱▱▱ 5% │ turn $0.004 · session $0.018 · budget off            $ spend  ^c quit
+ $ spend    enter send    tab review    / commands    ^t changes    ^o expand    ^b hat rack    ^c quit

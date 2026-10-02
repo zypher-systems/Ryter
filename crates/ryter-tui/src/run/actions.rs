@@ -588,6 +588,16 @@ fn strip_hat_note(content: &str) -> String {
     }
 }
 
+/// The hat a saved message's note names: `[hat: review — …]`.
+fn hat_of_note(content: &str) -> Option<ryter_core::Role> {
+    content
+        .strip_prefix("[hat: ")?
+        .split([' ', ']'])
+        .next()?
+        .parse()
+        .ok()
+}
+
 pub fn fill_view_from_session(view: &mut View, session: &Session) {
     view.reset_transcript();
     view.session_id = session.meta.id.to_string();
@@ -623,6 +633,10 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
         view.scroll.to_bottom();
     }
     view.show(view.mode.thread());
+    view.agent_hat = view.mode;
+    // The chat was rebuilt through the live path, which counted its tool
+    // calls again without their hats: the log has what really happened.
+    view.rack = ryter_core::rack::Rack::from_log(&session.dir.join("events.jsonl"));
     view.spend_by_role.clear();
     view.spend_by_conn.clear();
     view.spend_rows_role.clear();
@@ -742,6 +756,11 @@ fn fill_chat(view: &mut View, messages: &[ryter_core::Message], model: &str) {
             }
             "user" if !m.content.trim().is_empty() => {
                 view.turn += 1;
+                // What follows was said in this hat: it is named in its
+                // color, as it was when it happened.
+                if let Some(hat) = hat_of_note(&m.content) {
+                    view.agent_hat = hat;
+                }
                 view.push(MessageKind::User, strip_hat_note(&m.content));
             }
             "assistant" => {
