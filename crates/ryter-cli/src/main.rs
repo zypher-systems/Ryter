@@ -687,12 +687,15 @@ impl ServeHost {
 }
 
 impl ryter_core::InboundHost for ServeHost {
+    fn prepare_prompt(&self) {
+        self.cancel.reset();
+    }
+
     fn prompt(&self, text: &str) -> ryter_core::Result<String> {
         let mut agent = self
             .agent
             .try_lock()
             .map_err(|_| Error::Config("busy; a prompt is already running".into()))?;
-        self.cancel.reset();
         let rt = self.rt.lock().map_err(|e| Error::Config(e.to_string()))?;
         let result = rt.block_on(agent.turn(text));
         let last_error = result

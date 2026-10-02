@@ -162,7 +162,11 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             }
             cx.want_redraw = true;
         }
-        Action::Submit(text) => cx.send(Work::Turn { text, reply: None }),
+        Action::Submit(text) => cx.send(Work::Turn {
+            text,
+            reply: None,
+            inbound: None,
+        }),
         Action::Cancel => {
             if view.busy {
                 cx.cancel.cancel();

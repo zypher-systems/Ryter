@@ -23,6 +23,9 @@ pub struct StatusSnapshot {
 
 /// Host the inbound tools talk to (the session and its agent).
 pub trait InboundHost: Send + Sync {
+    /// Prepare a reserved prompt before the dispatcher accepts cancellation.
+    /// Hosts that reset a shared cancel flag must do it here, not in `prompt`.
+    fn prepare_prompt(&self) {}
     /// Run one user turn: a normal user message, worked on in the build hat.
     fn prompt(&self, text: &str) -> Result<String>;
     /// Status line.
@@ -31,6 +34,42 @@ pub trait InboundHost: Send + Sync {
     fn spend(&self) -> String;
     /// Cancel in-flight work. Safe to call while [`prompt`](Self::prompt) is running.
     fn cancel(&self);
+    /// Cancel only this connection's reserved prompt on disconnect or write failure.
+    /// Queued hosts should distinguish it from unrelated interactive work.
+    fn cancel_prompt(&self) {
+        self.cancel();
+    }
+}
+
+// A host can be shared by many socket sessions. Reserve it before spawning a
+// prompt so a rejected connection never owns (or cancels) somebody else's turn.
+// The permit borrows the host, keeping its data address valid until release.
+static PROMPT_OWNERS: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+
+struct PromptPermit<'a> {
+    host: &'a dyn InboundHost,
+}
+
+impl<'a> PromptPermit<'a> {
+    fn acquire(host: &'a dyn InboundHost) -> Option<Self> {
+        let key = host as *const dyn InboundHost as *const () as usize;
+        let mut owners = PROMPT_OWNERS.lock().unwrap_or_else(|e| e.into_inner());
+        if owners.contains(&key) {
+            return None;
+        }
+        owners.push(key);
+        Some(Self { host })
+    }
+}
+
+impl Drop for PromptPermit<'_> {
+    fn drop(&mut self) {
+        let key = self.host as *const dyn InboundHost as *const () as usize;
+        PROMPT_OWNERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|owner| *owner != key);
+    }
 }
 
 /// In-memory echo host (also used by `ryter mcp echo`).
@@ -261,7 +300,10 @@ where
             .and_then(|()| writer.flush())
             .map_err(|e| Error::Io(e.to_string()))
     };
-    std::thread::scope(|scope| {
+    // Keep the permit outside the scope: error paths cancel and join the
+    // old worker before another connection can claim the same host.
+    let mut permit = None;
+    let result = std::thread::scope(|scope| {
         let (done_tx, done_rx) = mpsc::channel();
         let mut workers: Vec<std::thread::ScopedJoinHandle<'_, ()>> = Vec::new();
         let mut authed = tokens.is_empty();
@@ -274,6 +316,7 @@ where
                     pending -= 1;
                     if prompt {
                         prompting = false;
+                        permit = None;
                     }
                     if let Some(resp) = response {
                         send(&mut writer, resp)?;
@@ -303,7 +346,7 @@ where
                     Err(RecvTimeoutError::Disconnected) => {
                         closed = true;
                         if prompting {
-                            host.cancel();
+                            host.cancel_prompt();
                         }
                         continue;
                     }
@@ -359,6 +402,23 @@ where
                         )?;
                     }
                 } else {
+                    if prompt {
+                        permit = PromptPermit::acquire(host);
+                        if permit.is_none() {
+                            if let Some(id) = req.id {
+                                send(
+                                    &mut writer,
+                                    RpcResponse::err(
+                                        id,
+                                        -32000,
+                                        "busy; a prompt is already running",
+                                    ),
+                                )?;
+                            }
+                            continue;
+                        }
+                        host.prepare_prompt();
+                    }
                     pending += 1;
                     prompting |= prompt;
                     let done_tx = done_tx.clone();
@@ -370,10 +430,12 @@ where
             }
         })();
         if prompting {
-            host.cancel();
+            host.cancel_prompt();
         }
         result
-    })
+    });
+    drop(permit);
+    result
 }
 
 fn is_prompt(req: &RpcRequest) -> bool {
@@ -469,20 +531,54 @@ mod tests {
             let (started, started_rx) = mpsc::channel();
             let (stopped, stopped_rx) = mpsc::channel();
             let (release, wait) = mpsc::channel();
-            let host = BlockingHost {
+            let host = std::sync::Arc::new(BlockingHost {
                 agent: Default::default(),
                 started,
                 stopped,
                 release,
                 wait: std::sync::Mutex::new(wait),
-            };
+            });
+            let owner_host = host.clone();
             let worker = std::thread::spawn(move || {
-                serve_session(server.try_clone().unwrap(), server, &host, &[])
+                serve_session(
+                    server.try_clone().unwrap(),
+                    server,
+                    owner_host.as_ref(),
+                    &[],
+                )
             });
             client
                 .write_all(tool(1, "ryter_prompt").to_line().as_bytes())
                 .unwrap();
             started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            let mut second = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            second
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let second_server = listener.accept().unwrap().0;
+            let rejected = std::thread::spawn(move || {
+                serve_session(
+                    second_server.try_clone().unwrap(),
+                    second_server,
+                    host.as_ref(),
+                    &[],
+                )
+            });
+            second
+                .write_all(tool(99, "ryter_prompt").to_line().as_bytes())
+                .unwrap();
+            second.shutdown(Shutdown::Write).unwrap();
+            let mut second_reply = String::new();
+            std::io::Read::read_to_string(&mut second, &mut second_reply).unwrap();
+            rejected.join().unwrap().unwrap();
+            let response: RpcResponse = serde_json::from_str(second_reply.trim()).unwrap();
+            assert_eq!(response.id, json!(99));
+            assert!(response.error.unwrap().message.contains("busy"));
+            assert!(
+                stopped_rx.try_recv().is_err(),
+                "rejected client cancelled the owner's prompt"
+            );
+
             for req in [
                 tool(2, "ryter_status"),
                 tool(3, "ryter_spend"),
