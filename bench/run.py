@@ -10,7 +10,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +19,50 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from simulated_provider import Fixture, Provider, reply
+
+
+def review_verdict(text):
+    """Match the app's last explicit verdict, including Markdown formatting."""
+    result = None
+    for line in text.splitlines():
+        line = line.strip().strip('*#`_> ').upper()
+        if line.startswith('VERDICT'):
+            result = 'PASS' if line[len('VERDICT'):].lstrip(': *-').startswith('PASS') else 'FAIL'
+    return result
+
+
+def score(row):
+    row['completed'] = passed(row['acceptance'])
+    review = row['phases'].get('review', {})
+    test = row['phases'].get('test', {})
+    row['false_review_pass'] = review.get('verdict') == 'PASS' and not row['completed']
+    row['false_test_pass'] = test.get('test_pass') is True and not row['completed']
+    row['flow_completed'] = (row['completed'] and len(row['phases']) == 4
+                             and all(p['exit'] == 0 for p in row['phases'].values())
+                             and review.get('verdict') == 'PASS' and test.get('test_pass') is True)
+
+
+def rescore(report_path, output=None):
+    """Recalculate metrics from saved events without running commands or models."""
+    report = json.loads(report_path.read_text())
+    for name, task in report['tasks'].items():
+        if 'run' not in task:
+            continue
+        row = task['run']
+        for phase, values in row['phases'].items():
+            events = [json.loads(line) for line in
+                      (report_path.parent / name / 'run' / f'{phase}.ndjson').read_text().splitlines()]
+            text = ''.join(e['text'] for e in events if e['kind'] == 'token')
+            values['verdict'] = review_verdict(text)
+        score(row)
+    report['scoring_version'] = 2
+    report['rescored_from'] = report_path.name
+    output = output or report_path.with_name('report-rescored.json')
+    with output.open('x') as stream:
+        json.dump(report, stream, indent=2)
+        stream.write('\n')
+    print(output)
+    return 0
 
 
 def commands(project, checks, env):
@@ -181,11 +224,10 @@ mode = "off"
             row['accounting_complete'] = False
         tool_results = [event for event in events if event['kind'] == 'tool_result']
         text = ''.join(event['text'] for event in events if event['kind'] == 'token')
-        verdicts = re.findall(r'(?im)^\s*(?:\*\*)?VERDICT\s*:\s*(PASS|FAIL)', text)
         tested = [event['passed'] for event in events if event['kind'] == 'tested']
         row['phases'][phase] = {'exit':result.returncode, 'calls':len(spend),
                                 'tool_errors':sum(event['is_error'] for event in tool_results),
-                                'verdict':verdicts[-1] if verdicts else None,
+                                'verdict':review_verdict(text),
                                 'test_pass':tested[-1] if tested else None,
                                 'text':text[-4000:]}
         if result.returncode or not row['accounting_complete']:
@@ -194,16 +236,13 @@ mode = "off"
     # Models never see the reference or hidden tests. Only now reveal acceptance.
     overlay(task / 'hidden', project)
     row['acceptance'] = commands(project, spec['accept'], env)
-    row['completed'] = passed(row['acceptance'])
-    review = row['phases'].get('review', {})
-    test = row['phases'].get('test', {})
-    row['false_review_pass'] = review.get('verdict') == 'PASS' and not row['completed']
-    row['false_test_pass'] = test.get('test_pass') is True and not row['completed']
+    score(row)
     return row
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--rescore', type=Path, help='recalculate a saved report from its events; no provider calls')
     parser.add_argument('--mode', choices=['reference','simulated','live'], default='reference')
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/debug/ryter')
     parser.add_argument('--output', type=Path)
@@ -214,6 +253,8 @@ def main():
     parser.add_argument('--simulate-broken-build', action='store_true',
                         help='negative control: simulated reviewers/testers pass an unchanged fixture')
     args = parser.parse_args()
+    if args.rescore:
+        return rescore(args.rescore.resolve(), args.output)
     args.binary = args.binary.resolve()
     if args.simulate_broken_build and args.mode != "simulated":
         parser.error("--simulate-broken-build requires simulated mode")
@@ -225,7 +266,7 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     report = {'mode':args.mode, 'model':args.model if args.mode == 'live' else None,
               'budget_usd':args.budget, 'negative_control':args.simulate_broken_build, 'total_usd':0.0, 'tasks':{},
-              'cost_kind':'recorded provider usage' if args.mode == 'live' else 'synthetic fixture accounting; no charge'}
+              'scoring_version':2, 'cost_kind':'recorded provider usage' if args.mode == 'live' else 'synthetic fixture accounting; no charge'}
     tasks = [(p.parent, tomllib.loads(p.read_text())) for p in sorted((ROOT / 'bench').glob('*/task.toml'))
              if not args.task or p.parent.name in args.task]
     if not tasks:

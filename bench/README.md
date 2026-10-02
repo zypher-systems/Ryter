@@ -81,3 +81,16 @@ as `cargo --version`.
 Visible checks are deliberately weaker than the hidden tests. Work that passes
 the checks and its review but fails the hidden tests is a **false pass**: the
 number that says how far a review can be trusted.
+
+## Recorded live result
+
+See [the October 2 acceptance report](../docs/acceptance-2026-10-02.md): six of ten
+implementations passed hidden checks, five completed with both verification hats
+passing, and three incorrect implementations received false passes from each hat.
+The authorized $5 run recorded $0.418755831. No live calls run in CI.
+
+`completed` measures hidden acceptance; `flow_completed` additionally requires all
+four phases to exit successfully and both verification hats to pass. Explicit
+Markdown verdicts are parsed like the application. Recalculate an existing report
+without executing commands or calling a provider with
+`python3 bench/run.py --rescore PATH/report.json --output NEW_REPORT.json`.

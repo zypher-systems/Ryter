@@ -2,6 +2,11 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Keep implementation success separate from verification claims
+- **Decision:** Preserve the first paid run, including failures, and distinguish hidden acceptance from a complete passing hat flow. Align benchmark verdict parsing with the app’s Markdown handling; support offline rescoring from saved events while retaining the original report and cost.
+- **Evidence:** Six of ten implementations passed hidden acceptance; five completed all hats with passing verification. Three incorrect implementations received both review and Test passes. Total recorded cost was $0.418755831 with complete accounting; no repeat paid run was used to change the score.
+- **Why:** The Test hat can fail a task whose implementation is correct, and a Markdown heading must not hide a false pass. These are different observations. See `docs/acceptance-2026-10-02.md` for limits and the reproducible failures.
+
 ### 2026-10-02 — Acceptance evidence includes an independent hidden check
 - **Decision:** Keep a deterministic full-session test in the core and run actual CLI processes against a loopback provider. Restore a ten-task hats benchmark that validates every reference and proves each unchanged fixture fails hidden acceptance before any paid request. Hidden tests are revealed only after the live hats finish.
 - **Why:** Passing unit tests and a model’s own verdict do not demonstrate the assembled product or catch false passes. Simulated reference answers exercise the plumbing, while an intentionally broken builder calibrates false-pass detection. Neither is a model-quality score.
