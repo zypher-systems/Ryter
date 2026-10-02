@@ -2,6 +2,11 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Give each Git operation its own scratch directory
+- **Decision:** Create a unique, owner-only directory under the repository’s Git metadata for each snapshot index, initial-commit probe and commit message. A scoped owner removes its files on every return path; it never unlinks a shared legacy filename.
+- **Why:** Two sessions creating checkpoints could remove or write the same `ryter-undo-index`; commit messages had the same collision through `RYTER_COMMIT_MSG`. A private directory also keeps Git’s index lock local to that operation. The user’s real index remains governed by Git’s own locking.
+- **Evidence and limits:** Eight simultaneous checkpoints preserve both the real staged index and a pre-existing legacy filename; failure cleanup is checked too. Four session writers append complete records that survive resume. Operation locks protect on-disk records, but simultaneous interactive writers still have separate in-memory conversations; this does not promise a shared live conversation or serializable concurrent commits.
+
 ### 2026-10-02 — Bound memory while reading, before formatting tool results
 - **Decision:** Retain 32 KB per shell pipe, split between its head and most recent tail, while counting and draining every byte. Live output uses the bounded tail. File paging retains at most 32 KB per line and stops when its output budget is reached; skipped offsets allocate no line content. Grep streams lines up to 64 KB, reports longer lines skipped, and stops at its result budget or 200 hits.
 - **Why:** Truncating a result after collecting all output does not bound the memory used by a noisy process or a giant file. The first command output and final error/summary are both useful, so pipe capture retains both ends and reports the omitted byte count.

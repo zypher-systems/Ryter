@@ -1,6 +1,9 @@
 //! Git helpers: the repository a turn works in, and the snapshots that
 //! `/undo`, `/changes` and a review are measured against.
 
+mod scratch;
+pub(crate) use scratch::Scratch;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -50,15 +53,8 @@ pub fn checkpoint(dir: &Path, name: &str) -> Result<Option<String>> {
     if !is_repo(dir) {
         return Ok(None);
     }
-    let index = std::path::PathBuf::from(
-        git(dir, &["rev-parse", "--git-path", "ryter-undo-index"])?.trim(),
-    );
-    let index = if index.is_absolute() {
-        index
-    } else {
-        dir.join(index)
-    };
-    let _ = std::fs::remove_file(&index);
+    let scratch = Scratch::new(dir)?;
+    let index = scratch.path().join("index");
     let has_head = head(dir).is_ok();
     if has_head {
         git_with_index(dir, &index, &["read-tree", "HEAD"])?;
@@ -67,7 +63,6 @@ pub fn checkpoint(dir: &Path, name: &str) -> Result<Option<String>> {
     let tree = git_with_index(dir, &index, &["write-tree"])?
         .trim()
         .to_string();
-    let _ = std::fs::remove_file(&index);
     let mut args = vec!["commit-tree", tree.as_str(), "-m", "ryter undo checkpoint"];
     if has_head {
         args.extend(["-p", "HEAD"]);
@@ -398,17 +393,14 @@ fn swept_in(dir: &Path, created: bool, repos: &[String]) -> Error {
 /// don't take a staged entry out.
 fn repos_to_add(dir: &Path) -> Result<Vec<String>> {
     let git_dir = PathBuf::from(git(dir, &["rev-parse", "--absolute-git-dir"])?.trim());
-    static PROBES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let n = PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let index = git_dir.join(format!("ryter-first-commit-{}-{n}", std::process::id()));
-    let _ = std::fs::remove_file(&index);
+    let scratch = Scratch::new(dir)?;
+    let index = scratch.path().join("index");
     let real = git_dir.join("index");
     if real.is_file() {
         std::fs::copy(&real, &index).map_err(|e| Error::Io(e.to_string()))?;
     }
     let staged = git_with_index(dir, &index, &["add", "-A"])
         .and_then(|_| git_with_index(dir, &index, &["ls-files", "-s", "-z"]));
-    let _ = std::fs::remove_file(&index);
     Ok(gitlinks_in(&staged?))
 }
 
@@ -594,6 +586,53 @@ pub fn init_repo(dir: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn simultaneous_snapshots_own_their_indices_and_preserve_user_staging() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+        init_repo(root).unwrap();
+        std::fs::write(root.join("README.md"), "staged\n").unwrap();
+        git(root, &["add", "README.md"]).unwrap();
+        std::fs::write(root.join("README.md"), "working\n").unwrap();
+        let index = std::fs::read(root.join(".git/index")).unwrap();
+        let legacy = root.join(".git/ryter-undo-index");
+        std::fs::write(&legacy, "belongs to somebody else").unwrap();
+        let gate = std::sync::Barrier::new(8);
+        let shas = std::thread::scope(|scope| {
+            let jobs: Vec<_> = (0..8)
+                .map(|i| {
+                    let gate = &gate;
+                    scope.spawn(move || {
+                        gate.wait();
+                        checkpoint(root, &format!("parallel-{i}")).unwrap().unwrap()
+                    })
+                })
+                .collect();
+            jobs.into_iter()
+                .map(|j| j.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        for sha in shas {
+            assert_eq!(
+                git(root, &["show", &format!("{sha}:README.md")]).unwrap(),
+                "working\n"
+            );
+        }
+        assert_eq!(std::fs::read(root.join(".git/index")).unwrap(), index);
+        assert_eq!(
+            std::fs::read_to_string(legacy).unwrap(),
+            "belongs to somebody else"
+        );
+        // An invalid ref fails after creating the snapshot and must clean up too.
+        assert!(checkpoint(root, "invalid name").is_err());
+        assert!(
+            !std::fs::read_dir(root.join(".git"))
+                .unwrap()
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with("ryter-tmp-"))
+        );
+    }
 
     #[test]
     fn nested_restore_uses_root_paths_and_preserves_unrelated_work() {
