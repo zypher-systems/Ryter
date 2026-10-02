@@ -424,6 +424,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let cancel = Cancel::new();
         let ctx = ToolContext {
+            sandbox: None,
             live: None,
             workspace: dir.path().to_path_buf(),
             notes_dir: dir.path().to_path_buf(),

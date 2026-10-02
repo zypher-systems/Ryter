@@ -18,6 +18,8 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 
 ## Now
 
+- **Unreleased — review repair 7c: session sandbox scopes.** Each tool, hook, automatic Git operation and approved lifecycle command runs in a fresh scope with only the active session’s notes and pages. Other sessions and private records stay closed. Session switching keeps working without accumulating grants.
+
 - **Unreleased — review repair 1 follow-up: protected path components.** Shared secret classification now catches credential directories at the project root as well as nested paths. All four hats reject direct reads, shell reads and linked aliases; grep skips their contents. Example environment files and published verification keys remain readable.
 
 - **Unreleased — review repair 8d: Git scratch ownership.** Each checkpoint, initial-index probe and commit message owns a unique private scratch directory in Git metadata. Cleanup runs on success and failure. Concurrent snapshots preserve the real index; concurrent session appends remain readable after resume.

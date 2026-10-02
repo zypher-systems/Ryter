@@ -370,7 +370,10 @@ async fn run_prompt(
     } else {
         Session::create(&home, &cwd, conn_name.clone(), model.clone())?
     };
-    sandbox::apply(profile, &cwd, &home)?;
+    let tool_sandbox = sandbox::Scope::for_profile(profile, &home);
+    if let Some(scope) = &tool_sandbox {
+        scope.check(&cwd, &session.notes_dir())?;
+    }
     let notes = session.notes_dir();
     let (tx, rx) = mpsc::channel();
     let json = cli.json;
@@ -404,6 +407,7 @@ async fn run_prompt(
         book: PriceBook::from_config(&cfg),
         session,
         ctx: ToolContext {
+            sandbox: tool_sandbox,
             live: None,
             workspace: cwd.clone(),
             notes_dir: notes,
@@ -433,7 +437,7 @@ async fn run_prompt(
         trusted,
         context_window: 0,
         cfg: Some(cfg.clone()),
-        machine: ryter_core::prompt::machine_here(),
+        machine: ryter_core::prompt::machine_for(profile),
         product: None,
         filed: Default::default(),
     };
@@ -758,13 +762,17 @@ fn mcp_serve() -> ryter_core::Result<()> {
         .ok()
         .map(|h| Arc::new(std::sync::Mutex::new(h)));
     let profile = cfg.sandbox.profile()?;
-    sandbox::apply(profile, &cwd, &home)?;
+    let tool_sandbox = sandbox::Scope::for_profile(profile, &home);
+    if let Some(scope) = &tool_sandbox {
+        scope.check(&cwd, &session.notes_dir())?;
+    }
     let rt = sandbox::runtime(profile).map_err(|e| Error::Io(e.to_string()))?;
     let agent = Agent {
         provider: Arc::new(provider),
         book: PriceBook::from_config(&cfg),
         session,
         ctx: ToolContext {
+            sandbox: tool_sandbox,
             live: None,
             workspace: cwd.clone(),
             notes_dir: notes,
@@ -797,7 +805,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
         trusted,
         context_window: 0,
         cfg: Some(cfg.clone()),
-        machine: ryter_core::prompt::machine_here(),
+        machine: ryter_core::prompt::machine_for(profile),
         product: None,
         filed: Default::default(),
     };
@@ -874,7 +882,10 @@ fn serve_host_from_config(
         .ok()
         .map(|h| Arc::new(std::sync::Mutex::new(h)));
     let profile = cfg.sandbox.profile()?;
-    sandbox::apply(profile, cwd, &home)?;
+    let tool_sandbox = sandbox::Scope::for_profile(profile, &home);
+    if let Some(scope) = &tool_sandbox {
+        scope.check(cwd, &session.notes_dir())?;
+    }
     let rt = sandbox::runtime(profile).map_err(|e| Error::Io(e.to_string()))?;
     let cancel = ryter_core::Cancel::new();
     let agent = Agent {
@@ -882,6 +893,7 @@ fn serve_host_from_config(
         book: PriceBook::from_config(cfg),
         session,
         ctx: ToolContext {
+            sandbox: tool_sandbox,
             live: None,
             workspace: cwd.to_path_buf(),
             notes_dir: notes,
@@ -914,7 +926,7 @@ fn serve_host_from_config(
         trusted: config::is_trusted(cwd),
         context_window: 0,
         cfg: Some(cfg.clone()),
-        machine: ryter_core::prompt::machine_here(),
+        machine: ryter_core::prompt::machine_for(profile),
         product: None,
         filed: Default::default(),
     };

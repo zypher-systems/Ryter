@@ -2,6 +2,13 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Tool scopes follow the active session
+- **Decision:** Keep the agent’s bookkeeping on its parent thread. Run built-in tools, command hooks, automatic Git work and approved lifecycle commands on fresh Landlock threads. Grant only the active session’s notes and pages, plus the existing workspace/system/tool/cache/scratch allowances. Prove the requested profile before the first provider call; enforcement errors never execute a command.
+- **Why:** A permanent grant on all sessions exposes other projects. A permanent grant on just the initial session breaks new/resumed sessions because Landlock restrictions cannot be removed. Fresh workers follow the current notes path without accumulating grants; transcripts, spending, metadata and approvals stay outside command access.
+- **Boundaries:** Refuse linked storage components, a workspace containing Ryter’s home, or a home under shared system/scratch directories. PATH and tool/cache grants cannot reopen Ryter’s home. Git filters can execute repository-configured code, so automatic snapshots and review preparation are scoped too. Browser opening remains disabled under a profile.
+- **Limits:** The filesystem profile does not restrict network access, container daemons, or separately configured outbound MCP servers. Shared scratch and tool caches remain shared. Kernel enforcement is Linux-only and requested profiles still fail closed elsewhere.
+- **Evidence:** Tests use isolated storage outside shared scratch. They exercise raw cross-session reads/writes, private record denial, new/resumed scopes, linked storage, PATH aliases, real gate/hooks, automatic Git filters, pages/skills and parent-thread persistence.
+
 ### 2026-10-02 — Classify protected directories as components
 - **Decision:** Extract shared secret-name rules from the large command policy into `tools/secret.rs`. Match credential directory components at any depth, including root `.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube` and `.docker`, and direct credential filenames such as `.netrc` and `.npmrc`.
 - **Why:** A substring requiring a leading slash missed root-relative `.ssh/config`. Home-directory protection did not cover a checked-out project with the same credential layout. The reproduced root read was allowed before the fix; the maintained all-hat regression now checks direct execution, shell policy, grep and linked aliases alongside public fixture files.

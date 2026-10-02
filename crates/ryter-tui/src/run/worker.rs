@@ -266,9 +266,11 @@ pub fn run(init: WorkerInit) {
         live_transcript,
         user_io,
     } = init;
-    if let Err(e) = sandbox::apply(profile, &cwd, &home) {
-        send_err(&ev_tx, e.to_string());
-        return;
+    if let Some(scope) = sandbox::Scope::for_profile(profile, &home) {
+        if let Err(e) = scope.check(&cwd, &session.notes_dir()) {
+            send_err(&ev_tx, e.to_string());
+            return;
+        }
     }
     let rt = match sandbox::runtime(profile) {
         Ok(rt) => rt,
@@ -282,6 +284,7 @@ pub fn run(init: WorkerInit) {
     if let (Some(key), Some(s)) = (key, session_hold.take()) {
         let a = build_agent(BuildAgent {
             cfg: &cfg,
+            profile,
             conn,
             key,
             session: s,
@@ -758,6 +761,7 @@ pub fn run(init: WorkerInit) {
                     let _ = s.set_route(name.clone(), new_model.clone());
                     let a = build_agent(BuildAgent {
                         cfg: &cfg,
+                        profile,
                         conn: c,
                         key: new_key,
                         session: s,
@@ -858,6 +862,7 @@ fn refresh_live(
 
 struct BuildAgent<'a> {
     cfg: &'a Config,
+    profile: sandbox::SandboxProfile,
     conn: ConnectionConfig,
     key: String,
     session: Session,
@@ -883,6 +888,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         book: PriceBook::from_config(b.cfg),
         session: b.session,
         ctx: ToolContext {
+            sandbox: sandbox::Scope::for_profile(b.profile, b.home),
             live: None,
             workspace: b.cwd.to_path_buf(),
             notes_dir: notes,
@@ -914,7 +920,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         trusted: b.trusted,
         context_window: 0,
         cfg: Some(b.cfg.clone()),
-        machine: ryter_core::prompt::machine_here(),
+        machine: ryter_core::prompt::machine_for(b.profile),
         product: None,
         filed: Default::default(),
     }

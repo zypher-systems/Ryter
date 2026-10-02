@@ -178,9 +178,14 @@ pub fn machine((docker, podman): (bool, bool), sandbox: crate::sandbox::SandboxP
 
 /// [`machine`], for the machine and the thread this is called on.
 pub fn machine_here() -> String {
+    machine_for(crate::sandbox::active())
+}
+
+/// Machine guidance for the profile applied to scoped tool workers.
+pub fn machine_for(profile: crate::sandbox::SandboxProfile) -> String {
     machine(
         container_tools_in(std::env::var_os("PATH").as_deref()),
-        crate::sandbox::active(),
+        profile,
     )
 }
 

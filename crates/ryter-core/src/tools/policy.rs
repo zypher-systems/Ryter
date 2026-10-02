@@ -5767,6 +5767,7 @@ mod tests {
 
     fn ctx_for(role: Role, dir: &Path) -> ToolContext {
         ToolContext {
+            sandbox: None,
             live: None,
             workspace: dir.to_path_buf(),
             notes_dir: dir.join("notes"),
