@@ -150,6 +150,25 @@ impl fmt::Display for Role {
     }
 }
 
+/// What `[ui] start_hat` may say.
+pub const START_HATS: &[&str] = &["plan", "build", "review", "last"];
+
+/// The hat a new session opens in, from `[ui] start_hat` and the hat this
+/// project's latest session ended in. `last` with no earlier session, or
+/// one that ended in the test hat (a test needs something to test), is
+/// plan; so is a value that isn't one of [`START_HATS`].
+pub fn start_hat(setting: &str, last: Option<Role>) -> Role {
+    match setting.trim().to_ascii_lowercase().as_str() {
+        "build" => Role::SoloBuild,
+        "review" => Role::SoloReview,
+        "last" => match last.map(Role::hat) {
+            Some(Role::SoloTest) | None => Role::SoloPlan,
+            Some(hat) => hat,
+        },
+        _ => Role::SoloPlan,
+    }
+}
+
 impl FromStr for Role {
     type Err = Error;
 
@@ -169,6 +188,29 @@ impl FromStr for Role {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_session_opens_in_the_hat_the_setting_names() {
+        for (setting, last, want) in [
+            ("plan", None, Role::SoloPlan),
+            ("build", Some(Role::SoloReview), Role::SoloBuild),
+            ("review", None, Role::SoloReview),
+            (" Build ", None, Role::SoloBuild),
+            ("last", None, Role::SoloPlan),
+            ("last", Some(Role::SoloBuild), Role::SoloBuild),
+            ("last", Some(Role::SoloReview), Role::SoloReview),
+            // A test needs something to test.
+            ("last", Some(Role::SoloTest), Role::SoloPlan),
+            // A session from crew mode opens in build.
+            ("last", Some(Role::Crew), Role::SoloBuild),
+            // Test is not a hat to start in, and neither is a typo.
+            ("test", Some(Role::SoloBuild), Role::SoloPlan),
+            ("bulid", None, Role::SoloPlan),
+            ("", None, Role::SoloPlan),
+        ] {
+            assert_eq!(start_hat(setting, last), want, "{setting:?} {last:?}");
+        }
+    }
 
     #[test]
     fn only_the_build_hat_writes_source() {

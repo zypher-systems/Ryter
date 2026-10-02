@@ -351,6 +351,32 @@ impl Session {
         }
     }
 
+    /// The hat the most recently updated session for `cwd` was left in,
+    /// from its index alone: no conversation is opened. `None` when the
+    /// project has no session. A session that never recorded a hat was
+    /// left in build, as a resume of it opens: one from before sessions
+    /// started in plan, that never left the hat it began in.
+    pub fn latest_hat(home: &Path, cwd: &Path) -> Option<crate::role::Role> {
+        let root = home.join("sessions").join(cwd_slug(cwd));
+        let rd = fs::read_dir(&root).ok()?;
+        let mut best: Option<(String, Option<crate::role::Role>)> = None;
+        for ent in rd.flatten() {
+            let Ok(text) = fs::read_to_string(ent.path().join("meta.json")) else {
+                continue;
+            };
+            let Ok(meta) = serde_json::from_str::<Meta>(&text) else {
+                continue;
+            };
+            if best
+                .as_ref()
+                .is_none_or(|(t, _)| meta.updated_at.as_str() > t.as_str())
+            {
+                best = Some((meta.updated_at, meta.mode));
+            }
+        }
+        best.map(|(_, mode)| mode.unwrap_or(crate::role::Role::SoloBuild))
+    }
+
     /// Sessions for `cwd`, newest `updated_at` first.
     pub fn list(home: &Path, cwd: &Path) -> Result<Vec<SessionInfo>> {
         list_in(&home.join("sessions").join(cwd_slug(cwd)))
@@ -955,6 +981,44 @@ mod tests {
     use tempfile::TempDir;
 
     #[cfg(unix)]
+    /// `[ui] start_hat = "last"`: the hat the project's latest session was
+    /// left in, read from the sessions' indexes.
+    #[test]
+    fn the_latest_hat_is_the_most_recent_sessions() {
+        use crate::role::Role;
+        let home = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        assert_eq!(Session::latest_hat(home.path(), cwd.path()), None);
+        let mut first = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+        // A session that never recorded a hat was left in build: that is
+        // the hat a resume of it opens in.
+        assert_eq!(
+            Session::latest_hat(home.path(), cwd.path()),
+            Some(Role::SoloBuild)
+        );
+        assert_eq!(
+            crate::role::start_hat("last", Session::latest_hat(home.path(), cwd.path())),
+            Role::SoloBuild
+        );
+        first.set_mode(Role::SoloReview).unwrap();
+        assert_eq!(
+            Session::latest_hat(home.path(), cwd.path()),
+            Some(Role::SoloReview)
+        );
+        let mut second = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+        second.set_mode(Role::SoloBuild).unwrap();
+        // Later than the first, whatever the clock's grain.
+        second.meta.updated_at = format!("{}9", first.meta.updated_at);
+        second.write_meta().unwrap();
+        assert_eq!(
+            Session::latest_hat(home.path(), cwd.path()),
+            Some(Role::SoloBuild)
+        );
+        // Another project's sessions are not this one's.
+        let other = tempfile::tempdir().unwrap();
+        assert_eq!(Session::latest_hat(home.path(), other.path()), None);
+    }
+
     #[test]
     fn simultaneous_session_appends_remain_complete_on_resume() {
         let home = TempDir::new().unwrap();

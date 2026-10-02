@@ -12,6 +12,26 @@ use crate::view::View;
 /// Window for the second `Ctrl+C` (`R-COMP-14`).
 pub const QUIT_ARM_MS: u64 = 2000;
 
+/// `^b`: the info panel on the classic screen, the side columns on the
+/// solo one. A screen too narrow to hold both columns beside the
+/// conversation opens them as a panel instead, and `^b` again closes it.
+fn toggle_side(view: &mut View) {
+    let folded = !view.ui.classic()
+        && view.workbench.is_none()
+        && view.screen.get().0 < crate::rail::BOTH_MIN;
+    if !folded {
+        view.panel_visible = !view.panel_visible;
+        return;
+    }
+    if view.panels.top().is_some_and(|p| p.kind() == "rack") {
+        view.panels.pop();
+    } else if !view.panels.has_modal() {
+        view.palette = None;
+        view.panels.push(Box::new(panel::rack::Rack::default()));
+    }
+    panel::sync_composer(view);
+}
+
 /// Route one key press.
 pub fn handle(view: &mut View, key: KeyEvent) -> Action {
     // Global bindings win everywhere, except `Esc` which panels interpret
@@ -23,7 +43,7 @@ pub fn handle(view: &mut View, key: KeyEvent) -> Action {
             KeyAction::Redraw => return Action::Redraw,
             KeyAction::ToggleMouse => return Action::ToggleMouse,
             KeyAction::TogglePanel => {
-                view.panel_visible = !view.panel_visible;
+                toggle_side(view);
                 return Action::None;
             }
             KeyAction::ToggleReasoning => {

@@ -65,6 +65,9 @@ pub struct TuiOpts {
     pub sandbox: Option<String>,
     /// Resume this session id (`latest` = most recent for cwd). `None` creates a new session.
     pub session: Option<String>,
+    /// The hat to open in (`--hat`), whatever `[ui] start_hat` and the
+    /// session say.
+    pub hat: Option<ryter_core::Role>,
 }
 
 #[derive(Default)]
@@ -211,7 +214,9 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         }
     }
 
-    let (session, resumed) = match opts.session.as_deref() {
+    // Read before a session is made: the new one would be the latest.
+    let last_hat = Session::latest_hat(&home, &cwd);
+    let (mut session, resumed) = match opts.session.as_deref() {
         Some("latest") | Some("") => match Session::latest(&home, &cwd)? {
             Some(s) => (s, true),
             None => (
@@ -231,6 +236,16 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         if let Some(c) = cfg.connections.get(&conn_name) {
             conn = c.clone();
         }
+    }
+    // A new session opens in the hat the setting names; a resumed one in
+    // the hat it was left in. `--hat` overrides either, for this run.
+    let start = match (opts.hat, resumed) {
+        (Some(hat), _) => Some(hat),
+        (None, false) => Some(ryter_core::role::start_hat(&cfg.ui.start_hat, last_hat)),
+        (None, true) => None,
+    };
+    if let Some(hat) = start {
+        session.set_mode(hat)?;
     }
     let key = resolve_secret(&cfg, &ConnectionId::new(&conn_name)).ok();
 
@@ -262,6 +277,17 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     if resumed {
         actions::fill_view_from_session(&mut view, &session);
     }
+    if let Some(hat) = start {
+        view.mode = hat;
+        view.agent_hat = hat;
+        view.show(hat.thread());
+    }
+    if !resumed {
+        view.system(format!(
+            "starting in the {hat} hat · Tab to change it · /help for keys",
+            hat = view.mode
+        ));
+    }
     for w in cfg.warnings.clone() {
         view.warn(w);
     }
@@ -271,6 +297,8 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         ));
     }
     actions::load_project_spend(&mut view, &home, &cwd);
+    view.workspace = Some(cwd.clone());
+    view.refresh_uncommitted();
     if config::asks_for_trust(&cwd) && !trusted {
         view.panels.push(Box::new(TrustModal::default()));
     }

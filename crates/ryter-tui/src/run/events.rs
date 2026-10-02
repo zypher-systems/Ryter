@@ -59,6 +59,7 @@ fn receipt(view: &mut View, verb: &Verb, tools: u32, duration_ms: u64) -> String
 /// conversation, and the screen follows it.
 pub fn apply(view: &mut View, ev: AgentEvent) {
     use ryter_core::Thread;
+    view.rack.apply(&ev);
     // The agent saying which hat it put on at the user's Tab. Once it has
     // caught up with every Tab, its word stands: a Tab pressed while it was
     // changing hats itself would otherwise leave the screen naming a hat
@@ -131,6 +132,8 @@ fn apply_to_shown(view: &mut View, ev: AgentEvent) {
             | AgentEvent::Notice { .. }
     ) {
         apply_inner(view, &ev);
+        // So do the instruments, of what is uncommitted.
+        view.refresh_uncommitted();
         if let Some(mut w) = view.workbench.take() {
             w.reload(view);
             view.workbench = Some(w);
@@ -372,11 +375,14 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             ));
         }
         AgentEvent::Checkpoint { sha } => view.last_checkpoint = sha.clone(),
+        // The rack counts it; the plan's own notice says it in the chat.
+        AgentEvent::Planned { .. } => {}
         // The commit panel shows the draft.
         AgentEvent::CommitDraft { .. } => {}
         AgentEvent::Committed { summary, error } => match (summary, error) {
             (Some(s), _) => {
                 view.system(format!("committed {s}"));
+                view.refresh_uncommitted();
                 view.last_tests = None;
                 view.tests_stale = false;
                 view.last_review = None;

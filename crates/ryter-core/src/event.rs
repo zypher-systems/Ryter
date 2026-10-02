@@ -143,6 +143,12 @@ pub enum AgentEvent {
         #[serde(default)]
         total_usd: Option<f64>,
     },
+    /// The user answered a plan on its panel: approved it or rejected it.
+    /// (Asking for changes is neither; the plan comes back.)
+    Planned {
+        /// Whether they approved it.
+        approved: bool,
+    },
     /// The agent has put on the hat the user chose with Tab. Said back so
     /// the screen and the agent can't come to disagree: a Tab pressed while
     /// the agent was changing hats itself (a review, a test) is applied

@@ -1,9 +1,8 @@
-//! The solo screen's side rail (design S2): the name, the session, the hat
-//! in its color, the model and its context, what it has cost, and what the
-//! last turn changed. The ledger had most of it in one bar at the bottom,
-//! the hat a small chip at its left end, and no name anywhere.
-
-use std::collections::BTreeMap;
+//! The hat rack (`docs/hat-rack-design.md` §5): the solo screen's left
+//! column. One block a hat, always in the same order and always the same
+//! height: the hat's model, how many turns it has had, what it has cost,
+//! and the one or two figures that mean something for that hat. It never
+//! lists turns: the conversation is the list of turns.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -12,128 +11,117 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ryter_core::Role;
 
-use crate::chat::{MessageKind, turn_usd, wrap};
+use crate::chat::{turn_usd, wrap};
 use crate::theme::Theme;
 use crate::view::View;
 
-/// Columns the rail takes, its right edge included.
-pub const RAIL_W: u16 = 34;
-/// Narrowest screen that keeps the rail: the conversation needs about
-/// seventy-six columns beside it.
-pub const RAIL_MIN_SCREEN: u16 = 110;
+/// Columns the rack takes, the hairline on its right included.
+pub const RACK_W: u16 = 30;
+/// Narrowest screen that shows the rack and the instruments together.
+pub const BOTH_MIN: u16 = 132;
+/// Narrowest screen that shows the instruments.
+pub const INSTRUMENTS_MIN: u16 = 100;
+/// The hats, in the order `Tab` goes round them.
+pub const HATS: [Role; 4] = [
+    Role::SoloPlan,
+    Role::SoloBuild,
+    Role::SoloReview,
+    Role::SoloTest,
+];
 
-/// Whether the rail shows: on the ledger, the conversation on screen, wide
-/// enough, and not hidden with `^b`.
-pub fn shown(view: &View, width: u16) -> bool {
-    !view.ui.classic() && view.workbench.is_none() && view.panel_visible && width >= RAIL_MIN_SCREEN
+/// What a screen of some width has room for beside the conversation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tier {
+    /// The rack and the instruments.
+    Wide,
+    /// The instruments, condensed.
+    Mid,
+    /// Neither: a status line at the foot.
+    Narrow,
 }
 
-/// What each hat does, in a line.
-fn hat_words(mode: Role) -> (&'static str, &'static str, &'static str) {
-    match mode {
-        Role::SoloPlan => ("PLAN", "reads and designs only", "build·review·test"),
-        Role::SoloReview => ("REVIEW", "reads the changes, reports", "plan·build·test"),
-        Role::SoloTest => ("TEST", "uses the product", "plan·build·review"),
-        _ => ("BUILD", "edits files, runs commands", "plan·review·test"),
+/// The tier a screen `width` columns wide is in.
+pub fn tier(width: u16) -> Tier {
+    if width >= BOTH_MIN {
+        Tier::Wide
+    } else if width >= INSTRUMENTS_MIN {
+        Tier::Mid
+    } else {
+        Tier::Narrow
     }
 }
 
-/// Paint the rail into `area` (its full height, right edge included).
-pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
-    let bg = theme.sidebar_bg;
-    let edge = Rect {
-        x: area.x + area.width.saturating_sub(1),
-        width: 1,
-        ..area
-    };
-    let body = Rect {
-        x: area.x + 2,
-        y: area.y + 1,
-        width: area.width.saturating_sub(4),
-        height: area.height.saturating_sub(2),
-    };
-    frame.render_widget(
-        Paragraph::new("").style(Style::default().bg(bg)),
-        Rect {
-            width: area.width.saturating_sub(1),
-            ..area
-        },
-    );
-    frame.render_widget(
-        Paragraph::new(
-            (0..edge.height)
-                .map(|_| {
-                    Line::from(Span::styled(
-                        "│",
-                        Style::default().fg(theme.gauge_track).bg(theme.bg),
-                    ))
-                })
-                .collect::<Vec<_>>(),
-        ),
-        edge,
-    );
-    let w = usize::from(body.width);
-    let foot = views_line(view, theme, bg);
-    // Sections in the order they read; when the screen is short, the last
-    // ones go first, but the name, the hat and the spend stay.
-    let sections = [
-        (0, name(view, theme, bg, w)),
-        (3, session(view, theme, bg, w)),
-        (0, hat(view, theme, bg, w)),
-        (2, model(view, theme, bg, w)),
-        (1, spend(view, theme, bg, w)),
-        (4, changed(view, theme, bg, w)),
-    ];
-    let room = usize::from(body.height).saturating_sub(2);
-    let mut keep: Vec<bool> = vec![true; sections.len()];
-    let height = |keep: &[bool]| -> usize {
-        sections
-            .iter()
-            .zip(keep)
-            .filter(|(_, k)| **k)
-            .map(|((_, s), _)| s.len() + 1)
-            .sum()
-    };
-    for drop in [4, 3, 2, 1] {
-        if height(&keep) <= room {
-            break;
-        }
-        for (i, (rank, _)) in sections.iter().enumerate() {
-            if *rank == drop {
-                keep[i] = false;
-            }
-        }
+/// A hat's name as the screen says it.
+pub fn hat_name(hat: Role) -> &'static str {
+    match hat {
+        Role::SoloPlan => "PLAN",
+        Role::SoloReview => "REVIEW",
+        Role::SoloTest => "TEST",
+        Role::SoloBuild | Role::Crew => "BUILD",
     }
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    for ((_, s), k) in sections.into_iter().zip(&keep) {
-        if *k {
-            lines.extend(s);
-            lines.push(Line::from(""));
-        }
-    }
-    lines.truncate(room);
-    while lines.len() < usize::from(body.height).saturating_sub(1) {
-        lines.push(Line::from(""));
-    }
-    lines.push(foot);
-    frame.render_widget(
-        Paragraph::new(lines).style(Style::default().fg(theme.fg).bg(bg)),
-        body,
-    );
 }
 
-fn heading(label: &str, theme: Theme, bg: Color) -> Line<'static> {
-    Line::from(Span::styled(
-        label.to_string(),
-        Style::default()
-            .fg(theme.dim)
-            .bg(bg)
-            .add_modifier(Modifier::BOLD),
-    ))
+/// The mark beside a hat's name: the one on, one that has had a turn, one
+/// that has not. It tells them apart where color can't.
+pub fn hat_mark(view: &View, hat: Role) -> &'static str {
+    if view.mode == hat {
+        "◆"
+    } else if view.rack.worn(hat) {
+        "●"
+    } else {
+        "○"
+    }
 }
 
-/// The end of `s` in at most `max` columns, `…` where it was cut: the
-/// folder's own name is the part worth keeping.
+/// The model `hat`'s next message goes to: its own where it has one,
+/// otherwise the one every hat uses.
+pub fn hat_model(view: &View, hat: Role) -> &str {
+    view.specialists
+        .get(hat.as_str())
+        .filter(|r| r.is_override())
+        .and_then(|r| r.model.as_deref())
+        .unwrap_or(&view.model)
+}
+
+/// What `hat` has cost this session. A call with no price is `$?.??`, and
+/// a total that leaves some out says so: never a made-up `$0.00`.
+pub fn hat_spend(view: &View, hat: Role) -> String {
+    match view.spend_rows_role.get(hat.as_str()) {
+        Some(row) if row.unpriced && row.usd <= 0.0 => "$?.??".into(),
+        Some(row) if row.unpriced => format!("≥{}", turn_usd(row.usd)),
+        Some(row) => turn_usd(row.usd),
+        None => "$0".into(),
+    }
+}
+
+/// `left` and `right` at the two ends of a row `w` columns wide, on `bg`.
+pub(crate) fn ends(
+    left: Vec<Span<'static>>,
+    right: Vec<Span<'static>>,
+    w: usize,
+    bg: Color,
+) -> Line<'static> {
+    let used: usize = left
+        .iter()
+        .chain(&right)
+        .map(|s| wrap::width(&s.content))
+        .sum();
+    let mut spans = left;
+    spans.push(Span::styled(
+        " ".repeat(w.saturating_sub(used)),
+        Style::default().bg(bg),
+    ));
+    spans.extend(right);
+    Line::from(spans)
+}
+
+/// A card's heading: its name, dim.
+pub(crate) fn heading(label: &str, theme: Theme, bg: Color) -> Span<'static> {
+    Span::styled(label.to_string(), Style::default().fg(theme.dim).bg(bg))
+}
+
+/// The end of `s` in at most `max` columns, `…` where it was cut: a
+/// path's file name is the part worth keeping.
 pub(crate) fn tail(s: &str, max: usize) -> String {
     let n = s.chars().count();
     if n <= max {
@@ -143,337 +131,264 @@ pub(crate) fn tail(s: &str, max: usize) -> String {
     format!("…{}", s.chars().skip(n - keep).collect::<String>())
 }
 
-/// `label` then `value`, the value at a fixed column.
-fn row(label: &str, value: Vec<Span<'static>>, theme: Theme, bg: Color) -> Line<'static> {
-    let mut v = vec![Span::styled(
-        format!("{label:<12}"),
-        Style::default().fg(theme.dim).bg(bg),
-    )];
-    v.extend(value);
-    Line::from(v)
-}
-
-fn name(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>> {
-    let project = std::path::Path::new(&view.cwd)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| view.cwd.clone());
-    let place = match &view.git_branch {
-        Some(b) => format!("{project} · {b}"),
-        None => project,
-    };
-    vec![
-        Line::from(Span::styled(
-            "R Y T E R",
-            Style::default()
-                .fg(theme.fg)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(
-            wrap::truncate(&place, w),
-            Style::default().fg(theme.dim).bg(bg),
-        )),
-    ]
-}
-
-fn session(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>> {
-    let title = view.session_title.trim();
-    let title = if title.is_empty() {
-        "new session"
+/// One hat's block. `figures` adds the rows that are that hat's own; a
+/// short screen leaves them off every block at once.
+fn block(view: &View, theme: Theme, hat: Role, w: usize, figures: bool) -> Vec<Line<'static>> {
+    let on = view.mode == hat;
+    let worn = view.rack.worn(hat);
+    let bg = if on {
+        theme.rack_tint(hat)
     } else {
-        title
+        theme.sidebar_bg
     };
-    let mut lines = vec![heading("SESSION", theme, bg)];
-    let mut wrapped = wrap::wrap_plain(title, w);
-    if wrapped.len() > 3 {
-        wrapped.truncate(3);
-        let last = wrapped[2].clone();
-        wrapped[2] = wrap::truncate(&format!("{last}…"), w);
-    }
-    for l in wrapped {
-        lines.push(Line::from(Span::styled(
-            l,
-            Style::default()
-                .fg(theme.fg)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
-        )));
-    }
-    // The session's, in both conversations, whichever is on screen.
-    let turns = view
-        .session_messages()
-        .filter(|m| matches!(m.kind, MessageKind::User))
-        .count();
-    let since = view
-        .session_messages()
-        .next()
-        .map(|m| format!("since {} · ", m.at.hhmm()))
-        .unwrap_or_default();
-    lines.push(Line::from(Span::styled(
-        format!("{since}{turns} turn{}", if turns == 1 { "" } else { "s" }),
-        Style::default().fg(theme.dim).bg(bg),
-    )));
-    lines
-}
-
-/// The hat, as a block in its color: the thing to find at a glance.
-fn hat(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>> {
-    let (label, does, others) = hat_words(view.mode);
-    let color = theme.mode(view.mode);
-    let block = |text: String, bold: bool| {
-        let mut style = Style::default().fg(theme.bg).bg(color);
-        if bold {
-            style = style.add_modifier(Modifier::BOLD);
-        }
-        Line::from(Span::styled(wrap::pad_right(&text, w), style))
+    let color = theme.mode(hat);
+    let dim = Style::default().fg(theme.dim).bg(bg);
+    let body = Style::default().fg(theme.fg).bg(bg);
+    let pad = |spans: Vec<Span<'static>>| ends(spans, Vec::new(), w, bg);
+    let row = |label: &str, value: Vec<Span<'static>>, label_style: Style| {
+        ends(
+            vec![Span::styled(format!("  {label}"), label_style)],
+            value,
+            w,
+            bg,
+        )
     };
-    vec![
-        block(format!(" {label}"), true),
-        block(
-            format!(" {}", wrap::truncate(does, w.saturating_sub(1))),
-            false,
-        ),
-        Line::from(vec![
-            Span::styled(
-                format!("{others}   "),
-                Style::default().fg(theme.dim).bg(bg),
-            ),
-            Span::styled(
-                "tab",
-                Style::default()
-                    .fg(theme.accent)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" switch", Style::default().fg(theme.dim).bg(bg)),
-        ]),
-    ]
-}
-
-/// `24k`, `1.2M`.
-fn short_count(n: u64) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1000 {
-        format!("{}k", n / 1000)
+    let mark_style = if on || worn {
+        Style::default().fg(color).bg(bg)
     } else {
-        n.to_string()
-    }
-}
-
-fn model(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>> {
-    let dim = Style::default().fg(theme.dim).bg(bg);
-    // The model this hat's next message goes to.
-    let name = crate::chat::short_model(view.hat_model()).to_string();
-    let reasoning = format!(" · reasoning {}", view.reasoning_label(view.hat_model()));
-    let name = wrap::truncate(&name, w);
-    let reasoning = wrap::truncate(&reasoning, w.saturating_sub(wrap::width(&name)));
-    let frac = view.ctx_frac();
-    let pct = format!(" {}%", (frac * 100.0).round() as u32);
-    let cells = w.saturating_sub(4 + pct.len());
-    let filled = ((frac * cells as f64).round() as usize).min(cells);
-    let window = view.ctx_window_or_default();
-    vec![
-        heading("MODEL", theme, bg),
-        Line::from(vec![
-            Span::styled(name, Style::default().fg(theme.fg).bg(bg)),
-            Span::styled(reasoning, dim),
-        ]),
-        Line::from(vec![
-            Span::styled("ctx ", dim),
-            Span::styled(
-                "▰".repeat(filled),
-                Style::default()
-                    .fg(crate::panel::widgets::gauge_color(frac, theme))
-                    .bg(bg),
-            ),
-            Span::styled("▱".repeat(cells - filled), dim),
-            Span::styled(pct, dim),
-        ]),
-        Line::from(Span::styled(
-            format!(
-                "{} of {} tokens",
-                short_count(view.ctx_tokens.unwrap_or(0)),
-                short_count(window)
-            ),
-            dim,
-        )),
-    ]
-}
-
-/// What each turn cost, oldest first.
-fn turn_costs(view: &View) -> Vec<f64> {
-    let mut by_turn: BTreeMap<u64, f64> = BTreeMap::new();
-    for m in &view.messages {
-        if let Some(c) = m.meta.cost {
-            *by_turn.entry(m.turn).or_insert(0.0) += c;
-        }
-    }
-    by_turn.into_values().collect()
-}
-
-fn spend(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>> {
-    let dim = Style::default().fg(theme.dim).bg(bg);
-    let strong = |fg: Color| Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD);
-    let turn = view
-        .spend
-        .map(|now| now - view.turn_spend_from.unwrap_or(0.0))
-        .map_or_else(|| "$0".into(), turn_usd);
-    let session = match view.spend {
-        None if !view.spend_unknown => "$0".to_string(),
-        Some(s) if !view.spend_unknown => turn_usd(s),
-        _ => view.spend_label(),
+        dim
     };
-    // The session's cost turns yellow at the warning and red at the budget,
-    // as the bottom bar's did.
-    let session_color = match view.spend {
-        Some(s) if view.budget_usd > 0.0 && s >= view.budget_usd => theme.error,
-        Some(s) if view.warn_usd > 0.0 && s >= view.warn_usd => theme.warn,
-        _ => theme.fg,
+    let name_style = if on {
+        Style::default()
+            .fg(color)
+            .bg(bg)
+            .add_modifier(Modifier::BOLD)
+    } else if worn {
+        body.add_modifier(Modifier::BOLD)
+    } else {
+        dim.add_modifier(Modifier::BOLD)
     };
     let mut lines = vec![
-        heading("SPEND", theme, bg),
-        row(
-            "this turn",
-            vec![Span::styled(turn, strong(theme.fg))],
-            theme,
-            bg,
-        ),
-        row(
-            "session",
-            vec![Span::styled(session, strong(session_color))],
-            theme,
-            bg,
-        ),
+        pad(vec![
+            Span::styled(format!("{} ", hat_mark(view, hat)), mark_style),
+            Span::styled(hat_name(hat), name_style),
+        ]),
+        pad(vec![Span::styled(
+            format!(
+                "  {}",
+                wrap::truncate(
+                    crate::chat::short_model(hat_model(view, hat)),
+                    w.saturating_sub(2)
+                )
+            ),
+            dim,
+        )]),
     ];
-    if let Some(p) = &view.project_spend {
-        let known = turn_usd(p.total_usd);
-        let label = if p.unpriced_calls > 0 {
-            format!("≥{known}")
-        } else {
-            known
+    let totals = view.rack.of(hat);
+    if !worn {
+        lines.push(pad(vec![Span::styled("  not worn yet", dim)]));
+        return lines;
+    }
+    lines.push(row(
+        &format!(
+            "{} turn{}",
+            totals.turns,
+            if totals.turns == 1 { "" } else { "s" }
+        ),
+        vec![Span::styled(hat_spend(view, hat), body)],
+        body,
+    ));
+    if !figures {
+        return lines;
+    }
+    let good = Style::default().fg(theme.success).bg(bg);
+    let bad = Style::default().fg(theme.error).bg(bg);
+    // `✓ 2 pass`, `✗ 1 fail`: only the kinds that happened. Both have
+    // happened: the counts alone, which is what fits beside the label.
+    let tally = |passed: u32, failed: u32, pass: &str, fail: &str| {
+        let both = passed > 0 && failed > 0;
+        let said = |n: u32, mark: char, word: &str| {
+            if both {
+                format!("{mark} {n}")
+            } else {
+                format!("{mark} {n} {word}")
+            }
         };
-        lines.push(row(
-            "project",
-            vec![Span::styled(label, strong(theme.fg))],
-            theme,
-            bg,
-        ));
-        // Counted for a repository around this folder: say which.
-        if let Some(root) = &view.project_root {
-            let room = w.saturating_sub(12 + 3);
-            lines.push(row(
-                "",
-                vec![Span::styled(format!("in {}", tail(root, room)), dim)],
-                theme,
-                bg,
-            ));
+        let mut v = Vec::new();
+        if passed > 0 {
+            v.push(Span::styled(said(passed, '✓', pass), good));
         }
-    }
-    let budget = if view.budget_usd > 0.0 {
-        format!("${:.2}", view.budget_usd)
-    } else {
-        "off".into()
+        if both {
+            v.push(Span::styled("  ", dim));
+        }
+        if failed > 0 {
+            v.push(Span::styled(said(failed, '✗', fail), bad));
+        }
+        v
     };
-    lines.push(row("budget", vec![Span::styled(budget, dim)], theme, bg));
-    let costs = turn_costs(view);
-    if costs.len() > 1 {
-        const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-        let cells = w.saturating_sub(12);
-        let shown = &costs[costs.len().saturating_sub(cells)..];
-        let top = shown.iter().copied().fold(0.0_f64, f64::max).max(1e-9);
-        let bars: String = shown
-            .iter()
-            .map(|c| BARS[((c / top) * 7.0).round() as usize])
-            .collect();
-        lines.push(row(
-            "by turn",
-            vec![Span::styled(
-                bars,
-                Style::default().fg(theme.success).bg(bg),
-            )],
-            theme,
-            bg,
-        ));
-    }
-    lines
-}
-
-/// What the last turn that changed files changed, a file a line.
-fn changed(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>> {
-    let dim = Style::default().fg(theme.dim).bg(bg);
-    let last = view
-        .messages
-        .iter()
-        .filter(|m| m.meta.diff.is_some())
-        .map(|m| m.turn)
-        .max();
-    let mut files: Vec<(String, usize, usize)> = Vec::new();
-    for m in view.messages.iter().filter(|m| Some(m.turn) == last) {
-        if let Some(d) = &m.meta.diff {
-            match files.iter_mut().find(|(p, ..)| *p == d.path) {
-                Some(f) => {
-                    f.1 += d.added;
-                    f.2 += d.removed;
-                }
-                None => files.push((d.path.clone(), d.added, d.removed)),
+    match hat {
+        Role::SoloPlan => {
+            if totals.plans_approved > 0 {
+                lines.push(row(
+                    "plans",
+                    vec![Span::styled(
+                        format!("{} approved", totals.plans_approved),
+                        body,
+                    )],
+                    dim,
+                ));
+            }
+            if totals.plans_rejected > 0 {
+                lines.push(row(
+                    if totals.plans_approved > 0 {
+                        ""
+                    } else {
+                        "plans"
+                    },
+                    vec![Span::styled(
+                        format!("{} rejected", totals.plans_rejected),
+                        body,
+                    )],
+                    dim,
+                ));
+            }
+        }
+        Role::SoloBuild | Role::Crew => {
+            if !totals.files.is_empty() {
+                lines.push(row(
+                    "files",
+                    vec![Span::styled(totals.files.len().to_string(), body)],
+                    dim,
+                ));
+                lines.push(row(
+                    "lines",
+                    vec![
+                        Span::styled(format!("+{}", totals.added), good),
+                        Span::styled(format!(" −{}", totals.removed), bad),
+                    ],
+                    dim,
+                ));
+            }
+            // The latest run of the tests, whichever hat ran them.
+            if let Some(t) = &view.last_tests {
+                let style = if t.starts_with('✗') { bad } else { good };
+                lines.push(row(
+                    "tests",
+                    vec![Span::styled(wrap::truncate(t, w.saturating_sub(9)), style)],
+                    dim,
+                ));
+            }
+        }
+        Role::SoloReview => {
+            let v = tally(
+                totals.verdicts_passed,
+                totals.verdicts_failed,
+                "pass",
+                "fail",
+            );
+            if !v.is_empty() {
+                lines.push(row("verdicts", v, dim));
+            }
+        }
+        Role::SoloTest => {
+            let v = tally(
+                totals.checks_passed,
+                totals.checks_failed,
+                "passed",
+                "failed",
+            );
+            if !v.is_empty() {
+                lines.push(row("checks", v, dim));
             }
         }
     }
-    let mut lines = vec![heading("CHANGED", theme, bg)];
-    if files.is_empty() {
-        lines.push(Line::from(Span::styled("nothing yet", dim)));
-        return lines;
-    }
-    const SHOWN: usize = 4;
-    for (path, added, removed) in files.iter().take(SHOWN) {
-        let counts = format!("+{added} −{removed}");
-        let room = w.saturating_sub(wrap::width(&counts) + 1);
-        let shown = wrap::truncate(path, room);
-        let pad = w.saturating_sub(wrap::width(&shown) + wrap::width(&counts));
-        lines.push(Line::from(vec![
-            Span::styled(shown, Style::default().fg(theme.fg).bg(bg)),
-            Span::styled(" ".repeat(pad), dim),
-            Span::styled(
-                format!("+{added}"),
-                Style::default().fg(theme.success).bg(bg),
-            ),
-            Span::styled(
-                format!(" −{removed}"),
-                Style::default().fg(theme.error).bg(bg),
-            ),
-        ]));
-    }
-    if files.len() > SHOWN {
-        lines.push(Line::from(Span::styled(
-            format!("and {} more", files.len() - SHOWN),
-            dim,
-        )));
-    }
-    let key = Style::default()
-        .fg(theme.accent)
-        .bg(bg)
-        .add_modifier(Modifier::BOLD);
-    lines.push(Line::from(vec![
-        Span::styled("/undo", key),
-        Span::styled("  ", dim),
-        Span::styled("^t", key),
-        Span::styled(" all changes", dim),
-    ]));
     lines
 }
 
-/// The views there are, the one on screen lit: the ledger's strip, moved.
-fn views_line(view: &View, theme: Theme, bg: Color) -> Line<'static> {
-    let _ = view;
-    let on = Style::default()
-        .fg(theme.fg)
-        .bg(bg)
-        .add_modifier(Modifier::BOLD);
-    let off = Style::default().fg(theme.dim).bg(bg);
-    Line::from(vec![
-        Span::styled("chat", on),
-        Span::styled("  changes ^t", off),
-    ])
+/// The rack's rows for a column `w` wide with `room` rows: every hat's
+/// block with its own figures, or without them when that is what fits.
+/// `None` when even that doesn't: the rack folds away.
+pub fn lines(view: &View, theme: Theme, w: usize, room: usize) -> Option<Vec<Line<'static>>> {
+    let bg = theme.sidebar_bg;
+    let build = |figures: bool| {
+        let mut v = vec![Line::from(""), Line::from(heading("HAT RACK", theme, bg))];
+        for hat in HATS {
+            v.push(Line::from(""));
+            v.extend(block(view, theme, hat, w, figures));
+        }
+        v
+    };
+    [true, false]
+        .into_iter()
+        .map(build)
+        .find(|v| v.len() <= room)
+}
+
+/// Whether the rack has room in a column `height` rows tall.
+pub fn fits(view: &View, theme: Theme, height: u16) -> bool {
+    lines(
+        view,
+        theme,
+        usize::from(RACK_W.saturating_sub(3)),
+        usize::from(height),
+    )
+    .is_some()
+}
+
+/// Paint the rack into `area`: its full height, the hairline on its right
+/// edge included.
+pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
+    let bg = theme.sidebar_bg;
+    let panel = Rect {
+        width: area.width.saturating_sub(1),
+        ..area
+    };
+    frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), panel);
+    let body = Rect {
+        x: area.x + 1,
+        width: area.width.saturating_sub(3),
+        ..area
+    };
+    if let Some(rows) = lines(
+        view,
+        theme,
+        usize::from(body.width),
+        usize::from(body.height),
+    ) {
+        // A tinted block runs to both edges of the column, so each row is
+        // drawn across the padding as well as the text.
+        for (i, line) in rows.into_iter().enumerate() {
+            let y = area.y + i as u16;
+            let row_bg = line.spans.first().and_then(|s| s.style.bg).unwrap_or(bg);
+            frame.render_widget(
+                Paragraph::new("").style(Style::default().bg(row_bg)),
+                Rect {
+                    y,
+                    height: 1,
+                    ..panel
+                },
+            );
+            frame.render_widget(
+                Paragraph::new(line).style(Style::default().fg(theme.fg).bg(row_bg)),
+                Rect {
+                    y,
+                    height: 1,
+                    ..body
+                },
+            );
+        }
+    }
+    vline(frame, area.x + area.width.saturating_sub(1), area, theme);
+}
+
+/// A hairline down the column at `x`, for the height of `area`.
+pub(crate) fn vline(frame: &mut Frame, x: u16, area: Rect, theme: Theme) {
+    let buf = frame.buffer_mut();
+    for y in area.y..area.y + area.height {
+        if x < buf.area.width && y < buf.area.height {
+            let c = &mut buf[(x, y)];
+            c.set_symbol("│");
+            c.set_style(Style::default().fg(theme.rule).bg(theme.bg));
+        }
+    }
 }

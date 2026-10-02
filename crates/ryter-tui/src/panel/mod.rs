@@ -16,6 +16,7 @@ pub mod modal;
 pub mod models;
 pub mod plan;
 pub mod providers;
+pub mod rack;
 pub mod rules;
 pub mod sessions;
 pub mod settings;
@@ -144,6 +145,11 @@ pub trait Panel {
     fn on_notice(&mut self, _n: &Notice, _view: &mut View) {}
     /// Modal interrupts render with heavier chrome.
     fn modal(&self) -> Option<ModalKind> {
+        None
+    }
+    /// The hat this panel offers to put on, if it is such an offer: its
+    /// border takes that hat's color.
+    fn offers(&self) -> Option<ryter_core::Role> {
         None
     }
     /// Clone into a box (`View: Clone`).
@@ -520,6 +526,8 @@ fn draw_one(
     focused: bool,
 ) -> Option<(u16, u16)> {
     let border: Color = match p.modal() {
+        // An offer to switch hats is in the color of the hat it offers.
+        Some(_) if p.offers().is_some() => p.offers().map_or(theme.warn, |h| theme.mode(h)),
         Some(ModalKind::Permission) => theme.warn,
         Some(ModalKind::Ask) => theme.accent,
         None if focused => theme.panel_border,

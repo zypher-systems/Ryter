@@ -35,8 +35,8 @@ struct Cli {
     #[arg(short = 'c', long = "continue")]
     resume: bool,
 
-    /// build | plan | review | test. Default: build, or the hat a
-    /// continued session was left in.
+    /// build | plan | review | test. With `-p` the default is build, or the
+    /// hat a continued session was left in; the TUI opens in `[ui] start_hat`.
     #[arg(long)]
     hat: Option<String>,
 
@@ -164,6 +164,24 @@ enum McpCmd {
     Echo,
 }
 
+/// The hat a headless run (`-p`) is in: the one asked for, else the one a
+/// continued session was left in, else build. `[ui] start_hat` is for the
+/// TUI: a script that calls `ryter -p` expects the work done.
+fn headless_hat(asked: Option<Role>, left_in: Option<Role>) -> Role {
+    asked.unwrap_or_else(|| left_in.map_or(Role::SoloBuild, Role::hat))
+}
+
+/// `--hat` for the TUI: the hat to open in, over `[ui] start_hat`.
+fn tui_hat(hat: Option<&str>) -> Result<Option<Role>, Error> {
+    match hat {
+        Some("crew" | "lead") => Err(Error::Config(
+            "crew mode was removed: --hat takes build, plan, review, or test".into(),
+        )),
+        Some(h) => Ok(Some(h.parse::<Role>()?)),
+        None => Ok(None),
+    }
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
@@ -183,12 +201,20 @@ fn main() -> ExitCode {
                 eprintln!("ryter: not a tty (use -p for headless, --version for version)");
                 return ExitCode::from(1);
             }
+            let hat = match tui_hat(cli.hat.as_deref()) {
+                Ok(hat) => hat,
+                Err(e) => {
+                    eprintln!("{e}");
+                    return ExitCode::from(1);
+                }
+            };
             match ryter_tui::run(ryter_tui::TuiOpts {
                 always_approve: cli.always_approve,
                 connection: cli.connection,
                 model: cli.model,
                 sandbox: cli.sandbox,
                 session: None,
+                hat,
             }) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
@@ -256,12 +282,20 @@ fn main() -> ExitCode {
                 eprintln!("ryter resume: not a tty");
                 return ExitCode::from(1);
             }
+            let hat = match tui_hat(cli.hat.as_deref()) {
+                Ok(hat) => hat,
+                Err(e) => {
+                    eprintln!("{e}");
+                    return ExitCode::from(1);
+                }
+            };
             match ryter_tui::run(ryter_tui::TuiOpts {
                 always_approve: cli.always_approve,
                 connection: cli.connection,
                 model: cli.model,
                 sandbox: cli.sandbox,
                 session: Some(id.unwrap_or_else(|| "latest".into())),
+                hat,
             }) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
@@ -405,7 +439,7 @@ async fn run_prompt(
         }
     });
     // A session left in crew mode, before it was removed, opens in build.
-    let role = hat.unwrap_or_else(|| session.meta.mode.map_or(Role::SoloBuild, Role::hat));
+    let role = headless_hat(hat, session.meta.mode);
     let _ = session.set_mode(role);
     let mut agent = Agent {
         provider: Arc::new(provider),
@@ -1047,4 +1081,38 @@ fn sessions_cmd() -> ryter_core::Result<()> {
 
 fn open_by_id(home: &std::path::Path, id: &str) -> ryter_core::Result<Session> {
     Session::find(home, None, id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `[ui] start_hat` is the TUI's. A script that calls `ryter -p`
+    /// expects the work done, so headless stays in build unless told.
+    #[test]
+    fn a_headless_run_is_in_build_unless_told_otherwise() {
+        for (asked, left_in, want) in [
+            (None, None, Role::SoloBuild),
+            (None, Some(Role::SoloPlan), Role::SoloPlan),
+            (
+                Some(Role::SoloReview),
+                Some(Role::SoloPlan),
+                Role::SoloReview,
+            ),
+            (Some(Role::SoloPlan), None, Role::SoloPlan),
+            // A session from crew mode continues in build.
+            (None, Some(Role::Crew), Role::SoloBuild),
+        ] {
+            assert_eq!(headless_hat(asked, left_in), want, "{asked:?} {left_in:?}");
+        }
+    }
+
+    #[test]
+    fn the_hat_flag_names_a_hat_or_is_refused() {
+        assert_eq!(tui_hat(None).unwrap(), None);
+        assert_eq!(tui_hat(Some("plan")).unwrap(), Some(Role::SoloPlan));
+        assert_eq!(tui_hat(Some("test")).unwrap(), Some(Role::SoloTest));
+        assert!(tui_hat(Some("crew")).is_err());
+        assert!(tui_hat(Some("bulid")).is_err());
+    }
 }

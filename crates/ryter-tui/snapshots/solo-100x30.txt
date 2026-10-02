@@ -1,0 +1,30 @@
+ RYTER │ ● PLAN 1    ◆ BUILD 2    ● REVIEW 1   ○ TEST      empty-query fix      shop · search-patch
+────────────────────────────────────────────────────────────────────────────────────────────────────
+         ●  search returns eve… ···· ✓ answered · 1.2s · $0.004  ▸    │
+         ●  build the plan ········ ✓ answered · 2 files (1 ne…  ▸    │ MODEL
+         ●  review it ·············· ✓ answered · 1.2s · $0.040  ▸    │ build   deepseek-pro-latest
+                                                                      │
+         ●  dusty                                                     │ CONTEXT
+         │  fix the blocking finding                                  │ ━━━━━━━━━────────────── 38%
+         │                                                            │ 97k / 256k tokens
+         ├─ write  app/server.js ····················· +1 −1  0.0s    │
+         │    1   app.get('/search', (req, res) => {                  │ SPEND
+         │    2 -   const q = (req.query.q || '').trim()              │ session              $0.065
+         │    2 +   const q = String(req.query.q ?? '').trim()        │ project               $4.82
+         │    3     if (!q) return res.json([])                       │ budget                  off
+         │    4     res.json(find(q))                                 │
+         ├─ write  test/search.test.js ··············· +4 −0  0.0s    │ GUARD
+         │     5     assert.deepEqual(await search(''), [])           │ sandbox           workspace
+         │     6   })                                                 │ this hat         asks first
+         │     7 +                                                    │
+         │     8 + test('a missing query finds nothing', async ()     │ CHANGES
+         │         => {                                               │ 2 files              +12 −1
+         │     9 +   assert.deepEqual(await search(), [])             │ tests           ✓ 14 passed
+         │    10 + })                                                 │
+         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.0…    │
+                     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                     │
+                                                                      │
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  BUILD  › what should change? · Tab: review · / for commands
+
+ $ spend    enter send    tab review    / commands    ^t changes    ^b hat rack    ^c quit

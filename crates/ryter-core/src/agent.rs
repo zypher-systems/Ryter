@@ -1029,6 +1029,7 @@ impl Agent {
                     .display()
                     .to_string();
                 self.session.set_plan_file(Some(shown.clone()))?;
+                self.emit(AgentEvent::Planned { approved: true })?;
                 // A plan says which files it will make and change, and the
                 // user approved it: its edits are not asked about one by
                 // one. Each is still shown, and `/undo` takes them back.
@@ -1068,11 +1069,15 @@ impl Agent {
                  was saved. Revise the plan and present it again with present_plan.",
                 what.trim()
             ))),
-            PlanAnswer::Reject => Ok(ToolOutput::err(format!(
-                "the user rejected the plan: nothing was saved, and you are still in the {} \
-                 hat. Ask what they would like instead; don't present the same plan again",
-                self.role
-            ))),
+            PlanAnswer::Reject => {
+                self.emit(AgentEvent::Planned { approved: false })?;
+                Ok(ToolOutput::err(format!(
+                    "the user rejected the plan: nothing was saved, and you are still in the \
+                     {} hat. Ask what they would like instead; don't present the same plan \
+                     again",
+                    self.role
+                )))
+            }
         }
     }
 

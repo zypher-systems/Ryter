@@ -32,7 +32,7 @@ enum Gutter {
     /// The turn's closing line: `└─`.
     End,
     /// A folded turn: its time and `●`, dimmed.
-    Folded(String),
+    Folded(String, ratatui::style::Color),
 }
 
 /// One rendered message with its document offset.
@@ -176,7 +176,15 @@ fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
                 start: row,
                 separator: false,
                 spine: false,
-                gutter: Gutter::Folded(time),
+                // In the color of the hat the turn ran in.
+                gutter: Gutter::Folded(
+                    time,
+                    view.messages
+                        .iter()
+                        .find(|m| m.turn == msg.turn && !matches!(m.kind, MessageKind::User))
+                        .and_then(|m| m.meta.hat)
+                        .map_or(theme.dim, |h| theme.mode(h)),
+                ),
                 entry: Rc::new(Entry {
                     lines: vec![fold_line(view, msg.turn, width, theme)],
                     bytes: 0,
@@ -406,7 +414,7 @@ fn gutter_spans(g: &Gutter, first: bool, theme: Theme) -> Vec<Span<'static>> {
     if !first {
         return match g {
             Gutter::None => Vec::new(),
-            Gutter::Folded(_) => vec![pad("          ")],
+            Gutter::Folded(..) => vec![pad("          ")],
             _ => spine(),
         };
     }
@@ -417,7 +425,11 @@ fn gutter_spans(g: &Gutter, first: bool, theme: Theme) -> Vec<Span<'static>> {
             Span::styled("●", Style::default().fg(theme.user).bg(theme.bg)),
             pad("  "),
         ],
-        Gutter::Folded(t) => vec![Span::styled(format!("{t:<5}  ●  "), dim)],
+        Gutter::Folded(t, c) => vec![
+            Span::styled(format!("{t:<5}  "), dim),
+            Span::styled("●", Style::default().fg(*c).bg(theme.bg)),
+            pad("  "),
+        ],
         Gutter::Speaker(c) => vec![
             pad("       "),
             Span::styled("◆", Style::default().fg(*c).bg(theme.bg)),

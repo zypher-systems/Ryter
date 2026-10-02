@@ -29,6 +29,7 @@ pub struct Hit {
 /// Paint one frame.
 pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     let full = frame.area();
+    view.screen.set((full.width, full.height));
     frame.render_widget(Block::default().style(theme.body()), full);
     if full.height < 6 || full.width < 20 {
         return Hit::default();
@@ -92,7 +93,7 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     // both misleading and, next to a modal interrupt, visual noise on the one
     // screen that has to read as a single closed shape (`R-POP-75`).
     if view.panels.is_empty() {
-        draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme);
+        draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme, true);
     }
     let cards = if panel_w > 0 {
         info::draw(frame, cols[2], view, theme)
@@ -128,13 +129,13 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
 /// a hundred columns of text. Wider lines are harder to read, not better.
 pub const LEDGER_COLUMN: u16 = 112;
 
-/// The ledger (`[ui] layout = "ledger"`, the default): one reading column on
-/// a timeline, centred; the composer beneath it as a single prompt line; and
-/// one bar at the bottom for everything the header and cards used to say.
+/// The ledger (`[ui] layout = "ledger"`, the default): the solo screen,
+/// or the workbench when it is open, which keeps the ledger's own frame: a
+/// strip of views across the top and one bar at the foot.
 fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     let full = frame.area();
-    if crate::rail::shown(view, full.width) {
-        return draw_with_rail(frame, view, theme);
+    if view.workbench.is_none() {
+        return draw_solo(frame, view, theme);
     }
     // The workbench takes the keys, so it has no composer.
     let composer_h = if view.workbench.is_some() {
@@ -183,7 +184,7 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         };
         let cf = draw_chat(frame, chat, view, theme);
         if view.panels.is_empty() {
-            draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme);
+            draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme, true);
         }
     }
     let act = column(act);
@@ -214,72 +215,161 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     }
 }
 
-/// Solo mode with the side rail (design S2): the rail on the left at full
-/// height; the conversation, the activity strip and a prompt boxed in the
-/// hat's color on the right. The rail says what the strip and the bottom bar
-/// said, so neither is drawn; the keys go on the prompt's border.
-fn draw_with_rail(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
+/// The side columns a screen has: the rack's width and the instruments'.
+/// Both give way to the conversation: the rack first, as the screen
+/// narrows or shortens, then the instruments. `^b` hides them.
+pub fn side_columns(view: &View, theme: Theme, width: u16, body_h: u16) -> (u16, u16) {
+    use crate::rail::Tier;
+    if !view.panel_visible {
+        return (0, 0);
+    }
+    match crate::rail::tier(width) {
+        Tier::Wide if crate::rail::fits(view, theme, body_h) => {
+            (crate::rail::RACK_W, crate::instruments::WIDE_W)
+        }
+        Tier::Wide => (0, crate::instruments::WIDE_W),
+        Tier::Mid => (0, crate::instruments::MID_W),
+        Tier::Narrow => (0, 0),
+    }
+}
+
+/// The solo screen (`docs/hat-rack-design.md`): a bar naming the four
+/// hats; the hat rack, the conversation and the instruments side by side;
+/// the prompt under a rule in the hat's color; and the keys at the foot.
+/// The hat on sets the one accent, and a fedora in that color sits behind
+/// the conversation.
+fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     let full = frame.area();
-    let rail = Rect {
-        width: crate::rail::RAIL_W,
-        ..full
-    };
-    crate::rail::draw(frame, rail, view, theme);
-    let main = Rect {
-        x: full.x + rail.width,
-        width: full.width.saturating_sub(rail.width),
-        ..full
-    };
-    let col_w = main.width.saturating_sub(4).min(LEDGER_COLUMN);
-    let col_x = main.x + (main.width.saturating_sub(col_w + 1)) / 2;
-    let prompt_h =
-        composer::draw::boxed_height(view, col_w).min(main.height.saturating_sub(8).max(3));
-    let body_avail = main.height.saturating_sub(prompt_h + 1);
-    let activity_h = activity::height(view, body_avail).min(body_avail.saturating_sub(6));
+    let tier = crate::rail::tier(full.width);
+    let narrow = tier == crate::rail::Tier::Narrow;
+    let comp_h =
+        composer::draw::solo_height(view, full.width).min(full.height.saturating_sub(8).max(2));
+    // A blank row between the prompt and the keys, where there is height
+    // for it.
+    let gap = u16::from(full.height >= 24);
+    let rule_h = u16::from(!narrow);
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
+            Constraint::Length(rule_h),
             Constraint::Min(4),
-            Constraint::Length(activity_h),
-            Constraint::Length(prompt_h),
+            Constraint::Length(comp_h),
+            Constraint::Length(gap),
+            Constraint::Length(1),
         ])
-        .split(main);
-    let (body, act, prompt_row) = (rows[1], rows[2], rows[3]);
+        .split(full);
+    let (top, rule, body, comp, foot) = (rows[0], rows[1], rows[2], rows[3], rows[5]);
+    let (rack_w, inst_w) = side_columns(view, theme, full.width, body.height);
+    draw_top_bar(frame, top, view, theme, rack_w == 0);
+    if rule_h > 0 {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "─".repeat(usize::from(rule.width)),
+                Style::default().fg(theme.rule).bg(theme.bg),
+            ))),
+            rule,
+        );
+    }
+    let main = Rect {
+        x: body.x + rack_w,
+        width: body.width.saturating_sub(rack_w + inst_w),
+        ..body
+    };
+    // A popout wider than the conversation's column takes the whole body,
+    // and the side columns are left out from under it: half a column
+    // showing past a panel's edge reads as a broken screen. One that fits
+    // (a plan to approve, a permission) leaves them in sight.
+    let panel_owns_body = view
+        .panels
+        .stack
+        .iter()
+        .any(|p| !p.docked() && p.size(view).0 > main.width);
+    let (rack_w, inst_w) = if panel_owns_body {
+        (0, 0)
+    } else {
+        (rack_w, inst_w)
+    };
+    if rack_w > 0 {
+        crate::rail::draw(
+            frame,
+            Rect {
+                width: rack_w,
+                ..body
+            },
+            view,
+            theme,
+        );
+    }
+    if inst_w > 0 {
+        crate::instruments::draw(
+            frame,
+            Rect {
+                x: body.x + body.width - inst_w,
+                width: inst_w,
+                ..body
+            },
+            view,
+            theme,
+            tier != crate::rail::Tier::Wide,
+        );
+    }
+    let col_w = main.width.saturating_sub(4).min(LEDGER_COLUMN);
+    let col_x = main.x + (main.width.saturating_sub(col_w + 1)) / 2;
     let column = |r: Rect| Rect {
         x: col_x,
         width: col_w,
         ..r
     };
     // Whose conversation this is, when it is the tester's.
-    if let Some(line) = thread_line(view, theme, usize::from(col_w)) {
+    let thread = thread_line(view, theme, usize::from(col_w));
+    let thread_h = u16::from(thread.is_some());
+    let below = main.height.saturating_sub(thread_h);
+    let activity_h = activity::height(view, below).min(below.saturating_sub(6));
+    let parts = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(thread_h),
+            Constraint::Min(4),
+            Constraint::Length(activity_h),
+        ])
+        .split(main);
+    if let Some(line) = thread {
         frame.render_widget(
             Paragraph::new(line).style(Style::default().bg(theme.bg)),
-            column(rows[0]),
+            column(parts[0]),
         );
     }
-    let chat = column(body);
+    let chat = column(parts[1]);
     let cf = draw_chat(frame, chat, view, theme);
+    if view.ui.watermark {
+        crate::watermark::draw(frame, parts[1], view.mode, theme);
+    }
     if view.panels.is_empty() {
         let gutter = Rect {
             x: col_x + col_w,
             width: 1,
-            ..body
+            ..parts[1]
         };
-        draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme);
+        // The thumb alone: a track beside the instruments' hairline is
+        // two lines where one separates.
+        draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme, false);
     }
-    let act = column(act);
+    let act = column(parts[2]);
     if activity_h > 0 {
         activity::draw(frame, act, view, theme);
     }
-    // The prompt, boxed in the hat's color, the keys on its lower edge.
-    let comp = column(prompt_row);
-    let keys = prompt_keys(view, theme, usize::from(comp.width.saturating_sub(4)));
-    let cursor = composer::draw::draw_boxed(frame, comp, view, theme, keys);
+    let cursor = composer::draw::draw_solo(frame, comp, view, theme);
+    if narrow {
+        draw_status_line(frame, foot, view, theme);
+    } else {
+        draw_keys(frame, foot, view, theme);
+    }
     if view.panels.is_empty() {
         palette::draw(frame, chat, comp.y, view, theme);
     }
-    let panel_cursor = panel::draw(frame, full, main, view, theme);
+    let panel_body = if panel_owns_body { body } else { main };
+    let panel_cursor = panel::draw(frame, full, panel_body, view, theme);
     if panel_cursor.is_some() {
         composer::draw::paint_cursor(frame, panel_cursor, theme);
     } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
@@ -291,6 +381,241 @@ fn draw_with_rail(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         activity: act,
         composer: comp,
     }
+}
+
+/// The bar across the top (`docs/hat-rack-design.md` §4): the name, then
+/// the four hats in the order `Tab` goes round them, then where this is.
+/// It says which hats have been worn, not an order to wear them in: no
+/// arrows, steps or ticks. `counts` adds each worn hat's turns, for when
+/// the rack isn't on screen to say them.
+fn draw_top_bar(frame: &mut Frame, area: Rect, view: &View, theme: Theme, counts: bool) {
+    let w = usize::from(area.width);
+    let bg = theme.panel_bg;
+    let dim = Style::default().fg(theme.dim).bg(bg);
+    let body = Style::default().fg(theme.fg).bg(bg);
+    let gap = if w >= 100 { "   " } else { "  " };
+    let mut left = vec![
+        Span::styled(" RYTER", body.add_modifier(Modifier::BOLD)),
+        Span::styled(" │ ", Style::default().fg(theme.faint).bg(bg)),
+    ];
+    for (i, hat) in crate::rail::HATS.into_iter().enumerate() {
+        if i > 0 {
+            left.push(Span::styled(gap, dim));
+        }
+        let name = crate::rail::hat_name(hat);
+        let mark = crate::rail::hat_mark(view, hat);
+        let turns = view.rack.of(hat).turns;
+        let count = if counts && turns > 0 {
+            format!(" {turns}")
+        } else {
+            String::new()
+        };
+        let color = theme.mode(hat);
+        if view.mode == hat {
+            left.push(Span::styled(
+                format!(" {mark} {name}{count} "),
+                theme.chip(color),
+            ));
+        } else if view.rack.worn(hat) {
+            left.push(Span::styled(
+                format!("{mark} "),
+                Style::default().fg(color).bg(bg),
+            ));
+            left.push(Span::styled(name, body));
+            left.push(Span::styled(count, dim));
+        } else {
+            left.push(Span::styled(format!("{mark} {name}"), dim));
+        }
+    }
+    let left_w: usize = left.iter().map(|s| wrap::width(&s.content)).sum();
+    // Where this is: the folder and the branch, less of it as the screen
+    // narrows.
+    let folder = if w >= usize::from(crate::rail::BOTH_MIN) {
+        view.cwd.clone()
+    } else if w >= usize::from(crate::rail::INSTRUMENTS_MIN) {
+        std::path::Path::new(&view.cwd)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| view.cwd.clone())
+    } else {
+        String::new()
+    };
+    let place = match (&view.git_branch, folder.is_empty()) {
+        (Some(b), false) => format!("{folder} · {b}"),
+        (Some(b), true) => b.clone(),
+        (None, _) => folder,
+    };
+    // A long path keeps its end, and leaves the bar to the hats.
+    let place = crate::rail::tail(&place, w.saturating_sub(left_w + 3).min(48));
+    let place_w = wrap::width(&place) + 1;
+    let mut spans = left;
+    let middle = w.saturating_sub(left_w + place_w);
+    // The session's title in the room between, where there is some.
+    let title = view.session_title.trim();
+    if w >= 100 && !title.is_empty() && middle > 16 {
+        let t = wrap::truncate(title, middle - 6);
+        let tw = wrap::width(&t);
+        let lpad = (middle - tw) / 2;
+        spans.push(Span::styled(" ".repeat(lpad), dim));
+        spans.push(Span::styled(t, dim));
+        spans.push(Span::styled(" ".repeat(middle - tw - lpad), dim));
+    } else {
+        spans.push(Span::styled(" ".repeat(middle), dim));
+    }
+    spans.push(Span::styled(place, dim));
+    spans.push(Span::styled(" ", dim));
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(bg)),
+        area,
+    );
+}
+
+/// The keys that matter now, as ranked hints: an open panel's own, or the
+/// screen's.
+fn hints_or_legend(view: &View) -> Vec<(String, String, Hint)> {
+    match view.panels.top() {
+        Some(p) => legend_keys(&p.legend(view)),
+        None => hints_ranked(view),
+    }
+}
+
+/// Those, with the spend drawer's first while there is nothing else to
+/// say.
+fn solo_keys(view: &View) -> Vec<(String, String, Hint)> {
+    let mut keys = hints_or_legend(view);
+    if view.panels.top().is_none() && view.palette.is_none() && view.composer.is_empty() {
+        keys.insert(0, ("$".into(), "spend".into(), Hint::Useful));
+    }
+    keys
+}
+
+/// Drop the least needed keys until the rest fit in `width`, a key's
+/// separator `sep` columns wide.
+fn fit_keys(
+    mut keys: Vec<(String, String, Hint)>,
+    width: usize,
+    sep: usize,
+) -> Vec<(String, String, Hint)> {
+    let used = |keys: &[(String, String, Hint)]| -> usize {
+        keys.iter()
+            .map(|(k, l, _)| wrap::width(k) + 1 + wrap::width(l) + sep)
+            .sum::<usize>()
+            .saturating_sub(sep)
+    };
+    // Cancel, quit and an answer to a prompt are never dropped.
+    while used(&keys) > width {
+        let worst = keys
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, _, rank))| *rank != Hint::Essential)
+            .max_by_key(|(i, (_, _, rank))| (*rank, *i))
+            .map(|(i, _)| i);
+        match worst {
+            Some(i) => {
+                keys.remove(i);
+            }
+            None => break,
+        }
+    }
+    keys
+}
+
+fn key_spans(
+    keys: &[(String, String, Hint)],
+    theme: Theme,
+    bg: ratatui::style::Color,
+    sep: usize,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (i, (k, l, _)) in keys.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" ".repeat(sep), Style::default().bg(bg)));
+        }
+        spans.push(Span::styled(
+            k.clone(),
+            Style::default()
+                .fg(theme.fg)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            format!(" {l}"),
+            Style::default().fg(theme.dim).bg(bg),
+        ));
+    }
+    spans
+}
+
+/// The solo screen's foot: the keys, from the left.
+fn draw_keys(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
+    let bg = theme.panel_bg;
+    let keys = fit_keys(
+        solo_keys(view),
+        usize::from(area.width).saturating_sub(2),
+        4,
+    );
+    let mut spans = vec![Span::styled(" ", Style::default().bg(bg))];
+    spans.extend(key_spans(&keys, theme, bg, 4));
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(bg)),
+        area,
+    );
+}
+
+/// The foot of a screen too narrow for the instruments: the model, how
+/// full its context is, what the session has cost and the budget, then as
+/// many keys as fit. The project's cost is in the `^b` panel.
+fn draw_status_line(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
+    let w = usize::from(area.width);
+    let bg = theme.panel_bg;
+    let on = |fg| Style::default().fg(fg).bg(bg);
+    let frac = view.ctx_frac();
+    const CELLS: usize = 8;
+    let filled = ((frac * CELLS as f64).round() as usize).min(CELLS);
+    let (session, color) = crate::instruments::session_spend(view, theme);
+    let model = wrap::truncate(
+        crate::chat::short_model(crate::rail::hat_model(view, view.mode)),
+        16,
+    );
+    let mut left = vec![
+        Span::styled(format!(" {model}"), on(theme.mode(view.mode))),
+        Span::styled("  ctx ", on(theme.dim)),
+        Span::styled(
+            "━".repeat(filled),
+            on(crate::instruments::gauge_color(view, theme)),
+        ),
+        Span::styled("─".repeat(CELLS - filled), on(theme.rule)),
+        Span::styled(format!(" {}%", (frac * 100.0).round() as u32), on(theme.fg)),
+        Span::styled(" │ ", on(theme.faint)),
+        Span::styled(session, on(color)),
+        Span::styled(
+            format!(" · budget {}", crate::instruments::budget(view)),
+            on(theme.dim),
+        ),
+    ];
+    let left_w: usize = left.iter().map(|s| wrap::width(&s.content)).sum();
+    // The keys take what is left; cancel and quit are never dropped, so on
+    // a very narrow screen the facts give way from the end.
+    let keys = fit_keys(hints_or_legend(view), w.saturating_sub(left_w + 4), 2);
+    let ks = key_spans(&keys, theme, bg, 2);
+    let ks_w: usize = ks.iter().map(|s| wrap::width(&s.content)).sum();
+    while left.len() > 1
+        && left.iter().map(|s| wrap::width(&s.content)).sum::<usize>() + ks_w + 3 > w
+    {
+        left.pop();
+    }
+    let left_w: usize = left.iter().map(|s| wrap::width(&s.content)).sum();
+    let mut spans = left;
+    spans.push(Span::styled(
+        " ".repeat(w.saturating_sub(left_w + ks_w + 1)),
+        on(theme.dim),
+    ));
+    spans.extend(ks);
+    spans.push(Span::styled(" ", on(theme.dim)));
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(bg)),
+        area,
+    );
 }
 
 /// The line over the tester's conversation: `TEST THREAD · tab: main chat`.
@@ -318,52 +643,6 @@ fn thread_line(view: &View, theme: Theme, width: usize) -> Option<Line<'static>>
         ),
         Span::styled(rest, dim),
     ]))
-}
-
-/// The keys that matter now, for the prompt's border: the bottom bar's, less
-/// the least needed until they fit in `width`.
-fn prompt_keys(view: &View, theme: Theme, width: usize) -> Line<'static> {
-    let mut keys = match view.panels.top() {
-        Some(p) => legend_keys(&p.legend(view)),
-        None => hints_ranked(view),
-    };
-    if view.panels.top().is_none() && view.palette.is_none() && view.composer.is_empty() {
-        keys.insert(0, ("$".into(), "spend".into(), Hint::Useful));
-    }
-    // Three columns between keys, and one after the last: the gap before
-    // the border's corner is not worth a key.
-    let used = |keys: &[(String, String, Hint)]| -> usize {
-        (keys
-            .iter()
-            .map(|(k, l, _)| wrap::width(k) + 1 + wrap::width(l) + 3)
-            .sum::<usize>()
-            + 1)
-        .saturating_sub(2)
-    };
-    while used(&keys) > width && keys.len() > 1 {
-        let worst = keys
-            .iter()
-            .enumerate()
-            .max_by_key(|(i, (_, _, rank))| (*rank, *i))
-            .map_or(keys.len() - 1, |(i, _)| i);
-        keys.remove(worst);
-    }
-    let mut spans = vec![Span::styled(" ", Style::default().bg(theme.bg))];
-    let last = keys.len().saturating_sub(1);
-    for (i, (k, l, _)) in keys.into_iter().enumerate() {
-        spans.push(Span::styled(
-            k,
-            Style::default()
-                .fg(theme.accent)
-                .bg(theme.bg)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled(
-            format!(" {l}{}", if i == last { " " } else { "   " }),
-            Style::default().fg(theme.dim).bg(theme.bg),
-        ));
-    }
-    Line::from(spans)
 }
 
 /// Which view the ledger is showing.
@@ -779,13 +1058,15 @@ fn draw_chat(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> layout
     cf
 }
 
-/// Gutter scrollbar (`R-BAR-01..04`).
+/// Gutter scrollbar (`R-BAR-01..04`). `track` draws the line the thumb
+/// runs on as well as the thumb.
 fn draw_scrollbar(
     frame: &mut Frame,
     area: Rect,
     cf: &layout::ChatFrame,
     follow: bool,
     theme: Theme,
+    track: bool,
 ) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -809,7 +1090,7 @@ fn draw_scrollbar(
         if i >= thumb_y && i < thumb_y + thumb_h {
             c.set_symbol("┃");
             c.set_style(Style::default().fg(thumb_color).bg(theme.bg));
-        } else {
+        } else if track {
             c.set_symbol("│");
             c.set_style(Style::default().fg(theme.dim).bg(theme.bg));
         }
@@ -839,6 +1120,9 @@ pub fn hints_ranked(view: &View) -> Vec<(String, String, Hint)> {
             let rank = match k.as_str() {
                 // Getting out: cancel, quit, and the permission answers.
                 "^c" | "esc" | "^d" | "y" | "n" | "a" | "⏎" => Hint::Essential,
+                // The only way to the hat rack on a screen that has folded
+                // it away.
+                "^b" if l == "hat rack" => Hint::Essential,
                 // The lanes' reasoning switch is on the board alone.
                 "^r" if l.ends_with(" reasoning") => Hint::Useful,
                 // Discoverable without the bar, so first to go.
@@ -897,17 +1181,15 @@ fn hints_static(view: &View) -> Vec<(&'static str, String)> {
     if view.activity.has_history {
         v.push(("^r", "reasoning".into()));
     }
-    // `^b` shows and hides the info panel on the classic screen, the rail
-    // on the ledger.
+    // `^b` shows and hides the info panel on the classic screen and the
+    // side columns on the solo one; on a screen too narrow to hold both
+    // columns it opens them as a panel.
     if view.ui.classic() {
         v.push(("^b", "panel".into()));
+    } else if view.screen.get().0 >= crate::rail::BOTH_MIN {
+        v.push(("^b", "panels".into()));
     } else {
-        let label = if view.panel_visible {
-            "hide rail"
-        } else {
-            "show rail"
-        };
-        v.push(("^b", label.into()));
+        v.push(("^b", "hat rack".into()));
     }
     if view.busy {
         v.push(("esc", "cancel".into()));

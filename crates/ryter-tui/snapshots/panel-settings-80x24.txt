@@ -1,19 +1,19 @@
  ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  · s╭─ settings ───────────────────────────────────────────────────────────╮
-   w│ SPEND                                                                ┃
-    │› budget usd (0 = off)  ‹ 0.00 ›                              default ┃
-    │  warn usd              ‹ 1.00 ›                              default ┃
+   w│ STARTUP                                                              ┃
+    │› start in              ‹ plan ›                              default ┃
+    │    read and propose first                                            ┃
+    │                                                                      │
+    │ SPEND                                                                │
+    │  budget usd (0 = off)  ‹ 0.00 ›                              default │
+    │  warn usd              ‹ 1.00 ›                              default │
     │  review usd (0 = off)  ‹ 0.00 ›                              default │
     │                                                                      │
     │ TOOLS                                                                │
     │  permission mode       ‹ ask ›                               default │
     │  features.web          [ off ]                               default │
     │                                                                      │
-    │ SANDBOX                                                              │
-    │  profile               ‹ off ›                               default │
-    │                                                                      │
-    │                 OFF           workspace     read-only                │
     │ ↑↓ move   space/←→ change   enter edit   esc done                    │
     ╰──────────────────────────────────────────────────────────────────────╯
 

@@ -286,6 +286,15 @@ impl Panel for PermissionModal {
         true
     }
 
+    fn offers(&self) -> Option<ryter_core::Role> {
+        match self.tool.as_str() {
+            "review" | "review offer" => Some(ryter_core::Role::SoloReview),
+            "test" | "test offer" => Some(ryter_core::Role::SoloTest),
+            "fix offer" => Some(ryter_core::Role::SoloBuild),
+            _ => None,
+        }
+    }
+
     fn render(&self, _view: &View, width: u16, height: u16, theme: Theme) -> Body {
         let w = usize::from(width);
         let h = usize::from(height).max(3);

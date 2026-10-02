@@ -215,6 +215,111 @@ pub fn changes(dir: &Path, base: &str) -> Result<Changes> {
     })
 }
 
+/// A new file's length in lines, or `None` for one that is not counted:
+/// anything but a regular file, one longer than `cap` bytes, and one that
+/// is not text.
+///
+/// What git lists as untracked is whatever is in the folder. A link is not
+/// followed, and nothing is read past `cap`: a link to `/dev/zero` reports
+/// a size of nothing and never ends, and a pipe waits for a writer. This
+/// runs where the screen is drawn.
+fn count_lines(root: &Path, path: &str, cap: u64) -> Option<u32> {
+    use std::io::Read;
+    let file = crate::project_file::open(root, Path::new(path)).ok()?;
+    let mut bytes = Vec::new();
+    file.take(cap.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > cap || bytes.contains(&0) {
+        return None;
+    }
+    let text = std::str::from_utf8(&bytes).ok()?;
+    Some(u32::try_from(text.lines().count()).unwrap_or(u32::MAX))
+}
+
+/// What differs from the last commit, the work only, read without writing
+/// anything: [`changes`] snapshots the files into the repository first,
+/// which is more than a glance at the screen's side should do.
+pub fn uncommitted(dir: &Path) -> Result<Vec<FileChange>> {
+    if !git::is_repo(dir) {
+        return Err(Error::Io("not a git repository".into()));
+    }
+    let dir = &root(dir)?;
+    let mut files = Vec::new();
+    // Before a first commit there is no `HEAD` to compare with, and every
+    // file is new.
+    if git::head(dir).is_ok() {
+        let numstat = git(dir, &["diff", "--no-renames", "--numstat", "-z", "HEAD"])?;
+        let mut counts = std::collections::HashMap::new();
+        for rec in numstat.split('\0').filter(|r| !r.is_empty()) {
+            let mut parts = rec.splitn(3, '\t');
+            if let (Some(a), Some(r), Some(path)) = (parts.next(), parts.next(), parts.next()) {
+                counts.insert(path, (a.parse::<u32>().ok(), r.parse::<u32>().ok()));
+            }
+        }
+        let status = git(
+            dir,
+            &["diff", "--no-renames", "--name-status", "-z", "HEAD"],
+        )?;
+        let mut fields = status.split('\0').filter(|f| !f.is_empty());
+        while let (Some(code), Some(path)) = (fields.next(), fields.next()) {
+            let status = match code.chars().next() {
+                Some('A') => Status::Added,
+                Some('D') => Status::Deleted,
+                _ => Status::Modified,
+            };
+            let (added, removed) = counts.get(path).copied().unwrap_or((None, None));
+            files.push(FileChange {
+                path: path.to_string(),
+                status,
+                added: added.unwrap_or(0),
+                removed: removed.unwrap_or(0),
+                binary: added.is_none(),
+            });
+        }
+    }
+    // Files git has never seen: the diff above leaves them out.
+    let seen = if files.is_empty() && git::head(dir).is_err() {
+        git(
+            dir,
+            &[
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ],
+        )?
+    } else {
+        git(dir, &["ls-files", "-z", "--others", "--exclude-standard"])?
+    };
+    // A new file's length in lines, for the first few only: a folder of
+    // installed packages nobody has ignored yet is thousands of files, and
+    // this runs between turns.
+    const COUNTED_BYTES: u64 = 1 << 20;
+    const COUNTED_FILES: usize = 50;
+    let mut counted = 0;
+    for path in seen.split('\0').filter(|p| !p.is_empty()) {
+        if files.iter().any(|f| f.path == path) {
+            continue;
+        }
+        let lines = (counted < COUNTED_FILES)
+            .then(|| count_lines(dir, path, COUNTED_BYTES))
+            .flatten();
+        counted += 1;
+        files.push(FileChange {
+            path: path.to_string(),
+            status: Status::Added,
+            added: lines.unwrap_or(0),
+            removed: 0,
+            binary: lines.is_none(),
+        });
+    }
+    files.retain(|f| !is_bookkeeping(&f.path));
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
 /// The patch for one file.
 pub fn file_diff(dir: &Path, c: &Changes, path: &str) -> String {
     let Ok(top) = root(dir) else {
@@ -564,6 +669,109 @@ mod tests {
         assert!(file_diff(p, &c, "keep.txt").contains("+three"));
         // Looking doesn't stage anything.
         assert_eq!(git(p, &["diff", "--cached", "--name-only"]).unwrap(), "");
+    }
+
+    #[test]
+    fn uncommitted_lists_the_work_and_writes_nothing() {
+        let d = repo();
+        let p = d.path();
+        assert!(uncommitted(p).unwrap().is_empty());
+        fs::write(p.join("keep.txt"), "one\n2\nthree\n").unwrap();
+        fs::remove_file(p.join("gone.txt")).unwrap();
+        fs::write(p.join("new.txt"), "a\nb\n").unwrap();
+        fs::create_dir_all(p.join(".ryter/plans")).unwrap();
+        fs::write(p.join(".ryter/plans/a.md"), "plan\n").unwrap();
+        let objects = || git(p, &["count-objects"]).unwrap();
+        let before = objects();
+        let got: Vec<(char, String, u32, u32)> = uncommitted(p)
+            .unwrap()
+            .iter()
+            .map(|f| (f.status.letter(), f.path.clone(), f.added, f.removed))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ('D', "gone.txt".to_string(), 0, 1),
+                ('M', "keep.txt".to_string(), 2, 1),
+                ('A', "new.txt".to_string(), 2, 0)
+            ]
+        );
+        assert_eq!(objects(), before, "a glance wrote to the repository");
+        assert_eq!(git(p, &["diff", "--cached", "--name-only"]).unwrap(), "");
+        // Before a first commit every file is new.
+        let fresh = tempfile::TempDir::new().unwrap();
+        git(fresh.path(), &["init", "-q"]).unwrap();
+        fs::write(fresh.path().join("a.txt"), "x\n").unwrap();
+        let got = uncommitted(fresh.path()).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!((got[0].status, got[0].added), (Status::Added, 1));
+        // Not a repository: nothing to compare with.
+        let plain = tempfile::TempDir::new().unwrap();
+        assert!(uncommitted(plain.path()).is_err());
+    }
+
+    /// What git lists as untracked is whatever is in the folder. None of
+    /// these may be read to its end: two of them have none.
+    #[cfg(unix)]
+    #[test]
+    fn uncommitted_counts_only_regular_text_files_and_never_waits() {
+        use std::os::unix::fs::symlink;
+        let d = repo();
+        let p = d.path();
+        assert_eq!(count_lines(p, "nothing-here", 100), None);
+        symlink("/dev/zero", p.join("endless")).unwrap();
+        symlink("keep.txt", p.join("alias")).unwrap();
+        // A pipe, where the platform lets the test make one.
+        #[cfg(target_os = "linux")]
+        {
+            rustix::fs::mknodat(
+                rustix::fs::CWD,
+                p.join("pipe"),
+                rustix::fs::FileType::Fifo,
+                rustix::fs::Mode::from_raw_mode(0o600),
+                0,
+            )
+            .unwrap();
+        }
+        // Asked for by name: refused, not waited on.
+        assert_eq!(count_lines(p, "pipe", 100), None);
+        assert_eq!(count_lines(p, "endless", 100), None);
+        fs::write(p.join("big.txt"), "x\n".repeat(600_000)).unwrap();
+        fs::write(p.join("edge.txt"), "y\n".repeat(1 << 19)).unwrap();
+        fs::write(p.join("blob.bin"), [0u8, 159, 146, 150]).unwrap();
+        fs::write(p.join("latin.txt"), [0xe9u8, b'\n']).unwrap();
+        fs::write(p.join("plain.txt"), "a\nb\nc\n").unwrap();
+        // On another thread: if it waits on the pipe or the endless file,
+        // the test fails instead of hanging the suite.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let dir = p.to_path_buf();
+        std::thread::spawn(move || {
+            let _ = tx.send(uncommitted(&dir));
+        });
+        let files = rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("uncommitted() did not return")
+            .unwrap();
+        let got: Vec<(&str, u32, bool)> = files
+            .iter()
+            .map(|f| (f.path.as_str(), f.added, f.binary))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("alias", 0, true),
+                ("big.txt", 0, true),
+                ("blob.bin", 0, true),
+                // Exactly the limit is still counted.
+                ("edge.txt", 1 << 19, false),
+                ("endless", 0, true),
+                ("latin.txt", 0, true),
+                // Git does not list the pipe at all; had it, it would not
+                // be opened for reading either.
+                ("plain.txt", 3, false),
+            ]
+        );
+        assert!(files.iter().all(|f| f.status == Status::Added));
     }
 
     #[test]

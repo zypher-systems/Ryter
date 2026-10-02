@@ -1,0 +1,40 @@
+ RYTER │ ● PLAN    ◆ BUILD    ● REVIEW   ○ TEST                   empty-query fix                   ~/workspace/shop · search-patch
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │         ●  search returns e… ···· ✓ answered · 1.2s · $0.004  ▸    │
+ HAT RACK                    │         ●  build the plan ······· ✓ answered · 2 files (1 n…  ▸    │ MODEL
+                             │         ●  review it ············ ✓ answered · 1.2s · $0.040  ▸    │ deepseek-pro-latest
+ ● PLAN                      │                                                                    │ connection         openrouter ●
+   grok-4.6                  │         ●  dusty                                                   │ reasoning                  auto
+   1 turn             $0.004 │         │  fix the blocking finding                                │
+   plans          1 approved │         │                                                          │ CONTEXT
+                             │         ├─ write  app/server.js ··················· +1 −1  0.0s    │ ━━━━━━━━━━───────────────── 38%
+ ◆ BUILD                     │         │    1   app.get('/search', (req, res) => {                │ 97k / 256k tokens
+   deepseek-pro-latest       │         │    2 -   const q = (req.query.q || '').trim()            │
+   2 turns            $0.021 │         │    2 +   const q = String(req.query.q ?? '').trim()      │ SPEND
+   files                   2 │         │    3     if (!q) return res.json([])                     │ session                  $0.065
+   lines              +13 −2 │         │    4     res.json(find(q))                               │ project                   $4.82
+   tests         ✓ 14 passed │         ├─ write  test/search.test.js ············· +4 −0  0.0s    │ budget                      off
+                             │         │     5     assert.deepEqual(await search(''), [])         │
+ ● REVIEW                    │         │     6   })                                               │ GUARD
+   claude-opus-5.5           │         │     7 +                                                  │ sandbox               workspace
+   1 turn             $0.040 │         │     8 + test('a missing query finds nothing', async (    │ this hat        edits ask first
+   verdicts         ✗ 1 fail │         │         ) => {                                           │
+                             │         │     9 +   assert.deepEqual(await search(), [])           │ CHANGES             uncommitted
+ ○ TEST                      │         │    10 + })                                               │ app/server.js             +2 −1
+   grok-4.6                  │         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0…    │ test/search.test.js         new
+   not worn yet              │  ▄▄                                                            ▄▄  │ tests               ✓ 14 passed
+                             │  ▀                                                              ▀  │
+                             │      ▀▀▀▀▀▀                                            ▀▀▀▀▀▀      │
+                             │                    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                    │
+                             │                                                                    │
+                             │                                                                    │
+                             │                                                                    │
+                             │                                                                    │
+                             │                                                                    │
+                             │                                                                    │
+                             │                                                                    │
+                             │                                                                    │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  BUILD  › what should change? · Tab: review · / for commands
+
+ $ spend    enter send    tab review    ⇧enter newline    / commands    ^t changes    ^o expand    ^b panels    ^c quit
