@@ -30,6 +30,9 @@ pub enum StreamDelta {
     Reasoning(String),
     /// Incremental tool call.
     ToolCall {
+        /// Stable stream identity: a wire index or Responses item id.
+        /// Separate from the call id sent back with the tool result.
+        stream_key: Option<String>,
         /// Provider id (may be empty on a later delta).
         id: String,
         /// Function name (may be empty on a later delta).
@@ -151,44 +154,64 @@ impl ModelInfo {
 ///
 /// Providers send a call's id and name once and then its arguments in
 /// fragments that carry no id (chat completions keys them by `index`, Messages
-/// by content-block index). An id-less fragment therefore continues the most
-/// recent call. Treating each one as a new call dropped every argument after
-/// the first fragment, so real tool calls arrived with empty arguments.
+/// by content-block index). Keep that identity through parsing, so parallel
+/// calls can interleave their arguments without joining different JSON values.
 #[derive(Debug, Default)]
 pub struct ToolCallAccumulator {
     calls: Vec<AssistantToolCall>,
+    keys: std::collections::HashMap<String, usize>,
+    active: Option<usize>,
 }
 
 impl ToolCallAccumulator {
     /// The call arriving now, as far as it has come.
     pub fn last(&self) -> Option<&AssistantToolCall> {
-        self.calls.last()
+        self.active.and_then(|i| self.calls.get(i))
     }
 
     /// Fold one `StreamDelta::ToolCall` in.
     pub fn push(&mut self, id: &str, name: &str, arguments: &str) {
-        let target = if id.is_empty() {
-            self.calls.last_mut()
-        } else {
-            self.calls.iter_mut().find(|c| c.id == id)
+        self.push_keyed(None, id, name, arguments);
+    }
+
+    /// Fold a fragment with the protocol's identity. A legacy fragment
+    /// without any identity continues the last active call.
+    pub fn push_keyed(&mut self, key: Option<&str>, id: &str, name: &str, arguments: &str) {
+        let target = match key {
+            Some(key) => self.keys.get(key).copied(),
+            None if !id.is_empty() => self.calls.iter().position(|c| c.id == id),
+            None => self.active,
         };
-        match target {
-            Some(call) => {
+        let index = match target {
+            Some(index) => {
+                let call = &mut self.calls[index];
+                if !id.is_empty() {
+                    call.id = id.to_string();
+                }
                 if !name.is_empty() {
                     call.name = name.to_string();
                 }
                 call.arguments.push_str(arguments);
+                index
             }
-            None => self.calls.push(AssistantToolCall {
-                id: if id.is_empty() {
-                    format!("call_{}", self.calls.len() + 1)
-                } else {
-                    id.to_string()
-                },
-                name: name.to_string(),
-                arguments: arguments.to_string(),
-            }),
+            None => {
+                let index = self.calls.len();
+                self.calls.push(AssistantToolCall {
+                    id: if id.is_empty() {
+                        format!("call_{}", self.calls.len() + 1)
+                    } else {
+                        id.to_string()
+                    },
+                    name: name.to_string(),
+                    arguments: arguments.to_string(),
+                });
+                index
+            }
+        };
+        if let Some(key) = key {
+            self.keys.insert(key.to_string(), index);
         }
+        self.active = Some(index);
     }
 
     /// Completed calls in arrival order. Nameless fragments are dropped.
@@ -450,6 +473,67 @@ mod tests {
         let calls = a.finish();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].arguments, "{\"path\":\"a.rs\"}");
+    }
+
+    #[test]
+    fn interleaved_protocol_calls_keep_their_arguments_and_result_ids() {
+        for (backend, fixture) in [
+            (
+                Backend::ChatCompletions,
+                include_str!("../../fixtures/parallel_chat.sse"),
+            ),
+            (
+                Backend::Messages,
+                include_str!("../../fixtures/parallel_messages.sse"),
+            ),
+            (
+                Backend::Responses,
+                include_str!("../../fixtures/parallel_responses.sse"),
+            ),
+        ] {
+            let mut calls = ToolCallAccumulator::default();
+            // HTTP parses each frame separately; identity cannot depend on
+            // state that exists only while parsing a complete fixture.
+            for frame in fixture.split("\n\n") {
+                let (deltas, _) = parse::parse_blocks(backend, frame).unwrap();
+                for delta in deltas {
+                    if let StreamDelta::ToolCall {
+                        stream_key,
+                        id,
+                        name,
+                        arguments,
+                    } = delta
+                    {
+                        calls.push_keyed(stream_key.as_deref(), &id, &name, &arguments);
+                    }
+                }
+            }
+            let calls = calls.finish();
+            assert_eq!(calls.len(), 2, "{backend:?}");
+            for (call, id) in calls.iter().zip(["a", "b"]) {
+                assert_eq!(call.id, id, "{backend:?}");
+                assert_eq!(call.name, "read_file");
+                assert_eq!(
+                    call.arguments,
+                    format!("{{\"path\":\"{id}.txt\"}}"),
+                    "{backend:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn indexed_arguments_can_arrive_before_the_call_definition() {
+        let mut calls = ToolCallAccumulator::default();
+        calls.push_keyed(Some("0"), "", "", "{\"path\":");
+        calls.push_keyed(Some("1"), "b", "read_file", "{\"path\":\"b.txt\"}");
+        calls.push_keyed(Some("0"), "a", "read_file", "\"a.txt\"}");
+        assert_eq!(calls.last().unwrap().id, "a");
+        let calls = calls.finish();
+        assert_eq!(calls[0].id, "a");
+        assert_eq!(calls[0].arguments, "{\"path\":\"a.txt\"}");
+        assert_eq!(calls[1].id, "b");
+        assert_eq!(calls[1].arguments, "{\"path\":\"b.txt\"}");
     }
 
     #[tokio::test]

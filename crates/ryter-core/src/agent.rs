@@ -365,10 +365,11 @@ impl Agent {
                             self.emit(AgentEvent::Reasoning { text: t })?;
                         }
                         StreamDelta::ToolCall {
+                            stream_key,
                             id,
                             name,
                             arguments,
-                        } => calls.push(&id, &name, &arguments),
+                        } => calls.push_keyed(stream_key.as_deref(), &id, &name, &arguments),
                         StreamDelta::Usage(u) => {
                             usage = usage.merge(u);
                             saw_usage = true;
@@ -2715,6 +2716,52 @@ mod tests {
         (home, cwd, agent)
     }
 
+    #[tokio::test]
+    async fn parallel_calls_execute_their_own_arguments_on_each_protocol() {
+        use crate::llm::{Backend, parse_sse};
+        for (backend, fixture) in [
+            (
+                Backend::ChatCompletions,
+                include_str!("../fixtures/parallel_chat.sse"),
+            ),
+            (
+                Backend::Messages,
+                include_str!("../fixtures/parallel_messages.sse"),
+            ),
+            (
+                Backend::Responses,
+                include_str!("../fixtures/parallel_responses.sse"),
+            ),
+        ] {
+            let (_home, cwd, mut agent) = setup(ReplayProvider::scripted(vec![
+                parse_sse(backend, fixture).unwrap(),
+                say("done"),
+            ]));
+            std::fs::write(cwd.path().join("a.txt"), "FIRST_FILE").unwrap();
+            std::fs::write(cwd.path().join("b.txt"), "SECOND_FILE").unwrap();
+            agent.turn("read both files").await.unwrap();
+            let results: Vec<_> = agent
+                .session
+                .transcript
+                .iter()
+                .filter(|m| m.role == "tool")
+                .collect();
+            assert_eq!(results.len(), 2, "{backend:?}");
+            assert_eq!(results[0].tool_call_id.as_deref(), Some("a"));
+            assert_eq!(results[1].tool_call_id.as_deref(), Some("b"));
+            assert!(
+                results[0].content.contains("FIRST_FILE"),
+                "{backend:?}: {:?}",
+                results[0]
+            );
+            assert!(
+                results[1].content.contains("SECOND_FILE"),
+                "{backend:?}: {:?}",
+                results[1]
+            );
+        }
+    }
+
     /// A session saved in crew mode names a role that is gone. Resumed, its
     /// next turn is in the build hat, with the hat's note and tools: run
     /// as the old role, the model was sent the message bare and offered
@@ -2749,6 +2796,7 @@ mod tests {
     fn write(path: &str, content: &str) -> Vec<StreamDelta> {
         vec![
             StreamDelta::ToolCall {
+                stream_key: None,
                 id: "w".into(),
                 name: "write".into(),
                 arguments: serde_json::json!({"path": path, "content": content}).to_string(),
@@ -2767,6 +2815,7 @@ mod tests {
     async fn a_build_turn_that_changes_nothing_touches_no_git() {
         let ls = vec![
             StreamDelta::ToolCall {
+                stream_key: None,
                 id: "b".into(),
                 name: "bash".into(),
                 arguments: serde_json::json!({"command": "ls"}).to_string(),
@@ -2789,6 +2838,7 @@ mod tests {
     fn call(name: &str, args: serde_json::Value) -> Vec<StreamDelta> {
         vec![
             StreamDelta::ToolCall {
+                stream_key: None,
                 id: format!("{name}-1"),
                 name: name.into(),
                 arguments: args.to_string(),
@@ -4342,11 +4392,13 @@ mod tests {
     async fn esc_during_a_command_leaves_every_call_answered() {
         let two = vec![
             StreamDelta::ToolCall {
+                stream_key: None,
                 id: "slow".into(),
                 name: "bash".into(),
                 arguments: serde_json::json!({"command": "sleep 20"}).to_string(),
             },
             StreamDelta::ToolCall {
+                stream_key: None,
                 id: "next".into(),
                 name: "bash".into(),
                 arguments: serde_json::json!({"command": "ls"}).to_string(),
@@ -4385,6 +4437,7 @@ mod tests {
     async fn arguments_that_are_not_json_say_so() {
         let bad = vec![
             StreamDelta::ToolCall {
+                stream_key: None,
                 id: "b".into(),
                 name: "read_file".into(),
                 arguments: "{\"path\": \"hello.txt\"".into(),
@@ -5345,6 +5398,7 @@ mod tests {
         // One step that used $0.75 of a $1.00 limit.
         let explored = vec![
             StreamDelta::ToolCall {
+                stream_key: None,
                 id: "r".into(),
                 name: "read_file".into(),
                 arguments: serde_json::json!({"path": "hello.txt"}).to_string(),
@@ -5423,6 +5477,7 @@ mod tests {
             vec![
                 StreamDelta::Text("Reading.".into()),
                 StreamDelta::ToolCall {
+                    stream_key: None,
                     id: id.into(),
                     name: "read_file".into(),
                     arguments: serde_json::json!({"path": "hello.txt"}).to_string(),
@@ -5498,6 +5553,7 @@ mod tests {
         let failed = vec![
             StreamDelta::Text("- hello.txt:2 wrong word (blocking)\n\nVERDICT: FAIL".into()),
             StreamDelta::ToolCall {
+                stream_key: None,
                 id: "h".into(),
                 name: "request_hat".into(),
                 arguments: serde_json::json!({"hat": "build", "reason": "fix the word"})
@@ -6122,6 +6178,7 @@ mod tests {
         let p = ReplayProvider::scripted(vec![
             vec![
                 StreamDelta::ToolCall {
+                    stream_key: None,
                     id: "c1".into(),
                     name: "read_file".into(),
                     arguments: args,

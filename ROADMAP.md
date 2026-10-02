@@ -18,6 +18,8 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 
 ## Now
 
+- **Unreleased — review repair 4: streamed tool identity.** Chat and Messages retain per-call indices; Responses retains item identity separately from its result call ID. Interleaved calls reconstruct and execute their own arguments on all three protocols.
+
 - **Unreleased — review repair 2b: undo from nested directories.** Snapshot differences retain repository-relative paths and stay within the launch directory. Undo and redo restore those paths from the repository root, preserving unrelated files, the branch and the user’s staging area.
 - **Unreleased — review repair 2a: socket paths.** Binding an MCP socket preserves every existing path, including stale sockets. An occupied name produces an actionable error instead of deleting data.
 - **Unreleased — review repair 3: spending integrity.** Commit drafting obeys the same budget admission checks as turns. Interrupted calls retain reported usage and mark accounting incomplete; a budget then stops further requests even after resume. Missing override rates remain unknown.

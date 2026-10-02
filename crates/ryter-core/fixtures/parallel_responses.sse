@@ -1,0 +1,14 @@
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"a","name":"read_file","arguments":""}}
+
+data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_b","call_id":"b","name":"read_file","arguments":""}}
+
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_a","delta":"{\"path\":"}
+
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_b","delta":"{\"path\":"}
+
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_a","delta":"\"a.txt\"}"}
+
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_b","delta":"\"b.txt\"}"}
+
+data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":25,"output_tokens":9}}}
+
