@@ -2,6 +2,11 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Undo uses one path coordinate system
+- **Decision:** Snapshot differences are explicitly repository-relative regardless of `diff.relative`; their pathspec is scoped to the session’s launch directory. Restore and deletion both run from the repository root, with literal pathspecs. Validate snapshots and relative paths before changing files.
+- **Why:** A session launched in `app/` otherwise treated `app/file` as `app/app/file`. Sibling projects and later user edits must not become part of that session’s undo.
+- **Where:** `git::paths_between`, `git::restore_paths`; a round-trip regression covers nested launch, deletion, addition, newline/bracket names, the index, HEAD and unrelated work.
+
 ### 2026-10-01 — One mode: crew mode is retired, the user is the lead
 - **By:** the user
 - **Decision:** Ryter becomes one mode, the solo interface with a hat per stage (plan, build, review, test) and optionally a model per hat. Crew mode gets no further work and is removed once the one-mode flow has taken a real project from a plan to a tested change.

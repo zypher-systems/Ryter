@@ -18,6 +18,8 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 
 ## Now
 
+- **Unreleased — review repair 2b: undo from nested directories.** Snapshot differences retain repository-relative paths and stay within the launch directory. Undo and redo restore those paths from the repository root, preserving unrelated files, the branch and the user’s staging area.
+
 Work that is in `dev` and not yet released is marked *Unreleased*, and its notes collect in `docs/releases/next.md`. An entry gets its version when it's released.
 
 - **0.11.0 — the gate judges what runs, not what was written.** From the release's first round of external reviews. The gate expands patterns and lists as the shell does and judges every match; follows `cd`; reads option values, unspaced redirects and the shell's own words; refuses what changes how the shell reads (`HOME=…`, `shopt`, `env -C`); reads inline-code flags per interpreter; judges `git`, searches through folders and container paths. The plan and review hats no longer write the user's folder. Ryter's own files are never written or read through a link, and its records are kept from outside the sandbox.
