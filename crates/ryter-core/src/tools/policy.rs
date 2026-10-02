@@ -5741,33 +5741,7 @@ pub(crate) fn is_secret(path: &Path, ctx: &ToolContext) -> bool {
         .strip_prefix(&workspace)
         .or_else(|_| path.strip_prefix(&ctx.workspace))
         .unwrap_or(path);
-    let name = rel
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    // A public key is published, not kept: `release.pub.pem` is checked
-    // into a repository so anyone can verify with it.
-    let public = [".pub.pem", ".pub.key", "public.pem", "pubkey.pem"]
-        .iter()
-        .any(|e| name.ends_with(e));
-    if name == ".env" || ((name.ends_with(".pem") || name.ends_with(".key")) && !public) {
-        return true;
-    }
-    let s = rel
-        .to_string_lossy()
-        .replace('\\', "/")
-        .to_ascii_lowercase();
-    // `.env.example` and its kind are what a project ships to say which
-    // variables it wants: they hold no values of anybody's.
-    let example = [".example", ".sample", ".template", ".dist", ".defaults"]
-        .iter()
-        .any(|e| name.ends_with(e));
-    s.contains("/.ssh/")
-        || s.contains("credential")
-        || s.contains("/.ryter/")
-        || s.ends_with(".env")
-        || (name.starts_with(".env") && !example)
+    super::secret::is_secret(rel)
 }
 
 #[cfg(test)]
@@ -5826,10 +5800,21 @@ mod tests {
             "config/.env.production",
             "config/.env.local",
             "config/private.key",
+            ".ssh/config",
+            "nested/.ssh/id_ed25519",
+            ".aws/config",
+            ".gnupg/private.dat",
+            ".azure/tokens.json",
+            ".kube/config",
+            ".docker/config.json",
+            ".npmrc",
+            ".netrc",
         ] {
+            std::fs::create_dir_all(root.join(file).parent().unwrap()).unwrap();
             std::fs::write(root.join(file), "PRIVATE_SENTINEL").unwrap();
         }
         symlink("config/.env.production", root.join("alias.txt")).unwrap();
+        symlink(".ssh/config", root.join("ssh-alias.txt")).unwrap();
         symlink("../outside.txt", root.join("outside-alias.txt")).unwrap();
         symlink("config", root.join("linked-folder")).unwrap();
         for file in [
@@ -5852,13 +5837,32 @@ mod tests {
                 "config/.env.production",
                 "config/.env.local",
                 "config/private.key",
+                ".ssh/config",
+                "nested/.ssh/id_ed25519",
+                ".aws/config",
+                ".gnupg/private.dat",
+                ".azure/tokens.json",
+                ".kube/config",
+                ".docker/config.json",
+                ".npmrc",
+                ".netrc",
                 "alias.txt",
+                "ssh-alias.txt",
                 "linked-folder/.env.production",
             ] {
                 assert_eq!(
                     decide("read_file", &json!({"path": path}), &c),
                     Decision::Deny,
                     "{role:?}: {path}"
+                );
+                assert_eq!(
+                    decide("bash", &json!({"command":format!("cat {path}")}), &c),
+                    Decision::Deny,
+                    "shell {role:?}: {path}"
+                );
+                assert!(
+                    crate::tools::fs::read_file(&json!({"path":path}), &c).is_err(),
+                    "reader {role:?}: {path}"
                 );
             }
             let private =

@@ -2,6 +2,10 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Classify protected directories as components
+- **Decision:** Extract shared secret-name rules from the large command policy into `tools/secret.rs`. Match credential directory components at any depth, including root `.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube` and `.docker`, and direct credential filenames such as `.netrc` and `.npmrc`.
+- **Why:** A substring requiring a leading slash missed root-relative `.ssh/config`. Home-directory protection did not cover a checked-out project with the same credential layout. The reproduced root read was allowed before the fix; the maintained all-hat regression now checks direct execution, shell policy, grep and linked aliases alongside public fixture files.
+
 ### 2026-10-02 — Bootstrap installation uses the updater’s trust anchor
 - **Decision:** Pin the release public key in the shell installer and verify Ed25519-signed `SHA256SUMS` with OpenSSL before checksum validation/extraction. A mirror changes only the download location. Unsupported crypto tools and unsigned releases fail closed. Extract only the expected regular executable and stage with a unique filename before replacement.
 - **Why:** A checksum obtained from the same compromised download source cannot authenticate its archive. Fixed staging names also collide with parallel installers or pre-existing links. Local signed fixtures prove that verification failures preserve the installed binary.
