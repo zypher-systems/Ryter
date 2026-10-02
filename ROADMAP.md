@@ -18,6 +18,8 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 
 ## Now
 
+- **Unreleased — review repair 4: streamed tool identity.** Chat and Messages retain per-call indices; Responses retains item identity separately from its result call ID. Interleaved calls reconstruct and execute their own arguments on all three protocols.
+
 - **Unreleased — review repair 2b: undo from nested directories.** Snapshot differences retain repository-relative paths and stay within the launch directory. Undo and redo restore those paths from the repository root, preserving unrelated files, the branch and the user’s staging area.
 - **Unreleased — review repair 2a: socket paths.** Binding an MCP socket preserves every existing path, including stale sockets. An occupied name produces an actionable error instead of deleting data.
 - **Unreleased — review repair 1: file-read boundaries.** Project instructions, prompt overrides and memory refuse linked files and directories; memory has one 48 KB cap. Search refuses linked files, and nested `.env` variants follow the same secret rules as root files. Regression tests cover all four hats. Remaining repair stages are in `docs/review-2026-10-02.md`.
