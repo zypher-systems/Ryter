@@ -595,6 +595,8 @@ When a terminal isn't the right place for an answer (a report, a comparison, a c
 - **Hooks see these tools too.** `PreToolUse` and `PostToolUse` hooks run for `show_page`, `load_skill` and `request_hat`, just as for `bash` or `write`. A hook can deny a page.
 - **The skill tells the model** to use only facts from the session, to say where they came from, and to make the page work in light and dark and at phone width.
 
+Tool output is bounded while it is read. Shell commands retain the first and last output bytes and report how much was omitted. File reads support `offset` and `limit`; a line over 32 KB is shortened explicitly. Search skips lines over 64 KB and reports that its results may be incomplete. Whole-file edit/diff tools stop at 2 MB; use a focused project command for larger files. Directory listings show at most 1,000 sorted names, and prompt memory includes at most 128 Markdown note files within its 48 KB total cap.
+
 ## Context
 
 `/context` opens a panel with estimated tokens vs the model window (500k for `grok-4.6`, 200k otherwise), a gauge, and a breakdown by contributor (system prompt, project files, transcript, tool output); `c` compacts. The info panel’s model card shows the same gauge. Auto-compact at 85%: older turns collapse to tools used, files touched, and the latest pass note; the last four user turns stay. `/compact` forces a pass. Resume reads the rewritten `transcript.jsonl`.

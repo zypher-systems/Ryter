@@ -326,23 +326,21 @@ const PIPE_GRACE: Duration = Duration::from_millis(500);
 
 /// A pipe read to EOF on its own thread.
 struct Drain {
-    buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    buf: std::sync::Arc<std::sync::Mutex<super::bounded::Capture>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     done: std::sync::mpsc::Receiver<()>,
 }
 
 impl Drain {
     /// Bytes read so far.
     fn len(&self) -> usize {
-        self.buf.lock().map(|b| b.len()).unwrap_or(0)
+        self.buf.lock().map(|b| b.total).unwrap_or(0)
     }
 
     /// The last `n` non-empty lines read so far. A line still being written
     /// counts: a progress bar never ends its line.
     fn tail(&self, n: usize) -> Vec<String> {
-        let bytes = self.buf.lock().map(|b| {
-            let from = b.len().saturating_sub(4096);
-            b[from..].to_vec()
-        });
+        let bytes = self.buf.lock().map(|b| b.recent(4096));
         let text = String::from_utf8_lossy(&bytes.unwrap_or_default()).into_owned();
         let mut lines: Vec<String> = text
             .split(['\n', '\r'])
@@ -361,30 +359,40 @@ impl Drain {
             .done
             .recv_timeout(wait)
             .is_err_and(|e| matches!(e, std::sync::mpsc::RecvTimeoutError::Timeout));
-        let bytes = self.buf.lock().map(|b| b.clone()).unwrap_or_default();
-        (String::from_utf8_lossy(&bytes).into_owned(), open)
+        let text = self.buf.lock().map(|b| b.render()).unwrap_or_default();
+        (text, open)
     }
 }
 
 fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> Drain {
-    let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let buf = std::sync::Arc::new(std::sync::Mutex::new(super::bounded::Capture::new(
+        super::MAX_TOOL_OUTPUT_BYTES,
+    )));
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stopped = stop.clone();
     let (tx, done) = std::sync::mpsc::channel();
     let sink = buf.clone();
     std::thread::spawn(move || {
         if let Some(mut pipe) = pipe {
             let mut chunk = [0u8; 8192];
             while let Ok(n) = pipe.read(&mut chunk) {
-                if n == 0 {
+                if n == 0 || stopped.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
                 }
                 if let Ok(mut b) = sink.lock() {
-                    b.extend_from_slice(&chunk[..n]);
+                    b.push(&chunk[..n]);
                 }
             }
         }
         let _ = tx.send(());
     });
-    Drain { buf, done }
+    Drain { buf, done, stop }
+}
+
+impl Drop for Drain {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// Whether any process is still in group `pgid`. Bash's builtin `kill`, not
@@ -544,7 +552,11 @@ mod tests {
         let (r, took) = run("head -c 1000000 /dev/zero | tr '\\0' x", 20);
         assert!(took < Duration::from_secs(5), "took {took:?}");
         match r {
-            Run::Ok(text) => assert_eq!(text.len(), 1_000_000),
+            Run::Ok(text) => {
+                assert!(text.len() < super::super::MAX_TOOL_OUTPUT_BYTES + 128);
+                assert!(text.contains("968000 bytes elided"));
+                assert!(text.starts_with('x') && text.ends_with('x'));
+            }
             other => panic!("{other:?}"),
         }
     }

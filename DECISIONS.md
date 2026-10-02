@@ -2,6 +2,12 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Bound memory while reading, before formatting tool results
+- **Decision:** Retain 32 KB per shell pipe, split between its head and most recent tail, while counting and draining every byte. Live output uses the bounded tail. File paging retains at most 32 KB per line and stops when its output budget is reached; skipped offsets allocate no line content. Grep streams lines up to 64 KB, reports longer lines skipped, and stops at its result budget or 200 hits.
+- **Why:** Truncating a result after collecting all output does not bound the memory used by a noisy process or a giant file. The first command output and final error/summary are both useful, so pipe capture retains both ends and reports the omitted byte count.
+- **Other readers:** Whole-file edits and approval diffs stop at 2 MB rather than constructing an unbounded diff. Directory listings keep the first 1,000 sorted names; project memory keeps the first 128 Markdown note names and the existing aggregate byte cap. Limits are explicit, never a false complete/no-match result.
+- **Where:** `tools/bounded.rs`, shell/file tools and project memory; generated readers exercise multi-megabyte lines without preallocating their contents, plus pipe capture, paging/search after a giant line, preservation of oversized files, and bounded note enumeration.
+
 ### 2026-10-02 — MCP observers cannot hold the cancellation dispatcher
 - **Decision:** Dispatch host-dependent requests on at most eight workers per connection, with a bounded incoming queue. Handle authentication, cancellation and protocol discovery on the connection thread. Reject a second prompt while one is pending; CLI and TUI hosts also reject overlapping MCP prompts across connections.
 - **Why:** A host can hold its agent lock for an entire turn. Serving status or spend synchronously behind that lock prevented the same connection from delivering cancellation. The CLI now exposes a separate last-completed-turn snapshot, including incomplete spending, refreshed on both success and error.

@@ -18,6 +18,8 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 
 ## Now
 
+- **Unreleased — review repair 7b: bounded output.** Shell pipes retain fixed head/tail buffers while draining continuously. File paging and grep stream bounded lines; oversized/skipped lines and capped search results are explicit. Edit/diff inputs and directory/note enumeration have finite limits too.
+
 - **Unreleased — review repair 6a: MCP responsiveness.** Blocking requests use bounded workers while cancellation stays available; overlapping prompts receive a busy response. CLI status and spend use completed-turn snapshots, and a disconnected prompt owner cancels its active work.
 
 - **Unreleased — review repair 5: project lifecycle.** Run commands preserve quoted spaces and newlines. Every failed start cleans up its owned process group and approved stop command; failed cleanup stays recorded and retryable, including after resume. Readiness requires successful HTTP over HTTP or HTTPS, and an occupied address is not claimed by a new start.
