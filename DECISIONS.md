@@ -2,6 +2,11 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Publish bounded conversation snapshots through MCP
+- **Decision:** Refresh a plain-text snapshot of the active thread alongside status/spend after worker operations. Readers take only a small snapshot mutex, not the running agent lock. Keep recent messages within 64 KiB with a 4 KiB per-message limit and explicit omission notices; include role, tool IDs, names and arguments.
+- **Why:** The advertised transcript resource returned only a session ID. Reading the live agent would reintroduce the cancellation deadlock repaired in stage 6. Snapshot staleness during a turn is documented, and no other session or parked thread is read.
+- **Where:** `mcp/transcript.rs`, inbound dispatch, CLI/TUI snapshots; resource-content, Unicode/bounds and cancellation regressions. Public guidance now names all four hats, supplies socket paths, and distinguishes permitted toolchain execution from edits that ask.
+
 ### 2026-10-02 — Bootstrap installation uses the updater’s trust anchor
 - **Decision:** Pin the release public key in the shell installer and verify Ed25519-signed `SHA256SUMS` with OpenSSL before checksum validation/extraction. A mirror changes only the download location. Unsupported crypto tools and unsigned releases fail closed. Extract only the expected regular executable and stage with a unique filename before replacement.
 - **Why:** A checksum obtained from the same compromised download source cannot authenticate its archive. Fixed staging names also collide with parallel installers or pre-existing links. Local signed fixtures prove that verification failures preserve the installed binary.
