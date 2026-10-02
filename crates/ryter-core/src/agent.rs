@@ -737,7 +737,8 @@ impl Agent {
         let attended = self.ctx.user_io.is_some();
         let open = attended && self.cfg.as_ref().is_some_and(|c| c.ui.open_pages);
         // A browser started from a sandboxed thread would run in the sandbox.
-        let sandboxed = crate::sandbox::active() != crate::sandbox::SandboxProfile::Off;
+        let sandboxed = self.ctx.sandbox.is_some()
+            || crate::sandbox::active() != crate::sandbox::SandboxProfile::Off;
         let opened = open && !sandboxed && crate::page::open(&path);
         self.emit(AgentEvent::Notice {
             message: if opened {
@@ -819,7 +820,9 @@ impl Agent {
                 u32::from(c)
             )));
         }
-        if crate::sandbox::active() != crate::sandbox::SandboxProfile::Off {
+        if self.ctx.sandbox.is_some()
+            || crate::sandbox::active() != crate::sandbox::SandboxProfile::Off
+        {
             return Ok(ToolOutput::err(format!(
                 "the sandbox keeps {shown} read-only, so the rules weren't changed. Tell the \
                  user to edit the file, or to run without --sandbox to change it from here."
@@ -1471,7 +1474,10 @@ impl Agent {
                 None => return Ok(Err("Ryter has not started this project".to_string())),
             },
         };
-        let out = crate::run::stop(&mut started, &root, &self.ctx.cancel);
+        let out = self
+            .ctx
+            .sandboxed(|| Ok(crate::run::stop(&mut started, &root, &self.ctx.cancel)))
+            .unwrap_or_else(|error| Err(error.to_string()));
         if out.is_ok() {
             crate::run::forget(&self.home, &root);
         } else {
@@ -1573,7 +1579,9 @@ impl Agent {
                 }
                 let log = self.session.notes_dir().join("project.log");
                 let began = std::time::Instant::now();
-                match crate::run::start(&run, &root, &log, START_TIMEOUT, &self.ctx.cancel)? {
+                match self.ctx.sandboxed(|| {
+                    crate::run::start(&run, &root, &log, START_TIMEOUT, &self.ctx.cancel)
+                })? {
                     Start::Up { started, how } => {
                         let note = started.note();
                         self.product = Some(started);
@@ -1614,13 +1622,15 @@ impl Agent {
                 let mut text = String::new();
                 let mut failed = 0;
                 for cmd in &run.test {
-                    let out = crate::tools::shell::run_command_live(
-                        cmd,
-                        &root,
-                        COMMAND_TIMEOUT,
-                        &self.ctx.cancel,
-                        self.ctx.live.as_ref(),
-                    )?;
+                    let out = self.ctx.sandboxed(|| {
+                        crate::tools::shell::run_command_live(
+                            cmd,
+                            &root,
+                            COMMAND_TIMEOUT,
+                            &self.ctx.cancel,
+                            self.ctx.live.as_ref(),
+                        )
+                    })?;
                     let (body, ok) = match out {
                         Run::Ok(o) => (o, true),
                         Run::Failed(o) => (o, false),
@@ -1722,11 +1732,16 @@ impl Agent {
         self.filed.delivered = Some(filed.report.passed());
         // What was tested, as the files stood: a change after this is not
         // covered by the report.
-        let tree = crate::review::root(&self.ctx.workspace).ok().and_then(|r| {
-            let base = crate::review::head_base(&r);
-            let changes = crate::review::changes(&r, &base).ok()?;
-            crate::review::tree_of(&r, &changes.now)
-        });
+        let tree = self
+            .ctx
+            .sandboxed(|| {
+                Ok(crate::review::root(&self.ctx.workspace).ok().and_then(|r| {
+                    let base = crate::review::head_base(&r);
+                    let changes = crate::review::changes(&r, &base).ok()?;
+                    crate::review::tree_of(&r, &changes.now)
+                }))
+            })
+            .unwrap_or_default();
         self.emit(AgentEvent::Tested {
             model,
             headline: filed.report.headline(),
@@ -1764,7 +1779,7 @@ impl Agent {
     /// put them back. A snapshot identical to the last one isn't kept twice.
     fn checkpoint_before_build(&mut self) -> Result<()> {
         let dir = self.ctx.workspace.clone();
-        match crate::git::ensure_repo(&dir) {
+        match self.ctx.sandboxed(|| crate::git::ensure_repo(&dir)) {
             Ok(Some(setup)) => {
                 let undo = if setup.created {
                     " If you didn't want a repository here, delete the `.git` folder."
@@ -1794,15 +1809,20 @@ impl Agent {
             self.session.meta.id,
             self.session.meta.checkpoints.len() + 1
         );
-        let Some(sha) = crate::git::checkpoint(&dir, &name)? else {
+        let Some(sha) = self.ctx.sandboxed(|| crate::git::checkpoint(&dir, &name))? else {
             return Ok(());
         };
         // This turn is about to change files, whether or not its starting
         // point is one already kept.
         self.session.changed_turns += 1;
         let same = self.session.meta.checkpoints.last().is_some_and(|last| {
-            crate::git::checkpoint_tree(&dir, last).ok()
-                == crate::git::checkpoint_tree(&dir, &sha).ok()
+            self.ctx
+                .sandboxed(|| crate::git::checkpoint_tree(&dir, last))
+                .ok()
+                == self
+                    .ctx
+                    .sandboxed(|| crate::git::checkpoint_tree(&dir, &sha))
+                    .ok()
         });
         if !same {
             self.session.push_checkpoint(sha)?;
@@ -1849,11 +1869,16 @@ impl Agent {
             .get(&start)
             .cloned()
             .unwrap_or_default();
-        if record.ignored.iter().any(|f| f.path == rel) || !crate::git::is_ignored(&dir, &rel) {
+        if record.ignored.iter().any(|f| f.path == rel)
+            || !self
+                .ctx
+                .sandboxed(|| Ok(crate::git::is_ignored(&dir, &rel)))
+                .unwrap_or(false)
+        {
             return Ok(());
         }
         record.ignored.push(crate::session::SavedFile {
-            before: crate::git::save_blob(&dir, &rel)?,
+            before: self.ctx.sandboxed(|| crate::git::save_blob(&dir, &rel))?,
             path: rel,
             after: None,
         });
@@ -1878,9 +1903,11 @@ impl Agent {
             self.session.meta.id,
             &start[..start.len().min(12)]
         );
-        record.after = crate::git::checkpoint(&dir, &name)?;
+        record.after = self.ctx.sandboxed(|| crate::git::checkpoint(&dir, &name))?;
         for f in &mut record.ignored {
-            f.after = crate::git::save_blob(&dir, &f.path)?;
+            f.after = self
+                .ctx
+                .sandboxed(|| crate::git::save_blob(&dir, &f.path))?;
         }
         self.session.set_turn_record(&start, record)
     }
@@ -1913,10 +1940,16 @@ impl Agent {
         let dir = self.ctx.workspace.clone();
         let id = self.session.meta.id.to_string();
         let redo_name = format!("{id}-redo-{}", self.session.meta.redo.len() + 1);
-        let Some(now) = crate::git::checkpoint(&dir, &redo_name)? else {
+        let Some(now) = self
+            .ctx
+            .sandboxed(|| crate::git::checkpoint(&dir, &redo_name))?
+        else {
             return Ok("nothing to undo: this folder has no repository to undo from".into());
         };
-        let now_tree = crate::git::checkpoint_tree(&dir, &now).ok();
+        let now_tree = self
+            .ctx
+            .sandboxed(|| crate::git::checkpoint_tree(&dir, &now))
+            .ok();
         while let Some(last) = self.session.meta.checkpoints.last().cloned() {
             let record = self
                 .session
@@ -1928,7 +1961,11 @@ impl Agent {
             // Skip checkpoints the files already match: undo means "go back
             // before the last change", not "restore what's already there".
             if record.ignored.is_empty()
-                && crate::git::checkpoint_tree(&dir, &last).ok() == now_tree
+                && self
+                    .ctx
+                    .sandboxed(|| crate::git::checkpoint_tree(&dir, &last))
+                    .ok()
+                    == now_tree
             {
                 self.session.pop_checkpoint()?;
                 continue;
@@ -1937,18 +1974,25 @@ impl Agent {
             // snapshot at the end. Sessions from before 0.5.2 have no end
             // snapshot: everything since the checkpoint, as undo did then.
             let end = record.after.clone().unwrap_or_else(|| now.clone());
-            let paths = crate::git::paths_between(&dir, &last, &end)?;
-            let since: std::collections::HashSet<String> =
-                crate::git::paths_between(&dir, &end, &now)?
-                    .into_iter()
-                    .collect();
+            let paths = self
+                .ctx
+                .sandboxed(|| crate::git::paths_between(&dir, &last, &end))?;
+            let since: std::collections::HashSet<String> = self
+                .ctx
+                .sandboxed(|| crate::git::paths_between(&dir, &end, &now))?
+                .into_iter()
+                .collect();
             let mut clash: Vec<String> = paths
                 .iter()
                 .filter(|p| since.contains(*p))
                 .cloned()
                 .collect();
             for f in &record.ignored {
-                if crate::git::save_blob(&dir, &f.path)? != f.after {
+                if self
+                    .ctx
+                    .sandboxed(|| crate::git::save_blob(&dir, &f.path))?
+                    != f.after
+                {
                     clash.push(f.path.clone());
                 }
             }
@@ -1964,14 +2008,21 @@ impl Agent {
             for f in &record.ignored {
                 saved.push(crate::session::SavedFile {
                     path: f.path.clone(),
-                    before: crate::git::save_blob(&dir, &f.path)?,
+                    before: self
+                        .ctx
+                        .sandboxed(|| crate::git::save_blob(&dir, &f.path))?,
                     after: f.before.clone(),
                 });
-                crate::git::put_blob(&dir, &f.path, f.before.as_deref())?;
+                self.ctx
+                    .sandboxed(|| crate::git::put_blob(&dir, &f.path, f.before.as_deref()))?;
             }
-            crate::git::restore_paths(&dir, &last, &paths)?;
+            self.ctx
+                .sandboxed(|| crate::git::restore_paths(&dir, &last, &paths))?;
             let undone_name = format!("{id}-undone-{}", self.session.meta.redo.len() + 1);
-            let undone = crate::git::checkpoint(&dir, &undone_name)?.unwrap_or_default();
+            let undone = self
+                .ctx
+                .sandboxed(|| crate::git::checkpoint(&dir, &undone_name))?
+                .unwrap_or_default();
             self.session.pop_checkpoint()?;
             self.session.push_redo(crate::session::Redo {
                 checkpoint: last,
@@ -2020,13 +2071,14 @@ impl Agent {
             return Ok("nothing to redo".into());
         };
         let dir = self.ctx.workspace.clone();
-        let Some(now) = crate::git::checkpoint(&dir, "now")? else {
+        let Some(now) = self.ctx.sandboxed(|| crate::git::checkpoint(&dir, "now"))? else {
             return Ok("nothing to redo".into());
         };
-        let since: std::collections::HashSet<String> =
-            crate::git::paths_between(&dir, &r.undone, &now)?
-                .into_iter()
-                .collect();
+        let since: std::collections::HashSet<String> = self
+            .ctx
+            .sandboxed(|| crate::git::paths_between(&dir, &r.undone, &now))?
+            .into_iter()
+            .collect();
         let mut clash: Vec<String> = r
             .paths
             .iter()
@@ -2034,7 +2086,11 @@ impl Agent {
             .cloned()
             .collect();
         for f in &r.ignored {
-            if crate::git::save_blob(&dir, &f.path)? != f.after {
+            if self
+                .ctx
+                .sandboxed(|| crate::git::save_blob(&dir, &f.path))?
+                != f.after
+            {
                 clash.push(f.path.clone());
             }
         }
@@ -2044,9 +2100,11 @@ impl Agent {
                 list(&clash)
             ));
         }
-        crate::git::restore_paths(&dir, &r.files, &r.paths)?;
+        self.ctx
+            .sandboxed(|| crate::git::restore_paths(&dir, &r.files, &r.paths))?;
         for f in &r.ignored {
-            crate::git::put_blob(&dir, &f.path, f.before.as_deref())?;
+            self.ctx
+                .sandboxed(|| crate::git::put_blob(&dir, &f.path, f.before.as_deref()))?;
         }
         self.session.pop_redo()?;
         self.session.push_checkpoint(r.checkpoint.clone())?;
@@ -2077,7 +2135,7 @@ impl Agent {
 
     fn revert_recorded(
         &mut self,
-        revert: impl FnOnce(&std::path::Path) -> Result<()>,
+        revert: impl FnOnce(&std::path::Path) -> Result<()> + Send,
     ) -> Result<()> {
         let dir = self.ctx.workspace.clone();
         let name = format!(
@@ -2090,15 +2148,17 @@ impl Agent {
             let start = self.session.meta.checkpoints.last().cloned();
             self.session.set_turn_checkpoint(start)?;
         }
-        let sha = crate::git::checkpoint(&dir, &name)?;
+        let sha = self.ctx.sandboxed(|| crate::git::checkpoint(&dir, &name))?;
         if let Some(sha) = &sha {
             self.session.push_checkpoint(sha.clone())?;
         }
-        revert(&dir)?;
+        self.ctx.sandboxed(|| revert(&dir))?;
         // Recorded like a turn, so `/undo` brings back this one file and
         // nothing the user changed around it.
         if let Some(sha) = sha {
-            let after = crate::git::checkpoint(&dir, &format!("{name}-after"))?;
+            let after = self
+                .ctx
+                .sandboxed(|| crate::git::checkpoint(&dir, &format!("{name}-after")))?;
             self.session.set_turn_record(
                 &sha,
                 crate::session::TurnRecord {
@@ -2115,9 +2175,13 @@ impl Agent {
     /// diff, the project's recent subjects, and this conversation's why.
     pub async fn draft_commit(&mut self, paths: &[String]) -> Result<String> {
         let dir = self.ctx.workspace.clone();
-        let changes = crate::review::changes(&dir, &crate::review::head_base(&dir))?;
-        let diff = crate::review::draft_diff(&dir, &changes, paths);
-        let subjects = crate::review::recent_subjects(&dir, 8);
+        let (diff, subjects) = self.ctx.sandboxed(|| {
+            let changes = crate::review::changes(&dir, &crate::review::head_base(&dir))?;
+            Ok((
+                crate::review::draft_diff(&dir, &changes, paths),
+                crate::review::recent_subjects(&dir, 8),
+            ))
+        })?;
         let mut prompt = String::new();
         if !subjects.is_empty() {
             prompt.push_str("Recent commit subjects in this project:\n");
@@ -2393,7 +2457,10 @@ impl Agent {
         let Some(hooks) = &self.ctx.hooks else {
             return Ok(());
         };
-        match hooks.session_start(&self.ctx.workspace, self.role) {
+        match self
+            .ctx
+            .sandboxed(|| Ok(hooks.session_start(&self.ctx.workspace, self.role)))?
+        {
             crate::hooks::HookDecision::Allow => Ok(()),
             crate::hooks::HookDecision::Deny(msg) => {
                 Err(Error::Config(format!("session start hook denied: {msg}")))
@@ -2745,6 +2812,14 @@ mod tests {
     fn setup(provider: ReplayProvider) -> (TempDir, TempDir, Agent) {
         let home = TempDir::new().unwrap();
         let cwd = TempDir::new().unwrap();
+        setup_in(provider, home, cwd)
+    }
+
+    fn setup_in(
+        provider: ReplayProvider,
+        home: TempDir,
+        cwd: TempDir,
+    ) -> (TempDir, TempDir, Agent) {
         std::fs::write(cwd.path().join("hello.txt"), "hi there").unwrap();
         let session = Session::create(
             home.path(),
@@ -2755,6 +2830,7 @@ mod tests {
         .unwrap();
         let notes = session.notes_dir();
         let ctx = ToolContext {
+            sandbox: None,
             live: None,
             workspace: cwd.path().to_path_buf(),
             notes_dir: notes,
@@ -6177,7 +6253,11 @@ mod tests {
                 call("update_rules", serde_json::json!({"rules": "- a new rule"})),
                 say("done"),
             ]);
-            let (home, cwd, mut agent) = setup(p);
+            let (home, cwd, mut agent) = setup_in(
+                p,
+                crate::sandbox::tests::outside_scratch(),
+                crate::sandbox::tests::outside_scratch(),
+            );
             crate::rules::save(home.path(), "- Be brief.").unwrap();
             let dir = home.path().join("skills/mine");
             std::fs::create_dir_all(&dir).unwrap();
@@ -6189,10 +6269,12 @@ mod tests {
             let (io, _rx) = crate::user_io::UserIo::pair();
             agent.ctx.user_io = Some(io);
             let profile = crate::sandbox::SandboxProfile::Workspace;
-            if let Err(e) = crate::sandbox::apply(profile, cwd.path(), home.path()) {
+            let scope = crate::sandbox::tests::fixture_scope(profile, home.path());
+            if let Err(e) = scope.check(cwd.path(), &agent.session.notes_dir()) {
                 eprintln!("sandbox apply skipped: {e}");
                 return;
             }
+            agent.ctx.sandbox = Some(scope);
             let rt = crate::sandbox::runtime(profile).unwrap();
             rt.block_on(agent.turn("go")).unwrap();
             let results: Vec<&str> = agent
@@ -6220,6 +6302,76 @@ mod tests {
         })
         .join()
         .expect("sandboxed turn");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn automatic_checkpoints_keep_git_filters_in_the_session_sandbox() {
+        // Git reads HOME configuration even for local snapshots. Run this
+        // fixture in a separate process with an empty home, never the user's
+        // configuration or process-wide environment mutations in parallel tests.
+        if std::env::var_os("RYTER_SANDBOX_FILTER_CHILD").is_none() {
+            let fixture_home = TempDir::new().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "agent::tests::automatic_checkpoints_keep_git_filters_in_the_session_sandbox",
+                    "--nocapture",
+                ])
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                .env("HOME", fixture_home.path())
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("RYTER_SANDBOX_FILTER_CHILD", "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        use crate::sandbox::{
+            SandboxProfile,
+            tests::{fixture_scope, outside_scratch},
+        };
+        let (home, cwd, mut agent) = setup_in(
+            ReplayProvider::scripted(vec![write("hello.txt", "changed"), say("done")]),
+            outside_scratch(),
+            outside_scratch(),
+        );
+        let scope = fixture_scope(SandboxProfile::Workspace, home.path());
+        if let Err(error) = scope.check(cwd.path(), &agent.session.notes_dir()) {
+            assert!(error.to_string().contains("Landlock is unavailable"));
+            return;
+        }
+        crate::git::init_repo(cwd.path()).unwrap();
+        let secret = home.path().join("private");
+        std::fs::write(&secret, "private\n").unwrap();
+        std::fs::write(cwd.path().join(".gitattributes"), "*.txt filter=probe\n").unwrap();
+        let filter = format!(
+            "if IFS= read -r line < '{}'; then printf leaked > leaked; fi; printf ran >> filter.log; cat",
+            secret.display()
+        );
+        crate::git::git(cwd.path(), &["config", "filter.probe.clean", &filter]).unwrap();
+        agent.ctx.sandbox = Some(scope);
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("change hello").await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("hello.txt")).unwrap(),
+            "changed"
+        );
+        assert!(
+            cwd.path().join("filter.log").exists(),
+            "filter must actually run: {:?}",
+            rx.try_iter().collect::<Vec<_>>()
+        );
+        assert!(!cwd.path().join("leaked").exists());
+        assert!(!agent.session.spend_log().unwrap().is_empty());
+        assert!(Session::open(&agent.session.dir).is_ok());
     }
 
     /// Solo mode in a folder of projects edits without making it a

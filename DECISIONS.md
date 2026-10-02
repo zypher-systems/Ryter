@@ -2,6 +2,13 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Tool scopes follow the active session
+- **Decision:** Keep the agent’s bookkeeping on its parent thread. Run built-in tools, command hooks, automatic Git work and approved lifecycle commands on fresh Landlock threads. Grant only the active session’s notes and pages, plus the existing workspace/system/tool/cache/scratch allowances. Prove the requested profile before the first provider call; enforcement errors never execute a command.
+- **Why:** A permanent grant on all sessions exposes other projects. A permanent grant on just the initial session breaks new/resumed sessions because Landlock restrictions cannot be removed. Fresh workers follow the current notes path without accumulating grants; transcripts, spending, metadata and approvals stay outside command access.
+- **Boundaries:** Refuse linked storage components, a workspace containing Ryter’s home, or a home under shared system/scratch directories. PATH and tool/cache grants cannot reopen Ryter’s home. Git filters can execute repository-configured code, so automatic snapshots and review preparation are scoped too. Browser opening remains disabled under a profile.
+- **Limits:** The filesystem profile does not restrict network access, container daemons, or separately configured outbound MCP servers. Shared scratch and tool caches remain shared. Kernel enforcement is Linux-only and requested profiles still fail closed elsewhere.
+- **Evidence:** Tests use isolated storage outside shared scratch. They exercise raw cross-session reads/writes, private record denial, new/resumed scopes, linked storage, PATH aliases, real gate/hooks, automatic Git filters, pages/skills and parent-thread persistence.
+
 ### 2026-10-02 — Bound memory while reading, before formatting tool results
 - **Decision:** Retain 32 KB per shell pipe, split between its head and most recent tail, while counting and draining every byte. Live output uses the bounded tail. File paging retains at most 32 KB per line and stops when its output budget is reached; skipped offsets allocate no line content. Grep streams lines up to 64 KB, reports longer lines skipped, and stops at its result budget or 200 hits.
 - **Why:** Truncating a result after collecting all output does not bound the memory used by a noisy process or a giant file. The first command output and final error/summary are both useful, so pipe capture retains both ends and reports the omitted byte count.

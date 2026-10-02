@@ -590,7 +590,7 @@ A rule saved this way takes effect from your next message. For a rule that belon
 When a terminal isn't the right place for an answer (a report, a comparison, a chart, a plan to scan), the model builds a page. It loads the `canvas` skill, writes one self-contained HTML page, and shows it with `show_page`. You can also ask for one directly with `/canvas <what you want to see>`.
 
 - **Where pages live:** `~/.ryter/pages/<session>/<title>.html`, outside your project. Deleting the session deletes its pages. Showing a page with the same title replaces it, so the model revises in place.
-- **The chat links every page**, and Ryter opens it in your browser when there's a desktop. `[ui] open_pages = false` (`/settings` → *pages in browser*) keeps pages closed, and you get the link only. Under `--sandbox`, Ryter leaves pages closed too: a browser started from the sandboxed thread would run inside the sandbox.
+- **The chat links every page**, and Ryter opens it in your browser when there's a desktop. `[ui] open_pages = false` (`/settings` → *pages in browser*) keeps pages closed, and you get the link only. Under `--sandbox`, Ryter leaves pages closed too; open the displayed link yourself.
 - **A page loads nothing from the network:** no scripts, fonts or images from the web, and no form posts. Ryter puts a Content-Security-Policy at the very top of every page, ahead of anything the page contains. Everything the page shows is inline.
 - **Hooks see these tools too.** `PreToolUse` and `PostToolUse` hooks run for `show_page`, `load_skill` and `request_hat`, just as for `bash` or `write`. A hook can deny a page.
 - **The skill tells the model** to use only facts from the session, to say where they came from, and to make the page work in light and dark and at phone width.
@@ -631,10 +631,10 @@ A sandbox limits which files the model's commands can reach. It is enforced by t
 
 - system folders (`/usr`, `/bin`, `/etc`), and where package managers install (`/opt`, `/nix`, `/snap`, Homebrew);
 - toolchains under your home folder: `~/.cargo/bin`, `~/.rustup`, node version managers (`~/.nvm`, `~/.volta`, `fnm`, `asdf`, `mise`), `~/.pyenv`, `~/.bun`, `~/.deno`, `~/go/bin`, `~/.local/bin`, pipx and uv;
-- any other folder on your `PATH` that is under your home folder, as that folder alone;
+- any other folder on your `PATH` that is under your home folder, as that folder alone, excluding folders that would expose Ryter’s private storage;
 - your git identity (`~/.gitconfig` and `~/.config/git/config`).
 
-A tool folder that is a symbolic link is left out, since a grant on a link is a grant on what it points at. If your `~/.npm` or `~/.cargo/registry` is a link to another disk, builds under the sandbox can't use that cache.
+A tool folder with a symbolic link anywhere below your home folder is left out, since a grant on a link is a grant on what it points at. If your `~/.npm` or `~/.cargo/registry` is a link to another disk, builds under the sandbox can't use that cache.
 
 They can also write the tools' download caches (`~/.cargo/registry`, `~/.npm`, pip's, uv's, Go's and others), so a build that fetches a dependency works.
 
@@ -642,9 +642,15 @@ They can also write the tools' download caches (`~/.cargo/registry`, `~/.npm`, p
 
 **What stays shut:** the rest of your home folder, `~/.ssh`, the tools' saved logins (`~/.cargo/credentials.toml`, `~/.npmrc`, `~/.config/git/credentials`), and Ryter's keys. Ryter also closes its own process to the commands it runs, so a key held in its memory or its environment can't be read from `/proc`.
 
-**Ryter's own records are kept from outside the sandbox:** which run file you approved, which product it left running, and its plans, decisions and reports in the project. A command can't write them, so it can't approve a run file for you, and a profile doesn't stop Ryter keeping them: under `read-only` too, an approved plan is saved.
+**Session access follows the session:** tools and command hooks can write only the active session’s notes and pages inside Ryter’s home. Other sessions, transcripts, spending records, metadata and approvals stay closed. New and resumed sessions get fresh scopes. Ryter’s own bookkeeping runs outside those scopes, so saving records still works. Automatic Git operations and approved project start/test/stop commands use the same profile.
+
+The configured Ryter home must be outside the workspace and outside shared system/scratch directories. A home under `/tmp`, for example, would be exposed by the scratch grant and is refused under a profile. Linked session, page or skill storage is refused. Choose a private home outside those locations or use `off`.
+
+Plans, decisions and test reports stored in the project follow the workspace’s access rights. Run-file approvals and lifecycle ownership are kept separately in Ryter’s home.
 
 **What a sandbox doesn't do:**
+
+- Separately configured outbound MCP servers run with their own permissions; this profile applies to Ryter’s built-in commands.
 
 - **It doesn't limit the network.**
 - **It doesn't contain Docker.** A command that can reach the Docker socket can mount the whole machine. If that matters, don't give the account Docker access. `docker build` works under a profile (its lock folder, `~/.docker/buildx`, is writable; the registry logins beside it stay shut).

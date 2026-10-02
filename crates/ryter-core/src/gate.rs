@@ -303,6 +303,12 @@ impl Agent {
     /// What the tester is asked: where to start from, since it has not read
     /// the conversation the work was done in.
     fn test_brief(&self) -> String {
+        self.ctx
+            .sandboxed(|| Ok(self.test_brief_scoped()))
+            .unwrap_or_else(|error| format!("Could not inspect the project: {error}"))
+    }
+
+    fn test_brief_scoped(&self) -> String {
         let root = self.root();
         let mut s = String::from("[Ryter] Test the work as its user would.");
         match self.session.meta.plan_file.as_deref() {
@@ -583,6 +589,10 @@ impl Agent {
 
     /// What there is to review; `Err` says why there is nothing.
     fn review_job(&mut self) -> Result<std::result::Result<Job, String>> {
+        self.ctx.sandboxed(|| self.review_job_scoped())
+    }
+
+    fn review_job_scoped(&self) -> Result<std::result::Result<Job, String>> {
         let Ok(root) = crate::review::root(&self.ctx.workspace) else {
             return Ok(Err(
                 "a review reads what changed, which needs a git repository".into(),
