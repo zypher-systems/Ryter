@@ -18,6 +18,8 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 
 ## Now
 
+- **Unreleased — review repair 5: project lifecycle.** Run commands preserve quoted spaces and newlines. Every failed start cleans up its owned process group and approved stop command; failed cleanup stays recorded and retryable, including after resume. Readiness requires successful HTTP over HTTP or HTTPS, and an occupied address is not claimed by a new start.
+
 - **Unreleased — review repair 2b: undo from nested directories.** Snapshot differences retain repository-relative paths and stay within the launch directory. Undo and redo restore those paths from the repository root, preserving unrelated files, the branch and the user’s staging area.
 - **Unreleased — review repair 2a: socket paths.** Binding an MCP socket preserves every existing path, including stale sockets. An occupied name produces an actionable error instead of deleting data.
 - **Unreleased — review repair 3: spending integrity.** Commit drafting obeys the same budget admission checks as turns. Interrupted calls retain reported usage and mark accounting incomplete; a budget then stops further requests even after resume. Missing override rates remain unknown.

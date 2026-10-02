@@ -2,6 +2,13 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — A failed lifecycle operation keeps ownership until cleanup succeeds
+- **Decision:** Nonzero startup exits, wait errors, timeouts and cancellation share cleanup. Failed cleanup returns its handle to the agent and persists a pending flag with the approved stop command. A later start cannot discard a pending cleanup record; `/stop` retries it. Earlier-session process numbers remain insufficient authority to kill a process.
+- **Why:** A launcher can fail after starting children or a partial stack. Dropping its record made those resources impossible to stop through Ryter.
+- **Readiness:** Successful HTTP statuses and redirects (200–399) count as ready, with normal TLS verification for HTTPS. A TCP listener proves only occupancy; it prevents a second start and preserves an unhealthy server’s ownership record. A service that appears on the same port after the preflight check cannot be attributed solely by its address.
+- **Commands:** Only outer whitespace is trimmed. Shell whitespace, quotes, line breaks and here-documents inside a command are part of the approved program and survive serialization unchanged.
+- **Where:** `run.rs`, `agent.rs`; isolated regressions cover orphan cleanup, failed-stop retry, resumed ownership, port occupancy, TLS versus TCP, and exact command approval.
+
 ### 2026-10-02 — Undo uses one path coordinate system
 - **Decision:** Snapshot differences are explicitly repository-relative regardless of `diff.relative`; their pathspec is scoped to the session’s launch directory. Restore and deletion both run from the repository root, with literal pathspecs. Validate snapshots and relative paths before changing files.
 - **Why:** A session launched in `app/` otherwise treated `app/file` as `app/app/file`. Sibling projects and later user edits must not become part of that session’s undo.
