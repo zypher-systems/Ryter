@@ -125,6 +125,9 @@ pub(crate) fn command(cmd: &str, cwd: &std::path::Path) -> Command {
         .env_remove("ENV")
         .env_remove("SHELLOPTS")
         .env_remove("BASHOPTS")
+        // And nothing that changes what a search reads.
+        .env_remove("RIPGREP_CONFIG_PATH")
+        .env_remove("GREP_OPTIONS")
         .stdin(Stdio::null());
     if let Ok(vars) = KEY_VARS.read() {
         for var in vars.iter() {

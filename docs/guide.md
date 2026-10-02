@@ -352,7 +352,7 @@ A toolchain runs the project's code: `cargo build` runs its build script and `np
 - **A redirect is read wherever it is written** (`echo x>file`), and a backslash at the end of a line joins it to the next.
 - **A link is judged by what it points at,** whatever the link is called.
 
-What the shell is told to read another way, the gate can't read at all, and refuses in every hat: setting `HOME`, `IFS`, `CDPATH`, `GLOBIGNORE` or `BASH_ENV`; `shopt`, `alias`, `hash`, `trap` and `enable`; and `env -C`, which runs a command in another folder.
+What the shell is told to read another way, the gate can't read at all, and refuses in every hat: setting `HOME`, `IFS`, `CDPATH`, `GLOBIGNORE` or `BASH_ENV`; `shopt`, `alias`, `hash`, `trap` and `enable`; a shell function (`function name { … }`, `name() { … }`), which makes a name mean other commands; and `env -C`, which runs a command in another folder.
 
 What the gate can read but not see through (a path in a variable, files handed over by `xargs`) is a question in the build and test hats and refused in plan and review. "Allow all" and `--always-approve` answer that question yes in advance, as they do any other.
 
@@ -386,7 +386,7 @@ The plan and review hats change nothing in the project and write nothing in your
 - inline code for an interpreter, however the flag is spelled (`python -c`, `python3 -bc`, `node -pe`, `perl -E`, `php -r`, `bash -lc`), standard input, here-strings and heredocs: write it to a file and run the file;
 - a tool handed a command as text: `make --eval`, `go test -exec`, `cargo --config`, `npm exec -c`, `python3 -m timeit`, `awk` calling `system()`;
 - a secret handed to a program that isn't just looking at the file: `cp .env notes.txt`, `tar cf x.tar .env`, `source .env`, a copy or an archive of a folder that holds one, a variable set to it (`x=.env; cat $x`). `ls -l .env`, `test -f .env`, and a container's or `node`'s `--env-file` still run;
-- a secret printed by any road: a pattern that matches it (`cat .en?`), an option's value (`diff --from-file=.env`), a link to it, a search through a folder that holds it (`grep -r KEY .`; name the folders, say which files with `--include`, or use `rg`, which leaves hidden and ignored files out), `git` (`git diff --no-index /dev/null .env`, `git show HEAD:.env`), or a command in one of the project's containers (`docker compose exec web cat /app/.env`);
+- a secret printed by any road: a pattern that matches it (`cat .en?`), an option's value (`diff --from-file=.env`), a link to it, a search through a folder that holds it (`grep -r KEY .`; name the folders, say which files with `--include`, or use `rg`, which leaves hidden and ignored files out), into a linked folder too where the search follows links (`grep -R`, `rg -L`), `git` (`git diff --no-index /dev/null .env`, `git show HEAD:.env`), or a command in one of the project's containers (`docker compose exec web cat /app/.env`);
 - `git -c` settings that name a program (`alias.x=!cmd`, `core.sshCommand`, `core.pager`, …), `git --exec-path`, and `--upload-pack`.
 
 `env` alone, which prints every variable, is not read-only. Commands run without Ryter's own API keys in their environment.

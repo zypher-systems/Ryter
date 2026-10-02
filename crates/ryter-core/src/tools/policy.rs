@@ -1849,11 +1849,18 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
 fn decide_segment_in(seg: &str, ctx: &ToolContext, in_container: bool) -> Decision {
     let mut words = read(seg, ctx, false);
     strip_keywords(&mut words);
+    // A function gives a name to commands, and the name is then a command:
+    // `function cat { … }; cat` ran whatever was in the braces as `cat`,
+    // which every hat may run. A command is judged by its name, so a
+    // command that changes what a name means is refused.
+    if words.first().is_some_and(|w| w == "function") {
+        return Decision::Deny;
+    }
     // `for f in …`, `case x in`: they run nothing themselves, but what
     // they name is what the commands inside will be handed.
     if matches!(
         words.first().map(String::as_str),
-        Some("for" | "select" | "case" | "function")
+        Some("for" | "select" | "case")
     ) {
         return if names_a_secret(&with_values(&words, 0).0, ctx) {
             Decision::Deny
@@ -2051,7 +2058,10 @@ fn redirects_a_program(name: &str, value: &str, ctx: &ToolContext) -> bool {
         | "CONTAINER_HOST"
         | "CONTAINER_CONNECTION"
         | "BUILDKIT_HOST"
-        | "KUBECONFIG" => true,
+        | "KUBECONFIG"
+        // A file of options for a search: `--hidden` in it, and `rg`
+        // reads what the gate took it to leave out.
+        | "RIPGREP_CONFIG_PATH" | "GREP_OPTIONS" => true,
         "GOFLAGS" | "RUSTFLAGS" | "RUSTDOCFLAGS" => {
             value.contains("exec") || value.contains("linker") || value.contains("link-arg")
         }
@@ -2260,7 +2270,28 @@ fn judge(
         if !works && git_leaves(from_prog, &seen, ctx) {
             return Decision::Deny;
         }
-        return decide_git(from_prog, ctx).and(outside);
+        // `git grep --no-index` and `--untracked` search the files that
+        // are there, a `.env` among them, as `grep -r` does.
+        if let Some(at) = from_prog.iter().position(|w| w == "grep") {
+            if from_prog
+                .iter()
+                .any(|w| w == "--no-index" || w == "--untracked")
+            {
+                let mut as_grep = vec!["grep".to_string(), "-r".to_string()];
+                as_grep.extend(
+                    from_prog[at + 1..]
+                        .iter()
+                        .filter(|w| !matches!(w.as_str(), "--no-index" | "--untracked" | "--"))
+                        .cloned(),
+                );
+                match searched_tree("grep", &as_grep, ctx) {
+                    Tree::Secret => return Decision::Deny,
+                    Tree::Unread => nested = nested.and(unseen),
+                    Tree::Clear => {}
+                }
+            }
+        }
+        return decide_git(from_prog, ctx).and(outside).and(nested);
     }
     // Printing a secret is denied even when the command itself is read-only,
     // otherwise `cat .env` walks around the `read_file` gate.
@@ -3466,6 +3497,15 @@ fn split(cmd: &str) -> Vec<Seg> {
                 before = sep;
             }
             '(' => {
+                // `name() { … }` defines a function, as `function name`
+                // does: said the same way, so it is judged the same way.
+                let mut rest = chars.clone();
+                if !cur.trim().is_empty()
+                    && rest.find(|n| !n.is_whitespace()) == Some(')')
+                    && !cur.trim_start().starts_with("function ")
+                {
+                    cur = format!("function {}", cur.trim());
+                }
                 push(&mut cur, &mut out, before, Sep::Then, inside);
                 groups += 1;
                 before = Sep::Then;
@@ -4083,14 +4123,26 @@ fn packed_tree(from_prog: &[String], ctx: &ToolContext) -> Tree {
         .filter_map(|w| resolve(ctx, w))
         .filter(|p| p.is_dir())
     {
+        // Links are followed: `cp -rL` and `tar -h` take what they point
+        // at, and looking further than a plain copy would is the safe side.
         let mut walk = ignore::WalkBuilder::new(&dir);
-        walk.standard_filters(false);
-        for entry in walk.build().flatten() {
+        walk.standard_filters(false).follow_links(true);
+        for entry in walk.build() {
+            let Ok(entry) = entry else {
+                return Tree::Unread;
+            };
             looked_at += 1;
             if looked_at > MAX_SEARCHED {
                 return Tree::Unread;
             }
-            if entry.file_type().is_some_and(|t| !t.is_dir()) && is_secret(entry.path(), ctx) {
+            if entry.file_type().is_some_and(|t| t.is_dir()) {
+                continue;
+            }
+            let real = real_path(entry.path());
+            if is_secret(entry.path(), ctx)
+                || is_secret(&real, ctx)
+                || forbidden_to_read(&real, ctx)
+            {
                 return Tree::Secret;
             }
         }
@@ -4148,21 +4200,114 @@ fn searched_tree(prog: &str, from_prog: &[String], ctx: &ToolContext) -> Tree {
         }
         _ => return Tree::Clear,
     };
-    // What it was told to search: every plain word but the pattern (the
-    // first, unless the pattern came with `-e` or from a file).
-    let plain = plain_args(from_prog);
-    let pattern_elsewhere =
-        prog == "diff" || short('e') || short('f') || long(&["--regexp", "--file", "--files"]);
+    // What it was told to search. The words that are not options, and not
+    // the value of one: `-e PATTERN` names a pattern, not a place, and
+    // read as a place it left `grep -rn -e KEY` searching a folder the
+    // gate hadn't looked through.
+    // The short options that take a value: `-r` is "into folders" to
+    // `grep` and "replace with" to `rg`.
+    let short_valued = if prog == "rg" {
+        "efgtTmABCjMEr"
+    } else {
+        "efmABCdD"
+    };
+    const LONG_VALUED: &[&str] = &[
+        "--regexp",
+        "--file",
+        "--include",
+        "--exclude",
+        "--exclude-dir",
+        "--exclude-from",
+        "--max-count",
+        "--context",
+        "--after-context",
+        "--before-context",
+        "--glob",
+        "--iglob",
+        "--type",
+        "--type-not",
+        "--type-add",
+        "--max-depth",
+        "--maxdepth",
+        "--threads",
+        "--replace",
+        "--encoding",
+        "--max-columns",
+        "--max-filesize",
+        "--sort",
+        "--sortr",
+        "--ignore-file",
+        "--pre-glob",
+        "--label",
+        "--directories",
+        "--devices",
+        "--binary-files",
+        "--color",
+        "--colors",
+        "--engine",
+        "--path-separator",
+        "--context-separator",
+        "--field-match-separator",
+        "--field-context-separator",
+    ];
+    let mut plain: Vec<&str> = Vec::new();
+    let mut pattern_elsewhere = prog == "diff";
+    let mut unknown = false;
+    let mut at = 0;
+    while let Some(a) = args.get(at).map(String::as_str) {
+        at += 1;
+        if a == "--" {
+            plain.extend(args[at..].iter().map(String::as_str));
+            break;
+        }
+        if let Some(name) = a.strip_prefix("--") {
+            let name = format!("--{}", name.split('=').next().unwrap_or(name));
+            pattern_elsewhere |= matches!(name.as_str(), "--regexp" | "--file" | "--files");
+            if !a.contains('=') {
+                if LONG_VALUED.contains(&name.as_str()) {
+                    at += 1;
+                } else if prog != "diff" {
+                    // It may take the next word as its value.
+                    unknown = true;
+                }
+            }
+            continue;
+        }
+        if a.len() > 1 && a.starts_with('-') {
+            if prog != "diff" {
+                for (k, c) in a[1..].char_indices() {
+                    if short_valued.contains(c) {
+                        pattern_elsewhere |= matches!(c, 'e' | 'f');
+                        // The rest of the word is its value, or the next
+                        // word is.
+                        if a[1 + k + c.len_utf8()..].is_empty() {
+                            at += 1;
+                        }
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        if redirect(a, true) != Redir::No || a.starts_with("<<") {
+            at += 1;
+            continue;
+        }
+        plain.push(a);
+    }
     let places = plain
         .get(usize::from(!pattern_elsewhere)..)
         .unwrap_or_default();
-    let mut dirs: Vec<PathBuf> = places
+    let named: Vec<PathBuf> = places
         .iter()
         .filter_map(|w| resolve(ctx, w).or_else(|| resolve_outside(ctx, w)))
-        .filter(|p| p.is_dir())
         .collect();
-    // Told nothing, it searches the folder it runs in.
-    if places.is_empty() {
+    let mut dirs: Vec<PathBuf> = named.iter().filter(|p| p.is_dir()).cloned().collect();
+    // Told nothing, it searches the folder it runs in. And where the gate
+    // isn't sure what it was told (an option it doesn't know may have
+    // taken the pattern as its value), that folder is looked through as
+    // well.
+    if places.is_empty() || unknown {
         match base(ctx) {
             Some(dir) => dirs.push(dir),
             None => return Tree::Unread,
@@ -4211,8 +4356,20 @@ fn searched_tree(prog: &str, from_prog: &[String], ctx: &ToolContext) -> Tree {
             .ignore(ignores)
             .git_ignore(ignores)
             .git_global(ignores)
-            .git_exclude(ignores);
-        for entry in walk.build().flatten() {
+            .git_exclude(ignores)
+            // Into a linked folder too, where the search goes into them:
+            // a link to a folder was looked at as a link, and what was in
+            // the folder was not looked at.
+            .follow_links(follows);
+        for entry in walk.build() {
+            // A folder it couldn't walk (a loop of links) is one it
+            // didn't look through.
+            let Ok(entry) = entry else {
+                if follows {
+                    return Tree::Unread;
+                }
+                continue;
+            };
             looked_at += 1;
             if looked_at > MAX_SEARCHED {
                 return Tree::Unread;
@@ -4224,15 +4381,26 @@ fn searched_tree(prog: &str, from_prog: &[String], ctx: &ToolContext) -> Tree {
             if !read(entry.file_name()) {
                 continue;
             }
-            if entry.path_is_symlink() {
-                let real = real_path(path);
-                if follows && (is_secret(&real, ctx) || forbidden_to_read(&real, ctx)) {
-                    return Tree::Secret;
-                }
+            if entry.path_is_symlink() && !follows {
                 continue;
             }
+            // By its name here, and by where it really is: under a
+            // linked folder those differ.
             if is_secret(path, ctx) {
                 return Tree::Secret;
+            }
+            if follows {
+                let real = real_path(path);
+                if is_secret(&real, ctx) || forbidden_to_read(&real, ctx) {
+                    return Tree::Secret;
+                }
+                // Through a link, out of the project and of every place
+                // a command may read without a question.
+                let ours = is_under(&real, &real_path(&ctx.workspace))
+                    || is_under(&real, &real_path(&ctx.notes_dir));
+                if !ours && !free_place(&real, ctx, false) {
+                    return Tree::Unread;
+                }
             }
         }
     }
@@ -7315,6 +7483,21 @@ mod tests {
             "f() { cat .env; }; f",
             "coproc cat .env",
         ]);
+        // A function gives a name to commands. Defined as `cat`, it ran as
+        // `cat`, whatever was in it: its first command sat in the same
+        // part of the line as `function`, and was never judged.
+        m.refused(&[
+            "function cat { python3 -c 'print(1)'; }; cat",
+            "function cat { printf x > src/main.py; }; cat",
+            "function f { sudo id; }; f",
+            "function f() { ls; }; f",
+            "function ls { rm -rf src; }\nls",
+            "cat() { printf x > src/main.py; }; cat",
+            "cat () { ls; }; cat",
+            "ls() ( rm -rf src ); ls",
+            "if true; then function cat { ls; }; fi; cat",
+            "f() { ls; }",
+        ]);
         m.runs(
             &HATS,
             &[
@@ -7356,6 +7539,7 @@ mod tests {
             "NODE_OPTIONS='--require /tmp/x.js' npm test",
             "PYTHONPATH=/tmp pytest",
             "PYTHONSTARTUP=/tmp/x.py python3 src/main.py",
+            "RIPGREP_CONFIG_PATH=/tmp/rc rg x src",
             "RUSTC_WRAPPER=/tmp/x cargo build",
             "GIT_EXTERNAL_DIFF=/tmp/x.sh git diff",
             "DOCKER_HOST=tcp://elsewhere:2375 docker ps",
@@ -7765,6 +7949,63 @@ mod tests {
         std::fs::write(m.proj.join("src/server.pem"), "x\n").unwrap();
         m.refused(&["rg x", "rg x src", "grep -rn x src"]);
         m.runs(&HATS, &["rg x tests", "grep -rn x src --include='*.py'"]);
+        // The pattern's own option is not a place to search: with `-e`,
+        // the folder it runs in is what is searched.
+        std::fs::remove_file(m.proj.join("src/server.pem")).unwrap();
+        m.refused(&[
+            "grep -rn -e x",
+            "grep -rne x",
+            "grep -r --regexp x",
+            "grep -r --regexp=x",
+            "rg --hidden -e x",
+            "rg --hidden -e x -e y",
+            "rg -uu -f README.md",
+            "grep -r -m 1 x",
+            "grep -rA 2 x",
+            // An option the gate doesn't know may have taken the pattern.
+            "rg --hidden --some-new-option x src",
+            // Files git doesn't track.
+            "git grep --no-index x",
+            "git grep --untracked -e x",
+        ]);
+        m.runs(
+            &HATS,
+            &[
+                "grep -rn -e x src",
+                "grep -rn -e x -- src tests",
+                "rg -e x",
+                "rg -e x src",
+                "grep -r -m 1 x src",
+                "git grep -n x",
+                "git grep --no-index x src",
+            ],
+        );
+        // A search that goes into linked folders reads what is in them.
+        // The link was looked at, and the folder behind it was not.
+        let behind = m.proj.parent().unwrap().join("behind");
+        std::fs::create_dir(&behind).unwrap();
+        std::fs::write(behind.join("server.pem"), "x\n").unwrap();
+        std::os::unix::fs::symlink(&behind, m.proj.join("src/linked")).unwrap();
+        m.refused(&[
+            "rg -L x src",
+            "rg --follow x",
+            "grep -R x src",
+            "grep --dereference-recursive x src",
+            "diff -r src tests",
+            "cp -r src /tmp/ryter-scratch/src",
+            "tar chf /tmp/x.tar src",
+            "cat src/linked/server.pem",
+            "cat src/linked/*",
+        ]);
+        // Without following, the link is passed over, as the search does.
+        m.runs(&HATS, &["rg x src", "grep -rn x src"]);
+        // A linked folder with no secret in it, but outside every place a
+        // command reads: not something to walk into unasked.
+        std::fs::remove_file(behind.join("server.pem")).unwrap();
+        std::fs::write(behind.join("notes.txt"), "x\n").unwrap();
+        m.asks(&["rg -L x src", "grep -R x src"]);
+        std::fs::remove_file(m.proj.join("src/linked")).unwrap();
+        std::fs::write(m.proj.join("src/server.pem"), "x\n").unwrap();
         // A read-only tool told to take its files, or its dates, from a
         // file prints that file: it isn't just looking.
         m.asks(&[
