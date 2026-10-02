@@ -2,6 +2,11 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Give each Git operation its own scratch directory
+- **Decision:** Create a unique, owner-only directory under the repository’s Git metadata for each snapshot index, initial-commit probe and commit message. A scoped owner removes its files on every return path; it never unlinks a shared legacy filename.
+- **Why:** Two sessions creating checkpoints could remove or write the same `ryter-undo-index`; commit messages had the same collision through `RYTER_COMMIT_MSG`. A private directory also keeps Git’s index lock local to that operation. The user’s real index remains governed by Git’s own locking.
+- **Evidence and limits:** Eight simultaneous checkpoints preserve both the real staged index and a pre-existing legacy filename; failure cleanup is checked too. Four session writers append complete records that survive resume. Operation locks protect on-disk records, but simultaneous interactive writers still have separate in-memory conversations; this does not promise a shared live conversation or serializable concurrent commits.
+
 ### 2026-10-02 — Publish bounded conversation snapshots through MCP
 - **Decision:** Refresh a plain-text snapshot of the active thread alongside status/spend after worker operations. Readers take only a small snapshot mutex, not the running agent lock. Keep recent messages within 64 KiB with a 4 KiB per-message limit and explicit omission notices; include role, tool IDs, names and arguments.
 - **Why:** The advertised transcript resource returned only a session ID. Reading the live agent would reintroduce the cancellation deadlock repaired in stage 6. Snapshot staleness during a turn is documented, and no other session or parked thread is read.
