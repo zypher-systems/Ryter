@@ -65,7 +65,7 @@ Why, not what. Non-obvious choices are recorded here, newest first.
   - Rejected a second `Session` (its own folder, spend and budget). A test is not a separate piece of work to the user, and the report has to land in the first conversation.
   - Rejected tagging each message with its thread in one file. Compaction, repair of unanswered tool calls and resume all read "the transcript"; two files leave them as they are.
   - Rejected blocking `Tab` while a turn runs. A test takes minutes, and the user will want to read the main chat meanwhile.
-  - Kept the Tab order build → plan → review → test. The approved screen mockup's hint says "Tab: plan" from Test; this says "Tab: build". Said in `docs/test-hat.md`.
+  - The Tab order was first kept as it was with Test added (build → plan → review → test). The user corrected it the same day ("I figured it was already Plan, Build, Review, Test now"): Tab goes round in the order the work does, as the approved mockup's "Tab: plan" from Test implied. A session still opens in build.
 - **Where:** `crates/ryter-core/src/role.rs` (`Thread`), `session.rs`, `agent.rs` (`put_on`), `tools/policy.rs` (`own_request`), `prompts/solo.md` ("A test"); `crates/ryter-tui/src/view/mod.rs` (`show`), `run/events.rs` (`apply`), `run/actions.rs` (`fill_chat`), `draw.rs` (`thread_line`)
 - **Residual risk:** the context gauge and the "this turn" figures on the rail are the last turn's, whichever conversation it was in. Each thread compacts on its own. Nothing was run with a real model, and no real product was started.
 

@@ -60,7 +60,8 @@ added at the top, and this comment removed.
 - **Docker is preferred when it is installed.** The model is told which container tool the machine has, and to use Docker when it has both, unless you ask for Podman.
 - **Under a sandbox profile the model is told what the profile shuts** and where its scratch folder is, so "Permission denied" is reported as the profile and not as a missing tool. The profiles are unchanged: `workspace` and `read-only` still shut `/tmp` and your home folder to commands, so the two changes above need the profile `off`.
 - **A fourth hat: Test.** It uses the product as its user would: starts it, runs its tests, tries it, and says what works and what doesn't.
-  - **It is on `Tab`** after review (build → plan → review → test), and has its own seat in `/models`.
+  - **It is on `Tab`** after review, and has its own seat in `/models`.
+  - **`Tab` goes round in the order the work does:** plan, build, review, test, then plan again. It went build, plan, review. A session still opens in build, so from there `Tab` is review and `Shift+Tab` is plan.
   - **It has a conversation of its own.** The tester doesn't read what you and the builder said: it judges the product from the plan, the decisions and from using it. In the test hat the chat shows the tester's thread; in any other hat it shows the conversation they share. The thread continues through the session and comes back when the session is resumed.
   - **You can look at either while the other works.** What a running turn says goes into the conversation it is part of, whichever is on screen.
   - **What it may run:** everything the build hat runs without asking, and requests to the project's own address (`curl localhost:8000/…`). It can't edit, delete or move the project's files.

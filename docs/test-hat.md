@@ -6,7 +6,6 @@ Designed with the user on 2026-10-01, a mockup for each choice. This page is wha
 
 **Where the build differs from the mockups:**
 
-- **Tab order.** The screen mockup's hint says "Tab: plan" from the test hat. The order built is the existing one with Test added at the end: build → plan → review → test → build, so the hint reads "Tab: build". After a failed test the next hat is usually build.
 - **The thread's header line** reads "TEST THREAD · its own conversation · tab: main chat" until a report has been filed; then it counts them ("2 runs this session").
 - **The composer's hint** reads "ask the tester" until a report has a failure to name ("retest 3").
 - **The offer says "leaves it running"** where its mockup said "stops it": the later choice (left running until you say) decides.

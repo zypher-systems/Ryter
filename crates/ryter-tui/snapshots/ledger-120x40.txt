@@ -36,5 +36,5 @@
 
 
    ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   › what should change? · Tab: plan · / for commands
+   › what should change? · Tab: review · / for commands
  BUILD  muzak  main  grok-4.6  ctx ▱▱▱▱▱▱▱▱ 5% │ turn $0.004 · session $0.018 · budget off            $ spend  ^c quit

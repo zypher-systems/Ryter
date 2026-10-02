@@ -62,17 +62,17 @@ fn placeholder(view: &View) -> String {
         Mode::Normal if view.busy => "type to queue the next message, / for commands".into(),
         Mode::Normal => match view.mode {
             ryter_core::Role::SoloBuild | ryter_core::Role::Crew => {
-                "what should change? · Tab: plan · / for commands".into()
+                "what should change? · Tab: review · / for commands".into()
             }
             ryter_core::Role::SoloPlan => {
-                "what are we planning? nothing changes here · Tab: review".into()
+                "what are we planning? nothing changes here · Tab: build".into()
             }
             ryter_core::Role::SoloReview => {
                 "what should be reviewed? · /audit reviews what changed · Tab: test".into()
             }
             ryter_core::Role::SoloTest => match view.retest {
-                Some(n) => format!("ask the tester, or: retest {n} · Tab: build"),
-                None => "ask the tester · Tab: build · / for commands".into(),
+                Some(n) => format!("ask the tester, or: retest {n} · Tab: plan"),
+                None => "ask the tester · Tab: plan · / for commands".into(),
             },
         },
         Mode::Secret { connection } => format!("paste the API key for {connection}"),

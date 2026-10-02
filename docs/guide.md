@@ -197,7 +197,7 @@ ryter -c -p "continue"               # continue the latest session
 
 ## Hats
 
-One model works in your project, in the build hat to start with. `Tab` switches its hat (build → plan → review → test), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. The header, the message box's badge, and its border all show the hat in its own color. A switch applies to your next message. The model can also offer a switch itself: after a review ("fix these?") it asks with a yes/no prompt, and on `y` it carries on in the new hat in the same turn. A plan has its own panel, below.
+One model works in your project, in the build hat to start with. `Tab` switches its hat in the order the work goes (plan → build → review → test, then round to plan), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. From build, where a session opens, `Tab` goes to review and `Shift+Tab` to plan. The header, the message box's badge, and its border all show the hat in its own color. A switch applies to your next message. The model can also offer a switch itself: after a review ("fix these?") it asks with a yes/no prompt, and on `y` it carries on in the new hat in the same turn. A plan has its own panel, below.
 
 | Hat | May | May not |
 | --- | --- | --- |

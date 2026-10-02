@@ -19,6 +19,6 @@
  · ✓ done · 2 tools · 0:02                                     ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
-│› what should change? · Tab: plan · / for commands                            │
+│› what should change? · Tab: review · / for commands                          │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ⏎ review    n not now    s stop offering

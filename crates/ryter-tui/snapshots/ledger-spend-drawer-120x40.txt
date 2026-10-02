@@ -36,5 +36,5 @@
 │ b set a budget   ⏎ full table   esc close                                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
    ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   › what should change? · Tab: plan · / for commands
+   › what should change? · Tab: review · / for commands
  BUILD  grok-4.6  ctx ▱▱▱▱▱▱▱▱ 5% │ turn $0.004 · session $0.018 · project $2.29 · budget off  ⏎ full table  esc close

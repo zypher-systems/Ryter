@@ -740,7 +740,9 @@ fn with_rail() -> View {
 #[test]
 fn the_rail_names_the_session_and_shows_the_hat_and_spend() {
     let v = with_rail();
-    let text = render_to_string(&v, 140, 44);
+    // Wide enough for every key on the prompt's edge: two columns narrower
+    // and the least needed one (`^b hide rail`) makes way.
+    let text = render_to_string(&v, 144, 44);
     if std::env::var_os("SHOW").is_some() {
         println!("{text}");
     }
@@ -1494,7 +1496,7 @@ fn the_test_hat_shows_its_own_conversation() {
         "{text}"
     );
     assert!(!text.contains("why does load()"), "{text}");
-    assert!(text.contains("ask the tester · Tab: build"), "{text}");
+    assert!(text.contains("ask the tester · Tab: plan"), "{text}");
     // The rail's session block still counts the whole session.
     assert!(text.contains("2 turns"), "{text}");
     // What is typed here is the tester's.
@@ -1884,7 +1886,7 @@ fn a_tests_report_is_a_card_in_the_main_conversation() {
         "{thread}"
     );
     assert!(
-        thread.contains("ask the tester, or: retest 3 · Tab: build"),
+        thread.contains("ask the tester, or: retest 3 · Tab: plan"),
         "{thread}"
     );
     assert!(!thread.contains("full report"), "{thread}");

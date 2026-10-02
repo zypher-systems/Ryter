@@ -82,23 +82,26 @@ impl Role {
         }
     }
 
-    /// The hat `Tab` moves to: build → plan → review → test → build.
+    /// The hat `Tab` moves to, in the order the work goes: plan → build →
+    /// review → test, and round to plan. A session still opens in build.
     pub fn next_hat(self) -> Self {
         match self {
-            Self::SoloBuild => Self::SoloPlan,
-            Self::SoloPlan => Self::SoloReview,
+            Self::SoloPlan => Self::SoloBuild,
+            Self::SoloBuild => Self::SoloReview,
             Self::SoloReview => Self::SoloTest,
-            _ => Self::SoloBuild,
+            Self::SoloTest => Self::SoloPlan,
+            Self::Crew => Self::SoloBuild,
         }
     }
 
-    /// The hat `Shift+Tab` moves to.
+    /// The hat `Shift+Tab` moves to: the same round, backwards.
     pub fn prev_hat(self) -> Self {
         match self {
-            Self::SoloBuild => Self::SoloTest,
+            Self::SoloPlan => Self::SoloTest,
             Self::SoloTest => Self::SoloReview,
-            Self::SoloReview => Self::SoloPlan,
-            _ => Self::SoloBuild,
+            Self::SoloReview => Self::SoloBuild,
+            Self::SoloBuild => Self::SoloPlan,
+            Self::Crew => Self::SoloBuild,
         }
     }
 
@@ -214,20 +217,25 @@ mod tests {
     }
 
     #[test]
-    fn tab_cycles_build_plan_review_test() {
-        let mut h = Role::SoloBuild;
+    fn tab_goes_round_in_the_order_the_work_does() {
+        let mut h = Role::SoloPlan;
         let mut seen = Vec::new();
         for _ in 0..4 {
             seen.push(h.as_str());
             h = h.next_hat();
         }
-        assert_eq!(seen, ["build", "plan", "review", "test"]);
-        assert_eq!(h, Role::SoloBuild);
+        assert_eq!(seen, ["plan", "build", "review", "test"]);
+        assert_eq!(h, Role::SoloPlan);
         // And back the other way.
-        for back in ["test", "review", "plan", "build"] {
+        for back in ["test", "review", "build", "plan"] {
             h = h.prev_hat();
             assert_eq!(h.as_str(), back);
         }
+        // From build, where a session opens: on to review, back to plan.
+        assert_eq!(Role::SoloBuild.next_hat(), Role::SoloReview);
+        assert_eq!(Role::SoloBuild.prev_hat(), Role::SoloPlan);
+        // A role from crew mode has no place in the round.
+        assert_eq!(Role::Crew.next_hat(), Role::SoloBuild);
         assert_eq!("test".parse::<Role>().unwrap(), Role::SoloTest);
         // Round-trips as the hat name, in logs and sessions.
         assert_eq!(
