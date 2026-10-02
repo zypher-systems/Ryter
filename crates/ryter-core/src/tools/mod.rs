@@ -3,6 +3,7 @@
 mod bounded;
 mod fs;
 mod policy;
+mod secret;
 pub(crate) mod shell;
 mod web;
 

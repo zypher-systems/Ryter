@@ -2,6 +2,10 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Classify protected directories as components
+- **Decision:** Extract shared secret-name rules from the large command policy into `tools/secret.rs`. Match credential directory components at any depth, including root `.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube` and `.docker`, and direct credential filenames such as `.netrc` and `.npmrc`.
+- **Why:** A substring requiring a leading slash missed root-relative `.ssh/config`. Home-directory protection did not cover a checked-out project with the same credential layout. The reproduced root read was allowed before the fix; the maintained all-hat regression now checks direct execution, shell policy, grep and linked aliases alongside public fixture files.
+
 ### 2026-10-02 — Give each Git operation its own scratch directory
 - **Decision:** Create a unique, owner-only directory under the repository’s Git metadata for each snapshot index, initial-commit probe and commit message. A scoped owner removes its files on every return path; it never unlinks a shared legacy filename.
 - **Why:** Two sessions creating checkpoints could remove or write the same `ryter-undo-index`; commit messages had the same collision through `RYTER_COMMIT_MSG`. A private directory also keeps Git’s index lock local to that operation. The user’s real index remains governed by Git’s own locking.
