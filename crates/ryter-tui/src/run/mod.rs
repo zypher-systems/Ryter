@@ -109,6 +109,7 @@ struct TuiAttach {
     cancel: Arc<Cancel>,
     status: Arc<Mutex<StatusSnapshot>>,
     spend: Arc<Mutex<String>>,
+    transcript: Arc<Mutex<String>>,
 }
 
 impl InboundHost for TuiAttach {
@@ -152,6 +153,13 @@ impl InboundHost for TuiAttach {
 
     fn spend(&self) -> String {
         self.spend.lock().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    fn transcript(&self) -> String {
+        self.transcript
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default()
     }
 
     fn cancel(&self) {
@@ -293,6 +301,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         last_error: String::new(),
     }));
     let live_spend = Arc::new(Mutex::new(String::new()));
+    let live_transcript = Arc::new(Mutex::new(String::new()));
 
     // A newer release: checked at most once a day on a thread of its own,
     // never the worker's, which may be sandboxed.
@@ -324,6 +333,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         cancel: cancel.clone(),
         live_status: live_status.clone(),
         live_spend: live_spend.clone(),
+        live_transcript: live_transcript.clone(),
         user_io,
     };
     let _ = work_tx.send(Work::ListModels);
@@ -336,6 +346,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         cancel: cancel.clone(),
         status: live_status,
         spend: live_spend,
+        transcript: live_transcript,
     });
     let sock_path = start_inbound(&mut view, &cfg, &home, attach_host.clone());
 
@@ -862,6 +873,7 @@ mod inbound_cancel_tests {
             cancel: Cancel::new(),
             status: Default::default(),
             spend: Default::default(),
+            transcript: Default::default(),
         });
         host.prepare_prompt();
         let caller = host.clone();
@@ -874,6 +886,8 @@ mod inbound_cancel_tests {
         else {
             panic!("expected turn")
         };
+        *host.transcript.lock().unwrap() = "completed conversation".into();
+        assert_eq!(host.transcript(), "completed conversation");
         host.cancel_prompt();
         assert!(matches!(
             waiting.join().unwrap(),
