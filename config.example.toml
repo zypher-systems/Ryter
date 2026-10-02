@@ -97,3 +97,8 @@ allow_dangerous = false
 # Skills: ~/.ryter/skills/<name>/SKILL.md (user-invocable → /name)
 # User slash: ~/.ryter/commands/<name>.md  ($ARGUMENTS)
 # Themes: ~/.ryter/themes/<name>.toml ; /theme default-16 | dark | <name>
+
+# Set the actual context window when a catalog omits it or a local server uses
+# a smaller limit. Keys are exact model IDs; positive token counts only.
+# [context_windows]
+# "your-model-id" = 32768

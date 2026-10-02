@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -148,6 +148,8 @@ pub struct Session {
     /// checkpoints, which stops growing at fifty: past that, no fix was
     /// seen as a change and no review of it was offered.
     pub changed_turns: u64,
+    /// Recovery notices from opening this session, including backup paths.
+    pub recovery_notices: Vec<String>,
 }
 
 /// The file a thread's messages are kept in.
@@ -191,6 +193,7 @@ impl Session {
             thread: Thread::Main,
             parked: Vec::new(),
             changed_turns: 0,
+            recovery_notices: Vec::new(),
         };
         s.write_meta()?;
         File::create(s.dir.join("events.jsonl")).map_err(|e| Error::Io(e.to_string()))?;
@@ -205,20 +208,94 @@ impl Session {
 
     /// Open an existing session directory.
     pub fn open(dir: &Path) -> Result<Self> {
+        let _lock = lock_logs(dir)?;
         let text =
             fs::read_to_string(dir.join("meta.json")).map_err(|e| Error::Io(e.to_string()))?;
         let meta: Meta = serde_json::from_str(&text).map_err(|e| Error::Io(e.to_string()))?;
-        let transcript = read_jsonl::<Message>(&dir.join(thread_file(Thread::Main)))?;
-        // A session from before the test hat has no such file: an empty thread.
-        let parked = read_jsonl::<Message>(&dir.join(thread_file(Thread::Test)))?;
-        Ok(Self {
+        let old_meta = serde_json::to_vec(&meta).map_err(|e| Error::Io(e.to_string()))?;
+        // Inspect every log before changing any of them. Only a final,
+        // unterminated EOF record is eligible for automatic recovery.
+        let main_path = dir.join(thread_file(Thread::Main));
+        let test_path = dir.join(thread_file(Thread::Test));
+        let spend_path = dir.join("spend.jsonl");
+        let main = inspect_jsonl::<Message>(&main_path, true)?;
+        let test = inspect_jsonl::<Message>(&test_path, true)?;
+        let spend = inspect_jsonl::<SpendRecord>(&spend_path, true)?;
+        let repairs = [
+            (&main_path, main.torn_at),
+            (&test_path, test.torn_at),
+            (&spend_path, spend.torn_at),
+        ];
+        let mut session = Self {
             dir: dir.to_path_buf(),
             meta,
-            transcript,
+            transcript: main.rows,
             thread: Thread::Main,
-            parked,
+            parked: test.rows,
             changed_turns: 0,
-        })
+            recovery_notices: Vec::new(),
+        };
+        session.reconcile_spend(&spend.rows);
+        if repairs.iter().any(|(_, offset)| offset.is_some()) {
+            // Persist uncertainty BEFORE discarding an incomplete record. A
+            // crash during recovery must not make the next resume trust it.
+            session.meta.spend_unknown = true;
+            session.meta.spend_incomplete = true;
+        }
+        if old_meta != serde_json::to_vec(&session.meta).map_err(|e| Error::Io(e.to_string()))? {
+            session.write_meta()?;
+        }
+        for (path, offset) in repairs {
+            if let Some(offset) = offset {
+                let backup = recover_prefix(path, offset)?;
+                session.recovery_notices.push(format!(
+                    "Recovered {} through its last complete record; original saved at {}. Spending may be incomplete.",
+                    path.file_name().unwrap_or_default().to_string_lossy(), backup.display()
+                ));
+            }
+        }
+        Ok(session)
+    }
+
+    /// The append-only ledger can be ahead of cached metadata after a crash.
+    /// Never reduce an older cached total: legacy writers updated meta first.
+    fn reconcile_spend(&mut self, rows: &[SpendRecord]) {
+        let cached = self.meta.spend_usd_total;
+        let mut total: Option<f64> = None;
+        for row in rows {
+            self.meta.spend_unknown |= row.incomplete || row.total_usd.is_none();
+            self.meta.spend_incomplete |= row.incomplete;
+            match row.total_usd {
+                Some(usd) if usd.is_finite() && usd >= 0.0 => {
+                    total = Some(total.unwrap_or(0.0) + usd);
+                    if self.meta.unpriced_model.as_deref() == Some(row.model.as_str()) {
+                        self.meta.unpriced_model = None;
+                    }
+                }
+                _ => {
+                    self.meta.spend_unknown = true;
+                    self.meta.unpriced_model = Some(row.model.clone());
+                    if row.total_usd.is_some() {
+                        self.meta.spend_incomplete = true;
+                    }
+                }
+            }
+        }
+        if cached.is_some_and(|v| !v.is_finite() || v < 0.0 || v > total.unwrap_or(0.0) + 1e-9) {
+            if !self.meta.spend_incomplete {
+                self.recovery_notices.push("Cached spending exceeds the readable ledger; kept the higher total and marked accounting incomplete.".into());
+            }
+            self.meta.spend_unknown = true;
+            self.meta.spend_incomplete = true;
+        }
+        self.meta.spend_usd_total = match (cached, total) {
+            (Some(old), Some(sum)) => Some(old.max(sum)),
+            (old, sum) => old.or(sum),
+        };
+        if cached != self.meta.spend_usd_total {
+            self.recovery_notices
+                .push("Recovered spending totals from the session ledger.".into());
+        }
     }
 
     /// Most recently updated session for `cwd`, if any.
@@ -377,19 +454,18 @@ impl Session {
     /// Rewrite the file of the thread in use, after compaction. Events log
     /// is unchanged.
     pub fn replace_transcript(&mut self, messages: Vec<Message>) -> Result<()> {
+        let _lock = lock_logs(&self.dir)?;
         let name = thread_file(self.thread);
         let path = self.dir.join(name);
-        let tmp = self.dir.join(format!("{name}.tmp"));
-        let mut f = File::create(&tmp).map_err(|e| Error::Io(e.to_string()))?;
-        for m in &messages {
-            let mut line = serde_json::to_string(m).map_err(|e| Error::Io(e.to_string()))?;
-            line.push('\n');
-            f.write_all(line.as_bytes())
-                .map_err(|e| Error::Io(e.to_string()))?;
-        }
-        f.flush().map_err(|e| Error::Io(e.to_string()))?;
-        f.sync_all().map_err(|e| Error::Io(e.to_string()))?;
-        fs::rename(tmp, path).map_err(|e| Error::Io(e.to_string()))?;
+        atomic_write(&path, |f| {
+            for m in &messages {
+                let mut line = serde_json::to_string(m).map_err(|e| Error::Io(e.to_string()))?;
+                line.push('\n');
+                f.write_all(line.as_bytes())
+                    .map_err(|e| Error::Io(e.to_string()))?;
+            }
+            Ok(())
+        })?;
         self.transcript = messages;
         self.touch()?;
         Ok(())
@@ -523,10 +599,10 @@ impl Session {
 
     fn write_meta(&self) -> Result<()> {
         let path = self.dir.join("meta.json");
-        let tmp = self.dir.join("meta.json.tmp");
         let body = serde_json::to_vec_pretty(&self.meta).map_err(|e| Error::Io(e.to_string()))?;
-        fs::write(&tmp, body).map_err(|e| Error::Io(e.to_string()))?;
-        fs::rename(tmp, path).map_err(|e| Error::Io(e.to_string()))
+        atomic_write(&path, |f| {
+            f.write_all(&body).map_err(|e| Error::Io(e.to_string()))
+        })
     }
 }
 
@@ -663,11 +739,25 @@ fn answer_unanswered(messages: &[Message]) -> (Vec<Message>, usize) {
 }
 
 pub(crate) fn append_jsonl<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    let _lock = lock_logs(path.parent().unwrap_or_else(|| Path::new(".")))?;
     let mut f = OpenOptions::new()
         .create(true)
+        .read(true)
         .append(true)
         .open(path)
         .map_err(|e| Error::Io(e.to_string()))?;
+    // A complete final JSON value without a newline is valid. Separate it
+    // from the next append instead of concatenating two JSON objects.
+    if f.metadata().map_err(|e| Error::Io(e.to_string()))?.len() > 0 {
+        f.seek(SeekFrom::End(-1))
+            .map_err(|e| Error::Io(e.to_string()))?;
+        let mut last = [0];
+        f.read_exact(&mut last)
+            .map_err(|e| Error::Io(e.to_string()))?;
+        if last[0] != b'\n' {
+            f.write_all(b"\n").map_err(|e| Error::Io(e.to_string()))?;
+        }
+    }
     let mut line = serde_json::to_string(value).map_err(|e| Error::Io(e.to_string()))?;
     line.push('\n');
     f.write_all(line.as_bytes())
@@ -677,21 +767,136 @@ pub(crate) fn append_jsonl<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     Ok(())
 }
 
+struct JsonLog<T> {
+    rows: Vec<T>,
+    torn_at: Option<u64>,
+}
+
 fn read_jsonl<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Vec<T>> {
+    let _lock = lock_logs(path.parent().unwrap_or_else(|| Path::new(".")))?;
+    Ok(inspect_jsonl(path, false)?.rows)
+}
+
+fn inspect_jsonl<T: for<'de> Deserialize<'de>>(path: &Path, recover: bool) -> Result<JsonLog<T>> {
     let f = match File::open(path) {
         Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(JsonLog {
+                rows: Vec::new(),
+                torn_at: None,
+            });
+        }
         Err(e) => return Err(Error::Io(e.to_string())),
     };
-    let mut out = Vec::new();
-    for line in BufReader::new(f).lines() {
-        let line = line.map_err(|e| Error::Io(e.to_string()))?;
-        if line.trim().is_empty() {
-            continue;
+    let mut reader = BufReader::new(f);
+    let mut out = JsonLog {
+        rows: Vec::new(),
+        torn_at: None,
+    };
+    let mut offset = 0;
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let n = reader
+            .read_until(b'\n', &mut line)
+            .map_err(|e| Error::Io(e.to_string()))?;
+        if n == 0 {
+            break;
         }
-        out.push(serde_json::from_str(&line).map_err(|e| Error::Io(e.to_string()))?);
+        if !line.iter().all(u8::is_ascii_whitespace) {
+            match serde_json::from_slice(&line) {
+                Ok(row) => out.rows.push(row),
+                Err(e) => {
+                    let split_utf8 = std::str::from_utf8(&line).err().is_some_and(|e| {
+                        e.error_len().is_none()
+                            && serde_json::from_slice::<serde_json::Value>(&line[..e.valid_up_to()])
+                                .is_err_and(|error| error.is_eof())
+                    });
+                    if recover && !line.ends_with(b"\n") && (e.is_eof() || split_utf8) {
+                        out.torn_at = Some(offset);
+                        break;
+                    }
+                    return Err(Error::Io(format!(
+                        "{} at byte {offset}: {e}; original left unchanged",
+                        path.display()
+                    )));
+                }
+            }
+        }
+        offset += n as u64;
     }
     Ok(out)
+}
+
+/// Readers that may repair a tail and writers agree on one directory lock.
+/// Advisory locking leaves stale lock files harmless after a process exits.
+fn lock_logs(dir: &Path) -> Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options
+        .open(dir.join(".jsonl.lock"))
+        .map_err(|e| Error::Io(e.to_string()))?;
+    #[cfg(unix)]
+    rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive)
+        .map_err(|e| Error::Io(e.to_string()))?;
+    Ok(file)
+}
+
+fn sync_parent(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    File::open(path.parent().unwrap_or_else(|| Path::new(".")))
+        .and_then(|d| d.sync_all())
+        .map_err(|e| Error::Io(e.to_string()))?;
+    Ok(())
+}
+
+fn create_private(path: &Path) -> Result<File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path).map_err(|e| Error::Io(e.to_string()))
+}
+
+/// Unique staging files prevent concurrent writes from sharing a temporary
+/// pathname. The replacement and its directory entry are synced before return.
+fn atomic_write(path: &Path, write: impl FnOnce(&mut File) -> Result<()>) -> Result<()> {
+    let tmp = path.with_extension(format!("tmp-{}", SessionId::generate()));
+    let result = (|| {
+        let mut f = create_private(&tmp)?;
+        write(&mut f)?;
+        f.sync_all().map_err(|e| Error::Io(e.to_string()))?;
+        fs::rename(&tmp, path).map_err(|e| Error::Io(e.to_string()))?;
+        sync_parent(path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
+fn recover_prefix(path: &Path, length: u64) -> Result<PathBuf> {
+    let backup = path.with_extension(format!("jsonl.recovery-{}.bak", SessionId::generate()));
+    let mut original = File::open(path).map_err(|e| Error::Io(e.to_string()))?;
+    let mut saved = create_private(&backup)?;
+    std::io::copy(&mut original, &mut saved).map_err(|e| Error::Io(e.to_string()))?;
+    saved.sync_all().map_err(|e| Error::Io(e.to_string()))?;
+    sync_parent(&backup)?;
+    original.rewind().map_err(|e| Error::Io(e.to_string()))?;
+    atomic_write(path, |f| {
+        std::io::copy(&mut original.take(length), f).map_err(|e| Error::Io(e.to_string()))?;
+        Ok(())
+    })?;
+    Ok(backup)
 }
 
 fn now_stamp() -> String {
@@ -726,6 +931,186 @@ pub fn cwd_slug(cwd: &Path) -> String {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_waits_for_a_live_append_to_finish() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let home = TempDir::new().unwrap();
+        let session = Session::create(home.path(), home.path(), "c".into(), "m".into()).unwrap();
+        let path = session.dir.join("transcript.jsonl");
+        let lock = lock_logs(&session.dir).unwrap();
+        let bytes = serde_json::to_vec(&msg("user", "complete append")).unwrap();
+        let cut = bytes.len() / 2;
+        fs::write(&path, &bytes[..cut]).unwrap();
+        let dir = session.dir.clone();
+        let (started, start_rx) = mpsc::channel();
+        let (done, done_rx) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            done.send(Session::open(&dir)).unwrap();
+        });
+        start_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let blocked = matches!(
+            done_rx.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        );
+        let mut writer = OpenOptions::new().append(true).open(&path).unwrap();
+        writer.write_all(&bytes[cut..]).unwrap();
+        writer.write_all(b"\n").unwrap();
+        writer.sync_all().unwrap();
+        drop(lock);
+        let resumed = done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        reader.join().unwrap();
+        assert!(blocked);
+        assert_eq!(said(&resumed.transcript), ["complete append"]);
+        assert!(resumed.recovery_notices.is_empty());
+    }
+
+    #[test]
+    fn torn_thread_tails_keep_history_backup_and_allow_future_appends() {
+        for thread in [Thread::Main, Thread::Test] {
+            for tail in [
+                b"{\"role\":\"assistant\",\"content\":\"unfinished".as_slice(),
+                b"{\"role\":\"assistant\",\"content\":\"\xe2\x82".as_slice(),
+            ] {
+                let home = TempDir::new().unwrap();
+                let mut session =
+                    Session::create(home.path(), home.path(), "c".into(), "m".into()).unwrap();
+                session
+                    .push_to(thread, msg("user", "keep this constraint"))
+                    .unwrap();
+                let path = session.dir.join(thread_file(thread));
+                let prefix = fs::read(&path).unwrap();
+                OpenOptions::new()
+                    .append(true)
+                    .open(&path)
+                    .unwrap()
+                    .write_all(tail)
+                    .unwrap();
+                let original = fs::read(&path).unwrap();
+                let mut resumed = Session::open(&session.dir).unwrap();
+                assert_eq!(said(resumed.messages_of(thread)), ["keep this constraint"]);
+                assert_eq!(fs::read(&path).unwrap(), prefix);
+                assert_eq!(resumed.recovery_notices.len(), 1);
+                assert!(resumed.meta.spend_incomplete);
+                let backup = fs::read_dir(&session.dir)
+                    .unwrap()
+                    .flatten()
+                    .map(|e| e.path())
+                    .find(|p| p.extension().is_some_and(|ext| ext == "bak"))
+                    .unwrap();
+                assert_eq!(fs::read(backup).unwrap(), original);
+                resumed
+                    .push_to(thread, msg("assistant", "continue"))
+                    .unwrap();
+                let again = Session::open(&session.dir).unwrap();
+                assert_eq!(
+                    said(again.messages_of(thread)),
+                    ["keep this constraint", "continue"]
+                );
+                assert!(again.recovery_notices.is_empty());
+                assert!(again.meta.spend_incomplete);
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_complete_or_middle_records_are_left_unchanged() {
+        for tail in [
+            "{\"role\":\"assistant\"\n",
+            "not json",
+            "{\"role\":false}",
+            "{\"role\":\"assistant\"\n{}\n",
+        ] {
+            let home = TempDir::new().unwrap();
+            let session =
+                Session::create(home.path(), home.path(), "c".into(), "m".into()).unwrap();
+            let path = session.dir.join("transcript.jsonl");
+            fs::write(&path, tail).unwrap();
+            assert!(Session::open(&session.dir).is_err(), "{tail}");
+            assert_eq!(fs::read_to_string(path).unwrap(), tail);
+            assert!(
+                !fs::read_dir(&session.dir)
+                    .unwrap()
+                    .flatten()
+                    .any(|e| e.path().extension().is_some_and(|x| x == "bak"))
+            );
+        }
+    }
+
+    #[test]
+    fn complete_unterminated_record_is_separated_from_next_append() {
+        let home = TempDir::new().unwrap();
+        let session = Session::create(home.path(), home.path(), "c".into(), "m".into()).unwrap();
+        fs::write(
+            session.dir.join("transcript.jsonl"),
+            serde_json::to_vec(&msg("user", "first")).unwrap(),
+        )
+        .unwrap();
+        let mut resumed = Session::open(&session.dir).unwrap();
+        assert!(resumed.recovery_notices.is_empty());
+        resumed.push_message(msg("assistant", "second")).unwrap();
+        assert_eq!(
+            said(&Session::open(&session.dir).unwrap().transcript),
+            ["first", "second"]
+        );
+    }
+
+    #[test]
+    fn spend_ledger_recovers_stale_meta_and_torn_cost_remains_unknown() {
+        let home = TempDir::new().unwrap();
+        let mut session =
+            Session::create(home.path(), home.path(), "c".into(), "m".into()).unwrap();
+        let record = |cost| {
+            spend_record(
+                "c".into(),
+                "m".into(),
+                Role::SoloBuild,
+                Usage::default(),
+                cost,
+            )
+        };
+        session.record_spend(record(Some(0.25))).unwrap();
+        // Emulate a durable ledger append followed by a crash before meta.
+        append_jsonl(&session.spend_path(), &record(Some(0.75))).unwrap();
+        let resumed = Session::open(&session.dir).unwrap();
+        assert_eq!(resumed.meta.spend_usd_total, Some(1.0));
+        assert!(!resumed.meta.spend_incomplete);
+        assert_eq!(resumed.recovery_notices.len(), 1);
+        assert_eq!(
+            Session::open(&session.dir).unwrap().meta.spend_usd_total,
+            Some(1.0)
+        );
+        OpenOptions::new()
+            .append(true)
+            .open(session.spend_path())
+            .unwrap()
+            .write_all(b"{\"total_usd\":")
+            .unwrap();
+        let resumed = Session::open(&session.dir).unwrap();
+        assert_eq!(resumed.spend_log().unwrap().len(), 2);
+        assert_eq!(resumed.meta.spend_usd_total, Some(1.0));
+        assert!(resumed.meta.spend_unknown && resumed.meta.spend_incomplete);
+        assert!(Session::open(&session.dir).unwrap().meta.spend_incomplete);
+    }
+
+    #[test]
+    fn recovery_never_reduces_a_legacy_cached_spend_total() {
+        let home = TempDir::new().unwrap();
+        let mut session =
+            Session::create(home.path(), home.path(), "c".into(), "m".into()).unwrap();
+        session.meta.spend_usd_total = Some(2.0);
+        session.write_meta().unwrap();
+        let resumed = Session::open(&session.dir).unwrap();
+        assert_eq!(resumed.meta.spend_usd_total, Some(2.0));
+        assert!(resumed.meta.spend_unknown && resumed.meta.spend_incomplete);
+        assert_eq!(resumed.recovery_notices.len(), 1);
+    }
 
     /// A session saved in crew mode has fields and roles that are gone.
     /// It still opens, with its conversation and its spend, in the build

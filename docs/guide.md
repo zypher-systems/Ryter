@@ -599,7 +599,9 @@ Tool output is bounded while it is read. Shell commands retain the first and las
 
 ## Context
 
-`/context` opens a panel with estimated tokens vs the model window (500k for `grok-4.6`, 200k otherwise), a gauge, and a breakdown by contributor (system prompt, project files, transcript, tool output); `c` compacts. The info panel’s model card shows the same gauge. Auto-compact at 85%: older turns collapse to tools used, files touched, and the latest pass note; the last four user turns stay. `/compact` forces a pass. Resume reads the rewritten `transcript.jsonl`.
+`/context` shows the active hat’s estimated context use, including tool schemas and an output allowance of up to one quarter of its window (at most 32,768 tokens). Its window comes from `[context_windows]`, a cached provider catalog, or a matching saved route. Without that information, the existing fallback is 500k for `grok-4.6` and 200k otherwise; these are estimates. For a model or local server with a different limit, set its model ID under `[context_windows]` in your config, for example `"your-model-id" = 32768`.
+
+At 85%, compaction keeps older user constraints and assistant notes in an extract, retains the last four user turns, and shortens older bulky tool results when needed. Tool identities and the newest result batch stay intact. `/compact` or `c` in the panel forces a pass; resume reads the rewritten conversation. If the resulting request still exceeds the window, Ryter stops before calling the provider. Choose a larger-window model or start a new session with the remaining task. Counts still use bytes/4 rather than the provider’s tokenizer.
 
 ## Doctor and sandbox
 
@@ -678,6 +680,8 @@ A project can keep **why** on disk, not only in a conversation:
 When these files exist, the model **reads** them on every turn (capped), and is told to update them as work changes and to add a short entry to `DECISIONS.md` when it makes a non-obvious decision. When you ask why something is a certain way, it should quote `DECISIONS.md` and open the files it names. Ryter doesn't create them: a project that has none gets none until you or the model writes one. The plan hat may write these files; the review hat may not.
 
 ## Sessions
+
+If an interrupted append leaves a torn final record, resume keeps the valid history and reports the path of an exact backup. Complete or middle-of-file corruption stops resume for deliberate recovery. Recovered or inconsistent spending remains marked incomplete, so an enabled budget stops further requests.
 
 ```
 ~/.ryter/sessions/<cwd-slug>/<id>/
