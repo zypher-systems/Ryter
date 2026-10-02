@@ -16,6 +16,18 @@ pub fn default_socket_path(home: &Path) -> PathBuf {
 /// A stale socket must be removed explicitly after checking its owner.
 #[cfg(unix)]
 pub fn bind_unix(path: &Path) -> Result<std::os::unix::net::UnixListener> {
+    // macOS bind can follow a dangling symlink. exists() misses those;
+    // inspect the entry itself and fail closed on any inspection error.
+    match path.symlink_metadata() {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(_) => {
+            return Err(Error::Io(format!(
+                "{} already exists; choose another socket path or explicitly remove a confirmed stale socket",
+                path.display()
+            )));
+        }
+        Err(e) => return Err(Error::Io(format!("{}: {e}", path.display()))),
+    }
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| Error::Io(e.to_string()))?;
     }
