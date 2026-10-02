@@ -2,6 +2,12 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Project-controlled links are not prompt input
+- **Decision:** Open project prompt inputs and search results through directory descriptors with no-follow flags on every relative component. The launch directory itself may be a link, so macOS temporary directories and linked workspaces keep working. Only regular files are read.
+- **Why:** Checking a path and then reading it still follows a link exchanged between the two operations. Instructions and memory are read before a tool permission prompt, so they need their own enforced boundary.
+- **Limits:** Prompt instructions and overrides are capped at 48 KB each; project memory shares a 48 KB total. Direct reads retain existing permission rules for ordinary user and scratch files. This does not identify hard links or classify secrets solely by their contents.
+- **Where:** `project_file.rs`, `prompt.rs`, `memory.rs`, `tools/fs.rs`, `tools/policy.rs`.
+
 ### 2026-10-01 — One mode: crew mode is retired, the user is the lead
 - **By:** the user
 - **Decision:** Ryter becomes one mode, the solo interface with a hat per stage (plan, build, review, test) and optionally a model per hat. Crew mode gets no further work and is removed once the one-mode flow has taken a real project from a plan to a tested change.

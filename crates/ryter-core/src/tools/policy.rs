@@ -5767,7 +5767,7 @@ pub(crate) fn is_secret(path: &Path, ctx: &ToolContext) -> bool {
         || s.contains("credential")
         || s.contains("/.ryter/")
         || s.ends_with(".env")
-        || (s.starts_with(".env") && !example)
+        || (name.starts_with(".env") && !example)
 }
 
 #[cfg(test)]
@@ -5811,6 +5811,78 @@ mod tests {
 
     fn bash(cmd: &str, role: Role, dir: &Path) -> Decision {
         decide("bash", &json!({"command": cmd}), &ctx_for(role, dir))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_search_and_reads_keep_nested_secrets_private_in_every_hat() {
+        use std::os::unix::fs::symlink;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("project");
+        std::fs::create_dir_all(root.join("config")).unwrap();
+        std::fs::write(tmp.path().join("outside.txt"), "PRIVATE_SENTINEL").unwrap();
+        for file in [
+            ".env",
+            "config/.env.production",
+            "config/.env.local",
+            "config/private.key",
+        ] {
+            std::fs::write(root.join(file), "PRIVATE_SENTINEL").unwrap();
+        }
+        symlink("config/.env.production", root.join("alias.txt")).unwrap();
+        symlink("../outside.txt", root.join("outside-alias.txt")).unwrap();
+        symlink("config", root.join("linked-folder")).unwrap();
+        for file in [
+            "config/.env.example",
+            "config/.env.sample",
+            "config/release.pub.pem",
+            "plain.txt",
+        ] {
+            std::fs::write(root.join(file), "PUBLIC_SENTINEL").unwrap();
+        }
+        for role in [
+            Role::SoloPlan,
+            Role::SoloBuild,
+            Role::SoloReview,
+            Role::SoloTest,
+        ] {
+            let c = ctx_for(role, &root);
+            for path in [
+                ".env",
+                "config/.env.production",
+                "config/.env.local",
+                "config/private.key",
+                "alias.txt",
+                "linked-folder/.env.production",
+            ] {
+                assert_eq!(
+                    decide("read_file", &json!({"path": path}), &c),
+                    Decision::Deny,
+                    "{role:?}: {path}"
+                );
+            }
+            let private =
+                crate::tools::gated_execute("grep", &json!({"pattern": "PRIVATE_SENTINEL"}), &c)
+                    .unwrap();
+            assert_eq!(private.text, "no matches", "{role:?}");
+            for path in [
+                "config/.env.example",
+                "config/.env.sample",
+                "config/release.pub.pem",
+                "plain.txt",
+            ] {
+                let output =
+                    crate::tools::gated_execute("read_file", &json!({"path": path}), &c).unwrap();
+                assert!(
+                    output.text.contains("PUBLIC_SENTINEL"),
+                    "{role:?}: {path}: {output:?}"
+                );
+            }
+            let public =
+                crate::tools::gated_execute("grep", &json!({"pattern": "PUBLIC_SENTINEL"}), &c)
+                    .unwrap();
+            assert!(public.text.contains("plain.txt"));
+        }
     }
 
     /// A workspace reached through a symlink (every temp folder on macOS:
