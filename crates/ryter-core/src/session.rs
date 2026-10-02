@@ -82,6 +82,11 @@ pub struct Meta {
     /// called again until it has one: the budget could not see it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unpriced_model: Option<String>,
+    /// Every model whose last call had no price. One slot was not enough:
+    /// two unpriced models taking turns each replaced the other and neither
+    /// was ever stopped.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub unpriced_models: std::collections::BTreeSet<String>,
     /// The plan the user last approved, as a path in the project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_file: Option<String>,
@@ -103,6 +108,26 @@ pub struct Meta {
     /// mode (sessions from before it was removed), means build.
     #[serde(default)]
     pub mode: Option<crate::role::Role>,
+}
+
+impl Meta {
+    /// Whether `model`'s last call had no price. The single field is what
+    /// sessions saved before the set hold.
+    pub fn is_unpriced(&self, model: &str) -> bool {
+        self.unpriced_models.contains(model) || self.unpriced_model.as_deref() == Some(model)
+    }
+
+    fn set_unpriced(&mut self, model: &str, unpriced: bool) {
+        if unpriced {
+            self.unpriced_models.insert(model.to_string());
+            self.unpriced_model = Some(model.to_string());
+        } else {
+            self.unpriced_models.remove(model);
+            if self.unpriced_model.as_deref() == Some(model) {
+                self.unpriced_model = None;
+            }
+        }
+    }
 }
 
 /// One priced model call.
@@ -179,6 +204,7 @@ impl Session {
             spend_unknown: false,
             spend_incomplete: false,
             unpriced_model: None,
+            unpriced_models: Default::default(),
             plan_file: None,
             checkpoints: Vec::new(),
             turn_records: Default::default(),
@@ -268,13 +294,11 @@ impl Session {
             match row.total_usd {
                 Some(usd) if usd.is_finite() && usd >= 0.0 => {
                     total = Some(total.unwrap_or(0.0) + usd);
-                    if self.meta.unpriced_model.as_deref() == Some(row.model.as_str()) {
-                        self.meta.unpriced_model = None;
-                    }
+                    self.meta.set_unpriced(&row.model, false);
                 }
                 _ => {
                     self.meta.spend_unknown = true;
-                    self.meta.unpriced_model = Some(row.model.clone());
+                    self.meta.set_unpriced(&row.model, true);
                     if row.total_usd.is_some() {
                         self.meta.spend_incomplete = true;
                     }
@@ -486,13 +510,11 @@ impl Session {
         match rec.total_usd {
             Some(v) => {
                 self.meta.spend_usd_total = Some(self.meta.spend_usd_total.unwrap_or(0.0) + v);
-                if self.meta.unpriced_model.as_deref() == Some(rec.model.as_str()) {
-                    self.meta.unpriced_model = None;
-                }
+                self.meta.set_unpriced(&rec.model, false);
             }
             None => {
                 self.meta.spend_unknown = true;
-                self.meta.unpriced_model = Some(rec.model.clone());
+                self.meta.set_unpriced(&rec.model, true);
             }
         }
         self.write_meta()

@@ -2609,9 +2609,7 @@ impl Agent {
             if self.session.meta.spend_incomplete {
                 return Err(self.budget_error(None));
             }
-            if self.session.meta.unpriced_model.as_deref() == Some(model)
-                && self.book.rates(model).is_none()
-            {
+            if self.session.meta.is_unpriced(model) && self.book.rates(model).is_none() {
                 return Err(self.budget_error(Some(model.into())));
             }
         }
@@ -6764,6 +6762,45 @@ mod tests {
         // With no budget there is nothing to protect: it runs.
         agent.budget_usd = 0.0;
         agent.turn("go on").await.unwrap();
+    }
+
+    /// Two unpriced models taking turns each replaced the other in the one
+    /// slot that remembered them, so under a budget neither was ever stopped.
+    #[tokio::test]
+    async fn a_budget_stops_every_model_it_cannot_price_when_they_take_turns() {
+        let reply = || {
+            vec![
+                StreamDelta::Text("ok".into()),
+                StreamDelta::Usage(Usage {
+                    input_tokens: 100,
+                    output_tokens: 10,
+                    cached_tokens: 0,
+                    cache_write_tokens: 0,
+                }),
+                StreamDelta::Done,
+            ]
+        };
+        let p = ReplayProvider::scripted(vec![reply(), reply(), reply()]);
+        let (_home, _cwd, mut agent) = setup(p);
+        agent.budget_usd = 5.0;
+        // One call each is made before the stop, as with a single model.
+        for model in ["mystery-a", "mystery-b"] {
+            agent.model = model.into();
+            assert_eq!(agent.turn("x").await.unwrap().text, "ok");
+        }
+        for model in ["mystery-a", "mystery-b", "mystery-a"] {
+            agent.model = model.into();
+            let err = agent.turn("again").await.unwrap_err();
+            assert!(
+                matches!(&err, Error::Budget { unpriced: Some(m), .. } if m == model),
+                "{model}: {err}"
+            );
+        }
+        assert_eq!(agent.session.spend_log().unwrap().len(), 2, "no third call");
+        // The stop survives a restart: it is rebuilt from the saved session.
+        let reopened = Session::open(&agent.session.dir).unwrap();
+        assert!(reopened.meta.is_unpriced("mystery-a"));
+        assert!(reopened.meta.is_unpriced("mystery-b"));
     }
 
     #[test]
