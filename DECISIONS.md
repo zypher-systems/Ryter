@@ -6,6 +6,10 @@ Why, not what. Non-obvious choices are recorded here, newest first.
 - **Decision:** Snapshot differences are explicitly repository-relative regardless of `diff.relative`; their pathspec is scoped to the session’s launch directory. Restore and deletion both run from the repository root, with literal pathspecs. Validate snapshots and relative paths before changing files.
 - **Why:** A session launched in `app/` otherwise treated `app/file` as `app/app/file`. Sibling projects and later user edits must not become part of that session’s undo.
 - **Where:** `git::paths_between`, `git::restore_paths`; a round-trip regression covers nested launch, deletion, addition, newline/bracket names, the index, HEAD and unrelated work.
+### 2026-10-02 — Socket setup never unlinks an existing name
+- **Decision:** Let Unix socket bind claim a new name atomically. Existing files, links, directories, live sockets and stale sockets are preserved.
+- **Why:** A failed connection can mean an ordinary file or insufficient permissions, not just a stale socket. Even checking the inode before unlink leaves a replacement race. Explicit removal of a confirmed stale socket trades automatic crash recovery for preserving user data.
+- **Where:** `mcp/listen.rs`; regression coverage checks each path kind and the original live listener.
 ### 2026-10-02 — Project-controlled links are not prompt input
 - **Decision:** Open project prompt inputs and search results through directory descriptors with no-follow flags on every relative component. The launch directory itself may be a link, so macOS temporary directories and linked workspaces keep working. Only regular files are read.
 - **Why:** Checking a path and then reading it still follows a link exchanged between the two operations. Instructions and memory are read before a tool permission prompt, so they need their own enforced boundary.
