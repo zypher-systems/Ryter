@@ -650,6 +650,8 @@ The configured Ryter home must be outside the workspace and outside shared syste
 
 Plans, decisions and test reports stored in the project follow the workspace’s access rights. Run-file approvals and lifecycle ownership are kept separately in Ryter’s home.
 
+**Git metadata must be reachable too.** For sandboxed Git workflows, launch Ryter from the repository root. A nested project whose Git metadata is outside the granted workspace may not have Git checkpoints or review available; the filesystem profile does not grant parent repositories automatically.
+
 **What a sandbox doesn't do:**
 
 - Separately configured outbound MCP servers run with their own permissions; this profile applies to Ryter’s built-in commands.
@@ -712,6 +714,23 @@ No SQLite. `ryter spend` uses the latest session for this directory.
 | 0 | ok |
 | 1 | error (including not a tty without `-p`) |
 | 3 | spend budget exceeded |
+
+## Repeatable acceptance checks
+
+From a source checkout, `cargo test --workspace` includes a complete simulated
+plan → build → review → test flow with approval, resume, undo/redo and commit
+receipts. After building the CLI, `python3 scripts/acceptance.py` checks real CLI
+processes against an isolated loopback provider, including spending, interrupted
+streams, recovery and permission refusals. These checks spend no provider credit.
+
+`python3 bench/run.py --mode simulated` exercises all ten retained benchmark
+fixtures. See [the benchmark guide](../bench/README.md) for reference validation,
+false-pass controls, saved reports and explicitly budgeted live runs. A model's
+review or test pass is its reported verdict; it does not prove the hidden tests
+will pass.
+
+For headless runs, explicit `--model` or `--connection` flags override saved
+hat-specific routes for that run. They do not rewrite those saved hat defaults.
 
 ## Dependency maintenance
 

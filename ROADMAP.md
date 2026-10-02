@@ -18,7 +18,12 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 
 ## Now
 
+- **Live acceptance evidence:** [ten-task OpenRouter run](docs/acceptance-2026-10-02.md), $0.418755831 of $5: six hidden-test passes, five complete passing hat flows, three false review passes and three false Test passes. Keep external review and improve requirement coverage before treating model verdicts as completion evidence.
+
+- **Unreleased — review repair 8a: acceptance and benchmark.** A full simulated session covers plan approval, build, review, approved Test commands, resume, undo/redo, later user edits and commit receipts. Isolated CLI checks cover routing, all four hats, interrupted accounting, budgets and recovery. The ten-task benchmark now validates references, measures hidden acceptance and false passes, and distinguishes simulated accounting from opt-in live charges. Explicit CLI routes override saved hat defaults for that run.
+
 - **Unreleased — review repair 7c: session sandbox scopes.** Each tool, hook, automatic Git operation and approved lifecycle command runs in a fresh scope with only the active session’s notes and pages. Other sessions and private records stay closed. Session switching keeps working without accumulating grants.
+
 
 - **Unreleased — review repair 1 follow-up: protected path components.** Shared secret classification now catches credential directories at the project root as well as nested paths. All four hats reject direct reads, shell reads and linked aliases; grep skips their contents. Example environment files and published verification keys remain readable.
 

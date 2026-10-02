@@ -6,3 +6,7 @@
 .vscode/
 *.swp
 .DS_Store
+
+# Python acceptance/benchmark bytecode
+__pycache__/
+*.pyc
