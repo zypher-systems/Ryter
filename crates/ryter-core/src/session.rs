@@ -352,7 +352,10 @@ impl Session {
     }
 
     /// The hat the most recently updated session for `cwd` was left in,
-    /// from its index alone: no conversation is opened.
+    /// from its index alone: no conversation is opened. `None` when the
+    /// project has no session. A session that never recorded a hat was
+    /// left in build, as a resume of it opens: one from before sessions
+    /// started in plan, that never left the hat it began in.
     pub fn latest_hat(home: &Path, cwd: &Path) -> Option<crate::role::Role> {
         let root = home.join("sessions").join(cwd_slug(cwd));
         let rd = fs::read_dir(&root).ok()?;
@@ -371,7 +374,7 @@ impl Session {
                 best = Some((meta.updated_at, meta.mode));
             }
         }
-        best.and_then(|(_, mode)| mode)
+        best.map(|(_, mode)| mode.unwrap_or(crate::role::Role::SoloBuild))
     }
 
     /// Sessions for `cwd`, newest `updated_at` first.
@@ -987,8 +990,16 @@ mod tests {
         let cwd = tempfile::tempdir().unwrap();
         assert_eq!(Session::latest_hat(home.path(), cwd.path()), None);
         let mut first = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
-        // A session that never set a hat has none to go back to.
-        assert_eq!(Session::latest_hat(home.path(), cwd.path()), None);
+        // A session that never recorded a hat was left in build: that is
+        // the hat a resume of it opens in.
+        assert_eq!(
+            Session::latest_hat(home.path(), cwd.path()),
+            Some(Role::SoloBuild)
+        );
+        assert_eq!(
+            crate::role::start_hat("last", Session::latest_hat(home.path(), cwd.path())),
+            Role::SoloBuild
+        );
         first.set_mode(Role::SoloReview).unwrap();
         assert_eq!(
             Session::latest_hat(home.path(), cwd.path()),

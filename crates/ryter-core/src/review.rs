@@ -215,6 +215,28 @@ pub fn changes(dir: &Path, base: &str) -> Result<Changes> {
     })
 }
 
+/// A new file's length in lines, or `None` for one that is not counted:
+/// anything but a regular file, one longer than `cap` bytes, and one that
+/// is not text.
+///
+/// What git lists as untracked is whatever is in the folder. A link is not
+/// followed, and nothing is read past `cap`: a link to `/dev/zero` reports
+/// a size of nothing and never ends, and a pipe waits for a writer. This
+/// runs where the screen is drawn.
+fn count_lines(root: &Path, path: &str, cap: u64) -> Option<u32> {
+    use std::io::Read;
+    let file = crate::project_file::open(root, Path::new(path)).ok()?;
+    let mut bytes = Vec::new();
+    file.take(cap.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > cap || bytes.contains(&0) {
+        return None;
+    }
+    let text = std::str::from_utf8(&bytes).ok()?;
+    Some(u32::try_from(text.lines().count()).unwrap_or(u32::MAX))
+}
+
 /// What differs from the last commit, the work only, read without writing
 /// anything: [`changes`] snapshots the files into the repository first,
 /// which is more than a glance at the screen's side should do.
@@ -271,9 +293,9 @@ pub fn uncommitted(dir: &Path) -> Result<Vec<FileChange>> {
     } else {
         git(dir, &["ls-files", "-z", "--others", "--exclude-standard"])?
     };
-    // A new file's length in lines, for one small enough to count, and
-    // for the first few only: a folder of installed packages nobody has
-    // ignored yet is thousands of files, and this runs between turns.
+    // A new file's length in lines, for the first few only: a folder of
+    // installed packages nobody has ignored yet is thousands of files, and
+    // this runs between turns.
     const COUNTED_BYTES: u64 = 1 << 20;
     const COUNTED_FILES: usize = 50;
     let mut counted = 0;
@@ -281,13 +303,9 @@ pub fn uncommitted(dir: &Path) -> Result<Vec<FileChange>> {
         if files.iter().any(|f| f.path == path) {
             continue;
         }
-        let full = dir.join(path);
         let lines = (counted < COUNTED_FILES)
-            .then(|| std::fs::metadata(&full).ok())
-            .flatten()
-            .filter(|m| m.len() <= COUNTED_BYTES)
-            .and_then(|_| std::fs::read_to_string(&full).ok())
-            .map(|t| u32::try_from(t.lines().count()).unwrap_or(u32::MAX));
+            .then(|| count_lines(dir, path, COUNTED_BYTES))
+            .flatten();
         counted += 1;
         files.push(FileChange {
             path: path.to_string(),
@@ -690,6 +708,66 @@ mod tests {
         // Not a repository: nothing to compare with.
         let plain = tempfile::TempDir::new().unwrap();
         assert!(uncommitted(plain.path()).is_err());
+    }
+
+    /// What git lists as untracked is whatever is in the folder. None of
+    /// these may be read to its end: two of them have none.
+    #[cfg(unix)]
+    #[test]
+    fn uncommitted_counts_only_regular_text_files_and_never_waits() {
+        use std::os::unix::fs::symlink;
+        let d = repo();
+        let p = d.path();
+        // The pipe, asked for by name: refused, not waited on.
+        assert_eq!(count_lines(p, "nothing-here", 100), None);
+        symlink("/dev/zero", p.join("endless")).unwrap();
+        symlink("keep.txt", p.join("alias")).unwrap();
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            p.join("pipe"),
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o600),
+            0,
+        )
+        .unwrap();
+        assert_eq!(count_lines(p, "pipe", 100), None);
+        assert_eq!(count_lines(p, "endless", 100), None);
+        fs::write(p.join("big.txt"), "x\n".repeat(600_000)).unwrap();
+        fs::write(p.join("edge.txt"), "y\n".repeat(1 << 19)).unwrap();
+        fs::write(p.join("blob.bin"), [0u8, 159, 146, 150]).unwrap();
+        fs::write(p.join("latin.txt"), [0xe9u8, b'\n']).unwrap();
+        fs::write(p.join("plain.txt"), "a\nb\nc\n").unwrap();
+        // On another thread: if it waits on the pipe or the endless file,
+        // the test fails instead of hanging the suite.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let dir = p.to_path_buf();
+        std::thread::spawn(move || {
+            let _ = tx.send(uncommitted(&dir));
+        });
+        let files = rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("uncommitted() did not return")
+            .unwrap();
+        let got: Vec<(&str, u32, bool)> = files
+            .iter()
+            .map(|f| (f.path.as_str(), f.added, f.binary))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("alias", 0, true),
+                ("big.txt", 0, true),
+                ("blob.bin", 0, true),
+                // Exactly the limit is still counted.
+                ("edge.txt", 1 << 19, false),
+                ("endless", 0, true),
+                ("latin.txt", 0, true),
+                // Git does not list the pipe at all; had it, it would not
+                // be opened for reading either.
+                ("plain.txt", 3, false),
+            ]
+        );
+        assert!(files.iter().all(|f| f.status == Status::Added));
     }
 
     #[test]
