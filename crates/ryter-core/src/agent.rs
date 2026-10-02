@@ -2171,6 +2171,14 @@ impl Agent {
         Ok(())
     }
 
+    /// Commit `paths` from the commit panel. The repository's hooks run in
+    /// it, so it is scoped like a tool call.
+    pub fn commit(&self, paths: &[String], message: &str) -> Result<String> {
+        let dir = self.ctx.workspace.clone();
+        self.ctx
+            .sandboxed(|| crate::review::commit(&dir, paths, message))
+    }
+
     /// Draft a commit message for `paths` (changes since `HEAD`), from the
     /// diff, the project's recent subjects, and this conversation's why.
     pub async fn draft_commit(&mut self, paths: &[String]) -> Result<String> {
@@ -6373,6 +6381,97 @@ mod tests {
         assert!(!cwd.path().join("leaked").exists());
         assert!(!agent.session.spend_log().unwrap().is_empty());
         assert!(Session::open(&agent.session.dir).is_ok());
+    }
+
+    /// The commit panel's commit runs the repository's hooks, and the build
+    /// hat may write a hook without a question. Called outside the scope, the
+    /// hook read a key under Ryter's home.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn the_commit_panel_keeps_git_hooks_in_the_session_sandbox() {
+        if std::env::var_os("RYTER_SANDBOX_HOOK_CHILD").is_none() {
+            let fixture_home = TempDir::new().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "agent::tests::the_commit_panel_keeps_git_hooks_in_the_session_sandbox",
+                    "--nocapture",
+                ])
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                .env("HOME", fixture_home.path())
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("RYTER_SANDBOX_HOOK_CHILD", "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        use crate::sandbox::{
+            SandboxProfile,
+            tests::{fixture_scope, outside_scratch},
+        };
+        use std::os::unix::fs::PermissionsExt;
+        let (home, cwd, mut agent) = setup_in(
+            ReplayProvider::scripted(vec![say("done")]),
+            outside_scratch(),
+            outside_scratch(),
+        );
+        let scope = fixture_scope(SandboxProfile::Workspace, home.path());
+        let notes = agent.session.notes_dir();
+        if let Err(error) = scope.check(cwd.path(), &notes) {
+            assert!(error.to_string().contains("Landlock is unavailable"));
+            return;
+        }
+        crate::git::init_repo(cwd.path()).unwrap();
+        for (key, value) in [
+            ("user.name", "Fixture"),
+            ("user.email", "fixture@example.com"),
+        ] {
+            crate::git::git(cwd.path(), &["config", key, value]).unwrap();
+        }
+        let secret = home.path().join("private");
+        std::fs::write(&secret, "private\n").unwrap();
+        let hook = cwd.path().join(".git/hooks/pre-commit");
+        std::fs::write(
+            &hook,
+            format!(
+                "#!/bin/sh\nif IFS= read -r line < '{}'; then printf leaked > leaked; fi\nprintf ran >> hook.log\n",
+                secret.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let commit = |name: &str, run: &dyn Fn(&[String]) -> Result<String>| {
+            std::fs::write(cwd.path().join(name), name).unwrap();
+            let summary = run(&[name.to_string()]).unwrap();
+            assert!(summary.ends_with(name), "{summary}");
+        };
+        // With an agent, as the worker calls it once a provider is connected.
+        agent.ctx.sandbox = Some(scope.clone());
+        commit("one.txt", &|paths| agent.commit(paths, "one.txt"));
+        // Without one, as the worker scopes it before a provider is connected.
+        commit("two.txt", &|paths| {
+            scope.run(cwd.path(), &notes, || {
+                crate::review::commit(cwd.path(), paths, "two.txt")
+            })
+        });
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("hook.log")).unwrap(),
+            "ranran",
+            "the hook must actually run"
+        );
+        assert!(!cwd.path().join("leaked").exists());
+        // The probe is real: outside the scope the same hook reads the key.
+        commit("three.txt", &|paths| {
+            crate::review::commit(cwd.path(), paths, "three.txt")
+        });
+        assert!(cwd.path().join("leaked").exists());
     }
 
     /// Solo mode in a folder of projects edits without making it a

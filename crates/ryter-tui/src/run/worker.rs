@@ -266,8 +266,12 @@ pub fn run(init: WorkerInit) {
         live_transcript,
         user_io,
     } = init;
-    if let Some(scope) = sandbox::Scope::for_profile(profile, &home) {
-        if let Err(e) = scope.check(&cwd, &session.notes_dir()) {
+    // Before a provider is connected there is no agent, and the panels can
+    // still revert and commit: that Git work gets this scope.
+    let idle_scope = sandbox::Scope::for_profile(profile, &home);
+    let idle_notes = session.notes_dir();
+    if let Some(scope) = &idle_scope {
+        if let Err(e) = scope.check(&cwd, &idle_notes) {
             send_err(&ev_tx, e.to_string());
             return;
         }
@@ -611,7 +615,9 @@ pub fn run(init: WorkerInit) {
             Ok(Work::RevertHunk { base, path, hunk }) => {
                 let result = match &mut agent {
                     Some(a) => a.revert_hunk(&base, &path, hunk),
-                    None => ryter_core::review::revert_hunk(&cwd, &base, &path, hunk),
+                    None => scoped(&idle_scope, &cwd, &idle_notes, || {
+                        ryter_core::review::revert_hunk(&cwd, &base, &path, hunk)
+                    }),
                 };
                 let _ = ev_tx.send(AgentEvent::Reverted {
                     path: format!("{path} (change {})", hunk + 1),
@@ -621,7 +627,9 @@ pub fn run(init: WorkerInit) {
             Ok(Work::Revert { base, path }) => {
                 let result = match &mut agent {
                     Some(a) => a.revert_file(&base, &path),
-                    None => ryter_core::review::revert_file(&cwd, &base, &path),
+                    None => scoped(&idle_scope, &cwd, &idle_notes, || {
+                        ryter_core::review::revert_file(&cwd, &base, &path)
+                    }),
                 };
                 let _ = ev_tx.send(AgentEvent::Reverted {
                     path,
@@ -642,7 +650,14 @@ pub fn run(init: WorkerInit) {
                 let _ = ev_tx.send(AgentEvent::CommitDraft { message, error });
             }
             Ok(Work::Commit { paths, message }) => {
-                let (summary, error) = match ryter_core::review::commit(&cwd, &paths, &message) {
+                // The repository's hooks run in a commit: scoped like a tool.
+                let result = match &agent {
+                    Some(a) => a.commit(&paths, &message),
+                    None => scoped(&idle_scope, &cwd, &idle_notes, || {
+                        ryter_core::review::commit(&cwd, &paths, &message)
+                    }),
+                };
+                let (summary, error) = match result {
                     Ok(s) => (Some(s), None),
                     Err(e) => (None, Some(e.to_string())),
                 };
@@ -794,6 +809,19 @@ pub fn run(init: WorkerInit) {
 
 fn send_err(tx: &mpsc::Sender<AgentEvent>, message: String) {
     let _ = tx.send(AgentEvent::Error { message });
+}
+
+/// Git work with no agent to scope it: under the profile, when there is one.
+fn scoped<T: Send>(
+    scope: &Option<sandbox::Scope>,
+    cwd: &Path,
+    notes: &Path,
+    run: impl FnOnce() -> ryter_core::Result<T> + Send,
+) -> ryter_core::Result<T> {
+    match scope {
+        Some(scope) => scope.run(cwd, notes, run),
+        None => run(),
+    }
 }
 
 fn session_event(a: &Agent) -> AgentEvent {

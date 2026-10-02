@@ -159,6 +159,8 @@ impl ModelInfo {
 #[derive(Debug, Default)]
 pub struct ToolCallAccumulator {
     calls: Vec<AssistantToolCall>,
+    /// Whether the provider named the call's id; a made-up one can be replaced.
+    given: Vec<bool>,
     keys: std::collections::HashMap<String, usize>,
     active: Option<usize>,
 }
@@ -176,10 +178,22 @@ impl ToolCallAccumulator {
 
     /// Fold a fragment with the protocol's identity. A legacy fragment
     /// without any identity continues the last active call.
+    ///
+    /// The id decides when it disagrees with the key: Ollama's
+    /// chat-completions stream (and some gateways) send every parallel call
+    /// as `index: 0` with its own id, and those are separate calls.
     pub fn push_keyed(&mut self, key: Option<&str>, id: &str, name: &str, arguments: &str) {
+        let by_id = || self.calls.iter().position(|c| c.id == id);
         let target = match key {
-            Some(key) => self.keys.get(key).copied(),
-            None if !id.is_empty() => self.calls.iter().position(|c| c.id == id),
+            Some(key) => match self.keys.get(key).copied() {
+                Some(index)
+                    if !id.is_empty() && self.given[index] && self.calls[index].id != id =>
+                {
+                    by_id()
+                }
+                keyed => keyed,
+            },
+            None if !id.is_empty() => by_id(),
             None => self.active,
         };
         let index = match target {
@@ -187,6 +201,7 @@ impl ToolCallAccumulator {
                 let call = &mut self.calls[index];
                 if !id.is_empty() {
                     call.id = id.to_string();
+                    self.given[index] = true;
                 }
                 if !name.is_empty() {
                     call.name = name.to_string();
@@ -205,6 +220,7 @@ impl ToolCallAccumulator {
                     name: name.to_string(),
                     arguments: arguments.to_string(),
                 });
+                self.given.push(!id.is_empty());
                 index
             }
         };
@@ -534,6 +550,62 @@ mod tests {
         assert_eq!(calls[0].arguments, "{\"path\":\"a.txt\"}");
         assert_eq!(calls[1].id, "b");
         assert_eq!(calls[1].arguments, "{\"path\":\"b.txt\"}");
+    }
+
+    /// Ollama's chat-completions stream sends every parallel call as
+    /// `index: 0` with its own id. Keyed by index alone they became one call
+    /// with two JSON values joined.
+    #[test]
+    fn calls_sharing_an_index_stay_apart_when_their_ids_differ() {
+        let mut calls = ToolCallAccumulator::default();
+        calls.push_keyed(Some("0"), "a", "read_file", "{\"path\":");
+        // The same id again, and no id at all, continue the call.
+        calls.push_keyed(Some("0"), "a", "", "\"a");
+        calls.push_keyed(Some("0"), "", "", ".txt\"}");
+        calls.push_keyed(Some("0"), "b", "read_file", "{\"path\":");
+        calls.push_keyed(Some("0"), "", "", "\"b.txt\"}");
+        assert_eq!(calls.last().unwrap().id, "b");
+        // An id seen before goes back to its own call, as it always did.
+        calls.push_keyed(Some("0"), "a", "", " ");
+        let calls = calls.finish();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            (calls[0].id.as_str(), calls[0].arguments.as_str()),
+            ("a", "{\"path\":\"a.txt\"} ")
+        );
+        assert_eq!(
+            (calls[1].id.as_str(), calls[1].arguments.as_str()),
+            ("b", "{\"path\":\"b.txt\"}")
+        );
+    }
+
+    #[test]
+    fn a_stream_reusing_index_zero_parses_into_separate_calls() {
+        let frame = |id: &str| {
+            format!(
+                "data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":0,\"id\":\"{id}\",\"type\":\"function\",\"function\":{{\"name\":\"read_file\",\"arguments\":\"{{\\\"path\\\":\\\"{id}.txt\\\"}}\"}}}}]}}}}]}}\n\n"
+            )
+        };
+        let sse = format!("{}{}data: [DONE]\n\n", frame("a"), frame("b"));
+        let deltas = parse_sse(Backend::ChatCompletions, &sse).unwrap();
+        let mut calls = ToolCallAccumulator::default();
+        for delta in deltas {
+            if let StreamDelta::ToolCall {
+                stream_key,
+                id,
+                name,
+                arguments,
+            } = delta
+            {
+                calls.push_keyed(stream_key.as_deref(), &id, &name, &arguments);
+            }
+        }
+        let calls = calls.finish();
+        assert_eq!(calls.len(), 2);
+        for (call, id) in calls.iter().zip(["a", "b"]) {
+            assert_eq!(call.id, id);
+            assert_eq!(call.arguments, format!("{{\"path\":\"{id}.txt\"}}"));
+        }
     }
 
     #[tokio::test]

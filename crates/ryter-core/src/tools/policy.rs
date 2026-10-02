@@ -5890,6 +5890,98 @@ mod tests {
         }
     }
 
+    /// A project keeps Dockerfiles and server config in `.docker/`. Matched
+    /// as a credential folder at any depth, every hat was refused them and
+    /// the build hat could not work on such a project. The logins are in
+    /// `config.json`, and the whole of `~/.docker` stays shut.
+    #[test]
+    fn a_projects_docker_folder_is_its_work_and_only_the_logins_are_secret() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("project");
+        let work = [
+            ".docker/Dockerfile",
+            ".docker/nginx/default.conf",
+            "services/api/.docker/Dockerfile",
+        ];
+        let logins = [".docker/config.json", "services/api/.docker/config.json"];
+        for (files, body) in [
+            (&work[..], "FROM alpine"),
+            (&logins[..], "PRIVATE_SENTINEL"),
+        ] {
+            for file in files {
+                std::fs::create_dir_all(root.join(file).parent().unwrap()).unwrap();
+                std::fs::write(root.join(file), body).unwrap();
+            }
+        }
+        for role in [
+            Role::SoloPlan,
+            Role::SoloBuild,
+            Role::SoloReview,
+            Role::SoloTest,
+        ] {
+            let c = ctx_for(role, &root);
+            for path in work {
+                let read =
+                    crate::tools::gated_execute("read_file", &json!({"path": path}), &c).unwrap();
+                assert!(
+                    read.text.contains("FROM alpine"),
+                    "{role:?}: {path}: {read:?}"
+                );
+                assert_eq!(
+                    decide("bash", &json!({"command": format!("cat {path}")}), &c),
+                    Decision::Allow,
+                    "shell {role:?}: {path}"
+                );
+            }
+            let found =
+                crate::tools::gated_execute("grep", &json!({"pattern": "alpine"}), &c).unwrap();
+            for path in work {
+                assert!(found.text.contains(path), "{role:?}: {path}: {found:?}");
+            }
+            for path in logins {
+                assert_eq!(
+                    decide("read_file", &json!({"path": path}), &c),
+                    Decision::Deny,
+                    "{role:?}: {path}"
+                );
+                assert_eq!(
+                    decide("bash", &json!({"command": format!("cat {path}")}), &c),
+                    Decision::Deny,
+                    "shell {role:?}: {path}"
+                );
+                assert!(
+                    crate::tools::fs::read_file(&json!({"path": path}), &c).is_err(),
+                    "reader {role:?}: {path}"
+                );
+            }
+            let private =
+                crate::tools::gated_execute("grep", &json!({"pattern": "PRIVATE_SENTINEL"}), &c)
+                    .unwrap();
+            assert_eq!(private.text, "no matches", "{role:?}");
+            if let Some(home) = home_dir() {
+                let path = home.join(".docker/contexts/meta.json");
+                assert_eq!(
+                    decide("read_file", &json!({"path": path}), &c),
+                    Decision::Deny,
+                    "{role:?}: {}",
+                    path.display()
+                );
+            }
+        }
+        // An edit there is decided like an edit to any other project file.
+        let build = ctx_for(Role::SoloBuild, &root);
+        let edit = |path: &str| {
+            let args = json!({"path": path, "old": "alpine", "new": "debian"});
+            decide("search_replace", &args, &build)
+        };
+        std::fs::write(root.join("Dockerfile"), "FROM alpine").unwrap();
+        assert_ne!(edit("Dockerfile"), Decision::Deny);
+        for path in work {
+            assert_eq!(edit(path), edit("Dockerfile"), "{path}");
+        }
+        assert_eq!(edit(".docker/config.json"), Decision::Deny);
+    }
+
     /// A workspace reached through a symlink (every temp folder on macOS:
     /// /var -> /private/var) still gets its notes, memory, and secret rules.
     #[cfg(unix)]

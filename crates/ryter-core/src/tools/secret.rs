@@ -26,22 +26,27 @@ pub(super) fn is_secret(path: &Path) -> bool {
     let example = [".example", ".sample", ".template", ".dist", ".defaults"]
         .iter()
         .any(|e| name.ends_with(e));
-    s.split('/').any(|component| {
-        matches!(
-            component,
-            ".ssh"
-                | ".gnupg"
-                | ".aws"
-                | ".azure"
-                | ".kube"
-                | ".docker"
-                | ".netrc"
-                | ".npmrc"
-                | ".pypirc"
-                | ".git-credentials"
-                | ".vault-token"
-        )
-    }) || s.contains("credential")
+    // A project's `.docker/` holds its Dockerfiles and server config; the
+    // logins are in `config.json`. The whole of `~/.docker` is shut by the
+    // home list in the policy.
+    let docker_login = s == ".docker/config.json" || s.ends_with("/.docker/config.json");
+    docker_login
+        || s.split('/').any(|component| {
+            matches!(
+                component,
+                ".ssh"
+                    | ".gnupg"
+                    | ".aws"
+                    | ".azure"
+                    | ".kube"
+                    | ".netrc"
+                    | ".npmrc"
+                    | ".pypirc"
+                    | ".git-credentials"
+                    | ".vault-token"
+            )
+        })
+        || s.contains("credential")
         || s.contains("/.ryter/")
         || s.ends_with(".env")
         || (name.starts_with(".env") && !example)
