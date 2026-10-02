@@ -45,3 +45,19 @@ jobs:
       - name: False-pass negative control
         if: runner.os == 'Linux'
         run: python3 bench/run.py --mode simulated --simulate-broken-build --task pager-off-by-one
+
+      - name: Installer signature fixtures
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = macOS ]; then
+            export RYTER_INSTALL_OPENSSL="$(brew --prefix openssl@3)/bin/openssl"
+          fi
+          python3 scripts/test_install.py
+      - name: Dependency advisories, licenses and sources
+        if: runner.os == 'Linux'
+        run: |
+          cargo install cargo-deny --version 0.20.2 --locked
+          cargo deny --locked check advisories licenses sources
+      - name: Dependency notice bundle
+        if: runner.os == 'Linux'
+        run: python3 scripts/license_bundle.py target/dependency-notices
