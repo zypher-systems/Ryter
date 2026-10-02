@@ -2,6 +2,13 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Admit requests against the active route’s context window
+- **Decision:** Resolve `[context_windows]` overrides, a matching base-route override, the active connection’s cached catalog, a matching last route, then the existing fallback. A base model’s window never overrides a different hat. Count schemas, message/tool-call content and requested output before both turns and auxiliary requests. Reserve up to a quarter of the window for output, capped at 32,768 tokens.
+- **Why:** A smaller hat could inherit the base model’s large gauge, and a single long tool turn could overflow without triggering compaction. Guard the actual request again after review instructions are added; if the request still cannot fit, stop before sending it and retain the user’s task.
+- **Compaction:** Keep older user instructions and assistant narrative verbatim in the extract. Shorten older bulky tool results with an explicit re-read notice while retaining call/result IDs and the newest result batch. Save only a measurable reduction. Irreducible instructions and tool-call arguments produce an actionable stop instead of silent loss.
+- **Limits:** Token counts remain the bytes/4 heuristic, not a model tokenizer. Catalog data can age, and the existing 500k Grok / 200k other-model fallback is an estimate, not provider evidence. Users can supply the server’s actual window in `[context_windows]`; exact tokenizer calibration and provider-specific output maxima remain separate work.
+- **Where:** `compact.rs`, agent request admission/context reporting, configuration; regressions cover smaller hats, catalog/config precedence, tool schemas/output reserve, a single long turn, retained constraints, and no provider call for irreducible turns or drafts.
+
 ### 2026-10-02 — Recover only a torn JSONL tail, preserving the original
 - **Decision:** Inspect both conversation files and the spend ledger before repair. An unterminated final record that ends during JSON or UTF-8 decoding can be removed after syncing an exact backup. A malformed complete record or corruption before another line remains an error. A complete final record without a newline is retained and separated from the next append.
 - **Why:** Interrupted appends should not hide valid history, but silently skipping arbitrary corruption would manufacture a different conversation or spending total. Recovery announces its backup path in CLI/TUI. Metadata and transcript replacement use unique staging files, synced before atomic rename. On Linux/macOS, append, recovery and replacement share an advisory file lock so a live append cannot be mistaken for an interrupted one.

@@ -70,7 +70,7 @@ pub struct Agent {
     pub project_root: Option<PathBuf>,
     /// Whether project prompts/config are trusted.
     pub trusted: bool,
-    /// Context window override. `0` uses the model default (grok-4.6 = 500k, else 200k).
+    /// Context override for the base route only. `0` uses configured/catalog limits.
     pub context_window: u64,
     /// The configuration: each hat's model, the review limit, the
     /// connections. Tests may leave this `None`.
@@ -255,7 +255,6 @@ impl Agent {
         // changed the prompt's prefix and threw away the provider's cache for
         // the whole conversation, every time memory was touched.
         let mut system = self.system_prompt()?;
-        let mut compactions = self.session.transcript.len();
         // The model that has read this conversation so far. A hat on another
         // model reads it all again, uncached: the user is told what that is.
         let mut reader = self.last_reader();
@@ -268,12 +267,9 @@ impl Agent {
             }
             let (provider, model, connection) = self.hat_stack();
             self.admit_request(&model)?;
-            self.maybe_compact()?;
-            if self.session.transcript.len() < compactions {
-                // Compaction already rewrote the prefix; memory can catch up free.
-                system = self.system_prompt()?;
-            }
-            compactions = self.session.transcript.len();
+            self.maybe_compact(&mut system, &model, &connection)?;
+            let window = self.model_window(&model, &connection);
+            let output = Self::output_allowance(window);
 
             // The hat's own model, when it has one. Worked out each round: a
             // hat can change mid-turn (an approved plan goes on to build).
@@ -321,10 +317,11 @@ impl Agent {
                 // nothing unused. At 8192 a reasoning model in the build hat
                 // spent the whole budget drafting code in its reasoning and
                 // returned nothing.
-                max_tokens: Some(CONVERSATION_MAX_OUTPUT),
+                max_tokens: Some(output),
                 reasoning: crate::config::reasoning_effort(self.cfg.as_ref(), self.role, &model),
             };
 
+            crate::compact::ensure_fits(&req, window)?;
             let mut stream = tokio::select! {
                 biased;
                 () = self.ctx.cancel.cancelled() => {
@@ -2207,6 +2204,7 @@ impl Agent {
             max_tokens: Some(max_tokens),
             reasoning: Some("low".into()),
         };
+        crate::compact::ensure_fits(&req, self.model_window(&self.model, &self.connection))?;
         let mut stream = tokio::select! {
             biased;
             () = self.ctx.cancel.cancelled() => return Err(Error::Cancelled),
@@ -2257,23 +2255,77 @@ impl Agent {
         Ok(text)
     }
 
-    /// `/context` snapshot (does not compact).
+    /// Resolve limits for the same route used to send the request. A base
+    /// route override must never leak onto another hat's smaller model.
+    fn model_window(&self, model: &str, connection: &str) -> u64 {
+        if let Some(window) = self
+            .cfg
+            .as_ref()
+            .and_then(|c| c.context_windows.get(model))
+            .filter(|v| **v > 0)
+        {
+            return *window;
+        }
+        if model == self.model && connection == self.connection && self.context_window > 0 {
+            return self.context_window;
+        }
+        if let Some(window) = crate::llm::model_cache::load(&self.home, connection)
+            .and_then(|(models, _)| models.into_iter().find(|m| m.id == model))
+            .and_then(|m| m.context_length)
+            .filter(|v| *v > 0)
+        {
+            return window;
+        }
+        if let Some(window) = crate::config::load_last_route(&self.home)
+            .filter(|r| r.model == model && r.connection == connection)
+            .and_then(|r| r.context_length)
+            .filter(|v| *v > 0)
+        {
+            return window;
+        }
+        crate::compact::window_for(model)
+    }
+
+    fn output_allowance(window: u64) -> u32 {
+        (window / 4).clamp(1, u64::from(CONVERSATION_MAX_OUTPUT)) as u32
+    }
+
+    fn report_for(
+        &self,
+        system: &str,
+        model: &str,
+        connection: &str,
+    ) -> crate::compact::ContextReport {
+        let window = self.model_window(model, connection);
+        crate::compact::request_report(
+            system,
+            self.session.messages_of(self.role.thread()),
+            &crate::tools::specs_for_opts(self.role, self.ctx.web),
+            window,
+            Self::output_allowance(window),
+        )
+    }
+
+    /// `/context` snapshot for the active hat, including schemas and output.
     pub fn context_report(&self) -> Result<crate::compact::ContextReport> {
-        let sys = self.system_prompt().unwrap_or_default();
-        Ok(crate::compact::report(
-            &sys,
-            &self.session.transcript,
-            &self.model,
-            self.context_window,
-        ))
+        let sys = self.system_prompt()?;
+        let (_, model, connection) = self.hat_stack();
+        Ok(self.report_for(&sys, &model, &connection))
     }
 
     /// Emit a [`AgentEvent::Context`] for the TUI / `--json`.
     pub fn emit_context(&mut self) -> Result<()> {
         self.session.use_thread(self.role.thread());
         let r = self.context_report()?;
-        let sys = self.system_prompt().unwrap_or_default();
-        let breakdown = crate::compact::breakdown(&sys, &self.session.transcript);
+        let sys = self.system_prompt()?;
+        let mut breakdown = crate::compact::breakdown(&sys, &self.session.transcript);
+        let tools = crate::tools::specs_for_opts(self.role, self.ctx.web);
+        let schemas = crate::compact::request_tokens("", &[], &tools, 0);
+        breakdown.push(("tool schemas".into(), schemas));
+        breakdown.push((
+            "output allowance".into(),
+            Self::output_allowance(r.window).into(),
+        ));
         self.emit(AgentEvent::Context {
             tokens: r.tokens,
             window: r.window,
@@ -2284,52 +2336,40 @@ impl Agent {
         })
     }
 
-    /// Deterministic compact. Always emits [`AgentEvent::Compacted`].
+    /// Deterministic compact. Emits [`AgentEvent::Compacted`] with measured size.
     pub fn compact_now(&mut self) -> Result<crate::compact::ContextReport> {
         self.session.use_thread(self.role.thread());
-        let sys = self.system_prompt().unwrap_or_default();
-        let before = crate::compact::estimate_tokens(&sys, &self.session.transcript);
-        // What must outlive the messages dropped: where the approved plan is.
-        let note = self
-            .session
-            .meta
-            .plan_file
-            .as_deref()
-            .map(|f| {
-                format!(
-                    "The plan the user approved is in `{f}`. Where the work differs from \
-                     it is recorded in `{}`.",
-                    crate::decisions::FILE
-                )
-            })
-            .unwrap_or_default();
+        let sys = self.system_prompt()?;
+        let (_, model, connection) = self.hat_stack();
+        let before = self.report_for(&sys, &model, &connection);
+        let note = self.session.meta.plan_file.as_deref().map(|f| format!(
+            "The plan the user approved is in `{f}`. Where the work differs from it is recorded in `{}`.",
+            crate::decisions::FILE)).unwrap_or_default();
         let next = crate::compact::compact(
             &self.session.transcript,
             &note,
             crate::compact::KEEP_USER_TURNS,
         );
-        if next.len() < self.session.transcript.len() {
+        let changed = crate::compact::estimate_tokens(&sys, &next)
+            < crate::compact::estimate_tokens(&sys, &self.session.transcript);
+        if changed {
             self.session.replace_transcript(next)?;
         }
-        let mut rep = crate::compact::report(
-            &sys,
-            &self.session.transcript,
-            &self.model,
-            self.context_window,
-        );
-        rep.compacted = true;
+        let mut rep = self.report_for(&sys, &model, &connection);
+        rep.compacted = changed;
         self.emit(AgentEvent::Compacted {
-            before,
+            before: before.tokens,
             after: rep.tokens,
             window: rep.window,
         })?;
         Ok(rep)
     }
 
-    fn maybe_compact(&mut self) -> Result<()> {
-        let rep = self.context_report()?;
-        if crate::compact::should_compact(&rep) {
-            self.compact_now()?;
+    fn maybe_compact(&mut self, system: &mut String, model: &str, connection: &str) -> Result<()> {
+        let rep = self.report_for(system, model, connection);
+        if crate::compact::should_compact(&rep) && self.compact_now()?.compacted {
+            // Compaction already changed the prefix; refresh project memory too.
+            *system = self.system_prompt()?;
         }
         Ok(())
     }
@@ -2393,17 +2433,12 @@ impl Agent {
     /// About how many tokens a model is sent to read the conversation: its
     /// instructions, the tools it is offered, and every message.
     pub(crate) fn conversation_tokens(&self, system: &str) -> u64 {
-        let tools = serde_json::to_string(&crate::tools::specs_for_opts(self.role, self.ctx.web))
-            .map_or(0, |t| t.len());
-        let bytes: usize = system.len()
-            + tools
-            + self
-                .session
-                .transcript
-                .iter()
-                .map(|m| m.content.len())
-                .sum::<usize>();
-        (bytes / 4) as u64
+        crate::compact::request_tokens(
+            system,
+            &self.session.transcript,
+            &crate::tools::specs_for_opts(self.role, self.ctx.web),
+            0,
+        )
     }
 
     /// What it costs `model` to read the conversation for the first time:
@@ -6479,11 +6514,68 @@ mod tests {
         agent.turn("go on").await.unwrap();
     }
 
+    #[test]
+    fn context_uses_the_active_hat_catalog_and_includes_schemas_and_output() {
+        let (home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![]));
+        agent.context_window = 500_000;
+        let mut cfg = crate::config::Config::default();
+        cfg.specialists.insert(
+            "review".into(),
+            crate::config::RoleModel {
+                connection: Some(agent.connection.clone()),
+                model: Some("small-reviewer".into()),
+            },
+        );
+        agent.cfg = Some(cfg);
+        crate::llm::model_cache::save(
+            home.path(),
+            &agent.connection,
+            &[crate::llm::ModelInfo::named("small-reviewer", Some(24_000))],
+        );
+        agent.role = Role::SoloReview;
+        agent.ctx.role = Role::SoloReview;
+        let report = agent.context_report().unwrap();
+        assert_eq!(report.window, 24_000);
+        assert!(
+            report.tokens
+                > crate::compact::estimate_tokens(&agent.system_prompt().unwrap(), &[]) + 6_000
+        );
+        agent
+            .cfg
+            .as_mut()
+            .unwrap()
+            .context_windows
+            .insert("small-reviewer".into(), 12_000);
+        assert_eq!(agent.context_report().unwrap().window, 12_000);
+        agent.role = Role::SoloBuild;
+        assert_eq!(agent.context_report().unwrap().window, 500_000);
+    }
+
+    #[tokio::test]
+    async fn irreducible_context_stops_turns_and_drafts_before_provider_calls() {
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![]));
+        let provider = Arc::new(SeesReasoning::default());
+        agent.provider = provider.clone();
+        agent.context_window = 200;
+        let error = agent.turn("keep every requirement").await.unwrap_err();
+        assert!(error.to_string().contains("context for"), "{error}");
+        assert!(
+            agent
+                .session
+                .transcript
+                .iter()
+                .any(|m| m.content.contains("keep every requirement"))
+        );
+        assert!(agent.one_shot("", "draft", 400).await.is_err());
+        assert!(provider.seen.lock().unwrap().is_empty());
+        assert!(agent.session.spend_log().unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn auto_compact_shrinks_long_transcript() {
         let p = ReplayProvider::new(vec![StreamDelta::Text("done".into()), StreamDelta::Done]);
         let (_home, _cwd, mut agent) = setup(p);
-        agent.context_window = 200;
+        agent.context_window = 20_000;
         for i in 0..10 {
             agent
                 .session
@@ -6498,8 +6590,21 @@ mod tests {
                 .session
                 .push_message(Message {
                     role: "assistant".into(),
-                    content: "ok".into(),
+                    content: "still need to verify the new behavior".into(),
                     tool_call_id: None,
+                    tool_calls: Some(vec![crate::llm::AssistantToolCall {
+                        id: format!("c{i}"),
+                        name: "read_file".into(),
+                        arguments: r#"{"path":"hello.txt"}"#.into(),
+                    }]),
+                })
+                .unwrap();
+            agent
+                .session
+                .push_message(Message {
+                    role: "tool".into(),
+                    content: "data".repeat(4000),
+                    tool_call_id: Some(format!("c{i}")),
                     tool_calls: None,
                 })
                 .unwrap();

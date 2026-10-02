@@ -18,6 +18,8 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 
 ## Now
 
+- **Unreleased — review repair 7a: context limits.** Admission and the gauge follow the active hat’s route, include tool schemas and reserve output space. Configured or cached model limits override the fallback. Compaction retains user constraints and assistant notes, can shorten older tool results within one turn, and must reduce size. Oversized turns and commit drafts stop before calling the provider.
+
 - **Unreleased — review repair 6b: session recovery.** Resume recovers torn final records in either conversation and the spend ledger, keeps an original backup, and reports the recovery. Complete/middle corruption fails without changing the logs. Spending reconciles from the ledger without lowering older cached totals; uncertain recovery keeps the budget closed.
 
 - **Unreleased — review repair 6a: MCP responsiveness.** Blocking requests use bounded workers while cancellation stays available; overlapping prompts receive a busy response. CLI status and spend use completed-turn snapshots, and a disconnected prompt owner cancels its active work.
@@ -201,7 +203,7 @@ Ryter is one mode: one model in the project, with a hat for each stage of the wo
 - **Recorded wire fixtures + a live smoke test.** Tool calling was broken on two backends while 212 tests passed, because every test used idealized deltas. Record real SSE per provider (tool calls, parallel calls, truncation) and replay those; add one nightly live round trip per built-in provider.
 - **Streamed `bash` output** (the shell already passes a running command's newest lines to a hook nothing listens on), and **reconcile the context gauge** with the provider's real `input_tokens` rather than bytes/4.
 - **macOS without the sandbox**, labelled Linux-only.
-- Anthropic extended thinking + tools (thinking blocks must be echoed back on `messages`); compaction that keeps a summary rather than a file list; `ryter-cli` tests; confirm grok-4.6's context window (500k in `window_for`, 256k in fixtures); a hat on a model with a smaller window than the main one can overflow before the conversation is compacted; rename `[orchestrator]`, `[specialists.*]` and the `Solo*` names in the code now that there is one mode.
+- Anthropic extended thinking + tools (thinking blocks must be echoed back on `messages`); `ryter-cli` tests; confirm grok-4.6's context window (500k in `window_for`, 256k in fixtures); rename `[orchestrator]`, `[specialists.*]` and the `Solo*` names in the code now that there is one mode.
 
 Previously listed:
 
