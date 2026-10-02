@@ -35,6 +35,8 @@ The application source exercised by the paid run was the acceptance patch (`dbb9
 
 Each paid task used a fresh Git repository under `target`, the workspace sandbox, an allocation no larger than $0.35, a 32K context override and an 8K output allowance. An aggregate reserve and incomplete-accounting stop guarded the $5 run cap. Price fallback used the highest listed model tier; provider-reported charges took precedence. Pricing was checked against [OpenRouter’s model pricing](https://openrouter.ai/qwen/qwen3-coder-flash/pricing) before the run. Headless plan replies were proposals followed by an explicit build instruction; they did not exercise the interactive approval UI.
 
+The final combined source passed 614 workspace tests (4 optional tests ignored), the locked build, clippy with warnings denied, formatting, seven CLI scenarios, three scoring regressions, ten simulated tasks, the false-pass control, five installer fixtures and dependency advisory/license/source checks.
+
 The core acceptance test separately covers plan approval, build, review, an approved Test run, resume, undo/redo, later user edits and commit receipts from a nested project. Seven CLI acceptance cases cover real subprocess routing, all hats, budgets, interrupted accounting and recovery. Provider protocol fixtures cover interleaved tool-call streams; these are sanitized regression fixtures, not recordings of the paid run. TUI geometry/snapshot tests pass, but this work does not claim a complete human-operated TUI acceptance session.
 
 ## Local evidence and replay

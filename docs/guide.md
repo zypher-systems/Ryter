@@ -650,6 +650,8 @@ The configured Ryter home must be outside the workspace and outside shared syste
 
 Plans, decisions and test reports stored in the project follow the workspace’s access rights. Run-file approvals and lifecycle ownership are kept separately in Ryter’s home.
 
+**Git metadata must be reachable too.** For sandboxed Git workflows, launch Ryter from the repository root. A nested project whose Git metadata is outside the granted workspace may not have Git checkpoints or review available; the filesystem profile does not grant parent repositories automatically.
+
 **What a sandbox doesn't do:**
 
 - Separately configured outbound MCP servers run with their own permissions; this profile applies to Ryter’s built-in commands.
