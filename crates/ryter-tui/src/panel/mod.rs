@@ -3,22 +3,20 @@
 //! Each panel module owns its state, key handling, and rendering. The
 //! framework draws the shared chrome, dims what is behind, and drops a shadow.
 
-pub mod agents;
 pub mod budget;
 pub mod changes;
 pub mod chrome;
 pub mod commit;
 pub mod context;
-pub mod crew;
-pub mod crew_builder;
 pub mod doctor;
 pub mod help;
 pub mod hooks;
-pub mod lane;
 pub mod mcp;
 pub mod modal;
 pub mod models;
+pub mod plan;
 pub mod providers;
+pub mod rules;
 pub mod sessions;
 pub mod settings;
 pub mod skills;
@@ -55,7 +53,7 @@ pub enum Outcome {
     Act(Action),
     /// Pop and act.
     CloseAct(Action),
-    /// Push a child and act (e.g. `/crew` → `/models` + fetch).
+    /// Push a child panel and act.
     PushAct(Box<dyn Panel>, Action),
 }
 
@@ -91,12 +89,8 @@ pub enum Notice {
     Doctor(Vec<(String, String, String)>),
     /// A file export finished (`/spend e`, `/doctor c`).
     Exported(String),
-    /// Models arrived for a specific picker (`/models`, `/crew`).
+    /// Models arrived for the picker (`/models`).
     Models(Vec<ryter_core::ModelInfo>),
-    /// Results of [`Action::ProbeModels`](crate::action::Action::ProbeModels).
-    Probed(Vec<(String, String, Result<(), String>)>),
-    /// Crew presets on disk changed.
-    PresetsChanged(Vec<String>),
     /// Sessions list refreshed (after rename/delete).
     SessionsChanged,
 }
@@ -330,9 +324,6 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
     let p: Box<dyn Panel> = match id {
         PanelId::Providers => Box::new(providers::Providers::new(view)),
         PanelId::Models => Box::new(models::Models::new(view, None)),
-        PanelId::Crew => Box::new(crew::Crew::new(env)),
-        PanelId::CrewBuilder => Box::new(crew_builder::CrewBuilder::new(view, false)),
-        PanelId::Agents => Box::new(agents::Agents::default()),
         PanelId::Sessions(mode) => Box::new(sessions::Sessions::new(view, env, mode)),
         PanelId::Spend => Box::new(spend::Spend::default()),
         PanelId::SpendDrawer => Box::new(spend_drawer::SpendDrawer),
@@ -340,9 +331,9 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
         PanelId::Settings => Box::new(settings::Settings::new(view)),
         PanelId::Theme => Box::new(theme::ThemePicker::new(view)),
         PanelId::Tools => Box::new(toggles::Toggles::tools(view)),
-        PanelId::Auditor => Box::new(toggles::Toggles::auditor(view)),
         PanelId::Mcp => Box::new(mcp::Mcp::default()),
         PanelId::Skills => Box::new(skills::Skills::default()),
+        PanelId::Rules => Box::new(rules::Rules::new(view, env)),
         PanelId::Hooks => Box::new(hooks::Hooks::default()),
         PanelId::Context => Box::new(context::Context::default()),
         PanelId::Help => Box::new(help::Help::default()),
@@ -364,7 +355,12 @@ pub fn rect(full: Rect, body: Rect, pref_w: u16, content_rows: u16, modal: bool)
     if full.width < 60 || full.height < 20 {
         return body;
     }
-    let w = pref_w.clamp(40, full.width.saturating_sub(8));
+    // No wider than the body it is drawn in. Beside the rail the body is
+    // narrower than the screen, and a panel sized to the screen ran off
+    // its right edge: `/models` there crashed the whole program.
+    let w = pref_w
+        .clamp(40, full.width.saturating_sub(8).max(40))
+        .min(body.width);
     // A panel may use the body it now owns. Reserving ten rows of the terminal
     // meant `/help` got 20 rows for 40 rows of keybindings at 100x30 and
     // clipped the first thing a new user reads; two rows of breathing room
@@ -466,6 +462,8 @@ pub fn draw(
         } else {
             rect(full, body, pw, rows + extra, modal.is_some())
         };
+        // Whatever a panel asks for, nothing is drawn off the screen.
+        let area = area.intersection(full);
         if !focused {
             // Under-panels render dimmed with no shadow.
             draw_one(frame, area, p.as_ref(), view, theme, false);

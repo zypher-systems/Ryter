@@ -25,6 +25,6 @@
 
 
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
-│› what should change? · Tab: plan · / for commands                                                │
+│› what should change? · Tab: review · / for commands                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- enter send    tab plan    ⇧enter newline    / commands    ^b panel    ^c quit
+ enter send    tab review    ⇧enter newline    / commands    ^b panel    ^c quit

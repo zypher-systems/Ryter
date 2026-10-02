@@ -23,7 +23,10 @@ pub fn verb(tool: &str) -> &str {
         "list_dir" => "list",
         "request_hat" => "hat",
         "ask_user" => "ask",
-        "todo_write" => "tasks",
+        "record_decision" => "decide",
+        "present_plan" => "plan",
+        "propose_run" => "setup",
+        "report_test" => "report",
         "web_fetch" => "fetch",
         "web_search" => "web",
         other => other,
@@ -42,6 +45,7 @@ pub fn target(tool: &str, args: &Value) -> String {
         "grep" | "glob" => arg(args, &["pattern"]),
         "request_hat" => arg(args, &["hat"]),
         "ask_user" => arg(args, &["question"]),
+        "record_decision" | "present_plan" | "report_test" => arg(args, &["title"]),
         "web_fetch" => arg(args, &["url"]),
         "web_search" => arg(args, &["query"]),
         _ => arg(args, &["path", "target_file"]),
@@ -238,6 +242,16 @@ pub fn result(tool: &str, output: &str, is_error: bool) -> (String, String) {
                     .join("\n"),
             ),
         },
+        // The project's own commands: its tests' totals when there are
+        // any, otherwise that it went through. What Ryter told the model
+        // about it is not the user's to read.
+        "run_project" => (
+            match test_summary(output) {
+                Some(s) => format!("✓ {s}"),
+                None => "✓".into(),
+            },
+            String::new(),
+        ),
         _ => (String::new(), String::new()),
     }
 }

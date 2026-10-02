@@ -18,52 +18,26 @@ default_model = "anthropic/claude-sonnet-4.6"
 http_referer = "https://github.com/zypher-systems/ryter"
 x_title = "Ryter"
 
+# The model every hat uses. (The table is called `orchestrator` for a reason
+# that is gone: the name is kept so existing configuration still loads.)
 [orchestrator]
 connection = "spacexai"
 model = "grok-4.6"
 
-# Crew defaults follow the orchestrator. Assign per-role models in the TUI (/crew)
-# or uncomment:
-# [specialists.architect]
+# A hat can have a model of its own: plan, build, review, test. Set them in the TUI
+# (/models), or uncomment:
+# [specialists.review]
 # connection = "openrouter"
 # model = "anthropic/claude-sonnet-4.6"
-
-[subagents]
-max = 4
-
-[auditor]
-# Work merges only after the checks pass and the auditor signs off.
-# With the auditor off, finished work is left on its branch for you to merge.
-enabled = true
-max_retries = 2
-# Run by Ryter in the builder's worktree before the auditor reviews. Set these
-# per project in `.ryter/config.toml` (trusted projects only).
-# checks = ["cargo test --workspace", "cargo clippy --workspace -- -D warnings"]
-# check_timeout_secs = 1200
-#
-# Every auditor must be a different model from the lead and the builder, or
-# builds refuse to start. One auditor comes from /crew; for a panel, list seats.
-# All must pass; they run in order and stop at the first FAIL, so put the
-# cheapest first. A seat with `paths` only reviews changes touching them.
-# [[auditor.panel]]
-# connection = "openrouter"
-# model = "anthropic/claude-sonnet-4.6"
-# [[auditor.panel]]
-# connection = "openrouter"
-# model = "anthropic/claude-opus-4.6"
-# focus = "security"
-# paths = ["crates/*/src/tools/**", "crates/*/src/sandbox.rs"]
 
 [spend]
 enabled = true
 currency = "USD"
-# Off (0) by default: set one with /budget or in the crew builder.
+# Off (0) by default: set one with /budget.
 session_budget_usd = 0
 warn_usd = 1.00
-# Per crew task, builder and auditors together. The token cap (uncached input
-# plus output) also stops models with no known price. See docs/cost.md.
-task_budget_usd = 3.00
-task_max_tokens = 1000000
+# The most one turn in the review hat may spend. Off (0) by default: set it in /settings.
+review_usd = 0
 
 # TUI presentation. Every key is optional; defaults shown. Unknown keys warn once at
 # startup instead of failing. `/theme` persists its pick to ~/.ryter/settings.toml [ui].
@@ -78,7 +52,8 @@ colors = "auto"            # auto | truecolor | 256 | 16 ; NO_COLOR always wins
 timestamps = true          # HH:MM on speaker headers (the ledger: beside each question)
 line_numbers = true        # gutter in code blocks
 receipts = true            # /commit adds a `Ryter:` trailer: model, cost, tests
-offer_audit = true         # after a build turn that changed files, offer an audit (asks first, shows the cost)
+offer_audit = true         # after a build turn that changed files, offer a review (asks first, shows the cost)
+offer_test = true          # after a review that passed, offer a test of the running product (asks first, shows the cost)
 open_pages = true          # open a page the model shows (show_page) in your browser; off, you get the link only
 
 [mcp]

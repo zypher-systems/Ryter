@@ -259,7 +259,7 @@ fn git_check(checks: &mut Vec<Check>) {
         _ => checks.push(Check {
             name: "git".into(),
             status: CheckStatus::Warn,
-            detail: "not found (builders need git worktrees)".into(),
+            detail: "not found (undo, /changes, /commit and reviews need git)".into(),
         }),
     }
 }

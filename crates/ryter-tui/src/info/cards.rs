@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ryter_core::{format_tokens, format_usd};
 
 use super::{Card, CardId};
-use crate::chat::{fmt_elapsed, short_model, wrap};
+use crate::chat::{short_model, wrap};
 use crate::panel::widgets::gauge_color;
 use crate::theme::Theme;
 use crate::view::View;
@@ -59,16 +59,8 @@ pub fn session(view: &View, w: usize, theme: Theme) -> Card {
     } else {
         view.session_title.clone()
     };
-    // Title, then the mode: which hat, or what the crew is doing. The raw
-    // session id belongs in `/sessions`.
-    let (state, color) = if view.crew_mode() {
-        match view.crew.len() {
-            0 => ("crew · idle".to_string(), theme.mode(view.mode)),
-            n => (format!("crew · {n} working"), theme.mode(view.mode)),
-        }
-    } else {
-        (view.mode_label().to_string(), theme.mode(view.mode))
-    };
+    // Title, then the hat. The raw session id belongs in `/sessions`.
+    let (state, color) = (view.mode_label().to_string(), theme.mode(view.mode));
     let mut rows = vec![kv(
         &wrap::truncate(&title, w.saturating_sub(state.chars().count() + 2)),
         &state,
@@ -77,38 +69,17 @@ pub fn session(view: &View, w: usize, theme: Theme) -> Card {
         Style::default().fg(color).bg(theme.sidebar_bg),
     )];
     let detail_from = rows.len();
-    let auditor = if view.auditor_on {
-        "auditor ✓"
-    } else {
-        "auditor ✗"
-    };
     let tools = format!("tools {}", view.perm_mode);
-    // The auditor is the crew's; in solo mode only the tool mode matters.
-    let auditor = if view.crew_mode() { auditor } else { "" };
-    let gap = if auditor.is_empty() { "" } else { "  " };
-    rows.push(row(vec![
-        s(
-            auditor,
-            Style::default()
-                .fg(if view.auditor_on {
-                    theme.success
-                } else {
-                    theme.warn
-                })
-                .bg(theme.sidebar_bg),
-        ),
-        s(gap, theme.side()),
-        s(
-            tools,
-            Style::default()
-                .fg(if view.perm_mode == "always" {
-                    theme.warn
-                } else {
-                    theme.dim
-                })
-                .bg(theme.sidebar_bg),
-        ),
-    ]));
+    rows.push(row(vec![s(
+        tools,
+        Style::default()
+            .fg(if view.perm_mode == "always" {
+                theme.warn
+            } else {
+                theme.dim
+            })
+            .bg(theme.sidebar_bg),
+    )]));
     Card {
         id: CardId::Session,
         title: "session".into(),
@@ -126,7 +97,7 @@ pub fn model(view: &View, w: usize, theme: Theme) -> Card {
     } else {
         theme.warn
     };
-    let model = short_model(&view.model).to_string();
+    let model = short_model(view.hat_model()).to_string();
     let mut rows = Vec::new();
     let conn_w = w.saturating_sub(wrap::width(&model) + 3);
     let conn = wrap::truncate(&view.connection, conn_w);
@@ -169,11 +140,7 @@ pub fn model(view: &View, w: usize, theme: Theme) -> Card {
     // How hard this model reasons in this mode: the user's choice, or what
     // auto picks. Change it with Tab in /models.
     let choice = view.reasoning_label(&view.model);
-    let role = if view.crew_mode() {
-        ryter_core::Role::Orchestrator
-    } else {
-        view.mode
-    };
+    let role = view.mode;
     let shown = match choice {
         "auto" => format!("auto · {}", view.reasoning_effective(role, &view.model)),
         c => c.to_string(),
@@ -249,15 +216,6 @@ pub fn spend(view: &View, w: usize, theme: Theme) -> Card {
         counter: String::new(),
         rows,
         detail_from,
-    }
-}
-
-fn task_rank(status: &str) -> u8 {
-    match status {
-        "running" | "in_progress" => 0,
-        "pending" => 1,
-        "blocked" => 2,
-        _ => 3,
     }
 }
 
@@ -362,117 +320,6 @@ pub fn budget(view: &View, w: usize, theme: Theme) -> Card {
     }
 }
 
-/// `tasks` card (`R-PANEL-08..11`).
-/// `tasks` card, or `None` until there is a task (`R-PANEL-18`).
-///
-/// Principle 1 is that the conversation gets the space. Three bordered boxes
-/// saying `no tasks yet` / `no specialists running` took a quarter of the width
-/// to say nothing.
-pub fn tasks(view: &View, w: usize, theme: Theme) -> Option<Card> {
-    if view.todos.is_empty() {
-        return None;
-    }
-    let done = view
-        .todos
-        .iter()
-        .filter(|t| t.status == "done" || t.status == "completed")
-        .count();
-    let mut sorted: Vec<_> = view.todos.iter().collect();
-    sorted.sort_by_key(|t| task_rank(&t.status));
-    let mut rows = Vec::new();
-    for t in sorted.iter().take(8) {
-        let (glyph, color, strike) = match t.status.as_str() {
-            "running" | "in_progress" => ("◐", theme.accent, false),
-            "done" | "completed" => ("✓", theme.success, true),
-            "blocked" => ("✕", theme.error, false),
-            _ => ("○", theme.dim, false),
-        };
-        let mut text_style = theme.side();
-        if strike {
-            text_style = theme.side_muted().add_modifier(Modifier::CROSSED_OUT);
-        }
-        let lines = wrap::wrap_plain(&t.title, w.saturating_sub(2));
-        for (i, l) in lines.iter().take(2).enumerate() {
-            if i == 0 {
-                rows.push(row(vec![
-                    s(glyph, Style::default().fg(color).bg(theme.sidebar_bg)),
-                    s(" ", theme.side()),
-                    s(l.clone(), text_style),
-                ]));
-            } else {
-                let l = if lines.len() > 2 {
-                    wrap::truncate(&format!("{l}…"), w.saturating_sub(2))
-                } else {
-                    l.clone()
-                };
-                rows.push(row(vec![s("  ", theme.side()), s(l, text_style)]));
-            }
-        }
-    }
-    if sorted.len() > 8 {
-        rows.push(row(vec![s(
-            format!("+{} more", sorted.len() - 8),
-            theme.side_muted(),
-        )]));
-    }
-    Some(Card {
-        id: CardId::Tasks,
-        title: "tasks".into(),
-        counter: format!("{done}/{}", view.todos.len()),
-        detail_from: rows.len(),
-        rows,
-    })
-}
-
-/// `crew` card (`R-PANEL-12..15`).
-/// `crew` card, or `None` while no specialist is running.
-pub fn crew(view: &View, w: usize, theme: Theme) -> Option<Card> {
-    if view.crew.is_empty() {
-        return None;
-    }
-    let mut rows = Vec::new();
-    for c in &view.crew {
-        let role_w = wrap::width(&c.role);
-        let label = wrap::truncate(&c.label, w.saturating_sub(role_w + 2));
-        rows.push(row(vec![
-            s(
-                c.role.clone(),
-                Style::default()
-                    .fg(theme.role(&c.role))
-                    .bg(theme.sidebar_bg),
-            ),
-            s("  ", theme.side()),
-            s(label, theme.side()),
-        ]));
-        let elapsed = fmt_elapsed(view.now_ms.saturating_sub(c.started_ms) / 1000);
-        let spend = c.spend.map(|v| format_usd(Some(v))).unwrap_or_default();
-        let status_style = if c.status.contains("audit") || c.status.contains("blocked") {
-            Style::default().fg(theme.warn).bg(theme.sidebar_bg)
-        } else {
-            theme.side_muted()
-        };
-        let right = format!("{elapsed}  {spend}").trim().to_string();
-        let left = wrap::truncate(
-            &c.status,
-            w.saturating_sub(role_w + 2 + wrap::width(&right) + 1),
-        );
-        let pad = w.saturating_sub(role_w + 2 + wrap::width(&left) + wrap::width(&right));
-        rows.push(row(vec![
-            s(" ".repeat(role_w + 2), theme.side()),
-            s(left, status_style),
-            s(" ".repeat(pad), theme.side()),
-            s(right, theme.side_muted()),
-        ]));
-    }
-    Some(Card {
-        id: CardId::Crew,
-        title: "crew".into(),
-        counter: format!("{}/{}", view.crew.len(), view.max_crew),
-        detail_from: rows.len(),
-        rows,
-    })
-}
-
 /// `mcp` card (`R-PANEL-16`), only when relevant.
 pub fn mcp(view: &View, w: usize, theme: Theme) -> Option<Card> {
     if view.mcp_servers.is_empty() && view.mcp_listen.is_none() && view.mcp_tcp_listen.is_none() {
@@ -549,12 +396,7 @@ mod tests {
     #[test]
     fn the_budget_card_says_where_the_cap_stands() {
         let theme = Theme::truecolor_dark();
-        let mut v = View::new(
-            ryter_core::Phase::Build,
-            "c".into(),
-            "m".into(),
-            "/tmp".into(),
-        );
+        let mut v = View::new("c".into(), "m".into(), "/tmp".into());
         v.spend = Some(1.25);
         v.budget_usd = 0.0;
         let off = budget(&v, 26, theme);

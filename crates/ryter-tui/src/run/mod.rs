@@ -3,6 +3,8 @@
 
 mod actions;
 #[cfg(test)]
+pub(crate) use actions::fill_view_from_session;
+#[cfg(test)]
 pub(crate) use actions::load_project_spend;
 pub(crate) mod events;
 pub(crate) mod keys;
@@ -33,13 +35,11 @@ use ryter_core::sandbox::{self, SandboxProfile};
 use ryter_core::session::Session;
 use ryter_core::spend::PriceBook;
 use ryter_core::{
-    AgentEvent, Cancel, HookSet, InboundHost, Phase, StatusSnapshot, UserIo, UserRequest,
-    load_catalog,
+    AgentEvent, Cancel, HookSet, InboundHost, StatusSnapshot, UserIo, UserRequest, load_catalog,
 };
 
 use crate::action::Action;
 use crate::activity::{Mode as ActivityMode, Verb};
-use crate::chat::parse_tz_offset;
 use crate::draw::{Hit, draw};
 use crate::panel::modal::{AskModal, PermissionModal, TrustModal};
 use crate::panel::{self, Notice};
@@ -61,8 +61,6 @@ pub struct TuiOpts {
     pub connection: Option<String>,
     /// Model override.
     pub model: Option<String>,
-    /// Phase override.
-    pub phase: Option<String>,
     /// Landlock profile override (`off`/`workspace`/`read-only`).
     pub sandbox: Option<String>,
     /// Resume this session id (`latest` = most recent for cwd). `None` creates a new session.
@@ -123,7 +121,6 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         .get(&conn_name)
         .ok_or_else(|| ryter_core::Error::Config(format!("unknown connection {conn_name}")))?
         .clone();
-    let phase = actions::parse_phase(opts.phase.as_deref())?.unwrap_or(Phase::Build);
     let profile: SandboxProfile = if let Some(s) = opts.sandbox.as_deref() {
         s.parse()?
     } else {
@@ -138,24 +135,20 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         }
     }
 
-    let (mut session, resumed) = match opts.session.as_deref() {
+    let (session, resumed) = match opts.session.as_deref() {
         Some("latest") | Some("") => match Session::latest(&home, &cwd)? {
             Some(s) => (s, true),
             None => (
-                Session::create(&home, &cwd, phase, conn_name.clone(), model.clone())?,
+                Session::create(&home, &cwd, conn_name.clone(), model.clone())?,
                 false,
             ),
         },
         Some(id) => (Session::find(&home, Some(&cwd), id)?, true),
         None => (
-            Session::create(&home, &cwd, phase, conn_name.clone(), model.clone())?,
+            Session::create(&home, &cwd, conn_name.clone(), model.clone())?,
             false,
         ),
     };
-    let phase = if resumed { session.meta.phase } else { phase };
-    if !resumed {
-        session.set_auditor(cfg.auditor.enabled)?;
-    }
     if resumed && cfg.connections.contains_key(&session.meta.connection) {
         conn_name = session.meta.connection.clone();
         model = session.meta.model.clone();
@@ -166,12 +159,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     let key = resolve_secret(&cfg, &ConnectionId::new(&conn_name)).ok();
 
     // -- view -----------------------------------------------------------------
-    let mut view = View::new(
-        phase,
-        conn_name.clone(),
-        model.clone(),
-        display_home_path(&cwd),
-    );
+    let mut view = View::new(conn_name.clone(), model.clone(), display_home_path(&cwd));
     populate_view(
         &mut view,
         &cfg,
@@ -207,7 +195,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         ));
     }
     actions::load_project_spend(&mut view, &home, &cwd);
-    if cwd.join(".ryter").is_dir() && !trusted {
+    if config::asks_for_trust(&cwd) && !trusted {
         view.panels.push(Box::new(TrustModal::default()));
     }
 
@@ -295,6 +283,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         mcp_host: attach_host,
         perm_reply: None,
         ask_reply: None,
+        plan_reply: None,
         mouse_grabbed: mouse,
         theme,
         theme_before_preview: None,
@@ -302,6 +291,8 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         last_doctor: None,
         want_redraw: false,
         want_quit: false,
+        quit_after_turn: false,
+        stop_reply: None,
         want_edit: None,
     };
     enter_terminal(mouse)?;
@@ -355,7 +346,7 @@ fn populate_view(
         ryter_core::git::git(cwd, &["config", "user.name"]).ok(),
         std::env::var("USER").ok(),
     );
-    view.tz_offset = local_tz_offset();
+    view.tz_offset = ryter_core::clock::local_offset();
     view.git_branch = ryter_core::git::branch(cwd).ok();
     view.perm_mode = if opts.always_approve {
         "always".into()
@@ -366,16 +357,14 @@ fn populate_view(
     view.hooks = cfg.hooks.clone();
     view.theme_names = Theme::list(home);
     view.has_key = has_key;
-    view.auditor_on = cfg.auditor.enabled;
     view.specialists = cfg.specialists.clone();
     view.budget_usd = cfg.spend.session_budget_usd;
     if view.budget_usd > 0.0 {
         view.budget_last = view.budget_usd;
     }
-    view.task_budget_usd = cfg.spend.task_budget_usd;
+    view.review_usd = cfg.spend.review_usd;
     view.model_reasoning = cfg.model_reasoning.clone();
     view.warn_usd = cfg.spend.warn_usd;
-    view.max_crew = cfg.subagents.max;
     view.sandbox_profile = cfg.sandbox.profile.clone();
     view.update_mode = cfg.update.mode;
     view.web = cfg.features.web;
@@ -404,17 +393,6 @@ fn populate_view(
         })
         .collect();
     let _ = HookSet::from_config(&cfg.hooks);
-}
-
-/// Local UTC offset via `date +%z` (no chrono dependency); UTC on failure.
-fn local_tz_offset() -> i32 {
-    std::process::Command::new("date")
-        .arg("+%z")
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|s| parse_tz_offset(&s))
-        .unwrap_or(0)
 }
 
 /// Start inbound MCP listeners (unix socket, optional TCP) if enabled.
@@ -524,12 +502,6 @@ fn loop_ui(
         // Drain everything that arrived since the last frame (`R-EVT-05`).
         while let Ok(ev) = ev_rx.try_recv() {
             events::apply(view, ev);
-            if let Some((tokens, then_run)) = view.reviewer_ask.take() {
-                let chooser = crate::panel::models::Models::for_review(view, tokens, then_run);
-                view.panels.push(Box::new(chooser));
-                crate::panel::sync_composer(view);
-                cx.send(crate::run::worker::Work::ListCrewModels);
-            }
             dirty = true;
         }
         while let Ok(n) = notice_rx.try_recv() {
@@ -544,6 +516,21 @@ fn loop_ui(
                 let a = view.submit_user(q.clone(), q);
                 actions::perform(view, cx, a);
                 dirty = true;
+            }
+        }
+        if cx.quit_after_turn && !view.busy {
+            cx.want_quit = true;
+        }
+        // A quit that asked for the product to be stopped leaves once it
+        // is; if it could not be stopped, the user is told and stays.
+        if let Some(rx) = &cx.stop_reply {
+            match rx.try_recv() {
+                Ok(Ok(_)) => cx.want_quit = true,
+                Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected) => {
+                    cx.stop_reply = None;
+                    dirty = true;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
             }
         }
         if cx.want_quit {
@@ -711,6 +698,22 @@ fn drain_user_prompts(
                     .with_context(why, opened),
             ));
         }
+        UserRequest::Plan { title, plan, reply } => {
+            cx.plan_reply = Some(reply);
+            let opened = view.now_ms;
+            view.panels
+                .push(Box::new(crate::panel::plan::PlanModal::new(
+                    title, plan, opened,
+                )));
+        }
+        UserRequest::Run { rows, note, reply } => {
+            cx.plan_reply = Some(reply);
+            let opened = view.now_ms;
+            view.panels
+                .push(Box::new(crate::panel::plan::PlanModal::run(
+                    rows, note, opened,
+                )));
+        }
         UserRequest::Question {
             title,
             question,
@@ -736,9 +739,12 @@ fn edit_with_editor(
     mouse: bool,
     path: &Path,
 ) {
-    let editor = std::env::var("VISUAL")
-        .or_else(|_| std::env::var("EDITOR"))
-        .unwrap_or_else(|_| "vi".into());
+    // An empty `VISUAL` is not an editor: it used to win over `EDITOR`,
+    // and the file itself was run as the command.
+    let set = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+    let editor = set("VISUAL")
+        .or_else(|| set("EDITOR"))
+        .unwrap_or_else(|| "vi".into());
     leave_terminal(mouse);
     let status = std::process::Command::new("sh")
         .arg("-c")

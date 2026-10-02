@@ -47,6 +47,26 @@ const NON_INTERACTIVE: &[(&str, &str)] = &[
     ("PIP_NO_INPUT", "1"),
 ];
 
+/// Environment variables a key is read from, besides the two built-in ones:
+/// every connection's `env_key`. A command's environment leaves them out.
+/// Only `XAI_API_KEY` and `OPENROUTER_API_KEY` used to be, so a key under
+/// any other name was handed to every command, and `env` put it in the
+/// transcript.
+static KEY_VARS: std::sync::RwLock<Vec<String>> = std::sync::RwLock::new(Vec::new());
+
+/// Keep `var` out of the environment of every command run from here on.
+pub fn hide_env(var: &str) {
+    let var = var.trim();
+    if var.is_empty() {
+        return;
+    }
+    if let Ok(mut vars) = KEY_VARS.write() {
+        if !vars.iter().any(|v| v == var) {
+            vars.push(var.to_string());
+        }
+    }
+}
+
 /// How a command ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Run {
@@ -61,9 +81,8 @@ pub enum Run {
 }
 
 /// Run `cmd` under `bash -c` in `cwd`, in its own process group so cancel and
-/// timeout kill everything it started. Shared by the `bash` tool and by the
-/// merge gate's configured checks, which are not model-chosen and so do not go
-/// through the permission gate.
+/// timeout kill everything it started.
+#[cfg(test)]
 pub fn run_command(
     cmd: &str,
     cwd: &std::path::Path,
@@ -78,15 +97,11 @@ const LIVE_EVERY: Duration = Duration::from_millis(250);
 /// Lines of a running command's output passed on each time.
 const LIVE_LINES: usize = 3;
 
-/// [`run_command`], passing its newest output lines to `live` as they arrive,
-/// so the crew board shows a test run working rather than a frozen lane.
-pub fn run_command_live(
-    cmd: &str,
-    cwd: &std::path::Path,
-    timeout: Duration,
-    cancel: &crate::cancel::Cancel,
-    live: Option<&LiveOutput>,
-) -> Result<Run> {
+/// `cmd` under `bash -c` in `cwd`, as every command Ryter runs is set up:
+/// nobody to answer a prompt, Ryter's keys kept out, temporary files where
+/// a sandbox allows them, and a process group of its own. Where its output
+/// goes is the caller's to say.
+pub(crate) fn command(cmd: &str, cwd: &std::path::Path) -> Command {
     let mut command = Command::new("bash");
     command
         // `-c`, not `-lc`: a login shell sources the user's profile on every
@@ -101,14 +116,95 @@ pub fn run_command_live(
         // put them in the transcript.
         .env_remove("XAI_API_KEY")
         .env_remove("OPENROUTER_API_KEY")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        // The gate reads a command as the shell would with nothing set
+        // that changes how it reads: where `cd sub` goes, which names a
+        // pattern leaves out, what a new shell runs first.
+        .env_remove("CDPATH")
+        .env_remove("GLOBIGNORE")
+        .env_remove("BASH_ENV")
+        .env_remove("ENV")
+        .env_remove("SHELLOPTS")
+        .env_remove("BASHOPTS")
+        // And nothing that changes what a search reads.
+        .env_remove("RIPGREP_CONFIG_PATH")
+        .env_remove("GREP_OPTIONS")
+        .stdin(Stdio::null());
+    if let Ok(vars) = KEY_VARS.read() {
+        for var in vars.iter() {
+            command.env_remove(var);
+        }
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
+    command
+}
+
+/// End a command Ryter started and still holds, and everything it
+/// started, the way a person would: ask it to stop, give it a few seconds
+/// to shut down (a server closing its files), then kill what is left.
+pub(crate) fn end_child(child: &mut std::process::Child) {
+    let pgid = child.id();
+    let _ = Command::new("bash")
+        .arg("-c")
+        .arg(format!("kill -TERM -- -{pgid}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let asked = std::time::Instant::now();
+    loop {
+        // Collect it once it has gone: until then it still counts as a
+        // member of its group, and the wait would run its full length.
+        let gone = matches!(child.try_wait(), Ok(Some(_)));
+        if gone && !group_alive(pgid) {
+            return;
+        }
+        if asked.elapsed() > Duration::from_secs(5) {
+            kill_group(pgid);
+            let _ = child.kill();
+            let _ = child.wait();
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// End process group `pgid`, which a command Ryter started left running
+/// after it returned: ask it to stop, give it a few seconds, then kill
+/// what is left.
+pub(crate) fn end_group(pgid: u32) {
+    if pgid == 0 || !group_alive(pgid) {
+        return;
+    }
+    let _ = Command::new("bash")
+        .arg("-c")
+        .arg(format!("kill -TERM -- -{pgid}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let asked = std::time::Instant::now();
+    while group_alive(pgid) && asked.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    if group_alive(pgid) {
+        kill_group(pgid);
+    }
+}
+
+/// Run `cmd` under `bash -c` in `cwd`, in its own process group so cancel
+/// and timeout kill everything it started, passing its newest output lines
+/// to `live` as they arrive.
+pub fn run_command_live(
+    cmd: &str,
+    cwd: &std::path::Path,
+    timeout: Duration,
+    cancel: &crate::cancel::Cancel,
+    live: Option<&LiveOutput>,
+) -> Result<Run> {
+    let mut command = command(cmd, cwd);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
     if cancel.is_cancelled() {
         return Ok(Run::Cancelled);
     }
@@ -212,8 +308,8 @@ pub fn run_command_live(
 
 /// Default and ceiling for a command's wall clock.
 ///
-/// 30s was below a cold `cargo test` or `npm install`, which made the auditor's
-/// own allowlist unrunnable. The model can raise it per command up to the cap.
+/// 30s was below a cold `cargo test` or `npm install`. The model can raise
+/// it per command up to the cap.
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const MAX_TIMEOUT_SECS: u64 = 600;
 
@@ -294,7 +390,7 @@ fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> Drain {
 /// Whether any process is still in group `pgid`. Bash's builtin `kill`, not
 /// `/usr/bin/kill`: procps-ng's `kill -0 -PGID` reports a dead group as alive
 /// and a live one as dead.
-fn group_alive(pgid: u32) -> bool {
+pub(crate) fn group_alive(pgid: u32) -> bool {
     pgid != 0
         && Command::new("bash")
             .arg("-c")
@@ -309,11 +405,9 @@ fn group_alive(pgid: u32) -> bool {
 mod tests {
     use super::*;
     use crate::cancel::Cancel;
-    use crate::queue::TaskQueue;
     use crate::role::Role;
     use crate::tools::ToolContext;
     use serde_json::json;
-    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
     use tempfile::TempDir;
 
@@ -325,15 +419,16 @@ mod tests {
             live: None,
             workspace: dir.path().to_path_buf(),
             notes_dir: dir.path().to_path_buf(),
-            role: Role::Builder,
+            role: Role::SoloBuild,
             always_approve: true,
-            queue: Arc::new(Mutex::new(TaskQueue::open(dir.path().join("tasks.json")))),
             mcp: None,
             hooks: None,
             cancel: cancel.clone(),
             user_io: None,
             allowed: Default::default(),
             web: false,
+            cwd: Default::default(),
+            vars: Default::default(),
         };
         let waiter = cancel.clone();
         std::thread::spawn(move || {
@@ -515,5 +610,29 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    /// A key's variable is kept out of a command's environment, whatever it
+    /// is called. `cargo test` sets `CARGO_PKG_NAME` for this process, so it
+    /// stands in for a key here: the command sees it until it is hidden.
+    #[test]
+    fn a_hidden_variable_does_not_reach_a_command() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let cancel = crate::cancel::Cancel::new();
+        let show = || match run_command(
+            "echo \"[$CARGO_PKG_NAME]\"",
+            dir.path(),
+            Duration::from_secs(20),
+            &cancel,
+        )
+        .unwrap()
+        {
+            Run::Ok(out) => out.trim().to_string(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(show(), "[ryter-core]");
+        hide_env("CARGO_PKG_NAME");
+        hide_env("  ");
+        assert_eq!(show(), "[]");
     }
 }

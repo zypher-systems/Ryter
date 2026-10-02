@@ -22,22 +22,19 @@ pub const RAIL_W: u16 = 34;
 /// seventy-six columns beside it.
 pub const RAIL_MIN_SCREEN: u16 = 110;
 
-/// Whether the rail shows: solo mode on the ledger, the conversation on
-/// screen, wide enough, and not hidden with `^b`.
+/// Whether the rail shows: on the ledger, the conversation on screen, wide
+/// enough, and not hidden with `^b`.
 pub fn shown(view: &View, width: u16) -> bool {
-    !view.ui.classic()
-        && !view.crew_mode()
-        && view.workbench.is_none()
-        && view.panel_visible
-        && width >= RAIL_MIN_SCREEN
+    !view.ui.classic() && view.workbench.is_none() && view.panel_visible && width >= RAIL_MIN_SCREEN
 }
 
 /// What each hat does, in a line.
 fn hat_words(mode: Role) -> (&'static str, &'static str, &'static str) {
     match mode {
-        Role::SoloPlan => ("PLAN", "reads and designs only", "build · review"),
-        Role::SoloReview => ("REVIEW", "reads the changes, reports", "build · plan"),
-        _ => ("BUILD", "edits files, runs commands", "plan · review"),
+        Role::SoloPlan => ("PLAN", "reads and designs only", "build·review·test"),
+        Role::SoloReview => ("REVIEW", "reads the changes, reports", "plan·build·test"),
+        Role::SoloTest => ("TEST", "uses the product", "plan·build·review"),
+        _ => ("BUILD", "edits files, runs commands", "plan·review·test"),
     }
 }
 
@@ -203,14 +200,14 @@ fn session(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>>
                 .add_modifier(Modifier::BOLD),
         )));
     }
+    // The session's, in both conversations, whichever is on screen.
     let turns = view
-        .messages
-        .iter()
+        .session_messages()
         .filter(|m| matches!(m.kind, MessageKind::User))
         .count();
     let since = view
-        .messages
-        .first()
+        .session_messages()
+        .next()
         .map(|m| format!("since {} · ", m.at.hhmm()))
         .unwrap_or_default();
     lines.push(Line::from(Span::styled(
@@ -267,8 +264,9 @@ fn short_count(n: u64) -> String {
 
 fn model(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>> {
     let dim = Style::default().fg(theme.dim).bg(bg);
-    let name = crate::chat::short_model(&view.model).to_string();
-    let reasoning = format!(" · reasoning {}", view.reasoning_label(&view.model));
+    // The model this hat's next message goes to.
+    let name = crate::chat::short_model(view.hat_model()).to_string();
+    let reasoning = format!(" · reasoning {}", view.reasoning_label(view.hat_model()));
     let name = wrap::truncate(&name, w);
     let reasoning = wrap::truncate(&reasoning, w.saturating_sub(wrap::width(&name)));
     let frac = view.ctx_frac();
@@ -476,6 +474,6 @@ fn views_line(view: &View, theme: Theme, bg: Color) -> Line<'static> {
     let off = Style::default().fg(theme.dim).bg(bg);
     Line::from(vec![
         Span::styled("chat", on),
-        Span::styled("  changes ^t  crew /crew", off),
+        Span::styled("  changes ^t", off),
     ])
 }

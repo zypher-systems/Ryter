@@ -192,19 +192,22 @@ fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
         }
         let prev = i.checked_sub(1).map(|p| &view.messages[p]);
         let continuation = prev.is_some_and(|p| p.same_speaker(msg));
-        // On the ledger a model is named once a turn; its later steps keep
-        // the `◆` mark in the gutter but not the header. Each step's cost is
-        // in the turn's closing line.
+        // On the ledger a model is named when it starts to speak; its
+        // later steps keep the `◆` mark in the gutter but not the header.
+        // Another model speaking in between (a hat with its own model)
+        // names it again: unnamed, its words read as the other's. Each
+        // step's cost is in the turn's closing line.
+        let speaks = |m: &super::Message| {
+            matches!(m.kind, MessageKind::Assistant { .. }) && !m.body.trim().is_empty()
+        };
         let named_before = ledger
-            && matches!(
-                msg.kind,
-                MessageKind::Assistant { .. } | MessageKind::Specialist { .. }
-            )
+            && speaks(msg)
             && view.messages[..i]
                 .iter()
                 .rev()
                 .take_while(|m| m.turn == msg.turn)
-                .any(|m| m.same_speaker(msg) && !m.body.trim().is_empty());
+                .find(|m| speaks(m))
+                .is_some_and(|m| m.same_speaker(msg));
         let both_tools = prev.is_some_and(|p| {
             matches!(p.kind, MessageKind::Tool { .. })
                 && matches!(msg.kind, MessageKind::Tool { .. })
@@ -265,6 +268,7 @@ fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
                     match level {
                         SystemLevel::Warn => "!",
                         SystemLevel::Error => "✕",
+                        SystemLevel::Report { .. } => "▣",
                         _ => "·",
                     },
                     msg.accent(theme),
@@ -433,14 +437,13 @@ fn gutter_spans(g: &Gutter, first: bool, theme: Theme) -> Vec<Span<'static>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ryter_core::Phase;
 
     fn text(l: &Line) -> String {
         l.spans.iter().map(|s| s.content.as_ref()).collect()
     }
 
     fn view_with_turns(n: usize) -> View {
-        let mut v = View::new(Phase::Build, "x".into(), "m".into(), "p".into());
+        let mut v = View::new("x".into(), "m".into(), "p".into());
         for i in 0..n {
             v.submit_user(format!("question {i}"), format!("question {i}"));
             v.on_token(&format!("answer {i}\n").repeat(6));

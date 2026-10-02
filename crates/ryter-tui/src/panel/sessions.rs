@@ -25,8 +25,8 @@ pub struct Row {
     pub messages: usize,
     /// Known spend.
     pub spend: Option<f64>,
-    /// Phase.
-    pub phase: String,
+    /// The hat it was left in.
+    pub hat: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,7 +111,11 @@ impl Sessions {
                 updated_ms: s.updated_millis(),
                 messages: s.messages,
                 spend: s.meta.spend_usd_total,
-                phase: s.meta.phase.to_string(),
+                hat: s
+                    .meta
+                    .mode
+                    .map_or(ryter_core::Role::SoloBuild, ryter_core::Role::hat)
+                    .to_string(),
             })
             .collect();
         rows.sort_by(|a, b| b.updated_ms.cmp(&a.updated_ms));
@@ -216,14 +220,14 @@ impl Panel for Sessions {
                     relative(now, r.updated_ms),
                     r.messages.to_string(),
                     format_usd(r.spend),
-                    r.phase.clone(),
+                    r.hat.clone(),
                     r.short.clone(),
                 ]
             })
             .collect();
         if n > 0 {
             lines.extend(widgets::table(
-                &["title", "updated", "msgs", "spend", "phase", "id"],
+                &["title", "updated", "msgs", "spend", "hat", "id"],
                 &rows,
                 &[
                     widgets::Al::L,

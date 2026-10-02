@@ -9,7 +9,7 @@ use crate::action::Action;
 use crate::activity::SPINNER;
 use crate::chat::{short_model, wrap};
 use crate::theme::Theme;
-use crate::view::{CREW_ROLES, View};
+use crate::view::{HAT_ROLES, View};
 
 /// Sort order (`R-POP-26`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,23 +64,10 @@ fn trim(v: f64) -> String {
     }
 }
 
-/// Choosing who gives second opinions (`/second`): a model from the live
-/// catalog, then the most one review may spend. Nothing is preselected;
-/// Ryter shows prices and facts, and the user chooses.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ReviewPick {
-    /// Tokens the review starts with, to price each model for it.
-    pub context_tokens: u64,
-    /// Run the review once chosen.
-    pub then_run: bool,
-    /// The model chosen; the limit is typed next.
-    pub chosen: Option<(String, String)>,
-}
-
 /// Which side of `/models` the keys move.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
-    /// The seats: the lead (or solo), then each crew role.
+    /// The seats: the model every hat uses, then each hat.
     Seats,
     /// The models for the seat chosen.
     Models,
@@ -88,21 +75,19 @@ pub enum Focus {
 
 /// Model picker: the seats on the left, the models for the chosen seat on
 /// the right. Enter sets the model and goes back to the seats, on the next
-/// one, so a whole crew is chosen without leaving the panel.
+/// one, so every hat is set without leaving the panel.
 #[derive(Debug, Clone)]
 pub struct Models {
-    /// Catalog rows (row 0 is the `default` sentinel in crew mode).
+    /// Catalog rows (row 0 is the `default` sentinel).
     pub items: Vec<ModelInfo>,
     /// Waiting for `ModelsListed`.
     pub loading: bool,
-    /// The tab on screen: `None` is the lead (the solo model in solo
-    /// mode), `Some(role)` a crew role. `←→` moves between them.
+    /// The seat chosen: `None` is the model every hat uses, `Some(hat)`
+    /// one hat's own.
     pub assign_role: Option<String>,
-    /// Every connection's models were asked for (a role tab lists them all;
-    /// the lead's tab lists its connection's).
-    crew_listed: bool,
-    /// `Some` when choosing the second-opinion reviewer.
-    pub review: Option<ReviewPick>,
+    /// Every connection's models were asked for (a hat's list has them
+    /// all; the first seat's has its connection's).
+    all_listed: bool,
     /// Why the last Enter did nothing.
     refusal: Option<String>,
     selected: usize,
@@ -113,14 +98,14 @@ pub struct Models {
     changed: [bool; SEATS],
 }
 
-/// The lead (or solo) and each crew role.
-const SEATS: usize = CREW_ROLES.len() + 1;
+/// The model the rest follow, and each hat, which can have its own.
+const SEATS: usize = HAT_ROLES.len() + 1;
 
 /// The list's width with every column showing.
 const LIST_WIDTH: usize = 80;
 
 impl Models {
-    /// Open for the active connection (or a crew role).
+    /// Open on the seats, or on one hat's models.
     pub fn new(view: &mut View, assign_role: Option<String>) -> Self {
         let kind = view
             .connections
@@ -129,8 +114,8 @@ impl Models {
             .map(|c| c.kind.clone())
             .unwrap_or_default();
         let _ = kind;
-        // Every tab's rows: the lead's tab shows its connection's, a role's
-        // tab all of them and `default` (follows the lead).
+        // Every seat's rows: the first shows its connection's, a hat's all
+        // of them and `default` (follows the others).
         let mut items = vec![default_row(&view.connection)];
         for c in view.connections.clone() {
             if !c.has_key && c.name != view.connection {
@@ -143,7 +128,7 @@ impl Models {
             items.extend(fb);
         }
         view.composer.clear();
-        // Opened on a role (from the crew panel): its models, at once.
+        // Opened on a hat: its models, at once.
         let focus = if assign_role.is_some() {
             Focus::Models
         } else {
@@ -152,9 +137,8 @@ impl Models {
         let mut p = Self {
             items,
             loading: true,
-            crew_listed: assign_role.is_some(),
+            all_listed: assign_role.is_some(),
             assign_role,
-            review: None,
             refusal: None,
             selected: 0,
             sort: Sort::Relevance,
@@ -165,57 +149,14 @@ impl Models {
         p
     }
 
-    /// Open to choose the second-opinion reviewer, from every connection
-    /// with a key, priced for the review at hand.
-    pub fn for_review(view: &mut View, context_tokens: u64, then_run: bool) -> Self {
-        let mut p = Self::new(view, Some(String::new()));
-        p.items.retain(|m| !m.id.is_empty());
-        p.assign_role = None;
-        p.review = Some(ReviewPick {
-            context_tokens,
-            then_run,
-            chosen: None,
-        });
-        p.sort = Sort::Price;
-        p
-    }
-
-    fn local(view: &View, m: &ModelInfo) -> bool {
-        let conn = m.connection.as_deref().unwrap_or(&view.connection);
-        view.connections
-            .iter()
-            .any(|c| c.name == conn && c.kind == "local")
-    }
-
-    /// What reviewing the work at hand with `m` should cost.
-    fn review_price(view: &View, m: &ModelInfo, context_tokens: u64) -> Option<(f64, f64)> {
-        if Self::local(view, m) {
-            return Some((0.0, 0.0));
-        }
-        let rates = match (m.input_per_million, m.output_per_million) {
-            (Some(i), Some(o)) if i >= 0.0 && o >= 0.0 => {
-                Some(ryter_core::Rates::per_million(i, o))
-            }
-            _ => None,
-        };
-        ryter_core::second::price_range(rates, context_tokens.max(2_000))
-    }
-
     fn filtered(&self, view: &View) -> Vec<&ModelInfo> {
         let f = view.composer.text().trim().to_ascii_lowercase();
         let mut v: Vec<&ModelInfo> = self
             .items
             .iter()
             .filter(|m| {
-                // A second opinion from the model doing the work isn't one,
-                // and a reviewer reads files and runs tests through tools.
-                if self.review.is_some()
-                    && (ryter_core::crew::same_model(&m.id, &view.model) || m.tools == Some(false))
-                {
-                    return false;
-                }
-                // The lead's tab: its connection's models, no `default`.
-                if self.review.is_none() && self.assign_role.is_none() {
+                // The first seat: its connection's models, no `default`.
+                if self.assign_role.is_none() {
                     if m.id.is_empty() {
                         return false;
                     }
@@ -229,7 +170,7 @@ impl Models {
                 // `default` stays unless the filter rules it out: typing a
                 // model's name and pressing enter picked `default` above it.
                 if m.id.is_empty() {
-                    return f.is_empty() || "default follows the lead".contains(&f);
+                    return f.is_empty() || "default follows all hats".contains(&f);
                 }
                 if f.is_empty() {
                     return true;
@@ -273,10 +214,7 @@ impl Models {
     /// Replace the catalog from a `ModelsListed` event.
     pub fn set_models(&mut self, view: &View, models: &[ModelInfo]) {
         if !models.is_empty() {
-            let mut v = Vec::new();
-            if self.review.is_none() {
-                v.push(default_row(&view.connection));
-            }
+            let mut v = vec![default_row(&view.connection)];
             v.extend(models.iter().cloned());
             self.items = v;
             self.selected = self.selected.min(self.items.len().saturating_sub(1));
@@ -288,12 +226,12 @@ impl Models {
     /// Put the cursor on the model in use, as the list opens: with hundreds
     /// in a catalog, starting at the top meant scrolling to find it.
     fn select_current(&mut self, view: &View) {
-        if self.review.is_some() || !view.composer.text().is_empty() {
+        if !view.composer.text().is_empty() {
             return;
         }
         let (model, connection) = match &self.assign_role {
             None => (view.model.clone(), Some(view.connection.clone())),
-            // A role that follows the lead is on the `default` row.
+            // A hat that follows the others is on the `default` row.
             Some(role) => view
                 .specialists
                 .get(role)
@@ -322,11 +260,10 @@ impl Models {
         }
     }
 
-    /// The seats: the lead (the solo model in solo mode), then the roles.
+    /// The seats: the model the rest follow ("All hats"), then each hat.
     fn seats(view: &View) -> Vec<(Option<&'static str>, String)> {
-        let lead = if view.crew_mode() { "Lead" } else { "Solo" };
-        let mut v = vec![(None, lead.to_string())];
-        for r in CREW_ROLES {
+        let mut v = vec![(None, "All hats".to_string())];
+        for r in view.seat_roles() {
             let mut label = r.to_string();
             label[..1].make_ascii_uppercase();
             v.push((Some(*r), label));
@@ -334,33 +271,33 @@ impl Models {
         v
     }
 
-    /// The seat chosen: 0 is the lead.
+    /// The seat chosen: 0 is the model every hat uses.
     fn seat(&self) -> usize {
         match &self.assign_role {
             None => 0,
-            Some(r) => CREW_ROLES.iter().position(|c| c == r).map_or(0, |i| i + 1),
+            Some(r) => HAT_ROLES.iter().position(|c| c == r).map_or(0, |i| i + 1),
         }
     }
 
     /// Choose seat `to`. The first role chosen asks for every connection's
-    /// models (the lead's list is its own connection's).
+    /// models (the first seat's list is its own connection's).
     fn choose_seat(&mut self, view: &View, to: usize) -> Option<Action> {
         let to = to.min(SEATS - 1);
-        self.assign_role = (to > 0).then(|| CREW_ROLES[to - 1].to_string());
+        self.assign_role = (to > 0).then(|| view.seat_roles()[to - 1].to_string());
         self.selected = 0;
         self.refusal = None;
         self.select_current(view);
         match &self.assign_role {
-            Some(role) if !self.crew_listed => {
-                self.crew_listed = true;
+            Some(role) if !self.all_listed => {
+                self.all_listed = true;
                 self.loading = true;
-                Some(Action::ListCrewModels { role: role.clone() })
+                Some(Action::ListAllModels { role: role.clone() })
             }
             _ => None,
         }
     }
 
-    /// What a seat runs on now, short, and whether it's the lead's.
+    /// What a seat runs on now, short, and whether it follows the others.
     fn seat_model(view: &View, role: Option<&str>) -> (String, bool) {
         match role {
             None => (short_model(&view.model).to_string(), false),
@@ -371,7 +308,7 @@ impl Models {
                 .and_then(|r| r.model.as_deref())
             {
                 Some(m) => (short_model(m).to_string(), false),
-                None => ("follows lead".into(), true),
+                None => ("follows all hats".into(), true),
             },
         }
     }
@@ -508,12 +445,6 @@ impl Models {
                 self.focus = Focus::Models;
                 Outcome::Stay
             }
-            KeyCode::Char('b') if view.composer.is_empty() => Outcome::PushAct(
-                Box::new(super::crew_builder::CrewBuilder::new(view, false)),
-                Action::ListCrewModels {
-                    role: String::new(),
-                },
-            ),
             KeyCode::Char(_) => {
                 self.focus = Focus::Models;
                 self.filter_key(key, view);
@@ -547,17 +478,7 @@ impl Panel for Models {
     }
 
     fn title(&self, _view: &View) -> String {
-        match (&self.review, &self.assign_role) {
-            (
-                Some(ReviewPick {
-                    chosen: Some(_), ..
-                }),
-                _,
-            ) => "audit · your limit".into(),
-            (Some(_), _) => "audit · who audits?".into(),
-            (None, _) if _view.crew_mode() => "crew models".into(),
-            (None, _) => "models".into(),
-        }
+        "models".into()
     }
 
     fn status(&self, view: &View) -> String {
@@ -572,17 +493,11 @@ impl Panel for Models {
     }
 
     fn legend(&self, _view: &View) -> String {
-        match &self.review {
-            Some(ReviewPick {
-                chosen: Some(_), ..
-            }) => "type dollars · enter save · esc back".into(),
-            Some(_) => "↑↓ move · enter choose · s sort · esc close".into(),
-            None => match self.focus {
-                Focus::Seats => "↑↓ seat · → models · b guided setup · esc done".into(),
-                Focus::Models => {
-                    "↑↓ move · enter set · ← seats · tab reasoning · s sort · esc done".into()
-                }
-            },
+        match self.focus {
+            Focus::Seats => "↑↓ seat · → models · esc done".into(),
+            Focus::Models => {
+                "↑↓ move · enter set · ← seats · tab reasoning · s sort · esc done".into()
+            }
         }
     }
 
@@ -591,30 +506,19 @@ impl Panel for Models {
     }
 
     fn input_indent(&self, width: u16) -> u16 {
-        if self.review.is_some() {
-            return 0;
-        }
         // `width` is the body's, as `render` gets it.
         u16::try_from(Self::seats_width(usize::from(width)) + 1).unwrap_or(0)
     }
 
     fn keys_in_body(&self) -> bool {
-        self.review.is_none()
+        true
     }
 
     fn input(&self, _view: &View) -> Option<String> {
-        match &self.review {
-            Some(ReviewPick {
-                chosen: Some(_), ..
-            }) => Some("limit in dollars".into()),
-            _ => Some("filter".into()),
-        }
+        Some("filter".into())
     }
 
     fn render(&self, view: &View, width: u16, height: u16, theme: Theme) -> Body {
-        if let Some(r) = &self.review {
-            return self.render_review(r, view, width, height, theme);
-        }
         let w = usize::from(width);
         let h = usize::from(height);
         let left_w = Self::seats_width(w);
@@ -634,7 +538,7 @@ impl Panel for Models {
             .map(|m| {
                 if m.id.is_empty() {
                     return vec![
-                        "default (follows the lead)".into(),
+                        "default (follows all hats)".into(),
                         String::new(),
                         String::new(),
                         String::new(),
@@ -731,7 +635,7 @@ impl Panel for Models {
         // however long the model's id.
         let facts = list.get(sel).map(|m| {
             if m.id.is_empty() {
-                format!("{} · follows the lead: {}", view.connection, view.model)
+                format!("{} · follows all hats: {}", view.connection, view.model)
             } else {
                 let rates = match (m.input_per_million, m.output_per_million) {
                     // A router's price varies by where it routes (listed as
@@ -790,16 +694,11 @@ impl Panel for Models {
     }
 
     fn key(&mut self, key: KeyEvent, view: &mut View) -> Outcome {
-        if self.review.is_some() {
-            if let Some(out) = self.review_key(key, view) {
-                return out;
-            }
-        }
         if key.code == KeyCode::Esc {
             view.composer.clear();
             return Outcome::Close;
         }
-        if self.review.is_none() && self.focus == Focus::Seats {
+        if self.focus == Focus::Seats {
             return self.seat_key(key, view);
         }
         let n = self.filtered(view).len();
@@ -829,13 +728,6 @@ impl Panel for Models {
                 self.focus = Focus::Seats;
                 Outcome::Stay
             }
-            // The guided crew setup, one key away.
-            KeyCode::Char('b') if view.composer.is_empty() => Outcome::PushAct(
-                Box::new(super::crew_builder::CrewBuilder::new(view, false)),
-                Action::ListCrewModels {
-                    role: String::new(),
-                },
-            ),
             // Tab / Shift+Tab: how hard this model reasons, wherever it runs.
             KeyCode::Tab | KeyCode::BackTab => {
                 let Some(m) = self
@@ -865,8 +757,8 @@ impl Panel for Models {
                 };
                 view.composer.clear();
                 let set = match &self.assign_role {
-                    Some(role) if m.id.is_empty() => Action::ResetCrewRole(role.clone()),
-                    Some(role) => Action::SetCrewRole {
+                    Some(role) if m.id.is_empty() => Action::ResetHatModel(role.clone()),
+                    Some(role) => Action::SetHatModel {
                         role: role.clone(),
                         connection: m.connection.unwrap_or_else(|| view.connection.clone()),
                         model: m.id,
@@ -882,7 +774,7 @@ impl Panel for Models {
                     // one before, as the set hasn't been applied yet.
                     let (model, connection) = match &set {
                         Action::SetModel(id) => (id.clone(), Some(view.connection.clone())),
-                        Action::SetCrewRole {
+                        Action::SetHatModel {
                             model, connection, ..
                         } => (model.clone(), Some(connection.clone())),
                         _ => (String::new(), None),
@@ -904,11 +796,7 @@ impl Panel for Models {
 
     fn size(&self, _view: &View) -> (u16, u16) {
         // Two panes: room for the seats' models and the list's names.
-        if self.review.is_some() {
-            (96, 20)
-        } else {
-            (124, 22)
-        }
+        (124, 22)
     }
 
     fn on_notice(&mut self, n: &Notice, view: &mut View) {
@@ -919,221 +807,6 @@ impl Panel for Models {
 
     fn box_clone(&self) -> Box<dyn Panel> {
         Box::new(self.clone())
-    }
-}
-
-impl Models {
-    fn render_review(
-        &self,
-        r: &ReviewPick,
-        view: &View,
-        width: u16,
-        height: u16,
-        theme: Theme,
-    ) -> Body {
-        let w = usize::from(width);
-        let h = usize::from(height);
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        if let Some((connection, model)) = &r.chosen {
-            let price = self
-                .items
-                .iter()
-                .find(|m| &m.id == model)
-                .and_then(|m| Self::review_price(view, m, r.context_tokens))
-                .map(ryter_core::second::format_range)
-                .unwrap_or_else(|| "$?.??".into());
-            for t in [
-                format!("{model} on {connection}"),
-                format!("this audit: about {price}"),
-                String::new(),
-                "The most one audit may spend, in dollars. Each audit asks before it".into(),
-                "runs and shows its estimate against this. Near the limit the auditor".into(),
-                "writes up what it has; a step that would pass it is never sent.".into(),
-                String::new(),
-                "A large change audited by a strong model can cost $20 or more.".into(),
-            ] {
-                lines.push(widgets::text(
-                    &wrap::truncate(&t, w.saturating_sub(2)),
-                    theme,
-                ));
-            }
-            if let Some(why) = &self.refusal {
-                lines.push(widgets::blank(theme));
-                lines.push(widgets::colored(why, theme.warn, theme));
-            }
-            return Body {
-                lines,
-                scroll: None,
-            };
-        }
-        let intro = if r.then_run {
-            "Choose who audits your work. Nothing is preselected: prices are for this audit."
-        } else {
-            "Choose again. Prices are for the work there is to audit now."
-        };
-        lines.push(widgets::note(
-            &wrap::truncate(intro, w.saturating_sub(2)),
-            theme,
-        ));
-        let rows_h = h.saturating_sub(4).max(1);
-        let list = self.filtered(view);
-        let n = list.len();
-        let sel = self.selected.min(n.saturating_sub(1));
-        let first = super::window(sel, n, rows_h);
-        let rows: Vec<Vec<String>> = list
-            .iter()
-            .skip(first)
-            .take(rows_h)
-            .map(|m| {
-                let cost = match Self::review_price(view, m, r.context_tokens) {
-                    Some(_) if Self::local(view, m) => "$0 · local".into(),
-                    Some(range) => ryter_core::second::format_range(range),
-                    None => "price unknown".into(),
-                };
-                vec![
-                    m.id.clone(),
-                    cost,
-                    price(m.input_per_million),
-                    price(m.output_per_million),
-                    m.connection
-                        .clone()
-                        .unwrap_or_else(|| view.connection.clone()),
-                ]
-            })
-            .collect();
-        lines.extend(widgets::table(
-            &["model", "this audit", "in/M", "out/M", "connection"],
-            &rows,
-            &[
-                widgets::Al::L,
-                widgets::Al::R,
-                widgets::Al::R,
-                widgets::Al::R,
-                widgets::Al::L,
-            ],
-            Some(sel.saturating_sub(first)),
-            w,
-            theme,
-        ));
-        if self.loading && n <= 1 {
-            let frame = SPINNER[(view.now_ms / 80) as usize % SPINNER.len()];
-            lines.push(Line::from(vec![
-                Span::styled(format!(" {frame} "), theme.on_panel(theme.accent)),
-                Span::styled(
-                    "loading every catalog you have a key for…",
-                    theme.panel_muted(),
-                ),
-            ]));
-        }
-        while lines.len() < h.saturating_sub(1) {
-            lines.push(widgets::blank(theme));
-        }
-        lines.truncate(h.saturating_sub(1));
-        // Facts about the highlighted model, not opinions of it.
-        let footer = if let Some(why) = &self.refusal {
-            why.clone()
-        } else if let Some(m) = list.get(sel) {
-            let conn = m.connection.as_deref().unwrap_or(&view.connection);
-            let same = ryter_core::tiering::family(conn, &m.id)
-                == ryter_core::tiering::family(&view.connection, &view.model);
-            match Self::review_price(view, m, r.context_tokens) {
-                None => format!("{}: no price known, so no limit can hold it", m.id),
-                Some(_) if same => format!(
-                    "{}: same vendor as {}, so a less independent opinion",
-                    m.id,
-                    short_model(&view.model)
-                ),
-                Some(_) => format!(
-                    "{}: a different vendor from {}",
-                    m.id,
-                    short_model(&view.model)
-                ),
-            }
-        } else {
-            String::new()
-        };
-        lines.push(widgets::note(
-            &wrap::truncate(&footer, w.saturating_sub(2)),
-            theme,
-        ));
-        Body {
-            lines,
-            scroll: (n > rows_h).then_some((first, n)),
-        }
-    }
-
-    /// Keys that mean something else while choosing a reviewer; `None`
-    /// falls through to the list's own keys.
-    fn review_key(&mut self, key: KeyEvent, view: &mut View) -> Option<Outcome> {
-        let r = self.review.clone()?;
-        if let Some((connection, model)) = r.chosen {
-            return Some(match key.code {
-                KeyCode::Esc => {
-                    if let Some(p) = self.review.as_mut() {
-                        p.chosen = None;
-                    }
-                    self.refusal = None;
-                    view.composer.clear();
-                    Outcome::Stay
-                }
-                KeyCode::Enter => {
-                    let typed = view
-                        .composer
-                        .text()
-                        .trim()
-                        .trim_start_matches('$')
-                        .to_string();
-                    match typed.parse::<f64>() {
-                        Ok(limit_usd) if limit_usd > 0.0 && limit_usd.is_finite() => {
-                            view.composer.clear();
-                            Outcome::CloseAct(Action::SetReviewer {
-                                connection,
-                                model,
-                                limit_usd,
-                                then_run: r.then_run,
-                            })
-                        }
-                        _ => {
-                            self.refusal = Some("type an amount in dollars, like 5 or 0.50".into());
-                            Outcome::Stay
-                        }
-                    }
-                }
-                _ => {
-                    super::edit_field(&mut view.composer, key);
-                    self.refusal = None;
-                    Outcome::Stay
-                }
-            });
-        }
-        match key.code {
-            KeyCode::Tab | KeyCode::BackTab => Some(Outcome::Stay),
-            KeyCode::Enter => {
-                let list = self.filtered(view);
-                let m = (*list.get(self.selected.min(list.len().saturating_sub(1)))?).clone();
-                if Self::review_price(view, &m, r.context_tokens).is_none() {
-                    self.refusal = Some(format!(
-                        "{} has no known price, so no limit can hold it: choose another, or add it under [pricing]",
-                        m.id
-                    ));
-                    return Some(Outcome::Stay);
-                }
-                let connection = m
-                    .connection
-                    .clone()
-                    .unwrap_or_else(|| view.connection.clone());
-                if let Some(p) = self.review.as_mut() {
-                    p.chosen = Some((connection, m.id));
-                }
-                self.refusal = None;
-                view.composer.clear();
-                Some(Outcome::Stay)
-            }
-            _ => {
-                self.refusal = None;
-                None
-            }
-        }
     }
 }
 
@@ -1173,16 +846,11 @@ mod tests {
             .collect()
     }
 
-    fn crew_view() -> View {
-        let mut v = View::new(
-            ryter_core::Phase::Build,
-            "openrouter".into(),
-            "x-ai/grok-4.7".into(),
-            "/tmp".into(),
-        );
-        v.mode = ryter_core::Role::Orchestrator;
+    fn hats_view() -> View {
+        let mut v = View::new("openrouter".into(), "x-ai/grok-4.7".into(), "/tmp".into());
+        v.mode = ryter_core::Role::SoloBuild;
         v.specialists.insert(
-            "auditor".into(),
+            "review".into(),
             ryter_core::RoleModel {
                 connection: Some("openrouter".into()),
                 model: Some("qwen/qwen3.7-max".into()),
@@ -1200,27 +868,84 @@ mod tests {
         ]
     }
 
-    /// The crew is chosen in one visit: the seats beside the list, and
-    /// enter sets the seat's model and goes back to the seats, on the next
-    /// one. It used to close after every seat, so a crew took four visits.
+    /// In the one mode the seats are the hats: "All hats", then Plan, Build
+    /// and Review, each following it until it has a model of its own. One
+    /// visit sets them all, and a hat's seat names the hat when it is set.
     #[test]
-    fn a_whole_crew_is_chosen_without_leaving_the_panel() {
-        let mut v = crew_view();
+    fn the_hats_are_the_seats() {
+        let mut v = hats_view();
+        v.specialists.clear();
+        let mut p = Models::new(&mut v, None);
+        p.set_models(&v, &catalog());
+        let t = text(&p, &v);
+        assert!(t.contains("›  All hats  grok-4.7"), "{t}");
+        for hat in ["Plan", "Build", "Review", "Test"] {
+            assert!(
+                t.contains(&format!("{hat:<9} follows all hats")),
+                "{hat}:\n{t}"
+            );
+        }
+        assert!(!t.contains("Architect") && !t.contains("Auditor"), "{t}");
+        assert_eq!(p.title(&v), "models");
+
+        // Down to Plan, across to its models, and enter gives it one: the
+        // cursor goes on to Build.
+        key(&mut p, &mut v, KeyCode::Down);
+        p.set_models(&v, &catalog());
+        assert_eq!(p.seat(), 1);
+        key(&mut p, &mut v, KeyCode::Right);
+        v.composer.set_text("qwen");
+        match key(&mut p, &mut v, KeyCode::Enter) {
+            Outcome::Act(set) => assert!(
+                matches!(
+                    &set,
+                    Action::SetHatModel { role, model, connection }
+                        if role == "plan" && model == "qwen/qwen3.7-max" && connection == "openrouter"
+                ),
+                "{set:?}"
+            ),
+            _ => panic!("set the plan hat's model"),
+        }
+        assert_eq!((p.focus, p.seat()), (Focus::Seats, 2));
+        // As the loop applies it, the seat shows it, and the hat it is on
+        // says so wherever the model is named.
+        v.specialists.insert(
+            "plan".into(),
+            ryter_core::RoleModel {
+                connection: Some("openrouter".into()),
+                model: Some("qwen/qwen3.7-max".into()),
+            },
+        );
+        let t = text(&p, &v);
+        assert!(t.contains("Plan      qwen3.7-max"), "{t}");
+        assert!(t.contains("Build     follows all hats"), "{t}");
+        assert_eq!(v.hat_model(), "x-ai/grok-4.7", "the build hat follows");
+        v.mode = ryter_core::Role::SoloPlan;
+        assert_eq!(v.hat_model(), "qwen/qwen3.7-max");
+    }
+
+    /// Every seat is set in one visit: the seats beside the list, and
+    /// enter sets the seat's model and goes back to the seats, on the next
+    /// one. It used to close after every seat, so four seats took four
+    /// visits.
+    #[test]
+    fn every_seat_is_set_without_leaving_the_panel() {
+        let mut v = hats_view();
         let mut p = Models::new(&mut v, None);
         p.set_models(&v, &catalog());
         let t = text(&p, &v);
         assert!(
-            t.contains("SEATS") && t.contains("›  Lead      grok-4.7"),
+            t.contains("SEATS") && t.contains("›  All hats  grok-4.7"),
             "{t}"
         );
         assert!(
-            t.contains("Architect follows lead") && t.contains("Auditor   qwen3.7-max"),
+            t.contains("Plan      follows all hats") && t.contains("Review    qwen3.7-max"),
             "{t}"
         );
         assert_eq!(p.focus, Focus::Seats);
-        assert_eq!(p.title(&v), "crew models");
+        assert_eq!(p.title(&v), "models");
 
-        // The lead: → to its models, enter sets it, and the cursor is back
+        // All hats: → to its models, enter sets it, and the cursor is back
         // on the seats, on the architect, whose list (every connection's)
         // is asked for in the same breath.
         assert!(matches!(key(&mut p, &mut v, KeyCode::Right), Outcome::Stay));
@@ -1229,9 +954,9 @@ mod tests {
         match key(&mut p, &mut v, KeyCode::Enter) {
             Outcome::Act(Action::Many(acts)) => {
                 assert!(matches!(&acts[0], Action::SetModel(m) if m == "x-ai/grok-4.7"));
-                assert!(matches!(&acts[1], Action::ListCrewModels { role } if role == "architect"));
+                assert!(matches!(&acts[1], Action::ListAllModels { role } if role == "plan"));
             }
-            _ => panic!("set the lead and list the architect's models"),
+            _ => panic!("set the first seat and list the plan hat's models"),
         }
         assert_eq!((p.focus, p.seat()), (Focus::Seats, 1));
         assert!(v.composer.is_empty(), "the filter is cleared");
@@ -1244,8 +969,8 @@ mod tests {
         }
         assert!(matches!(
             key(&mut p, &mut v, KeyCode::Enter),
-            Outcome::Act(Action::SetCrewRole { role, model, .. })
-                if role == "architect" && model == "minimax/minimax-m2.7"
+            Outcome::Act(Action::SetHatModel { role, model, .. })
+                if role == "plan" && model == "minimax/minimax-m2.7"
         ));
         assert_eq!((p.focus, p.seat()), (Focus::Seats, 2));
 
@@ -1260,12 +985,11 @@ mod tests {
         );
         assert!(matches!(
             key(&mut p, &mut v, KeyCode::Enter),
-            Outcome::Act(Action::SetCrewRole { role, connection, .. })
-                if role == "builder" && connection == "spacexai"
+            Outcome::Act(Action::SetHatModel { role, connection, .. })
+                if role == "build" && connection == "spacexai"
         ));
 
-        // The auditor, the last seat: ← goes back without setting, and the
-        // cursor stays on the last seat after a set.
+        // The reviewer: ← goes back without setting.
         assert_eq!(p.seat(), 3);
         key(&mut p, &mut v, KeyCode::Right);
         assert!(matches!(key(&mut p, &mut v, KeyCode::Left), Outcome::Stay));
@@ -1274,48 +998,61 @@ mod tests {
         v.composer.set_text("qwen");
         assert!(matches!(
             key(&mut p, &mut v, KeyCode::Enter),
-            Outcome::Act(Action::SetCrewRole { role, model, .. })
-                if role == "auditor" && model == "qwen/qwen3.7-max"
+            Outcome::Act(Action::SetHatModel { role, model, .. })
+                if role == "review" && model == "qwen/qwen3.7-max"
         ));
-        assert_eq!((p.focus, p.seat()), (Focus::Seats, 3));
+        assert_eq!((p.focus, p.seat()), (Focus::Seats, 4));
+
+        // The tester, the last seat: the cursor stays on it after a set.
+        key(&mut p, &mut v, KeyCode::Right);
+        v.composer.set_text("minimax");
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetHatModel { role, model, .. })
+                if role == "test" && model == "minimax/minimax-m2.7"
+        ));
+        assert_eq!((p.focus, p.seat()), (Focus::Seats, 4));
 
         // Each seat set is ticked; esc closes, keeping them.
         let t = text(&p, &v);
-        for seat in ["✓ Lead", "✓ Architect", "✓ Builder", "✓ Auditor"] {
+        for seat in ["✓ All hats", "✓ Plan", "✓ Build", "✓ Review", "✓ Test"] {
             assert!(t.contains(seat), "{seat}: {t}");
         }
         assert!(matches!(key(&mut p, &mut v, KeyCode::Esc), Outcome::Close));
     }
 
     /// ↑↓ moves between seats without wrapping, the list follows the seat
-    /// and opens on its model, and opening on a role (from the crew panel)
+    /// and opens on its model, and opening on a hat
     /// starts in that role's models.
     #[test]
     fn the_list_follows_the_seat() {
-        let mut v = crew_view();
+        let mut v = hats_view();
         let mut p = Models::new(&mut v, None);
         p.set_models(&v, &catalog());
         assert!(matches!(key(&mut p, &mut v, KeyCode::Up), Outcome::Stay));
         assert_eq!(p.seat(), 0);
-        // The lead's list is its own connection's, with no `default`.
+        // The first seat's list is its own connection's, with no `default`.
         let t = text(&p, &v);
         assert!(!t.contains("grok-4.6 ") && !t.contains("default"), "{t}");
         assert!(matches!(
             key(&mut p, &mut v, KeyCode::Down),
-            Outcome::Act(Action::ListCrewModels { role }) if role == "architect"
+            Outcome::Act(Action::ListAllModels { role }) if role == "plan"
         ));
         key(&mut p, &mut v, KeyCode::Down);
         key(&mut p, &mut v, KeyCode::Down);
-        assert!(matches!(key(&mut p, &mut v, KeyCode::Down), Outcome::Stay));
         assert_eq!(p.seat(), 3);
         p.set_models(&v, &catalog());
         let on = p.filtered(&v)[p.selected].id.clone();
         assert_eq!(
             on, "qwen/qwen3.7-max",
-            "the auditor's list opens on its model"
+            "the reviewer's list opens on its model"
         );
+        // The tester is the last seat: ↓ stops there.
+        key(&mut p, &mut v, KeyCode::Down);
+        assert!(matches!(key(&mut p, &mut v, KeyCode::Down), Outcome::Stay));
+        assert_eq!(p.seat(), 4);
 
-        let p = Models::new(&mut v, Some("builder".into()));
+        let p = Models::new(&mut v, Some("build".into()));
         assert_eq!((p.focus, p.seat()), (Focus::Models, 2));
     }
 
@@ -1324,8 +1061,8 @@ mod tests {
     /// a role is `default`: → then enter dropped the role's model.
     #[test]
     fn moving_in_the_filter_keeps_the_highlight() {
-        let mut v = crew_view();
-        let mut p = Models::new(&mut v, Some("builder".into()));
+        let mut v = hats_view();
+        let mut p = Models::new(&mut v, Some("build".into()));
         p.set_models(&v, &catalog());
         let minimax = p
             .filtered(&v)
@@ -1339,12 +1076,12 @@ mod tests {
         }
         assert!(matches!(
             key(&mut p, &mut v, KeyCode::Enter),
-            Outcome::Act(Action::SetCrewRole { role, model, .. })
-                if role == "builder" && model == "minimax/minimax-m2.7"
+            Outcome::Act(Action::SetHatModel { role, model, .. })
+                if role == "build" && model == "minimax/minimax-m2.7"
         ));
         // With a filter, typing goes to the first match, and moving within
         // the text doesn't.
-        let mut p = Models::new(&mut v, Some("builder".into()));
+        let mut p = Models::new(&mut v, Some("build".into()));
         p.set_models(&v, &catalog());
         key(&mut p, &mut v, KeyCode::Char('o'));
         assert_eq!(p.selected, 0);
@@ -1363,8 +1100,10 @@ mod tests {
     /// enter again saved the old model back.
     #[test]
     fn the_last_seat_opens_on_the_model_just_set() {
-        let mut v = crew_view();
-        let mut p = Models::new(&mut v, Some("auditor".into()));
+        let mut v = hats_view();
+        let reviewer = v.specialists["review"].clone();
+        v.specialists.insert("test".into(), reviewer);
+        let mut p = Models::new(&mut v, Some("test".into()));
         p.set_models(&v, &catalog());
         assert_eq!(
             p.filtered(&v)[p.selected].id,
@@ -1374,15 +1113,15 @@ mod tests {
         v.composer.set_text("minimax");
         assert!(matches!(
             key(&mut p, &mut v, KeyCode::Enter),
-            Outcome::Act(Action::SetCrewRole { role, model, .. })
-                if role == "auditor" && model == "minimax/minimax-m2.7"
+            Outcome::Act(Action::SetHatModel { role, model, .. })
+                if role == "test" && model == "minimax/minimax-m2.7"
         ));
-        assert_eq!((p.focus, p.seat()), (Focus::Seats, 3));
+        assert_eq!((p.focus, p.seat()), (Focus::Seats, 4));
         assert_eq!(p.filtered(&v)[p.selected].id, "minimax/minimax-m2.7");
         key(&mut p, &mut v, KeyCode::Right);
         assert!(matches!(
             key(&mut p, &mut v, KeyCode::Enter),
-            Outcome::Act(Action::SetCrewRole { model, .. }) if model == "minimax/minimax-m2.7"
+            Outcome::Act(Action::SetHatModel { model, .. }) if model == "minimax/minimax-m2.7"
         ));
     }
 
@@ -1390,8 +1129,8 @@ mod tests {
     /// facts line leads with them.
     #[test]
     fn narrow_the_facts_line_names_the_connection() {
-        let mut v = crew_view();
-        let mut p = Models::new(&mut v, Some("builder".into()));
+        let mut v = hats_view();
+        let mut p = Models::new(&mut v, Some("build".into()));
         p.set_models(&v, &catalog());
         p.selected = p
             .filtered(&v)
@@ -1429,11 +1168,11 @@ mod tests {
     /// case: `shared-model` on openrouter and on spacexai.
     #[test]
     fn a_model_on_two_connections_keeps_its_connection() {
-        let mut v = crew_view();
+        let mut v = hats_view();
         let mut models = catalog();
         models.push(row("shared-model", "openrouter", Some((1.0, 2.0))));
         models.push(row("shared-model", "spacexai", Some((1.0, 2.0))));
-        let mut p = Models::new(&mut v, Some("auditor".into()));
+        let mut p = Models::new(&mut v, Some("test".into()));
         p.set_models(&v, &models);
         for c in "shared".chars() {
             key(&mut p, &mut v, KeyCode::Char(c));
@@ -1442,7 +1181,7 @@ mod tests {
         key(&mut p, &mut v, KeyCode::Down);
         assert!(matches!(
             key(&mut p, &mut v, KeyCode::Enter),
-            Outcome::Act(Action::SetCrewRole { connection, model, .. })
+            Outcome::Act(Action::SetHatModel { connection, model, .. })
                 if connection == "spacexai" && model == "shared-model"
         ));
         let on = p.filtered(&v)[p.selected];
@@ -1453,17 +1192,17 @@ mod tests {
         key(&mut p, &mut v, KeyCode::Right);
         assert!(matches!(
             key(&mut p, &mut v, KeyCode::Enter),
-            Outcome::Act(Action::SetCrewRole { connection, .. }) if connection == "spacexai"
+            Outcome::Act(Action::SetHatModel { connection, .. }) if connection == "spacexai"
         ));
         // Opening on a seat set to the second connection's copy.
         v.specialists.insert(
-            "auditor".into(),
+            "review".into(),
             ryter_core::RoleModel {
                 connection: Some("spacexai".into()),
                 model: Some("shared-model".into()),
             },
         );
-        let mut p = Models::new(&mut v, Some("auditor".into()));
+        let mut p = Models::new(&mut v, Some("review".into()));
         p.set_models(&v, &models);
         assert_eq!(
             p.filtered(&v)[p.selected].connection.as_deref(),
@@ -1475,7 +1214,7 @@ mod tests {
     /// leads with the connection, so a long id can't push it out of sight.
     #[test]
     fn names_and_prices_show_at_every_width() {
-        let mut v = crew_view();
+        let mut v = hats_view();
         let models = vec![
             row(
                 "deepseek/deepseek-v4.1-flash",
@@ -1488,7 +1227,7 @@ mod tests {
                 Some((3.0, 15.0)),
             ),
         ];
-        let mut p = Models::new(&mut v, Some("builder".into()));
+        let mut p = Models::new(&mut v, Some("build".into()));
         p.set_models(&v, &models);
         p.selected = p
             .filtered(&v)
@@ -1521,87 +1260,6 @@ mod tests {
         }
     }
 
-    /// The chooser: every catalog model but the one doing the work, each
-    /// priced for this review; no price, no choice; then the user's limit.
-    #[test]
-    fn choosing_a_reviewer_is_the_users_choice_with_prices_and_a_limit() {
-        let mut v = View::new(
-            ryter_core::Phase::Build,
-            "openrouter".into(),
-            "deepseek/deepseek-v4.1-flash".into(),
-            "/tmp".into(),
-        );
-        let mut p = Models::for_review(&mut v, 20_000, true);
-        p.set_models(
-            &v,
-            &[
-                row(
-                    "deepseek/deepseek-v4.1-flash",
-                    "openrouter",
-                    Some((0.1, 0.6)),
-                ),
-                row("x-ai/grok-4.7", "openrouter", Some((3.0, 15.0))),
-                row("mystery/unpriced", "openrouter", None),
-            ],
-        );
-        let ids: Vec<String> = p.filtered(&v).iter().map(|m| m.id.clone()).collect();
-        assert_eq!(
-            ids,
-            vec!["x-ai/grok-4.7", "mystery/unpriced"],
-            "cheapest first, own model hidden"
-        );
-        let text = |p: &Models, v: &View| -> String {
-            p.render(v, 96, 16, Theme::truecolor_dark())
-                .lines
-                .iter()
-                .map(|l| {
-                    l.spans
-                        .iter()
-                        .map(|s| s.content.as_ref())
-                        .collect::<String>()
-                        + "\n"
-                })
-                .collect()
-        };
-        let shown = text(&p, &v);
-        assert!(
-            shown.contains("this audit") && shown.contains("$0."),
-            "{shown}"
-        );
-        assert!(shown.contains("price unknown"), "{shown}");
-        // No price: refused, and said why.
-        p.selected = 1;
-        assert!(matches!(key(&mut p, &mut v, KeyCode::Enter), Outcome::Stay));
-        assert!(text(&p, &v).contains("no known price"));
-        // A priced model: on to the limit, which nobody preset.
-        p.selected = 0;
-        assert!(matches!(key(&mut p, &mut v, KeyCode::Enter), Outcome::Stay));
-        assert_eq!(p.input(&v).as_deref(), Some("limit in dollars"));
-        assert!(v.composer.is_empty());
-        assert!(
-            matches!(key(&mut p, &mut v, KeyCode::Enter), Outcome::Stay),
-            "no amount, no save"
-        );
-        for c in "$7.5".chars() {
-            key(&mut p, &mut v, KeyCode::Char(c));
-        }
-        match key(&mut p, &mut v, KeyCode::Enter) {
-            Outcome::CloseAct(Action::SetReviewer {
-                connection,
-                model,
-                limit_usd,
-                then_run,
-            }) => {
-                assert_eq!(
-                    (connection.as_str(), model.as_str()),
-                    ("openrouter", "x-ai/grok-4.7")
-                );
-                assert!((limit_usd - 7.5).abs() < 1e-9 && then_run);
-            }
-            _ => panic!("the choice is saved"),
-        }
-    }
-
     #[test]
     fn a_varying_price_reads_varies_not_minus_a_million() {
         assert_eq!(price(Some(-1_000_000.0)), "varies");
@@ -1614,7 +1272,6 @@ mod tests {
     #[test]
     fn tab_sets_the_highlighted_models_reasoning() {
         let mut v = View::new(
-            ryter_core::Phase::Build,
             "openrouter".into(),
             "z-ai/glm-5.3-flashx".into(),
             "/tmp".into(),

@@ -1,6 +1,6 @@
 # Ryter user guide
 
-Ryter is a Bring-Your-Own-Key terminal coding harness. You talk to an orchestrator. Independent specialists do the work.
+Ryter is a Bring-Your-Own-Key terminal coding harness. One model works in your project, with you. It wears one of three hats at a time (**plan**, **build**, **review**), and each hat can run on a model of its own.
 
 Linux is the first platform. macOS and Windows are later ports.
 
@@ -59,15 +59,15 @@ SpaceXAI and OpenRouter are compiled in as equals. Other OpenAI-compatible or An
 
 Credential order per connection: TOML `api_key` → `env_key` → the stored key → well-known env (`OPENROUTER_API_KEY`, `XAI_API_KEY`).
 
-**Reasoning.** Each model has a reasoning level you choose: **Tab** on a model in `/models`, for any seat, or on a seat in the crew builder steps it through `auto → low → medium → high → model's own`. The model card shows the level in use (`reasoning  auto · medium`). The choice follows the model into every role that uses it, and is saved to `~/.ryter/reasoning.toml`; `[model_reasoning]` in `config.toml` does the same by hand, keyed by model id.
+**Reasoning.** Each model has a reasoning level you choose: **Tab** on a model in `/models`, for any seat, steps it through `auto → low → medium → high → model's own`. The model card shows the level in use (`reasoning  auto · medium`). The choice follows the model into every hat that uses it, and is saved to `~/.ryter/reasoning.toml`; `[model_reasoning]` in `config.toml` does the same by hand, keyed by model id.
 
-**Auto** means Ryter picks by role: `high` for the plan hat and the architect, `medium` for every role that acts. `[reasoning_effort]` overrides that per role (`build`, `plan`, `review`, `lead`, `architect`, `builder`, `auditor`). **Model's own** sends nothing. Beware: with no setting, some models think for minutes before acting. The level is sent only to OpenRouter connections.
+**Auto** means Ryter picks by hat: `high` for the plan hat, `medium` for build and review. `[reasoning_effort]` overrides that per hat (`build`, `plan`, `review`). **Model's own** sends nothing. Beware: with no setting, some models think for minutes before acting. The level is sent only to OpenRouter connections.
 
 Where a saved key (`/provider` set-key, `ryter connections set-key`) is stored: on **Linux**, `~/.ryter/keys/<connection>`, readable only by you (mode 0600). Linux's kernel keyring is in memory and doesn't survive a reboot, so it isn't used to store keys. On **macOS**, the keychain (`service=ryter`, `account=connection:<name>`), falling back to the file if the keychain refuses.
 
 If `config.toml` contains `api_key` and is group/world-readable, Ryter refuses to start until the mode is `0600`.
 
-First launch writes `config.example.toml` to `~/.ryter/config.toml` if that file is missing. Precedence, high wins: CLI flags > `RYTER_*` env > trusted project `.ryter/config.toml` > `~/.ryter/config.toml` > sidecars (`crew.toml`, `mcp.toml`, `hooks.toml`, `connections.toml`, `settings.toml`) > built-ins.
+First launch writes `config.example.toml` to `~/.ryter/config.toml` if that file is missing. Precedence, high wins: CLI flags > `RYTER_*` env > trusted project `.ryter/config.toml` > `~/.ryter/config.toml` > sidecars (`hats.toml`, `mcp.toml`, `hooks.toml`, `connections.toml`, `settings.toml`) > built-ins.
 
 `--connection` / `/provider` pick the endpoint. In the TUI, `/` then arrows + Enter runs the highlighted command.
 
@@ -95,7 +95,7 @@ ryter models [connection]
 
 `ryter` on a tty opens the TUI in the **ledger** layout (`[ui] layout = "ledger"`, the default since 0.6.0).
 
-**In solo mode, a rail runs down the left** (screens 110 columns and wider). It carries:
+**A rail runs down the left** (screens 110 columns and wider). It carries:
 - the Ryter name, the project and branch;
 - the session's title, when it began, and how many turns it has had;
 - **the hat**, as a block in its color: `BUILD` green, `PLAN` cyan, `REVIEW` yellow, with what it does (`edits files, runs commands`) and `tab` to switch;
@@ -105,20 +105,13 @@ ryter models [connection]
 
 The prompt sits in a box of the hat's color, with the keys that matter now on its lower edge. The rail replaces the view strip and the bottom bar, which come back when the rail is hidden (`^b`, or `[ui] panel = false`) or the screen is narrower than 110 columns. The rest is the same either way:
 
-- **A view strip** across the top names the views and lights the one on screen: `chat`, `changes ^t` (the workbench), and `crew board` (crew mode; `/crew` from solo mode).
+- **A view strip** across the top names the views and lights the one on screen: `chat` and `changes ^t` (the workbench).
 - **One reading column on a timeline**, centered, at most 112 columns wide. Each question starts with its time and `●`. The model's text hangs off `◆`, each tool step off `├─` (`edit   src/config.rs ······· +9 −1`, `run    npm test ····· ✓ 4 passed`), and edits show as full-row green and red diffs.
 - **Every turn closes with what it came to**, measured by Ryter: `└─ ✓ 5 tools · 2 files (2 changed, +3 −0) · 1 command (1 ok) · 7.9s · $0.001`.
 - **Finished turns fold to one line:** what was asked, led by dots to that summary, ending in `▸`. The newest turn stays open. `^o` opens every turn and every edit whole, and folds them again.
-- **The composer** is a rule and a `›` prompt beneath the column. The rule's left end takes the mode's color.
-- **The bottom bar** holds what the header and cards used to show: the mode (`BUILD`, `CREW · LEAD`), the project and branch, the model, the context gauge, and the cost this turn, this session, and for the project, against the budget. The keys that matter now are on its right. When space runs short, it drops keys first, then the project, the model, and the gauge. The mode and the costs stay.
-- **`$`** on an empty composer opens the **spend drawer** above it. It shows this turn, the session, and the project side by side, with spend by role for the session and the project, and the budget, task cap, and warning level. `b` sets a budget, `⏎` opens the full `/spend` table.
-
-**Mission control** (crew mode on the ledger) is the crew's screen. Five tiles run across the top. The plan is on the left, at full height, with a legend. On the right are the lanes, and the LEAD box with the lead's conversation and the prompt. The strip names who fills each seat and where the patch lands. `tab` picks a lane and `⏎` opens its transcript. Before there is a plan, the board says so:
-- **Tiles:** spend against the budget (or, with no budget, what the last minute cost), tasks landed out of all of them, the checks run on each task, the crew's time, model calls, and retries, and the **pulse**: the crew's tokens a second now, a bar per second, and how long since any worker was last heard from (yellow after 30 seconds of silence).
-- **The plan:** drawn as boxes, each in its state's color, left to right by what waits on what, and joined by `──┬─▶` / `└─▶`. A blocked task's full reason is listed under the drawing. A plan too big to draw in the space shows as a tree instead. It's drawn from the agent's queue snapshots (`after`, and the manifest-first rule), so it shows exactly what the scheduler enforces. Each task is marked `✓` landed, `◐` building, `◑` in audit, `✕` blocked (with the reason, wrapped rather than cut), `○` waiting on something, or `◇` proposed.
-- **Lanes:** a live card per worker, updated a few times a second while it works. The first row says who is acting (builder or auditor), on which task, with which model, and what it is doing right now, for how long: `WAITING` for the model's first byte (after 20 seconds, "the provider is slow"), `THINKING`, `WRITING` a file edit or its reply, or `RUNNING` a tool or command. The second row is the meter: lines of the file written so far, tokens (estimated while streaming), tokens a second, the task's cost, and its tool calls. Under it are the last three lines of what the worker is producing: its reasoning, the file it is writing, or the command's output as it runs. On a short screen the cards drop their output lines, then become one row a worker.
-
-Everything a specialist reports is also kept in the session's `activity.jsonl`.
+- **The composer** is a rule and a `›` prompt beneath the column. The rule's left end takes the hat's color.
+- **The bottom bar** holds what the header and cards used to show: the hat (`BUILD`, `PLAN`, `REVIEW`), the project and branch, the model, the context gauge, and the cost this turn, this session, and for the project, against the budget. The keys that matter now are on its right. When space runs short, it drops keys first, then the project, the model, and the gauge. The hat and the costs stay.
+- **`$`** on an empty composer opens the **spend drawer** above it. It shows this turn, the session, and the project side by side, with spend by hat for the session and the project, and the budget and warning level. `b` sets a budget, `⏎` opens the full `/spend` table.
 
 **The workbench** (`^T`, or `/changes` on the ledger) shows what changed beside the chat, in three panes:
 - **Left:** the files changed (this turn, or since the last commit with `tab`), the turn's commands and what came of them, and the turns.
@@ -127,7 +120,7 @@ Everything a specialist reports is also kept in the session's `activity.jsonl`.
 
 Its keys: `↑↓` pick a file, `j`/`k` move between its changes, `x` undoes the selected change alone, `X` undoes the whole file (after a `y`), and `u` undoes the turn. `x` and `X` are recorded like a turn, so `/undo` brings them back. While the workbench is open, keys go to it and not the composer; `esc` or `^T` returns to the chat.
 
-`[ui] layout = "classic"` (also in `/settings`, applied at once) brings back the 0.5 screen. That's a header row, the chat with a right-hand **info panel** of cards (session, model + context gauge, spend + budget gauge, tasks, crew, mcp), the **activity strip** while a turn runs, the bordered **composer**, and a hint bar. `^b` shows or hides the info panel there (it also drops automatically under 80 columns), and the rail on the ledger.
+`[ui] layout = "classic"` (also in `/settings`, applied at once) brings back the 0.5 screen. That's a header row, the chat with a right-hand **info panel** of cards (session, model + context gauge, spend + budget gauge, mcp), the **activity strip** while a turn runs, the bordered **composer**, and a hint bar. `^b` shows or hides the info panel there (it also drops automatically under 80 columns), and the rail on the ledger.
 
 Every message is a left-aligned block under a speaker header — your name (from `[ui] username`, then `git user.name`, then `$USER`), the model name, `· system`, or a one-line tool row (`· read_file  path  0.1s`). Markdown renders with headings, lists, quotes, tables, and fenced code with syntax highlighting and a line-number gutter. Long model turns end with a summary line (`3 tools · 12.4k tok · 0:42 · $0.01`).
 
@@ -135,13 +128,13 @@ Every message is a left-aligned block under a speaker header — your name (from
 
 Type a message and press `Enter`. `Shift+Enter` (or `Alt+Enter`) inserts a newline; paste is bracketed so multi-line text lands in one message. While a turn runs, `Enter` queues the next message. `↑`/`↓` on an empty composer walk prompt history.
 
-`/` (or `^p`) opens the **command palette**: fuzzy-matched, grouped by category, with a description and keybinding column. `Enter` runs the command, `→` opens its panel, `Tab` completes. Every configuration command opens a **panel** — a bordered popout with a title, status, and legend line — and panels stack: `/models` → `b` → the crew builder opens on top; `Esc` closes one level.
+`/` (or `^p`) opens the **command palette**: fuzzy-matched, grouped by category, with a description and keybinding column. `Enter` runs the command, `→` opens its panel, `Tab` completes. Every configuration command opens a **panel** — a bordered popout with a title, status, and legend line — and panels stack: one opened from another sits on top, and `Esc` closes one level.
 
 The **activity strip** shows what the model is doing (`⠙ writing · edit docs/guide.md · 0:34 · 1.2k tok`). Reasoning streams there as a one-line ticker; `^r` expands it to a scrollable pane (`Alt+PgUp`/`Alt+PgDn`). Reasoning is display-only — it is never saved or sent back to a model. `[ui] reasoning = "off"` hides it.
 
 **Scrolling.** The transcript follows the bottom until you scroll up (`PgUp`, `Shift+↑`, or the mouse wheel over the chat); then it holds still and the scrollbar turns amber. `Ctrl+End` reattaches. `Ctrl+↑`/`Ctrl+↓` jump between turns. While detached, a sticky header at the top of the chat keeps the in-flight user message in view.
 
-`/sessions` (alias `/resume`) is one browser for this directory’s sessions: `Enter` resumes, `r` renames, `d` deletes (type the short id to confirm), `n` starts a new one. `/agents` lists running specialists; `Enter` or `k` kills one, `K` kills all. `ryter sessions` and `ryter resume [id]` are the CLI equivalents.
+`/sessions` (alias `/resume`) is one browser for this directory’s sessions: `Enter` resumes, `r` renames, `d` deletes (type the short id to confirm), `n` starts a new one. `ryter sessions` and `ryter resume [id]` are the CLI equivalents.
 
 **Approving.** When the build hat needs your yes, a card opens just above the message box, with the chat still readable behind it. It has these rows:
 - **what** the call does (`edit stats.js`, `run cargo test`);
@@ -153,7 +146,7 @@ The keys are on the card's last row:
 - **`⏎`** allows this call. An Enter pressed in the first half-second after the card opens is ignored, since it may have been meant to send a message.
 - **`a`** allows the kind of action the card names for the rest of the session: "edits to files in the project", or "`cargo test` commands". Anything else still asks.
 - **`n`** or **`Esc`** denies.
-- **Commands that delete, move, or discard files** (`rm`, `mv`, `git reset --hard`, `git clean`, deleting a branch) and **writes outside the project** take only **`y`**. Enter says so instead of approving, and there's no `a` for them.
+- **Commands that delete, move, or discard files** (`rm`, `mv`, `git reset --hard`, `git clean`, deleting a branch) and **writes outside the project that ask** (see "Outside the project") take only **`y`**. Enter says so instead of approving, and there's no `a` for them.
 
 `ask_user` questions and the first-run “trust this project?” prompt are modals with a heavy top border. `^c` on a prompt while a turn runs stops the turn.
 
@@ -197,52 +190,205 @@ Without a tty, use headless:
 ```sh
 ryter -p "add a --json flag" --always-approve
 ryter -p "…" --json                  # NDJSON AgentEvent stream
-ryter -c -p "continue"               # continue the latest session: transcript, tasks, open patch
+ryter -c -p "continue"               # continue the latest session
 ```
 
 `--always-approve` treats Ask as Allow. Deny still wins.
 
-An empty folder, or one that is not a git repository, works as is. Before the crew's first build, Ryter runs `git init` (your `init.defaultBranch`, else `main`), writes a `.gitignore` for secrets and caches unless one exists, commits what is already there as the starting point, and says so in the chat. A repository with no commits gets just the first commit.
+## Hats
 
-A folder of projects is different. That's a folder like `~/workspace` that isn't a repository with commits itself, but holds other projects' repositories, in its folders or one level further down. There, the crew stops at your first message, before any model call and without writing anything. It names the repositories it found and asks you to start Ryter in the project's own folder. If they're the project's own dependencies (a git package under `node_modules`, say), add their folder to `.gitignore`. Only folders git will ignore, by the folder's own rules, are left out of the search. Before the first commit, git itself checks that it holds no other repository at any depth. If it would, Ryter undoes the `git init` and `.gitignore` it just made. If you do want one repository there, run `git init` and make the first commit yourself.
-
-## Solo mode and hats
-
-Ryter starts in solo mode: one model in your project. `Tab` switches its hat (build → plan → review), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. The header, the message box's badge, and its border all show the hat in its own color. A switch applies to your next message. The model can also offer a switch itself: after a plan ("carry out the plan?") or a review ("fix these?") it asks with a yes/no prompt, and on `y` it carries on in the new hat in the same turn.
+One model works in your project, in the build hat to start with. `Tab` switches its hat in the order the work goes (plan → build → review → test, then round to plan), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. From build, where a session opens, `Tab` goes to review and `Shift+Tab` to plan. The header, the message box's badge, and its border all show the hat in its own color. A switch applies to your next message. The model can also offer a switch itself: after a review ("fix these?") it asks with a yes/no prompt, and on `y` it carries on in the new hat in the same turn. A plan has its own panel, below.
 
 | Hat | May | May not |
 | --- | --- | --- |
-| **build** (default) | edit files and run commands; edits and commands that change things ask (or run with `a` for that kind of action / `--always-approve`); destructive commands always ask; outside the project, writes ask **every time** (see below) | read secrets, push, run inline interpreter code |
-| **plan** | read, search, run read-only commands, write `notes/` and project memory | edit source, run anything that changes the project |
+| **build** (default) | edit files and run commands. Your toolchains, the project's own programs and its containers run without asking; edits ask (or run with `a` for the session / `--always-approve`); so do commands that delete, publish, or that Ryter doesn't know (see "What runs without asking") | read secrets, push, run inline interpreter code |
+| **plan** | read, search, run read-only commands, and show you a plan to approve | edit source, run anything that changes the project |
 | **review** | read, run the tests and linters, read-only git | write anything, not even by redirect; install, format, or fix |
+| **test** | start the product, run its tests and use it: everything the build hat runs without asking, and requests to the project's own address (`curl localhost:8000/…`) | edit or write the project's files, delete or move anything in it |
 
-**Audits: a second opinion.** `/audit` asks a different model to review your uncommitted changes before you commit (`/second` also works). You choose the model and how much one audit may spend; Ryter never chooses either.
+**A model for each hat.** Every hat runs on one model until you give a hat its own. `/models` lists the seats on the left: *All hats*, then *Plan*, *Build*, *Review* and *Test*, each showing its model or "follows all hats". Pick a seat, pick a model, `⏎`, and the cursor moves to the next seat, so one visit sets them all. To put a hat back, choose `default` at the top of its list. The choice is kept in `~/.ryter/hats.toml`.
 
-- **Offered after your changes.** When a build turn finishes having changed files, Ryter offers an audit with what it would cost: `y` runs it, with no second question; `n` passes; `s` stops the offers. `/settings` (audit offers) or `[ui] offer_audit` turns them back on. Nothing is offered after a turn that only talked or read, or one that was cancelled or cut short.
-- **The first time,** `/second` opens a chooser. It lists every model from every connection you have a key for, from the live catalog, each with what *this* review should cost in dollars. The model doing the work isn't offered, and neither are models that can't use tools. A model from the same vendor is marked as less independent, and one with no known price can't be chosen, since no limit could hold it. Then you type your limit per review, in dollars; there's no preset. The choice is saved in `~/.ryter/review.toml`, and `/audit model` changes it.
-- **Every review asks first,** with the model, what it will read, and a cost range against your limit. After a few reviews it also shows what your last ones with that model cost. `n` spends nothing.
-- **It keeps to your limit before spending, not after.** Each step is priced before it's sent. A step that would pass the limit isn't sent. When about one step's room is left, or three quarters of the limit is spent, the reviewer is told to stop exploring and write up what it has. Either way you get what it found, marked if it was cut short.
-- **In the chat,** an audit carries a rule in the auditor's color on every line, and a long one folds after 14 lines; `^o` shows it whole.
-- **It can't change anything.** It reads the diff and the conversation, and may read files and run the tests, under the review hat's rules. It creates no files. Findings come marked **blocking** or **note**, with a verdict and the cost, and the model you work with gets them with your next message, so "fix those" works.
-- **A saved reviewer that disappears** (retired, or no longer priced) brings the chooser back. Ryter never falls back to another model on its own.
+- **Where it shows:** the rail and the status line name the model your next message goes to, which is the current hat's.
+- **What a switch costs:** the hats share one conversation. A model that hasn't read it yet reads all of it at the full price the first time, and Ryter says so in the chat as it happens: "review hat · grok-4.7 re-reads 42k tokens, about $0.13". Nothing stops; the line is there so the cost isn't a surprise. Going back to a model that has read the conversation costs the same again if its provider's cache has lapsed.
+- **A use for it:** a strong model for the plan, a cheaper one to build it, and a different one to review, so the review isn't the model that built it marking its own work.
+
+**The test hat has a conversation of its own.** The plan, build and review hats share one conversation. The tester doesn't read it: it judges the product from the plan, the decisions and from using it, not from the builder's account of the work.
+
+- **`Tab` to Test** and the chat shows the tester's thread, under a line that names it ("TEST THREAD"). `Tab` away and the shared conversation is back as you left it. Each keeps its own scroll position and its own context gauge.
+- **It continues through the session.** The tester remembers what it tried before, so "retest the health check" works. Both conversations are saved, and both come back when you resume the session.
+- **A turn stays in its own conversation.** You can look at the main chat while a test runs, or at the tester's thread while a build does: what a running turn says goes to the conversation it is part of. The model can't switch into or out of the test hat in the middle of a turn; that is yours to do with `Tab`.
+- **It makes nothing in the project either:** `touch`, `mkdir` and `cp` into the project are refused, as edits are.
+- **What it may run:** what the build hat runs without asking (your toolchains, the project's programs, its containers), plus requests to the project's own address: `curl` to `localhost`, `127.0.0.1` or a `.localhost` name, saving only to `/tmp` or your home folder. What the build hat asks about, it asks about. It can't edit, delete or move the project's files, and a redirect into the project is refused.
+- **Its own model:** the *Test* seat in `/models`. Starting a test thread on a different model costs nothing extra, since there is no conversation for it to re-read.
+
+**A test, and its report.** A test is the test hat using the product: it starts it, runs its tests, tries each scenario the plan says to verify, and files a report.
+
+- **Offered after a review that passed.** `⏎` runs it, `n` passes, `s` stops the offers (`/settings` → *test offers*, or `[ui] offer_test`, turns them back on). **`/test`** asks for one at any time.
+- **Every test asks first,** naming the model, what it will do, and a cost range; after a few tests, also what your last ones with that model cost. A test is longer than a review, so its range is wider. There is no separate limit for a test: your session budget holds it.
+- **What the tester starts from:** the plan you approved and its entries in `.ryter/decisions.md`, the files that changed, the run file, and its own last report. Not the conversation.
+- **The report comes back as a card** in the main conversation. A pass is one line; a failure is opened out with what was expected, what happened, and how to see it again:
+
+  ```
+  ▣  test · kimi-k3 · ✗ 2 of 5 failed · 1:40 · $0.21
+  │  ✓ 1  the stack starts and is healthy
+  │  ✗ 3  /manage/ after login
+  │       expected the page list
+  │       got 500: NoReverseMatch 'pages:list'
+  │       to see it: start the stack, log in, open /manage/
+  │  ✗ 4  publish a page · not reached (needs 3)
+  │  full report  .ryter/tests/2026-10-01-cms-2.md
+  ```
+
+  The model you build with is given the same report, so "fix 3" works. The tester's working (its commands, logs and dead ends) stays in its own thread.
+- **The full report is a file** in `.ryter/tests/`, named for the day and the plan. An earlier report is never written over: a second one that day is `-2`.
+- **A failed test offers its fixes** in the build hat. Say yes and the builder works from the report. The fixes are new work, so a review of them is offered, and a test after that.
+- **You can ask the tester yourself.** In the test hat, "retest 3" or "try the upload with a large file" is a message like any other; a report it files lands in the main conversation the same way.
+- **The commit says whether the work was tested:** the receipt ends with "test ✓ kimi-k3", "test ✗ kimi-k3", "not tested", or "not tested after the last change".
+- **Ryter's own files are not the work.** Plans, decisions, the run file and test reports are in the project, but a review doesn't read them as changes, and writing one doesn't make a review or a test out of date.
+
+**How a project runs: `.ryter/run.toml`.** The tester needs four things from a project: the command that starts it, an address that answers once it is up, its test commands, and the command that stops it.
+
+```toml
+start = "docker compose up -d --wait"
+ready = "http://localhost:8000/healthz"
+test  = [
+    "docker compose run --rm web pytest -q",
+    "docker compose run --rm web ruff check .",
+]
+stop  = "docker compose down"
+```
+
+- **The model drafts it, you approve it.** The first time the tester needs it, it reads the project and proposes the commands in a panel: `y` approves and saves the file, `e` says what to change, `n` rejects. Leave out what the project doesn't have.
+- **You are shown every word.** A command longer than the panel wraps under itself, and `y` is taken only once the last row has been on screen: what you approve here runs without another question. A command that deletes or discards something is pointed out above the list.
+- **Ryter runs what you approved, itself.** Starting waits until `ready` answers (any answer that isn't a server error), for up to five minutes. A start command that stays in the foreground (`npm run dev`, `cargo run`) is kept running by Ryter; through the shell tool it would be cut off when the command didn't return.
+- **Approval is of what you were shown.** It is kept in `~/.ryter/run-approved.toml`, not in the project. A run file that came with a clone, or that anyone changed since (you, the model, a `git pull`), is shown to you again before anything in it runs, and a file rewritten while you were reading is not the one you approved.
+- **It is the project's own file, or it is not read.** Ryter writes the run file, and its plans, decisions and reports, into the project and never through a link: a project that arrives with a link where one of those files goes has the link replaced, not followed, and a link there is not read either.
+- **Limits:** a command Ryter runs for nobody (`sudo`, inline code) can't be in it, and `ready` has to be an address on this machine. Only the test hat runs these commands.
+- **Headless** (`ryter -p --hat test`), nobody can approve anything, so the model can't save a run file. One you wrote yourself runs with `--always-approve`, as far as that flag reaches in the test hat: nothing outside the project, nothing that deletes or rewrites the project's files. It is not recorded as approved, so the TUI still asks.
+- **A start that doesn't come up is taken down again.** If the start command returned but `ready` never answered, or you pressed `esc` while it was waiting, Ryter runs the stop command (or ends what the start command left running) and says so. Nothing half-started is left behind without a way to stop it.
+
+**The product is left running.** After a test the product stays up, so you can look at what the tester saw. The chat says where it is.
+
+- **`/stop`** stops it: the `stop` command, or, when the file has none, ending the start command Ryter is holding.
+- **Quitting asks.** With the product still up, `^c` shows "stop the project?": `⏎` stops it and leaves, `n` leaves it running, `esc` stays.
+- **A later session knows.** Left running, it is remembered: the next session in that project says so, the tester doesn't start it a second time, and `/stop` there runs the `stop` command. A start command left running with no `stop` command is yours to end; Ryter gives you its process number and doesn't end a process it can't be sure is the one it started.
+- **Only what Ryter started.** It never stops containers or processes it didn't start, and never removes volumes unless your `stop` command says to.
+
+**Approving a plan.** When the model has a plan, it shows it in a panel instead of writing it into the chat: the goal, the steps, the files, the risks, and how to verify it. `↑`/`↓` and `PgUp`/`PgDn` scroll a long one. You answer:
+
+- **`y` approves.** The plan is saved in the project as `.ryter/plans/<date>-<title>.md`, Ryter switches to the build hat, and the model builds from that file in the same turn. Earlier plans are kept beside it, and whether to commit them is yours to decide.
+- **`e` adjusts.** Type what should change. The model revises the plan and shows it again. Nothing is saved yet.
+- **`n` (or `Esc`) rejects.** Nothing is saved, and the hat stays as it was.
+
+`Enter` approves nothing here. The panel waits as long as you take to read. A headless run (`ryter -p`) has nobody to approve a plan, so nothing is saved and the plan comes back as the answer.
+
+**When the work differs from the plan.** An approved plan is not edited afterwards. Where the work comes to differ from it, the difference and its reason are recorded in `.ryter/decisions.md` in the project, under the plan they belong to:
+
+```
+## plan: 2026-10-01-cms.md
+
+### No export button in this pass
+- Plan said: step 4, an Export button on the page list
+- Built instead: no export
+- Why: you said "skip the export button for now"
+- Decided by: you · 2026-10-01 14:20
+```
+
+- **When an entry is added:** when you tell the model to leave out, add or change something the plan says, and when the model finds a step can't be done as written and takes another way to the same goal. Those are signed "build hat" with the model's name.
+- **You see each one.** The chat says "decision recorded: No export button in this pass". Nothing stops and nothing is asked.
+- **A review reads them.** A difference recorded there was decided, so the reviewer doesn't report it as a defect. A difference with no entry is still a finding.
+- **The file is yours.** Remove an entry you don't agree with, or add your own under the plan's heading. Whether to commit it is yours to decide, as with the plans.
+- **Limits:** a decision needs a plan approved in this session, and only the plan and build hats record one. A reviewer can't.
+
+**Review before you commit.** The review hat is the check on work before it is committed. Give it its own model in `/models` and it is a second opinion: a different model from the one that built the work. There is one reviewer, and it is this hat.
+
+- **Offered after your changes.** When a build turn finishes having changed files, Ryter offers a review with what it should cost: `⏎` runs it, with no second question; `n` passes; `s` stops the offers. `/settings` (review offers) or `[ui] offer_audit` turns them back on. Nothing is offered after a turn that only talked or read, or one that was cancelled or cut short.
+- **Asked for:** `/audit` (or `/second`) runs the same review whenever you want one.
+- **Every review asks first,** naming the model, what it will read, and a cost range. After a few reviews it also shows what your last ones with that model cost. `n` spends nothing. If the review hat follows the model every hat uses, the prompt says the reviewer is the model that built the work.
+- **It is a turn in the conversation,** in the review hat, and the hat you were in comes back when it ends. The reviewer has read what you asked for, and the model you build with reads the findings next, so "fix those" works. Because it reads the conversation, a reviewer on another model pays to read it once; the chat says what that costs.
+- **It checks against the plan.** If you approved a plan, the reviewer is pointed at its file and checks that the change does what it says, all of it and nothing more. It is also pointed at that plan's entries in `.ryter/decisions.md`: what you decided to do differently is not held against the work. With no plan it checks against what you asked for. Then correctness, tests and safety.
+- **It ends with a verdict:** `VERDICT: PASS` or `VERDICT: FAIL`, with findings marked **blocking** or **note**. The chat repeats it under the review: "review · grok-4.7 · ✗ blocking problems · $0.040".
+- **A failed review offers its fixes.** The reviewer asks to switch to the build hat; say yes and the build hat fixes them in the same turn. The fixes are new work, so a review of them is offered.
+- **The commit says whether the work was reviewed.** The receipt on `/commit` ends with "review ✓ grok-4.7", "review ✗ grok-4.7", "not reviewed", or "not reviewed after the last change". A verdict holds for the files the reviewer read: change one afterwards, by hand or with the model, and the receipt says so.
+- **A limit, if you want one.** `/settings` → *review usd* is the most one turn in the review hat may spend (0 is no limit). Each step is priced before it's sent. When about one step's room is left, or three quarters of the limit is spent, the reviewer is told to stop exploring and write up. A step that would pass the limit isn't sent, and a review stopped that way has no verdict. A model with no known price isn't run under a limit, since the limit couldn't hold it.
+- **It can't change anything.** The review hat reads, and runs tests and linters. Edits, installs and formatting are refused.
+- **A project that tests in containers is tested there.** The reviewer may run a test or lint command in one of the project's containers (`docker compose run --rm web pytest`, `docker compose exec web ruff check .`; `podman` the same) and look at what is running (`docker compose ps`, `logs`). The command inside answers to the same rules as outside. It may not build, start or stop the stack, or use `docker run`: if the stack isn't up, it says the tests weren't run.
+- **Coming from 0.10.0:** the model and limit you chose for `/audit` (`~/.ryter/review.toml`) are now the review hat's model and the review limit. Change them in `/models` and `/settings`. `/audit model` is gone.
 
 **What the chat shows.** The model narrates as it works: what it's doing next and why, each choice between approaches with its reason, and what it thinks went wrong when something fails. Each tool step shows what came of it, measured by Ryter: `new · 48 lines`, `rewrote · 76 lines (was 89)`, an edit's changed lines, `✓ 13 passed`, or `✗ exit 1` with the cause. Reads fold into one line, and a divider closes each turn that did work (`6 files (3 new, 3 changed, +153 −15) · 9 commands (9 ok) · 2:41`).
 
-**Outside the project.** The build hat can write elsewhere on your machine, such as `/tmp` or another folder, but only by asking each time. The prompt says "outside the project" and offers only `y` (allow once) or `n`. "Allow all" and `--always-approve` cover the project, not the rest of the machine, so headless refuses these writes.
+**What runs without asking** in the build hat. A question for every `cargo build` and `docker compose up` was answered yes every time, so these run:
 
-Some places are refused however they're asked for:
-- **Never read or written:** credentials (`~/.ryter`, `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config/gh`, and the like) and secret files.
+- **Looking:** `ls`, `cat`, `grep`, `git status`, `git diff` and the like, `sed -n` used to pick lines out (`sed -n '1,40p' file`), and `sleep`.
+- **Requests to the project's own address:** `curl` to `localhost`, `127.0.0.1` or a `.localhost` name, as the test hat makes them. A URL kept in a variable earlier in the same command is read: `B=http://localhost:8000; curl $B/health`.
+- **Your toolchains,** whatever the subcommand: `cargo`, `npm`, `pnpm`, `yarn`, `bun`, `node`, `python`, `pip`, `uv`, `pytest`, `go`, `make`, `mvn`, `gradle`, `dotnet`, and the rest of their kind. `cargo install`, `npm install` and `pip install` included.
+- **The project's own programs:** `./scripts/setup.sh`, `bin/cms-admin`, `./manage.py`, and `bash` given a script file of the project's.
+- **Programs you installed under your home folder:** whatever `PATH` finds in `~/.cargo/bin`, `~/.local/bin`, a node or python manager's folder.
+- **The project's containers,** with `docker` or `podman`: `build`, `compose build`, `up`, `down`, `run`, `exec`, `restart`, `logs`, `ps`, `pull`, and `docker run` with folders of the project's (or of `/tmp`) mounted. Paths inside the container, such as `-w /app` or `ls /app`, are the container's and are not judged.
+- **`cd`** into a folder of the project, `/tmp` or your home folder.
+
+These still ask:
+
+- **Edits** to the project's files, until you press `a` on one or approve a plan: a plan says which files it will make and change, so once you approve it the edits stop asking for the rest of the session.
+- **Changing files by hand:** `mkdir`, `cp`, `sed -i` and other system programs that aren't a toolchain. `a` on the prompt allows that command for the session.
+- **Deleting and moving:** `rm`, `mv`, `chmod`, `git reset --hard`, and removing a stack's volumes (`docker compose down -v`, `docker volume rm`, any `prune`). `y` only, with no "allow for this session".
+- **Publishing and signing in:** `cargo publish`, `npm publish`, `npm login`, `docker push`, `docker login`.
+- **Tools that work on a service somewhere else:** `gh`, `aws`, `gcloud`, `kubectl`, `terraform`, `curl`, `wget`.
+- **A script that isn't the project's:** `python3 /tmp/probe.py`, `node ~/x.js`. The project's own scripts run. The same goes for a build tool pointed at a file or folder outside the project: `make -f /tmp/x.mk`, `npm --prefix /tmp/x test`, `cargo build --manifest-path=/tmp/x/Cargo.toml`.
+- **A command that prints files it is handed out of sight:** `… | xargs cat`, `find … -exec grep …`.
+- **A path only the shell can read:** `cat "$FILE"`, a `cd "$DIR"` and everything after it, a pattern with thousands of matches. The gate can't see where it leads.
+- **A variable that makes a program load or run something else:** `LD_PRELOAD=…`, `PATH=/tmp:$PATH`, `NODE_OPTIONS='--require …'`, `PYTHONPATH` or `NODE_PATH` outside the project, `RUSTC_WRAPPER`, most `GIT_…` variables, `DOCKER_HOST`. Ordinary ones run: `NODE_ENV=test`, `DATABASE_URL=…`, `RUST_BACKTRACE=1`, `PATH="$HOME/.cargo/bin:$PATH"`.
+- **In Docker:** copying files in or out of a container (`docker cp`); a mount or a build context that is your home folder or the folder above the project, however the path is written (`../..`, `src/../..`); build output written anywhere but the project, `/tmp` or your home folder (`-o`, `--output`); a build from an address (`docker build https://…`); a `docker build` option Ryter doesn't know; stopping or removing a container by name (`docker stop`, `docker rm`), since it may not be this project's; another machine (`-H`, `--context`, `DOCKER_HOST`); a compose file outside the project; and giving a container the host (`--privileged`, a mount of `/`, the Docker socket). A folder where keys are kept is refused, as a mount, a context, a `--secret` or a place to write.
+
+A toolchain runs the project's code: `cargo build` runs its build script and `npm install` its install scripts. If you don't want that unasked, a sandbox profile limits what any command can touch (see "Sandbox profiles").
+
+**Docker or Podman.** When both are installed the model is told to use Docker, unless you ask for Podman. With one installed it is told which.
+
+**How a command is read.** The gate judges what will run, not what was written. Before it decides, it does what the shell would do:
+
+- **Patterns and lists are expanded,** and every file they match is judged: `cat .en?` is `cat .env`, and `cat ~/.s?h/id_rsa` is the key. A pattern in quotes is a pattern for the program (`find -name '*.py'`), and is left alone.
+- **A `cd` moves where the rest is judged from.** `cd app && npm test` is judged in `app/`. Where a `cd` may not have run (after `||`, in a subshell, under `if`), the rest is judged from both places.
+- **An option's value is a path like any other:** `--file=.env` and `-f.env` get the answer `.env` gets.
+- **The shell's own words are not the program:** in `if …; then make; fi` the command is `make`.
+- **A redirect is read wherever it is written** (`echo x>file`), and a backslash at the end of a line joins it to the next.
+- **A link is judged by what it points at,** whatever the link is called.
+
+What the shell is told to read another way, the gate can't read at all, and refuses in every hat: setting `HOME`, `IFS`, `CDPATH`, `GLOBIGNORE` or `BASH_ENV`; `shopt`, `alias`, `hash`, `trap` and `enable`; a shell function (`function name { … }`, `name() { … }`) or a named coprocess, which make a name mean other commands; and `env -C`, which runs a command in another folder.
+
+What the gate can read but not see through (a path in a variable, files handed over by `xargs`) is a question in the build and test hats and refused in plan and review. "Allow all" and `--always-approve` answer that question yes in advance, as they do any other.
+
+**Outside the project.** Scratch space (`/tmp`, `/var/tmp` and your system's temporary folder) is open to every hat, to read and to write, without a question. Your home folder, where tools keep their caches, configuration and builds, is open to every hat to read, and to the build and test hats to write.
+
+With these exceptions:
+
+- **Never read or written:** credentials (`~/.ryter`, `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.docker`, `~/.config/gh`, and the like), your tools' saved logins (`~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials.toml`, `~/.git-credentials`), your shell history, your browser's and mail client's folders, and secret files (`.env`, `*.pem`, `*.key`) wherever they are.
 - **Never written:** shell startup files (`~/.bashrc`, `~/.zshrc`, `~/.profile`, …) and system folders (`/etc`, `/usr`, …).
+- **What something runs later asks each time,** in the build hat, and is refused in the others: a tool's own configuration in your home folder (`~/.gitconfig`, `~/.cargo/config.toml`, `~/.config/pip`, `~/.curlrc`), a folder of programs (`~/.local/bin`, `~/.cargo/bin`, any folder on your `PATH`), a program that is already there, and the files Python loads at every start. A line in one of those is a command the next `git status` or `cargo test` runs.
+- **Another project:** a folder under your home that is a git repository other than this one can be read, but writing there asks each time in the build hat and is refused in the others.
+- **Deleting or moving** anything outside the project asks each time, scratch space and your home folder included.
 
-Reading outside the project is an ordinary question. Plan and review never write outside, and crew builders stay in their worktrees.
+Anywhere else (`/opt`, `/srv`, another disk), the build hat asks each time and no other hat writes. Those prompts say "outside the project" and offer only `y` (allow once) or `n`. "Allow all" and `--always-approve` don't cover them, so headless refuses them.
 
-**What review may run** is judged by the command's form, not the tool's name. `cargo test`, `cargo clippy`, `cargo fmt --check`, `npm test`, `npm run lint`, `npx vitest run`, `npx tsc --noEmit`, `npx prettier --check`, `pytest`, `ruff check`, `black --check`, `go test`, `go vet`, `make test`, and the like run. `cargo fmt`, `npm install`, `npm run format`, `npx <any package>`, `ruff --fix`, `make install`, and `python -m pip install` don't. Review may still run the project's own code, which is what tests do.
+The plan and review hats change nothing in the project and write nothing in your home folder. What they may write is scratch space: a place to keep a test's output. Not a file a tool would read as configuration on its way up from the project: for a project kept in `/tmp`, that rules out a `conftest.py` or a `.cargo/config.toml` beside it, while `/tmp/out.txt` is fine.
+
+**A sandbox profile is stricter than this for your home folder.** With `workspace` or `read-only` chosen in `/settings`, `/tmp` is open as it is here, but the system itself shuts your home folder (beyond your tools and their caches) to every command, whatever the rules above allow. The model is told so, so a refusal isn't reported as a broken tool. To have your home folder open to commands, the profile has to be `off`.
+
+**What review may run** is judged by the command's form, not the tool's name. `cargo test`, `cargo clippy`, `cargo fmt --check`, `npm test`, `npm run lint`, `npx vitest run`, `npx tsc --noEmit`, `npx prettier --check`, `pytest`, `ruff check`, `black --check`, `go test`, `go vet`, `make test`, and the like run. `cargo fmt`, `npm install`, `npm run format`, `npx <any package>`, `ruff --fix`, `make install`, and `python -m pip install` don't. Review may still run the project's own code, which is what tests do: a file of the project's, and no other. A script in `/tmp`, your home folder or its own notes is refused, since it could have written it a moment ago. That holds for every road to one:
+
+- a path outside the project anywhere in the command, an option's value or a path inside a longer argument included (`--manifest-path=/tmp/x/Cargo.toml`, `--config '{"globalSetup":"/tmp/x.js"}'`), and an address (`deno run https://…`);
+- an option before the script (`node -r`, `python3 -i`), a module that isn't a check or the project's own (`python3 -m json.tool`), a variable set on `make`'s command line (`make test CC=…`);
+- a variable set on the command, other than a short list that changes how output looks or which mode a suite runs in (`CI`, `NO_COLOR`, `RUST_BACKTRACE`, `NODE_ENV`, a search path inside the project, a `PATH` of folders the hat can't write).
+
+`xargs` in front of a command that prints files (`cat`, `grep`) is refused too, in the plan hat as well: the files it is handed can't be checked, and a secret could be among them. Search with `grep -rn` or `rg` and a folder.
 
 **Commands the gate refuses in every hat:**
 - the never-run list (`sudo`, `ssh`, `dd`, `mkfs`, `systemctl`, `crontab`, …), however it's wrapped: `env -i sudo`, `timeout 5 sudo`, `nice dd`, `xargs ssh`, `find -exec sudo`, `busybox rm`, `s\udo`;
 - a command whose name comes from a variable or `$(…)`, and `eval`;
-- inline code for an interpreter (`python -c`, `node -e`, `deno eval`, heredocs): write it to a file and run the file;
-- `git -c` settings that name a program (`alias.x=!cmd`, `core.sshCommand`, `core.pager`, …) and `git --exec-path`.
+- inline code for an interpreter, however the flag is spelled (`python -c`, `python3 -bc`, `node -pe`, `perl -E`, `php -r`, `bash -lc`), standard input, here-strings and heredocs: write it to a file and run the file;
+- a tool handed a command as text: `make --eval`, `go test -exec`, `cargo --config`, `npm exec -c`, `python3 -m timeit`, `awk` calling `system()`;
+- a secret handed to a program that isn't just looking at the file: `cp .env notes.txt`, `tar cf x.tar .env`, `source .env`, a copy or an archive of a folder that holds one, a variable set to it (`x=.env; cat $x`). `ls -l .env`, `test -f .env`, and a container's or `node`'s `--env-file` still run;
+- a secret printed by any road: a pattern that matches it (`cat .en?`), an option's value (`diff --from-file=.env`), a link to it, a search through a folder that holds it (`grep -r KEY .`; name the folders, say which files with `--include`, or use `rg`, which leaves hidden and ignored files out), into a linked folder too where the search follows links (`grep -R`, `rg -L`), `git` (`git diff --no-index /dev/null .env`, `git show HEAD:.env`; and in a repository that tracks a secret, a `git` command that prints files has to say which: `git grep KEY -- src`, `git diff -- src`), or a command in one of the project's containers (`docker compose exec web cat /app/.env`);
+- `git -c` settings that name a program (`alias.x=!cmd`, `core.sshCommand`, `core.pager`, …), `git --exec-path`, and `--upload-pack`.
 
 `env` alone, which prints every variable, is not read-only. Commands run without Ryter's own API keys in their environment.
 
@@ -254,7 +400,7 @@ Before each build turn changes anything, Ryter snapshots your files as a git obj
 - **`/redo` reverses an undo,** forced or not, as long as no build turn has run since. If you've edited those files after the undo, it asks for `/redo force` the same way.
 - **Gitignored files the model writes** (a local config, say) are saved before it writes them, so `/undo` puts them back too. Snapshots skip ignored files, and a command run through the shell isn't covered.
 
-A folder that isn't a repository gets git set up first, and Ryter says so. It won't make one in your home folder, at the root, or in a folder that holds other projects' repositories. There, solo mode edits without snapshots, and `/undo` is unavailable.
+A folder that isn't a repository gets git set up before the first change, and Ryter says so: `git init` (your `init.defaultBranch`, else `main`), a `.gitignore` for secrets and caches unless one exists, and a first commit of what is already there. A repository with no commits gets just the first commit. It won't make one in your home folder, at the root, or in a folder that holds other projects' repositories (a folder like `~/workspace`). There, edits are made without snapshots, and `/undo` is unavailable.
 
 ### Review and commit
 
@@ -275,7 +421,7 @@ The panel updates when a turn finishes. You can open it while a turn is running,
 - **The receipt.** With receipts on (the default; `t` switches, and `[ui] receipts` remembers), the message ends with a trailer:
 
   ```
-  Ryter: deepseek-pro-latest · $0.34 · tests ✓ 13 passed
+  Ryter: deepseek-pro-latest · $0.34 · tests ✓ 13 passed · review ✓ grok-4.7
   ```
 
   - **Model:** the models used since the previous commit.
@@ -284,98 +430,20 @@ The panel updates when a turn finishes. You can open it while a turn is running,
 
   `git log --grep "Ryter:"` finds them later.
 
-Headless, `ryter -p` runs in build; `--hat plan|review|crew` picks another. Headless nobody can approve an edit, so pass `--always-approve` to let build change files.
+Headless, `ryter -p` runs in build; `--hat plan|review` picks another. Headless nobody can approve an edit, so pass `--always-approve` to let build change files.
 
-## Crew mode
+## Choosing models
 
-`/crew` switches to crew mode, and that's all it does. The first time, the crew builder opens (below); once a crew is saved, `/crew` switches straight to it. `/solo` goes back. In crew mode the right-hand panel adds the tasks and crew cards.
-
-**Every model is chosen in `/models`.** The seats are on the left: the lead (`Solo` in solo mode), architect, builder and auditor, each with the model it runs on now. The models for the chosen seat are on the right.
+**Every model is chosen in `/models`.** The seats are on the left, each with the model it runs on now: *All hats*, then *Plan*, *Build* and *Review*. The models for the chosen seat are on the right.
 - **Choosing a seat:** `↑↓` picks one. `→` or `⏎` moves to its models, and typing starts a filter there straight away.
-- **Setting a model:** `⏎` sets the highlighted model for the seat and takes you back to the seats, on the next one. You can set the whole crew in one visit: pick, `⏎`, pick, `⏎`. A `✓` marks each seat you've set.
-- **Other keys:** `←` goes back to the seats without setting anything. `Tab` steps the highlighted model's reasoning, `s` sorts, `b` opens the guided crew builder, and `Esc` closes.
+- **Setting a model:** `⏎` sets the highlighted model for the seat and takes you back to the seats, on the next one. You can set every seat in one visit: pick, `⏎`, pick, `⏎`. A `✓` marks each seat you've set.
+- **Other keys:** `←` goes back to the seats without setting anything. `Tab` steps the highlighted model's reasoning, `s` sorts, and `Esc` closes.
 
-It works the same in solo and crew mode, so you can set up the crew before you switch to it. **`/crews`** holds the ready-made crews and your saved ones, to preview, apply, save or delete.
-
-## The lead
-
-In crew mode every message you send goes to the lead. You never talk to a specialist; they report back through the chat. The lead's prompt is `prompts/orchestrator.md` (overridable). It may read the repo, grep, glob, and call `todo_write`. It cannot write product source. For each request it does one of these:
-
-| The request | What the lead does |
-| --- | --- |
-| A question | answers it |
-| A trivial edit | `propose_edit`: you see the diff and press `y` |
-| A precise change | writes builder tasks itself |
-| Something that needs a design | queues an architect task; the architect's builder tasks run in the same pass |
-| "Design it, don't build yet" | the same, with `hold`: the design waits for your go-ahead |
-
-There is no mode to switch. Specialists get a **fresh window**: their task brief, `RYTER.md` / `AGENTS.md`, and the project memory scoped to their files, not the chat history.
-
-Project markdown is loaded from the working tree without a trust gate: `RYTER.md`, or `AGENTS.md` if `RYTER.md` is absent. Your own rules for every project come before it: see [Your rules](#your-rules).
-
-## Build workers, auditor, merge
-
-`todo_write` **is** the work queue. After a lead turn with no remaining tool calls, Ryter drains pending tasks, up to `[subagents] max` in parallel (must be ≥ 1). Each task names its role: architect tasks run first, then builders, each gated by checks and an auditor. Tasks declare the `files` they own; disjoint tasks run in parallel, overlapping or undeclared ones one at a time.
-
-**Order.** A task can list the tasks it builds on in `after` (`"after": ["scaffold"]`). It starts only once they have landed on the patch, so it branches from their real code. In a project with no build manifest yet (`Cargo.toml`, `package.json`, `pyproject.toml`, `go.mod`, …), the task that creates one runs first and alone, and every other builder task waits for it, whether or not the plan says so. A task whose prerequisite is blocked never starts: the crew report lists what each one waits on, and the lead fixes that task instead of retrying the ones waiting.
-
-Crew roles default to the lead’s current provider and model. Assign a different model per role in `/models` (the role's seat; the first row, `default`, follows the lead). That is also how you split providers. Optional `[specialists.*]` tables in `~/.ryter/config.toml` pin the same overrides.
-
-Each builder task:
-
-1. `git worktree add` under `~/.ryter/worktrees/<session>/<task>/` on branch `ryter-<8hex>-<slug>`
-2. The builder implements its brief and ends with a handback (`STATUS / FILES / DECISIONS / NOTES`). `STATUS: BLOCKED` means something outside the task stopped it (a missing system package, a module another task owns): the work is kept on its branch, nothing is checked or audited, no retry is spent, and the lead tells you what to do (`sudo dnf install libpq-devel`)
-3. The runtime commits, then merges **your branch into the worktree**. Conflicts are resolved there by a builder — never in your checkout — and the resolution is re-audited
-4. **Checks**: `[auditor] checks` run in the worktree (set them per project in `.ryter/config.toml`). A failure rejects the work before any audit. With none set, Ryter reads the project's files once there is a manifest (`Cargo.toml` → `cargo test`, `package.json` → its `build` and `test` scripts, `go.mod` → `go build`/`go test`, pytest or unittest for Python) and asks once whether to use them, for the session or saved to the project
-5. **Auditor**: reviews the brief, handback, check output, and full diff, and ends with `VERDICT: PASS`, `VERDICT: FAIL`, or `VERDICT: UNVERIFIED`. `UNVERIFIED` is for code that reads right but can't be built yet because something outside the task hasn't landed, and only when no checks ran. It isn't a rejection. The task lands on the patch marked, and the patch doesn't reach your branch until checks have built and tested it
-6. **Land**: one `--no-ff` merge commit (undo with `git revert -m 1`). If your branch moved meanwhile, it re-integrates and re-checks first. If you have uncommitted edits to the same files, it stops and keeps the branch
-7. Rejected → retry with the findings, up to `[auditor] max_retries`, then `blocked`
-
-Tasks land on a patch branch (`ryter/patch-…`), not yours. When every task in the patch is done and the combined checks pass, the patch lands on your branch as **one commit** (`git revert -m 1` undoes it all). A blocked task holds the patch until you retry or drop it; the lead says what it is waiting on.
-
-Auditors must be different models from the lead and the builder — otherwise builds refuse to start and say how to fix it. Before the crew starts, Ryter checks that your OpenRouter account can use every seat it is about to call (a free lookup). If one is ruled out, say an auditor under zero data retention, nothing runs, the tasks stay queued, and you're told which seat to change. If a model still fails after the builder has finished (the auditor's provider is down, say), the task stops with its work kept on its branch. Assign one in `/models` (the Auditor seat), or list a panel under `[[auditor.panel]]` (all must pass; cheapest first; seats may have a `focus` and `paths`).
-
-For a trivial change the lead can `propose_edit`: you see the diff and press `y`. Only a person can approve it.
-
-**The crew builder** is where a crew is set up. It opens the first time you type `/crew`, and from `/models` or `/crews` with `b`. When you save, you're in crew mode. It walks through seven steps:
-
-1. A starting point: skiff, schooner, galleon, or your current crew.
-2. The lead.
-3. The architect.
-4. The builder.
-5. The auditor.
-6. Budget: pick the job size (small, medium, or large) and see an estimate per task, per design, and for the whole job, with a suggested cap.
-7. Review.
-
-Each seat step says what the role does, puts a ★ recommendation first, and lists every model you can reach (type to filter). The auditor step refuses the lead's and builder's models. Review sends each model one tiny request with a tool (well under a cent) and saves only when all of them answer. That catches what no catalog shows: an OpenRouter data policy such as zero data retention that leaves a model no provider, missing tool support, a model you have no access to, or no credits. `ryter crew check` runs the same test on your saved crew. Esc on first launch means "later"; the builder doesn't come back on its own.
-
-The estimate uses token counts measured on paid runs (`crates/ryter-core/src/estimate.rs`). It is rough, and a job is usually larger than it looks.
-
-Three ready-made crews sit in `/crews`, picked from every model you can reach at today's prices, so they never name a model you can't use or one that has gone stale:
-
-| Crew | Cost | Builder | Architect and auditor |
-| --- | --- | --- | --- |
-| **skiff** | low | a budget model | the best of the budget models; the auditor is still a different model from another vendor |
-| **schooner** | balanced | a budget model | strong models (the default suggestion, `s` in `/crews`) |
-| **galleon** | high | a strong model | strong models, the auditor from another vendor |
-
-Enter on one previews it; `y` applies it and keeps your previous crew as the `before-suggest` preset. `ryter crew tiers` shows all three; `ryter crew suggest --tier galleon --apply` applies one from the shell. Strong seats prefer established vendors when one is close in price: price is the only signal before `ryter bench`, and on a live catalog it put an obscure model ahead of Claude Opus. None of the crews changes the lead. A local model server works as a connection with no key: `ryter connections add box --kind ollama --model qwen3-coder:30b`. `ryter bench` runs `bench/` through the crew and reports what landed, what passed hidden tests, and the cost per accepted task — it spends real money.
-
-Crew spend is metered per task and role and counts against `[spend] session_budget_usd`; each task also stops at `task_budget_usd` / `task_max_tokens`. See `docs/cost.md`.
-
-**When a task reaches its cap**, it pauses and Ryter asks (`Ryter asks · task budget`). You see what the task has spent and on which roles, with three choices: add $5, add $2, or stop. Raising the cap carries the task on from exactly where it was: the step it paid for is kept, and the other workers go on while you decide. A raised cap stays with the task. If you stop, the task's branch keeps the work. The lead is told to raise the cap and requeue the task rather than recreate it, because recreating it starts the build over. A task that is still at its cap asks before it spends anything. Runs with no one to ask (headless) stop as before.
-
-**A task that stops after its build is committed** (you stopped it at the cap during the audit, the auditor's provider refused, the merge failed) goes straight back to the checks and the audit on its next run. The builder isn't paid again.
-
-**Rejections are counted per task, in all**, across the lead's requeues and recreations. The lane card shows them in yellow, and a blocked task says `rejected; blocked (5 rejections in all)`. At 3 rejections, and every 3 after, Ryter says more retries of the same builder rarely help and that you should choose a stronger one in `/models → builder`. Which model is your choice: Ryter names none and switches nothing. The lead is told to pass it on without picking one for you, and the cap question mentions it too.
-
-`/auditor on|off` is session-only unless you also change config. With the auditor off, **nothing merges**: finished work waits on its branch. After each batch the lead gets the crew report, tells you what landed, and records builder decisions in `DECISIONS.md` — builders never write project memory themselves.
-
-The architect runs in-process (no worktree) and writes tasks straight into the queue builders read from. Nested subagents are not supported.
+A model your account can't use (a data policy that refuses it, no tool support, no credits) fails on its first message, and the chat gives the provider's reason. Pick another in `/models`.
 
 ## Spend
 
-Every model call is priced before the next request. Roll-ups: session, turn, role, connection. Persisted in `spend.jsonl`.
+Every model call is priced before the next request. Roll-ups: session, turn, hat, connection. Persisted in `spend.jsonl`.
 
 Sources, high wins: TOML `[pricing."<model>"]` → OpenRouter catalog (when ingested) → shipped SpaceXAI table. Provider-reported cost on a stream wins for that turn.
 
@@ -393,30 +461,30 @@ output_per_million = 15.0
 
 Prompt caching is priced in parts: cache reads at the cached rate, cache writes at the cache-write rate, the rest at the input rate. Each rate falls back to the input rate when unset.
 
-A session budget is optional. With one, the crew stops when spend reaches it, says what finished and what didn't, and waits (exit `3` in headless). Without one, nothing stops on cost and you watch the spend card.
+A session budget is optional. With one, the turn stops when spend reaches it and says so (exit `3` in headless). Raise it and say continue. Without one, nothing stops on cost and you watch the spend card.
 
 | Command | Effect |
 | --- | --- |
-| `/budget` | the budget panel: spend against the cap, on/off, the cap, the warning level, and the per-task cap (`^s` saves) |
+| `/budget` | the budget panel: spend against the cap, on/off, the cap, and the warning level (`^s` saves) |
 | `/budget 5` | cap this session at $5 |
 | `/budget +2` | raise the cap by $2, e.g. after hitting it |
 | `/budget off` | no cap |
 
-The **budget** card on the right shows the cap, how much is used and left, or `off`; click it to open the panel. Changes apply at once and are saved as your default (`~/.ryter/settings.toml`, the same value as *budget usd* in `/settings`). A trusted project's `[spend] session_budget_usd` overrides your default in that project. There is no session budget until you set one; the crew builder suggests one sized to the job. Each task is still capped at `[spend] task_budget_usd` ($3 by default; the crew builder raises it when your crew's normal design would not fit), which catches one runaway task whether or not there is a session budget. `[spend] enabled = false` still counts in memory and prints a warning.
+The **budget** card on the right shows the cap, how much is used and left, or `off`; click it to open the panel. Changes apply at once and are saved as your default (`~/.ryter/settings.toml`, the same value as *budget usd* in `/settings`). A trusted project's `[spend] session_budget_usd` overrides your default in that project. There is no session budget until you set one. `[spend] enabled = false` still counts in memory and prints a warning.
 
-**Project cost.** A project is its git repository (the folder, outside one), so sessions started in any subfolder count toward it. The spend card shows `project` under the session total. When the project is a repository around the folder you started in, the rail says which folder, for example `in ~/workspace`, and the `$` drawer names its project column for it. `p` in `/spend` switches to the project view: the total across sessions, this month, solo vs. crew, and breakdowns by role, model, and month. `ryter spend --project` prints the same. Nothing extra is recorded: every call is already in its session's `spend.jsonl`, and a running total in `~/.ryter/projects/` means only new lines are read. Calls with no known price are counted and shown (`$14.20+`), never added as $0.
+**Project cost.** A project is its git repository (the folder, outside one), so sessions started in any subfolder count toward it. The spend card shows `project` under the session total. When the project is a repository around the folder you started in, the rail says which folder, for example `in ~/workspace`, and the `$` drawer names its project column for it. `p` in `/spend` switches to the project view: the total across sessions, this month, and breakdowns by hat, model, and month. A project that was worked on in crew mode, before it was removed, also shows what that cost. `ryter spend --project` prints the same. Nothing extra is recorded: every call is already in its session's `spend.jsonl`, and a running total in `~/.ryter/projects/` means only new lines are read. Calls with no known price are counted and shown (`$14.20+`), never added as $0.
 
-`/spend` is a panel: session total, a budget gauge, and tables by role and by connection; `p` switches to the project; `e` exports CSV. The info panel’s spend card shows the total, and the budget card below it shows the cap. `ryter spend` prints the roll-up on the CLI.
+`/spend` is a panel: session total, a budget gauge, and tables by hat and by connection; `p` switches to the project; `e` exports CSV. The info panel’s spend card shows the total, and the budget card below it shows the cap. `ryter spend` prints the roll-up on the CLI.
 
 ## Slash commands
 
-Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/crews` `/mcp` `/skills` `/hooks` `/sessions` `/agents` `/spend` `/theme` `/tools` `/auditor` `/context` `/doctor` `/help`. `/changes` and `/commit` open panels too (see [Review and commit](#review-and-commit)). Direct commands act immediately: `/undo [force]` `/redo [force]` `/new` `/rename <title>` `/budget [amount|+amount|off]` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
+Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/mcp` `/skills` `/rules` `/hooks` `/sessions` `/spend` `/theme` `/tools` `/context` `/doctor` `/help`. `/changes` and `/commit` open panels too (see [Review and commit](#review-and-commit)). Direct commands act immediately: `/undo [force]` `/redo [force]` `/new` `/rename <title>` `/budget [amount|+amount|off]` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
 
 User-invocable skills and `~/.ryter/commands/*.md` join the palette under **skills**. Built-ins win on a name clash.
 
 ## MCP
 
-**Outbound.** `[mcp_servers.<name>]` stdio children. The orchestrator discovers with `search_tool` and calls with `use_tool`. Child env does not inherit API keys unless that server’s `env` table asks. In the TUI, `/mcp` is a panel: `Enter` toggles a server, `r` reconnects, `d` removes it (type the name to confirm), and `Enter` on the trailing `+ add server` row walks name → command → args → review. Each server row shows its live status (`connected · 5 tools`, `error: …`, `disabled`).
+**Outbound.** `[mcp_servers.<name>]` stdio children. The model discovers them with `search_tool` and calls one with `use_tool`. Child env does not inherit API keys unless that server’s `env` table asks. In the TUI, `/mcp` is a panel: `Enter` toggles a server, `r` reconnects, `d` removes it (type the name to confirm), and `Enter` on the trailing `+ add server` row walks name → command → args → review. Each server row shows its live status (`connected · 5 tools`, `error: …`, `disabled`).
 
 `search_tool` matches every word of its query against a tool's name and description, and lists each tool's arguments. A server has 60 seconds to start and list its tools. A tool call may run for 120 seconds, or for the server's `timeout_secs`:
 
@@ -450,11 +518,11 @@ TCP requires `--token` (or `RYTER_MCP_TOKEN`) on `initialize.params.token`. Bind
 
 | Kind | Where |
 | --- | --- |
-| Prompts | `prompts/*.md`; override `~/.ryter/prompts/` then trusted `.ryter/prompts/` |
+| Prompt | `prompts/solo.md`, the one prompt every hat shares; override with `~/.ryter/prompts/solo.md`, then a trusted project's `.ryter/prompts/solo.md` |
 | Rules | `~/.ryter/RYTER.md` for every project; `RYTER.md` (or `AGENTS.md`) at a project's top for that project. See [Your rules](#your-rules). |
 | Skills | `/skills` panel. Files: `~/.ryter/skills/<name>/SKILL.md` (frontmatter `user-invocable`, `model-invocable`). `Enter` runs (optional args), `e` opens the file in `$EDITOR`, `a` writes a stub, `d` deletes a user skill (not a project overlay or a built-in one). |
 | User slash | Same `/skills` list (`command` rows). `~/.ryter/commands/<name>.md` (`$ARGUMENTS`) |
-| Hooks | `/hooks` panel. `a` adds: event → command or URL → optional matcher. `d` removes. Live list is `~/.ryter/hooks.toml` (does not rewrite `config.toml`). Command gets JSON on stdin; exit 2 or HTTP 403 denies. |
+| Hooks | `/hooks` panel. `a` adds: event (`PreToolUse`, `PostToolUse`, `SessionStart`) → command or URL → optional matcher. `d` removes. Live list is `~/.ryter/hooks.toml` (does not rewrite `config.toml`). Command gets JSON on stdin; exit 2 or HTTP 403 denies. |
 | Themes | `/theme` panel previews as you move: `dark`, `light`, `default-16`, or `~/.ryter/themes/<name>.toml`. `Enter` persists to `~/.ryter/settings.toml`. `NO_COLOR` or a 16-color `TERM` degrades automatically. |
 | UI | `[ui]` in `~/.ryter/config.toml`: `username`, `theme`, `reasoning`, `mouse`, `panel`, `colors`, `timestamps`, `line_numbers`, `receipts`, `offer_audit`, `open_pages`. All optional; unknown keys warn once at startup. See `config.example.toml`. |
 
@@ -479,12 +547,21 @@ Look at `git diff` and report findings.
 
 ### Your rules
 
-Ryter keeps your standing rules in two plain Markdown files, and puts both into the instructions of every role (solo, the lead, the architect, builders and auditors) on every message:
+Ryter keeps your standing rules in two plain Markdown files, and puts both into the model's instructions on every message, whichever hat it is in:
 
 - **`~/.ryter/RYTER.md`:** your rules for every project. How you like work reported, what to ask before doing, spelling, tone.
 - **`RYTER.md` at the top of a project** (or `AGENTS.md` when there's no `RYTER.md`): rules for that project.
 
 Your rules come first, and where the two differ the project's win. You can edit either file by hand at any time. Ryter loads up to 32 KB of the every-project file.
+
+**The `/rules` panel.** `/rules` opens both files, one at a time, with no model involved:
+
+- **Tab** switches between *every project* and *this project*. The line under the tabs names the file and says how many rules it holds.
+- **`a`** adds a rule under the selected line. What you type becomes a bullet; a line you start with `#` is kept as a heading.
+- **`d`** removes the selected line, after you answer `y`.
+- **`e`** opens the file in your editor (`$VISUAL`, then `$EDITOR`, then `vi`).
+
+The first rule you add creates the file. For this project that is `RYTER.md`, unless the project already keeps an `AGENTS.md`, which is then the one read and added to. A change takes effect from your next message.
 
 **Saving a rule from the chat.** Say how you want something done from now on, such as "from now on, answer in British spelling", or type `/rules <what to remember>`. The model loads the built-in `rules` skill and changes the every-project file with the `update_rules` tool. Before anything is saved, Ryter shows you the change line by line and asks:
 
@@ -520,18 +597,61 @@ When a terminal isn't the right place for an answer (a report, a comparison, a c
 
 `ryter doctor` (and the `/doctor` panel, which runs the checks off-thread and can save the report with `c`) checks OS, tty, home, config, both built-in connections (key set/missing, never printed), spend catalog, git, Landlock, sandbox profile, and whether `.ryter/` is trusted. No network.
 
-`--sandbox workspace` Landlock-restricts the tool thread to the project tree (writable) plus `~/.ryter/{tmp,logs,sessions,pages}`, and reads `~/.ryter/skills`. It never grants `~/.ryter/keys`. The sandbox is filesystem-only; it does not restrict network. `--sandbox read-only` makes the project tree read-only. `--sandbox off` is the default. A non-off profile **refuses to start** if the kernel cannot enforce Landlock. `/tmp` itself is not granted; scratch is `~/.ryter/tmp`. Sandboxed runs use a current-thread tokio runtime.
+### Sandbox profiles
+
+A sandbox limits which files the model's commands can reach. It is enforced by the system (Linux's Landlock), not by Ryter's own rules, so it holds even for a command Ryter would have allowed. Choose a profile with `--sandbox <profile>`, or in `/settings` → *sandbox*, which shows this comparison. A change applies the next time Ryter starts. The default is `off`.
+
+| | `off` | `workspace` | `read-only` |
+|---|---|---|---|
+| Project files | read, write | read, write | read |
+| The rest of your home folder | read, write | no | no |
+| Your tools | yes | yes | yes |
+| Your keys | by rule only | never | never |
+| `/tmp` | read, write | read, write | read, write |
+| Network | yes | yes | yes |
+| Docker | yes | yes | yes |
+
+**When to use each:**
+
+- **`off`:** you are watching each step. Ryter's own rules still apply: it asks before a command that changes things, and refuses to read your keys. Nothing stops a command you approved from reaching the rest of your machine.
+- **`workspace`:** tools run without asking (`/tools always`, `--always-approve`, `ryter serve`), or you are working on code you don't trust. Commands can change only the project.
+- **`read-only`:** you only want a review. Nothing in the project can be changed either, which also means nothing can be built into it.
+
+**What "your tools" means.** Under `workspace` and `read-only`, commands can read and run:
+
+- system folders (`/usr`, `/bin`, `/etc`), and where package managers install (`/opt`, `/nix`, `/snap`, Homebrew);
+- toolchains under your home folder: `~/.cargo/bin`, `~/.rustup`, node version managers (`~/.nvm`, `~/.volta`, `fnm`, `asdf`, `mise`), `~/.pyenv`, `~/.bun`, `~/.deno`, `~/go/bin`, `~/.local/bin`, pipx and uv;
+- any other folder on your `PATH` that is under your home folder, as that folder alone;
+- your git identity (`~/.gitconfig` and `~/.config/git/config`).
+
+A tool folder that is a symbolic link is left out, since a grant on a link is a grant on what it points at. If your `~/.npm` or `~/.cargo/registry` is a link to another disk, builds under the sandbox can't use that cache.
+
+They can also write the tools' download caches (`~/.cargo/registry`, `~/.npm`, pip's, uv's, Go's and others), so a build that fetches a dependency works.
+
+**Scratch space is open:** `/tmp` and `/var/tmp`, to read and write, under both profiles. Scripts and tools name `/tmp` outright, and with it shut they failed with "Permission denied".
+
+**What stays shut:** the rest of your home folder, `~/.ssh`, the tools' saved logins (`~/.cargo/credentials.toml`, `~/.npmrc`, `~/.config/git/credentials`), and Ryter's keys. Ryter also closes its own process to the commands it runs, so a key held in its memory or its environment can't be read from `/proc`.
+
+**Ryter's own records are kept from outside the sandbox:** which run file you approved, which product it left running, and its plans, decisions and reports in the project. A command can't write them, so it can't approve a run file for you, and a profile doesn't stop Ryter keeping them: under `read-only` too, an approved plan is saved.
+
+**What a sandbox doesn't do:**
+
+- **It doesn't limit the network.**
+- **It doesn't contain Docker.** A command that can reach the Docker socket can mount the whole machine. If that matters, don't give the account Docker access. `docker build` works under a profile (its lock folder, `~/.docker/buildx`, is writable; the registry logins beside it stay shut).
+- **Rootless Podman can't run under it.** Podman keeps its state in your home folder and starts containers in a user namespace of its own, and a sandboxed command can do neither. Use Docker, or the `off` profile, for a project that needs Podman.
+- **It needs Linux.** Elsewhere Ryter refuses to start with `workspace` or `read-only`, and it also refuses on a Linux kernel that can't enforce Landlock. On a kernel older than 5.19 a profile works, but a file can't be moved from one folder to another under it, so some builds fail (`cargo` building a library, for one).
+- **Some of Ryter's own features are off under it:** your every-project rules can't be changed, and pages aren't opened in a browser.
+
 
 ## Safety
 
-- One gate: `decide(role, tool, args)` → Allow / Ask / Deny. Role masks omit tools the model should not see.
-- Orchestrator: read, list, grep, glob, `todo_write`, MCP. Cannot write `src/`.
-- Architect: read tools, project memory, `todo_write`.
-- Builder: full tool set in its worktree; denied project memory files.
-- Auditor: read tools + test/lint/read-only-git bash; no write tools.
-- Denied even for builders: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files.
-- Shell commands are judged per segment (`a && b` is two commands). Privilege escalation, disk writes, `git push`, and piping into a shell are denied; destroying files outside the worktree is Ask. In the TUI a permission modal shows the tool and its arguments: `⏎` or `y` allow this call, `n` deny, `a` allow that kind of action for the rest of the session; destructive commands and writes outside the project take only `y` (see [Approving](#talking-to-ryter)). Headless (no TUI) fail-closes.
-- `ask_user` lets the orchestrator ask a question; the TUI shows it as a modal (number keys pick a choice, or type free text).
+- One gate: `decide(hat, tool, args)` → Allow / Ask / Deny. Every hat is offered the same tools; the gate decides what each may do with them.
+- **Build:** reading runs; edits and commands that change things ask; destruction always asks.
+- **Plan:** reading and read-only commands; it may write the project's memory files and its own notes, nothing else.
+- **Review:** reading, tests, linters and read-only git; no writes at all.
+- Denied in every hat: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files. An example file (`.env.example`, `.env.sample`) is not a secret.
+- Shell commands are judged per segment (`a && b` is two commands). Privilege escalation, disk writes, `git push`, and piping into a shell are denied. In the TUI a permission modal shows the tool and its arguments: `⏎` or `y` allow this call, `n` deny, `a` allow that kind of action for the rest of the session; destructive commands and writes outside the project take only `y` (see [Approving](#talking-to-ryter)). Headless (no TUI) fail-closes.
+- `ask_user` lets the model ask a question; the TUI shows it as a modal (number keys pick a choice, or type free text).
 - `[features] web = true` offers `web_fetch` / `web_search`. Localhost and private IPs are blocked.
 - Hooks can still deny after the policy allows.
 
@@ -539,51 +659,15 @@ Logs append to `~/.ryter/logs/ryter.log` (no secrets). Project `.ryter/` overlay
 
 ## Project memory
 
-Ryter keeps **why** on disk, not in the orchestrator transcript:
+A project can keep **why** on disk, not only in a conversation:
 
 | File | Role |
 | --- | --- |
-| `ROADMAP.md` | Now / Next / Later / Done / Blocked. Created on first run if missing. |
+| `ROADMAP.md` | Now / Next / Later / Done / Blocked. |
 | `DECISIONS.md` | Decision records (chosen vs rejected, why, where). |
-| `notes/*.md` | Phase pass notes (`plan`, `architect`, `build`, `audit`). |
+| `notes/*.md` | Notes kept beside them. |
 
-The orchestrator and specialists **read** these every turn (capped). They **update** them as work changes. They must not paste chat logs. When you ask why something is a certain way, the orchestrator should quote `DECISIONS.md` and open the files it names.
-
-Orchestrator may write only these memory files, never `src/`.
-
-## Benchmark
-
-`ryter bench` measures the crew on real tasks. Each task in `bench/` is a small repository with something to build or fix. The crew you have set up does the work in a fresh copy: a builder builds, the task's checks and the auditor decide whether it lands, and then tests the crew never saw decide whether it was right. It spends real money on your keys, capped per task.
-
-```sh
-ryter bench                         # every task, with your crew
-ryter bench --only rust-durations   # one task (repeatable)
-ryter bench --budget-usd 2          # the cap per task (default $1)
-ryter bench --repeat 3              # each task three times
-ryter bench --crew <preset>         # a saved crew, to compare
-ryter bench --publish docs/bench    # write the results page and compare with the last
-```
-
-It reports four numbers:
-
-- **Landed:** the checks and the auditor passed, so the work reached the branch.
-- **Accepted:** the hidden tests passed too.
-- **False passes:** landed but wrong, which is how often the auditor's sign-off was mistaken.
-- **Cost per accepted task.**
-
-The suite covers Python, Rust and TypeScript, single-file fixes and changes across several files, and one piece of work split into three builder tasks, two of them side by side. A task says what it needs (`cargo`, `node`, `python3`), and is skipped, by name, on a machine without it.
-
-`--publish docs/bench` writes `docs/bench.md` (the page) and `docs/bench.json` (the same run as data). If a run was published there before, it says how this one compares. Cost is shown but never counted as worse: the same crew can take several times as many steps on one run as on the next. A task that ran last time and not this time is named. The published run is [docs/bench.md](bench.md), and each release is checked against it this way.
-
-The published run is what the next one is measured against, so it is replaced only by a run that can stand in for it. Otherwise it is left exactly as it was, and `ryter bench` exits 1:
-
-- **The run is worse:** a task is accepted less often, or is passed wrong more often. Both are counted per run of the task, so runs with a different `--repeat` still compare. If the new run is the truth, remove `docs/bench.json` and publish again.
-- **A published task was skipped** because this machine lacks its tools.
-- **Only part of the suite ran:** `--publish` can't be combined with `--only`.
-
-A run that measured nothing is a failure whether you publish or not. `ryter bench` exits 1 when every task was skipped, and it stops at the first task no model answered: a key the provider refuses, a model your account can't reach, or a crew that won't start because the auditor is the same model as the builder. It says which, and spends nothing on the tasks left. `--repeat` must be at least 1 and `--budget-usd` above 0.
-
-To add a task, copy one in `bench/` (see `bench/README.md`). A test proves every task sound: the hidden tests fail on the fixture, and pass on the reference solution.
+When these files exist, the model **reads** them on every turn (capped), and is told to update them as work changes and to add a short entry to `DECISIONS.md` when it makes a non-obvious decision. When you ask why something is a certain way, it should quote `DECISIONS.md` and open the files it names. Ryter doesn't create them: a project that has none gets none until you or the model writes one. The plan hat may write these files; the review hat may not.
 
 ## Sessions
 
@@ -591,11 +675,13 @@ To add a task, copy one in `bench/` (see `bench/README.md`). A test proves every
 ~/.ryter/sessions/<cwd-slug>/<id>/
   meta.json
   events.jsonl
-  transcript.jsonl
+  transcript.jsonl # the conversation the plan, build and review hats share
+  test.jsonl       # the test hat's own conversation, once it has one
   spend.jsonl
-  notes/           # pass notes
-  tasks.json
+  notes/           # the plan hat's notes, and project.log: the output of a product the tester started
 ```
+
+A session saved in crew mode, before it was removed, still opens: its conversation and its spend are there, and it carries on in the build hat.
 
 No SQLite. `ryter spend` uses the latest session for this directory.
 

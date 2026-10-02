@@ -1,0 +1,30 @@
+ ryter  ·  build                                                    ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ dusty  trim the query                                   ↑ 15  │╭─ session ────────────────────────╮
+ ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥ ││ untitled                   build │
+   6 + })                                                      ││ tools ask                        │
+                                                               │╰──────────────────────────────────╯
+ ───────── 2 files (1 new, 1 changed, +8 −1) · 2.1s ────────── │╭─ model ──────────────────────────╮
+                                                               ││ spacexai ●              grok-4.6 │
+ · system                                                      ││ ctx █░░░░░░░░░░░░░░░░░░░   5%    │
+   switched to the review hat (claude-opus-5.5) · Tab to       ││     12.4k / 256k tokens          │
+   change it again                                             ││ price unknown                    │
+                                                               ││ reasoning          auto · medium │
+ claude-opus-5.5                                               ┃╰──────────────────────────────────╯
+   • blocking  app/server.js:6 : an empty query returns early, ┃╭─ spend ──────────────────────────╮
+     but  find  still runs on  undefined  when  q  is missing. ┃│ session                    $?.?? │
+   • note: the test covers  ""  only.                          ┃╰──────────────────────────────────╯
+                                                               ┃╭─ budget ─────────────────── off ─╮
+   VERDICT: FAIL                                               ┃│ cap                          off │
+                                                               ┃╰──────────────────────────────────╯
+ · system                                                      ┃
+   switched to the build hat · Tab to change it again          ┃
+                                                               ┃
+ · system                                                      ┃
+   review · claude-opus-5.5 · ✗ blocking problems · $0.040     ┃
+ · ✓ done · 0 tools · 0:03                                                         ^r  reasoning  ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: review · / for commands                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ enter send    tab review    ⇧enter newline    / commands    ^r reasoning    ^b panel    ^c quit

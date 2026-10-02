@@ -39,8 +39,12 @@ impl Commit {
     /// Open on everything uncommitted, all chosen, and ask for a draft.
     pub fn new(view: &View, env: &PanelEnv) -> (Self, Action) {
         let base = review::head_base(&env.cwd);
+        let mut now = None;
         let (files, error) = match review::changes(&env.cwd, &base) {
-            Ok(c) => (c.files.into_iter().map(|f| (f, true)).collect(), None),
+            Ok(c) => {
+                now = review::tree_of(&env.cwd, &c.now);
+                (c.files.into_iter().map(|f| (f, true)).collect(), None)
+            }
             Err(e) => (Vec::new(), Some(super::changes::plain(&e))),
         };
         let since = review::head_time_ms(&env.cwd).unwrap_or(0);
@@ -51,6 +55,8 @@ impl Commit {
             partial: spend.unpriced > 0,
             tests: view.last_tests.clone(),
             tests_stale: view.tests_stale,
+            review: review::Reviewed::of(view.last_review.as_ref(), now.as_deref()),
+            test: review::Tested::of(view.last_test.as_ref(), now.as_deref()),
         };
         let mut c = Self {
             files,
@@ -70,6 +76,12 @@ impl Commit {
             Action::DraftCommit(c.chosen())
         };
         (c, act)
+    }
+
+    /// The receipt's line, as the commit message would carry it.
+    #[cfg(test)]
+    pub(crate) fn receipt_line(&self) -> String {
+        self.receipt.line()
     }
 
     fn chosen(&self) -> Vec<String> {
@@ -199,7 +211,7 @@ impl Panel for Commit {
         let receipt_note = if view.ui.receipts {
             "receipt on · t turns it off"
         } else {
-            "receipt off · t adds model, cost, and tests to the message"
+            "receipt off · t adds model, cost, tests and review to the message"
         };
         if lines.len() + 2 < h {
             while lines.len() + 1 < h {

@@ -32,10 +32,6 @@ pub enum Error {
         unpriced: Option<String>,
     },
 
-    /// One crew task hit its dollar or token cap. Stops that task only.
-    #[error("task budget: {0}")]
-    TaskBudget(String),
-
     /// An outbound MCP server failed, timed out, or went away.
     #[error("{0}")]
     Mcp(String),

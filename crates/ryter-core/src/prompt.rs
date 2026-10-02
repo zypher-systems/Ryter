@@ -1,90 +1,32 @@
-//! Prompt files: shipped, user (`~/.ryter/prompts`), project (`.ryter/prompts`).
+//! The prompt: shipped, or the user's (`~/.ryter/prompts/solo.md`), or the
+//! project's (`.ryter/prompts/solo.md`), with what this session adds to it.
 
 use std::fs;
 use std::path::Path;
 
-use crate::error::Result;
-use crate::phase::Phase;
-use crate::role::Role;
-use crate::session::Session;
-
-const ORCHESTRATOR: &str = include_str!("../../../prompts/orchestrator.md");
-const ARCHITECT: &str = include_str!("../../../prompts/architect.md");
-const BUILDER: &str = include_str!("../../../prompts/builder.md");
-const AUDITOR: &str = include_str!("../../../prompts/auditor.md");
 const SOLO: &str = include_str!("../../../prompts/solo.md");
-const SECOND: &str = include_str!("../../../prompts/second.md");
 
-/// Which prompt file to load.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PromptKind {
-    /// User-facing orchestrator.
-    Orchestrator,
-    /// Architect specialist.
-    Architect,
-    /// Build specialist.
-    Builder,
-    /// Audit specialist / merge gate.
-    Auditor,
-    /// Solo mode: one model, three hats.
-    Solo,
-    /// A second model reviewing solo work, on the user's request.
-    Second,
-}
-
-impl PromptKind {
-    /// Filename stem.
-    pub fn file_stem(self) -> &'static str {
-        match self {
-            Self::Orchestrator => "orchestrator",
-            Self::Architect => "architect",
-            Self::Builder => "builder",
-            Self::Auditor => "auditor",
-            Self::Solo => "solo",
-            Self::Second => "second",
-        }
-    }
-
-    /// Shipped default body.
-    pub fn shipped(self) -> &'static str {
-        match self {
-            Self::Orchestrator => ORCHESTRATOR,
-            Self::Architect => ARCHITECT,
-            Self::Builder => BUILDER,
-            Self::Auditor => AUDITOR,
-            Self::Solo => SOLO,
-            Self::Second => SECOND,
-        }
-    }
-
-    /// Specialist kind for a role (orchestrator is not a specialist prompt).
-    pub fn for_role(role: Role) -> Option<Self> {
-        match role {
-            Role::Orchestrator => Some(Self::Orchestrator),
-            Role::Architect => Some(Self::Architect),
-            Role::Builder => Some(Self::Builder),
-            Role::Auditor => Some(Self::Auditor),
-            Role::SoloPlan | Role::SoloBuild | Role::SoloReview => Some(Self::Solo),
-        }
-    }
+/// The shipped prompt.
+pub fn shipped() -> &'static str {
+    SOLO
 }
 
 /// Load a prompt with overrides: project (if trusted) > user home > shipped.
-pub fn load(kind: PromptKind, home: &Path, project_root: Option<&Path>, trusted: bool) -> String {
-    let name = format!("{}.md", kind.file_stem());
+pub fn load(home: &Path, project_root: Option<&Path>, trusted: bool) -> String {
+    let name = "solo.md";
     if trusted {
         if let Some(root) = project_root {
-            let p = root.join(".ryter").join("prompts").join(&name);
+            let p = root.join(".ryter").join("prompts").join(name);
             if let Ok(s) = fs::read_to_string(&p) {
                 return s;
             }
         }
     }
-    let user = home.join("prompts").join(&name);
+    let user = home.join("prompts").join(name);
     if let Ok(s) = fs::read_to_string(&user) {
         return s;
     }
-    kind.shipped().to_string()
+    SOLO.to_string()
 }
 
 /// `RYTER.md`, or `AGENTS.md` if that file is missing. Loaded from the project
@@ -103,7 +45,7 @@ pub fn load_project_instructions(project_root: Option<&Path>) -> Option<String> 
 }
 
 /// `YYYY-MM-DD` in UTC, from the system clock.
-fn today_utc() -> String {
+pub(crate) fn today_utc() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -125,45 +67,16 @@ pub(crate) fn civil_date(days: u64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
-/// Orchestrator system prompt for this session: body + phase + pass notes.
-pub fn orchestrator_system(
-    home: &Path,
-    project_root: Option<&Path>,
-    trusted: bool,
-    session: &Session,
-) -> Result<String> {
-    conversation_system(
-        PromptKind::Orchestrator,
-        home,
-        project_root,
-        trusted,
-        session,
-    )
-}
-
-/// System prompt for the conversation the user types into: the crew lead, or
-/// solo mode's one model. Both carry project instructions and memory.
-pub fn conversation_system(
-    kind: PromptKind,
-    home: &Path,
-    project_root: Option<&Path>,
-    trusted: bool,
-    session: &Session,
-) -> Result<String> {
-    // No phase section: the lead routes each task to a role itself, and a
-    // "current phase" line only confused the models about what they could do.
-    let mut s = load(kind, home, project_root, trusted);
+/// The system prompt for a conversation: the prompt, the date, the user's
+/// rules, the project's instructions, the skills on offer, and the
+/// project's memory. Nothing in it changes with the hat, so a hat switch
+/// keeps the provider's cache.
+pub fn system(home: &Path, project_root: Option<&Path>, trusted: bool) -> String {
+    let mut s = load(home, project_root, trusted);
     s.push('\n');
-    // Without it the lead dated DECISIONS entries from its training data.
+    // Without it the model dated DECISIONS entries from its training data.
     // Changes once a day, so it costs the prompt cache nothing within a day.
     s.push_str(&format!("\nToday's date (UTC) is {}.\n", today_utc()));
-    // The crew keeps its memory in the project; solo mode doesn't create
-    // files the user didn't ask for (they appeared on "are you there?").
-    if kind == PromptKind::Orchestrator {
-        if let Some(root) = project_root {
-            let _ = crate::memory::ensure_project_memory(root);
-        }
-    }
     // The user's rules come before the project's, and say which wins. They
     // are part of the prompt, not a file to go and read: a model told to
     // read one may skip it, and tools can't read Ryter's home folder.
@@ -200,125 +113,133 @@ pub fn conversation_system(
     }
     if let Some(mem) = crate::memory::load_project_memory(project_root) {
         s.push_str("\n## Project memory (roadmap, decisions, notes)\n");
-        s.push_str("When the user asks why something is the way it is, read this and the files named in it. Update ROADMAP.md and DECISIONS.md as work changes. Do not paste specialist transcripts here.\n\n");
+        s.push_str("When the user asks why something is the way it is, read this and the files named in it. Update ROADMAP.md and DECISIONS.md as work changes.\n\n");
         s.push_str(&mem);
     }
 
-    let mut any = false;
-    for phase in [Phase::Plan, Phase::Build, Phase::Audit] {
-        let note = session.read_note(phase)?;
-        if note.is_empty() {
-            continue;
-        }
-        if !any {
-            s.push_str("\n## Pass notes\n");
-            any = true;
-        }
-        s.push_str("### ");
-        s.push_str(phase.as_str());
-        s.push('\n');
-        s.push_str(&note);
-        if !note.ends_with('\n') {
-            s.push('\n');
-        }
-    }
-    // The latest crew report is not repeated here: it already reaches the
-    // orchestrator as a turn in the transcript, and a copy in the system prompt
-    // changed the cached prefix after every build.
-    Ok(s)
+    s
 }
 
-/// Fresh-window messages for a specialist (no orchestrator transcript).
-pub fn specialist_messages(
-    home: &Path,
-    project_root: Option<&Path>,
-    trusted: bool,
-    role: Role,
-    pass_note: &str,
-    task: &str,
-    scope: &[String],
-) -> Vec<crate::llm::Message> {
-    // The crew keeps its memory in the project.
-    if let Some(root) = project_root {
-        let _ = crate::memory::ensure_project_memory(root);
-    }
-    reading_messages(home, project_root, trusted, role, pass_note, task, scope)
-}
-
-/// [`specialist_messages`] without creating project memory: for a reader
-/// in the user's own tree (`/second`), which must not leave files behind,
-/// least of all ones it would then review.
-pub fn reading_messages(
-    home: &Path,
-    project_root: Option<&Path>,
-    trusted: bool,
-    role: Role,
-    pass_note: &str,
-    task: &str,
-    scope: &[String],
-) -> Vec<crate::llm::Message> {
-    let kind = PromptKind::for_role(role).unwrap_or(PromptKind::Builder);
-    let system = load(kind, home, project_root, trusted);
-    let mut user = String::new();
-    if let Some(rules) = crate::rules::load(home) {
-        user.push_str(
-            "The user's rules (every project; the project's instructions win where they \
-             differ):\n",
-        );
-        user.push_str(&rules);
-        user.push_str("\n\n");
-    }
-    if let Some(inst) = load_project_instructions(project_root) {
-        user.push_str("Project instructions:\n");
-        user.push_str(&inst);
-        if !inst.ends_with('\n') {
-            user.push('\n');
-        }
-        user.push('\n');
-    }
-    // The architect writes project memory, so it reads all of it. Builders and
-    // auditors get the design and the decisions about their files: the whole
-    // log on every round was most of their fixed cost.
-    let memory = if role == Role::Architect {
-        crate::memory::load_project_memory(project_root)
-            .map(|m| format!("Project memory (you keep ROADMAP.md and DECISIONS.md current):\n{m}"))
-    } else {
-        crate::memory::load_scoped_memory(project_root, scope)
-            .map(|m| format!("Project memory relevant to this task:\n{m}"))
+/// Whether `docker` and `podman` are on `path` (the `PATH` variable).
+pub fn container_tools_in(path: Option<&std::ffi::OsStr>) -> (bool, bool) {
+    let has = |name: &str| {
+        path.is_some_and(|p| std::env::split_paths(p).any(|dir| dir.join(name).is_file()))
     };
-    if let Some(mem) = memory {
-        user.push_str(&mem);
-        user.push('\n');
+    (has("docker"), has("podman"))
+}
+
+/// What the model is told about the machine it is on: which container tool
+/// to use, and what a sandbox profile shuts.
+///
+/// - **Containers.** With both installed, models picked either, and a
+///   project built with one was started with the other. Docker when it is
+///   there.
+/// - **The sandbox.** A command refused by the profile fails with
+///   "Permission denied", and the model reported a broken tool or a missing
+///   one. It is told what the profile shuts and where scratch space is.
+pub fn machine((docker, podman): (bool, bool), sandbox: crate::sandbox::SandboxProfile) -> String {
+    use crate::sandbox::SandboxProfile;
+    let mut lines = Vec::new();
+    match (docker, podman) {
+        (true, true) => lines.push(
+            "- Containers: Docker and Podman are both installed. Use Docker (`docker`, \
+             `docker compose`) for everything, including what a project's files call \
+             `podman`, unless the user asks for Podman."
+                .to_string(),
+        ),
+        (true, false) => lines
+            .push("- Containers: Docker is installed (`docker`, `docker compose`).".to_string()),
+        (false, true) => lines.push(
+            "- Containers: Podman is installed (`podman`, `podman compose`); Docker is not."
+                .to_string(),
+        ),
+        (false, false) => {}
     }
-    if !pass_note.is_empty() {
-        user.push_str("Pass note:\n");
-        user.push_str(pass_note);
-        user.push_str("\n\n");
+    if sandbox != SandboxProfile::Off {
+        let project = if sandbox == SandboxProfile::ReadOnly {
+            "They can read the project and can't write it."
+        } else {
+            "They can write the project and the tools' download caches."
+        };
+        lines.push(format!(
+            "- Sandbox: commands and file edits run under the `{sandbox}` profile, which the \
+             user chose. {project} `/tmp` is open. The rest of the user's folder is shut: a \
+             \"Permission denied\" there is the profile, not a broken or missing tool. If the \
+             work needs more, say so: the user changes the profile in /settings. Docker's own \
+             work is not limited by it."
+        ));
     }
-    user.push_str("Task:\n");
-    user.push_str(task);
-    vec![
-        crate::llm::Message {
-            role: "system".into(),
-            content: system,
-            tool_call_id: None,
-            tool_calls: None,
-        },
-        crate::llm::Message {
-            role: "user".into(),
-            content: user,
-            tool_call_id: None,
-            tool_calls: None,
-        },
-    ]
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("\n## This machine\n{}\n", lines.join("\n"))
+    }
+}
+
+/// [`machine`], for the machine and the thread this is called on.
+pub fn machine_here() -> String {
+    machine(
+        container_tools_in(std::env::var_os("PATH").as_deref()),
+        crate::sandbox::active(),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::phase::Phase;
-    use crate::session::Session;
     use tempfile::TempDir;
+
+    /// With both installed the model is told to use Docker; with one, which
+    /// one; with neither, nothing. Under a sandbox profile it is told what
+    /// is shut, so a refusal isn't reported as a missing tool.
+    #[test]
+    fn the_model_is_told_about_containers_and_the_sandbox() {
+        use crate::sandbox::SandboxProfile;
+        let both = machine((true, true), SandboxProfile::Off);
+        assert!(
+            both.starts_with("\n## This machine\n- Containers: Docker and Podman"),
+            "{both}"
+        );
+        assert!(
+            both.contains("Use Docker") && !both.contains("Sandbox"),
+            "{both}"
+        );
+        let only_podman = machine((false, true), SandboxProfile::Off);
+        assert!(only_podman.contains("Podman is installed") && !only_podman.contains("Use Docker"));
+        assert!(machine((true, false), SandboxProfile::Off).contains("Docker is installed"));
+        assert_eq!(machine((false, false), SandboxProfile::Off), "");
+        let boxed = machine((false, false), SandboxProfile::Workspace);
+        assert!(
+            boxed.contains("under the `workspace` profile")
+                && boxed.contains("`/tmp` is open. The rest of the user's folder is shut")
+                && boxed.contains("They can write the project"),
+            "{boxed}"
+        );
+        let ro = machine((false, false), SandboxProfile::ReadOnly);
+        assert!(
+            ro.contains("can't write it") && ro.contains("`/tmp` is open"),
+            "{ro}"
+        );
+    }
+
+    #[test]
+    fn container_tools_are_found_on_the_path() {
+        let a = TempDir::new().unwrap();
+        let b = TempDir::new().unwrap();
+        std::fs::write(a.path().join("docker"), "").unwrap();
+        std::fs::write(b.path().join("podman"), "").unwrap();
+        let path = |dirs: &[&Path]| std::env::join_paths(dirs).unwrap();
+        assert_eq!(
+            container_tools_in(Some(&path(&[a.path(), b.path()]))),
+            (true, true)
+        );
+        assert_eq!(container_tools_in(Some(&path(&[a.path()]))), (true, false));
+        assert_eq!(container_tools_in(Some(&path(&[b.path()]))), (false, true));
+        assert_eq!(container_tools_in(None), (false, false));
+        // A folder named for the tool is not the tool.
+        std::fs::create_dir(a.path().join("podman")).unwrap();
+        assert_eq!(container_tools_in(Some(&path(&[a.path()]))), (true, false));
+    }
 
     #[test]
     fn civil_dates_are_right_across_leap_years() {
@@ -328,41 +249,31 @@ mod tests {
         assert_eq!(civil_date(20_819), "2027-01-01");
     }
 
+    /// The runtime reads the verdict a review ends with: the prompt must
+    /// ask for it in the words the reader takes.
     #[test]
-    fn shipped_orchestrator_forbids_writing_source() {
-        let body = PromptKind::Orchestrator.shipped();
-        assert!(
-            body.to_ascii_lowercase()
-                .contains("never write product source")
+    fn the_prompt_states_the_contract_the_runtime_parses() {
+        let body = shipped();
+        assert!(body.contains("VERDICT: PASS") && body.contains("VERDICT: FAIL"));
+        assert_eq!(
+            crate::gate::verdict("- a.rs:3 nit\nVERDICT: PASS"),
+            Some(true)
         );
-    }
-
-    /// The runtime parses what these roles return. The auditor prompt once
-    /// said "return a clear pass or fail" while the parser wanted a first-line
-    /// PASS, so good work failed the gate on formatting.
-    #[test]
-    fn prompts_state_the_contracts_the_runtime_parses() {
-        let auditor = PromptKind::Auditor.shipped();
-        assert!(auditor.contains("VERDICT: PASS") && auditor.contains("VERDICT: FAIL"));
-        assert!(crate::crew::parse_verdict("- a.rs:3 nit\nVERDICT: PASS"));
-        assert!(!crate::crew::parse_verdict("- a.rs:3 bug\nVERDICT: FAIL"));
-        let builder = PromptKind::Builder.shipped();
-        for field in ["STATUS:", "FILES:", "DECISIONS:", "NOTES:"] {
-            assert!(builder.contains(field), "builder handback lost {field}");
+        assert_eq!(
+            crate::gate::verdict("- a.rs:3 bug\nVERDICT: FAIL"),
+            Some(false)
+        );
+        for tool in ["present_plan", "request_hat"] {
+            assert!(body.contains(tool), "{tool}");
         }
-        // Builders are denied memory files; the prompt must not ask for them.
-        assert!(builder.contains("Do not commit"));
-        let orchestrator = PromptKind::Orchestrator.shipped();
-        assert!(orchestrator.contains("brief") && orchestrator.contains("files"));
     }
 
     #[test]
     fn user_override_wins() {
         let home = TempDir::new().unwrap();
         fs::create_dir_all(home.path().join("prompts")).unwrap();
-        fs::write(home.path().join("prompts/orchestrator.md"), "OVERRIDE ORCH").unwrap();
-        let got = load(PromptKind::Orchestrator, home.path(), None, false);
-        assert_eq!(got, "OVERRIDE ORCH");
+        fs::write(home.path().join("prompts/solo.md"), "OVERRIDE").unwrap();
+        assert_eq!(load(home.path(), None, false), "OVERRIDE");
     }
 
     #[test]
@@ -370,60 +281,29 @@ mod tests {
         let home = TempDir::new().unwrap();
         let proj = TempDir::new().unwrap();
         fs::create_dir_all(proj.path().join(".ryter/prompts")).unwrap();
-        fs::write(
-            proj.path().join(".ryter/prompts/builder.md"),
-            "PROJECT BUILDER",
-        )
-        .unwrap();
-        let untrusted = load(PromptKind::Builder, home.path(), Some(proj.path()), false);
-        assert_eq!(untrusted, PromptKind::Builder.shipped());
-        let trusted = load(PromptKind::Builder, home.path(), Some(proj.path()), true);
-        assert_eq!(trusted, "PROJECT BUILDER");
+        fs::write(proj.path().join(".ryter/prompts/solo.md"), "PROJECT").unwrap();
+        assert_eq!(load(home.path(), Some(proj.path()), false), shipped());
+        assert_eq!(load(home.path(), Some(proj.path()), true), "PROJECT");
     }
 
+    /// The project's memory is read when it is there, and never created:
+    /// files appeared in the user's project on "are you there?".
     #[test]
-    fn orchestrator_system_includes_phase_and_notes() {
+    fn the_prompt_includes_the_roadmap_and_creates_nothing() {
         let home = TempDir::new().unwrap();
         let cwd = TempDir::new().unwrap();
-        let mut s = Session::create(
-            home.path(),
-            cwd.path(),
-            Phase::Plan,
-            "spacexai".into(),
-            "grok-4.6".into(),
-        )
-        .unwrap();
-        s.handoff(Phase::Build, "we need auth", None).unwrap();
-        let sys = orchestrator_system(home.path(), None, false, &s).unwrap();
-        // Phases are gone from what the lead is told.
-        assert!(!sys.contains("## Current phase"));
-        assert!(!sys.contains("Allowed specialists"));
-        // Notes left by older sessions still reach it.
-        assert!(sys.contains("we need auth"));
-        assert_eq!(s.transcript.len(), 0);
-    }
-
-    #[test]
-    fn orchestrator_system_includes_roadmap() {
-        let home = TempDir::new().unwrap();
-        let cwd = TempDir::new().unwrap();
+        let sys = system(home.path(), Some(cwd.path()), false);
+        assert!(!sys.contains("## Project memory (roadmap, decisions, notes)"));
+        assert_eq!(fs::read_dir(cwd.path()).unwrap().count(), 0);
         fs::write(
             cwd.path().join("ROADMAP.md"),
             "# Roadmap\n## Now\n- custom flag\n",
         )
         .unwrap();
-        let s = Session::create(
-            home.path(),
-            cwd.path(),
-            Phase::Build,
-            "spacexai".into(),
-            "grok-4.6".into(),
-        )
-        .unwrap();
-        let sys = orchestrator_system(home.path(), Some(cwd.path()), false, &s).unwrap();
-        assert!(sys.contains("Project memory"));
+        let sys = system(home.path(), Some(cwd.path()), false);
+        assert!(sys.contains("## Project memory (roadmap, decisions, notes)"));
         assert!(sys.contains("custom flag"));
-        assert!(cwd.path().join("DECISIONS.md").is_file());
+        assert!(!cwd.path().join("DECISIONS.md").exists());
     }
 
     #[test]
@@ -432,100 +312,39 @@ mod tests {
         let cwd = TempDir::new().unwrap();
         fs::write(cwd.path().join("AGENTS.md"), "agents file").unwrap();
         fs::write(cwd.path().join("RYTER.md"), "never invent APIs").unwrap();
-        let s = Session::create(
-            home.path(),
-            cwd.path(),
-            Phase::Build,
-            "spacexai".into(),
-            "grok-4.6".into(),
-        )
-        .unwrap();
-        let sys = orchestrator_system(home.path(), Some(cwd.path()), false, &s).unwrap();
+        let sys = system(home.path(), Some(cwd.path()), false);
         assert!(sys.contains("## Project instructions"));
         assert!(sys.contains("never invent APIs"));
         assert!(!sys.contains("agents file"));
-        let msgs = specialist_messages(
-            home.path(),
-            Some(cwd.path()),
-            false,
-            Role::Builder,
-            "",
-            "add a flag",
-            &[],
-        );
-        assert!(msgs[1].content.contains("never invent APIs"));
     }
 
-    /// The user's rules are in every role's instructions, ahead of the
-    /// project's, with which wins said; no file, no section.
+    /// The user's rules are in the prompt, ahead of the project's, with
+    /// which wins said; no file, no section.
     #[test]
-    fn the_users_rules_are_in_every_prompt() {
+    fn the_users_rules_are_in_the_prompt() {
         let home = TempDir::new().unwrap();
         let cwd = TempDir::new().unwrap();
         fs::write(cwd.path().join("RYTER.md"), "never invent APIs").unwrap();
-        let s = Session::create(
-            home.path(),
-            cwd.path(),
-            Phase::Build,
-            "spacexai".into(),
-            "grok-4.6".into(),
-        )
-        .unwrap();
-        let solo = |home: &Path| {
-            conversation_system(PromptKind::Solo, home, Some(cwd.path()), false, &s).unwrap()
-        };
-        assert!(!solo(home.path()).contains("The user's rules"), "no file");
+        let sys = |home: &Path| system(home, Some(cwd.path()), false);
+        assert!(!sys(home.path()).contains("The user's rules"), "no file");
         crate::rules::save(home.path(), "- Use British spelling.").unwrap();
-        for sys in [
-            solo(home.path()),
-            orchestrator_system(home.path(), Some(cwd.path()), false, &s).unwrap(),
-        ] {
-            let rules = sys
-                .find("## The user's rules (every project)")
-                .expect("section");
-            let project = sys.find("## Project instructions").unwrap();
-            assert!(rules < project, "the user's rules come first");
-            assert!(sys.contains("- Use British spelling."));
-            assert!(sys.contains("the project's win") && sys.contains("`update_rules`"));
-        }
-        for role in [Role::Architect, Role::Builder, Role::Auditor] {
-            let msgs =
-                specialist_messages(home.path(), Some(cwd.path()), false, role, "", "t", &[]);
-            let brief = &msgs[1].content;
-            let rules = brief
-                .find("- Use British spelling.")
-                .expect("rules in the brief");
-            assert!(rules < brief.find("never invent APIs").unwrap(), "{role:?}");
-        }
+        let sys = sys(home.path());
+        let rules = sys
+            .find("## The user's rules (every project)")
+            .expect("section");
+        let project = sys.find("## Project instructions").unwrap();
+        assert!(rules < project, "the user's rules come first");
+        assert!(sys.contains("- Use British spelling."));
+        assert!(sys.contains("the project's win") && sys.contains("`update_rules`"));
     }
 
     #[test]
     fn agents_md_when_ryter_md_absent() {
-        let home = TempDir::new().unwrap();
         let proj = TempDir::new().unwrap();
         fs::write(proj.path().join("AGENTS.md"), "from agents").unwrap();
         assert_eq!(
             load_project_instructions(Some(proj.path())).as_deref(),
             Some("from agents")
         );
-        drop(home);
-    }
-
-    #[test]
-    fn specialist_messages_are_a_fresh_window() {
-        let home = TempDir::new().unwrap();
-        let msgs = specialist_messages(
-            home.path(),
-            None,
-            false,
-            Role::Builder,
-            "brief",
-            "add a flag",
-            &[],
-        );
-        assert_eq!(msgs.len(), 2);
-        assert_eq!(msgs[0].role, "system");
-        assert!(msgs[1].content.contains("add a flag"));
-        assert!(msgs[1].content.contains("brief"));
     }
 }

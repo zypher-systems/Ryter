@@ -1,4 +1,4 @@
-  chat  esc    changes  ^t    crew board  /crew
+  chat  esc    changes  ^t
  CHANGES · UNCOMMITTED         │        ·  welcome · /help for keys                     ╭ config.rs  +3 −2 · change 1 of 2 ───────────────────────────────────╮
  ▸ config.rs             +3 −2 │        ●  why does loa… ···· ✓ answered · 1.8s · …  ▸  │▌change 1 · line 1                                                   │
                                │                                                        │▌   1    1   line 1                                                  │

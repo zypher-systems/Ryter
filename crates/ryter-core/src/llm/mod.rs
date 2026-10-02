@@ -120,13 +120,13 @@ pub struct ModelInfo {
     /// USD per million output tokens, when the catalog includes it.
     #[serde(default)]
     pub output_per_million: Option<f64>,
-    /// Connection this row was listed from (crew picker).
+    /// Connection this row was listed from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<String>,
     /// Release time (unix seconds), when the catalog says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<u64>,
-    /// Whether the model accepts tools, when the catalog says. A crew role
+    /// Whether the model accepts tools, when the catalog says. A model
     /// that cannot call tools cannot read a file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<bool>,
@@ -309,7 +309,10 @@ pub fn explain_error(e: &str) -> Option<String> {
         );
     }
     if lower.contains("tool use") || lower.contains("tools") && lower.contains("support") {
-        return Some("no provider serves it with tool use, which every crew role needs".into());
+        return Some(
+            "no provider serves it with tool use, which Ryter needs to read and change files"
+                .into(),
+        );
     }
     if lower.contains("not a valid model") {
         return Some("not a model this connection knows (renamed or retired?)".into());

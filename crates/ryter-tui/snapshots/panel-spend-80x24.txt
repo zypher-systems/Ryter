@@ -19,6 +19,6 @@
 
 
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
-│› what should change? · Tab: plan · / for commands                            │
+│› what should change? · Tab: review · / for commands                          │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  p project    e export csv    ↑↓ scroll    esc

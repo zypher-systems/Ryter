@@ -20,12 +20,6 @@ pub enum PanelId {
     Providers,
     /// `/models`.
     Models,
-    /// `/crew`.
-    Crew,
-    /// The crew builder (from `/crew`, or on first launch).
-    CrewBuilder,
-    /// `/agents`.
-    Agents,
     /// `/sessions`.
     Sessions(SessionsMode),
     /// `/spend`.
@@ -40,12 +34,12 @@ pub enum PanelId {
     Theme,
     /// `/tools`.
     Tools,
-    /// `/auditor`.
-    Auditor,
     /// `/mcp`.
     Mcp,
     /// `/skills`.
     Skills,
+    /// `/rules`.
+    Rules,
     /// `/hooks`.
     Hooks,
     /// `/context`.
@@ -73,10 +67,8 @@ pub enum Action {
     ToggleMouse,
     /// Start a new session.
     New,
-    /// Submit text to the orchestrator.
+    /// Submit the user's message.
     Submit(String),
-    /// Toggle auditor gate.
-    SetAuditor(bool),
     /// Switch and persist the theme.
     SetTheme(String),
     /// Live-preview a theme without persisting.
@@ -116,27 +108,19 @@ pub enum Action {
         /// Always.
         always: bool,
     },
-    /// Assign a specialist model (and persist).
-    SetCrewRole {
-        /// Role.
+    /// Give a hat its own model (and persist).
+    SetHatModel {
+        /// The hat: `plan`, `build`, or `review`.
         role: String,
         /// Connection.
         connection: String,
         /// Model.
         model: String,
     },
-    /// Reset a role to follow the orchestrator.
-    ResetCrewRole(String),
-    /// Save the live crew as a named preset.
-    SaveCrewPreset(String),
-    /// Load a named crew preset.
-    LoadCrewPreset(String),
-    /// Delete a named crew preset.
-    DeleteCrewPreset(String),
-    /// Apply a suggested tiered crew (`/crew` → `s`).
-    ApplyCrewTiering(std::collections::BTreeMap<String, ryter_core::RoleModel>),
-    /// List models for a specialist assignment (all connections).
-    ListCrewModels {
+    /// Put a hat back to following the model every hat uses.
+    ResetHatModel(String),
+    /// List every connection's models, for a hat's seat.
+    ListAllModels {
         /// Role.
         role: String,
     },
@@ -160,10 +144,8 @@ pub enum Action {
         /// `low` / `medium` / `high` / `default`, or `None` for auto.
         level: Option<String>,
     },
-    /// Switch hats (solo mode), or to the crew lead (`Orchestrator`).
+    /// Switch hats.
     SetMode(ryter_core::Role),
-    /// `/crew` from solo mode: the crew builder first time, then crew mode.
-    EnterCrew,
     /// `/undo [force]`: put back what the last build turn changed.
     Undo {
         /// Even over the user's later edits to those files.
@@ -174,24 +156,23 @@ pub enum Action {
         /// Even over the user's edits since the undo.
         force: bool,
     },
-    /// `/second`: a second model reviews the uncommitted work.
-    SecondOpinion,
-    /// `/audit model`: choose the reviewer and its limit again.
-    ChooseReviewer,
-    /// `s` on an audit offer: no more offers after build turns (the offer
-    /// itself is answered no).
-    StopAuditOffers,
-    /// The reviewer the user chose, and the most one review may spend.
-    SetReviewer {
-        /// Connection name.
-        connection: String,
-        /// Model id.
-        model: String,
-        /// USD per review.
-        limit_usd: f64,
-        /// Run the review now.
-        then_run: bool,
+    /// `/stop`: stop the product Ryter started for a test.
+    StopProduct,
+    /// The answer to "stop the project?" on quit: stop it and leave, or
+    /// leave it running.
+    QuitAnswer {
+        /// Stop it first.
+        stop: bool,
     },
+    /// `/test`: the test hat tests the work now.
+    TestNow,
+    /// `s` on a test offer: no more offers after reviews that pass.
+    StopTestOffers,
+    /// `/audit`: the review hat reviews the uncommitted work now.
+    ReviewNow,
+    /// `s` on a review offer: no more offers after build turns (the offer
+    /// itself is answered no).
+    StopReviewOffers,
     /// `/changes` `x`: put one file back as `base` had it.
     Revert {
         /// Commit to restore from.
@@ -221,34 +202,13 @@ pub enum Action {
     },
     /// Turn commit receipts on or off, and remember it.
     SetReceipts(bool),
-    /// Test that each `(connection, model)` answers a tiny request with a tool.
-    ProbeModels(Vec<(String, String)>),
-    /// Save what the crew builder chose: the lead's route, the crew, the budget.
-    SaveCrewSetup {
-        /// Lead connection.
-        lead_connection: String,
-        /// Lead model.
-        lead_model: String,
-        /// Architect, builder, auditor.
-        crew: std::collections::BTreeMap<String, ryter_core::RoleModel>,
-        /// Session budget; `0` is off.
-        budget: f64,
-        /// Per-task cap that fits this crew's normal work.
-        task_cap: f64,
-    },
     /// Save everything the `/budget` panel edits.
     SaveBudget {
         /// Session cap; `0` is off.
         usd: f64,
         /// Warn threshold.
         warn: f64,
-        /// Per-task cap.
-        task: f64,
     },
-    /// Kill a running specialist.
-    KillAgent(String),
-    /// Kill every running specialist.
-    KillAllAgents,
     /// Persist MCP config and reconnect outbound servers.
     SaveMcp,
     /// Bind TCP inbound on the running TUI.
@@ -275,6 +235,8 @@ pub enum Action {
     SaveSettings,
     /// Reply to a permission prompt.
     PermissionReply(Permission),
+    /// Reply to a plan.
+    PlanReply(ryter_core::user_io::PlanAnswer),
     /// Reply to `ask_user`.
     AskUserReply(String),
     /// Trust or skip project `.ryter/`.

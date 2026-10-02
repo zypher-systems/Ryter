@@ -77,7 +77,12 @@ pub fn entries(view: &View) -> Vec<Entry> {
         .iter()
         .flat_map(|c| std::iter::once(c.name).chain(c.aliases.iter().copied()))
         .collect();
-    for s in view.catalog.skills.iter().filter(|s| s.user_invocable) {
+    for s in view
+        .catalog
+        .skills
+        .iter()
+        .filter(|s| s.user_invocable && !registry::FRONTS_SKILL.contains(&s.name.as_str()))
+    {
         out.push(Entry {
             name: s.name.clone(),
             aliases: Vec::new(),
@@ -441,15 +446,9 @@ fn match_line(m: &Match, selected: bool, width: usize, theme: Theme) -> Line<'st
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ryter_core::Phase;
 
     fn view() -> View {
-        View::new(
-            Phase::Build,
-            "spacexai".into(),
-            "grok-4.6".into(),
-            "p".into(),
-        )
+        View::new("spacexai".into(), "grok-4.6".into(), "p".into())
     }
 
     #[test]

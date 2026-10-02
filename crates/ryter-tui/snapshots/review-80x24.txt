@@ -1,0 +1,24 @@
+ ryter  ·  build                                ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────
+ dusty  trim the query                       ↑ 25  │╭─ session ────────────────╮
+ ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥ ││ untitled           build │
+   • blocking  app/server.js:6 : an empty query    │╰──────────────────────────╯
+     returns early, but  find  still runs on       │╭─ model ──────────────────╮
+     undefined  when  q  is missing.               ││ spacexai ●      grok-4.6 │
+   • note: the test covers  ""  only.              ││ ctx █░░░░░░░░░░░░░   5%  │
+                                                   ││     12.4k / 256k tokens  │
+   VERDICT: FAIL                                   ││ price unknown            │
+                                                   ││ reasoning  auto · medium │
+ · system                                          │╰──────────────────────────╯
+   switched to the build hat · Tab to change it    │╭─ spend ──────────────────╮
+   again                                           ┃│ session            $?.?? │
+                                                   ┃╰──────────────────────────╯
+ · system                                          ┃╭─ budget ─────────── off ─╮
+   review · claude-opus-5.5 · ✗ blocking problems  ┃│ cap                  off │
+   · $0.040                                        ┃╰──────────────────────────╯
+ · ✓ done · 0 tools · 0:03                                     ^r  reasoning  ▾
+────────────────────────────────────────────────────────────────────────────────
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: review · / for commands                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ enter send    tab review    ⇧enter newline    / commands    ^b panel    ^c quit

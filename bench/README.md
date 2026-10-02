@@ -1,44 +1,23 @@
-# Benchmark suite
+# Benchmark tasks
 
-`ryter bench` runs each task here through the real crew and reports what
-landed, what passed the hidden tests, and what it cost. The last published run
-is `docs/bench.md`; `ryter bench --publish docs/bench` says how the new run
-compares and replaces it, unless the new run is worse, skipped a published
-task, or measured nothing. See the guide's Benchmark section, and
-`docs/cost.md`.
+These ten tasks were the suite for `ryter bench`, which ran each one through
+crew mode and reported what landed, what passed the hidden tests, and what it
+cost. Crew mode was removed, and `ryter bench` went with it. The tasks are
+kept for a benchmark that runs the plan, build and review hats on them, which
+is on the roadmap. **Nothing runs them today**, and no test checks that they
+are still sound.
 
 Each task:
 
 ```
 <task>/task.toml   title, brief, files (scope), checks (the gate), accept (hidden), needs
-<task>/repo/       the fixture the crew works in
-<task>/hidden/     acceptance tests, copied in only after the work lands
-<task>/solution/   a reference answer; never shown to the crew
+<task>/repo/       the fixture the work is done in
+<task>/hidden/     acceptance tests, copied in only after the work is done
+<task>/solution/   a reference answer; never shown to the model
 ```
 
 `needs` lists commands that must succeed for the task to run on a machine, such
-as `cargo --version`. A task whose tools are missing is skipped, by name.
-
-A task can be split into several builder tasks, the way an architect's plan
-splits work. Tasks with no `after` run side by side:
-
-```toml
-[[tasks]]
-id = "parse"
-title = "Parse name,value lines"
-brief = "..."
-files = ["stats/parse.py"]
-
-[[tasks]]
-id = "report"
-title = "Render the report"
-brief = "..."
-files = ["stats/report.py"]
-after = ["parse"]
-```
-
-The gate's `checks` run at every stage of a split task, so they can only cover
-what exists at every stage. The hidden tests cover the whole.
+as `cargo --version`.
 
 | Task | Language | What it asks for |
 |---|---|---|
@@ -50,13 +29,9 @@ what exists at every stage. The hidden tests cover the whole.
 | `settings-overrides` | Python | bugs in two modules that only show together |
 | `rust-durations` | Rust | a parser, its errors and a formatter, across three modules |
 | `ts-event-bus` | TypeScript | new behaviour in two modules, run by Node with no build |
-| `split-stats-report` | Python | three builder tasks: two side by side, one waiting on both |
+| `split-stats-report` | Python | work split into three steps, two of them independent |
+| `runner-script` | Python | a feature in a project whose tests run only through its own script |
 
-A test (`bench::tests::the_suite_is_sound`) proves every task is sound: the
-hidden tests fail on the fixture, and the reference solution passes both the
-visible checks and the hidden tests. Add a task by copying one and keeping that
-test green.
-
-Visible checks are deliberately weaker than the hidden tests. A crew that
-passes the checks and the auditor but fails the hidden tests is a **false
-pass**: the number that says how far the auditor can be trusted.
+Visible checks are deliberately weaker than the hidden tests. Work that passes
+the checks and its review but fails the hidden tests is a **false pass**: the
+number that says how far a review can be trusted.

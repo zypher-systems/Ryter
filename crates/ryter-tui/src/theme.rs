@@ -8,7 +8,6 @@ use std::fs;
 use std::path::Path;
 
 use ratatui::style::{Color, Modifier, Style};
-use ryter_core::Phase;
 use serde::Deserialize;
 
 /// How many colors the terminal can show.
@@ -437,32 +436,24 @@ impl Theme {
         ]
     }
 
-    /// Accent for a phase / specialist kind.
-    pub fn phase(self, phase: Phase) -> Color {
-        match phase {
-            // The plan phase runs the architect; one colour for both.
-            Phase::Plan => self.architect,
-            Phase::Build => self.build,
-            Phase::Audit => self.audit,
-        }
-    }
-
-    /// Accent for a specialist role name.
-    /// The color of a mode: each hat, and crew.
+    /// Accent for a hat's name, as a row of spend names it.
+    /// The color of a hat.
     pub fn mode(self, mode: ryter_core::Role) -> Color {
         match mode {
             ryter_core::Role::SoloBuild => self.build,
             ryter_core::Role::SoloPlan => self.plan,
             ryter_core::Role::SoloReview => self.audit,
-            _ => self.architect,
+            ryter_core::Role::SoloTest => self.architect,
+            ryter_core::Role::Crew => self.build,
         }
     }
 
     pub fn role(self, role: &str) -> Color {
         match role {
-            "planner" => self.plan,
+            "plan" | "planner" => self.plan,
+            "review" | "auditor" | "audit" => self.audit,
+            // A project's total from crew mode names its roles.
             "architect" => self.architect,
-            "auditor" | "audit" => self.audit,
             _ => self.build,
         }
     }

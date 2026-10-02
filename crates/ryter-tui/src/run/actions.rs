@@ -10,9 +10,7 @@ use ryter_core::ids::ConnectionId;
 use ryter_core::sandbox::SandboxProfile;
 use ryter_core::session::Session;
 use ryter_core::spend::PriceBook;
-use ryter_core::{
-    Config, HookSet, InboundHost, Permission, Phase, Provider, format_usd, load_catalog,
-};
+use ryter_core::{Config, HookSet, InboundHost, Permission, Provider, format_usd, load_catalog};
 
 use super::worker::Work;
 use crate::action::{Action, PanelId};
@@ -47,6 +45,8 @@ pub struct Ctx {
     pub perm_reply: Option<mpsc::Sender<Permission>>,
     /// Pending `ask_user` reply.
     pub ask_reply: Option<mpsc::Sender<String>>,
+    /// The plan popout's reply channel, while one is open.
+    pub plan_reply: Option<mpsc::Sender<ryter_core::user_io::PlanAnswer>>,
     /// Mouse capture currently held. Released to let the terminal select
     /// text, since capture takes click-drag away from the user.
     pub mouse_grabbed: bool,
@@ -62,6 +62,12 @@ pub struct Ctx {
     pub want_redraw: bool,
     /// Set when the loop should exit.
     pub want_quit: bool,
+    /// Quit once the running turn has ended: it was starting the product,
+    /// and what a half-made start left behind is taken down first.
+    pub quit_after_turn: bool,
+    /// The worker's word on a stop asked for at quit: the loop exits once
+    /// it says the product was stopped, and stays if it could not be.
+    pub stop_reply: Option<mpsc::Receiver<std::result::Result<String, String>>>,
     /// A `$EDITOR` request to run with the terminal released.
     pub want_edit: Option<PathBuf>,
 }
@@ -95,7 +101,49 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 perform(view, cx, a);
             }
         }
+        // The product is being started this moment. Left now, a stack that
+        // was half up would stay up with nothing recorded to stop it by:
+        // the start is cancelled, which takes it down, and then Ryter
+        // leaves.
+        Action::Quit if view.busy && view.starting_product.is_some() => {
+            if !cx.quit_after_turn {
+                cx.quit_after_turn = true;
+                cx.cancel.cancel();
+                view.system("stopping what was being started, then leaving…");
+            }
+        }
+        // A product Ryter started is still up: ask before leaving it.
+        Action::Quit if view.product.is_some() && cx.stop_reply.is_none() => {
+            let asking = view
+                .panels
+                .top()
+                .is_some_and(|p| p.kind() == "stop-product");
+            if !asking {
+                view.panels.push(Box::new(crate::panel::modal::StopModal));
+            }
+        }
         Action::Quit => cx.want_quit = true,
+        Action::QuitAnswer { stop: false } => cx.want_quit = true,
+        Action::QuitAnswer { stop: true } => {
+            // A turn still running holds the worker: end it first.
+            if view.busy {
+                cx.cancel.cancel();
+            }
+            let (tx, rx) = mpsc::channel();
+            cx.stop_reply = Some(rx);
+            view.system("stopping the project…");
+            cx.send(Work::StopProduct { reply: Some(tx) });
+        }
+        Action::StopProduct if view.product.is_none() => {
+            view.system("Ryter has not started this project: there is nothing of its to stop");
+        }
+        Action::StopProduct if view.busy => {
+            view.warn("wait for this turn to end, or stop it with esc, then /stop");
+        }
+        Action::StopProduct => {
+            view.system("stopping the project…");
+            cx.send(Work::StopProduct { reply: None });
+        }
         Action::Redraw => cx.want_redraw = true,
         // Capture gives us wheel scroll and card clicks but takes the
         // terminal's own click-drag selection away, and per-message copy is not
@@ -123,6 +171,8 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                     let _ = tx.send(Permission::Deny);
                 }
                 cx.ask_reply = None;
+                // Dropped unanswered, a plan is rejected.
+                cx.plan_reply = None;
                 while view.panels.has_modal() {
                     view.panels.pop();
                 }
@@ -148,8 +198,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             cx.notice(Notice::SessionsChanged);
         }
         Action::SetBudget(usd) => set_budget(view, cx, usd),
-        Action::SaveBudget { usd, warn, task } => save_budget(view, cx, usd, warn, task),
-        Action::ProbeModels(seats) => probe_models(cx, seats),
+        Action::SaveBudget { usd, warn } => save_budget(view, cx, usd, warn),
         Action::SetMode(role) => set_mode(view, cx, role),
         Action::SetModelReasoning { model, level } => {
             match &level {
@@ -166,28 +215,34 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             }
             cx.send(Work::SetModelReasoning(view.model_reasoning.clone()));
         }
-        Action::EnterCrew => {
-            if config::crew_unconfigured(&cx.home, &cx.cfg) && view.specialists.is_empty() {
-                // First time: build the crew, then drop into crew mode.
-                view.panels
-                    .push(Box::new(panel::crew_builder::CrewBuilder::new(view, true)));
-                panel::sync_composer(view);
-                cx.send(Work::ListCrewModels);
-            } else {
-                set_mode(view, cx, ryter_core::Role::Orchestrator);
-            }
-        }
         Action::Undo { .. } | Action::Redo { .. } if view.busy => {
             view.warn("wait for this turn to end: it may still be changing files");
         }
         Action::Undo { force } => cx.send(Work::Undo { force }),
         Action::Redo { force } => cx.send(Work::Redo { force }),
-        Action::SecondOpinion if view.busy => {
-            view.warn("an audit reads the finished work: wait for this turn to end");
+        Action::ReviewNow if view.busy => {
+            view.warn("a review reads the finished work: wait for this turn to end");
         }
-        Action::SecondOpinion => cx.send(Work::SecondOpinion),
-        Action::ChooseReviewer => cx.send(Work::ChooseReviewer),
-        Action::StopAuditOffers => {
+        Action::ReviewNow => cx.send(Work::ReviewNow),
+        Action::TestNow if view.busy => {
+            view.warn("a test uses the finished work: wait for this turn to end");
+        }
+        Action::TestNow => cx.send(Work::TestNow),
+        Action::StopTestOffers => {
+            if let Some(tx) = cx.perm_reply.take() {
+                let _ = tx.send(Permission::Deny);
+            }
+            view.ui.offer_test = false;
+            cx.cfg.ui.offer_test = false;
+            if let Err(e) = config::save_settings(&cx.home, &cx.cfg) {
+                view.error(e.to_string());
+            }
+            cx.send(Work::SetOfferTest(false));
+            view.system(
+                "no more test offers · /test still runs one · /settings turns them back on",
+            );
+        }
+        Action::StopReviewOffers => {
             if let Some(tx) = cx.perm_reply.take() {
                 let _ = tx.send(Permission::Deny);
             }
@@ -197,21 +252,10 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 view.error(e.to_string());
             }
             cx.send(Work::SetOfferAudit(false));
-            view.system("no more audit offers · /audit still works · /settings turns them back on");
+            view.system(
+                "no more review offers · /audit still runs one · /settings turns them back on",
+            );
         }
-        Action::SetReviewer {
-            connection,
-            model,
-            limit_usd,
-            then_run,
-        } => cx.send(Work::SetReviewer(
-            ryter_core::config::ReviewerConfig {
-                connection,
-                model,
-                limit_usd,
-            },
-            then_run,
-        )),
         Action::Revert { base, path } => cx.send(Work::Revert { base, path }),
         Action::RevertHunk { base, path, hunk } => cx.send(Work::RevertHunk { base, path, hunk }),
         Action::OpenWorkbench => {
@@ -231,39 +275,6 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             if let Err(e) = config::save_settings(&cx.home, &cx.cfg) {
                 view.error(e.to_string());
             }
-        }
-        Action::SaveCrewSetup {
-            lead_connection,
-            lead_model,
-            crew,
-            budget,
-            task_cap,
-        } => save_crew_setup(
-            view,
-            cx,
-            lead_connection,
-            lead_model,
-            crew,
-            (budget, task_cap),
-        ),
-        Action::KillAgent(id) => {
-            if let Some(c) = view.crew.iter().find(|c| c.id == id) {
-                view.system(format!("killing {} · {}", c.role, c.label));
-            }
-            cx.send(Work::Kill(id));
-        }
-        Action::KillAllAgents => {
-            let n = view.crew.len();
-            if n > 0 {
-                view.system(format!("killing {n} specialists"));
-                cx.send(Work::KillAll);
-            }
-        }
-        Action::SetAuditor(on) => {
-            view.auditor_on = on;
-            cx.cfg.auditor.enabled = on;
-            let _ = config::save_settings(&cx.home, &cx.cfg);
-            cx.send(Work::SetAuditor(on));
         }
         Action::SetTools { always } => {
             view.perm_mode = if always { "always" } else { "ask" }.into();
@@ -306,7 +317,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         Action::AddConnection { name, conn } => add_connection(view, cx, &name, conn),
         Action::RemoveConnection(name) => remove_connection(view, cx, &name),
         Action::SetModel(model) => set_model(view, cx, model),
-        Action::SetCrewRole {
+        Action::SetHatModel {
             role,
             connection,
             model,
@@ -322,53 +333,13 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                     },
                 );
             }
-            save_crew(view, cx);
+            save_hats(view, cx);
         }
-        Action::ApplyCrewTiering(rows) => {
-            // Keep what was there, so a suggestion is one keypress to undo.
-            match config::save_crew_preset(&cx.home, "before-suggest", &view.specialists) {
-                Ok(()) => {
-                    view.specialists.extend(rows);
-                    save_crew(view, cx);
-                    view.system(
-                        "applied the suggested crew · your previous crew is the `before-suggest` preset",
-                    );
-                }
-                Err(e) => view.error(format!("not applied: could not save the current crew: {e}")),
-            }
-            cx.notice(Notice::PresetsChanged(config::list_crew_presets(&cx.home)));
-        }
-        Action::ResetCrewRole(role) => {
+        Action::ResetHatModel(role) => {
             view.specialists.remove(&role);
-            save_crew(view, cx);
+            save_hats(view, cx);
         }
-        Action::SaveCrewPreset(name) => {
-            match config::save_crew_preset(&cx.home, &name, &view.specialists) {
-                Ok(()) => view.system(format!("saved crew preset {name}")),
-                Err(e) => view.error(e.to_string()),
-            }
-            cx.notice(Notice::PresetsChanged(config::list_crew_presets(&cx.home)));
-        }
-        Action::LoadCrewPreset(name) => {
-            let mut c = cx.cfg.clone();
-            match config::load_crew_preset(&cx.home, &mut c, &name) {
-                Ok(()) => {
-                    view.specialists = c.specialists.clone();
-                    save_crew(view, cx);
-                    view.system(format!("loaded crew preset {name}"));
-                }
-                Err(e) => view.error(e.to_string()),
-            }
-        }
-        Action::DeleteCrewPreset(name) => {
-            let path = config::crews_dir(&cx.home).join(format!("{name}.toml"));
-            match std::fs::remove_file(&path) {
-                Ok(()) => view.system(format!("deleted crew preset {name}")),
-                Err(e) => view.error(format!("{}: {e}", path.display())),
-            }
-            cx.notice(Notice::PresetsChanged(config::list_crew_presets(&cx.home)));
-        }
-        Action::ListCrewModels { .. } => cx.send(Work::ListCrewModels),
+        Action::ListAllModels { .. } => cx.send(Work::ListAllModels),
         Action::SaveMcp => {
             persist_mcp(view, cx);
             cx.send(Work::SetMcp {
@@ -434,6 +405,14 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 view.activity.verb = Verb::Thinking;
             }
         }
+        Action::PlanReply(answer) => {
+            if let Some(tx) = cx.plan_reply.take() {
+                let _ = tx.send(answer);
+            }
+            if view.activity.busy() {
+                view.activity.verb = Verb::Thinking;
+            }
+        }
         Action::AskUserReply(s) => {
             if let Some(tx) = cx.ask_reply.take() {
                 let _ = tx.send(s);
@@ -486,7 +465,6 @@ fn open_panel(view: &mut View, cx: &mut Ctx, id: PanelId) {
     }
     match id {
         PanelId::Models => cx.send(Work::ListModels),
-        PanelId::CrewBuilder => cx.send(Work::ListCrewModels),
         // The logs are the truth; replace the live running copy with them.
         PanelId::Spend | PanelId::SpendDrawer => {
             load_project_spend(view, &cx.home, &cx.workspace);
@@ -528,8 +506,10 @@ fn new_session(view: &mut View, cx: &mut Ctx) {
     view.panels.clear();
     panel::sync_composer(view);
     view.reset_transcript();
-    view.crew.clear();
-    view.todos.clear();
+    // The hat stays, and with it whose conversation is on screen: `/new`
+    // in the test hat showed the shared conversation while the next
+    // message went to the tester.
+    view.show(view.mode.thread());
     view.spend = None;
     view.spend_unknown = false;
     view.unpriced_calls = 0;
@@ -561,9 +541,9 @@ fn resume(view: &mut View, cx: &mut Ctx, id: &str) {
                 "resumed {} · {}",
                 short_id(&s),
                 if s.meta.title.is_empty() {
-                    s.meta.phase.to_string()
+                    "untitled"
                 } else {
-                    s.meta.title.clone()
+                    s.meta.title.as_str()
                 }
             ));
         }
@@ -608,93 +588,37 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
     view.reset_transcript();
     view.session_id = session.meta.id.to_string();
     view.session_title = session.meta.title.clone();
-    view.phase = session.meta.phase;
-    view.mode = session.meta.mode.unwrap_or(ryter_core::Role::SoloBuild);
+    // A session left in crew mode, before it was removed, opens in build.
+    view.mode = session
+        .meta
+        .mode
+        .map_or(ryter_core::Role::SoloBuild, ryter_core::Role::hat);
+    view.agent_hat = view.mode;
     view.spend = session.meta.spend_usd_total;
     view.spend_unknown = session.meta.spend_unknown;
-    view.auditor_on = session.meta.auditor_enabled;
     view.connection = session.meta.connection.clone();
     view.model = session.meta.model.clone();
-    view.crew.clear();
-    let model = view.model.clone();
-    for m in &session.transcript {
-        match m.role.as_str() {
-            "user" if !m.content.trim().is_empty() => {
-                view.turn += 1;
-                view.push(MessageKind::User, strip_hat_note(&m.content));
-            }
-            "assistant" => {
-                if !m.content.trim().is_empty() {
-                    view.push(
-                        MessageKind::Assistant {
-                            model: model.clone(),
-                        },
-                        m.content.clone(),
-                    );
-                }
-                // Replay through the live path, so a resumed session reads
-                // the same as it did.
-                if let Some(calls) = &m.tool_calls {
-                    for c in calls {
-                        let args: serde_json::Value =
-                            serde_json::from_str(&c.arguments).unwrap_or(serde_json::Value::Null);
-                        crate::run::events::apply(
-                            view,
-                            AgentEvent::ToolCall {
-                                id: c.id.clone(),
-                                name: c.name.clone(),
-                                summary: Some(ryter_core::tool_summary(&c.name, &args)),
-                                args,
-                                role: view.mode,
-                            },
-                        );
-                    }
-                }
-            }
-            "tool" => {
-                if let Some(id) = &m.tool_call_id {
-                    let c = m.content.trim_start();
-                    let is_err = c.starts_with("error")
-                        || c.starts_with("denied")
-                        || m.content.contains("[exit ")
-                        || m.content.contains("\"error\"");
-                    crate::run::events::apply(
-                        view,
-                        AgentEvent::ToolResult {
-                            id: id.clone(),
-                            output: m.content.clone(),
-                            is_error: is_err,
-                            duration_ms: None,
-                            diff: None,
-                        },
-                    );
-                }
-            }
-            _ => {}
-        }
+    // Both conversations: the one the hats share, then the tester's.
+    use ryter_core::Thread;
+    for thread in [Thread::Main, Thread::Test] {
+        view.show(thread);
+        // The tester's answers are named for the test hat's model. In the
+        // shared conversation the saved messages don't say which hat's
+        // model wrote each, so they carry the one every hat uses.
+        let model = match thread {
+            Thread::Test => view
+                .specialists
+                .get("test")
+                .filter(|r| r.is_override())
+                .and_then(|r| r.model.clone())
+                .unwrap_or_else(|| view.model.clone()),
+            Thread::Main => view.model.clone(),
+        };
+        fill_chat(view, session.messages_of(thread), &model);
+        view.turn = view.turn.max(1);
+        view.scroll.to_bottom();
     }
-    view.turn = view.turn.max(1);
-    view.scroll.to_bottom();
-    let q = ryter_core::queue::TaskQueue::open(session.dir.join("tasks.json"));
-    view.task_edges.clear();
-    let tree = session
-        .meta
-        .patch
-        .as_ref()
-        .map(|p| p.worktree.clone())
-        // The TUI runs in the project.
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    let patch = session
-        .meta
-        .patch
-        .as_ref()
-        .map(|p| ryter_core::queue::PatchView {
-            branch: p.branch.clone(),
-            target: p.target.clone(),
-            tasks: p.tasks.clone(),
-            landed: p.landed.clone(),
-        });
-    view.set_tasks(q.views(|p| tree.join(p).exists()), patch);
+    view.show(view.mode.thread());
     view.spend_by_role.clear();
     view.spend_by_conn.clear();
     view.spend_rows_role.clear();
@@ -724,6 +648,148 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
                 }
                 None => view.unpriced_calls += 1,
             }
+        }
+    }
+}
+
+/// How the tester's report starts, in the conversation it was handed to.
+const REPORT_PREFIX: &str = "[Ryter] The test hat (";
+
+/// A saved report message as the card it was shown as: its text, whether
+/// anything in it failed, and the first failed scenario's number.
+fn report_card(content: &str) -> (String, bool, Option<usize>) {
+    let mut lines = content.lines();
+    let first = lines.next().unwrap_or("");
+    let tester = first
+        .strip_prefix(REPORT_PREFIX)
+        .and_then(|r| r.split(')').next())
+        .unwrap_or("");
+    let headline = first
+        .rsplit("filed this report: ")
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('.');
+    let mut body = format!("test · {tester} · {headline}");
+    let mut retest = None;
+    for l in lines {
+        match l.strip_prefix("The full report is in `") {
+            Some(rest) => {
+                body.push_str(&format!(
+                    "\nfull report  {}",
+                    rest.split('`').next().unwrap_or("")
+                ));
+            }
+            // What could not be tested is in the file; the card is the
+            // scenarios.
+            None if l.starts_with("Also: ") => {}
+            None => {
+                body.push('\n');
+                body.push_str(l);
+                // `✗ 3  /manage/ after login`, and not a scenario that was
+                // only not reached.
+                if retest.is_none() && !l.contains("· not reached") {
+                    retest = l
+                        .strip_prefix("✗ ")
+                        .and_then(|r| r.split_whitespace().next())
+                        .and_then(|n| n.parse().ok());
+                }
+            }
+        }
+    }
+    (body, headline.starts_with('✗'), retest)
+}
+
+/// Rebuild one conversation's chat from its saved messages, through the
+/// same path a live turn takes, so a resumed session reads as it did.
+fn fill_chat(view: &mut View, messages: &[ryter_core::Message], model: &str) {
+    for m in messages {
+        match m.role.as_str() {
+            // The tester's report, as it was handed in: a card, not
+            // something the user typed.
+            "user" if m.content.starts_with(REPORT_PREFIX) => {
+                let (body, failed, retest) = report_card(&m.content);
+                view.report(body, failed);
+                view.test_runs += 1;
+                view.retest = retest;
+            }
+            // What Ryter asked of the model (a review, a test, the fixes):
+            // said in a line, as it was when it happened. The brief itself
+            // is for the model, and the user didn't type it.
+            "user" if strip_hat_note(&m.content).starts_with("[Ryter] ") => {
+                let asked = strip_hat_note(&m.content);
+                let first = asked
+                    .trim_start_matches("[Ryter] ")
+                    .split(['.', ':'])
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                let mut said = String::from("Ryter · ");
+                let mut chars = first.chars();
+                if let Some(c) = chars.next() {
+                    said.extend(c.to_lowercase());
+                    said.push_str(chars.as_str());
+                }
+                view.turn += 1;
+                view.system(said);
+            }
+            "user" if !m.content.trim().is_empty() => {
+                view.turn += 1;
+                view.push(MessageKind::User, strip_hat_note(&m.content));
+            }
+            "assistant" => {
+                if !m.content.trim().is_empty() {
+                    view.push(
+                        MessageKind::Assistant {
+                            model: model.to_string(),
+                        },
+                        m.content.clone(),
+                    );
+                }
+                // Replay through the live path, so a resumed session reads
+                // the same as it did.
+                if let Some(calls) = &m.tool_calls {
+                    for c in calls {
+                        let args: serde_json::Value =
+                            serde_json::from_str(&c.arguments).unwrap_or(serde_json::Value::Null);
+                        crate::run::events::apply(
+                            view,
+                            AgentEvent::ToolCall {
+                                id: c.id.clone(),
+                                name: c.name.clone(),
+                                // The project's command isn't in the call,
+                                // and the run file may have changed since.
+                                summary: Some(if c.name == "run_project" {
+                                    String::new()
+                                } else {
+                                    ryter_core::tool_summary(&c.name, &args)
+                                }),
+                                args,
+                                role: view.mode,
+                            },
+                        );
+                    }
+                }
+            }
+            "tool" => {
+                if let Some(id) = &m.tool_call_id {
+                    let c = m.content.trim_start();
+                    let is_err = c.starts_with("error")
+                        || c.starts_with("denied")
+                        || m.content.contains("[exit ")
+                        || m.content.contains("\"error\"");
+                    crate::run::events::apply(
+                        view,
+                        AgentEvent::ToolResult {
+                            id: id.clone(),
+                            output: m.content.clone(),
+                            is_error: is_err,
+                            duration_ms: None,
+                            diff: None,
+                        },
+                    );
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -833,107 +899,14 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
     }
 }
 
-/// Switch hats, or between solo and crew mode. A switch while a turn runs
-/// applies to the next message.
+/// Switch hats. A switch while a turn runs applies to the next message.
 fn set_mode(view: &mut View, cx: &mut Ctx, role: ryter_core::Role) {
-    let entering_crew = role == ryter_core::Role::Orchestrator && !view.crew_mode();
-    let leaving_crew = role.is_solo() && view.crew_mode();
     view.mode = role;
+    // The tester has a conversation of its own: its hat shows that one,
+    // and any other hat shows the one they share.
+    view.show(role.thread());
+    view.hats_pending += 1;
     cx.send(Work::SetRole(role));
-    if entering_crew {
-        view.system(
-            "crew mode · your messages go to the lead, and the crew does the work · /models \
-             for each role's model · /solo to go back",
-        );
-    } else if leaving_crew {
-        view.system("solo mode · Tab switches between build, plan, and review");
-    }
-}
-
-/// One tiny request per model, off the UI thread; results come back as a
-/// notice. Unknown connections and missing keys fail without a request.
-fn probe_models(cx: &mut Ctx, seats: Vec<(String, String)>) {
-    let tx = cx.notice_tx.clone();
-    let cfg = cx.cfg.clone();
-    std::thread::spawn(move || {
-        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        else {
-            return;
-        };
-        let results = rt.block_on(async {
-            let mut out = Vec::new();
-            for (conn, model) in seats {
-                let r = match (
-                    cfg.connections.get(&conn),
-                    resolve_secret(&cfg, &ConnectionId::new(&conn)),
-                ) {
-                    (Some(c), Ok(key)) => {
-                        let p = ryter_core::http_provider(c, key);
-                        ryter_core::tiering::probe(&p, &model).await
-                    }
-                    (None, _) => Err(format!("unknown connection {conn}")),
-                    (_, Err(_)) => Err(format!("no key for {conn}")),
-                };
-                out.push((conn, model, r));
-            }
-            out
-        });
-        let _ = tx.send(Notice::Probed(results));
-    });
-}
-
-/// Save the crew builder's choices: the crew (the old one kept as a preset),
-/// the lead's route, and the budget.
-fn save_crew_setup(
-    view: &mut View,
-    cx: &mut Ctx,
-    lead_connection: String,
-    lead_model: String,
-    crew: std::collections::BTreeMap<String, ryter_core::RoleModel>,
-    (budget, task_cap): (f64, f64),
-) {
-    if !view.specialists.is_empty() {
-        if let Err(e) = config::save_crew_preset(&cx.home, "before-builder", &view.specialists) {
-            view.error(format!("not saved: could not keep the current crew: {e}"));
-            return;
-        }
-    }
-    view.specialists = crew;
-    save_crew(view, cx);
-    if lead_connection != view.connection || lead_model != view.model {
-        match (
-            cx.cfg.connections.get(&lead_connection).cloned(),
-            resolve_secret(&cx.cfg, &ConnectionId::new(&lead_connection)),
-        ) {
-            (Some(_), Ok(key)) => {
-                view.connection = lead_connection.clone();
-                view.model = lead_model.clone();
-                view.has_key = true;
-                view.ctx_window = Some(ryter_core::window_for(&lead_model));
-                apply_pricing(view, &cx.cfg, &lead_model);
-                let _ = config::save_last_route(&cx.home, &route_from_view(view));
-                cx.send(Work::Reconnect {
-                    name: lead_connection,
-                    model: lead_model,
-                    key,
-                });
-            }
-            _ => view.error(format!("lead not changed: no key for {lead_connection}")),
-        }
-    }
-    let warn = view.warn_usd;
-    save_budget(view, cx, budget, warn, task_cap);
-    set_mode(view, cx, ryter_core::Role::Orchestrator);
-    cx.notice(Notice::PresetsChanged(config::list_crew_presets(&cx.home)));
-    view.system(format!(
-        "crew saved · lead {} · architect {} · builder {} · auditor {}",
-        view.model,
-        crate::view::crew_role_label(view, "architect"),
-        crate::view::crew_role_label(view, "builder"),
-        crate::view::crew_role_label(view, "auditor"),
-    ));
 }
 
 fn test_connection(view: &mut View, cx: &mut Ctx, name: &str) {
@@ -1017,14 +990,15 @@ fn remove_connection(view: &mut View, cx: &mut Ctx, name: &str) {
     }
 }
 
-// -- crew -----------------------------------------------------------------------
+// -- hats -----------------------------------------------------------------------
 
-fn save_crew(view: &mut View, cx: &mut Ctx) {
-    if let Err(e) = config::save_crew(&cx.home, &view.specialists) {
+/// Save each hat's own model, and tell the worker.
+fn save_hats(view: &mut View, cx: &mut Ctx) {
+    if let Err(e) = config::save_hats(&cx.home, &view.specialists) {
         view.error(e.to_string());
     }
     cx.cfg.specialists = view.specialists.clone();
-    cx.send(Work::SetCrew {
+    cx.send(Work::SetHats {
         specialists: view.specialists.clone(),
     });
 }
@@ -1034,11 +1008,10 @@ fn save_crew(view: &mut View, cx: &mut Ctx) {
 fn save_settings(view: &mut View, cx: &mut Ctx) {
     cx.cfg.spend.session_budget_usd = view.budget_usd;
     cx.cfg.spend.warn_usd = view.warn_usd;
-    cx.cfg.subagents.max = view.max_crew;
+    cx.cfg.spend.review_usd = view.review_usd;
     cx.cfg.sandbox.profile = view.sandbox_profile.clone();
     cx.cfg.mcp.inbound = view.mcp_inbound;
     cx.cfg.features.web = view.web;
-    cx.cfg.auditor.enabled = view.auditor_on;
     cx.cfg.ui = view.ui.clone();
     cx.cfg.update.mode = view.update_mode;
     match config::save_settings(&cx.home, &cx.cfg) {
@@ -1060,37 +1033,34 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
     }
     cx.send(Work::SetSettings {
         budget_usd: view.budget_usd,
-        task_budget_usd: view.task_budget_usd,
-        max_crew: view.max_crew,
+        review_usd: view.review_usd,
         web: view.web,
         open_pages: view.ui.open_pages,
     });
     cx.send(Work::SetOfferAudit(view.ui.offer_audit));
+    cx.send(Work::SetOfferTest(view.ui.offer_test));
 }
 
 fn set_budget(view: &mut View, cx: &mut Ctx, usd: f64) {
-    let (warn, task) = (view.warn_usd, view.task_budget_usd);
-    save_budget(view, cx, usd, warn, task);
+    let warn = view.warn_usd;
+    save_budget(view, cx, usd, warn);
 }
 
 /// Apply spend limits to the running session and save them as the default.
-fn save_budget(view: &mut View, cx: &mut Ctx, usd: f64, warn: f64, task: f64) {
+fn save_budget(view: &mut View, cx: &mut Ctx, usd: f64, warn: f64) {
     view.budget_usd = usd;
     if usd > 0.0 {
         view.budget_last = usd;
     }
     view.warn_usd = warn;
-    view.task_budget_usd = task;
     cx.cfg.spend.session_budget_usd = usd;
     cx.cfg.spend.warn_usd = warn;
-    cx.cfg.spend.task_budget_usd = task;
     if let Err(e) = config::save_settings(&cx.home, &cx.cfg) {
         view.error(e.to_string());
     }
     cx.send(Work::SetSettings {
         budget_usd: usd,
-        task_budget_usd: task,
-        max_crew: view.max_crew,
+        review_usd: view.review_usd,
         web: view.web,
         open_pages: view.ui.open_pages,
     });
@@ -1108,9 +1078,8 @@ fn save_budget(view: &mut View, cx: &mut Ctx, usd: f64, warn: f64, task: f64) {
         ));
     } else {
         view.system(format!(
-            "budget off · spent {} · nothing stops on cost now; each task is still capped at {}",
-            format_usd(view.spend),
-            format_usd(Some(task))
+            "budget off · spent {} · nothing stops on cost now",
+            format_usd(view.spend)
         ));
     }
 }
@@ -1233,12 +1202,6 @@ pub fn display_home_path(cwd: &Path) -> String {
     cwd.display().to_string()
 }
 
-/// Phase override parsing shared with startup.
-pub fn parse_phase(s: Option<&str>) -> ryter_core::Result<Option<Phase>> {
-    use std::str::FromStr;
-    s.map(Phase::from_str).transpose()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1248,7 +1211,6 @@ mod tests {
     #[test]
     fn the_sidebar_uses_the_catalog_price() {
         let mut v = View::new(
-            ryter_core::Phase::Build,
             "openrouter".into(),
             "vendor/new-model".into(),
             "/tmp".into(),

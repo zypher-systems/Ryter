@@ -1,9 +1,12 @@
 //! `/settings` — grouped settings form (`R-POP-47..50`).
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 use ryter_core::UiConfig;
 
 use super::widgets::{Field, Form, Kind};
+use super::wrap;
 use super::{Body, Outcome, Panel};
 use crate::action::Action;
 use crate::theme::Theme;
@@ -91,19 +94,16 @@ impl Settings {
                 false,
                 1.0,
             ),
-            Field::new("g_agents", "agents", Kind::Header),
             num(
-                "max",
-                "subagents max",
-                f64::from(view.max_crew),
-                1.0,
-                16.0,
-                1.0,
-                true,
-                4.0,
+                "review",
+                "review usd (0 = off)",
+                view.review_usd,
+                0.0,
+                1_000.0,
+                0.5,
+                false,
+                0.0,
             ),
-            Field::new("auditor", "auditor", Kind::Toggle(view.auditor_on))
-                .origin(origin(&view.auditor_on, &true)),
             Field::new("g_tools", "tools", Kind::Header),
             select(
                 "perm",
@@ -175,10 +175,16 @@ impl Settings {
             .origin(origin(&view.ui.line_numbers, &d.line_numbers)),
             Field::new(
                 "offer_audit",
-                "audit offers",
+                "review offers",
                 Kind::Toggle(view.ui.offer_audit),
             )
             .origin(origin(&view.ui.offer_audit, &d.offer_audit)),
+            Field::new(
+                "offer_test",
+                "test offers",
+                Kind::Toggle(view.ui.offer_test),
+            )
+            .origin(origin(&view.ui.offer_test, &d.offer_test)),
             Field::new(
                 "open_pages",
                 "pages in browser",
@@ -221,11 +227,8 @@ impl Settings {
         if let Some(v) = number("warn") {
             view.warn_usd = v;
         }
-        if let Some(v) = number("max") {
-            view.max_crew = v.round().clamp(1.0, 16.0) as u32;
-        }
-        if let Some(v) = toggle("auditor") {
-            view.auditor_on = v;
+        if let Some(v) = number("review") {
+            view.review_usd = v;
         }
         if let Some(v) = sel("perm") {
             view.perm_mode = v;
@@ -272,10 +275,137 @@ impl Settings {
         if let Some(v) = toggle("offer_audit") {
             view.ui.offer_audit = v;
         }
+        if let Some(v) = toggle("offer_test") {
+            view.ui.offer_test = v;
+        }
         if let Some(v) = toggle("open_pages") {
             view.ui.open_pages = v;
         }
     }
+}
+
+impl Settings {
+    /// The row field `index` is drawn on, as [`Form::render`] lays them out:
+    /// a header takes a blank row above it (but for the first), and an
+    /// error takes a row under its field.
+    fn row_of(&self, index: usize) -> usize {
+        let before: usize = self
+            .form
+            .fields
+            .iter()
+            .take(index)
+            .enumerate()
+            .map(|(i, f)| match f.kind {
+                Kind::Header => 1 + usize::from(i > 0),
+                _ => 1 + usize::from(f.error.is_some()),
+            })
+            .sum();
+        // The field's own blank row, when it is a header.
+        let own = self
+            .form
+            .fields
+            .get(index)
+            .is_some_and(|f| matches!(f.kind, Kind::Header) && index > 0);
+        before + usize::from(own)
+    }
+}
+
+/// What each sandbox profile lets the model's commands reach, side by side,
+/// with the chosen one picked out. The facts are `ryter_core::sandbox`'s:
+/// its module documentation lists what a profile grants.
+///
+/// `off` keeps your keys by rule only: Ryter refuses to read them, and
+/// nothing stops a command that tries. Under the other two the system
+/// refuses.
+const SANDBOX_ROWS: &[(&str, [&str; 3])] = &[
+    ("project files", ["read, write", "read, write", "read"]),
+    ("rest of home", ["read, write", "no", "no"]),
+    ("your tools", ["yes", "yes", "yes"]),
+    ("your keys", ["rule only †", "never", "never"]),
+    ("/tmp", ["read, write", "read, write", "read, write"]),
+    ("network", ["yes", "yes", "yes"]),
+    ("docker", ["yes", "yes *", "yes *"]),
+];
+
+/// When each profile is the one to use, in two short lines.
+const SANDBOX_WHEN: [[&str; 2]; 3] = [
+    ["you watch", "each step"],
+    ["tools run", "unasked"],
+    ["you only want", "a review"],
+];
+
+const SANDBOX_PROFILES: [&str; 3] = ["off", "workspace", "read-only"];
+
+fn sandbox_table(chosen: &str, width: usize, theme: Theme) -> Vec<Line<'static>> {
+    const LABEL: usize = 16;
+    const COL: usize = 14;
+    let picked = SANDBOX_PROFILES.iter().position(|p| *p == chosen);
+    let dim = theme.panel_muted();
+    let plain = theme.panel();
+    let strong = Style::default()
+        .fg(theme.accent)
+        .bg(theme.panel_bg)
+        .add_modifier(Modifier::BOLD);
+    let cell_style = |col: usize| if picked == Some(col) { strong } else { plain };
+    let row = |label: &str, cells: [String; 3], head: bool| -> Line<'static> {
+        let mut spans = vec![Span::styled(
+            format!(" {}", wrap::pad_right(label, LABEL)),
+            dim,
+        )];
+        for (i, cell) in cells.into_iter().enumerate() {
+            let style = if head && picked != Some(i) {
+                dim
+            } else {
+                cell_style(i)
+            };
+            spans.push(Span::styled(wrap::pad_right(&cell, COL), style));
+        }
+        Line::from(spans)
+    };
+    let note = |text: &str| -> Vec<Line<'static>> {
+        wrap::wrap_plain(text, width.saturating_sub(2))
+            .into_iter()
+            .map(|l| Line::from(Span::styled(format!(" {l}"), dim)))
+            .collect()
+    };
+    let blank = || Line::from(Span::styled("", plain));
+    let mut out = vec![blank()];
+    // The chosen profile's name stands out: capitals, as well as colour,
+    // for a terminal with none.
+    let names: [String; 3] = std::array::from_fn(|i| {
+        if picked == Some(i) {
+            SANDBOX_PROFILES[i].to_ascii_uppercase()
+        } else {
+            SANDBOX_PROFILES[i].to_string()
+        }
+    });
+    out.push(row("", names, true));
+    for (label, cells) in SANDBOX_ROWS {
+        out.push(row(label, cells.map(str::to_string), false));
+    }
+    out.push(blank());
+    for line in 0..2 {
+        let label = if line == 0 { "use it when" } else { "" };
+        out.push(row(
+            label,
+            std::array::from_fn(|i| SANDBOX_WHEN[i][line].to_string()),
+            false,
+        ));
+    }
+    out.push(blank());
+    out.extend(note(
+        "* docker can reach the whole machine; the sandbox does not stop it. \
+         Rootless podman can't run under workspace or read-only.",
+    ));
+    out.extend(note(
+        "† Ryter refuses to read your keys, but nothing stops a command that tries.",
+    ));
+    // The same words on every system: the panel is drawn the same everywhere.
+    out.extend(note(
+        "workspace and read-only need Linux, and apply the next time Ryter starts.",
+    ));
+    out.push(blank());
+    out
 }
 
 impl Panel for Settings {
@@ -319,18 +449,34 @@ impl Panel for Settings {
     }
 
     fn render(&self, _view: &View, width: u16, height: u16, theme: Theme) -> Body {
-        let rows = self.form.render(usize::from(width), theme, true);
+        let mut rows = self.form.render(usize::from(width), theme, true);
+        // The sandbox profiles, compared, under the field that picks one.
+        let sandbox = self.form.fields.iter().position(|f| f.id == "sandbox");
+        let mut table_rows = 0;
+        if let Some(at) = sandbox {
+            let chosen = self.form.fields[at].value_text();
+            let table = sandbox_table(&chosen, usize::from(width), theme);
+            table_rows = table.len();
+            let after = self.row_of(at) + 1 + usize::from(self.form.fields[at].error.is_some());
+            let after = after.min(rows.len());
+            rows.splice(after..after, table);
+        }
         let total = rows.len();
         let h = usize::from(height).max(1);
-        // Keep the selected row visible: estimate its row index.
-        let sel_row = self
-            .form
-            .fields
-            .iter()
-            .take(self.form.selected)
-            .map(|f| if matches!(f.kind, Kind::Header) { 2 } else { 1 } + usize::from(f.error.is_some()))
-            .sum::<usize>();
-        let first = super::window(sel_row, total, h);
+        // Keep the selected row visible. On the sandbox field, that is the
+        // table under it too: aim at its middle.
+        let mut sel_row = self.row_of(self.form.selected);
+        match sandbox {
+            Some(at) if self.form.selected > at => sel_row += table_rows,
+            Some(at) if self.form.selected == at => sel_row += table_rows.div_ceil(2),
+            _ => {}
+        }
+        let mut first = super::window(sel_row, total, h);
+        // On a short panel the field itself stays in view, above as much of
+        // the table as fits.
+        if let Some(at) = sandbox.filter(|at| *at == self.form.selected) {
+            first = first.min(self.row_of(at));
+        }
         let mut lines: Vec<_> = rows.into_iter().skip(first).take(h).collect();
         if self.confirm_discard {
             lines = super::widgets::save_prompt(lines, usize::from(width), h, theme);
@@ -447,5 +593,123 @@ impl Panel for Settings {
 
     fn box_clone(&self) -> Box<dyn Panel> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn view() -> View {
+        View::new("c".into(), "m".into(), "/tmp".into())
+    }
+
+    fn set(s: &mut Settings, id: &str, to: f64) {
+        match &mut s.form.get_mut(id).unwrap().kind {
+            Kind::Number { value, .. } => *value = to,
+            other => panic!("{id} is not a number: {other:?}"),
+        }
+    }
+
+    /// The most a review may spend is set here; 0 is no limit.
+    #[test]
+    fn the_review_limit_is_set_here() {
+        let mut v = view();
+        v.review_usd = 2.0;
+        let mut s = Settings::new(&v);
+        let field = s.form.get("review").unwrap();
+        assert_eq!(field.label, "review usd (0 = off)");
+        assert!(field.label.chars().count() <= 25);
+        assert_eq!(field.value_text(), "2.00");
+        s.apply(&mut v);
+        assert_eq!(v.review_usd, 2.0);
+        set(&mut s, "review", 0.0);
+        s.apply(&mut v);
+        assert_eq!(v.review_usd, 0.0);
+    }
+
+    fn rows(s: &Settings, v: &View, width: u16, height: u16) -> Vec<String> {
+        s.render(v, width, height, Theme::truecolor_dark())
+            .lines
+            .iter()
+            .map(|l| l.spans.iter().map(|sp| sp.content.as_ref()).collect())
+            .collect()
+    }
+
+    /// The sandbox profiles are compared under the field that picks one,
+    /// with the chosen one picked out, and the table moves with the choice.
+    #[test]
+    fn sandbox_profiles_are_compared_under_the_field() {
+        let mut v = view();
+        v.sandbox_profile = "off".into();
+        let mut s = Settings::new(&v);
+        let at = s
+            .form
+            .fields
+            .iter()
+            .position(|f| f.id == "sandbox")
+            .unwrap();
+        s.form.selected = at;
+        let shown = rows(&s, &v, 72, 26);
+        let all = shown.join("\n");
+        let field = shown.iter().position(|l| l.contains("‹ off ›")).unwrap();
+        // The table is right under the field, all of it on screen.
+        for (below, want) in [
+            (2, "OFF           workspace     read-only"),
+            (3, "project files   read, write   read, write   read"),
+            (4, "rest of home    read, write   no            no"),
+            (5, "your tools      yes           yes           yes"),
+            (6, "your keys       rule only †   never         never"),
+            (7, "/tmp            read, write   read, write   read, write"),
+            (8, "network         yes           yes           yes"),
+            (9, "docker          yes           yes *         yes *"),
+            (
+                11,
+                "use it when     you watch     tools run     you only want",
+            ),
+            (12, "each step     unasked       a review"),
+        ] {
+            assert!(
+                shown[field + below].contains(want),
+                "row {below}: {:?}\n{all}",
+                shown[field + below]
+            );
+        }
+        assert!(
+            all.contains("* docker can reach the whole machine"),
+            "{all}"
+        );
+        assert!(all.contains("† Ryter refuses to read your keys"), "{all}");
+        // Choosing another profile moves the mark.
+        s.form.adjust(1);
+        let all = rows(&s, &v, 72, 26).join("\n");
+        assert!(
+            all.contains("off           WORKSPACE     read-only"),
+            "{all}"
+        );
+        s.form.adjust(1);
+        let all = rows(&s, &v, 72, 26).join("\n");
+        assert!(
+            all.contains("off           workspace     READ-ONLY"),
+            "{all}"
+        );
+        // Every row fits the panel, and a field below the table is still reached.
+        assert!(rows(&s, &v, 72, 26).iter().all(|l| l.chars().count() <= 72));
+        // On a short panel the field stays in view above the table.
+        s.form.selected = at;
+        let short = rows(&s, &v, 72, 12);
+        assert!(short[0].contains("‹ read-only ›"), "{short:?}");
+        assert!(
+            short.iter().any(|l| l.contains("project files")),
+            "{short:?}"
+        );
+        s.form.selected = s
+            .form
+            .fields
+            .iter()
+            .position(|f| f.id == "inbound")
+            .unwrap();
+        let below = rows(&s, &v, 72, 26).join("\n");
+        assert!(below.contains("› inbound"), "{below}");
     }
 }

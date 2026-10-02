@@ -1,5 +1,11 @@
 # Hats: one model, or a crew, in one app
 
+> **History.** This is the design note that added the hats beside crew mode. Crew mode was
+> removed on 2026-10-01 (see `DECISIONS.md`): the hats are the one mode now, each hat can
+> have its own model, and the review hat took the place of `/audit`'s separate reviewer.
+> The parts below about crew mode, and about switching between the two, no longer apply.
+> The user guide (`guide.md`) describes how it works today.
+
 Status: built (v1), with these decisions from review:
 
 - Ryter starts in **solo mode**, in the **build** hat. `Tab` cycles build → plan → review.
@@ -91,7 +97,7 @@ meets the auditor rule on their first build.
 - **Tools:** read, search, the auditor's command allow-list (tests, linters,
   read-only git), judged by form: `cargo fmt --check` runs, `cargo fmt`
   doesn't. No edits, installs, or fixes.
-- **Second opinion:** built as `/audit` (also `/second`), in any solo hat, and offered after a build turn that changed files. The user chooses
+- **Second opinion:** built first as `/audit`, a second model run apart from the conversation with a reviewer and limit of its own. Since the hats have their own models it is the review hat: `/audit` and the offer after a build turn run a review in that hat, on its model. See "Review before you commit" in `guide.md`.
   the reviewer from the live catalog, with each model priced for the review,
   and sets a dollar limit per review. Every review asks first, and the limit
   is kept before each step. It is the crew's best idea, independent review,

@@ -5,7 +5,7 @@ use ryter_core::{AgentEvent, Role};
 use crate::activity::{self, Verb};
 use crate::chat::{MessageKind, SystemLevel, ToolStatus, humanize, wrap};
 use crate::panel::{self, Notice};
-use crate::view::{CrewRow, TodoRow, View};
+use crate::view::View;
 
 /// Cap on tool error text shown in the chat (`R-EVT-02`).
 const TOOL_ERROR_CHARS: usize = 600;
@@ -14,7 +14,19 @@ const TOOL_ERROR_CHARS: usize = 600;
 /// A turn's closing line on the ledger: `✓ 4 tools · 1 file (1 changed, +9
 /// −1) · 1 command (1 ok) · 12s · $0.004`. Measured by Ryter, not reported by
 /// the model.
-fn receipt(view: &View, verb: &Verb, tools: u32, duration_ms: u64) -> String {
+fn receipt(view: &mut View, verb: &Verb, tools: u32, duration_ms: u64) -> String {
+    // A turn in which the tester filed its report closes on the report:
+    // `✗ 2 of 5 failed · 1:40 · $0.21`.
+    let report = view.turn_report.take();
+    if let (Some(headline), Verb::Done) = (report, verb) {
+        let mut parts = vec![headline, crate::chat::fmt_duration(duration_ms)];
+        if let Some(now) = view.spend {
+            parts.push(crate::chat::turn_usd(
+                now - view.turn_spend_from.unwrap_or(0.0),
+            ));
+        }
+        return parts.join(" · ");
+    }
     let mut parts = vec![match verb {
         Verb::Stopped => "⊘ stopped".to_string(),
         Verb::Failed => "✕ failed".to_string(),
@@ -38,7 +50,77 @@ fn receipt(view: &View, verb: &Verb, tools: u32, duration_ms: u64) -> String {
     parts.join(" · ")
 }
 
+/// Apply an agent event to the chat it belongs to.
+///
+/// What a turn says goes into the conversation that turn is part of, which
+/// may not be the one on screen: the user can Tab to the main chat while a
+/// test runs, or to the tester's while a build does. A hat change the
+/// agent makes itself (a review, a test run) is said in the main
+/// conversation, and the screen follows it.
 pub fn apply(view: &mut View, ev: AgentEvent) {
+    use ryter_core::Thread;
+    // The agent saying which hat it put on at the user's Tab. Once it has
+    // caught up with every Tab, its word stands: a Tab pressed while it was
+    // changing hats itself would otherwise leave the screen naming a hat
+    // the agent is not in.
+    if let AgentEvent::HatSet { role } = &ev {
+        view.agent_hat = *role;
+        view.hats_pending = view.hats_pending.saturating_sub(1);
+        if view.hats_pending == 0 && view.mode != *role {
+            view.mode = *role;
+            view.show(role.thread());
+        }
+        return;
+    }
+    let shown = view.shown;
+    let target = match &ev {
+        AgentEvent::TurnStarted { role, .. } => {
+            view.turn_thread = role.thread();
+            view.turn_open = true;
+            view.agent_hat = *role;
+            view.turn_thread
+        }
+        // A hat change the agent makes, and a report the tester files, are
+        // said in the conversation the other hats share.
+        AgentEvent::ModeChanged { .. } | AgentEvent::Tested { .. } => Thread::Main,
+        // How full a conversation is belongs to that conversation's gauge,
+        // whenever it is measured.
+        AgentEvent::Context { thread, .. } => *thread,
+        // Until a turn closes, what arrives is that turn's: a stop or an
+        // error ends the busy state first, and the turn's closing line
+        // used to land in whichever conversation was on screen.
+        _ if view.turn_open => view.turn_thread,
+        _ => shown,
+    };
+    view.show(target);
+    // The screen follows the agent into the tester's conversation and
+    // back out of it. A change of hat within one conversation leaves the
+    // screen where the user put it.
+    let follow = match &ev {
+        AgentEvent::ModeChanged { role } if role.thread() != view.agent_hat.thread() => {
+            Some(role.thread())
+        }
+        _ => None,
+    };
+    if let AgentEvent::ModeChanged { role } = &ev {
+        view.agent_hat = *role;
+    }
+    let closes = matches!(ev, AgentEvent::TurnFinished { .. });
+    apply_to_shown(view, ev);
+    if closes {
+        view.turn_open = false;
+        view.starting_product = None;
+    }
+    match follow {
+        Some(thread) => {
+            view.turn_thread = thread;
+            view.show(thread);
+        }
+        None => view.show(shown),
+    }
+}
+
+fn apply_to_shown(view: &mut View, ev: AgentEvent) {
     // The workbench shows the files as they are: read them again after
     // anything that changes them.
     if matches!(
@@ -88,17 +170,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 view.activity.current.clear();
             }
         }
-        AgentEvent::Tasks {
-            tasks,
-            checks,
-            patch,
-        } => {
-            view.crew_checks = checks.clone();
-            view.set_tasks(tasks.clone(), patch.clone());
-        }
         AgentEvent::TurnStarted { .. } => {
-            view.turn_calls = 0;
-            view.crew_started_ms = None;
             view.tally = Default::default();
             view.lookups = None;
             view.turn_spend_from = view.spend;
@@ -160,16 +232,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             output_tokens,
             cached_tokens,
             total_usd,
-            task,
-            ..
         } => {
-            view.turn_calls += 1;
-            if let Some(usd) = total_usd {
-                view.spend_log.push((view.now_ms, *usd));
-            }
-            if let (Some(t), Some(usd)) = (task, total_usd) {
-                *view.task_spend.entry(t.clone()).or_insert(0.0) += *usd;
-            }
             if let Some(p) = &mut view.project_spend {
                 p.add(*role, model, *total_usd);
             }
@@ -183,176 +246,124 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 *total_usd,
             );
         }
-        AgentEvent::PhaseChanged { phase } => {
-            view.phase = *phase;
-        }
-        AgentEvent::SubagentStarted {
-            id,
-            role,
-            description,
-        } => {
-            if view.crew_started_ms.is_none() {
-                view.crew_started_ms = Some(view.now_ms);
-            }
-            view.lane_logs
-                .entry(id.to_string())
-                .or_insert_with(|| (description.clone(), Vec::new()));
-            view.crew.push(CrewRow {
-                id: id.to_string(),
-                role: role.to_string(),
-                label: description.clone(),
-                spend: None,
-                status: "running".into(),
-                started_ms: view.now_ms,
-                acting: role.to_string(),
-                live: None,
-                tools: 0,
-            });
-        }
-        // Progress goes on the specialist's crew row, not into the chat. A
-        // second opinion has no crew row: it shows on the activity strip.
-        AgentEvent::SubagentActivity { id, text, role } => {
-            if let Some((_, lines)) = view.lane_logs.get_mut(id.as_str()) {
-                let at = crate::chat::OffsetTimestamp::now(view.tz_offset).hhmm();
-                lines.push(format!("{at}  {role:<8} {text}"));
-                if lines.len() > 500 {
-                    lines.remove(0);
-                }
-            }
-            if let Some(row) = view.crew.iter_mut().find(|c| c.id == id.as_str()) {
-                row.status = wrap::truncate(text, 48);
-                row.acting = role.to_string();
-                // Notes about the step, not tool calls.
-                if !["reviewing (", "near the limit", "reply cut off"]
-                    .iter()
-                    .any(|p| text.starts_with(p))
-                {
-                    row.tools += 1;
-                }
-            } else if view.activity.busy() {
-                view.activity.current = wrap::truncate(text, 48);
-            }
-        }
-        AgentEvent::SubagentLive {
-            id,
-            role,
-            phase,
-            target,
-            tokens,
-            lines,
-            tail,
-        } => {
-            let now = view.now_ms;
-            if let Some(row) = view.crew.iter_mut().find(|c| c.id == id.as_str()) {
-                row.acting = role.to_string();
-                let prev = row.live.take();
-                let same = prev
-                    .as_ref()
-                    .is_some_and(|l| l.phase == *phase && l.target == *target);
-                // Tokens a second, smoothed; a new step starts from nothing.
-                let rate = match &prev {
-                    Some(l) if *tokens > l.tokens && now > l.last_ms => {
-                        let now_rate =
-                            (tokens - l.tokens) as f64 * 1000.0 / (now - l.last_ms) as f64;
-                        if l.rate > 0.0 {
-                            l.rate * 0.6 + now_rate * 0.4
-                        } else {
-                            now_rate
-                        }
-                    }
-                    Some(l) if *tokens >= l.tokens && *tokens > 0 => l.rate,
-                    _ => 0.0,
-                };
-                row.live = Some(crate::view::LaneLive {
-                    phase: *phase,
-                    target: target.clone(),
-                    since_ms: prev.as_ref().filter(|_| same).map_or(now, |l| l.since_ms),
-                    last_ms: now,
-                    tokens: *tokens,
-                    lines: *lines,
-                    tail: tail.clone(),
-                    rate,
-                });
-            }
-        }
-        AgentEvent::ReviewerNeeded {
-            context_tokens,
-            then_run,
-            reason,
-        } => {
-            if !reason.is_empty() {
-                view.warn(format!("{reason}: choose who reviews"));
-            }
-            view.reviewer_ask = Some((*context_tokens, *then_run));
-        }
-        AgentEvent::SecondOpinion {
+        AgentEvent::Reviewed {
             model,
             verdict,
-            body,
+            tree,
             total_usd,
             ..
         } => {
-            let m = view.push(
-                MessageKind::Specialist {
-                    role: "audit".into(),
-                    model: model.clone(),
-                },
-                body.clone(),
-            );
-            m.meta.label = Some(format!(
-                "{} · {}",
-                crate::chat::short_model(model),
-                match verdict {
-                    Some(true) => "✓ no blocking problems",
-                    Some(false) => "✗ blocking problems",
-                    None => "no verdict",
-                }
+            let said = match verdict {
+                Some(true) => "✓ no blocking problems",
+                Some(false) => "✗ blocking problems",
+                None => "no verdict",
+            };
+            // To the tenth of a cent, as a turn's cost is: a review that
+            // cost $0.003 read "$0.00".
+            let cost = total_usd.map_or_else(String::new, |usd| {
+                format!(" · {}", crate::chat::turn_usd(usd))
+            });
+            view.system(format!(
+                "review · {} · {said}{cost}",
+                crate::chat::short_model(model)
             ));
-            m.meta.cost = *total_usd;
+            view.last_review = Some((tree.clone(), model.clone(), *verdict));
         }
-        AgentEvent::SubagentFinished {
-            id,
-            role,
-            summary,
-            body,
+        AgentEvent::Tested {
+            model,
+            headline,
+            passed,
+            rows,
+            file,
+            first_failed,
+            tree,
+            total_usd,
+            duration_ms,
         } => {
-            // A finished lane leaves the board; don't leave the pick on another.
-            view.lane_selected = None;
-            let label = view
-                .crew
-                .iter()
-                .find(|c| c.id == id.as_str())
-                .map(|c| c.label.clone())
-                .unwrap_or_else(|| role.to_string());
-            if !body.trim().is_empty() {
-                let model = specialist_model(view, role.as_str());
-                let m = view.push(
-                    MessageKind::Specialist {
-                        role: role.as_str().to_string(),
-                        model,
-                    },
-                    body.clone(),
-                );
-                m.meta.label = Some(label.clone());
+            let mut head = format!(
+                "test · {} · {headline} · {}",
+                crate::chat::short_model(model),
+                crate::chat::fmt_duration(*duration_ms)
+            );
+            if let Some(usd) = total_usd {
+                head.push_str(&format!(" · {}", crate::chat::turn_usd(*usd)));
             }
-            if *role == Role::Builder {
-                view.push(MessageKind::Merge, format!("{label} · {summary}"));
-                if view.activity.busy() {
-                    view.activity.verb = Verb::Merging;
-                }
+            let mut body = head;
+            for row in rows {
+                body.push('\n');
+                body.push_str(row);
             }
-            view.crew.retain(|c| c.id != id.as_str());
+            body.push_str(&format!("\nfull report  {file}"));
+            view.report(body, !passed);
+            // Left running, so the user can look at what the tester saw.
+            if let Some(p) = &view.product {
+                let at = p
+                    .address
+                    .as_ref()
+                    .map(|a| format!(" at {a}"))
+                    .unwrap_or_default();
+                let how = p
+                    .stop
+                    .as_ref()
+                    .map(|s| format!(" ({s})"))
+                    .unwrap_or_default();
+                view.system(format!(
+                    "the project is still running{at}\n/stop stops it{how}"
+                ));
+            }
+            view.last_test = Some((tree.clone(), model.clone(), *passed));
+            view.test_runs += 1;
+            view.retest = *first_failed;
+            // The tester's own turn closes on what it reported.
+            view.turn_report = Some(headline.clone());
         }
-        AgentEvent::Session { id, phase, title } => {
+        AgentEvent::Session { id, title } => {
             view.session_id = id.clone();
-            view.phase = *phase;
             view.session_title = title.clone();
         }
         AgentEvent::Notice { message } => view.system(message.clone()),
+        AgentEvent::Product {
+            running,
+            at,
+            address,
+            stop,
+        } => {
+            let was = view.product.take();
+            if !*running {
+                return;
+            }
+            let now = crate::view::ProductUp {
+                at: at.clone(),
+                address: address.clone(),
+                stop: stop.clone(),
+            };
+            // Said once, when it comes up (or is found up at startup).
+            if was.as_ref() != Some(&now) {
+                let time = at.rsplit(' ').next().unwrap_or(at);
+                let at_address = address
+                    .as_ref()
+                    .map(|a| format!(" at {a}"))
+                    .unwrap_or_default();
+                let how = stop.as_ref().map(|s| format!(" ({s})")).unwrap_or_default();
+                view.system(format!(
+                    "the project is running{at_address}, started {time} · /stop stops it{how}"
+                ));
+            }
+            view.product = Some(now);
+        }
+        // Taken in `apply`, before anything is routed.
+        AgentEvent::HatSet { .. } => {}
         AgentEvent::ModeChanged { role } => {
             view.mode = *role;
+            // A hat on a model of its own says which: the next message
+            // goes to it.
+            let own = if view.hat_model() == view.model {
+                String::new()
+            } else {
+                format!(" ({})", crate::chat::short_model(view.hat_model()))
+            };
             view.system(format!(
-                "switched to the {role} hat · Tab to change it again"
+                "switched to the {role} hat{own} · Tab to change it again"
             ));
         }
         AgentEvent::Checkpoint { sha } => view.last_checkpoint = sha.clone(),
@@ -363,6 +374,8 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 view.system(format!("committed {s}"));
                 view.last_tests = None;
                 view.tests_stale = false;
+                view.last_review = None;
+                view.last_test = None;
                 view.panels
                     .stack
                     .retain(|p| !matches!(p.kind(), "commit" | "changes"));
@@ -386,7 +399,6 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
         AgentEvent::Cancelled => {
             view.busy = false;
             view.cancelling = false;
-            view.crew.clear();
             view.activity.finish(Verb::Stopped, None, None);
             view.system("cancelled");
         }
@@ -396,6 +408,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             pct,
             messages,
             breakdown,
+            ..
         } => {
             view.ctx_pct = Some(*pct);
             view.ctx_tokens = Some(*tokens);
@@ -461,7 +474,10 @@ fn on_tool_call(
     let target = toolview::target(name, args);
     view.tool_calls
         .insert(id.to_string(), (name.to_string(), target.clone()));
-    let speaker = role == Role::Orchestrator || role.is_solo();
+    if name == "run_project" && args.get("action").and_then(|a| a.as_str()) == Some("start") {
+        view.starting_product = Some(id.to_string());
+    }
+    let speaker = role.is_solo();
     // Reads and searches fold into one row while they keep coming; the
     // chat is for the work.
     if speaker && toolview::is_lookup(name) {
@@ -496,14 +512,21 @@ fn on_tool_call(
             }
         }
     } else {
-        let shown = if target.is_empty() {
+        let shown = if name == "propose_run" {
+            "how this project runs".to_string()
+        } else if target.is_empty() {
             label.clone()
         } else {
             target.clone()
         };
         let m = view.push(
             MessageKind::Tool {
-                name: toolview::verb(name).to_string(),
+                // The project's own commands read as what they do:
+                // `start  docker compose up -d --wait`.
+                name: match (name, args.get("action").and_then(|a| a.as_str())) {
+                    ("run_project", Some(action)) => action.to_string(),
+                    _ => toolview::verb(name).to_string(),
+                },
                 status: ToolStatus::Running,
             },
             toolview::edit_preview(name, args),
@@ -518,10 +541,7 @@ fn on_tool_call(
         }
         view.lookups = None;
     }
-    if name == "todo_write" {
-        view.todos = parse_todos(args);
-    }
-    if view.activity.busy() && (role == Role::Orchestrator || role.is_solo()) {
+    if view.activity.busy() && role.is_solo() {
         view.activity.verb = Verb::Tool(name.to_string());
         view.activity.current = wrap::truncate(&label, 48);
         view.activity.tools += 1;
@@ -541,6 +561,9 @@ fn on_tool_result(
 ) {
     use crate::chat::toolview;
     let (tool, target) = view.tool_calls.remove(id).unwrap_or_default();
+    if view.starting_product.as_deref() == Some(id) {
+        view.starting_product = None;
+    }
     if toolview::is_lookup(&tool) {
         if is_error {
             let body = wrap::truncate(output.trim(), TOOL_ERROR_CHARS);
@@ -553,6 +576,14 @@ fn on_tool_result(
         return;
     }
     view.finish_tool(id, is_error, duration_ms);
+    // A decision that was recorded is said once, by the line Ryter adds
+    // ("decision recorded: …"). Only one that wasn't keeps its step, with
+    // the reason.
+    if tool == "record_decision" && !is_error {
+        view.messages
+            .retain(|m| m.meta.tool_id.as_deref() != Some(id));
+        return;
+    }
     let (detail, body) = toolview::result(&tool, output, is_error);
     if let Some(m) = view
         .messages
@@ -628,7 +659,6 @@ fn on_spend(
     cached_tokens: u64,
     total_usd: Option<f64>,
 ) {
-    // The user knows this role as the lead; logs keep `orchestrator`.
     let role_name = crate::view::role_label(&role.to_string()).to_string();
     {
         let row = view.spend_rows_role.entry(role_name.clone()).or_default();
@@ -671,7 +701,7 @@ fn on_spend(
             view.unpriced_calls += 1;
         }
     }
-    if role == Role::Orchestrator || role.is_solo() {
+    if role.is_solo() {
         // Tokens this turn become exact once accounting lands (`R-ACT-07`).
         view.activity.tokens = output_tokens;
         view.activity.tokens_estimated = false;
@@ -696,22 +726,7 @@ fn on_spend(
         let window = view.ctx_window_or_default();
         view.ctx_window = Some(window);
         view.ctx_pct = Some(((used.min(window) * 100) / window.max(1)) as u8);
-    } else if let Some(c) = view
-        .crew
-        .iter_mut()
-        .find(|c| c.role == role.to_string() && c.status == "running")
-    {
-        if let Some(v) = total_usd {
-            c.spend = Some(c.spend.unwrap_or(0.0) + v);
-        }
     }
-}
-
-fn specialist_model(view: &View, role: &str) -> String {
-    view.specialists
-        .get(role)
-        .and_then(|rm| rm.model.clone())
-        .unwrap_or_else(|| view.model.clone())
 }
 
 /// Pull the picker row for the active model into the header / info cards.
@@ -726,50 +741,89 @@ pub fn apply_model_catalog(view: &mut View, m: &ryter_core::ModelInfo) {
     }
 }
 
-/// `todo_write` arguments → info-panel rows.
-pub fn parse_todos(args: &serde_json::Value) -> Vec<TodoRow> {
-    let Some(items) = args.get("items").and_then(|v| v.as_array()) else {
-        return Vec::new();
-    };
-    items
-        .iter()
-        .map(|item| {
-            if let Some(s) = item.as_str() {
-                TodoRow {
-                    title: s.to_string(),
-                    status: "pending".into(),
-                }
-            } else {
-                TodoRow {
-                    title: item
-                        .get("title")
-                        .or_else(|| item.get("content"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("task")
-                        .to_string(),
-                    status: item
-                        .get("status")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("pending")
-                        .to_string(),
-                }
-            }
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ryter_core::Phase;
+
+    /// A decision that was recorded is one line in the chat: Ryter's
+    /// "decision recorded". One that wasn't keeps its step and its reason.
+    #[test]
+    fn a_recorded_decision_is_said_once() {
+        let call = |v: &mut View, id: &str| {
+            apply(
+                v,
+                AgentEvent::ToolCall {
+                    id: id.into(),
+                    name: "record_decision".into(),
+                    args: serde_json::json!({"title": "No export button in this pass"}),
+                    role: Role::SoloBuild,
+                    summary: None,
+                },
+            );
+        };
+        let result = |v: &mut View, id: &str, output: &str, is_error: bool| {
+            apply(
+                v,
+                AgentEvent::ToolResult {
+                    id: id.into(),
+                    output: output.into(),
+                    is_error,
+                    duration_ms: Some(2),
+                    diff: None,
+                },
+            );
+        };
+        let lines = |v: &View| -> Vec<String> {
+            v.messages
+                .iter()
+                .filter(|m| !matches!(m.kind, MessageKind::User))
+                .map(|m| {
+                    format!("{} {}", m.meta.label.clone().unwrap_or_default(), m.body)
+                        .trim()
+                        .to_string()
+                })
+                .collect()
+        };
+        let mut v = view();
+        call(&mut v, "d1");
+        apply(
+            &mut v,
+            AgentEvent::Notice {
+                message: "decision recorded: No export button in this pass".into(),
+            },
+        );
+        result(&mut v, "d1", "Recorded in `.ryter/decisions.md`", false);
+        assert_eq!(
+            lines(&v),
+            ["decision recorded: No export button in this pass"]
+        );
+        // Refused: the step stays, named in plain words, with why.
+        let mut v = view();
+        call(&mut v, "d2");
+        result(
+            &mut v,
+            "d2",
+            "no plan has been approved in this session",
+            true,
+        );
+        let tool = v
+            .messages
+            .iter()
+            .find(|m| matches!(m.kind, MessageKind::Tool { .. }))
+            .expect("the step");
+        assert!(
+            matches!(&tool.kind, MessageKind::Tool { name, status: ToolStatus::Error } if name == "decide"),
+            "{:?}",
+            tool.kind
+        );
+        assert_eq!(
+            tool.meta.label.as_deref(),
+            Some("No export button in this pass")
+        );
+    }
 
     fn view() -> View {
-        let mut v = View::new(
-            Phase::Build,
-            "spacexai".into(),
-            "grok-4.6".into(),
-            "~/p".into(),
-        );
+        let mut v = View::new("spacexai".into(), "grok-4.6".into(), "~/p".into());
         let _ = v.submit_user("hi".into(), "hi".into());
         v
     }
@@ -783,7 +837,7 @@ mod tests {
                 id: "t1".into(),
                 name: "bash".into(),
                 args: serde_json::json!({"command": "cargo test --all"}),
-                role: Role::Orchestrator,
+                role: Role::SoloBuild,
                 summary: None,
             },
         );
@@ -886,9 +940,7 @@ mod tests {
             AgentEvent::Spend {
                 connection: "spacexai".into(),
                 model: "grok-4.6".into(),
-                role: Role::Orchestrator,
-                subagent_id: None,
-                task: None,
+                role: Role::SoloBuild,
                 input_tokens: 100,
                 output_tokens: 20,
                 cached_tokens: 0,
@@ -908,7 +960,7 @@ mod tests {
         assert_eq!(v.activity.verb, Verb::Done);
         assert_eq!(v.activity.tools, 3);
         assert_eq!(v.spend, Some(0.01));
-        assert_eq!(v.spend_rows_role["lead"].calls, 1);
+        assert_eq!(v.spend_rows_role["build"].calls, 1);
     }
 
     #[test]
@@ -919,9 +971,7 @@ mod tests {
             AgentEvent::Spend {
                 connection: "x".into(),
                 model: "m".into(),
-                role: Role::Orchestrator,
-                subagent_id: None,
-                task: None,
+                role: Role::SoloBuild,
                 input_tokens: 1,
                 output_tokens: 1,
                 cached_tokens: 0,
@@ -952,37 +1002,5 @@ mod tests {
             }
         ));
         assert_eq!(last.body, "transcript compacted · 180k → 42k tokens");
-    }
-
-    #[test]
-    fn specialist_finish_posts_body_and_merge_row() {
-        let mut v = view();
-        let id = ryter_core::SubagentId::new("abc");
-        apply(
-            &mut v,
-            AgentEvent::SubagentStarted {
-                id: id.clone(),
-                role: Role::Builder,
-                description: "wire the loop".into(),
-            },
-        );
-        assert_eq!(v.crew.len(), 1);
-        apply(
-            &mut v,
-            AgentEvent::SubagentFinished {
-                id,
-                role: Role::Builder,
-                summary: "merged 3 files".into(),
-                body: "done.".into(),
-            },
-        );
-        assert!(v.crew.is_empty());
-        let kinds: Vec<_> = v.messages.iter().map(|m| &m.kind).collect();
-        assert!(
-            kinds
-                .iter()
-                .any(|k| matches!(k, MessageKind::Specialist { .. }))
-        );
-        assert!(kinds.iter().any(|k| matches!(k, MessageKind::Merge)));
     }
 }

@@ -145,7 +145,7 @@ impl Skill {
         fs::read_to_string(&path).map_err(|e| format!("{rel}: {e}"))
     }
 
-    /// Prompt sent to the orchestrator when the skill is invoked.
+    /// Prompt sent to the model when the skill is invoked.
     pub fn expand(&self, args: &str) -> String {
         let mut s = format!("# Skill: {}\n\n{}", self.name, self.body.trim());
         if !args.trim().is_empty() {
@@ -312,7 +312,7 @@ pub fn write_skill(home: &Path, name: &str, description: &str) -> Result<PathBuf
     }
     let desc = description.trim();
     let body = format!(
-        "---\nname: {name}\ndescription: {desc}\nuser-invocable: true\n---\n\nDescribe what the orchestrator should do.\n"
+        "---\nname: {name}\ndescription: {desc}\nuser-invocable: true\n---\n\nDescribe what Ryter should do.\n"
     );
     fs::write(&path, body).map_err(|e| Error::Io(e.to_string()))?;
     Ok(path)

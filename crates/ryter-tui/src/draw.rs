@@ -156,40 +156,6 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         .split(full);
     let (strip, body, act, comp_row, bar) = (rows[0], rows[1], rows[2], rows[3], rows[4]);
     draw_view_strip(frame, strip, view, theme);
-    // Crew mode: mission control takes the screen, the lead's conversation
-    // and the prompt in their own box on it (design D).
-    if crate::crewboard::shown(view) {
-        let area = Rect {
-            height: bar.y.saturating_sub(body.y),
-            ..body
-        };
-        let lead = crate::crewboard::draw_screen(frame, area, view, theme, activity_h, composer_h);
-        draw_chat(frame, lead.chat, view, theme);
-        if lead.activity.height > 0 {
-            activity::draw(frame, lead.activity, view, theme);
-        }
-        let cursor = if lead.composer.height > 0 {
-            composer::draw::draw(frame, lead.composer, view, theme)
-        } else {
-            None
-        };
-        draw_status_bar(frame, bar, view, theme);
-        if view.panels.is_empty() {
-            palette::draw(frame, lead.chat, lead.composer.y, view, theme);
-        }
-        let panel_cursor = panel::draw(frame, full, area, view, theme);
-        if panel_cursor.is_some() {
-            composer::draw::paint_cursor(frame, panel_cursor, theme);
-        } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
-            composer::draw::paint_cursor(frame, cursor, theme);
-        }
-        return Hit {
-            chat: lead.chat,
-            cards: Vec::new(),
-            activity: lead.activity,
-            composer: lead.composer,
-        };
-    }
     // The column, centred; one cell to its right is the scrollbar.
     let col_w = full.width.saturating_sub(2).min(LEDGER_COLUMN);
     let col_x = full.x + (full.width.saturating_sub(col_w + 1)) / 2;
@@ -285,6 +251,13 @@ fn draw_with_rail(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         width: col_w,
         ..r
     };
+    // Whose conversation this is, when it is the tester's.
+    if let Some(line) = thread_line(view, theme, usize::from(col_w)) {
+        frame.render_widget(
+            Paragraph::new(line).style(Style::default().bg(theme.bg)),
+            column(rows[0]),
+        );
+    }
     let chat = column(body);
     let cf = draw_chat(frame, chat, view, theme);
     if view.panels.is_empty() {
@@ -320,6 +293,33 @@ fn draw_with_rail(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     }
 }
 
+/// The line over the tester's conversation: `TEST THREAD · tab: main chat`.
+/// `None` for the conversation the other hats share, which needs no name.
+fn thread_line(view: &View, theme: Theme, width: usize) -> Option<Line<'static>> {
+    if view.shown != ryter_core::Thread::Test {
+        return None;
+    }
+    let dim = Style::default().fg(theme.dim).bg(theme.bg);
+    let name = "TEST THREAD";
+    let rest = match view.test_runs {
+        0 => " · its own conversation · tab: main chat".to_string(),
+        1 => " · 1 run this session · tab: main chat".to_string(),
+        n => format!(" · {n} runs this session · tab: main chat"),
+    };
+    let rest = rest.as_str();
+    let rest = wrap::truncate(rest, width.saturating_sub(wrap::width(name)));
+    Some(Line::from(vec![
+        Span::styled(
+            name,
+            Style::default()
+                .fg(theme.mode(ryter_core::Role::SoloTest))
+                .bg(theme.bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(rest, dim),
+    ]))
+}
+
 /// The keys that matter now, for the prompt's border: the bottom bar's, less
 /// the least needed until they fit in `width`.
 fn prompt_keys(view: &View, theme: Theme, width: usize) -> Line<'static> {
@@ -330,11 +330,15 @@ fn prompt_keys(view: &View, theme: Theme, width: usize) -> Line<'static> {
     if view.panels.top().is_none() && view.palette.is_none() && view.composer.is_empty() {
         keys.insert(0, ("$".into(), "spend".into(), Hint::Useful));
     }
+    // Three columns between keys, and one after the last: the gap before
+    // the border's corner is not worth a key.
     let used = |keys: &[(String, String, Hint)]| -> usize {
-        keys.iter()
+        (keys
+            .iter()
             .map(|(k, l, _)| wrap::width(k) + 1 + wrap::width(l) + 3)
             .sum::<usize>()
-            + 1
+            + 1)
+        .saturating_sub(2)
     };
     while used(&keys) > width && keys.len() > 1 {
         let worst = keys
@@ -345,7 +349,8 @@ fn prompt_keys(view: &View, theme: Theme, width: usize) -> Line<'static> {
         keys.remove(worst);
     }
     let mut spans = vec![Span::styled(" ", Style::default().bg(theme.bg))];
-    for (k, l, _) in keys {
+    let last = keys.len().saturating_sub(1);
+    for (i, (k, l, _)) in keys.into_iter().enumerate() {
         spans.push(Span::styled(
             k,
             Style::default()
@@ -354,7 +359,7 @@ fn prompt_keys(view: &View, theme: Theme, width: usize) -> Line<'static> {
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(
-            format!(" {l}   "),
+            format!(" {l}{}", if i == last { " " } else { "   " }),
             Style::default().fg(theme.dim).bg(theme.bg),
         ));
     }
@@ -368,24 +373,20 @@ pub enum LedgerView {
     Chat,
     /// The workbench.
     Changes,
-    /// Crew mode: the board above the lead's chat.
-    Crew,
 }
 
 /// The view on screen now.
 pub fn ledger_view(view: &View) -> LedgerView {
     if view.workbench.is_some() {
         LedgerView::Changes
-    } else if view.crew_mode() {
-        LedgerView::Crew
     } else {
         LedgerView::Chat
     }
 }
 
 /// The strip across the top: the views there are, the one on screen lit,
-/// and the key to each. Without it the workbench and the crew board were
-/// there but out of sight.
+/// and the key to each. Without it the workbench was there but out of
+/// sight.
 fn draw_view_strip(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let now = ledger_view(view);
     let dim = Style::default().fg(theme.dim).bg(theme.bg);
@@ -408,7 +409,12 @@ fn draw_view_strip(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     };
     let mut spans = vec![Span::styled(" ", dim)];
     spans.extend(tab(
-        "chat",
+        // The tester's conversation is named; the shared one is "chat".
+        if view.shown == ryter_core::Thread::Test {
+            "test thread"
+        } else {
+            "chat"
+        },
         if now == LedgerView::Changes {
             "esc"
         } else {
@@ -417,40 +423,8 @@ fn draw_view_strip(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         LedgerView::Chat,
     ));
     spans.extend(tab("changes", "^t", LedgerView::Changes));
-    // The board is crew mode's screen; in solo mode `/crew` gets there.
-    spans.extend(tab(
-        "crew board",
-        if view.crew_mode() { "" } else { "/crew" },
-        LedgerView::Crew,
-    ));
     let used: usize = spans.iter().map(|s| wrap::width(&s.content)).sum();
-    // Crew mode: who fills each seat, and where the patch lands.
-    let crew_line = view.crew_mode().then(|| {
-        let seat = |role: &str| {
-            view.specialists
-                .get(role)
-                .and_then(|r| r.model.clone())
-                .map(|m| crate::chat::short_model(&m).to_string())
-                .unwrap_or_else(|| crate::chat::short_model(&view.model).to_string())
-        };
-        let lead = crate::chat::short_model(&view.model).to_string();
-        let builders = seat("builder");
-        let builders = if builders == lead {
-            "same".to_string()
-        } else {
-            builders
-        };
-        let mut line = format!(
-            "lead {lead} · builders {builders} · auditor {}",
-            seat("auditor")
-        );
-        if let Some(p) = &view.patch_view {
-            let n = p.branch.rsplit('-').next().unwrap_or("");
-            line.push_str(&format!("   patch-{n} → {}", p.target));
-        }
-        line
-    });
-    let title = crew_line.as_deref().unwrap_or(view.session_title.trim());
+    let title = view.session_title.trim();
     if !title.is_empty() && used + 8 < area.width as usize {
         let t = wrap::truncate(title, area.width as usize - used - 2);
         let pad = (area.width as usize).saturating_sub(used + wrap::width(&t) + 1);
@@ -473,8 +447,6 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let on = |fg| Style::default().fg(fg).bg(bar_bg);
     let mode = if view.workbench.is_some() {
         " WORKBENCH ".to_string()
-    } else if view.crew_mode() {
-        " CREW · LEAD ".to_string()
     } else {
         format!(" {} ", view.mode_label().to_ascii_uppercase())
     };
@@ -493,7 +465,7 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         Some(b) => format!(" {project}  {b} "),
         None => format!(" {project} "),
     };
-    let model = format!(" {} ", crate::chat::short_model(&view.model));
+    let model = format!(" {} ", crate::chat::short_model(view.hat_model()));
     let frac = view.ctx_frac();
     let filled = ((frac * 8.0).round() as usize).min(8);
     let gauge = [
@@ -684,12 +656,8 @@ fn draw_header(frame: &mut Frame, area: Rect, view: &View, theme: Theme, compact
         Span::styled(" ryter", theme.muted()),
         Span::styled("  ·  ", theme.muted()),
     ];
-    // Who the user is talking to: a hat in solo mode, the lead in crew mode.
-    let speaker = if view.crew_mode() {
-        "crew · lead".to_string()
-    } else {
-        view.mode_label().to_string()
-    };
+    // The hat the next message goes out in.
+    let speaker = view.mode_label().to_string();
     left.push(Span::styled(
         speaker,
         Style::default()
@@ -702,7 +670,7 @@ fn draw_header(frame: &mut Frame, area: Rect, view: &View, theme: Theme, compact
     let mut right: Vec<Span<'static>> = Vec::new();
     if compact_facts {
         right.push(Span::styled(
-            crate::chat::short_model(&view.model).to_string(),
+            crate::chat::short_model(view.hat_model()).to_string(),
             theme.body(),
         ));
         right.push(Span::styled(" · ", theme.muted()));
@@ -916,22 +884,7 @@ fn hints_static(view: &View) -> Vec<(&'static str, String)> {
     }
     let mut v = vec![("enter", "send".to_string())];
     // The one key that isn't discoverable any other way.
-    if !view.crew_mode() {
-        v.push(("tab", view.mode.next_hat().as_str().to_string()));
-    } else if !view.ui.classic() && !view.crew.is_empty() {
-        v.push(("tab", "lanes".into()));
-        if crate::crewboard::shown(view) {
-            let label = if view.lanes_hide_reasoning {
-                "show reasoning"
-            } else {
-                "hide reasoning"
-            };
-            v.push(("^r", label.into()));
-        }
-        if view.lane_selected.is_some() && view.composer.is_empty() {
-            v.push(("⏎", "on a lane: its transcript".into()));
-        }
-    }
+    v.push(("tab", view.mode.next_hat().as_str().to_string()));
     v.push(("⇧enter", "newline".into()));
     v.push(("/", "commands".into()));
     if !view.ui.classic() {
@@ -941,16 +894,14 @@ fn hints_static(view: &View) -> Vec<(&'static str, String)> {
     if !view.ui.classic() && !view.diffs_expanded && view.has_folded_turns() {
         v.push(("^o", "expand".into()));
     }
-    if crate::crewboard::shown(view) && !view.crew.is_empty() {
-        // Listed with the lane keys above.
-    } else if view.activity.has_history {
+    if view.activity.has_history {
         v.push(("^r", "reasoning".into()));
     }
     // `^b` shows and hides the info panel on the classic screen, the rail
-    // on the ledger's solo screen.
+    // on the ledger.
     if view.ui.classic() {
         v.push(("^b", "panel".into()));
-    } else if !view.crew_mode() {
+    } else {
         let label = if view.panel_visible {
             "hide rail"
         } else {
@@ -958,9 +909,7 @@ fn hints_static(view: &View) -> Vec<(&'static str, String)> {
         };
         v.push(("^b", label.into()));
     }
-    if view.busy && view.crew_mode() {
-        v.push(("esc", "stop the crew".into()));
-    } else if view.busy {
+    if view.busy {
         v.push(("esc", "cancel".into()));
     } else if !view.scroll.follow {
         v.push(("end", "follow".into()));

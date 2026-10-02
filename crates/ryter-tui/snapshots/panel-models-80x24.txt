@@ -2,16 +2,16 @@
 ────────────────────────────────────────────────────────────────────────────────
  · s╭─ models ─────────────────────────────────────────────── 4 · loading ─╮
    w│ SEATS                │ ⌕ type to filter                              │
-    │›  Solo               │ model            in/M  out/M                  │
+    │›  All hats           │ model            in/M  out/M                  │
     │   grok-4.6           │ grok-4.6           $2     $6                  │
-    │   Architect          │ grok-4.5           $2     $6                  │
-    │   follows lead       │ grok-4.3        $1.25   $2.5                  │
-    │   Builder            │ grok-build-0.1     $1     $2                  │
-    │   follows lead       │                                               │
-    │   Auditor            │                                               │
-    │   follows lead       │                                               │
-    │                      │                                               │
-    │                      │                                               │
+    │   Plan               │ grok-4.5           $2     $6                  │
+    │   follows all hats   │ grok-4.3        $1.25   $2.5                  │
+    │   Build              │ grok-build-0.1     $1     $2                  │
+    │   follows all hats   │                                               │
+    │   Review             │                                               │
+    │   follows all hats   │                                               │
+    │   Test               │                                               │
+    │   follows all hats   │                                               │
     │                      │                                               │
     │                      │ spacexai · grok-4.6 · reasoning auto (medium… │
     │ ↑↓ seat   → models   │ enter set   ← seats   esc done   tab reasoning│
@@ -21,4 +21,4 @@
 ╭─ filter ─────────────────────────────────────────────────────────────────────╮
 │› typing goes to the search in the panel above                                │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ seat    → models    b guided setup    esc done
+ ↑↓ seat    → models    esc done

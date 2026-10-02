@@ -1,4 +1,4 @@
-//! PreToolUse / PostToolUse / SessionStart / Handoff hooks (command or HTTP).
+//! PreToolUse / PostToolUse / SessionStart hooks (command or HTTP).
 
 use std::io::Write;
 use std::path::Path;
@@ -9,7 +9,6 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use crate::config::HookConfig;
-use crate::phase::Phase;
 use crate::role::Role;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -23,8 +22,6 @@ pub enum HookEvent {
     PostToolUse,
     /// New session. Exit 2 denies starting work.
     SessionStart,
-    /// Before a phase handoff. Exit 2 denies the switch.
-    Handoff,
 }
 
 impl HookEvent {
@@ -33,7 +30,6 @@ impl HookEvent {
             "pretooluse" | "pre_tool_use" => Some(Self::PreToolUse),
             "posttooluse" | "post_tool_use" => Some(Self::PostToolUse),
             "sessionstart" | "session_start" => Some(Self::SessionStart),
-            "handoff" => Some(Self::Handoff),
             _ => None,
         }
     }
@@ -44,18 +40,12 @@ impl HookEvent {
             Self::PreToolUse => "PreToolUse",
             Self::PostToolUse => "PostToolUse",
             Self::SessionStart => "SessionStart",
-            Self::Handoff => "Handoff",
         }
     }
 
     /// Events the `/hooks` add menu offers.
     pub fn all() -> &'static [Self] {
-        &[
-            Self::PreToolUse,
-            Self::PostToolUse,
-            Self::SessionStart,
-            Self::Handoff,
-        ]
+        &[Self::PreToolUse, Self::PostToolUse, Self::SessionStart]
     }
 }
 
@@ -171,29 +161,13 @@ impl HookSet {
     }
 
     /// SessionStart.
-    pub fn session_start(&self, cwd: &Path, phase: Phase) -> HookDecision {
+    pub fn session_start(&self, cwd: &Path, hat: Role) -> HookDecision {
         self.run_event(
             HookEvent::SessionStart,
             json!({
                 "event": "SessionStart",
                 "cwd": cwd.to_string_lossy(),
-                "phase": phase.as_str(),
-            }),
-            cwd,
-            true,
-        )
-    }
-
-    /// Handoff (before the phase switch).
-    pub fn handoff(&self, from: Phase, to: Phase, note: &str, cwd: &Path) -> HookDecision {
-        self.run_event(
-            HookEvent::Handoff,
-            json!({
-                "event": "Handoff",
-                "from": from.as_str(),
-                "to": to.as_str(),
-                "note": note,
-                "cwd": cwd.to_string_lossy(),
+                "hat": hat.as_str(),
             }),
             cwd,
             true,
@@ -395,12 +369,17 @@ mod tests {
             url: None,
             matcher: Some("bash".into()),
         }]);
-        let d = set.pre_tool("bash", &json!({"command": "ls"}), dir.path(), Role::Builder);
+        let d = set.pre_tool(
+            "bash",
+            &json!({"command": "ls"}),
+            dir.path(),
+            Role::SoloBuild,
+        );
         assert!(
             matches!(d, HookDecision::Deny(ref s) if s.contains("no-bash")),
             "{d:?}"
         );
-        let allow = set.pre_tool("write", &json!({"path": "x"}), dir.path(), Role::Builder);
+        let allow = set.pre_tool("write", &json!({"path": "x"}), dir.path(), Role::SoloBuild);
         assert_eq!(allow, HookDecision::Allow);
     }
 
@@ -415,27 +394,9 @@ mod tests {
             matcher: None,
         }]);
         assert_eq!(
-            set.pre_tool("read_file", &json!({}), dir.path(), Role::Orchestrator),
+            set.pre_tool("read_file", &json!({}), dir.path(), Role::SoloPlan),
             HookDecision::Allow
         );
-    }
-
-    #[test]
-    fn handoff_can_deny() {
-        let dir = TempDir::new().unwrap();
-        let script = write_script(
-            dir.path(),
-            "stop.sh",
-            "#!/bin/sh\necho stay-in-plan\nexit 2\n",
-        );
-        let set = HookSet::from_config(&[HookConfig {
-            event: "Handoff".into(),
-            command: Some(script),
-            url: None,
-            matcher: None,
-        }]);
-        let d = set.handoff(Phase::Plan, Phase::Build, "skip", dir.path());
-        assert!(matches!(d, HookDecision::Deny(s) if s.contains("stay-in-plan")));
     }
 
     #[test]
@@ -448,13 +409,7 @@ mod tests {
             url: None,
             matcher: None,
         }]);
-        set.post_tool(
-            "read_file",
-            &json!({}),
-            "ok",
-            dir.path(),
-            Role::Orchestrator,
-        );
+        set.post_tool("read_file", &json!({}), "ok", dir.path(), Role::SoloPlan);
     }
 
     #[test]
@@ -482,7 +437,7 @@ mod tests {
             url: Some(format!("http://{addr}/hook")),
             matcher: None,
         }]);
-        let d = set.pre_tool("bash", &json!({}), Path::new("/tmp"), Role::Builder);
+        let d = set.pre_tool("bash", &json!({}), Path::new("/tmp"), Role::SoloBuild);
         assert!(
             matches!(d, HookDecision::Deny(ref s) if s.contains("nope")),
             "{d:?}"

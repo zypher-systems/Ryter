@@ -3,9 +3,6 @@
 //! `Message` replaces the old `LogLine`. Every message opens with a speaker
 //! header row; bodies are left-aligned for every kind (`R-CHAT-09`).
 
-/// Rows an audit shows before folding, unless edits are shown whole.
-pub const AUDIT_ROWS: usize = 14;
-
 pub mod cache;
 pub mod diff;
 pub mod highlight;
@@ -66,22 +63,6 @@ impl OffsetTimestamp {
     }
 }
 
-/// Parse `+0530` / `-0400` (`date +%z`) into seconds.
-pub fn parse_tz_offset(s: &str) -> Option<i32> {
-    let s = s.trim();
-    let (sign, digits) = match s.chars().next()? {
-        '+' => (1, &s[1..]),
-        '-' => (-1, &s[1..]),
-        _ => (1, s),
-    };
-    if digits.len() != 4 || !digits.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    let h: i32 = digits[0..2].parse().ok()?;
-    let m: i32 = digits[2..4].parse().ok()?;
-    Some(sign * (h * 3600 + m * 60))
-}
-
 /// Outcome of a tool call for its row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolStatus {
@@ -104,6 +85,12 @@ pub enum SystemLevel {
     Error,
     /// A dim horizontal rule with the body centred in it (`R-EVT-04`).
     Rule,
+    /// A report handed in from somewhere else: the tester's, in the
+    /// conversation the other hats share. `failed` picks its colour.
+    Report {
+        /// Something in it failed.
+        failed: bool,
+    },
     /// What a turn came to, closing it on the ledger: `✓ 4 tools · 1 file
     /// (+9 −1) · 0:12 · $0.004`. The folded form of a finished turn shows it.
     Receipt,
@@ -114,16 +101,9 @@ pub enum SystemLevel {
 pub enum MessageKind {
     /// The person at the keyboard.
     User,
-    /// Orchestrator model output.
+    /// The model's reply.
     Assistant {
         /// Model id.
-        model: String,
-    },
-    /// Specialist output (display only; not orchestrator context).
-    Specialist {
-        /// `planner` / `architect` / `builder` / `auditor`.
-        role: String,
-        /// Model id if known.
         model: String,
     },
     /// Collapsed tool row.
@@ -133,8 +113,6 @@ pub enum MessageKind {
         /// Outcome.
         status: ToolStatus,
     },
-    /// Merge notice after a builder finished.
-    Merge,
     /// TUI / slash output.
     System {
         /// Severity.
@@ -151,7 +129,7 @@ pub struct MessageMeta {
     pub duration_ms: Option<u64>,
     /// What a tool step came to: `new · 48 lines`, `✓ 12 passed`, `✗ exit 1`.
     pub detail: Option<String>,
-    /// Secondary label: specialist task, tool summary.
+    /// Secondary label: a tool's summary.
     pub label: Option<String>,
     /// Provider tool-call id (to match `ToolResult`).
     pub tool_id: Option<String>,
@@ -204,9 +182,6 @@ impl Message {
         match (&self.kind, &other.kind) {
             (MessageKind::User, MessageKind::User) => true,
             (MessageKind::Assistant { model: a }, MessageKind::Assistant { model: b }) => a == b,
-            (MessageKind::Specialist { role: a, .. }, MessageKind::Specialist { role: b, .. }) => {
-                a == b
-            }
             _ => false,
         }
     }
@@ -216,13 +191,12 @@ impl Message {
         match &self.kind {
             MessageKind::User => wrap::truncate(username, 20),
             MessageKind::Assistant { model } => short_model(model).to_string(),
-            MessageKind::Specialist { role, .. } => role.clone(),
             MessageKind::Tool { name, .. } => name.clone(),
-            MessageKind::Merge => "merge".into(),
             MessageKind::System { level } => match level {
                 SystemLevel::Info => "system".into(),
                 SystemLevel::Warn => "warning".into(),
                 SystemLevel::Error => "error".into(),
+                SystemLevel::Report { .. } => "test".into(),
                 SystemLevel::Rule | SystemLevel::Receipt => String::new(),
             },
         }
@@ -233,17 +207,16 @@ impl Message {
         match &self.kind {
             MessageKind::User => "",
             MessageKind::Assistant { .. } => "",
-            MessageKind::Specialist { .. } => "⇢ ",
             MessageKind::Tool { status, .. } => match status {
                 ToolStatus::Running => "◌ ",
                 ToolStatus::Ok => "· ",
                 ToolStatus::Error => "! ",
             },
-            MessageKind::Merge => "⇄ ",
             MessageKind::System { level } => match level {
                 SystemLevel::Info => "· ",
                 SystemLevel::Warn => "! ",
                 SystemLevel::Error => "✕ ",
+                SystemLevel::Report { .. } => "▣ ",
                 SystemLevel::Rule | SystemLevel::Receipt => "",
             },
         }
@@ -254,16 +227,16 @@ impl Message {
         match &self.kind {
             MessageKind::User => theme.user,
             MessageKind::Assistant { .. } => theme.assistant,
-            MessageKind::Specialist { role, .. } => theme.role(role),
             MessageKind::Tool { status, .. } => match status {
                 ToolStatus::Error => theme.error,
                 _ => theme.tool,
             },
-            MessageKind::Merge => theme.build,
             MessageKind::System { level } => match level {
                 SystemLevel::Info | SystemLevel::Rule | SystemLevel::Receipt => theme.dim,
                 SystemLevel::Warn => theme.warn,
                 SystemLevel::Error => theme.error,
+                SystemLevel::Report { failed: true } => theme.error,
+                SystemLevel::Report { failed: false } => theme.success,
             },
         }
     }
@@ -296,7 +269,7 @@ impl Message {
                     parts.push(self.at.hhmm());
                 }
             }
-            MessageKind::Assistant { .. } | MessageKind::Specialist { .. } | MessageKind::Merge => {
+            MessageKind::Assistant { .. } => {
                 if timestamps {
                     parts.push(self.at.hhmm());
                 }
@@ -420,22 +393,16 @@ pub fn render_message(msg: &Message, opts: &RenderOpts, theme: Theme) -> Vec<Lin
         return out;
     }
     // Bodies indent one column; user bodies carry a `▎` rule (`R-CHAT-10`).
-    // An audit carries a rule in the auditor's color on every row, so any
-    // slice of it on screen reads as the audit, not the model at work, even
-    // when its header has scrolled away.
-    let audit = matches!(&msg.kind, MessageKind::Specialist { role, .. } if role == "audit");
     let (gutter, gutter_style) = match msg.kind {
-        // On the ledger the spine is the gutter, for every speaker; an
-        // audit keeps its rule, so any slice of it reads as the audit.
-        _ if opts.ledger && !audit => ("", theme.body()),
+        // On the ledger the spine is the gutter, for every speaker.
+        _ if opts.ledger => ("", theme.body()),
         MessageKind::User => ("▎", Style::default().fg(theme.user).bg(theme.bg)),
-        _ if audit => ("┃", Style::default().fg(theme.audit).bg(theme.bg)),
         _ => (" ", theme.body()),
     };
     let inner = width.saturating_sub(2).max(8);
     let body_rows: Vec<Line<'static>> = match &msg.kind {
         MessageKind::User => markdown::render_inline_only(&msg.body, inner, theme),
-        MessageKind::Assistant { .. } | MessageKind::Specialist { .. } | MessageKind::Merge => {
+        MessageKind::Assistant { .. } => {
             let md = markdown::MdOptions {
                 width: inner,
                 line_numbers: opts.line_numbers,
@@ -479,19 +446,6 @@ pub fn render_message(msg: &Message, opts: &RenderOpts, theme: Theme) -> Vec<Lin
                 .collect()
         }
     };
-    // A long audit folds like a long edit: its findings come most serious
-    // first, and the verdict is in the header. Unfolded, it took the whole
-    // chat and pushed the work it audited off the screen.
-    let mut body_rows = body_rows;
-    // Folding away a line or two hides more than it saves.
-    if audit && opts.diff_rows != usize::MAX && body_rows.len() >= AUDIT_ROWS + 4 {
-        let rest = body_rows.len() - AUDIT_ROWS;
-        body_rows.truncate(AUDIT_ROWS);
-        body_rows.push(Line::from(Span::styled(
-            format!("… {rest} more lines · ^O shows it whole"),
-            theme.muted().add_modifier(Modifier::ITALIC),
-        )));
-    }
     for row in body_rows {
         let mut spans = if gutter.is_empty() {
             Vec::new()
@@ -676,9 +630,6 @@ mod tests {
             offset_secs: -4 * 3600,
         };
         assert_eq!(t.hhmm(), "20:00");
-        assert_eq!(parse_tz_offset("+0530"), Some(19_800));
-        assert_eq!(parse_tz_offset("-0400"), Some(-14_400));
-        assert_eq!(parse_tz_offset("garbage"), None);
     }
 
     #[test]

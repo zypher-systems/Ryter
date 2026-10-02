@@ -11,11 +11,10 @@ use serde_json::{Value, json};
 
 use crate::error::Result;
 use crate::llm::ToolSpec;
-use crate::queue::TaskQueue;
 use crate::role::Role;
 
 pub use fs::changed_lines;
-pub(crate) use policy::resolve;
+pub(crate) use policy::{on_this_machine, resolve};
 
 /// What `a` ("allow for this session") on this call's prompt would cover:
 /// a key, and the words for it. `None` when the prompt must not offer it.
@@ -35,7 +34,6 @@ pub fn allow_scope(name: &str, args: &Value) -> Option<(String, String)> {
             };
             Some((format!("bash:{scope}"), label))
         }
-        "propose_edit" => None,
         other => Some((other.to_string(), format!("{other} calls"))),
     }
 }
@@ -49,21 +47,19 @@ pub fn strict_prompt(name: &str, args: &Value) -> bool {
             .and_then(Value::as_str)
             .is_some_and(policy::destructive_command)
 }
-pub use policy::{Decision, decide};
+pub use policy::{Decision, decide, removes_stack_data};
 
 /// Runtime context for a tool call.
 #[derive(Debug, Clone)]
 pub struct ToolContext {
     /// Project root. All source paths must stay inside it.
     pub workspace: std::path::PathBuf,
-    /// Pass-note directory (writable for non-builders).
+    /// The session's notes folder: the one place the plan hat may write.
     pub notes_dir: std::path::PathBuf,
     /// Who is calling.
     pub role: Role,
     /// Treat Ask as Allow (deny still wins).
     pub always_approve: bool,
-    /// Shared task queue (`todo_write`).
-    pub queue: Arc<Mutex<TaskQueue>>,
     /// Outbound MCP hub.
     pub mcp: Option<Arc<Mutex<crate::mcp::McpHub>>>,
     /// Optional lifecycle hooks.
@@ -77,9 +73,27 @@ pub struct ToolContext {
     pub allowed: Arc<Mutex<std::collections::HashSet<String>>>,
     /// `[features] web`.
     pub web: bool,
-    /// Where a running command's output goes as it arrives: the crew board's
-    /// lane. `None` where only the result matters.
+    /// Where a running command's output goes as it arrives. `None` where
+    /// only the result matters.
     pub live: Option<LiveOutput>,
+    /// Where a shell command's relative paths start. The project's top,
+    /// until a `cd` in the same command moves it.
+    pub cwd: Cwd,
+    /// Variables an earlier part of the same shell command set to a plain
+    /// value (`B=http://localhost:8001`), so `$B` later can be read.
+    pub vars: Vec<(String, String)>,
+}
+
+/// The folder a shell command is in when one of its parts runs.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Cwd {
+    /// The project's top: where every command starts.
+    #[default]
+    Project,
+    /// A folder an earlier `cd` in the same command moved to.
+    At(std::path::PathBuf),
+    /// Somewhere the gate can't read: `cd "$DIR"`, `cd -`.
+    Unknown,
 }
 
 /// Takes a running command's latest output lines.
@@ -186,7 +200,6 @@ pub const TOOL_NAMES: &[&str] = &[
     "write",
     "search_replace",
     "bash",
-    "todo_write",
 ];
 
 /// JSON-schema tool specs for this role (what the model is offered).
@@ -248,46 +261,6 @@ fn spec(name: &str) -> Option<ToolSpec> {
              check a server, start it, test it, and finish in the same command.",
             json!({"type":"object","properties":{"command":{"type":"string"},"timeout_secs":{"type":"integer"}},"required":["command"]}),
         ),
-        "propose_edit" => (
-            "Fast path for a trivial change (a typo, a one-line fix, a config \
-             value): propose replacing old_string with new_string in one file. The \
-             user sees the diff and approves it with y — their approval is the \
-             sign-off, so it skips the crew. At most 20 lines on each side; \
-             anything larger is a task. Include enough context in old_string to \
-             make it unique.",
-            json!({"type":"object","properties":{
-                "path":{"type":"string"},
-                "old_string":{"type":"string"},
-                "new_string":{"type":"string"},
-                "reason":{"type":"string","description":"one line: why"}
-            },"required":["path","old_string","new_string","reason"]}),
-        ),
-        "todo_write" => (
-            "Queue work for the crew. Updates tasks by id and adds new ones; it \
-             never replaces the list (set status \"dropped\" to remove one). Each \
-             task names who does it: role \"architect\" designs and writes builder \
-             tasks; role \"builder\" (the default) implements one in a git \
-             worktree, gated by checks and auditors before it lands. The crew runs \
-             when your reply ends. A builder's brief is its entire spec: what to \
-             change, the constraints, how to know it is done. Declare the files each \
-             builder task owns: disjoint tasks run in parallel. List in `after` the \
-             tasks one needs done first (a scaffold, a shared module): it starts only \
-             once they have landed. On an architect task, hold: true keeps its \
-             builder tasks proposed until the user approves.",
-            json!({"type":"object","properties":{"items":{"type":"array","items":{
-                "type":"object",
-                "properties":{
-                    "id":{"type":"string","description":"stable id; reuse it to update a task"},
-                    "title":{"type":"string","description":"one line, shown to the user"},
-                    "brief":{"type":"string","description":"the full spec"},
-                    "role":{"type":"string","enum":["architect","builder"]},
-                    "files":{"type":"array","items":{"type":"string"},"description":"paths this builder task owns"},
-                    "hold":{"type":"boolean","description":"architect only: wait for approval before building"},
-                    "after":{"type":"array","items":{"type":"string"},"description":"ids of tasks that must land before this one starts"},
-                    "status":{"type":"string","enum":["pending","proposed","done","blocked","dropped"]}
-                }
-            }}},"required":["items"]}),
-        ),
         "search_tool" => (
             "Search connected MCP servers for tools.",
             json!({"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}),
@@ -328,6 +301,85 @@ fn spec(name: &str) -> Option<ToolSpec> {
                 "rules":{"type":"string","description":"the whole rules file, in Markdown, as it should be after the change"}
             },"required":["rules"]}),
         ),
+        "present_plan" => (
+            "Show the user a plan to approve before any work on it starts. Use it whenever \
+             the user asks for a plan, and before work that is more than a small change. \
+             Write the plan in Markdown under these headings: Goal, Steps (numbered, each \
+             small enough to check), Files, Risks, How to verify. The user reads it in a \
+             panel and answers. Approve: the plan is saved in the project and you carry it \
+             out in the build hat, in this same turn. Adjust: they say what to change; \
+             revise the plan and present it again. Reject: nothing is saved. Never ask in \
+             plain text whether a plan is acceptable: present it.",
+            json!({"type":"object","properties":{
+                "title":{"type":"string","description":"a few words: the panel's title and the file's name"},
+                "plan":{"type":"string","description":"the plan, in Markdown"}
+            },"required":["title","plan"]}),
+        ),
+        "record_decision" => (
+            "Record one place where the work differs from the plan the user approved, and \
+             why. Call it when the user tells you to leave out, add or change something the \
+             plan says, and when the plan can't be followed as written and you take another \
+             way to the same goal. One call for each difference, when it is decided, before \
+             you build it. The entry goes in `.ryter/decisions.md` in the project, and a \
+             review reads it: a difference recorded there is not held against the work. \
+             Don't record work that follows the plan, or things the plan doesn't speak to.",
+            json!({"type":"object","properties":{
+                "title":{"type":"string","description":"a few words: what was decided"},
+                "plan_said":{"type":"string","description":"what the plan says, with its step"},
+                "built_instead":{"type":"string","description":"what is built instead"},
+                "why":{"type":"string","description":"the reason, in a sentence; the user's own words when they decided"},
+                "decided_by":{"type":"string","enum":["user","model"],"description":"`user` when they told you to; `model` when you chose"}
+            },"required":["title","plan_said","built_instead","why","decided_by"]}),
+        ),
+        "propose_run" => (
+            "Propose how this project runs, for the user to approve: the command that \
+             starts it, an address that answers once it is up, its test commands, and the \
+             command that stops it. Read the project first (its README, compose file, \
+             package.json, Makefile, scripts). Use the commands the project itself uses. \
+             The start command may return (`docker compose up -d --wait`) or stay in the \
+             foreground (`npm run dev`): Ryter runs it and keeps it up. Approved, it is \
+             saved as `.ryter/run.toml` and Ryter runs these commands with run_project, \
+             without asking again. Leave out what the project doesn't have.",
+            json!({"type":"object","properties":{
+                "start":{"type":"string","description":"starts the product"},
+                "ready":{"type":"string","description":"an http address on this machine that answers once it is up, e.g. http://localhost:8000/healthz"},
+                "test":{"type":"array","items":{"type":"string"},"description":"the project's test and check commands, in order"},
+                "stop":{"type":"string","description":"stops what start started"}
+            }}),
+        ),
+        "report_test" => (
+            "File your test report. Call it once, when you have finished testing, as your \
+             last tool call. List every scenario you tried, in order, each with how it \
+             went: `pass`, `fail`, or `not_reached` (it depended on one that failed). For \
+             a failure say what you expected, what happened (the status, the error line), \
+             and the exact steps to see it again: the builder fixes from this without \
+             having seen what you saw. The report goes to the user and the builder, and \
+             into a file under `.ryter/tests/`. Don't soften a failure, and don't report \
+             a pass you didn't see.",
+            json!({"type":"object","properties":{
+                "title":{"type":"string","description":"what was tested, in a few words"},
+                "scenarios":{"type":"array","items":{"type":"object","properties":{
+                    "name":{"type":"string","description":"what you tried, in a few words"},
+                    "result":{"type":"string","enum":["pass","fail","not_reached"]},
+                    "expected":{"type":"string","description":"for a failure: what should have happened"},
+                    "got":{"type":"string","description":"for a failure: what happened, with the status or the error line"},
+                    "to_see_it":{"type":"string","description":"for a failure: the exact steps to see it again"},
+                    "note":{"type":"string","description":"a word more: `21 passed`, or for not_reached what it needs (`needs 3`)"}
+                },"required":["name","result"]}},
+                "summary":{"type":"string","description":"what you could not test, and why"}
+            },"required":["title","scenarios"]}),
+        ),
+        "run_project" => (
+            "Run the project's own approved commands from `.ryter/run.toml`. `start` \
+             starts the product and waits until it is up; it stays up after your turn. \
+             `test` runs the project's test commands and returns their output. `stop` \
+             stops what was started (the user usually does this, with /stop: leave the \
+             product running when you finish). `status` says whether it is up. With no \
+             run file yet, propose one with propose_run.",
+            json!({"type":"object","properties":{
+                "action":{"type":"string","enum":["start","test","stop","status"]}
+            },"required":["action"]}),
+        ),
         "request_hat" => (
             "Ask the user to switch your hat, e.g. to build once a plan is ready or once a \
              review found things to fix. They answer yes or no; on yes you continue in the \
@@ -365,6 +417,26 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
         // One list for every hat, so switching hats never changes the tool
         // definitions (and never throws away the prompt cache). The gate
         // decides what each hat may run.
+        // The tester works in a thread of its own, so its list is its own
+        // too: nothing for planning or for changing the project's rules.
+        Role::SoloTest => &[
+            "read_file",
+            "list_dir",
+            "grep",
+            "glob",
+            "write",
+            "bash",
+            "propose_run",
+            "run_project",
+            "report_test",
+            "ask_user",
+            "load_skill",
+            "show_page",
+            "search_tool",
+            "use_tool",
+            "web_fetch",
+            "web_search",
+        ],
         Role::SoloPlan | Role::SoloBuild | Role::SoloReview => &[
             "read_file",
             "list_dir",
@@ -375,6 +447,8 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "bash",
             "ask_user",
             "request_hat",
+            "present_plan",
+            "record_decision",
             "load_skill",
             "show_page",
             "update_rules",
@@ -383,50 +457,8 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "web_fetch",
             "web_search",
         ],
-        Role::Orchestrator => &[
-            "propose_edit",
-            "read_file",
-            "list_dir",
-            "grep",
-            "glob",
-            "write",
-            "search_replace",
-            "todo_write",
-            "load_skill",
-            "show_page",
-            "update_rules",
-            "search_tool",
-            "use_tool",
-            "ask_user",
-            "web_fetch",
-            "web_search",
-        ],
-        Role::Architect => &[
-            "read_file",
-            "list_dir",
-            "grep",
-            "glob",
-            "todo_write",
-            "write",
-            "search_replace",
-            "web_fetch",
-            "web_search",
-        ],
-        Role::Builder => &[
-            "read_file",
-            "list_dir",
-            "grep",
-            "glob",
-            "write",
-            "search_replace",
-            "bash",
-            "todo_write",
-            "web_fetch",
-            "web_search",
-        ],
-        // Read-only. It reviews in a worktree that is discarded after the
-        // merge, so anything it wrote was lost; its findings are its reply.
-        Role::Auditor => &["read_file", "list_dir", "grep", "glob", "bash"],
+        // A role from crew mode, which is gone: nothing runs as it.
+        Role::Crew => &[],
     }
 }
 
@@ -438,14 +470,14 @@ pub fn execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput
         "grep" => fs::grep(args, ctx),
         "glob" => fs::glob_files(args, ctx),
         "write" => fs::write_file(args, ctx),
-        "search_replace" | "propose_edit" => fs::search_replace(args, ctx),
+        "search_replace" => fs::search_replace(args, ctx),
         "bash" => shell::bash(args, ctx),
-        "todo_write" => todo_write(args, ctx),
         "search_tool" => mcp_search(args, ctx),
         "use_tool" => mcp_use(args, ctx),
         "ask_user" => ask_user(args, ctx),
         // The agent loop answers this itself: it changes who the agent is.
-        "request_hat" | "load_skill" | "show_page" | "update_rules" => Ok(ToolOutput::err(
+        "request_hat" | "present_plan" | "record_decision" | "load_skill" | "show_page"
+        | "update_rules" | "propose_run" | "run_project" | "report_test" => Ok(ToolOutput::err(
             format!("{name} is handled by the agent loop"),
         )),
         "web_fetch" => web::web_fetch(args, ctx),
@@ -524,21 +556,12 @@ fn ask_user(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     Ok(ToolOutput::ok(answer))
 }
 
-fn todo_write(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
-    let mut q = ctx
-        .queue
-        .lock()
-        .map_err(|e| crate::error::Error::Config(e.to_string()))?;
-    q.apply_todo_as(args, ctx.role.as_str())?;
-    let summary = q
-        .tasks
-        .iter()
-        .map(|t| format!("{:?} {} {}", t.status, t.id, t.title))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let n = q.tasks.len();
-    Ok(ToolOutput::ok(format!("{n} tasks\n{summary}")))
-}
+/// What a reviewer may do with containers, for a refusal: a model refused
+/// `docker compose up` otherwise concludes it has no Docker at all.
+const CONTAINER_CHECKS: &str = " Docker is here, and tests and linters do run in the \
+    project's containers: `docker compose run --rm <service> <test command>`, `docker compose \
+    exec <service> <test command>`, and `docker compose ps` / `logs` to look. Building, \
+    starting and stopping the stack are not yours.";
 
 /// Decide then execute. Deny/Ask do not run. PreToolUse hooks can still deny.
 pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
@@ -547,30 +570,6 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
     }
     match decide(name, args, ctx) {
         Decision::Allow => run_with_hooks(name, args, ctx),
-        // A proposed edit skips the crew because a person approves it. No
-        // blanket approval stands in for that person: not --always-approve,
-        // not the session-wide `a`.
-        Decision::Ask if name == "propose_edit" => match &ctx.user_io {
-            Some(io) => {
-                let summary = crate::user_io::summary_args(name, args);
-                match io.permission_with(name, &summary, fs::preview(name, args, ctx), &ctx.cancel)
-                {
-                    crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
-                        run_with_hooks(name, args, ctx)
-                    }
-                    crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
-                        Err(crate::error::Error::Cancelled)
-                    }
-                    crate::user_io::Permission::Deny => Ok(ToolOutput::err(
-                        "the user declined the edit; ask what they want instead",
-                    )),
-                }
-            }
-            None => Ok(ToolOutput::err(
-                "a proposed edit needs a person to approve it and none is attached; \
-                 queue it as a task instead",
-            )),
-        },
         // Outside the project: a person answers every time. "Allow all" and
         // --always-approve cover the project, not the rest of the machine.
         Decision::AskOutside => match &ctx.user_io {
@@ -609,33 +608,40 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
         }
         // Say which gate refused. "not allowed for <role>" on every denial
         // taught models a tool was forbidden when only the arguments were.
-        Decision::Deny if !tools_for(ctx.role).contains(&name) => Ok(ToolOutput::err(format!(
-            "denied: the {} role does not have the {name} tool",
-            ctx.role
-        ))),
+        Decision::Deny if !tools_for(ctx.role).contains(&name) => {
+            Ok(ToolOutput::err(format!("denied: there is no {name} tool")))
+        }
         // A hat that can't do this: say which one can, so the model tells the
         // user instead of hunting for a way round.
         Decision::Deny
-            if matches!(ctx.role, Role::SoloPlan | Role::SoloReview)
+            if matches!(ctx.role, Role::SoloPlan | Role::SoloReview | Role::SoloTest)
                 && matches!(name, "write" | "search_replace" | "bash")
-                && !(name == "bash" && policy::bash_hint(args).is_some()) =>
+                && !(name == "bash" && policy::bash_hint(args, ctx).is_some()) =>
         {
             Ok(ToolOutput::err(format!(
                 "denied: the {} hat can't {} — tell the user; they can press Tab to switch to \
-                 build",
+                 build.{}",
                 ctx.role,
-                if name == "bash" {
+                if name == "bash" && ctx.role == Role::SoloTest {
+                    "delete, move or rewrite the project's files"
+                } else if name == "bash" {
                     "run commands that change things"
                 } else {
                     "edit files"
+                },
+                if name == "bash" && ctx.role == Role::SoloReview && policy::names_containers(args)
+                {
+                    CONTAINER_CHECKS
+                } else {
+                    ""
                 }
             )))
         }
-        Decision::Deny if name == "bash" && policy::bash_hint(args).is_some() => {
+        Decision::Deny if name == "bash" && policy::bash_hint(args, ctx).is_some() => {
             Ok(ToolOutput::err(format!(
                 "denied: bash {} — {}",
                 crate::user_io::summary_args(name, args),
-                policy::bash_hint(args).unwrap_or_default()
+                policy::bash_hint(args, ctx).unwrap_or_default()
             )))
         }
         Decision::Deny => Ok(ToolOutput::err(format!(
@@ -739,23 +745,22 @@ mod tests {
             notes_dir: notes,
             role,
             always_approve: false,
-            queue: Arc::new(Mutex::new(crate::queue::TaskQueue::open(
-                root.join("tasks.json"),
-            ))),
             mcp: None,
             hooks: None,
             cancel: crate::cancel::Cancel::new(),
             user_io: None,
             allowed: Default::default(),
             web: false,
+            cwd: Default::default(),
+            vars: Default::default(),
         }
     }
 
     #[test]
-    fn orchestrator_can_write_roadmap_not_src() {
+    fn the_plan_hat_writes_memory_not_source() {
         let dir = TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
-        let c = ctx(Role::Orchestrator, dir.path());
+        let c = ctx(Role::SoloPlan, dir.path());
         let road = json!({"path": "ROADMAP.md", "content": "# Roadmap\n"});
         assert_eq!(decide("write", &road, &c), Decision::Allow);
         let out = gated_execute("write", &road, &c).unwrap();
@@ -766,11 +771,11 @@ mod tests {
     }
 
     #[test]
-    fn orchestrator_cannot_write_src() {
+    fn the_plan_hat_cannot_write_source() {
         let dir = TempDir::new().unwrap();
         let src = dir.path().join("src");
         std::fs::create_dir_all(&src).unwrap();
-        let c = ctx(Role::Orchestrator, dir.path());
+        let c = ctx(Role::SoloPlan, dir.path());
         let args = json!({"path": "src/lib.rs", "content": "fn x() {}"});
         assert_eq!(decide("write", &args, &c), Decision::Deny);
         let out = gated_execute("write", &args, &c).unwrap();
@@ -779,12 +784,13 @@ mod tests {
     }
 
     #[test]
-    fn builder_can_write_src() {
+    fn the_build_hat_writes_source_once_allowed() {
         let dir = TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
-        let c = ctx(Role::Builder, dir.path());
+        let mut c = ctx(Role::SoloBuild, dir.path());
         let args = json!({"path": "src/lib.rs", "content": "fn x() {}"});
-        assert_eq!(decide("write", &args, &c), Decision::Allow);
+        assert_eq!(decide("write", &args, &c), Decision::Ask);
+        c.always_approve = true;
         let out = gated_execute("write", &args, &c).unwrap();
         assert!(!out.is_error);
         assert_eq!(
@@ -794,20 +800,9 @@ mod tests {
     }
 
     #[test]
-    fn todo_write_feeds_queue() {
+    fn the_plan_hat_writes_its_notes() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Orchestrator, dir.path());
-        let out = gated_execute("todo_write", &json!({"items":["a","b"]}), &c).unwrap();
-        assert!(!out.is_error);
-        let q = c.queue.lock().unwrap();
-        assert_eq!(q.tasks.len(), 2);
-        assert_eq!(q.tasks[0].title, "a");
-    }
-
-    #[test]
-    fn planner_can_write_notes_only() {
-        let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Architect, dir.path());
+        let c = ctx(Role::SoloPlan, dir.path());
         let note = c.notes_dir.join("plan.md");
         let args = json!({"path": note.to_string_lossy(), "content": "# plan\n"});
         assert_eq!(decide("write", &args, &c), Decision::Allow);
@@ -816,10 +811,10 @@ mod tests {
     }
 
     #[test]
-    fn env_file_is_denied_even_for_builder() {
+    fn env_file_is_denied_even_for_the_build_hat() {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join(".env"), "SECRET=1").unwrap();
-        let c = ctx(Role::Builder, dir.path());
+        let c = ctx(Role::SoloBuild, dir.path());
         let args = json!({"path": ".env"});
         assert_eq!(decide("read_file", &args, &c), Decision::Deny);
     }
@@ -841,7 +836,8 @@ mod tests {
             url: None,
             matcher: Some("write".into()),
         }]);
-        let mut c = ctx(Role::Builder, dir.path());
+        let mut c = ctx(Role::SoloBuild, dir.path());
+        c.always_approve = true;
         c.hooks = Some(Arc::new(hooks));
         let args = json!({"path": "src/lib.rs", "content": "fn x() {}"});
         let out = gated_execute("write", &args, &c).unwrap();
@@ -851,10 +847,10 @@ mod tests {
     }
 
     #[test]
-    fn orchestrator_read_is_allowed() {
+    fn reading_is_allowed() {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("README.md"), "hello").unwrap();
-        let c = ctx(Role::Orchestrator, dir.path());
+        let c = ctx(Role::SoloPlan, dir.path());
         let out = gated_execute("read_file", &json!({"path": "README.md"}), &c).unwrap();
         assert!(!out.is_error);
         assert!(out.text.contains("hello"));
@@ -862,20 +858,20 @@ mod tests {
 
     #[test]
     fn web_tools_are_opt_in() {
-        let names: Vec<_> = specs_for_opts(Role::Orchestrator, false)
+        let names: Vec<_> = specs_for_opts(Role::SoloPlan, false)
             .into_iter()
             .map(|s| s.name)
             .collect();
         assert!(names.contains(&"ask_user".into()));
         assert!(!names.contains(&"web_fetch".into()));
-        let names: Vec<_> = specs_for_opts(Role::Orchestrator, true)
+        let names: Vec<_> = specs_for_opts(Role::SoloPlan, true)
             .into_iter()
             .map(|s| s.name)
             .collect();
         assert!(names.contains(&"web_fetch".into()));
         assert!(names.contains(&"web_search".into()));
         let dir = TempDir::new().unwrap();
-        let mut c = ctx(Role::Orchestrator, dir.path());
+        let mut c = ctx(Role::SoloPlan, dir.path());
         let out = execute("web_fetch", &json!({"url": "https://example.com"}), &c).unwrap();
         assert!(out.is_error);
         c.web = true;
@@ -888,7 +884,7 @@ mod tests {
     #[test]
     fn oversized_tool_output_is_capped_at_both_ends() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Builder, dir.path());
+        let c = ctx(Role::SoloBuild, dir.path());
         let big = "x".repeat(MAX_TOOL_OUTPUT_BYTES * 3);
         std::fs::write(dir.path().join("big.txt"), &big).unwrap();
         let out = execute("read_file", &json!({"path": "big.txt"}), &c).unwrap();
@@ -912,7 +908,7 @@ mod tests {
     #[test]
     fn read_file_pages_a_long_file() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Builder, dir.path());
+        let c = ctx(Role::SoloBuild, dir.path());
         let body: String = (1..=5_000).map(|i| format!("line {i}\n")).collect();
         std::fs::write(dir.path().join("long.txt"), body).unwrap();
 
@@ -947,7 +943,7 @@ mod tests {
     #[test]
     fn bash_timeout_is_raisable_and_clamped() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Builder, dir.path());
+        let c = ctx(Role::SoloBuild, dir.path());
         let out = execute(
             "bash",
             &json!({"command": "sleep 2", "timeout_secs": 1}),
@@ -966,7 +962,7 @@ mod tests {
     #[test]
     fn bash_is_not_a_login_shell() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Builder, dir.path());
+        let c = ctx(Role::SoloBuild, dir.path());
         let out = execute(
             "bash",
             &json!({"command": "shopt -q login_shell; echo $?"}),
@@ -976,69 +972,33 @@ mod tests {
         assert_eq!(out.text.trim(), "1", "should not be a login shell");
     }
 
-    fn propose(dir: &std::path::Path) -> Value {
-        std::fs::write(dir.join("config.toml"), "retries = 3\n").unwrap();
-        json!({"path": "config.toml", "old_string": "retries = 3", "new_string": "retries = 5", "reason": "user asked"})
-    }
-
-    /// The fast path: a person sees the diff and approves it.
+    /// Scratch space outside the project is written without a question, in
+    /// any hat, with nobody there to ask.
     #[test]
-    fn a_proposed_edit_applies_when_the_user_approves() {
+    fn scratch_space_is_written_without_asking() {
         let dir = TempDir::new().unwrap();
-        let args = propose(dir.path());
-        let (io, rx) = crate::user_io::UserIo::pair();
-        let mut c = ctx(Role::Orchestrator, dir.path());
-        c.user_io = Some(io);
-        let allowed = c.allowed.clone();
-        let worker = std::thread::spawn(move || gated_execute("propose_edit", &args, &c).unwrap());
-        match rx.recv_timeout(std::time::Duration::from_secs(2)) {
-            Ok(crate::user_io::UserRequest::Permission { summary, reply, .. }) => {
-                assert!(
-                    summary.contains("-retries = 3") && summary.contains("+retries = 5"),
-                    "{summary}"
-                );
-                reply.send(crate::user_io::Permission::Always).unwrap();
-            }
-            other => panic!("expected the diff for approval, got {other:?}"),
+        // A folder of scratch space with an ordinary name: a hidden one
+        // beside the project is where tools look for configuration.
+        let outside = tempfile::Builder::new()
+            .prefix("ryter-scratch-")
+            .tempdir()
+            .unwrap();
+        for role in [Role::SoloBuild, Role::SoloPlan, Role::SoloReview] {
+            let target = outside.path().join(format!("{role}.txt"));
+            let args = json!({"path": target.to_string_lossy(), "content": "hi"});
+            let out = gated_execute("write", &args, &ctx(role, dir.path())).unwrap();
+            assert!(!out.is_error, "{role:?}: {out:?}");
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), "hi");
         }
-        let out = worker.join().unwrap();
-        assert!(!out.is_error, "{out:?}");
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("config.toml")).unwrap(),
-            "retries = 5\n"
-        );
-        // "allow for the session" must not turn later proposals into
-        // silent writes: a proposal has no scope to allow.
-        assert!(allowed.lock().unwrap().is_empty());
     }
 
-    /// No person, no fast path — whatever blanket approval is configured.
-    #[test]
-    fn a_proposed_edit_is_refused_without_a_person() {
-        let dir = TempDir::new().unwrap();
-        let args = propose(dir.path());
-        let mut c = ctx(Role::Orchestrator, dir.path());
-        c.always_approve = true;
-        c.allowed.lock().unwrap().insert("edit".into());
-        let out = gated_execute("propose_edit", &args, &c).unwrap();
-        assert!(
-            out.is_error && out.text.contains("queue it as a task"),
-            "{out:?}"
-        );
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("config.toml")).unwrap(),
-            "retries = 3\n"
-        );
-    }
-
-    /// "Allow all" and --always-approve don't reach outside the project:
-    /// headless says so; a person's yes writes exactly there.
+    /// "Allow all" and --always-approve don't reach the rest of the
+    /// machine: headless says so, and a person is asked each time, told
+    /// where.
     #[test]
     fn outside_writes_need_a_yes_every_time() {
         let dir = TempDir::new().unwrap();
-        let outside = TempDir::new().unwrap();
-        let target = outside.path().join("scratch.txt");
-        let args = json!({"path": target.to_string_lossy(), "content": "hi"});
+        let args = json!({"path": "/opt/ryter-not-here/scratch.txt", "content": "hi"});
         let mut c = ctx(Role::SoloBuild, dir.path());
         c.always_approve = true;
         c.allowed.lock().unwrap().insert("edit".into());
@@ -1047,30 +1007,35 @@ mod tests {
             out.is_error && out.text.contains("outside the project"),
             "{out:?}"
         );
-        assert!(!target.exists());
         let (io, rx) = crate::user_io::UserIo::pair();
         c.user_io = Some(io);
         let asked = std::thread::spawn(move || match rx.recv().unwrap() {
             crate::user_io::UserRequest::Permission { tool, reply, .. } => {
-                let _ = reply.send(crate::user_io::Permission::Allow);
+                let _ = reply.send(crate::user_io::Permission::Deny);
                 tool
             }
             _ => String::new(),
         });
         let out = gated_execute("write", &args, &c).unwrap();
-        assert!(!out.is_error, "{out:?}");
-        assert_eq!(std::fs::read_to_string(&target).unwrap(), "hi");
+        assert!(
+            out.is_error && out.text.contains("denied by user"),
+            "{out:?}"
+        );
         assert!(
             asked.join().unwrap().ends_with(OUTSIDE),
             "the prompt says where"
         );
+        // No other hat is asked: it is refused.
+        let out = gated_execute("write", &args, &ctx(Role::SoloPlan, dir.path())).unwrap();
+        assert!(out.is_error, "{out:?}");
     }
 
     /// Refused inline code names the route that works; the route really works.
     #[test]
     fn refused_inline_code_points_at_a_probe_file() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Auditor, dir.path());
+        let mut c = ctx(Role::SoloBuild, dir.path());
+        c.always_approve = true;
         for cmd in ["python3 -c 'print(1)'", "python3 - <<'EOF'"] {
             let out = gated_execute("bash", &json!({ "command": cmd }), &c).unwrap();
             assert!(out.is_error && out.text.contains("probe.py"), "{out:?}");
@@ -1087,43 +1052,39 @@ mod tests {
         assert!(out.text.contains("outside policy"), "{out:?}");
     }
 
+    /// A reviewer refused a container command is told what does run in
+    /// containers. Told only "refused", an auditor reported that the
+    /// machine had no Docker, and the user was told so.
     #[test]
-    fn only_small_edits_take_the_fast_path() {
+    fn a_refused_container_command_says_what_does_run() {
         let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("big.rs"), "x\n".repeat(50)).unwrap();
-        let big = "x\n".repeat(crate::tools::policy::FAST_PATH_MAX_LINES + 1);
-        let c = ctx(Role::Orchestrator, dir.path());
-        let d = decide(
-            "propose_edit",
-            &json!({"path": "big.rs", "old_string": big, "new_string": "y", "reason": "r"}),
-            &c,
-        );
-        assert_eq!(d, Decision::Deny);
-        std::fs::write(dir.path().join(".env"), "K=1").unwrap();
-        let d = decide(
-            "propose_edit",
-            &json!({"path": ".env", "old_string": "K=1", "new_string": "K=2", "reason": "r"}),
-            &c,
-        );
-        assert_eq!(d, Decision::Deny, "secrets never take the fast path");
-        // Builders have the crew's gate; the fast path is the lead's alone.
-        let b = ctx(Role::Builder, dir.path());
-        assert_eq!(
-            decide(
-                "propose_edit",
-                &json!({"path": "big.rs", "old_string": "x", "new_string": "y", "reason": "r"}),
-                &b
-            ),
-            Decision::Deny
-        );
+        let reviewer = ctx(Role::SoloReview, dir.path());
+        for (cmd, containers) in [
+            ("docker compose up -d --wait", true),
+            ("cd app && podman-compose build", true),
+            ("npm install", false),
+        ] {
+            let out = gated_execute("bash", &json!({ "command": cmd }), &reviewer).unwrap();
+            assert!(out.is_error, "{cmd}: {out:?}");
+            assert!(
+                out.text.contains("the review hat can't run commands"),
+                "{out:?}"
+            );
+            assert_eq!(
+                out.text.contains("docker compose run --rm <service>"),
+                containers,
+                "{cmd}: {out:?}"
+            );
+        }
+        // What it may run still runs.
+        let out = gated_execute("bash", &json!({ "command": "true" }), &reviewer).unwrap();
+        assert!(!out.is_error, "{out:?}");
     }
 
-    /// Live run 2: a builder reading a file that did not exist yet, or a
-    /// compiled .pyc, ended its whole task. The model must see the error.
     #[test]
     fn a_failing_tool_is_an_error_result_not_a_dead_task() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Builder, dir.path());
+        let c = ctx(Role::SoloBuild, dir.path());
         let missing = gated_execute("read_file", &json!({"path": "not/yet.py"}), &c).unwrap();
         assert!(missing.is_error, "{missing:?}");
         std::fs::write(dir.path().join("x.pyc"), [0xff_u8, 0xfe, 0x00, 0x01]).unwrap();
@@ -1137,7 +1098,7 @@ mod tests {
     #[test]
     fn ask_is_fail_closed_without_tui() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Builder, dir.path());
+        let c = ctx(Role::SoloBuild, dir.path());
         let out = gated_execute(
             "bash",
             &json!({"command": "rm -rf /nonexistent-ryter-ask-fixture"}),
@@ -1152,7 +1113,7 @@ mod tests {
     fn permission_allow_from_user_io() {
         let dir = TempDir::new().unwrap();
         let (io, rx) = crate::user_io::UserIo::pair();
-        let mut c = ctx(Role::Builder, dir.path());
+        let mut c = ctx(Role::SoloBuild, dir.path());
         c.user_io = Some(io);
         let worker = std::thread::spawn(move || {
             gated_execute(
@@ -1175,7 +1136,7 @@ mod tests {
     #[test]
     fn ask_user_needs_tui() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::Orchestrator, dir.path());
+        let c = ctx(Role::SoloPlan, dir.path());
         let out = gated_execute("ask_user", &json!({"question": "ok?"}), &c).unwrap();
         assert!(out.is_error);
         assert!(out.text.contains("TUI"), "{out:?}");
@@ -1241,7 +1202,7 @@ mod edit_tests {
                 let _ = reply.send(crate::user_io::Permission::Deny);
                 preview
             }
-            crate::user_io::UserRequest::Question { .. } => None,
+            _ => None,
         });
         let out = gated_execute("search_replace", &args, &c).unwrap();
         assert!(out.is_error, "denied");

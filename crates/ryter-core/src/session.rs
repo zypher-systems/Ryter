@@ -10,8 +10,7 @@ use crate::error::{Error, Result};
 use crate::event::AgentEvent;
 use crate::ids::SessionId;
 use crate::llm::Message;
-use crate::phase::Phase;
-use crate::role::Role;
+use crate::role::{Role, Thread};
 use crate::spend::Usage;
 
 /// What a build turn left, for an undo of only its files.
@@ -65,8 +64,6 @@ pub struct Meta {
     pub created_at: String,
     /// Last write.
     pub updated_at: String,
-    /// Orchestrator phase.
-    pub phase: Phase,
     /// Active connection name.
     pub connection: String,
     /// Active model id.
@@ -82,23 +79,9 @@ pub struct Meta {
     /// called again until it has one: the budget could not see it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unpriced_model: Option<String>,
-    /// Auditor gate for this session.
-    #[serde(default = "default_auditor_on")]
-    pub auditor_enabled: bool,
-    /// The open patch, if the crew is building one.
-    #[serde(default)]
-    pub patch: Option<Patch>,
-    /// Patches opened so far (names the next branch).
-    #[serde(default)]
-    pub patches_opened: u32,
-    /// Ryter has offered the project's detected checks this session; it
-    /// asks once.
-    #[serde(default)]
-    pub checks_offered: bool,
-    /// Audit and check rejections per task id, in all: a task the lead
-    /// requeues or recreates keeps its count.
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub rejections: std::collections::BTreeMap<String, u32>,
+    /// The plan the user last approved, as a path in the project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_file: Option<String>,
     /// Build-hat checkpoints, oldest first, for `/undo`.
     #[serde(default)]
     pub checkpoints: Vec<String>,
@@ -113,42 +96,10 @@ pub struct Meta {
     /// "last turn". Not moved by a file undone from `/changes`.
     #[serde(default)]
     pub turn_checkpoint: Option<String>,
-    /// The mode the user left the session in: a hat, or the crew's lead.
-    /// `None` (sessions from before solo mode) means build.
+    /// The hat the user left the session in. `None`, or a role from crew
+    /// mode (sessions from before it was removed), means build.
     #[serde(default)]
     pub mode: Option<crate::role::Role>,
-}
-
-/// Several tasks' work collected on one integration branch. It lands on the
-/// user's branch as a single commit, and only once every task in it is done,
-/// so the user has nothing to act on until the whole change is in.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Patch {
-    /// Integration branch (`ryter/patch-<session>-<n>`).
-    pub branch: String,
-    /// Worktree where the integration branch is checked out.
-    pub worktree: PathBuf,
-    /// The user's branch it will land on.
-    pub target: String,
-    /// `target`'s commit when the patch opened.
-    pub base: String,
-    /// Tasks taken into this patch.
-    #[serde(default)]
-    pub tasks: Vec<String>,
-    /// Tasks whose work is on the integration branch.
-    #[serde(default)]
-    pub landed: Vec<String>,
-    /// Their titles, for the landing commit message.
-    #[serde(default)]
-    pub titles: Vec<String>,
-    /// Landed tasks the auditor passed on review alone; the patch's checks
-    /// must build and test them before it lands.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub unverified: Vec<String>,
-}
-
-fn default_auditor_on() -> bool {
-    true
 }
 
 /// One priced model call.
@@ -160,11 +111,8 @@ pub struct SpendRecord {
     pub connection: String,
     /// Model id.
     pub model: String,
-    /// Who spent it.
+    /// The hat it was spent in (`crew` for a row from crew mode).
     pub role: Role,
-    /// Child id when a specialist spent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub subagent_id: Option<String>,
     /// Prompt tokens.
     pub input_tokens: u64,
     /// Completion tokens.
@@ -183,19 +131,30 @@ pub struct Session {
     pub dir: PathBuf,
     /// Index.
     pub meta: Meta,
-    /// Messages sent to the model.
+    /// Messages sent to the model: the thread in use.
     pub transcript: Vec<Message>,
+    /// Which thread that is.
+    thread: Thread,
+    /// The other thread, while it isn't in use.
+    parked: Vec<Message>,
+    /// How many build turns in this process have gone on to change files.
+    /// "Did that turn change anything?" was asked of the list of
+    /// checkpoints, which stops growing at fifty: past that, no fix was
+    /// seen as a change and no review of it was offered.
+    pub changed_turns: u64,
+}
+
+/// The file a thread's messages are kept in.
+fn thread_file(thread: Thread) -> &'static str {
+    match thread {
+        Thread::Main => "transcript.jsonl",
+        Thread::Test => "test.jsonl",
+    }
 }
 
 impl Session {
     /// Create a new session under `home/sessions/<slug>/<id>/`.
-    pub fn create(
-        home: &Path,
-        cwd: &Path,
-        phase: Phase,
-        connection: String,
-        model: String,
-    ) -> Result<Self> {
+    pub fn create(home: &Path, cwd: &Path, connection: String, model: String) -> Result<Self> {
         let id = SessionId::generate();
         let dir = home.join("sessions").join(cwd_slug(cwd)).join(id.as_str());
         fs::create_dir_all(dir.join("notes")).map_err(|e| Error::Io(e.to_string()))?;
@@ -205,18 +164,13 @@ impl Session {
             cwd: cwd.to_path_buf(),
             created_at: now.clone(),
             updated_at: now,
-            phase,
             connection,
             model,
             title: String::new(),
             spend_usd_total: None,
             spend_unknown: false,
             unpriced_model: None,
-            auditor_enabled: true,
-            patch: None,
-            patches_opened: 0,
-            checks_offered: false,
-            rejections: Default::default(),
+            plan_file: None,
             checkpoints: Vec::new(),
             turn_records: Default::default(),
             redo: Vec::new(),
@@ -227,6 +181,9 @@ impl Session {
             dir,
             meta,
             transcript: Vec::new(),
+            thread: Thread::Main,
+            parked: Vec::new(),
+            changed_turns: 0,
         };
         s.write_meta()?;
         File::create(s.dir.join("events.jsonl")).map_err(|e| Error::Io(e.to_string()))?;
@@ -234,7 +191,7 @@ impl Session {
         File::create(s.dir.join("spend.jsonl")).map_err(|e| Error::Io(e.to_string()))?;
         crate::trace::log(
             home,
-            &format!("session {} phase={phase} model={}", s.meta.id, s.meta.model),
+            &format!("session {} model={}", s.meta.id, s.meta.model),
         );
         Ok(s)
     }
@@ -244,11 +201,16 @@ impl Session {
         let text =
             fs::read_to_string(dir.join("meta.json")).map_err(|e| Error::Io(e.to_string()))?;
         let meta: Meta = serde_json::from_str(&text).map_err(|e| Error::Io(e.to_string()))?;
-        let transcript = read_jsonl::<Message>(&dir.join("transcript.jsonl"))?;
+        let transcript = read_jsonl::<Message>(&dir.join(thread_file(Thread::Main)))?;
+        // A session from before the test hat has no such file: an empty thread.
+        let parked = read_jsonl::<Message>(&dir.join(thread_file(Thread::Test)))?;
         Ok(Self {
             dir: dir.to_path_buf(),
             meta,
             transcript,
+            thread: Thread::Main,
+            parked,
+            changed_turns: 0,
         })
     }
 
@@ -350,10 +312,44 @@ impl Session {
         Ok(())
     }
 
-    /// Append a transcript message.
+    /// The thread `transcript` is.
+    pub fn thread(&self) -> Thread {
+        self.thread
+    }
+
+    /// Make `thread` the one in use: `transcript` is its messages from here
+    /// on, and new messages are added to it. The other thread is kept as it
+    /// is.
+    pub fn use_thread(&mut self, thread: Thread) {
+        if thread != self.thread {
+            std::mem::swap(&mut self.transcript, &mut self.parked);
+            self.thread = thread;
+        }
+    }
+
+    /// The messages of `thread`, whichever is in use.
+    pub fn messages_of(&self, thread: Thread) -> &[Message] {
+        if thread == self.thread {
+            &self.transcript
+        } else {
+            &self.parked
+        }
+    }
+
+    /// Append a message to the thread in use.
     pub fn push_message(&mut self, msg: Message) -> Result<()> {
-        append_jsonl(&self.dir.join("transcript.jsonl"), &msg)?;
-        self.transcript.push(msg);
+        self.push_to(self.thread, msg)
+    }
+
+    /// Append a message to `thread`, whichever is in use: how the tester's
+    /// report reaches the conversation the other hats share.
+    pub fn push_to(&mut self, thread: Thread, msg: Message) -> Result<()> {
+        append_jsonl(&self.dir.join(thread_file(thread)), &msg)?;
+        if thread == self.thread {
+            self.transcript.push(msg);
+        } else {
+            self.parked.push(msg);
+        }
         self.touch()?;
         Ok(())
     }
@@ -371,10 +367,12 @@ impl Session {
         Ok(n)
     }
 
-    /// Rewrite `transcript.jsonl` after compaction. Events log is unchanged.
+    /// Rewrite the file of the thread in use, after compaction. Events log
+    /// is unchanged.
     pub fn replace_transcript(&mut self, messages: Vec<Message>) -> Result<()> {
-        let path = self.dir.join("transcript.jsonl");
-        let tmp = self.dir.join("transcript.jsonl.tmp");
+        let name = thread_file(self.thread);
+        let path = self.dir.join(name);
+        let tmp = self.dir.join(format!("{name}.tmp"));
         let mut f = File::create(&tmp).map_err(|e| Error::Io(e.to_string()))?;
         for m in &messages {
             let mut line = serde_json::to_string(m).map_err(|e| Error::Io(e.to_string()))?;
@@ -396,9 +394,8 @@ impl Session {
         append_jsonl(&self.dir.join("spend.jsonl"), &rec)
     }
 
-    /// Add a row to the totals only: the crew meter has already written it
-    /// to `spend.jsonl` the moment it was charged.
-    pub fn count_spend(&mut self, rec: &SpendRecord) -> Result<()> {
+    /// Add a row to the session's totals.
+    fn count_spend(&mut self, rec: &SpendRecord) -> Result<()> {
         match rec.total_usd {
             Some(v) => {
                 self.meta.spend_usd_total = Some(self.meta.spend_usd_total.unwrap_or(0.0) + v);
@@ -419,122 +416,20 @@ impl Session {
         self.dir.join("spend.jsonl")
     }
 
-    /// Keep a crew report the lead never saw, because the run stopped before
-    /// it could take another round. The next turn hands it over.
-    pub fn set_carry(&self, report: &str) -> Result<()> {
-        fs::write(self.dir.join("carry.md"), report).map_err(|e| Error::Io(e.to_string()))
-    }
-
-    /// The report kept by [`set_carry`](Self::set_carry), removed as it is read.
-    pub fn take_carry(&self) -> Option<String> {
-        let path = self.dir.join("carry.md");
-        let text = fs::read_to_string(&path).ok()?;
-        let _ = fs::remove_file(&path);
-        (!text.trim().is_empty()).then_some(text)
-    }
-
-    /// Keep a second opinion for the next message, so the model working in
-    /// the project reads it before the user's reply to it.
-    pub fn set_second_opinion(&self, review: &str) -> Result<()> {
-        fs::write(self.dir.join("second.md"), review).map_err(|e| Error::Io(e.to_string()))
-    }
-
-    /// The review kept by [`set_second_opinion`](Self::set_second_opinion),
-    /// removed as it is read.
-    pub fn take_second_opinion(&self) -> Option<String> {
-        let path = self.dir.join("second.md");
-        let text = fs::read_to_string(&path).ok()?;
-        let _ = fs::remove_file(&path);
-        (!text.trim().is_empty()).then_some(text)
-    }
-
     /// All spend rows.
     pub fn spend_log(&self) -> Result<Vec<SpendRecord>> {
         read_jsonl(&self.dir.join("spend.jsonl"))
     }
 
-    /// Notes directory (pass notes).
+    /// The session's notes folder, which the plan hat may write in.
     pub fn notes_dir(&self) -> PathBuf {
         self.dir.join("notes")
-    }
-
-    /// Path of the pass note for a phase.
-    pub fn note_path(&self, phase: Phase) -> PathBuf {
-        self.dir
-            .join("notes")
-            .join(format!("{}.md", phase.as_str()))
-    }
-
-    /// Read a pass note. Missing or empty file → empty string (allowed).
-    pub fn read_note(&self, phase: Phase) -> Result<String> {
-        match fs::read_to_string(self.note_path(phase)) {
-            Ok(s) => Ok(s),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-            Err(e) => Err(Error::Io(e.to_string())),
-        }
-    }
-
-    /// Write a pass note (empty body is allowed).
-    /// Latest crew results, kept outside the repository so the orchestrator
-    /// sees them on later turns. Only the tail is kept.
-    pub fn write_crew_report(&self, body: &str) -> Result<()> {
-        // Appended, not overwritten: a turn can drain the crew more than once,
-        // and the last drain's report alone hid what the earlier ones did.
-        const KEEP: usize = 32_000;
-        let mut all = self.read_crew_report();
-        if !all.is_empty() {
-            all.push_str("\n---\n\n");
-        }
-        all.push_str(body);
-        let start = all.len().saturating_sub(KEEP);
-        let start = (start..=all.len())
-            .find(|i| all.is_char_boundary(*i))
-            .unwrap_or(all.len());
-        fs::create_dir_all(self.notes_dir()).map_err(|e| Error::Io(e.to_string()))?;
-        fs::write(self.notes_dir().join("crew.md"), &all[start..])
-            .map_err(|e| Error::Io(e.to_string()))
-    }
-
-    /// Latest crew results, or empty.
-    pub fn read_crew_report(&self) -> String {
-        fs::read_to_string(self.notes_dir().join("crew.md")).unwrap_or_default()
-    }
-
-    pub fn write_note(&self, phase: Phase, body: &str) -> Result<()> {
-        fs::create_dir_all(self.dir.join("notes")).map_err(|e| Error::Io(e.to_string()))?;
-        fs::write(self.note_path(phase), body).map_err(|e| Error::Io(e.to_string()))
-    }
-
-    /// Record a pass note for the current phase and switch to `to`.
-    /// Does not clear the orchestrator transcript.
-    pub fn handoff(&mut self, to: Phase, note: &str, back_reason: Option<&str>) -> Result<()> {
-        let from = self.meta.phase;
-        let mut body = note.to_string();
-        if let Some(reason) = back_reason {
-            if !body.trim().is_empty() {
-                body.push_str("\n\n");
-            }
-            body.push_str("Reason: ");
-            body.push_str(reason);
-            body.push('\n');
-        }
-        self.write_note(from, &body)?;
-        self.meta.phase = to;
-        self.touch()?;
-        Ok(())
     }
 
     /// Update connection + model on the session index.
     pub fn set_route(&mut self, connection: String, model: String) -> Result<()> {
         self.meta.connection = connection;
         self.meta.model = model;
-        self.touch()
-    }
-
-    /// Enable or disable the auditor gate.
-    /// Replace the open patch.
-    pub fn set_patch(&mut self, patch: Option<Patch>) -> Result<()> {
-        self.meta.patch = patch;
         self.touch()
     }
 
@@ -604,36 +499,10 @@ impl Session {
         Ok(c)
     }
 
-    /// Remember that the detected checks were offered.
-    pub fn set_checks_offered(&mut self) -> Result<()> {
-        self.meta.checks_offered = true;
+    /// Remember the plan the user approved.
+    pub fn set_plan_file(&mut self, path: Option<String>) -> Result<()> {
+        self.meta.plan_file = path;
         self.touch()
-    }
-
-    /// Count `n` more rejections of `task`; returns its total.
-    pub fn add_rejections(&mut self, task: &str, n: u32) -> Result<u32> {
-        let total = {
-            let c = self.meta.rejections.entry(task.to_string()).or_insert(0);
-            *c += n;
-            *c
-        };
-        self.touch()?;
-        Ok(total)
-    }
-
-    /// Set the auditor gate for this session.
-    pub fn set_auditor(&mut self, on: bool) -> Result<()> {
-        self.meta.auditor_enabled = on;
-        self.touch()
-    }
-
-    /// Previous phase for `/handoff back`.
-    pub fn previous_phase(phase: Phase) -> Option<Phase> {
-        match phase {
-            Phase::Plan => None,
-            Phase::Build => Some(Phase::Plan),
-            Phase::Audit => Some(Phase::Build),
-        }
     }
 
     fn touch(&mut self) -> Result<()> {
@@ -738,7 +607,6 @@ pub fn spend_record(
         connection,
         model,
         role,
-        subagent_id: None,
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         cached_tokens: usage.cached_tokens,
@@ -844,18 +712,53 @@ pub fn cwd_slug(cwd: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn sessions_from_before_the_role_merge_still_load() {
-        use crate::phase::Phase;
-        use crate::role::Role;
-        let phase: Phase = serde_json::from_str("\"architect\"").unwrap();
-        assert_eq!(phase, Phase::Plan);
-        let role: Role = serde_json::from_str("\"planner\"").unwrap();
-        assert_eq!(role, Role::Architect);
-    }
-
     use super::*;
     use tempfile::TempDir;
+
+    /// A session saved in crew mode has fields and roles that are gone.
+    /// It still opens, with its conversation and its spend, in the build
+    /// hat.
+    #[test]
+    fn a_session_from_crew_mode_still_opens() {
+        let home = TempDir::new().unwrap();
+        let cwd = TempDir::new().unwrap();
+        let s = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+        let dir = s.dir.clone();
+        drop(s);
+        let meta = serde_json::json!({
+            "id": "01a0f7ef-234b-718a-a02b-53d2d8f7884f",
+            "cwd": cwd.path(),
+            "created_at": "1790000000000",
+            "updated_at": "1790000000001",
+            "phase": "build",
+            "connection": "openrouter",
+            "model": "deepseek/deepseek-v4.1-flash",
+            "title": "a docker stack",
+            "spend_usd_total": 4.35,
+            "auditor_enabled": true,
+            "patch": {"branch": "ryter/patch-x-1", "worktree": "/w", "target": "main",
+                      "base": "abc", "tasks": ["T-scaffold"]},
+            "patches_opened": 1,
+            "checks_offered": false,
+            "rejections": {"T-scaffold": 7},
+            "mode": "orchestrator"
+        });
+        fs::write(dir.join("meta.json"), meta.to_string()).unwrap();
+        fs::write(
+            dir.join("spend.jsonl"),
+            "{\"ts\":\"1\",\"connection\":\"openrouter\",\"model\":\"z-ai/glm-5.3\",\"role\":\"builder\",\"input_tokens\":10,\"output_tokens\":5,\"cached_tokens\":0,\"total_usd\":0.5}\n\
+             {\"ts\":\"2\",\"connection\":\"openrouter\",\"model\":\"x-ai/grok-4.7\",\"role\":\"auditor\",\"input_tokens\":10,\"output_tokens\":5,\"cached_tokens\":0,\"total_usd\":0.25}\n",
+        )
+        .unwrap();
+        let s = Session::open(&dir).unwrap();
+        assert_eq!(s.meta.title, "a docker stack");
+        assert_eq!(s.meta.mode, Some(Role::Crew));
+        assert_eq!(s.meta.mode.map(Role::hat), Some(Role::SoloBuild));
+        let spend = s.spend_log().unwrap();
+        assert_eq!(spend.len(), 2);
+        assert!(spend.iter().all(|r| r.role == Role::Crew));
+        assert_eq!(spend[0].total_usd, Some(0.5));
+    }
 
     #[test]
     fn unanswered_calls_get_a_stand_in_result_where_providers_expect_it() {
@@ -898,6 +801,65 @@ mod tests {
         assert_eq!(answer_unanswered(&fixed).1, 0);
     }
 
+    fn msg(role: &str, content: &str) -> Message {
+        Message {
+            role: role.into(),
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    fn said(messages: &[Message]) -> Vec<&str> {
+        messages.iter().map(|m| m.content.as_str()).collect()
+    }
+
+    /// The tester's thread is kept apart from the conversation the other
+    /// hats share: each has its own messages and its own file, a message
+    /// can be put in either from the other, and both come back when the
+    /// session is opened again.
+    #[test]
+    fn the_test_thread_is_kept_apart_from_the_main_one() {
+        let home = TempDir::new().unwrap();
+        let cwd = TempDir::new().unwrap();
+        let mut s = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+        assert_eq!(s.thread(), Thread::Main);
+        s.push_message(msg("user", "build the list")).unwrap();
+        s.use_thread(Thread::Test);
+        assert!(s.transcript.is_empty());
+        s.push_message(msg("user", "test the list")).unwrap();
+        s.push_message(msg("assistant", "it fails")).unwrap();
+        // The report, put in the main thread while the test one is in use.
+        s.push_to(Thread::Main, msg("user", "the test's report"))
+            .unwrap();
+        assert_eq!(said(&s.transcript), ["test the list", "it fails"]);
+        assert_eq!(
+            said(s.messages_of(Thread::Main)),
+            ["build the list", "the test's report"]
+        );
+        // Compacting one thread leaves the other alone.
+        s.replace_transcript(vec![msg("user", "test, compacted")])
+            .unwrap();
+        s.use_thread(Thread::Main);
+        s.use_thread(Thread::Main);
+        assert_eq!(said(&s.transcript), ["build the list", "the test's report"]);
+        assert_eq!(said(s.messages_of(Thread::Test)), ["test, compacted"]);
+        let dir = s.dir.clone();
+        drop(s);
+        let again = Session::open(&dir).unwrap();
+        assert_eq!(again.thread(), Thread::Main);
+        assert_eq!(
+            said(&again.transcript),
+            ["build the list", "the test's report"]
+        );
+        assert_eq!(said(again.messages_of(Thread::Test)), ["test, compacted"]);
+        // A session from before the test hat has no file for it.
+        std::fs::remove_file(dir.join("test.jsonl")).unwrap();
+        let old = Session::open(&dir).unwrap();
+        assert!(old.messages_of(Thread::Test).is_empty());
+        assert_eq!(old.transcript.len(), 2);
+    }
+
     #[test]
     fn create_resume_and_spend() {
         let home = TempDir::new().unwrap();
@@ -905,7 +867,6 @@ mod tests {
         let mut s = Session::create(
             home.path(),
             cwd.path(),
-            Phase::Build,
             "spacexai".into(),
             "grok-4.6".into(),
         )
@@ -920,7 +881,7 @@ mod tests {
         s.record_spend(spend_record(
             "spacexai".into(),
             "grok-4.6".into(),
-            Role::Orchestrator,
+            Role::SoloBuild,
             Usage {
                 input_tokens: 10,
                 output_tokens: 5,
@@ -951,33 +912,5 @@ mod tests {
         drop(s2);
         Session::remove(&dir).unwrap();
         assert!(Session::list(home.path(), cwd.path()).unwrap().is_empty());
-    }
-
-    #[test]
-    fn handoff_preserves_transcript_and_allows_empty_note() {
-        let home = TempDir::new().unwrap();
-        let cwd = TempDir::new().unwrap();
-        let mut s = Session::create(
-            home.path(),
-            cwd.path(),
-            Phase::Plan,
-            "spacexai".into(),
-            "grok-4.6".into(),
-        )
-        .unwrap();
-        s.push_message(Message {
-            role: "user".into(),
-            content: "keep me".into(),
-            tool_call_id: None,
-            tool_calls: None,
-        })
-        .unwrap();
-        assert!(s.read_note(Phase::Plan).unwrap().is_empty());
-        s.handoff(Phase::Build, "ship it", None).unwrap();
-        assert_eq!(s.meta.phase, Phase::Build);
-        assert_eq!(s.transcript.len(), 1);
-        assert_eq!(s.transcript[0].content, "keep me");
-        assert_eq!(s.read_note(Phase::Plan).unwrap(), "ship it");
-        assert_eq!(s.transcript.len(), 1);
     }
 }

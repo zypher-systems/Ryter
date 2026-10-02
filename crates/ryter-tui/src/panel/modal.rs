@@ -136,20 +136,24 @@ fn lang_for(tool: &str, summary: &str) -> Option<String> {
 
 impl PermissionModal {
     /// A yes/no question, with no "allow for this session": the model asking
-    /// to switch hats (`request_hat`), or Ryter asking before an audit spends
+    /// to switch hats (`request_hat`), or Ryter asking before a review spends
     /// money. Its title and the words for yes and no.
     fn question(&self) -> Option<(&'static str, &'static str, &'static str)> {
         match self.tool.as_str() {
             "switch hat" => Some(("switch hat?", "switch", "stay")),
-            "audit" => Some(("audit?", "audit", "not now")),
-            "audit offer" => Some(("audit this work?", "audit", "not now")),
+            "review" => Some(("review?", "review", "not now")),
+            "review offer" => Some(("review this work?", "review", "not now")),
+            "test" => Some(("test?", "test", "not now")),
+            "test offer" => Some(("test this work?", "test", "not now")),
+            "fix offer" => Some(("fix what the test found?", "fix", "not now")),
             _ => None,
         }
     }
 
-    /// Ryter offering an audit after a build turn: `s` stops the offers.
+    /// Ryter offering a review after a build turn, or a test after a
+    /// review that passed: `s` stops the offers.
     fn is_offer(&self) -> bool {
-        self.tool == "audit offer"
+        matches!(self.tool.as_str(), "review offer" | "test offer")
     }
 
     fn is_hat(&self) -> bool {
@@ -196,6 +200,11 @@ impl PermissionModal {
             return ("writes outside the project · asked every time".into(), true);
         }
         match self.base_tool() {
+            // A stack's data is in its volumes, and nothing brings it back.
+            "bash" if self.strict && ryter_core::tools::removes_stack_data(&self.summary) => (
+                "removes containers' data (volumes) · nothing undoes it".into(),
+                true,
+            ),
             "bash" if self.strict => (
                 "deletes, moves, or discards files · /undo may not reach it".into(),
                 true,
@@ -524,8 +533,11 @@ impl Panel for PermissionModal {
             }
             KeyCode::Enter | KeyCode::Char('y' | 'Y') => reply(Permission::Allow),
             KeyCode::Char('n' | 'N') | KeyCode::Esc => reply(Permission::Deny),
+            KeyCode::Char('s' | 'S') if self.tool == "test offer" => {
+                Outcome::CloseAct(Action::StopTestOffers)
+            }
             KeyCode::Char('s' | 'S') if self.is_offer() => {
-                Outcome::CloseAct(Action::StopAuditOffers)
+                Outcome::CloseAct(Action::StopReviewOffers)
             }
             // `a` allows this kind of action for the session, named on the
             // card, in one press. It used to allow everything, and needed
@@ -768,6 +780,74 @@ impl Panel for Confirm {
     }
 }
 
+/// "Stop the project?": asked on quit while a product Ryter started for a
+/// test is still up. Left running, it holds its ports and its containers
+/// after Ryter has gone; stopped, it is stopped with the project's own
+/// command.
+#[derive(Debug, Clone, Default)]
+pub struct StopModal;
+
+impl Panel for StopModal {
+    fn kind(&self) -> &'static str {
+        "stop-product"
+    }
+
+    fn title(&self, _view: &View) -> String {
+        "stop the project?".into()
+    }
+
+    fn legend(&self, _view: &View) -> String {
+        "⏎ stop it · n leave it running · esc stay".into()
+    }
+
+    fn size(&self, view: &View) -> (u16, u16) {
+        let cmd = view
+            .product
+            .as_ref()
+            .and_then(|p| p.stop.as_deref())
+            .map_or(0, wrap::width);
+        ((cmd + 6).clamp(56, 96) as u16, 4)
+    }
+
+    fn modal(&self) -> Option<ModalKind> {
+        Some(ModalKind::Ask)
+    }
+
+    fn render(&self, view: &View, _width: u16, _height: u16, theme: Theme) -> Body {
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        if let Some(p) = &view.product {
+            let time = p.at.rsplit(' ').next().unwrap_or(&p.at);
+            lines.push(widgets::text(
+                &format!("Ryter started it for the test at {time}."),
+                theme,
+            ));
+            lines.push(match &p.stop {
+                Some(cmd) => widgets::note(cmd, theme),
+                None => widgets::note("no stop command: its start command is ended", theme),
+            });
+        }
+        Body {
+            lines,
+            scroll: None,
+        }
+    }
+
+    fn key(&mut self, key: KeyEvent, _view: &mut View) -> Outcome {
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('y' | 'Y') => {
+                Outcome::CloseAct(Action::QuitAnswer { stop: true })
+            }
+            KeyCode::Char('n' | 'N') => Outcome::CloseAct(Action::QuitAnswer { stop: false }),
+            KeyCode::Esc => Outcome::Close,
+            _ => Outcome::Stay,
+        }
+    }
+
+    fn box_clone(&self) -> Box<dyn Panel> {
+        Box::new(self.clone())
+    }
+}
+
 /// Trust-this-project prompt shown at startup when `.ryter/` is untrusted.
 #[derive(Debug, Clone, Default)]
 pub struct TrustModal {
@@ -863,13 +943,8 @@ mod tests {
     #[test]
     fn an_audit_offer_can_stop_the_offers_and_has_no_allow_all() {
         use crossterm::event::{KeyEvent, KeyModifiers};
-        let mut v = crate::view::View::new(
-            ryter_core::Phase::Build,
-            "openrouter".into(),
-            "m".into(),
-            "/tmp".into(),
-        );
-        let mut m = PermissionModal::new("audit offer".into(), "Audit this work?".into());
+        let mut v = crate::view::View::new("openrouter".into(), "m".into(), "/tmp".into());
+        let mut m = PermissionModal::new("review offer".into(), "Review this work?".into());
         assert!(m.legend(&v).contains("s stop offering"));
         let press = |m: &mut PermissionModal, v: &mut crate::view::View, c: char| {
             m.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE), v)
@@ -877,8 +952,22 @@ mod tests {
         assert!(matches!(press(&mut m, &mut v, 'a'), Outcome::Stay));
         assert!(matches!(
             press(&mut m, &mut v, 's'),
-            Outcome::CloseAct(Action::StopAuditOffers)
+            Outcome::CloseAct(Action::StopReviewOffers)
         ));
+        // A test offer is the same card, and `s` stops test offers.
+        let mut t = PermissionModal::new("test offer".into(), "Test this work?".into());
+        assert_eq!(t.title(&v), "test this work?");
+        assert!(t.legend(&v).contains("s stop offering"));
+        assert!(matches!(
+            press(&mut t, &mut v, 's'),
+            Outcome::CloseAct(Action::StopTestOffers)
+        ));
+        // Asked for with /test, or offering fixes: yes or no, no `s`.
+        for (tool, title) in [("test", "test?"), ("fix offer", "fix what the test found?")] {
+            let m = PermissionModal::new(tool.into(), "x".into());
+            assert_eq!(m.title(&v), title);
+            assert!(!m.legend(&v).contains("stop offering"), "{tool}");
+        }
         let mut asked = PermissionModal::new("audit".into(), "x".into());
         assert!(!asked.legend(&v).contains("stop offering"));
         assert!(matches!(press(&mut asked, &mut v, 's'), Outcome::Stay));
@@ -886,12 +975,7 @@ mod tests {
     use crossterm::event::KeyModifiers;
 
     fn view() -> View {
-        View::new(
-            ryter_core::Phase::Build,
-            "c".into(),
-            "m".into(),
-            "/tmp".into(),
-        )
+        View::new("c".into(), "m".into(), "/tmp".into())
     }
 
     fn press(m: &mut PermissionModal, c: char) -> Outcome {
@@ -953,12 +1037,7 @@ mod tests {
     #[test]
     fn enter_approves_after_a_moment_and_never_destruction() {
         use crossterm::event::KeyModifiers;
-        let mut v = crate::view::View::new(
-            ryter_core::Phase::Build,
-            "spacexai".into(),
-            "grok-4.6".into(),
-            "/tmp".into(),
-        );
+        let mut v = crate::view::View::new("spacexai".into(), "grok-4.6".into(), "/tmp".into());
         let enter = |m: &mut PermissionModal, v: &mut crate::view::View| {
             m.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), v)
         };

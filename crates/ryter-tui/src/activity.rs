@@ -53,8 +53,6 @@ pub enum Verb {
     Tool(String),
     /// Permission / ask outstanding.
     Waiting,
-    /// Builder result being merged.
-    Merging,
     /// Cancel requested.
     Cancelling,
     /// Turn finished normally.
@@ -73,7 +71,6 @@ impl Verb {
             Verb::Writing => "writing".into(),
             Verb::Tool(t) => t.clone(),
             Verb::Waiting => "waiting".into(),
-            Verb::Merging => "merging".into(),
             Verb::Cancelling => "cancelling".into(),
             Verb::Done => "done".into(),
             Verb::Stopped => "stopped".into(),

@@ -1,4 +1,4 @@
-  chat     changes  ^t    crew board  /crew
+  chat     changes  ^t
            ·  welcome · /help for keys
            ●  why does load() ignore a missing file? ······························· ✓ answered · 1.8s · $0.002  ▸
 
@@ -32,9 +32,9 @@
 │                                                           lead      ▰▰▰▰▰▰▰▱▱▱▱▱    $0.46                            │
 │                                                           architect ▰▰▰▰▱▱▱▱▱▱▱▱    $0.27                            │
 │                                                                                                                      │
-│ budget off   task cap $3.00   warn at $1.00                                                                          │
+│ budget off   warn at $1.00                                                                                           │
 │ b set a budget   ⏎ full table   esc close                                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
    ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   › what should change? · Tab: plan · / for commands
+   › what should change? · Tab: review · / for commands
  BUILD  grok-4.6  ctx ▱▱▱▱▱▱▱▱ 5% │ turn $0.004 · session $0.018 · project $2.29 · budget off  ⏎ full table  esc close

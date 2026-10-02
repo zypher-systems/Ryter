@@ -1,0 +1,40 @@
+ ryter  ·  build                                                grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ dusty
+ ▎ trim the query
+
+ · edit  app/server.js                                                                                     +2 −1  0.0s
+   3
+   4   app.get('/search', (req, res) => {
+   5 -   const q = req.query.q
+   5 +   const q = (req.query.q || '').trim()
+   6 +   if (!q) return res.json([])
+   7     res.json(find(q))
+   8   })
+ · write  test/search.test.js                                                                      new · 6 lines  0.0s
+   1 + import { test } from 'node:test'
+   2 + import assert from 'node:assert'
+   3 +
+   4 + test('an empty query finds nothing', async () => {
+   5 +   assert.deepEqual(await search(''), [])
+   6 + })
+
+ ───────────────────────────────────── 2 files (1 new, 1 changed, +8 −1) · 2.1s ──────────────────────────────────────
+
+
+
+
+┏━ review this work? ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│ Review this work before you commit?                                                                                  │
+│ x-ai/grok-4.7 on openrouter (the review hat's model)                                                                 │
+│ reviews 2 files, +8 −1, read-only                                                                                    │
+│ about $0.02–$0.31 of your $5.00 limit                                                                                │
+│ your last 4 reviews with it cost $0.03–$0.19                                                                         │
+│ ⏎ review   n not now   s stop offering                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ · ✓ done · 2 tools · 0:02                                                                             ^r  reasoning  ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│› what should change? · Tab: review · / for commands                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ⏎ review    n not now    s stop offering

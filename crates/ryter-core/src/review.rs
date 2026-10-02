@@ -73,6 +73,12 @@ impl Changes {
             .iter()
             .fold((0, 0), |(a, r), f| (a + f.added, r + f.removed))
     }
+
+    /// The same changes, without Ryter's own bookkeeping: the work.
+    pub fn work(mut self) -> Self {
+        self.files.retain(|f| !is_bookkeeping(&f.path));
+        self
+    }
 }
 
 /// The repository's top folder, where git's paths start.
@@ -85,6 +91,52 @@ pub fn head_base(dir: &Path) -> String {
     git::head(dir)
         .map(|h| h.trim().to_string())
         .unwrap_or_else(|_| EMPTY_TREE.into())
+}
+
+/// Ryter's own record of the work, kept in the project: approved plans,
+/// decisions, the run file, test reports. They are not the work. A review
+/// doesn't read them as changes, and writing one doesn't make a review or a
+/// test out of date.
+pub fn is_bookkeeping(path: &str) -> bool {
+    // Wherever the project sits in its repository: a project in a
+    // subfolder keeps its `.ryter/` there.
+    let own = match path.rsplit_once(".ryter/") {
+        Some((before, own)) if before.is_empty() || before.ends_with('/') => own,
+        _ => return false,
+    };
+    own.starts_with("plans/")
+        || own.starts_with("tests/")
+        || own == "decisions.md"
+        || own == "run.toml"
+}
+
+/// What identifies the work in a commit: the same for the same files,
+/// whenever it was made, and unchanged by Ryter's own bookkeeping
+/// ([`is_bookkeeping`]). `None` when it can't be read.
+///
+/// It was the commit's tree. A test writes its report into the project, so
+/// a review that passed read as "not reviewed after the last change" as
+/// soon as the work was tested.
+pub fn tree_of(dir: &Path, commit: &str) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    // The whole tree, from the repository's top, wherever `dir` is in it:
+    // from a subfolder `ls-tree` lists that folder alone, so the commit
+    // panel and the review hashed different things and the receipt could
+    // never say "reviewed".
+    let listing = git(dir, &["ls-tree", "-r", "-z", "--full-tree", commit]).ok()?;
+    if listing.is_empty() && git(dir, &["rev-parse", &format!("{commit}^{{tree}}")]).is_err() {
+        return None;
+    }
+    let mut h = Sha256::new();
+    // `<mode> <type> <id>\t<path>`, one a file.
+    for entry in listing.split('\0').filter(|e| !e.is_empty()) {
+        let path = entry.split_once('\t').map_or("", |(_, p)| p);
+        if !is_bookkeeping(path) {
+            h.update(entry.as_bytes());
+            h.update([0]);
+        }
+    }
+    Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// When `HEAD` was committed, unix millis.
@@ -331,6 +383,74 @@ pub struct Receipt {
     pub tests: Option<String>,
     /// Tests ran, but files changed after.
     pub tests_stale: bool,
+    /// The review hat's last verdict on this work.
+    pub review: Reviewed,
+    /// The test hat's last report on this work.
+    pub test: Tested,
+}
+
+/// What the test hat reported of the work being committed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Tested {
+    /// No test ran.
+    #[default]
+    No,
+    /// One ran, and the files changed after.
+    Stale,
+    /// Every scenario passed, by this model.
+    Pass(String),
+    /// Something failed, by this model.
+    Fail(String),
+}
+
+impl Tested {
+    /// The report a test gave on `tree`, for a commit of `now`.
+    pub fn of(mark: Option<&(Option<String>, String, bool)>, now: Option<&str>) -> Self {
+        let Some((tree, model, passed)) = mark else {
+            return Self::No;
+        };
+        if tree.is_none() || tree.as_deref() != now {
+            return Self::Stale;
+        }
+        if *passed {
+            Self::Pass(model.clone())
+        } else {
+            Self::Fail(model.clone())
+        }
+    }
+}
+
+/// What the review hat said of the work being committed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Reviewed {
+    /// No review ran.
+    #[default]
+    No,
+    /// One ran, and the files changed after.
+    Stale,
+    /// `VERDICT: PASS`, by this model.
+    Pass(String),
+    /// `VERDICT: FAIL`, by this model.
+    Fail(String),
+    /// It ended without a verdict.
+    NoVerdict(String),
+}
+
+impl Reviewed {
+    /// The verdict a review gave on `tree`, for a commit of `now`.
+    pub fn of(mark: Option<&(Option<String>, String, Option<bool>)>, now: Option<&str>) -> Self {
+        let Some((tree, model, verdict)) = mark else {
+            return Self::No;
+        };
+        if tree.is_none() || tree.as_deref() != now {
+            return Self::Stale;
+        }
+        match verdict {
+            Some(true) => Self::Pass(model.clone()),
+            Some(false) => Self::Fail(model.clone()),
+            None => Self::NoVerdict(model.clone()),
+        }
+    }
 }
 
 impl Receipt {
@@ -360,7 +480,20 @@ impl Receipt {
             (_, true) => "tests not rerun after the last edit".into(),
             (None, false) => "no tests run".into(),
         };
-        format!("{models} · {cost} · {tests}")
+        let review = match &self.review {
+            Reviewed::No => "not reviewed".to_string(),
+            Reviewed::Stale => "not reviewed after the last change".into(),
+            Reviewed::Pass(m) => format!("review ✓ {}", short_model(m)),
+            Reviewed::Fail(m) => format!("review ✗ {}", short_model(m)),
+            Reviewed::NoVerdict(m) => format!("review by {} gave no verdict", short_model(m)),
+        };
+        let test = match &self.test {
+            Tested::No => "not tested".to_string(),
+            Tested::Stale => "not tested after the last change".into(),
+            Tested::Pass(m) => format!("test ✓ {}", short_model(m)),
+            Tested::Fail(m) => format!("test ✗ {}", short_model(m)),
+        };
+        format!("{models} · {cost} · {tests} · {review} · {test}")
     }
 }
 
@@ -496,6 +629,52 @@ mod tests {
         assert_eq!(c.files[0].status, Status::Added);
     }
 
+    /// What identifies the work doesn't change when Ryter writes its own
+    /// record of it into the project (a plan, a decision, the run file, a
+    /// test report), and does when the work changes.
+    #[test]
+    fn ryters_own_files_do_not_change_what_was_reviewed() {
+        let d = tempfile::TempDir::new().unwrap();
+        let p = d.path();
+        crate::git::init_repo(p).unwrap();
+        fs::write(p.join("a.txt"), "one\n").unwrap();
+        let tree = |p: &Path| {
+            let c = changes(p, &head_base(p)).unwrap();
+            tree_of(p, &c.now).expect("a tree")
+        };
+        let before = tree(p);
+        fs::create_dir_all(p.join(".ryter/plans")).unwrap();
+        fs::create_dir_all(p.join(".ryter/tests")).unwrap();
+        fs::write(p.join(".ryter/plans/2026-10-01-cms.md"), "# plan\n").unwrap();
+        fs::write(p.join(".ryter/tests/2026-10-01-cms.md"), "# report\n").unwrap();
+        fs::write(p.join(".ryter/decisions.md"), "# Decisions\n").unwrap();
+        fs::write(p.join(".ryter/run.toml"), "start = \"x\"\n").unwrap();
+        assert_eq!(tree(p), before, "bookkeeping changed the work's identity");
+        // The reviewer isn't given them as changes either.
+        let work = changes(p, &head_base(p)).unwrap().work();
+        let paths: Vec<&str> = work.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["a.txt"]);
+        // The work itself, and the project's own skills, are the work.
+        fs::write(p.join("a.txt"), "two\n").unwrap();
+        let changed = tree(p);
+        assert_ne!(changed, before);
+        fs::create_dir_all(p.join(".ryter/skills/x")).unwrap();
+        fs::write(p.join(".ryter/skills/x/SKILL.md"), "skill\n").unwrap();
+        assert_ne!(tree(p), changed);
+        assert!(!is_bookkeeping(".ryter/skills/x/SKILL.md"));
+        assert!(!is_bookkeeping("src/my.ryter/run.toml"));
+        // A project in a subfolder of its repository: the same work has
+        // the same identity from the top and from the project's folder, and
+        // its own `.ryter/` is bookkeeping there too.
+        fs::create_dir_all(p.join("app/.ryter/tests")).unwrap();
+        fs::write(p.join("app/main.py"), "x\n").unwrap();
+        let from_top = tree(p);
+        assert_eq!(tree(&p.join("app")), from_top);
+        fs::write(p.join("app/.ryter/tests/2026-10-01-x.md"), "# report\n").unwrap();
+        assert_eq!(tree(p), from_top);
+        assert!(is_bookkeeping("app/.ryter/tests/2026-10-01-x.md"));
+    }
+
     #[test]
     fn the_receipt_says_what_it_knows() {
         let mut r = Receipt {
@@ -504,14 +683,69 @@ mod tests {
             tests: Some("✓ 13 passed".into()),
             ..Receipt::default()
         };
-        assert_eq!(r.line(), "deepseek-pro-latest · $0.34 · tests ✓ 13 passed");
+        assert_eq!(
+            r.line(),
+            "deepseek-pro-latest · $0.34 · tests ✓ 13 passed · not reviewed · not tested"
+        );
         r.tests_stale = true;
-        assert!(r.line().ends_with("tests not rerun after the last edit"));
+        assert!(
+            r.line().contains("tests not rerun after the last edit"),
+            "{}",
+            r.line()
+        );
         r.tests = None;
         r.tests_stale = false;
         r.partial = true;
         assert!(r.line().contains("(some prices unknown)"), "{}", r.line());
-        assert!(r.line().ends_with("no tests run"));
+        assert!(r.line().contains("no tests run"), "{}", r.line());
+        // The review's verdict is about the files it read, and no others.
+        let mark = (
+            Some("t1".to_string()),
+            "x-ai/grok-4.7".to_string(),
+            Some(true),
+        );
+        r.review = Reviewed::of(Some(&mark), Some("t1"));
+        assert!(
+            r.line().ends_with("review ✓ grok-4.7 · not tested"),
+            "{}",
+            r.line()
+        );
+        r.review = Reviewed::of(Some(&mark), Some("t2"));
+        assert!(
+            r.line()
+                .ends_with("not reviewed after the last change · not tested"),
+            "{}",
+            r.line()
+        );
+        // The test's report is about the files as they stood, too.
+        let tested = (
+            Some("t1".to_string()),
+            "moonshot/kimi-k3".to_string(),
+            false,
+        );
+        r.test = Tested::of(Some(&tested), Some("t1"));
+        assert!(r.line().ends_with("· test ✗ kimi-k3"), "{}", r.line());
+        r.test = Tested::of(Some(&tested), Some("t2"));
+        assert!(
+            r.line().ends_with("· not tested after the last change"),
+            "{}",
+            r.line()
+        );
+        let passed = (Some("t1".to_string()), "kimi-k3".to_string(), true);
+        r.test = Tested::of(Some(&passed), Some("t1"));
+        assert!(r.line().ends_with("· test ✓ kimi-k3"), "{}", r.line());
+        assert_eq!(Tested::of(None, Some("t1")), Tested::No);
+        let failed = (Some("t1".to_string()), "m".to_string(), Some(false));
+        assert_eq!(
+            Reviewed::of(Some(&failed), Some("t1")),
+            Reviewed::Fail("m".into())
+        );
+        let silent = (Some("t1".to_string()), "m".to_string(), None);
+        assert_eq!(
+            Reviewed::of(Some(&silent), Some("t1")),
+            Reviewed::NoVerdict("m".into())
+        );
+        assert_eq!(Reviewed::of(None, Some("t1")), Reviewed::No);
         let m = with_receipt("Subject\n\nBody.\n", &r);
         assert!(m.starts_with("Subject\n\nBody.\n\nRyter: "), "{m}");
     }

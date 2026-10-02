@@ -6,7 +6,6 @@ mod action;
 mod activity;
 mod chat;
 mod composer;
-mod crewboard;
 mod draw;
 mod info;
 mod keymap;

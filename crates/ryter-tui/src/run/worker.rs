@@ -15,12 +15,18 @@ use ryter_core::session::Session;
 use ryter_core::spend::PriceBook;
 use ryter_core::tools::ToolContext;
 use ryter_core::{
-    Agent, AgentEvent, Cancel, Config, ConnectionConfig, HookSet, McpServerConfig, Phase, Role,
-    RoleModel, StatusSnapshot, UserIo,
+    Agent, AgentEvent, Cancel, Config, ConnectionConfig, HookSet, McpServerConfig, Role, RoleModel,
+    StatusSnapshot, UserIo,
 };
 
 /// Requests from the UI thread.
 pub enum Work {
+    /// Stop the product Ryter started for a test. `reply` carries how it
+    /// went back to a quit that is waiting on it.
+    StopProduct {
+        /// Optional reply channel.
+        reply: Option<mpsc::Sender<std::result::Result<String, String>>>,
+    },
     /// Run a user turn. `reply` carries the final text back to an MCP caller.
     Turn {
         /// Prompt.
@@ -30,8 +36,6 @@ pub enum Work {
     },
     /// Fresh session.
     New,
-    /// Auditor gate.
-    SetAuditor(bool),
     /// Tool permission mode.
     SetTools {
         /// Always approve `Ask`.
@@ -43,10 +47,10 @@ pub enum Work {
     Compact,
     /// `GET /models` on the active connection.
     ListModels,
-    /// `GET /models` on every keyed connection (crew picker).
-    ListCrewModels,
-    /// Replace the live specialist table.
-    SetCrew {
+    /// `GET /models` on every keyed connection (a hat's seat).
+    ListAllModels,
+    /// Replace each hat's own model.
+    SetHats {
         /// Assignments.
         specialists: BTreeMap<String, RoleModel>,
     },
@@ -60,7 +64,7 @@ pub enum Work {
         /// Hooks.
         hooks: Vec<ryter_core::HookConfig>,
     },
-    /// Switch hats, or to the crew's lead.
+    /// Switch hats.
     SetRole(ryter_core::Role),
     /// The user's reasoning levels per model changed.
     SetModelReasoning(std::collections::BTreeMap<String, String>),
@@ -74,14 +78,14 @@ pub enum Work {
         /// Even over the user's edits since the undo.
         force: bool,
     },
-    /// `/second`: another model reviews the uncommitted work.
-    SecondOpinion,
-    /// `/audit model`: ask the user to choose the reviewer again.
-    ChooseReviewer,
-    /// Offer an audit after build turns, or not.
+    /// `/audit`: the review hat reviews the uncommitted work.
+    ReviewNow,
+    /// Offer a review after build turns, or not.
     SetOfferAudit(bool),
-    /// Save the user's reviewer choice; run the review when `then_run`.
-    SetReviewer(ryter_core::config::ReviewerConfig, bool),
+    /// Offer a test after a review that passed, or not.
+    SetOfferTest(bool),
+    /// `/test`: the test hat tests the work now.
+    TestNow,
     /// `/changes`: put one file back as `base` had it.
     Revert {
         /// Commit to restore from.
@@ -111,10 +115,8 @@ pub enum Work {
     SetSettings {
         /// Budget cap.
         budget_usd: f64,
-        /// Per-task cap.
-        task_budget_usd: f64,
-        /// Max parallel specialists.
-        max_crew: u32,
+        /// Most one review may spend.
+        review_usd: f64,
         /// Web tools.
         web: bool,
         /// Open pages the model shows in the browser.
@@ -122,10 +124,6 @@ pub enum Work {
     },
     /// Load a saved session.
     Resume(String),
-    /// Kill one specialist.
-    Kill(String),
-    /// Kill every specialist.
-    KillAll,
     /// Set the session title.
     Rename(String),
     /// Switch provider / model.
@@ -188,14 +186,14 @@ const MODELS_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Model lists fetched off the worker's thread, one per connection.
 struct Fetched {
-    /// For the crew builder (every connection), not the model picker.
-    crew: bool,
+    /// From every connection (a hat's seat), not the active one alone.
+    all: bool,
     results: Vec<(String, Result<Vec<ryter_core::ModelInfo>, String>)>,
 }
 
 /// Fetch each connection's model list on a thread of its own, so a slow
 /// catalog never holds up a turn, and send what came back.
-fn fetch_models(targets: Vec<(String, Arc<dyn Provider>)>, crew: bool, tx: mpsc::Sender<Fetched>) {
+fn fetch_models(targets: Vec<(String, Arc<dyn Provider>)>, all: bool, tx: mpsc::Sender<Fetched>) {
     std::thread::spawn(move || {
         let Ok(rt) = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -219,7 +217,7 @@ fn fetch_models(targets: Vec<(String, Arc<dyn Provider>)>, crew: bool, tx: mpsc:
                 (name, r)
             })
             .collect();
-        let _ = tx.send(Fetched { crew, results });
+        let _ = tx.send(Fetched { all, results });
     });
 }
 
@@ -298,6 +296,9 @@ pub fn run(init: WorkerInit) {
         emit_mcp_status(&a, &ev_tx);
         refresh_live(&a, &live_status, &live_spend);
         let _ = ev_tx.send(a.checkpoint_event());
+        let mut a = a;
+        // A product an earlier session left running is still Ryter's to stop.
+        let _ = a.announce_product();
         agent = Some(a);
     }
     let (fetch_tx, fetch_rx) = mpsc::channel::<Fetched>();
@@ -323,7 +324,7 @@ pub fn run(init: WorkerInit) {
             let mut all = Vec::new();
             let mut notes = Vec::new();
             for (name, result) in done.results {
-                fetching.remove(&(done.crew, name.clone()));
+                fetching.remove(&(done.all, name.clone()));
                 match result {
                     Ok(models) => {
                         ryter_core::llm::model_cache::save(&home, &name, &models);
@@ -367,18 +368,18 @@ pub fn run(init: WorkerInit) {
             Ok(Work::Turn { text, reply }) => {
                 if let Some(a) = &mut agent {
                     a.ctx.cancel.reset();
-                    let before = a.session.meta.checkpoints.len();
+                    let before = a.session.changed_turns;
                     let out = match rt.block_on(a.turn(&text)) {
                         Ok(r) => {
                             // A build turn that finished and changed files:
-                            // offer an audit. Not for a turn another program
+                            // offer a review. Not for a turn another program
                             // asked for over MCP.
-                            let changed = a.session.meta.checkpoints.len() > before;
+                            let changed = a.session.changed_turns > before;
                             if changed
                                 && reply.is_none()
                                 && r.reason == ryter_core::StopReason::Completed
                             {
-                                if let Err(e) = rt.block_on(a.offer_audit()) {
+                                if let Err(e) = rt.block_on(a.offer_review()) {
                                     send_err(&ev_tx, e.to_string());
                                 }
                             }
@@ -398,13 +399,6 @@ pub fn run(init: WorkerInit) {
                     }
                 }
             }
-            Ok(Work::SetAuditor(on)) => {
-                if let Some(a) = &mut agent {
-                    let _ = a.session.set_auditor(on);
-                } else if let Some(s) = &mut session_hold {
-                    let _ = s.set_auditor(on);
-                }
-            }
             Ok(Work::SetTools { always }) => {
                 always_approve = always;
                 if let Some(a) = &mut agent {
@@ -413,13 +407,7 @@ pub fn run(init: WorkerInit) {
             }
             Ok(Work::New) => {
                 if let Some(a) = &mut agent {
-                    match Session::create(
-                        &home,
-                        &cwd,
-                        Phase::Build,
-                        a.connection.clone(),
-                        a.model.clone(),
-                    ) {
+                    match Session::create(&home, &cwd, a.connection.clone(), a.model.clone()) {
                         Ok(mut s) => {
                             // A new session stays in the mode the user is in.
                             let _ = s.set_mode(a.role);
@@ -435,10 +423,11 @@ pub fn run(init: WorkerInit) {
                 if let Some(a) = &mut agent {
                     match Session::find(&home, Some(&cwd), &id) {
                         Ok(s) => {
-                            let role = s.meta.mode.unwrap_or(Role::SoloBuild);
+                            // A session left in crew mode, before it was
+                            // removed, opens in build.
+                            let role = s.meta.mode.map_or(Role::SoloBuild, Role::hat);
                             swap_session(a, s);
-                            a.role = role;
-                            a.ctx.role = role;
+                            let _ = a.put_on(role);
                             a.model = a.session.meta.model.clone();
                             a.connection = a.session.meta.connection.clone();
                             refresh_live(a, &live_status, &live_spend);
@@ -447,18 +436,6 @@ pub fn run(init: WorkerInit) {
                         }
                         Err(e) => send_err(&ev_tx, e.to_string()),
                     }
-                }
-            }
-            Ok(Work::Kill(id)) => {
-                if let Some(a) = &agent {
-                    if !a.kill_child(&id) {
-                        send_err(&ev_tx, format!("no running specialist {id}"));
-                    }
-                }
-            }
-            Ok(Work::KillAll) => {
-                if let Some(a) = &agent {
-                    a.kill_all_children();
                 }
             }
             Ok(Work::Rename(title)) => {
@@ -480,7 +457,10 @@ pub fn run(init: WorkerInit) {
                     }
                 }
             }
-            Ok(Work::SetCrew { specialists }) => {
+            Ok(Work::SetHats { specialists }) => {
+                // The worker's copy too: an agent rebuilt later (a provider
+                // switch) starts from it.
+                cfg.specialists = specialists.clone();
                 if let Some(c) = agent.as_mut().and_then(|a| a.cfg.as_mut()) {
                     c.specialists = specialists;
                 }
@@ -527,10 +507,9 @@ pub fn run(init: WorkerInit) {
             }
             Ok(Work::SetRole(role)) => {
                 if let Some(a) = &mut agent {
-                    a.role = role;
-                    a.ctx.role = role;
-                    let _ = a.session.set_mode(role);
+                    let _ = a.put_on(role);
                 }
+                let _ = ev_tx.send(AgentEvent::HatSet { role });
             }
             Ok(Work::SetOfferAudit(on)) => {
                 cfg.ui.offer_audit = on;
@@ -538,46 +517,54 @@ pub fn run(init: WorkerInit) {
                     c.ui.offer_audit = on;
                 }
             }
-            Ok(Work::ChooseReviewer) => {
-                if let Some(a) = &mut agent {
-                    if let Err(e) = a.choose_reviewer() {
-                        send_err(&ev_tx, e.to_string());
-                    }
+            Ok(Work::SetOfferTest(on)) => {
+                cfg.ui.offer_test = on;
+                if let Some(c) = agent.as_mut().and_then(|a| a.cfg.as_mut()) {
+                    c.ui.offer_test = on;
                 }
             }
-            Ok(Work::SetReviewer(choice, then_run)) => {
-                if let Err(e) = ryter_core::config::save_reviewer(&home, &choice) {
-                    send_err(&ev_tx, e.to_string());
-                }
-                let _ = ev_tx.send(AgentEvent::Notice {
-                    message: format!(
-                        "audits: {} on {}, up to ${:.2} each · /audit model changes it",
-                        choice.model, choice.connection, choice.limit_usd
-                    ),
-                });
-                cfg.reviewer = Some(choice.clone());
-                if let Some(a) = &mut agent {
-                    if let Some(c) = a.cfg.as_mut() {
-                        c.reviewer = Some(choice);
-                    }
-                    if then_run {
-                        a.ctx.cancel.reset();
-                        if let Err(e) = rt.block_on(a.second_opinion()) {
-                            send_err(&ev_tx, e.to_string());
-                        }
-                        refresh_live(a, &live_status, &live_spend);
-                    }
-                }
-            }
-            Ok(Work::SecondOpinion) => {
+            Ok(Work::TestNow) => {
                 if let Some(a) = &mut agent {
                     a.ctx.cancel.reset();
-                    if let Err(e) = rt.block_on(a.second_opinion()) {
+                    if let Err(e) = rt.block_on(a.test_now()) {
                         send_err(&ev_tx, e.to_string());
                     }
                     refresh_live(a, &live_status, &live_spend);
                 } else {
                     send_err(&ev_tx, "no API key — /provider set-key".into());
+                }
+            }
+            Ok(Work::ReviewNow) => {
+                if let Some(a) = &mut agent {
+                    a.ctx.cancel.reset();
+                    if let Err(e) = rt.block_on(a.review_now()) {
+                        send_err(&ev_tx, e.to_string());
+                    }
+                    refresh_live(a, &live_status, &live_spend);
+                } else {
+                    send_err(&ev_tx, "no API key — /provider set-key".into());
+                }
+            }
+            Ok(Work::StopProduct { reply }) => {
+                let out = match &mut agent {
+                    Some(a) => {
+                        a.ctx.cancel.reset();
+                        a.stop_product().unwrap_or_else(|e| Err(e.to_string()))
+                    }
+                    None => Err("Ryter has not started this project".to_string()),
+                };
+                match (&out, &reply) {
+                    (Ok(did), _) => {
+                        let _ = ev_tx.send(AgentEvent::Notice {
+                            message: format!("the project was stopped ({did})"),
+                        });
+                    }
+                    (Err(why), _) => {
+                        send_err(&ev_tx, format!("the project was not stopped: {why}"))
+                    }
+                }
+                if let Some(reply) = reply {
+                    let _ = reply.send(out);
                 }
             }
             Ok(Work::Undo { force }) => {
@@ -642,8 +629,7 @@ pub fn run(init: WorkerInit) {
             }
             Ok(Work::SetSettings {
                 budget_usd,
-                task_budget_usd,
-                max_crew,
+                review_usd,
                 web,
                 open_pages,
             }) => {
@@ -651,22 +637,20 @@ pub fn run(init: WorkerInit) {
                 // switch) starts from it, and used to lose live changes.
                 let apply = |c: &mut Config| {
                     c.spend.session_budget_usd = budget_usd;
-                    c.spend.task_budget_usd = task_budget_usd;
-                    c.subagents.max = max_crew;
+                    c.spend.review_usd = review_usd;
                     c.features.web = web;
                     c.ui.open_pages = open_pages;
                 };
                 apply(&mut cfg);
                 if let Some(a) = &mut agent {
                     a.budget_usd = budget_usd;
-                    a.max_crew = max_crew;
                     a.ctx.web = web;
                     if let Some(c) = &mut a.cfg {
                         apply(c);
                     }
                 }
             }
-            Ok(Work::ListCrewModels) => {
+            Ok(Work::ListAllModels) => {
                 let book = PriceBook::from_config(&cfg);
                 let mut shown = Vec::new();
                 let mut oldest = 0u64;
@@ -775,6 +759,10 @@ pub fn run(init: WorkerInit) {
                     emit_mcp_status(&a, &ev_tx);
                     refresh_live(&a, &live_status, &live_spend);
                     let _ = ev_tx.send(a.checkpoint_event());
+                    let mut a = a;
+                    // As at startup: a product an earlier session left
+                    // running is still this one's to stop.
+                    let _ = a.announce_product();
                     agent = Some(a);
                 }
             }
@@ -789,7 +777,6 @@ fn send_err(tx: &mpsc::Sender<AgentEvent>, message: String) {
 fn session_event(a: &Agent) -> AgentEvent {
     AgentEvent::Session {
         id: a.session.meta.id.to_string(),
-        phase: a.session.meta.phase,
         title: a.session.meta.title.clone(),
     }
 }
@@ -797,11 +784,6 @@ fn session_event(a: &Agent) -> AgentEvent {
 fn swap_session(a: &mut Agent, s: Session) {
     a.session = s;
     a.ctx.notes_dir = a.session.notes_dir();
-    let q = Arc::new(Mutex::new(ryter_core::queue::TaskQueue::open(
-        a.session.dir.join("tasks.json"),
-    )));
-    a.ctx.queue = q.clone();
-    a.queue = q;
 }
 
 fn enrich(m: &mut ryter_core::ModelInfo, book: &PriceBook) {
@@ -864,12 +846,10 @@ struct BuildAgent<'a> {
 
 fn build_agent(b: BuildAgent<'_>) -> Agent {
     let provider = http_provider(&b.conn, b.key);
-    let queue = Arc::new(Mutex::new(ryter_core::queue::TaskQueue::open(
-        b.session.dir.join("tasks.json"),
-    )));
     let notes = b.session.notes_dir();
-    // Solo mode's build hat unless the session was left in another mode.
-    let role = b.session.meta.mode.unwrap_or(Role::SoloBuild);
+    // The build hat, unless the session was left in another. A session
+    // left in crew mode, before it was removed, opens in build too.
+    let role = b.session.meta.mode.map_or(Role::SoloBuild, Role::hat);
     Agent {
         provider: Arc::new(provider),
         book: PriceBook::from_config(b.cfg),
@@ -880,7 +860,6 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
             notes_dir: notes,
             role,
             always_approve: b.always_approve,
-            queue: queue.clone(),
             mcp: ryter_core::McpHub::connect(&b.cfg.mcp_servers)
                 .ok()
                 .map(|h| Arc::new(Mutex::new(h))),
@@ -893,6 +872,8 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
             user_io: Some(b.user_io),
             allowed: Default::default(),
             web: b.cfg.features.web,
+            cwd: Default::default(),
+            vars: Default::default(),
         },
         connection: b.conn_name,
         model: b.model,
@@ -903,13 +884,10 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         home: b.home.to_path_buf(),
         project_root: Some(b.cwd.to_path_buf()),
         trusted: b.trusted,
-        queue,
-        max_crew: b.cfg.subagents.max,
-        max_retries: b.cfg.auditor.max_retries,
-        checks: b.cfg.auditor.checks.clone(),
-        check_timeout_secs: b.cfg.auditor.check_timeout_secs,
         context_window: 0,
         cfg: Some(b.cfg.clone()),
-        running: Arc::new(Mutex::new(Vec::new())),
+        machine: ryter_core::prompt::machine_here(),
+        product: None,
+        filed: Default::default(),
     }
 }
