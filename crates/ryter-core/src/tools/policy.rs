@@ -5541,7 +5541,12 @@ pub(crate) fn is_secret(path: &Path, ctx: &ToolContext) -> bool {
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    if name == ".env" || name.ends_with(".pem") || name.ends_with(".key") {
+    // A public key is published, not kept: `release.pub.pem` is checked
+    // into a repository so anyone can verify with it.
+    let public = [".pub.pem", ".pub.key", "public.pem", "pubkey.pem"]
+        .iter()
+        .any(|e| name.ends_with(e));
+    if name == ".env" || ((name.ends_with(".pem") || name.ends_with(".key")) && !public) {
         return true;
     }
     let s = rel
@@ -8225,6 +8230,10 @@ mod tests {
         };
         git(&["init", "-q"]);
         git(&["add", "README.md", "src/main.py", "tests/run.py"]);
+        // A public key is tracked on purpose, and is nobody's secret.
+        std::fs::write(m.proj.join("release.pub.pem"), "x\n").unwrap();
+        git(&["add", "release.pub.pem"]);
+        m.runs(&HATS, &["cat release.pub.pem"]);
         // Nothing secret is tracked yet: git is as it was.
         m.runs(
             &HATS,
