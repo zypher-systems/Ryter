@@ -156,6 +156,14 @@ pub enum Action {
         /// Even over the user's edits since the undo.
         force: bool,
     },
+    /// `/stop`: stop the product Ryter started for a test.
+    StopProduct,
+    /// The answer to "stop the project?" on quit: stop it and leave, or
+    /// leave it running.
+    QuitAnswer {
+        /// Stop it first.
+        stop: bool,
+    },
     /// `/audit`: the review hat reviews the uncommitted work now.
     ReviewNow,
     /// `s` on a review offer: no more offers after build turns (the offer

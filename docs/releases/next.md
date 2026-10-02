@@ -64,7 +64,10 @@ added at the top, and this comment removed.
   - **It has a conversation of its own.** The tester doesn't read what you and the builder said: it judges the product from the plan, the decisions and from using it. In the test hat the chat shows the tester's thread; in any other hat it shows the conversation they share. The thread continues through the session and comes back when the session is resumed.
   - **You can look at either while the other works.** What a running turn says goes into the conversation it is part of, whichever is on screen.
   - **What it may run:** everything the build hat runs without asking, and requests to the project's own address (`curl localhost:8000/…`). It can't edit, delete or move the project's files.
-  - **Not in this release:** the tester's report coming back into the main conversation, `/test`, an offer to test after a review, and saved start and stop commands. Today its findings stay in its thread.
+  - **How the project runs is its own file,** `.ryter/run.toml`: the start command, an address that answers once it is up, the test commands, and the stop command. The tester proposes it and you approve it on a panel (`y` approve, `e` adjust, `n` reject). Ryter then runs those commands itself, and keeps a start command that stays in the foreground (`npm run dev`) running.
+  - **A run file is approved by what it says.** One that came with the project, or was changed after you approved it, is shown to you again before anything in it runs.
+  - **The product is left running** after a test, and the chat says where. `/stop` stops it, quitting asks whether to stop it, and the next session in that project is told it is still up.
+  - **Not in this release:** the tester's report coming back into the main conversation, `/test`, and an offer to test after a review. Today its findings stay in its thread.
 - **Where the work differs from the plan, the difference and its reason are recorded.** An approved plan is not edited. The entries go in `.ryter/decisions.md` in the project, under the plan they belong to: what the plan said, what is built instead, why, and who decided.
   - An entry is added when you tell the model to leave out, add or change something the plan says, and when the model finds a step can't be done as written and takes another way to the same goal.
   - The chat says "decision recorded: No export button in this pass". Nothing is asked.
@@ -136,6 +139,13 @@ added at the top, and this comment removed.
   - "test the list": the request went to the tester's model with that one message and eleven tools. It ran the project's `./run-tests.sh` and a `curl` to `localhost` with no prompt. Its attempt to write a file in the project was refused: "the test hat can't edit files".
   - `Tab` back to build: the main chat as it was left, with nothing of the tester's. A message there went to the main model with the main conversation only.
   - `ryter resume`, with the session left in the test hat: it opened on the tester's thread, and the next message continued it (the request carried all nine messages of that thread).
+- **The run file,** in the TUI against a stand-in provider, with a small real web server as the product:
+  - The tester proposed a start command, a ready address and one test command. The panel showed them under "how this project runs". `e` and "also run ./lint.sh": the model proposed again with both. `y`: the chat said "run file · approved and saved to .ryter/run.toml", and the file held the four lines.
+  - Start: the server came up in 0.3s and the chat said "the project is running at http://127.0.0.1:57341/, started 20:56 · /stop stops it". The tests ran ("✓ 2 passed"), and `curl` to the server returned 200 with no prompt.
+  - `/stop`: "the project was stopped (ended the start command)", and the server's process was gone.
+  - `^c` with it up: "stop the project?". `⏎` stopped it and Ryter exited. In another run `n` left it up and Ryter exited; the next session said the project was still running, and `/stop` there said it had no stop command, gave the process number, and left it alone.
+  - **Bugs this found:** `curl -o /dev/null` was treated as writing outside the project and asked every time; and stopping a held start command waited five seconds for a process that had already gone. Both fixed, with tests.
+  - Not tried: a start command through Docker, and a product that takes long to come up.
 - **Less asking,** in a headless run in the build hat against a stand-in provider, with nobody to ask, so anything that needs a yes is refused:
   - Ran: `docker compose version`; `docker ps` piped to `wc`; a file written to scratch space with the `write` tool; `echo hi > ~/note.txt` (with the home folder pointed at a scratch one); a program in `~/.local/bin`; `cargo test > /tmp/out.txt`.
   - Held back: `echo x >> ~/.bashrc` (refused); `rm -rf ~/note.txt` and a write to `/opt` (outside the project, a yes each time); `docker compose down -v` and `npm publish` (need approval).

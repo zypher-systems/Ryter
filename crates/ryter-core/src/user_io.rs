@@ -65,6 +65,15 @@ pub enum UserRequest {
         /// Reply channel.
         reply: mpsc::Sender<PlanAnswer>,
     },
+    /// How the project runs, to approve before Ryter runs any of it.
+    Run {
+        /// `start`, `ready`, `test`, `stop`, each with its command.
+        rows: Vec<(String, String)>,
+        /// Why it is being asked again, when it is: the file changed.
+        note: Option<String>,
+        /// Reply channel.
+        reply: mpsc::Sender<PlanAnswer>,
+    },
     /// A question: the model's `ask_user`, or Ryter's own.
     Question {
         /// Who asks, when it is Ryter and not the model: `task budget`,
@@ -203,6 +212,36 @@ impl UserIo {
         let req = UserRequest::Plan {
             title: title.to_string(),
             plan: plan.to_string(),
+            reply: reply_tx,
+        };
+        if self.send(req).is_err() {
+            return PlanAnswer::Reject;
+        }
+        loop {
+            if cancel.is_cancelled() {
+                return PlanAnswer::Reject;
+            }
+            match reply_rx.recv_timeout(POLL) {
+                Ok(answer) => return answer,
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return PlanAnswer::Reject,
+            }
+        }
+    }
+
+    /// Show the user how the project runs (its start, ready, test and stop
+    /// commands) and wait for their answer, as for a plan. No answer is a
+    /// rejection.
+    pub fn present_run(
+        &self,
+        rows: Vec<(String, String)>,
+        note: Option<String>,
+        cancel: &Cancel,
+    ) -> PlanAnswer {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        let req = UserRequest::Run {
+            rows,
+            note,
             reply: reply_tx,
         };
         if self.send(req).is_err() {

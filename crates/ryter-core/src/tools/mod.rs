@@ -14,7 +14,7 @@ use crate::llm::ToolSpec;
 use crate::role::Role;
 
 pub use fs::changed_lines;
-pub(crate) use policy::resolve;
+pub(crate) use policy::{on_this_machine, resolve};
 
 /// What `a` ("allow for this session") on this call's prompt would cover:
 /// a key, and the words for it. `None` when the prompt must not offer it.
@@ -313,6 +313,33 @@ fn spec(name: &str) -> Option<ToolSpec> {
                 "decided_by":{"type":"string","enum":["user","model"],"description":"`user` when they told you to; `model` when you chose"}
             },"required":["title","plan_said","built_instead","why","decided_by"]}),
         ),
+        "propose_run" => (
+            "Propose how this project runs, for the user to approve: the command that \
+             starts it, an address that answers once it is up, its test commands, and the \
+             command that stops it. Read the project first (its README, compose file, \
+             package.json, Makefile, scripts). Use the commands the project itself uses. \
+             The start command may return (`docker compose up -d --wait`) or stay in the \
+             foreground (`npm run dev`): Ryter runs it and keeps it up. Approved, it is \
+             saved as `.ryter/run.toml` and Ryter runs these commands with run_project, \
+             without asking again. Leave out what the project doesn't have.",
+            json!({"type":"object","properties":{
+                "start":{"type":"string","description":"starts the product"},
+                "ready":{"type":"string","description":"an http address on this machine that answers once it is up, e.g. http://localhost:8000/healthz"},
+                "test":{"type":"array","items":{"type":"string"},"description":"the project's test and check commands, in order"},
+                "stop":{"type":"string","description":"stops what start started"}
+            }}),
+        ),
+        "run_project" => (
+            "Run the project's own approved commands from `.ryter/run.toml`. `start` \
+             starts the product and waits until it is up; it stays up after your turn. \
+             `test` runs the project's test commands and returns their output. `stop` \
+             stops what was started (the user usually does this, with /stop: leave the \
+             product running when you finish). `status` says whether it is up. With no \
+             run file yet, propose one with propose_run.",
+            json!({"type":"object","properties":{
+                "action":{"type":"string","enum":["start","test","stop","status"]}
+            },"required":["action"]}),
+        ),
         "request_hat" => (
             "Ask the user to switch your hat, e.g. to build once a plan is ready or once a \
              review found things to fix. They answer yes or no; on yes you continue in the \
@@ -359,6 +386,8 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "glob",
             "write",
             "bash",
+            "propose_run",
+            "run_project",
             "ask_user",
             "load_skill",
             "show_page",
@@ -407,7 +436,7 @@ pub fn execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput
         "ask_user" => ask_user(args, ctx),
         // The agent loop answers this itself: it changes who the agent is.
         "request_hat" | "present_plan" | "record_decision" | "load_skill" | "show_page"
-        | "update_rules" => Ok(ToolOutput::err(format!(
+        | "update_rules" | "propose_run" | "run_project" => Ok(ToolOutput::err(format!(
             "{name} is handled by the agent loop"
         ))),
         "web_fetch" => web::web_fetch(args, ctx),

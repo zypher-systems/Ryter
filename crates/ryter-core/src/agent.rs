@@ -79,6 +79,8 @@ pub struct Agent {
     /// worked out once, where the agent is made, so the prompt doesn't change
     /// from one message to the next.
     pub machine: String,
+    /// The product a test started, while Ryter holds it.
+    pub product: Option<crate::run::Started>,
 }
 
 /// Output ceiling per round of the conversation.
@@ -499,7 +501,13 @@ impl Agent {
                     name: call.name.clone(),
                     args: args.clone(),
                     role: self.role,
-                    summary: Some(tool_summary(&call.name, &args)),
+                    // For the project's own commands, the command itself:
+                    // the call only says "start".
+                    summary: Some(if call.name == "run_project" {
+                        self.run_summary(&args)
+                    } else {
+                        tool_summary(&call.name, &args)
+                    }),
                 })?;
                 let t0 = std::time::Instant::now();
                 if self.role == Role::SoloBuild
@@ -525,6 +533,8 @@ impl Agent {
                             "request_hat"
                                 | "present_plan"
                                 | "record_decision"
+                                | "propose_run"
+                                | "run_project"
                                 | "load_skill"
                                 | "show_page"
                                 | "update_rules"
@@ -536,6 +546,8 @@ impl Agent {
                                 "request_hat" => self.request_hat(&args),
                                 "present_plan" => self.present_plan(&args),
                                 "record_decision" => self.record_decision(&args),
+                                "propose_run" => self.propose_run(&args),
+                                "run_project" => self.run_project(&args),
                                 "load_skill" => Ok(self.load_skill(&args)),
                                 "update_rules" => self.update_rules(&args),
                                 _ => self.show_page(&args),
@@ -1121,6 +1133,384 @@ impl Agent {
             "Recorded in `{}`, under the plan `{plan_file}`. A review will read it.",
             crate::decisions::FILE
         )))
+    }
+
+    /// The folder the project's own files are in.
+    fn root(&self) -> PathBuf {
+        self.project_root
+            .clone()
+            .unwrap_or_else(|| self.ctx.workspace.clone())
+    }
+
+    /// What a `run_project` call runs, for the chat: the command itself.
+    fn run_summary(&self, args: &Value) -> String {
+        let run = match crate::run::find(&self.root(), &self.home) {
+            crate::run::Found::Approved(r) | crate::run::Found::Unapproved(r) => r,
+            _ => return String::new(),
+        };
+        match args.get("action").and_then(Value::as_str) {
+            Some("start") => run.start.unwrap_or_default(),
+            Some("stop") => run.stop.unwrap_or_default(),
+            Some("test") => match run.test.as_slice() {
+                [] => String::new(),
+                [one] => one.clone(),
+                [first, rest @ ..] => format!("{first} (+{} more)", rest.len()),
+            },
+            _ => String::new(),
+        }
+    }
+
+    /// Put how the project runs to the user. `Ok(None)` is their yes.
+    /// `Ok(Some(reply))` is what the model is told when it isn't.
+    fn ask_run(
+        &mut self,
+        run: &crate::run::RunFile,
+        note: Option<String>,
+    ) -> Result<Option<crate::tools::ToolOutput>> {
+        use crate::tools::ToolOutput;
+        use crate::user_io::PlanAnswer;
+        let Some(io) = self.ctx.user_io.clone() else {
+            // Headless: `--always-approve` is the user's yes to what the
+            // project's file says.
+            return Ok(if self.ctx.always_approve {
+                None
+            } else {
+                Some(ToolOutput::err(
+                    "nobody can approve how the project runs here (headless), so nothing \
+                     ran. Tell the user to run again with --always-approve, or to approve \
+                     it in the TUI.",
+                ))
+            });
+        };
+        let rows = run
+            .rows()
+            .into_iter()
+            .map(|(label, cmd)| (label.to_string(), cmd))
+            .collect();
+        let answer = io.present_run(rows, note, &self.ctx.cancel);
+        if self.ctx.cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        Ok(match answer {
+            PlanAnswer::Approve => None,
+            PlanAnswer::Adjust(what) => Some(ToolOutput::ok(format!(
+                "The user wants how the project runs changed before they approve it:\n\n{}\n\n\
+                 Nothing was saved or run. Propose it again with propose_run.",
+                what.trim()
+            ))),
+            PlanAnswer::Reject => Some(ToolOutput::err(
+                "the user rejected it: nothing was saved or run. Ask how they start and test \
+                 the project; don't propose the same commands again",
+            )),
+        })
+    }
+
+    /// `propose_run`: how the project starts, becomes ready, tests and
+    /// stops, for the user to approve. Approved, it is the project's
+    /// `.ryter/run.toml`, and Ryter runs those commands itself.
+    fn propose_run(&mut self, args: &Value) -> Result<crate::tools::ToolOutput> {
+        use crate::tools::ToolOutput;
+        let text = |key: &str| args.get(key).and_then(Value::as_str).map(str::to_string);
+        let test = match args.get("test") {
+            Some(Value::Array(items)) => items
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect(),
+            Some(Value::String(one)) => vec![one.clone()],
+            _ => Vec::new(),
+        };
+        let run = crate::run::RunFile {
+            start: text("start"),
+            ready: text("ready"),
+            test,
+            stop: text("stop"),
+        }
+        .tidy();
+        if run.is_empty() {
+            return Ok(ToolOutput::err(
+                "propose_run needs at least one of `start`, `ready`, `test` (a list) and `stop`",
+            ));
+        }
+        if let Some(why) = self.run_refused(&run) {
+            return Ok(ToolOutput::err(why));
+        }
+        let root = self.root();
+        if crate::run::find(&root, &self.home) == crate::run::Found::Approved(run.clone()) {
+            return Ok(ToolOutput::ok(format!(
+                "The user has already approved exactly this: it is `{}`. Use run_project.",
+                crate::run::FILE
+            )));
+        }
+        if let Some(reply) = self.ask_run(&run, None)? {
+            return Ok(reply);
+        }
+        if let Err(e) = crate::run::save_approved(&root, &self.home, &run) {
+            return Ok(ToolOutput::err(format!(
+                "the user approved it, but it could not be saved ({e}), so nothing ran. Tell \
+                 them."
+            )));
+        }
+        self.emit(AgentEvent::Notice {
+            message: format!("run file · approved and saved to {}", crate::run::FILE),
+        })?;
+        Ok(ToolOutput::ok(format!(
+            "The user approved how the project runs. It is saved as `{}`. Start it with \
+             run_project (action `start`), run its tests with action `test`.",
+            crate::run::FILE
+        )))
+    }
+
+    /// Why a run file can't be used at all, whoever approves it: a command
+    /// no hat runs, or an address that isn't this machine's.
+    fn run_refused(&self, run: &crate::run::RunFile) -> Option<String> {
+        let as_builder = crate::tools::ToolContext {
+            live: None,
+            role: Role::SoloBuild,
+            ..self.ctx.clone()
+        };
+        for cmd in run.commands() {
+            let args = serde_json::json!({ "command": cmd });
+            if crate::tools::decide("bash", &args, &as_builder) == crate::tools::Decision::Deny {
+                return Some(format!(
+                    "`{cmd}` is a command Ryter runs for nobody (sudo, inline code, a write \
+                     to a protected place, …). Use a command without it."
+                ));
+            }
+        }
+        match run.ready.as_deref() {
+            Some(url) if !crate::tools::on_this_machine(url) => Some(format!(
+                "`ready` has to be an http address on this machine (http://localhost:8000/…), \
+                 and `{url}` isn't one"
+            )),
+            _ => None,
+        }
+    }
+
+    /// The run file the user has approved, asking them now if it is there
+    /// but not approved as it stands. `Err` is what the model is told.
+    fn approved_run(
+        &mut self,
+    ) -> Result<std::result::Result<crate::run::RunFile, crate::tools::ToolOutput>> {
+        use crate::run::Found;
+        use crate::tools::ToolOutput;
+        let root = self.root();
+        Ok(match crate::run::find(&root, &self.home) {
+            Found::Approved(run) => match self.run_refused(&run) {
+                Some(why) => Err(ToolOutput::err(why)),
+                None => Ok(run),
+            },
+            Found::None => Err(ToolOutput::err(format!(
+                "this project has no `{}` yet. Read how it starts and tests itself (its \
+                 README, compose file, package.json, Makefile, scripts), then propose it \
+                 with propose_run.",
+                crate::run::FILE
+            ))),
+            Found::Broken(why) => Err(ToolOutput::err(format!(
+                "`{}` can't be read ({why}). Propose a new one with propose_run.",
+                crate::run::FILE
+            ))),
+            // It came with the project, or was changed since the user
+            // approved it: nothing in it runs until they have seen it.
+            Found::Unapproved(run) => {
+                if let Some(why) = self.run_refused(&run) {
+                    return Ok(Err(ToolOutput::err(why)));
+                }
+                let note = format!(
+                    "{} is not as you last approved it, or is new to Ryter",
+                    crate::run::FILE
+                );
+                match self.ask_run(&run, Some(note))? {
+                    Some(reply) => Err(reply),
+                    None => match crate::run::approve_as_is(&root, &self.home) {
+                        Ok(()) => Ok(run),
+                        Err(e) => Err(ToolOutput::err(format!(
+                            "the approval could not be saved ({e}), so nothing ran"
+                        ))),
+                    },
+                }
+            }
+        })
+    }
+
+    /// Tell the screen whether the product is up.
+    fn say_product(&mut self) -> Result<()> {
+        let left = self
+            .product
+            .as_ref()
+            .map(crate::run::Started::note)
+            .or_else(|| crate::run::remembered(&self.home, &self.root()));
+        self.emit(match left {
+            Some(l) => AgentEvent::Product {
+                running: true,
+                at: l.at,
+                address: l.address,
+                stop: l.stop,
+            },
+            None => AgentEvent::Product {
+                running: false,
+                at: String::new(),
+                address: None,
+                stop: None,
+            },
+        })
+    }
+
+    /// Say what an earlier session left running here, if anything.
+    pub fn announce_product(&mut self) -> Result<()> {
+        if crate::run::remembered(&self.home, &self.root()).is_some() {
+            self.say_product()?;
+        }
+        Ok(())
+    }
+
+    /// Stop the product Ryter started: `/stop`, the question on quit, and
+    /// the tester's `run_project stop`. `Ok` says what was done.
+    pub fn stop_product(&mut self) -> Result<std::result::Result<String, String>> {
+        let root = self.root();
+        let log = self.session.notes_dir().join("project.log");
+        let started = match self.product.take() {
+            Some(s) => s,
+            None => match crate::run::remembered(&self.home, &root) {
+                Some(left) if left.stop.is_none() => {
+                    // An earlier session's foreground command: a process
+                    // number is not proof it is still that process.
+                    crate::run::forget(&self.home, &root);
+                    self.say_product()?;
+                    return Ok(Err(match left.pid {
+                        Some(pid) => format!(
+                            "an earlier session started it at {} with no stop command (process \
+                             {pid}). Ryter doesn't end a process it can't be sure is the one \
+                             it started: stop it yourself",
+                            left.at
+                        ),
+                        None => "there is no stop command for it".to_string(),
+                    }));
+                }
+                Some(left) => crate::run::Started::left(left, log),
+                None => return Ok(Err("Ryter has not started this project".to_string())),
+            },
+        };
+        let out = crate::run::stop(started, &root, &self.ctx.cancel);
+        // Stopped or not, it is no longer Ryter's: a failed stop is the
+        // user's to look at.
+        crate::run::forget(&self.home, &root);
+        self.say_product()?;
+        Ok(out)
+    }
+
+    /// `run_project`: start the product, run the project's tests, or stop
+    /// it, with the commands the user approved.
+    fn run_project(&mut self, args: &Value) -> Result<crate::tools::ToolOutput> {
+        use crate::run::{COMMAND_TIMEOUT, START_TIMEOUT, Start};
+        use crate::tools::ToolOutput;
+        use crate::tools::shell::Run;
+        let action = args.get("action").and_then(Value::as_str).unwrap_or("");
+        let root = self.root();
+        match action {
+            "status" => Ok(ToolOutput::ok(
+                match self
+                    .product
+                    .as_ref()
+                    .map(crate::run::Started::note)
+                    .or_else(|| crate::run::remembered(&self.home, &root))
+                {
+                    Some(l) => format!(
+                        "Ryter started it at {}{}. It is left running until the user stops it.",
+                        l.at,
+                        l.address.map(|a| format!(", at {a}")).unwrap_or_default()
+                    ),
+                    None => "Ryter has not started it.".to_string(),
+                },
+            )),
+            "stop" => Ok(match self.stop_product()? {
+                Ok(did) => ToolOutput::ok(format!("Stopped: {did}.")),
+                Err(why) => ToolOutput::err(why),
+            }),
+            "start" => {
+                if let Some(up) = &self.product {
+                    return Ok(ToolOutput::ok(format!(
+                        "It is already running: Ryter started it at {}{}.",
+                        up.at,
+                        up.address
+                            .as_ref()
+                            .map(|a| format!(", at {a}"))
+                            .unwrap_or_default()
+                    )));
+                }
+                let run = match self.approved_run()? {
+                    Ok(run) => run,
+                    Err(reply) => return Ok(reply),
+                };
+                let log = self.session.notes_dir().join("project.log");
+                let began = std::time::Instant::now();
+                match crate::run::start(&run, &root, &log, START_TIMEOUT, &self.ctx.cancel)? {
+                    Start::Up { started, how } => {
+                        let note = started.note();
+                        self.product = Some(started);
+                        if let Err(e) = crate::run::remember(&self.home, &root, &note) {
+                            crate::trace::log(&self.home, &format!("running note: {e}"));
+                        }
+                        self.say_product()?;
+                        Ok(ToolOutput::ok(format!(
+                            "Started in {}s: {how}. Its output is in `{}`. It stays up after \
+                             your turn: leave it running when you finish, and say where it is.",
+                            began.elapsed().as_secs(),
+                            log.display()
+                        )))
+                    }
+                    Start::Failed(why) => Ok(ToolOutput::err(why)),
+                    Start::Cancelled => Err(Error::Cancelled),
+                }
+            }
+            "test" => {
+                let run = match self.approved_run()? {
+                    Ok(run) => run,
+                    Err(reply) => return Ok(reply),
+                };
+                if run.test.is_empty() {
+                    return Ok(ToolOutput::err(format!(
+                        "`{}` has no test commands. Run the project's tests with bash, or \
+                         propose the file again with them.",
+                        crate::run::FILE
+                    )));
+                }
+                let mut text = String::new();
+                let mut failed = 0;
+                for cmd in &run.test {
+                    let out = crate::tools::shell::run_command_live(
+                        cmd,
+                        &root,
+                        COMMAND_TIMEOUT,
+                        &self.ctx.cancel,
+                        self.ctx.live.as_ref(),
+                    )?;
+                    let (body, ok) = match out {
+                        Run::Ok(o) => (o, true),
+                        Run::Failed(o) => (o, false),
+                        Run::TimedOut => (
+                            format!("[did not finish in {}s]", COMMAND_TIMEOUT.as_secs()),
+                            false,
+                        ),
+                        Run::Cancelled => return Err(Error::Cancelled),
+                    };
+                    if !ok {
+                        failed += 1;
+                    }
+                    text.push_str(&format!(
+                        "$ {cmd}\n{}\n",
+                        crate::run::last_lines(body.trim_end(), 60)
+                    ));
+                }
+                Ok(if failed == 0 {
+                    ToolOutput::ok(text)
+                } else {
+                    ToolOutput::err(text)
+                })
+            }
+            other => Ok(ToolOutput::err(format!(
+                "run_project: unknown action {other:?}: start, test, stop, or status"
+            ))),
+        }
     }
 
     /// Put on `role`: the hat, what its tools may do, where the session was
@@ -1931,6 +2321,7 @@ mod tests {
             context_window: 0,
             cfg: None,
             machine: String::new(),
+            product: None,
         };
         (home, cwd, agent)
     }
@@ -2248,6 +2639,320 @@ mod tests {
             "{result}"
         );
         assert_eq!(role, Role::SoloTest);
+    }
+
+    /// One turn in the test hat that makes `calls` in order. The user
+    /// answers each question about how the project runs with the next of
+    /// `answers`. What they were shown, each tool's result, and the events.
+    async fn tester_turn(
+        agent: &mut Agent,
+        calls: Vec<Vec<StreamDelta>>,
+        answers: Vec<crate::user_io::PlanAnswer>,
+    ) -> (
+        Vec<(Vec<(String, String)>, Option<String>)>,
+        Vec<String>,
+        Vec<AgentEvent>,
+    ) {
+        let mut script = calls;
+        script.push(say("done"));
+        agent.provider = Arc::new(ReplayProvider::scripted(script));
+        agent.put_on(Role::SoloTest).unwrap();
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        let shown = std::thread::spawn(move || {
+            let mut shown = Vec::new();
+            let mut answers = answers.into_iter();
+            while let Ok(req) = rx.recv() {
+                if let crate::user_io::UserRequest::Run { rows, note, reply } = req {
+                    shown.push((rows, note));
+                    let _ =
+                        reply.send(answers.next().unwrap_or(crate::user_io::PlanAnswer::Reject));
+                }
+            }
+            shown
+        });
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let before = agent.session.transcript.len();
+        agent.turn("test it").await.unwrap();
+        agent.ctx.user_io = None;
+        agent.sink = None;
+        let results = agent.session.transcript[before..]
+            .iter()
+            .filter(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .collect();
+        (shown.join().unwrap(), results, events.try_iter().collect())
+    }
+
+    fn run_project(action: &str) -> Vec<StreamDelta> {
+        let mut c = call("run_project", serde_json::json!({ "action": action }));
+        // Each call in a turn needs its own id.
+        if let Some(StreamDelta::ToolCall { id, .. }) = c.first_mut() {
+            *id = format!("run-{action}");
+        }
+        c
+    }
+
+    fn product_events(events: &[AgentEvent]) -> Vec<bool> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::Product { running, .. } => Some(*running),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The tester proposes how the project runs, the user approves it on a
+    /// panel, and it is the project's run file from then on. Ryter starts
+    /// the product and runs its tests with those commands, leaves it up,
+    /// and stops it when the user says.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_project_runs_by_commands_the_user_approved() {
+        use crate::user_io::PlanAnswer;
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        let propose = call(
+            "propose_run",
+            serde_json::json!({
+                "start": "echo up > state",
+                "test": ["echo 2 passed", "cat state"],
+                "stop": "echo down > state",
+            }),
+        );
+        let (shown, results, events) = tester_turn(
+            &mut agent,
+            vec![propose, run_project("start"), run_project("test")],
+            vec![PlanAnswer::Approve],
+        )
+        .await;
+        // They were shown the commands, once.
+        let row = |l: &str, c: &str| (l.to_string(), c.to_string());
+        assert_eq!(
+            shown,
+            [(
+                vec![
+                    row("start", "echo up > state"),
+                    row("test", "echo 2 passed"),
+                    row("", "cat state"),
+                    row("stop", "echo down > state"),
+                ],
+                None
+            )]
+        );
+        assert!(
+            results[0].contains("saved as `.ryter/run.toml`"),
+            "{results:?}"
+        );
+        assert!(
+            results[1].starts_with("Started in") && results[1].contains("stays up"),
+            "{results:?}"
+        );
+        assert_eq!(results[2], "$ echo 2 passed\n2 passed\n$ cat state\nup\n");
+        assert!(matches!(
+            crate::run::find(cwd.path(), &agent.home),
+            crate::run::Found::Approved(_)
+        ));
+        // It is up, the screen was told, and a later session would know.
+        assert_eq!(product_events(&events), [true]);
+        assert!(agent.product.is_some());
+        let left = crate::run::remembered(&agent.home, cwd.path()).expect("remembered");
+        assert_eq!(left.stop.as_deref(), Some("echo down > state"));
+        // The chat names the command each step ran.
+        let summaries: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::ToolCall { name, summary, .. } if name == "run_project" => {
+                    summary.clone()
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(summaries, ["echo up > state", "echo 2 passed (+1 more)"]);
+        // Starting it again is not a second start.
+        let (shown, results, _) =
+            tester_turn(&mut agent, vec![run_project("start")], Vec::new()).await;
+        assert!(shown.is_empty(), "asked again: {shown:?}");
+        assert!(
+            results[0].starts_with("It is already running"),
+            "{results:?}"
+        );
+        // The user stops it.
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        assert_eq!(
+            agent.stop_product().unwrap(),
+            Ok("echo down > state".to_string())
+        );
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("state")).unwrap(),
+            "down\n"
+        );
+        let events: Vec<AgentEvent> = events.try_iter().collect();
+        assert_eq!(product_events(&events), [false]);
+        assert!(agent.product.is_none());
+        assert_eq!(crate::run::remembered(&agent.home, cwd.path()), None);
+        assert_eq!(
+            agent.stop_product().unwrap(),
+            Err("Ryter has not started this project".to_string())
+        );
+    }
+
+    /// A run file that came with the project, or was changed after it was
+    /// approved, runs nothing until the user has seen it as it stands.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_run_file_the_user_has_not_approved_runs_nothing() {
+        use crate::user_io::PlanAnswer;
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        std::fs::create_dir_all(cwd.path().join(".ryter")).unwrap();
+        std::fs::write(
+            cwd.path().join(crate::run::FILE),
+            "start = \"echo up > state\"\ntest = \"echo ok\"\n",
+        )
+        .unwrap();
+        // No.
+        let (shown, results, events) = tester_turn(
+            &mut agent,
+            vec![run_project("start")],
+            vec![PlanAnswer::Reject],
+        )
+        .await;
+        assert_eq!(shown.len(), 1);
+        assert!(
+            shown[0]
+                .1
+                .as_deref()
+                .is_some_and(|n| n.contains("not as you last approved it")),
+            "{shown:?}"
+        );
+        assert!(results[0].contains("rejected"), "{results:?}");
+        assert!(!cwd.path().join("state").exists(), "it ran");
+        assert!(product_events(&events).is_empty());
+        // "Change this first" goes back to the model, and still nothing ran.
+        let (_, results, _) = tester_turn(
+            &mut agent,
+            vec![run_project("test")],
+            vec![PlanAnswer::Adjust("use make test".into())],
+        )
+        .await;
+        assert!(
+            results[0].contains("use make test") && results[0].contains("propose_run"),
+            "{results:?}"
+        );
+        // Yes: it runs, and is not asked about again.
+        let (shown, results, _) = tester_turn(
+            &mut agent,
+            vec![run_project("test"), run_project("test")],
+            vec![PlanAnswer::Approve],
+        )
+        .await;
+        assert_eq!(shown.len(), 1, "{shown:?}");
+        assert_eq!(results, ["$ echo ok\nok\n", "$ echo ok\nok\n"]);
+        // Changed since: asked again.
+        std::fs::write(
+            cwd.path().join(crate::run::FILE),
+            "test = \"echo changed\"\n",
+        )
+        .unwrap();
+        let (shown, _, _) = tester_turn(
+            &mut agent,
+            vec![run_project("test")],
+            vec![PlanAnswer::Reject],
+        )
+        .await;
+        assert_eq!(shown.len(), 1);
+        // With no file at all, the model is told to propose one.
+        std::fs::remove_file(cwd.path().join(crate::run::FILE)).unwrap();
+        let (shown, results, _) =
+            tester_turn(&mut agent, vec![run_project("start")], Vec::new()).await;
+        assert!(shown.is_empty());
+        assert!(
+            results[0].contains("propose it with propose_run"),
+            "{results:?}"
+        );
+    }
+
+    /// A run file can't name a command no hat runs, or an address that is
+    /// not this machine's, whoever would approve it. A failing test command
+    /// is a failed step, with its output.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_run_file_holds_to_the_rules_every_command_does() {
+        use crate::user_io::PlanAnswer;
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        for (args, want) in [
+            (
+                serde_json::json!({"start": "sudo docker compose up -d"}),
+                "runs for nobody",
+            ),
+            (
+                serde_json::json!({"start": "true", "ready": "https://example.com/health"}),
+                "on this machine",
+            ),
+            (serde_json::json!({"ready": " "}), "needs at least one"),
+        ] {
+            let (shown, results, _) = tester_turn(
+                &mut agent,
+                vec![call("propose_run", args.clone())],
+                vec![PlanAnswer::Approve],
+            )
+            .await;
+            assert!(shown.is_empty(), "{args}: the user was asked");
+            assert!(results[0].contains(want), "{args}: {results:?}");
+        }
+        assert!(!cwd.path().join(crate::run::FILE).exists());
+        // A hand-written file with such a command isn't put to the user
+        // either.
+        std::fs::create_dir_all(cwd.path().join(".ryter")).unwrap();
+        std::fs::write(
+            cwd.path().join(crate::run::FILE),
+            "start = \"sudo systemctl start cms\"\n",
+        )
+        .unwrap();
+        let (shown, results, _) = tester_turn(
+            &mut agent,
+            vec![run_project("start")],
+            vec![PlanAnswer::Approve],
+        )
+        .await;
+        assert!(
+            shown.is_empty() && results[0].contains("runs for nobody"),
+            "{results:?}"
+        );
+        // Tests that fail are a failed step.
+        let (_, results, _) = tester_turn(
+            &mut agent,
+            vec![
+                call(
+                    "propose_run",
+                    serde_json::json!({"test": ["echo 1 failed; exit 1", "echo lint ok"]}),
+                ),
+                run_project("test"),
+            ],
+            vec![PlanAnswer::Approve],
+        )
+        .await;
+        assert_eq!(
+            results[1],
+            "$ echo 1 failed; exit 1\n1 failed\n[exit 1]\n$ echo lint ok\nlint ok\n"
+        );
+        // With nobody to ask, nothing is approved, unless the run was
+        // started with --always-approve.
+        std::fs::remove_file(cwd.path().join(crate::run::FILE)).unwrap();
+        let propose = || call("propose_run", serde_json::json!({"test": ["echo ok"]}));
+        agent.ctx.always_approve = false;
+        agent.provider = Arc::new(ReplayProvider::scripted(vec![propose(), say("done")]));
+        agent.turn("test it").await.unwrap();
+        assert!(!cwd.path().join(crate::run::FILE).exists());
+        agent.ctx.always_approve = true;
+        agent.provider = Arc::new(ReplayProvider::scripted(vec![propose(), say("done")]));
+        agent.turn("test it").await.unwrap();
+        assert!(matches!(
+            crate::run::find(cwd.path(), &agent.home),
+            crate::run::Found::Approved(_)
+        ));
     }
 
     /// A hat with a model of its own is run on it; the others follow the

@@ -62,6 +62,9 @@ pub struct Ctx {
     pub want_redraw: bool,
     /// Set when the loop should exit.
     pub want_quit: bool,
+    /// The worker's word on a stop asked for at quit: the loop exits once
+    /// it says the product was stopped, and stays if it could not be.
+    pub stop_reply: Option<mpsc::Receiver<std::result::Result<String, String>>>,
     /// A `$EDITOR` request to run with the terminal released.
     pub want_edit: Option<PathBuf>,
 }
@@ -95,7 +98,38 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 perform(view, cx, a);
             }
         }
+        // A product Ryter started is still up: ask before leaving it.
+        Action::Quit if view.product.is_some() && cx.stop_reply.is_none() => {
+            let asking = view
+                .panels
+                .top()
+                .is_some_and(|p| p.kind() == "stop-product");
+            if !asking {
+                view.panels.push(Box::new(crate::panel::modal::StopModal));
+            }
+        }
         Action::Quit => cx.want_quit = true,
+        Action::QuitAnswer { stop: false } => cx.want_quit = true,
+        Action::QuitAnswer { stop: true } => {
+            // A turn still running holds the worker: end it first.
+            if view.busy {
+                cx.cancel.cancel();
+            }
+            let (tx, rx) = mpsc::channel();
+            cx.stop_reply = Some(rx);
+            view.system("stopping the project…");
+            cx.send(Work::StopProduct { reply: Some(tx) });
+        }
+        Action::StopProduct if view.product.is_none() => {
+            view.system("Ryter has not started this project: there is nothing of its to stop");
+        }
+        Action::StopProduct if view.busy => {
+            view.warn("wait for this turn to end, or stop it with esc, then /stop");
+        }
+        Action::StopProduct => {
+            view.system("stopping the project…");
+            cx.send(Work::StopProduct { reply: None });
+        }
         Action::Redraw => cx.want_redraw = true,
         // Capture gives us wheel scroll and card clicks but takes the
         // terminal's own click-drag selection away, and per-message copy is not

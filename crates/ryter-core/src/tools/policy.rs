@@ -62,6 +62,9 @@ pub fn decide(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
         "update_rules" | "present_plan" => Decision::Allow,
         // Ryter writes the entry itself, in one file, and says so in the chat.
         "record_decision" => Decision::Allow,
+        // The run file is the user's to approve, and Ryter runs only what
+        // they approved.
+        "propose_run" | "run_project" => Decision::Allow,
         "web_fetch" | "web_search" => {
             if ctx.web {
                 Decision::Allow
@@ -2615,7 +2618,7 @@ fn path_escapes(words: &[String], ctx: &ToolContext) -> bool {
         if w.contains('$') {
             return true;
         }
-        if !looks_like_path(w) {
+        if !looks_like_path(w) || nowhere(w) {
             continue;
         }
         if resolve(ctx, w).is_none() && !free() {
@@ -2623,6 +2626,15 @@ fn path_escapes(words: &[String], ctx: &ToolContext) -> bool {
         }
     }
     false
+}
+
+/// The standard devices: writing to them writes no file, and reading them
+/// reads none.
+fn nowhere(word: &str) -> bool {
+    matches!(
+        word,
+        "/dev/null" | "/dev/stdout" | "/dev/stderr" | "/dev/stdin" | "/dev/zero"
+    )
 }
 
 /// Where a path outside the workspace would land, with `~` and `$HOME`
@@ -2795,6 +2807,11 @@ fn in_a_repository(path: &Path, stop: &Path) -> bool {
         .any(|a| a.join(".git").exists())
 }
 
+/// Whether `url` is an address on this machine.
+pub(crate) fn on_this_machine(url: &str) -> bool {
+    url_host(url).is_some_and(own_host)
+}
+
 /// Outside the project, but somewhere a command may read and write without
 /// asking: scratch space (`/tmp`), and the user's own folder. Tools keep
 /// their caches, configuration and builds there, and a question for each
@@ -2894,7 +2911,8 @@ fn outside_segment(prog: &str, words: &[String], ctx: &ToolContext) -> Decision 
             || w.starts_with('~')
             || w.contains("$HOME")
             || w.contains("${HOME}");
-        if !pathish || resolve(ctx, w).is_some() {
+        // `curl -o /dev/null`: nowhere, as an argument as in a redirect.
+        if !pathish || nowhere(w) || resolve(ctx, w).is_some() {
             continue;
         }
         let read_only = !destroys && (READ_ONLY.contains(&prog) || READERS.contains(&prog));
@@ -3209,6 +3227,9 @@ mod tests {
         assert_eq!(sh("echo x > /tmp/ryter-scratch/f"), Decision::Allow);
         assert_eq!(sh("ls /tmp"), Decision::Allow);
         assert_eq!(sh("cat /tmp/ryter-scratch/f"), Decision::Allow);
+        // The standard devices are nowhere, as an argument as in a redirect.
+        assert_eq!(sh("grep -c x /dev/null"), Decision::Allow);
+        assert_eq!(bash("cat /dev/null", Role::SoloPlan, d), Decision::Allow);
         // The home folder is open, but not where logins, history and the
         // browser's cookies are kept, to any hat, to read or to write.
         for kept in [
@@ -3325,6 +3346,8 @@ mod tests {
             "curl -s -b /tmp/ryter-jar -L http://localhost:8000/manage/",
             "curl -s -H 'Content-Type: application/json' --data-binary @form.json http://[::1]:8000/api/pages",
             "curl -s -o /tmp/ryter-page.html -w '%{http_code}' http://cms.localhost:8000/",
+            "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/",
+            "grep -c passed /dev/null",
             "curl -s http://localhost:8000/a http://localhost:8000/b",
         ] {
             assert_eq!(sh(cmd), Decision::Allow, "{cmd}");

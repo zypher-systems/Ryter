@@ -243,6 +243,17 @@ pub const COMMANDS: &[CommandSpec] = &[
         },
     ),
     spec(
+        "stop",
+        &[],
+        Category::Session,
+        "Stop the project Ryter started for a test, with the project's own stop command",
+        None,
+        false,
+        None,
+        false,
+        |_, _| Action::StopProduct,
+    ),
+    spec(
         "audit",
         &["second", "second-opinion"],
         Category::Session,

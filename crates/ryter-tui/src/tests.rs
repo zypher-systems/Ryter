@@ -1653,3 +1653,135 @@ fn a_resumed_session_has_both_conversations() {
     assert!(v.messages.is_empty() && !v.test_thread_started());
     assert_eq!(v.shown, Thread::Main);
 }
+
+fn product(running: bool) -> AgentEvent {
+    AgentEvent::Product {
+        running,
+        at: "2026-10-01 14:02".into(),
+        address: Some("http://localhost:8000".into()),
+        stop: Some("docker compose down".into()),
+    }
+}
+
+/// A product Ryter started is said once when it comes up, `/stop` is how
+/// it is stopped, and quitting asks about it instead of leaving it behind
+/// without a word.
+#[test]
+fn a_running_product_is_named_and_asked_about_on_quit() {
+    let mut v = ledger();
+    crate::run_events_apply(&mut v, product(true));
+    crate::run_events_apply(&mut v, product(true));
+    let said: Vec<String> = chat_bodies(&v)
+        .into_iter()
+        .filter(|b| b.contains("the project is running"))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            "the project is running at http://localhost:8000, started 14:02 · /stop stops it (docker compose down)"
+        ]
+    );
+    assert!(v.product.is_some());
+    // The question on quit, as it was drawn for the user.
+    v.panels.push(Box::new(crate::panel::modal::StopModal));
+    let text = render_to_string(&v, 120, 40);
+    for want in [
+        "stop the project?",
+        "Ryter started it for the test at 14:02.",
+        "docker compose down",
+        "⏎ stop it",
+        "n leave it running",
+    ] {
+        assert!(text.contains(want), "missing {want:?}:\n{text}");
+    }
+    let key = |v: &mut View, code| {
+        crate::run_keys_handle(
+            v,
+            crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE),
+        )
+    };
+    assert_eq!(
+        key(&mut v, crossterm::event::KeyCode::Enter),
+        Action::QuitAnswer { stop: true }
+    );
+    v.panels.push(Box::new(crate::panel::modal::StopModal));
+    assert_eq!(
+        key(&mut v, crossterm::event::KeyCode::Char('n')),
+        Action::QuitAnswer { stop: false }
+    );
+    // Stopped: nothing left to ask about.
+    crate::run_events_apply(&mut v, product(false));
+    assert!(v.product.is_none());
+}
+
+/// The project's own commands read as what they do in the chat.
+#[test]
+fn the_projects_commands_are_named_for_what_they_do() {
+    let mut v = ledger();
+    for (id, action, cmd) in [
+        ("p1", "start", "docker compose up -d --wait"),
+        (
+            "p2",
+            "test",
+            "docker compose run --rm web pytest -q (+1 more)",
+        ),
+    ] {
+        crate::run_events_apply(
+            &mut v,
+            AgentEvent::ToolCall {
+                id: id.into(),
+                name: "run_project".into(),
+                args: serde_json::json!({ "action": action }),
+                role: Role::SoloTest,
+                summary: Some(cmd.into()),
+            },
+        );
+    }
+    // Each says how it went: started, and the tests' own totals.
+    for (id, output) in [
+        (
+            "p1",
+            "Started in 14s: http://localhost:8000/healthz answered 200.",
+        ),
+        ("p2", "$ pytest -q\n21 passed in 3.2s\n"),
+    ] {
+        crate::run_events_apply(
+            &mut v,
+            AgentEvent::ToolResult {
+                id: id.into(),
+                output: output.into(),
+                is_error: false,
+                duration_ms: Some(14_000),
+                diff: None,
+            },
+        );
+    }
+    let details: Vec<String> = v
+        .messages
+        .iter()
+        .filter(|m| matches!(m.kind, crate::chat::MessageKind::Tool { .. }))
+        .map(|m| m.meta.detail.clone().unwrap_or_default())
+        .collect();
+    assert!(
+        details.contains(&"✓".to_string()) && details.iter().any(|d| d.starts_with("✓ 21 passed")),
+        "{details:?}"
+    );
+    let steps: Vec<(String, String)> = v
+        .messages
+        .iter()
+        .filter_map(|m| match &m.kind {
+            crate::chat::MessageKind::Tool { name, .. } => {
+                Some((name.clone(), m.meta.label.clone().unwrap_or_default()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(
+        steps.contains(&("start".into(), "docker compose up -d --wait".into()))
+            && steps.contains(&(
+                "test".into(),
+                "docker compose run --rm web pytest -q (+1 more)".into()
+            )),
+        "{steps:?}"
+    );
+}

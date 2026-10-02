@@ -12,6 +12,24 @@ Why, not what. Non-obvious choices are recorded here, newest first.
 - **Why:** "There is too many unknowns for crew to work effectively without the user." No real project had completed in crew mode; the benchmark's clean runs were on small tasks with checks already set.
 - **Where:** `ROADMAP.md` (Direction). The code to go, when it goes: `crew.rs`, `queue.rs`, `tiering.rs`, `estimate.rs`, the crew parts of `agent.rs`, and the crew panels, about 10,000 of 72,000 lines; `bench.rs` is rebuilt on the hats.
 
+### 2026-10-01 — The run file: Ryter runs what the user approved
+- **By:** lead, building to the user's design (`docs/test-hat.md`: the model drafts it, the user approves it; the product is left running until the user says). Second of three patches.
+- **Decision:**
+  - **Ryter runs the commands itself** (`run_project`), not the model through `bash`. `bash` waits for its command and then ends everything it left running, so `npm run dev` could never be the start command. `run::start` spawns it in its own process group with its output in the session's notes, and holds it if it stays in the foreground.
+  - **Ready is an answer that isn't a server error.** A 404 at `/` means the server is up; a 502 from a proxy means the app behind it isn't. With no address, a start command that returned has started it, and one still running after three seconds is taken to be the product.
+  - **Approval is a digest of the file's text, kept in `~/.ryter/run-approved.toml`.** In the project it could be forged by the same clone or the same model that changed the file. Anything unapproved is put to the user as it stands before it runs.
+  - **The file can't hold what no hat runs.** Each command is put to the gate as the build hat's and refused if the gate would refuse it; `ready` has to be an address on this machine, since Ryter itself makes the request.
+  - **A product left running is remembered in `~/.ryter/running/`** with its stop command and, for a held start command, its process number. A later session stops it with the stop command only: a number is not proof the process is still the one that was started.
+  - **Stopping asks first (TERM), then kills.** A database or a dev server gets a few seconds to close its files.
+- **Chosen vs rejected:**
+  - Rejected letting an exact match of an approved command through the gate when the model runs it with `bash`. It needs the gate to read the run file on every command, and it doesn't solve the foreground server.
+  - Rejected a `/run` panel to edit the file by hand (the user chose "the model drafts it, you approve it" over "both"). The file is plain TOML and is asked about again when it changes.
+  - Rejected stopping the product at the end of each test (the user chose "left running until you say").
+  - Rejected ending an earlier session's process by its number.
+- **Found on the way:** `/dev/null` as an argument (`curl -o /dev/null`) counted as a place outside the project; and the wait after asking a held command to stop ran its full five seconds, because a process that has exited still counts as alive until it is collected.
+- **Where:** `crates/ryter-core/src/run.rs`, `agent.rs` (`propose_run`, `run_project`, `stop_product`), `tools/shell.rs` (`command`, `end_child`), `user_io.rs` (`UserRequest::Run`); `crates/ryter-tui/src/panel/plan.rs` (`PlanModal::run`), `panel/modal.rs` (`StopModal`), `run/actions.rs` (`StopProduct`, `QuitAnswer`)
+- **Residual risk:** `ready` over `https` is only checked for a listening port. A start command that returns before the product is up, with no `ready` address, is taken as started. A product left running by a session that crashed is remembered only if it had come up.
+
 ### 2026-10-01 — The Test hat: a second conversation in one session
 - **By:** lead, building to the user's design (`docs/test-hat.md`). This is the first of three patches: the hat and its thread. The run file, the report, `/test` and the offer follow.
 - **Decision:**

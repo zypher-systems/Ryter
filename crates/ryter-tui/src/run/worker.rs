@@ -21,6 +21,12 @@ use ryter_core::{
 
 /// Requests from the UI thread.
 pub enum Work {
+    /// Stop the product Ryter started for a test. `reply` carries how it
+    /// went back to a quit that is waiting on it.
+    StopProduct {
+        /// Optional reply channel.
+        reply: Option<mpsc::Sender<std::result::Result<String, String>>>,
+    },
     /// Run a user turn. `reply` carries the final text back to an MCP caller.
     Turn {
         /// Prompt.
@@ -286,6 +292,9 @@ pub fn run(init: WorkerInit) {
         emit_mcp_status(&a, &ev_tx);
         refresh_live(&a, &live_status, &live_spend);
         let _ = ev_tx.send(a.checkpoint_event());
+        let mut a = a;
+        // A product an earlier session left running is still Ryter's to stop.
+        let _ = a.announce_product();
         agent = Some(a);
     }
     let (fetch_tx, fetch_rx) = mpsc::channel::<Fetched>();
@@ -512,6 +521,28 @@ pub fn run(init: WorkerInit) {
                     refresh_live(a, &live_status, &live_spend);
                 } else {
                     send_err(&ev_tx, "no API key — /provider set-key".into());
+                }
+            }
+            Ok(Work::StopProduct { reply }) => {
+                let out = match &mut agent {
+                    Some(a) => {
+                        a.ctx.cancel.reset();
+                        a.stop_product().unwrap_or_else(|e| Err(e.to_string()))
+                    }
+                    None => Err("Ryter has not started this project".to_string()),
+                };
+                match (&out, &reply) {
+                    (Ok(did), _) => {
+                        let _ = ev_tx.send(AgentEvent::Notice {
+                            message: format!("the project was stopped ({did})"),
+                        });
+                    }
+                    (Err(why), _) => {
+                        send_err(&ev_tx, format!("the project was not stopped: {why}"))
+                    }
+                }
+                if let Some(reply) = reply {
+                    let _ = reply.send(out);
                 }
             }
             Ok(Work::Undo { force }) => {
@@ -828,5 +859,6 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         context_window: 0,
         cfg: Some(b.cfg.clone()),
         machine: ryter_core::prompt::machine_here(),
+        product: None,
     }
 }

@@ -90,6 +90,58 @@ fn plan_rows(plan: &str, width: usize, theme: Theme) -> Vec<Line<'static>> {
     out
 }
 
+/// How the project runs, as rows: each command under its label (`start`,
+/// `ready`, `test`, `stop`), then where it is saved and what approving it
+/// means.
+fn run_rows(
+    rows: &[(String, String)],
+    note: Option<&str>,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    if let Some(note) = note {
+        for row in crate::chat::wrap::wrap_plain(note, width.saturating_sub(2)) {
+            out.push(widgets::colored(&row, theme.warn, theme));
+        }
+        out.push(widgets::blank(theme));
+    }
+    for (label, cmd) in rows {
+        out.push(Line::from(vec![
+            Span::styled(
+                format!(" {label:<7}"),
+                Style::default()
+                    .fg(theme.accent)
+                    .bg(theme.panel_bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                crate::chat::wrap::truncate(cmd, width.saturating_sub(9)),
+                theme.panel(),
+            ),
+        ]));
+    }
+    out.push(widgets::blank(theme));
+    out.push(widgets::note(
+        &format!("saved to {}", ryter_core::run::FILE),
+        theme,
+    ));
+    out.push(widgets::note("the tester runs these without asking", theme));
+    out
+}
+
+/// What is on the popout.
+#[derive(Debug, Clone)]
+enum Shown {
+    /// A plan, in Markdown.
+    Plan(String),
+    /// How the project runs: its commands, and why it is asked again.
+    Run {
+        rows: Vec<(String, String)>,
+        note: Option<String>,
+    },
+}
+
 /// What the popout is doing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Pane {
@@ -104,8 +156,8 @@ enum Pane {
 pub struct PlanModal {
     /// A few words: the panel's title.
     title: String,
-    /// The plan, in Markdown.
-    plan: String,
+    /// The plan, or the project's commands.
+    shown: Shown,
     pane: Pane,
     /// First row shown.
     top: usize,
@@ -122,9 +174,29 @@ pub struct PlanModal {
 impl PlanModal {
     /// Build.
     pub fn new(title: String, plan: String, opened_ms: u64) -> Self {
+        Self::showing(title, Shown::Plan(plan), opened_ms)
+    }
+
+    /// How the project runs, to approve the same way a plan is.
+    pub fn run(rows: Vec<(String, String)>, note: Option<String>, opened_ms: u64) -> Self {
+        Self::showing(
+            "how this project runs".into(),
+            Shown::Run { rows, note },
+            opened_ms,
+        )
+    }
+
+    fn rows_at(&self, width: usize, theme: Theme) -> Vec<Line<'static>> {
+        match &self.shown {
+            Shown::Plan(plan) => plan_rows(plan, width, theme),
+            Shown::Run { rows, note } => run_rows(rows, note.as_deref(), width, theme),
+        }
+    }
+
+    fn showing(title: String, shown: Shown, opened_ms: u64) -> Self {
         Self {
             title,
-            plan,
+            shown,
             pane: Pane::Read,
             top: 0,
             max_top: std::cell::Cell::new(0),
@@ -146,13 +218,17 @@ impl Panel for PlanModal {
     }
 
     fn title(&self, _view: &View) -> String {
-        format!("plan · {}", self.title)
+        match self.shown {
+            Shown::Plan(_) => format!("plan · {}", self.title),
+            Shown::Run { .. } => self.title.clone(),
+        }
     }
 
     fn legend(&self, _view: &View) -> String {
-        match self.pane {
-            Pane::Read => "↑↓ scroll · y approve · e adjust · n reject".into(),
-            Pane::Adjust => "type what to change · enter send · esc back".into(),
+        match (&self.pane, &self.shown) {
+            (Pane::Read, Shown::Plan(_)) => "↑↓ scroll · y approve · e adjust · n reject".into(),
+            (Pane::Read, Shown::Run { .. }) => "y approve · e adjust · n reject".into(),
+            (Pane::Adjust, _) => "type what to change · enter send · esc back".into(),
         }
     }
 
@@ -161,10 +237,31 @@ impl Panel for PlanModal {
     }
 
     fn size(&self, _view: &View) -> (u16, u16) {
-        // As tall as the plan is when drawn, up to what the screen gives.
-        let rows = plan_rows(&self.plan, usize::from(WIDTH) - 2, Theme::truecolor_dark()).len();
+        // The commands' own width, for a run file: a short list reads
+        // better in a box its size.
+        let width = match &self.shown {
+            Shown::Plan(_) => WIDTH,
+            Shown::Run { rows, note } => {
+                let longest = rows
+                    .iter()
+                    .map(|(_, cmd)| crate::chat::wrap::width(cmd) + 9)
+                    .chain(note.iter().map(|n| crate::chat::wrap::width(n).min(70) + 2))
+                    .max()
+                    .unwrap_or(0);
+                (longest + 4).clamp(52, usize::from(WIDTH)) as u16
+            }
+        };
+        // As tall as it is when drawn, up to what the screen gives.
+        let rows = self
+            .rows_at(usize::from(width) - 2, Theme::truecolor_dark())
+            .len();
+        let floor = if matches!(self.shown, Shown::Plan(_)) {
+            10
+        } else {
+            4
+        };
         // And a row of air above the keys.
-        (WIDTH, (rows + 1).clamp(10, 200) as u16)
+        (width, (rows + 1).clamp(floor, 200) as u16)
     }
 
     fn modal(&self) -> Option<ModalKind> {
@@ -176,7 +273,7 @@ impl Panel for PlanModal {
         let h = usize::from(height).max(1);
         let mut laid_out = self.rows.borrow_mut();
         if laid_out.as_ref().is_none_or(|(at, _)| *at != w) {
-            *laid_out = Some((w, plan_rows(&self.plan, w, theme)));
+            *laid_out = Some((w, self.rows_at(w, theme)));
         }
         let all = laid_out.as_ref().map_or(&[][..], |(_, rows)| rows);
         let foot = usize::from(self.error.is_some());
@@ -223,8 +320,14 @@ impl Panel for PlanModal {
                     }
                     // Enter starts work on nothing: `y` is the yes.
                     KeyCode::Enter => {
-                        self.error =
-                            Some("Enter doesn't approve a plan: y approves, e adjusts, n rejects");
+                        self.error = Some(match self.shown {
+                            Shown::Plan(_) => {
+                                "Enter doesn't approve a plan: y approves, e adjusts, n rejects"
+                            }
+                            Shown::Run { .. } => {
+                                "Enter doesn't approve this: y approves, e adjusts, n rejects"
+                            }
+                        });
                     }
                     _ => {}
                 }
@@ -436,5 +539,103 @@ mod tests {
         press(&mut p, &mut v, KeyCode::Char('e'));
         assert_eq!(answered(&press(&mut p, &mut v, KeyCode::Esc)), None);
         assert_eq!(p.pane, Pane::Read);
+    }
+}
+
+#[cfg(test)]
+mod run_tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+
+    fn rows() -> Vec<(String, String)> {
+        [
+            ("start", "docker compose up -d --wait"),
+            ("ready", "http://localhost:8000/healthz"),
+            ("test", "docker compose run --rm web pytest -q"),
+            ("", "docker compose run --rm web ruff check ."),
+            ("stop", "docker compose down"),
+        ]
+        .iter()
+        .map(|(l, c)| (l.to_string(), c.to_string()))
+        .collect()
+    }
+
+    fn text(p: &PlanModal, v: &View, width: u16) -> Vec<String> {
+        p.render(v, width, 20, Theme::truecolor_dark())
+            .lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// How the project runs is put to the user as the mockup shows it: each
+    /// command under its label, where it is saved, what approving means,
+    /// and the three answers.
+    #[test]
+    fn how_the_project_runs_is_approved_on_a_panel() {
+        let mut v = View::new("c".into(), "m".into(), "/tmp".into());
+        v.now_ms = 10_000;
+        let mut p = PlanModal::run(rows(), None, 0);
+        assert_eq!(p.title(&v), "how this project runs");
+        assert_eq!(p.legend(&v), "y approve · e adjust · n reject");
+        assert_eq!(
+            text(&p, &v, 56),
+            [
+                " start  docker compose up -d --wait",
+                " ready  http://localhost:8000/healthz",
+                " test   docker compose run --rm web pytest -q",
+                "        docker compose run --rm web ruff check .",
+                " stop   docker compose down",
+                "",
+                " saved to .ryter/run.toml",
+                " the tester runs these without asking",
+            ]
+        );
+        // A box its own size, not a plan's.
+        let (w, h) = p.size(&v);
+        assert!((52..=60).contains(&w) && h == 9, "{w}x{h}");
+        // The same three answers as a plan.
+        let press = |p: &mut PlanModal, v: &mut View, code| {
+            p.key(KeyEvent::new(code, KeyModifiers::NONE), v)
+        };
+        assert!(matches!(
+            press(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Stay
+        ));
+        assert!(
+            text(&p, &v, 56)
+                .last()
+                .is_some_and(|l| l.contains("Enter doesn't approve this")),
+        );
+        assert!(matches!(
+            press(&mut p, &mut v, KeyCode::Char('y')),
+            Outcome::CloseAct(Action::PlanReply(PlanAnswer::Approve))
+        ));
+        let mut p = PlanModal::run(rows(), None, 0);
+        press(&mut p, &mut v, KeyCode::Char('e'));
+        v.composer.set_text("use make test");
+        assert!(matches!(
+            press(&mut p, &mut v, KeyCode::Enter),
+            Outcome::CloseAct(Action::PlanReply(PlanAnswer::Adjust(what))) if what == "use make test"
+        ));
+        // Asked again because the file changed: it says so first.
+        let p = PlanModal::run(
+            rows(),
+            Some(".ryter/run.toml is not as you last approved it, or is new to Ryter".into()),
+            0,
+        );
+        let shown = text(&p, &v, 70);
+        assert!(
+            shown[0].contains("not as you last approved it"),
+            "{shown:?}"
+        );
+        assert_eq!(shown[2], " start  docker compose up -d --wait");
     }
 }

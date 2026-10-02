@@ -26,6 +26,7 @@ pub mod prompt;
 pub mod review;
 pub mod role;
 pub mod rules;
+pub mod run;
 pub mod sandbox;
 pub mod session;
 pub mod skill;

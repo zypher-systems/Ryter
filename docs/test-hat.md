@@ -2,7 +2,7 @@
 
 Designed with the user on 2026-10-01, a mockup for each choice. This page is what the build is held to; where the build has to differ, it says so here.
 
-**Built so far:** the hat itself, its own thread, its seat in `/models`, what it may run, and `.ryter/decisions.md`. **Not built yet:** the report into the main conversation, `/test` and the offer, `.ryter/run.toml`, and stopping what a test started.
+**Built so far:** the hat itself, its own thread, its seat in `/models`, what it may run, `.ryter/decisions.md`, `.ryter/run.toml` with its approval panel, `/stop`, and the question on quit. **Not built yet:** the report into the main conversation, `/test`, and the offer after a review.
 
 **Where the build differs from the mockups:**
 
@@ -10,6 +10,9 @@ Designed with the user on 2026-10-01, a mockup for each choice. This page is wha
 - **The thread's header line** reads "TEST THREAD · its own conversation · tab: main chat" until there are test runs to count.
 - **The composer's hint** reads "ask the tester" until there is a report with a scenario to name ("retest 3").
 - **What the tester may run** was changed by the user after the mockup (see that section).
+- **The run file is asked about again when it changes.** The mockup shows one approval. A file that came with the project, or was changed after you approved it, is shown again before anything in it runs.
+- **The question on quit has a third key,** `esc`, to stay in Ryter. With no stop command the second line reads "no stop command: its start command is ended".
+- **When the product comes up** the chat says "the project is running at …, started 14:02 · /stop stops it (docker compose down)". The mockup's "still running" line belongs to the report, which is not built yet.
 
 ## What was decided
 

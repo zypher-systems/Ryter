@@ -291,6 +291,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         last_doctor: None,
         want_redraw: false,
         want_quit: false,
+        stop_reply: None,
         want_edit: None,
     };
     enter_terminal(mouse)?;
@@ -516,6 +517,18 @@ fn loop_ui(
                 dirty = true;
             }
         }
+        // A quit that asked for the product to be stopped leaves once it
+        // is; if it could not be stopped, the user is told and stays.
+        if let Some(rx) = &cx.stop_reply {
+            match rx.try_recv() {
+                Ok(Ok(_)) => cx.want_quit = true,
+                Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected) => {
+                    cx.stop_reply = None;
+                    dirty = true;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
         if cx.want_quit {
             return Ok(());
         }
@@ -687,6 +700,14 @@ fn drain_user_prompts(
             view.panels
                 .push(Box::new(crate::panel::plan::PlanModal::new(
                     title, plan, opened,
+                )));
+        }
+        UserRequest::Run { rows, note, reply } => {
+            cx.plan_reply = Some(reply);
+            let opened = view.now_ms;
+            view.panels
+                .push(Box::new(crate::panel::plan::PlanModal::run(
+                    rows, note, opened,
                 )));
         }
         UserRequest::Question {

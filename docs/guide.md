@@ -219,7 +219,31 @@ One model works in your project, in the build hat to start with. `Tab` switches 
 - **A turn stays in its own conversation.** You can look at the main chat while a test runs, or at the tester's thread while a build does: what a running turn says goes to the conversation it is part of. The model can't switch into or out of the test hat in the middle of a turn; that is yours to do with `Tab`.
 - **What it may run:** what the build hat runs without asking (your toolchains, the project's programs, its containers), plus requests to the project's own address: `curl` to `localhost`, `127.0.0.1` or a `.localhost` name, saving only to `/tmp` or your home folder. What the build hat asks about, it asks about. It can't edit, delete or move the project's files, and a redirect into the project is refused.
 - **Its own model:** the *Test* seat in `/models`. Starting a test thread on a different model costs nothing extra, since there is no conversation for it to re-read.
-- **Not built yet:** the report that comes back into the main conversation, `/test`, the offer after a passed review, and the saved start and stop commands. Today the tester's findings stay in its thread, and you carry them to the build hat yourself. The approved design is in `docs/test-hat.md`.
+- **Not built yet:** the report that comes back into the main conversation, `/test`, and the offer after a passed review. Today the tester's findings stay in its thread, and you carry them to the build hat yourself. The approved design is in `docs/test-hat.md`.
+
+**How a project runs: `.ryter/run.toml`.** The tester needs four things from a project: the command that starts it, an address that answers once it is up, its test commands, and the command that stops it.
+
+```toml
+start = "docker compose up -d --wait"
+ready = "http://localhost:8000/healthz"
+test  = [
+    "docker compose run --rm web pytest -q",
+    "docker compose run --rm web ruff check .",
+]
+stop  = "docker compose down"
+```
+
+- **The model drafts it, you approve it.** The first time the tester needs it, it reads the project and proposes the commands in a panel: `y` approves and saves the file, `e` says what to change, `n` rejects. Leave out what the project doesn't have.
+- **Ryter runs what you approved, itself.** Starting waits until `ready` answers (any answer that isn't a server error), for up to five minutes. A start command that stays in the foreground (`npm run dev`, `cargo run`) is kept running by Ryter; through the shell tool it would be cut off when the command didn't return.
+- **Approval is of what the file says.** It is kept in `~/.ryter/run-approved.toml`, not in the project. A run file that came with a clone, or that anyone changed since (you, the model, a `git pull`), is shown to you again before anything in it runs.
+- **Limits:** a command Ryter runs for nobody (`sudo`, inline code) can't be in it, and `ready` has to be an address on this machine. Headless, `--always-approve` is your yes to the file as it stands; without it nothing in the file runs.
+
+**The product is left running.** After a test the product stays up, so you can look at what the tester saw. The chat says where it is.
+
+- **`/stop`** stops it: the `stop` command, or, when the file has none, ending the start command Ryter is holding.
+- **Quitting asks.** With the product still up, `^c` shows "stop the project?": `⏎` stops it and leaves, `n` leaves it running, `esc` stays.
+- **A later session knows.** Left running, it is remembered: the next session in that project says so, and `/stop` there runs the `stop` command. A start command left running with no `stop` command is yours to end; Ryter gives you its process number and doesn't end a process it can't be sure is the one it started.
+- **Only what Ryter started.** It never stops containers or processes it didn't start, and never removes volumes unless your `stop` command says to.
 
 **Approving a plan.** When the model has a plan, it shows it in a panel instead of writing it into the chat: the goal, the steps, the files, the risks, and how to verify it. `↑`/`↓` and `PgUp`/`PgDn` scroll a long one. You answer:
 
@@ -596,7 +620,7 @@ When these files exist, the model **reads** them on every turn (capped), and is 
   transcript.jsonl # the conversation the plan, build and review hats share
   test.jsonl       # the test hat's own conversation, once it has one
   spend.jsonl
-  notes/           # the plan hat's notes
+  notes/           # the plan hat's notes, and project.log: the output of a product the tester started
 ```
 
 A session saved in crew mode, before it was removed, still opens: its conversation and its spend are there, and it carries on in the build hat.

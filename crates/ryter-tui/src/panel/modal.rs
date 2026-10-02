@@ -773,6 +773,74 @@ impl Panel for Confirm {
     }
 }
 
+/// "Stop the project?": asked on quit while a product Ryter started for a
+/// test is still up. Left running, it holds its ports and its containers
+/// after Ryter has gone; stopped, it is stopped with the project's own
+/// command.
+#[derive(Debug, Clone, Default)]
+pub struct StopModal;
+
+impl Panel for StopModal {
+    fn kind(&self) -> &'static str {
+        "stop-product"
+    }
+
+    fn title(&self, _view: &View) -> String {
+        "stop the project?".into()
+    }
+
+    fn legend(&self, _view: &View) -> String {
+        "⏎ stop it · n leave it running · esc stay".into()
+    }
+
+    fn size(&self, view: &View) -> (u16, u16) {
+        let cmd = view
+            .product
+            .as_ref()
+            .and_then(|p| p.stop.as_deref())
+            .map_or(0, wrap::width);
+        ((cmd + 6).clamp(56, 96) as u16, 4)
+    }
+
+    fn modal(&self) -> Option<ModalKind> {
+        Some(ModalKind::Ask)
+    }
+
+    fn render(&self, view: &View, _width: u16, _height: u16, theme: Theme) -> Body {
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        if let Some(p) = &view.product {
+            let time = p.at.rsplit(' ').next().unwrap_or(&p.at);
+            lines.push(widgets::text(
+                &format!("Ryter started it for the test at {time}."),
+                theme,
+            ));
+            lines.push(match &p.stop {
+                Some(cmd) => widgets::note(cmd, theme),
+                None => widgets::note("no stop command: its start command is ended", theme),
+            });
+        }
+        Body {
+            lines,
+            scroll: None,
+        }
+    }
+
+    fn key(&mut self, key: KeyEvent, _view: &mut View) -> Outcome {
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('y' | 'Y') => {
+                Outcome::CloseAct(Action::QuitAnswer { stop: true })
+            }
+            KeyCode::Char('n' | 'N') => Outcome::CloseAct(Action::QuitAnswer { stop: false }),
+            KeyCode::Esc => Outcome::Close,
+            _ => Outcome::Stay,
+        }
+    }
+
+    fn box_clone(&self) -> Box<dyn Panel> {
+        Box::new(self.clone())
+    }
+}
+
 /// Trust-this-project prompt shown at startup when `.ryter/` is untrusted.
 #[derive(Debug, Clone, Default)]
 pub struct TrustModal {

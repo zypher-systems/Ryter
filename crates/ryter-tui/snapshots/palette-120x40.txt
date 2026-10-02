@@ -27,7 +27,7 @@
 
 
 
-╭─ commands ───────────────────────────────────────────────── 4 of 29 ─╮
+╭─ commands ───────────────────────────────────────────────── 4 of 30 ─╮
 │ mo                                                                   │
 │›/models         Choose models: one for every hat, or one each fo… ▸  │
 │ /tools          Tool permission mode                              ▸  │

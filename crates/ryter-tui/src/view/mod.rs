@@ -56,6 +56,17 @@ impl Default for ParkedChat {
     }
 }
 
+/// The product a test started, while it is up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductUp {
+    /// When it was started, as the user's clock reads.
+    pub at: String,
+    /// Where it answers.
+    pub address: Option<String>,
+    /// The command that stops it.
+    pub stop: Option<String>,
+}
+
 /// Everything the draw path needs.
 #[derive(Debug, Clone)]
 pub struct View {
@@ -247,6 +258,9 @@ pub struct View {
     pub turn_thread: ryter_core::Thread,
     /// The conversation that isn't on screen.
     pub parked: ParkedChat,
+    /// The product Ryter started for a test, while it is up: `/stop` stops
+    /// it, and quitting asks about it.
+    pub product: Option<ProductUp>,
 }
 
 /// Aggregated spend row for `/spend`.
@@ -398,6 +412,7 @@ impl View {
             shown: ryter_core::Thread::Main,
             turn_thread: ryter_core::Thread::Main,
             parked: ParkedChat::default(),
+            product: None,
         }
     }
 

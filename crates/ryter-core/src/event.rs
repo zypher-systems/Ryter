@@ -80,6 +80,21 @@ pub enum AgentEvent {
         /// USD total for this call. `None` means unknown price (`$?.??`).
         total_usd: Option<f64>,
     },
+    /// The product a test started is up, or was stopped. While it is up the
+    /// user can stop it (`/stop`), and is asked about it on quit.
+    Product {
+        /// Whether it is running.
+        running: bool,
+        /// When it was started, as the user's clock reads.
+        #[serde(default)]
+        at: String,
+        /// Where it answers.
+        #[serde(default)]
+        address: Option<String>,
+        /// The command that stops it.
+        #[serde(default)]
+        stop: Option<String>,
+    },
     /// The review hat reviewed the uncommitted work (`/audit`, or the offer
     /// after a build turn). The review itself is the turn's answer.
     Reviewed {

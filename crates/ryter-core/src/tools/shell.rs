@@ -97,16 +97,11 @@ const LIVE_EVERY: Duration = Duration::from_millis(250);
 /// Lines of a running command's output passed on each time.
 const LIVE_LINES: usize = 3;
 
-/// Run `cmd` under `bash -c` in `cwd`, in its own process group so cancel
-/// and timeout kill everything it started, passing its newest output lines
-/// to `live` as they arrive.
-pub fn run_command_live(
-    cmd: &str,
-    cwd: &std::path::Path,
-    timeout: Duration,
-    cancel: &crate::cancel::Cancel,
-    live: Option<&LiveOutput>,
-) -> Result<Run> {
+/// `cmd` under `bash -c` in `cwd`, as every command Ryter runs is set up:
+/// nobody to answer a prompt, Ryter's keys kept out, temporary files where
+/// a sandbox allows them, and a process group of its own. Where its output
+/// goes is the caller's to say.
+pub(crate) fn command(cmd: &str, cwd: &std::path::Path) -> Command {
     let mut command = Command::new("bash");
     command
         // `-c`, not `-lc`: a login shell sources the user's profile on every
@@ -121,9 +116,7 @@ pub fn run_command_live(
         // put them in the transcript.
         .env_remove("XAI_API_KEY")
         .env_remove("OPENROUTER_API_KEY")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stdin(Stdio::null());
     if let Ok(vars) = KEY_VARS.read() {
         for var in vars.iter() {
             command.env_remove(var);
@@ -140,6 +133,50 @@ pub fn run_command_live(
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
+    command
+}
+
+/// End a command Ryter started and still holds, and everything it
+/// started, the way a person would: ask it to stop, give it a few seconds
+/// to shut down (a server closing its files), then kill what is left.
+pub(crate) fn end_child(child: &mut std::process::Child) {
+    let pgid = child.id();
+    let _ = Command::new("bash")
+        .arg("-c")
+        .arg(format!("kill -TERM -- -{pgid}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let asked = std::time::Instant::now();
+    loop {
+        // Collect it once it has gone: until then it still counts as a
+        // member of its group, and the wait would run its full length.
+        let gone = matches!(child.try_wait(), Ok(Some(_)));
+        if gone && !group_alive(pgid) {
+            return;
+        }
+        if asked.elapsed() > Duration::from_secs(5) {
+            kill_group(pgid);
+            let _ = child.kill();
+            let _ = child.wait();
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// Run `cmd` under `bash -c` in `cwd`, in its own process group so cancel
+/// and timeout kill everything it started, passing its newest output lines
+/// to `live` as they arrive.
+pub fn run_command_live(
+    cmd: &str,
+    cwd: &std::path::Path,
+    timeout: Duration,
+    cancel: &crate::cancel::Cancel,
+    live: Option<&LiveOutput>,
+) -> Result<Run> {
+    let mut command = command(cmd, cwd);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
     if cancel.is_cancelled() {
         return Ok(Run::Cancelled);
     }
@@ -325,7 +362,7 @@ fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> Drain {
 /// Whether any process is still in group `pgid`. Bash's builtin `kill`, not
 /// `/usr/bin/kill`: procps-ng's `kill -0 -PGID` reports a dead group as alive
 /// and a live one as dead.
-fn group_alive(pgid: u32) -> bool {
+pub(crate) fn group_alive(pgid: u32) -> bool {
     pgid != 0
         && Command::new("bash")
             .arg("-c")

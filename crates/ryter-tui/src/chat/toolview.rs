@@ -25,6 +25,7 @@ pub fn verb(tool: &str) -> &str {
         "ask_user" => "ask",
         "record_decision" => "decide",
         "present_plan" => "plan",
+        "propose_run" => "setup",
         "web_fetch" => "fetch",
         "web_search" => "web",
         other => other,
@@ -240,6 +241,16 @@ pub fn result(tool: &str, output: &str, is_error: bool) -> (String, String) {
                     .join("\n"),
             ),
         },
+        // The project's own commands: its tests' totals when there are
+        // any, otherwise that it went through. What Ryter told the model
+        // about it is not the user's to read.
+        "run_project" => (
+            match test_summary(output) {
+                Some(s) => format!("✓ {s}"),
+                None => "✓".into(),
+            },
+            String::new(),
+        ),
         _ => (String::new(), String::new()),
     }
 }

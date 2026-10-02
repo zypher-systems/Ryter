@@ -229,6 +229,35 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             view.session_title = title.clone();
         }
         AgentEvent::Notice { message } => view.system(message.clone()),
+        AgentEvent::Product {
+            running,
+            at,
+            address,
+            stop,
+        } => {
+            let was = view.product.take();
+            if !*running {
+                return;
+            }
+            let now = crate::view::ProductUp {
+                at: at.clone(),
+                address: address.clone(),
+                stop: stop.clone(),
+            };
+            // Said once, when it comes up (or is found up at startup).
+            if was.as_ref() != Some(&now) {
+                let time = at.rsplit(' ').next().unwrap_or(at);
+                let at_address = address
+                    .as_ref()
+                    .map(|a| format!(" at {a}"))
+                    .unwrap_or_default();
+                let how = stop.as_ref().map(|s| format!(" ({s})")).unwrap_or_default();
+                view.system(format!(
+                    "the project is running{at_address}, started {time} · /stop stops it{how}"
+                ));
+            }
+            view.product = Some(now);
+        }
         AgentEvent::ModeChanged { role } => {
             view.mode = *role;
             // A hat on a model of its own says which: the next message
@@ -383,14 +412,21 @@ fn on_tool_call(
             }
         }
     } else {
-        let shown = if target.is_empty() {
+        let shown = if name == "propose_run" {
+            "how this project runs".to_string()
+        } else if target.is_empty() {
             label.clone()
         } else {
             target.clone()
         };
         let m = view.push(
             MessageKind::Tool {
-                name: toolview::verb(name).to_string(),
+                // The project's own commands read as what they do:
+                // `start  docker compose up -d --wait`.
+                name: match (name, args.get("action").and_then(|a| a.as_str())) {
+                    ("run_project", Some(action)) => action.to_string(),
+                    _ => toolview::verb(name).to_string(),
+                },
                 status: ToolStatus::Running,
             },
             toolview::edit_preview(name, args),
