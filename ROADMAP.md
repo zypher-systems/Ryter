@@ -20,6 +20,8 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 
 - **Unreleased — review repair 8d: Git scratch ownership.** Each checkpoint, initial-index probe and commit message owns a unique private scratch directory in Git metadata. Cleanup runs on success and failure. Concurrent snapshots preserve the real index; concurrent session appends remain readable after resume.
 
+- **Unreleased — review repair 8b: installation and dependency checks.** Bootstrap installation verifies signed checksums with the updater’s pinned key and uses unique atomic staging. Tampered/missing signatures, changed archives and linked executables preserve the existing install. CI checks dependency advisories, declared licenses and registries; release archives carry dependency notices. Removed unused YAML/plist loaders and replaced the yanked yoke-derive version. Two transitive maintenance notices (bincode and paste) remain explicitly tracked pending upstream/UI migrations.
+
 - **Unreleased — review repair 7b: bounded output.** Shell pipes retain fixed head/tail buffers while draining continuously. File paging and grep stream bounded lines; oversized/skipped lines and capped search results are explicit. Edit/diff inputs and directory/note enumeration have finite limits too.
 
 - **Unreleased — review repair 7a: context limits.** Admission and the gauge follow the active hat’s route, include tool schemas and reserve output space. Configured or cached model limits override the fallback. Compaction retains user constraints and assistant notes, can shorten older tool results within one turn, and must reduce size. Oversized turns and commit drafts stop before calling the provider.
