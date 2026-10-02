@@ -1168,7 +1168,7 @@ impl Agent {
     /// What a `run_project` call runs, for the chat: the command itself.
     fn run_summary(&self, args: &Value) -> String {
         let run = match crate::run::find(&self.root(), &self.home) {
-            crate::run::Found::Approved(r) | crate::run::Found::Unapproved(r) => r,
+            crate::run::Found::Approved(r) | crate::run::Found::Unapproved(r, _) => r,
             _ => return String::new(),
         };
         match args.get("action").and_then(Value::as_str) {
@@ -1184,7 +1184,8 @@ impl Agent {
     }
 
     /// Put how the project runs to the user. `Ok(None)` is their yes.
-    /// `Ok(Some(reply))` is what the model is told when it isn't.
+    /// `Ok(Some(reply))` is what the model is told when it isn't. With
+    /// nobody there, it is not approved.
     fn ask_run(
         &mut self,
         run: &crate::run::RunFile,
@@ -1193,17 +1194,26 @@ impl Agent {
         use crate::tools::ToolOutput;
         use crate::user_io::PlanAnswer;
         let Some(io) = self.ctx.user_io.clone() else {
-            // Headless: `--always-approve` is the user's yes to what the
-            // project's file says.
-            return Ok(if self.ctx.always_approve {
-                None
-            } else {
-                Some(ToolOutput::err(
-                    "nobody can approve how the project runs here (headless), so nothing \
-                     ran. Tell the user to run again with --always-approve, or to approve \
-                     it in the TUI.",
-                ))
-            });
+            return Ok(Some(ToolOutput::err(
+                "nobody can approve how the project runs here (headless), so nothing was \
+                 saved or run. A run file the user wrote themselves (`.ryter/run.toml`) is \
+                 used with --always-approve; otherwise they approve one in the TUI.",
+            )));
+        };
+        // A command in it that deletes or discards is worth a line of its
+        // own: the panel is the only yes these commands get.
+        let risky = run
+            .commands()
+            .iter()
+            .any(|c| crate::tools::strict_prompt("bash", &serde_json::json!({ "command": c })));
+        let note = match (note, risky) {
+            (Some(n), true) => Some(format!(
+                "{n}. One of these deletes or discards something: read it before you approve"
+            )),
+            (None, true) => Some(
+                "one of these deletes or discards something: read it before you approve".into(),
+            ),
+            (n, false) => n,
         };
         let rows = run
             .rows()
@@ -1228,11 +1238,45 @@ impl Agent {
         })
     }
 
+    /// The project's own commands are the test hat's to run: the tools are
+    /// offered to no other hat, and a call from one is refused.
+    fn only_the_tester(&self, tool: &str) -> Option<crate::tools::ToolOutput> {
+        (self.role != Role::SoloTest).then(|| {
+            crate::tools::ToolOutput::err(format!(
+                "{tool} is the test hat's, not the {} hat's. Tell the user to press Tab to \
+                 the test hat, or to type /test.",
+                self.role
+            ))
+        })
+    }
+
+    /// With nobody to approve it (`--always-approve`, headless), a run file
+    /// holds to what this hat's own gate would run under that flag: inside
+    /// the project, and nothing the hat is refused. A person's yes on the
+    /// panel can go further; a flag can't.
+    fn run_beyond_the_hat(&self, run: &crate::run::RunFile) -> Option<String> {
+        run.commands().into_iter().find_map(|cmd| {
+            let args = serde_json::json!({ "command": cmd });
+            match crate::tools::decide("bash", &args, &self.ctx) {
+                crate::tools::Decision::Allow | crate::tools::Decision::Ask => None,
+                _ => Some(format!(
+                    "`{cmd}` is more than --always-approve covers in the {} hat (it reaches \
+                     outside the project, or changes what this hat may not). Nothing ran. \
+                     The user can approve the run file in the TUI.",
+                    self.role
+                )),
+            }
+        })
+    }
+
     /// `propose_run`: how the project starts, becomes ready, tests and
     /// stops, for the user to approve. Approved, it is the project's
     /// `.ryter/run.toml`, and Ryter runs those commands itself.
     fn propose_run(&mut self, args: &Value) -> Result<crate::tools::ToolOutput> {
         use crate::tools::ToolOutput;
+        if let Some(refused) = self.only_the_tester("propose_run") {
+            return Ok(refused);
+        }
         let text = |key: &str| args.get(key).and_then(Value::as_str).map(str::to_string);
         let test = match args.get("test") {
             Some(Value::Array(items)) => items
@@ -1264,6 +1308,8 @@ impl Agent {
                 crate::run::FILE
             )));
         }
+        // Only a person approves a run file the model wrote: with nobody
+        // there it is not saved, whatever flag the run was started with.
         if let Some(reply) = self.ask_run(&run, None)? {
             return Ok(reply);
         }
@@ -1334,9 +1380,18 @@ impl Agent {
             ))),
             // It came with the project, or was changed since the user
             // approved it: nothing in it runs until they have seen it.
-            Found::Unapproved(run) => {
+            Found::Unapproved(run, text) => {
                 if let Some(why) = self.run_refused(&run) {
                     return Ok(Err(ToolOutput::err(why)));
+                }
+                // Headless with `--always-approve`: the file as it stands
+                // runs, this once, as far as the flag reaches. Nothing is
+                // recorded: a flag is not a person having read it.
+                if self.ctx.user_io.is_none() && self.ctx.always_approve {
+                    return Ok(match self.run_beyond_the_hat(&run) {
+                        Some(why) => Err(ToolOutput::err(why)),
+                        None => Ok(run),
+                    });
                 }
                 let note = format!(
                     "{} is not as you last approved it, or is new to Ryter",
@@ -1344,7 +1399,9 @@ impl Agent {
                 );
                 match self.ask_run(&run, Some(note))? {
                     Some(reply) => Err(reply),
-                    None => match crate::run::approve_as_is(&root, &self.home) {
+                    // Their yes is to the text they were shown: the file
+                    // is not read again.
+                    None => match crate::run::approve(&root, &self.home, &text) {
                         Ok(()) => Ok(run),
                         Err(e) => Err(ToolOutput::err(format!(
                             "the approval could not be saved ({e}), so nothing ran"
@@ -1427,6 +1484,9 @@ impl Agent {
         use crate::run::{COMMAND_TIMEOUT, START_TIMEOUT, Start};
         use crate::tools::ToolOutput;
         use crate::tools::shell::Run;
+        if let Some(refused) = self.only_the_tester("run_project") {
+            return Ok(refused);
+        }
         let action = args.get("action").and_then(Value::as_str).unwrap_or("");
         let root = self.root();
         match action {
@@ -1459,6 +1519,31 @@ impl Agent {
                             .map(|a| format!(", at {a}"))
                             .unwrap_or_default()
                     )));
+                }
+                // One an earlier session left running is not started a
+                // second time: the new one would die on its port, and
+                // `/stop` would then end the wrong one.
+                if let Some(left) = crate::run::remembered(&self.home, &root) {
+                    let up = match (left.address.as_deref(), left.pid) {
+                        (Some(url), _) => {
+                            crate::run::ask(url, std::time::Duration::from_secs(2)).up()
+                        }
+                        (None, Some(pid)) => crate::tools::shell::group_alive(pid),
+                        // A stack with only a stop command: taken to be up.
+                        (None, None) => true,
+                    };
+                    if up {
+                        return Ok(ToolOutput::ok(format!(
+                            "It is already running: an earlier session started it at {}{}. \
+                             Go on to its tests.",
+                            left.at,
+                            left.address
+                                .map(|a| format!(", at {a}"))
+                                .unwrap_or_default()
+                        )));
+                    }
+                    // It has gone since: start it afresh.
+                    crate::run::forget(&self.home, &root);
                 }
                 let run = match self.approved_run()? {
                     Ok(run) => run,
@@ -1683,6 +1768,9 @@ impl Agent {
         let Some(sha) = crate::git::checkpoint(&dir, &name)? else {
             return Ok(());
         };
+        // This turn is about to change files, whether or not its starting
+        // point is one already kept.
+        self.session.changed_turns += 1;
         let same = self.session.meta.checkpoints.last().is_some_and(|last| {
             crate::git::checkpoint_tree(&dir, last).ok()
                 == crate::git::checkpoint_tree(&dir, &sha).ok()
@@ -2042,7 +2130,9 @@ impl Agent {
     /// hat notes, keeping the latest `max` characters.
     pub(crate) fn conversation_digest(&self, max: usize) -> String {
         let mut parts: Vec<String> = Vec::new();
-        for m in &self.session.transcript {
+        // The conversation that made the change is the one the build hat
+        // works in, whichever hat `/commit` is typed in.
+        for m in self.session.messages_of(crate::role::Thread::Main) {
             let body = m.content.trim();
             if body.is_empty() {
                 continue;
@@ -2162,6 +2252,7 @@ impl Agent {
             pct: r.pct,
             messages: r.messages,
             breakdown,
+            thread: self.role.thread(),
         })
     }
 
@@ -3052,21 +3143,189 @@ mod tests {
             results[1],
             "$ echo 1 failed; exit 1\n1 failed\n[exit 1]\n$ echo lint ok\nlint ok\n"
         );
-        // With nobody to ask, nothing is approved, unless the run was
-        // started with --always-approve.
+        // With nobody to ask, a run file the model wrote is never saved,
+        // whatever flag the run was started with: the model would be
+        // approving its own commands.
         std::fs::remove_file(cwd.path().join(crate::run::FILE)).unwrap();
         let propose = || call("propose_run", serde_json::json!({"test": ["echo ok"]}));
-        agent.ctx.always_approve = false;
-        agent.provider = Arc::new(ReplayProvider::scripted(vec![propose(), say("done")]));
+        for always in [false, true] {
+            agent.ctx.always_approve = always;
+            agent.provider = Arc::new(ReplayProvider::scripted(vec![propose(), say("done")]));
+            agent.turn("test it").await.unwrap();
+            assert!(
+                !cwd.path().join(crate::run::FILE).exists(),
+                "saved with nobody to approve it (always_approve: {always})"
+            );
+        }
+    }
+
+    /// The user's yes is to the commands they were shown. A run file
+    /// rewritten while they were reading is not what they approved: the
+    /// approval used to be recorded for whatever the file held after the
+    /// yes, and the next run took the rewritten commands with no question.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_yes_is_to_the_run_file_that_was_shown() {
+        use crate::user_io::{PlanAnswer, UserRequest};
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        std::fs::create_dir_all(cwd.path().join(".ryter")).unwrap();
+        let file = cwd.path().join(crate::run::FILE);
+        std::fs::write(&file, "test = \"echo shown > ran\"\n").unwrap();
+        agent.provider = Arc::new(ReplayProvider::scripted(vec![
+            run_project("test"),
+            run_project("test"),
+            say("done"),
+        ]));
+        agent.put_on(Role::SoloTest).unwrap();
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        let swapped = file.clone();
+        let asked = std::thread::spawn(move || {
+            let mut asked = 0;
+            while let Ok(req) = rx.recv() {
+                if let UserRequest::Run { reply, .. } = req {
+                    asked += 1;
+                    if asked == 1 {
+                        // Someone rewrites the file while the panel is up.
+                        std::fs::write(&swapped, "test = \"echo never-shown > ran\"\n").unwrap();
+                        let _ = reply.send(PlanAnswer::Approve);
+                    } else {
+                        let _ = reply.send(PlanAnswer::Reject);
+                    }
+                }
+            }
+            asked
+        });
         agent.turn("test it").await.unwrap();
-        assert!(!cwd.path().join(crate::run::FILE).exists());
-        agent.ctx.always_approve = true;
-        agent.provider = Arc::new(ReplayProvider::scripted(vec![propose(), say("done")]));
-        agent.turn("test it").await.unwrap();
+        agent.ctx.user_io = None;
+        assert_eq!(
+            asked.join().unwrap(),
+            2,
+            "the rewritten file was not asked about"
+        );
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("ran")).unwrap(),
+            "shown\n"
+        );
+    }
+
+    /// A product an earlier session left running is not started a second
+    /// time: the tester is told it is up. One that has gone since is
+    /// started afresh.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_product_left_running_is_not_started_twice() {
+        use std::io::{Read, Write};
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        // The product, still answering.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let serving = std::thread::spawn(move || {
+            for stream in listener.incoming().take(1) {
+                let mut s = stream.unwrap();
+                let mut buf = [0u8; 512];
+                let _ = s.read(&mut buf);
+                let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+            }
+        });
+        let run = crate::run::RunFile {
+            start: Some("echo started-again > state".into()),
+            ready: Some(url.clone()),
+            ..Default::default()
+        };
+        crate::run::save_approved(cwd.path(), &agent.home, &run).unwrap();
+        crate::run::remember(
+            &agent.home,
+            cwd.path(),
+            &crate::run::Left {
+                at: "2026-10-01 14:02".into(),
+                address: Some(url.clone()),
+                stop: None,
+                pid: None,
+            },
+        )
+        .unwrap();
+        let (_, results, _) = tester_turn(&mut agent, vec![run_project("start")], Vec::new()).await;
+        serving.join().unwrap();
+        assert!(
+            results[0].starts_with("It is already running: an earlier session started it"),
+            "{results:?}"
+        );
+        assert!(!cwd.path().join("state").exists(), "it was started again");
+        // It has gone (nobody answers there now): forgotten, and started.
+        let run = crate::run::RunFile {
+            start: Some("echo started-again > state".into()),
+            ..Default::default()
+        };
+        crate::run::save_approved(cwd.path(), &agent.home, &run).unwrap();
+        let (_, results, _) = tester_turn(&mut agent, vec![run_project("start")], Vec::new()).await;
+        assert!(results[0].starts_with("Started in"), "{results:?}");
+        assert!(cwd.path().join("state").exists());
+        let _ = agent.stop_product();
+    }
+
+    /// Headless, `--always-approve` is the user's yes to a run file they
+    /// wrote, as far as the flag reaches in that hat: nothing the hat's own
+    /// gate refuses, nothing outside the project. It is not recorded as
+    /// approved, so the TUI still asks. And only the test hat has the
+    /// project's commands.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn headless_a_run_file_goes_only_as_far_as_the_flag_does() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        std::fs::create_dir_all(cwd.path().join(".ryter")).unwrap();
+        let file = cwd.path().join(crate::run::FILE);
+        let headless = async |agent: &mut Agent, hat: Role, always: bool| -> String {
+            agent.provider = Arc::new(ReplayProvider::scripted(vec![
+                run_project("test"),
+                say("done"),
+            ]));
+            agent.put_on(hat).unwrap();
+            agent.ctx.user_io = None;
+            agent.ctx.always_approve = always;
+            let before = agent.session.transcript.len();
+            agent.turn("test it").await.unwrap();
+            agent.session.transcript[before..]
+                .iter()
+                .find(|m| m.role == "tool")
+                .map(|m| m.content.clone())
+                .unwrap_or_default()
+        };
+        std::fs::write(&file, "test = \"echo ok\"\n").unwrap();
+        // Without the flag, nothing in it runs.
+        let out = headless(&mut agent, Role::SoloTest, false).await;
+        assert!(out.contains("nobody can approve"), "{out}");
+        // With it, a file within the hat's reach runs, and stays unapproved.
+        let out = headless(&mut agent, Role::SoloTest, true).await;
+        assert_eq!(out, "$ echo ok\nok\n");
         assert!(matches!(
             crate::run::find(cwd.path(), &agent.home),
-            crate::run::Found::Approved(_)
+            crate::run::Found::Unapproved(..)
         ));
+        // What the hat's own gate refuses, or asks about every time, the
+        // flag doesn't cover: deleting a project file, writing elsewhere.
+        std::fs::write(cwd.path().join("hello.txt"), "hi\n").unwrap();
+        for cmd in ["rm hello.txt", "echo x > /opt/ryter-not-here.txt"] {
+            std::fs::write(&file, format!("test = \"{cmd}\"\n")).unwrap();
+            let out = headless(&mut agent, Role::SoloTest, true).await;
+            assert!(
+                out.contains("more than --always-approve covers in the test hat"),
+                "{cmd}: {out}"
+            );
+        }
+        assert!(
+            cwd.path().join("hello.txt").exists(),
+            "the run file deleted it"
+        );
+        // No other hat runs the project's commands, with the flag or not.
+        std::fs::write(&file, "test = \"echo ok\"\n").unwrap();
+        for hat in [Role::SoloPlan, Role::SoloBuild, Role::SoloReview] {
+            let out = headless(&mut agent, hat, true).await;
+            assert!(
+                out.contains("run_project is the test hat's"),
+                "{hat}: {out}"
+            );
+        }
     }
 
     /// A hat with a model of its own is run on it; the others follow the
@@ -4188,6 +4447,75 @@ mod tests {
             decisions.contains("- Decided by: build hat (builder-b) · "),
             "{decisions}"
         );
+    }
+
+    /// `/audit` typed in the test hat: the review reads the shared
+    /// conversation and its verdict is its own. It took the verdict from
+    /// the tester's thread, so a tester that had written "VERDICT: FAIL"
+    /// turned a passing review into a failed one on the receipt.
+    #[tokio::test]
+    async fn a_review_asked_for_in_the_test_hat_reads_its_own_verdict() {
+        use crate::role::Thread;
+        use crate::user_io::Permission;
+        let (_home, _cwd, agent, events, asked) = checked(
+            vec![say("VERDICT: PASS")],
+            vec![Permission::Allow, Permission::Deny],
+            async |a| {
+                // What the tester said earlier, in its own conversation.
+                for (role, content) in [
+                    ("user", "test it"),
+                    ("assistant", "It is broken.\n\nVERDICT: FAIL"),
+                ] {
+                    a.session
+                        .push_to(
+                            Thread::Test,
+                            Message {
+                                role: role.into(),
+                                content: content.into(),
+                                tool_call_id: None,
+                                tool_calls: None,
+                            },
+                        )
+                        .unwrap();
+                }
+                a.put_on(Role::SoloTest).unwrap();
+                a.review_now().await.unwrap();
+            },
+        )
+        .await;
+        assert_eq!(kinds(&asked), ["review"]);
+        assert_eq!(reviewed(&events), [Some(true)]);
+        // Back in the test hat, with each conversation its own.
+        assert_eq!(agent.role, Role::SoloTest);
+        assert_eq!(agent.session.messages_of(Thread::Test).len(), 2);
+        assert_eq!(agent.session.messages_of(Thread::Main).len(), 2);
+    }
+
+    /// Past fifty checkpoints a session keeps only the last fifty, and
+    /// "did that turn change anything?" was asked of how many there were:
+    /// from then on a fix was not seen, and no review of it was offered.
+    #[tokio::test]
+    async fn a_fix_is_seen_as_a_change_in_a_long_session() {
+        use crate::user_io::Permission;
+        let (_home, _cwd, _agent, _events, asked) = checked(
+            vec![
+                report(FAILING),
+                say("It fails."),
+                write("hello.txt", "hi there, ann\n"),
+                say("Fixed."),
+                say("VERDICT: FAIL"),
+            ],
+            vec![Permission::Allow, Permission::Allow, Permission::Allow],
+            async |a| {
+                for i in 0..60 {
+                    a.session.push_checkpoint(format!("sha{i}")).unwrap();
+                }
+                assert_eq!(a.session.meta.checkpoints.len(), 50);
+                a.test_now().await.unwrap();
+            },
+        )
+        .await;
+        assert_eq!(kinds(&asked), ["test", "fix offer", "review offer"]);
     }
 
     /// A review that passes is followed by the offer of a test, with its

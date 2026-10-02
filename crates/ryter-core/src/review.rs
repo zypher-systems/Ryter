@@ -98,10 +98,16 @@ pub fn head_base(dir: &Path) -> String {
 /// doesn't read them as changes, and writing one doesn't make a review or a
 /// test out of date.
 pub fn is_bookkeeping(path: &str) -> bool {
-    path.starts_with(".ryter/plans/")
-        || path.starts_with(".ryter/tests/")
-        || path == ".ryter/decisions.md"
-        || path == ".ryter/run.toml"
+    // Wherever the project sits in its repository: a project in a
+    // subfolder keeps its `.ryter/` there.
+    let own = match path.rsplit_once(".ryter/") {
+        Some((before, own)) if before.is_empty() || before.ends_with('/') => own,
+        _ => return false,
+    };
+    own.starts_with("plans/")
+        || own.starts_with("tests/")
+        || own == "decisions.md"
+        || own == "run.toml"
 }
 
 /// What identifies the work in a commit: the same for the same files,
@@ -113,7 +119,11 @@ pub fn is_bookkeeping(path: &str) -> bool {
 /// soon as the work was tested.
 pub fn tree_of(dir: &Path, commit: &str) -> Option<String> {
     use sha2::{Digest, Sha256};
-    let listing = git(dir, &["ls-tree", "-r", "-z", commit]).ok()?;
+    // The whole tree, from the repository's top, wherever `dir` is in it:
+    // from a subfolder `ls-tree` lists that folder alone, so the commit
+    // panel and the review hashed different things and the receipt could
+    // never say "reviewed".
+    let listing = git(dir, &["ls-tree", "-r", "-z", "--full-tree", commit]).ok()?;
     if listing.is_empty() && git(dir, &["rev-parse", &format!("{commit}^{{tree}}")]).is_err() {
         return None;
     }
@@ -652,7 +662,17 @@ mod tests {
         fs::write(p.join(".ryter/skills/x/SKILL.md"), "skill\n").unwrap();
         assert_ne!(tree(p), changed);
         assert!(!is_bookkeeping(".ryter/skills/x/SKILL.md"));
-        assert!(!is_bookkeeping("src/.ryter/run.toml"));
+        assert!(!is_bookkeeping("src/my.ryter/run.toml"));
+        // A project in a subfolder of its repository: the same work has
+        // the same identity from the top and from the project's folder, and
+        // its own `.ryter/` is bookkeeping there too.
+        fs::create_dir_all(p.join("app/.ryter/tests")).unwrap();
+        fs::write(p.join("app/main.py"), "x\n").unwrap();
+        let from_top = tree(p);
+        assert_eq!(tree(&p.join("app")), from_top);
+        fs::write(p.join("app/.ryter/tests/2026-10-01-x.md"), "# report\n").unwrap();
+        assert_eq!(tree(p), from_top);
+        assert!(is_bookkeeping("app/.ryter/tests/2026-10-01-x.md"));
     }
 
     #[test]

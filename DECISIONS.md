@@ -12,6 +12,46 @@ Why, not what. Non-obvious choices are recorded here, newest first.
 - **Why:** "There is too many unknowns for crew to work effectively without the user." No real project had completed in crew mode; the benchmark's clean runs were on small tasks with checks already set.
 - **Where:** `ROADMAP.md` (Direction). The code to go, when it goes: `crew.rs`, `queue.rs`, `tiering.rs`, `estimate.rs`, the crew parts of `agent.rs`, and the crew panels, about 10,000 of 72,000 lines; `bench.rs` is rebuilt on the hats.
 
+### 2026-10-01 — What a second independent review found in the Test hat
+- **By:** lead, from a review of the Test hat, the run file and the report by a separate agent, before the user's acceptance run. Fifteen defects; fourteen it had confirmed with tests of its own. Each was fixed with a test here.
+- **The run file's approval:**
+  - **Every word is shown, and the end has to have been on screen.** The panel cut a long command with `…` and took `y`: `… && rm -rf ../other` was approved unseen. Commands wrap, a long word is broken, and `y` waits for the last row. A command that deletes or discards gets a line above the list.
+  - **The yes is to the text that was read.** `approve_as_is` read the file again after the yes and recorded that; `run::approve` takes the text `find` read.
+  - **A flag is not a person.** Headless, `propose_run` never saves (the model would be approving its own commands), and `--always-approve` runs an unapproved file only if every command is one this hat's gate would run under that flag (`Allow` or `Ask`), recording nothing. It ran `rm` from the test hat, and wrote to `/opt`, which the same flag refuses the shell tool.
+  - **Only the test hat** runs `propose_run` and `run_project`; the dispatch did not check.
+  - **Never through a link:** `.ryter/run.toml` is written beside itself and moved into place, and Ryter refuses to keep its files in a `.ryter` that is a link.
+- **The product:**
+  - **A start that didn't come up is taken down** (`take_down`): its stop command, with a cancel of its own, or the group its start command left. It was left up with nothing recorded, so `/stop` said Ryter had started nothing. Quitting during a start cancels it first, for the same reason.
+  - **Not started twice.** A product an earlier process left running is asked whether it still answers; if so the tester is told it is up.
+  - **What a returned start command left running** in its process group is held and ended on stop; the handle was dropped, and quit said it would be ended.
+  - **One note per project:** the "left running" note's name carries a digest of the path. `my-app` and `my_app` shared one.
+- **The conversations:**
+  - **A review reads the shared conversation by name.** Asked for in the test hat, `review_once` read its verdict, its cost and its limit from `session.transcript`, which was the tester's thread by then.
+  - **An event belongs to its turn until the turn closes** (`turn_open`), not while the screen is "busy": `Cancelled` and `Error` end the busy state first, and the closing line went to whichever conversation was on screen.
+  - **The screen follows the agent by the agent's hat** (`agent_hat`), not by where the user's last message went.
+  - **The agent says which hat it put on after a Tab** (`AgentEvent::HatSet`), and once it has caught up with every Tab its word is the hat on screen. A Tab during the agent's own hat change left the two disagreeing; this predates today.
+  - **`/new` keeps the hat's conversation on screen,** and asks first if either conversation has content.
+- **Also:** "did that turn change files?" is a counter (`Session::changed_turns`), not the length of a list capped at fifty; `tree_of` lists the whole tree from the repository's top, and `is_bookkeeping` matches a project's `.ryter/` wherever the project sits in its repository; a commit draft reads the shared conversation; a product is announced after a reconnect as at startup.
+- **Left as it is:** a stop command that fails still forgets the product (the user is told, and it is theirs to look at); a start with no `ready` address that returns before the product is up is taken as started.
+- **Where:** `crates/ryter-core/src/run.rs`, `agent.rs`, `gate.rs`, `review.rs`, `session.rs`, `plan.rs` (`own_folder`), `tools/shell.rs` (`end_group`); `crates/ryter-tui/src/panel/plan.rs`, `run/events.rs`, `run/actions.rs`, `run/worker.rs`, `view/mod.rs`
+
+### 2026-10-01 — Holes in the gate found by an independent review
+- **By:** lead, from a review of the permission gate by a separate agent, run before the user's acceptance test. Each finding was reproduced with a failing test first.
+- **Found, and fixed:**
+  - **Printing commands not checked for secrets.** The secret check ran for `READERS`, a list that had fallen behind `READ_ONLY`: `hexdump`, `rev`, `column`, `paste`, `comm`. A test now fails if a read-only command is in neither `READERS` nor a list of those that print no contents. In released versions.
+  - **`xargs` in front of a printing command.** `parse` marked the case (`via_xargs`) and nothing read the mark. The files are whatever arrives on the pipe, so the secret check can't see them: the build and test hats ask, plan and review refuse, and the refusal says to search with `grep -rn` or `rg`. `fd -x cat` the same. (`find -exec` was already refused outside the build hat.) In released versions.
+  - **`/dev/stdin` as a script.** It contains a `/`, so `runs_a_script` took it for a file on disk and the inline-code rule didn't apply. In released versions.
+  - **The review hat ran any script it could name,** and since today it can write to `/tmp`. Its checks now have to name only the project's own files (`leaves_project`); its notes folder is not the project. This closes a road that was already open through the notes folder.
+  - **`docker cp`** ran unasked in the build and test hats: a write into the project from the test hat, or a secret copied into a container.
+  - **A mount of the folder above the project,** or of the home folder, ran unasked: the projects beside this one, handed to a container. Mounts are the project's folders or scratch space now.
+- **Found on the way:** paths inside a container (`-w /app`, `ls /app` after the image) were judged as paths on this machine, so `docker run … ls /app` asked every time and could not be allowed for the session. A container command's host-side paths (a compose file, a build context, a mount's source) are judged by `container_decision`; the rest are the container's.
+- **Chosen vs rejected:**
+  - Rejected refusing every read-only command that names a secret file. `ls -la .env` and `wc -l .env` say that it is there and how long it is; models check for that, and refusing it teaches nothing.
+  - Rejected stopping the build and test hats running a script from outside the project. It asks. A model that means to get round the gate there can do it through any toolchain (`cargo run`, a Makefile); what the gate holds is that it doesn't happen without a prompt by the plain roads.
+  - Rejected judging the files `xargs` is handed by reading the command before it in the pipe.
+- **Residual risk:** in the build and test hats a toolchain runs whatever code the project holds, and a container the project's own compose file mounts the project into can change it. The test hat's "changes nothing in the project" holds for its tools and plain commands, not for code it runs.
+- **Where:** `crates/ryter-core/src/tools/policy.rs` (`READERS`, `leaves_project`, `runs_a_foreign_script`, `is_stdin`, `container_decision`, `bash_hint`)
+
 ### 2026-10-01 — `/tmp` is open under the sandbox profiles
 - **By:** the user ("lets fix it all"), after being told that their `sandbox = "workspace"` setting shuts `/tmp` and the home folder whatever the gate allows. This reverses a choice in the 2026-10-01 sandbox entry below ("Never … `/tmp`").
 - **Decision:** `workspace` and `read-only` grant `/tmp` and `/var/tmp`, to read and write. The `TMPDIR` redirect to `~/.ryter/tmp`, and the way a sandboxed thread recognised itself (its temporary folder could not be listed), are removed: with `/tmp` open neither is needed.
@@ -77,7 +117,7 @@ Why, not what. Non-obvious choices are recorded here, newest first.
   - Rejected blocking `Tab` while a turn runs. A test takes minutes, and the user will want to read the main chat meanwhile.
   - The Tab order was first kept as it was with Test added (build → plan → review → test). The user corrected it the same day ("I figured it was already Plan, Build, Review, Test now"): Tab goes round in the order the work does, as the approved mockup's "Tab: plan" from Test implied. A session still opens in build.
 - **Where:** `crates/ryter-core/src/role.rs` (`Thread`), `session.rs`, `agent.rs` (`put_on`), `tools/policy.rs` (`own_request`), `prompts/solo.md` ("A test"); `crates/ryter-tui/src/view/mod.rs` (`show`), `run/events.rs` (`apply`), `run/actions.rs` (`fill_chat`), `draw.rs` (`thread_line`)
-- **Residual risk:** the context gauge and the "this turn" figures on the rail are the last turn's, whichever conversation it was in. Each thread compacts on its own. Nothing was run with a real model, and no real product was started.
+- **Residual risk:** the "this turn" figure on the rail is the last turn's, whichever conversation it was in. Each thread compacts on its own, and has its own context gauge (a `Context` event names the thread it measures). Nothing was run with a real model, and no real product was started.
 
 ### 2026-10-01 — Less asking: toolchains, containers, scratch space and the home folder
 - **By:** the user ("one of the things I want to avoid is too much asking. It should be able to run docker/podman from within the working directory to build stacks, if it needs access to apps stored in the home drive like rust or other libraries it should be able to execute those freely. The hats should also be able to write to home directory or /tmp without interaction. I would prefer to steer the models to docker if its there rather than podman"). This also replaces the Test hat's "anything else asks first", which the user had approved from a mockup earlier the same day.

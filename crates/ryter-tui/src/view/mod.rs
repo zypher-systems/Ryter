@@ -41,6 +41,11 @@ pub struct ParkedChat {
     reasoning: BTreeMap<u64, String>,
     lookups: Option<(u64, crate::chat::toolview::Lookups)>,
     cache: RefCell<RenderCache>,
+    /// How full its context is: each conversation fills on its own.
+    ctx_pct: Option<u8>,
+    ctx_tokens: Option<u64>,
+    ctx_messages: Option<usize>,
+    ctx_breakdown: Vec<(String, u64)>,
 }
 
 impl Default for ParkedChat {
@@ -52,6 +57,11 @@ impl Default for ParkedChat {
             reasoning: BTreeMap::new(),
             lookups: None,
             cache: RefCell::new(RenderCache::new()),
+            // Nothing said yet: empty, not unknown.
+            ctx_pct: Some(0),
+            ctx_tokens: Some(0),
+            ctx_messages: None,
+            ctx_breakdown: Vec::new(),
         }
     }
 }
@@ -256,6 +266,18 @@ pub struct View {
     /// The conversation the running turn is part of. What the turn says
     /// goes there, whichever is on screen.
     pub turn_thread: ryter_core::Thread,
+    /// The product is being started right now (the id of the step doing
+    /// it): quitting waits for that to be undone.
+    pub starting_product: Option<String>,
+    /// A turn's events are still arriving: from its start to its close,
+    /// whatever ended it. What arrives then is that turn's.
+    pub turn_open: bool,
+    /// The hat the agent is in, as it last said. The screen follows the
+    /// agent into the tester's conversation and out of it by this, not by
+    /// where the user's last message went.
+    pub agent_hat: ryter_core::Role,
+    /// Hats chosen with Tab that the agent has not yet said it put on.
+    pub hats_pending: u32,
     /// The conversation that isn't on screen.
     pub parked: ParkedChat,
     /// The product Ryter started for a test, while it is up: `/stop` stops
@@ -421,6 +443,10 @@ impl View {
             pending_warnings: Vec::new(),
             shown: ryter_core::Thread::Main,
             turn_thread: ryter_core::Thread::Main,
+            starting_product: None,
+            turn_open: false,
+            agent_hat: ryter_core::Role::SoloBuild,
+            hats_pending: 0,
             parked: ParkedChat::default(),
             product: None,
             last_test: None,
@@ -444,6 +470,10 @@ impl View {
         std::mem::swap(&mut self.reasoning, &mut self.parked.reasoning);
         std::mem::swap(&mut self.lookups, &mut self.parked.lookups);
         std::mem::swap(&mut self.cache, &mut self.parked.cache);
+        std::mem::swap(&mut self.ctx_pct, &mut self.parked.ctx_pct);
+        std::mem::swap(&mut self.ctx_tokens, &mut self.parked.ctx_tokens);
+        std::mem::swap(&mut self.ctx_messages, &mut self.parked.ctx_messages);
+        std::mem::swap(&mut self.ctx_breakdown, &mut self.parked.ctx_breakdown);
         self.shown = thread;
     }
 
@@ -602,8 +632,8 @@ impl View {
 
     /// Anything in the transcript worth confirming before `/new`.
     pub fn has_content(&self) -> bool {
-        self.messages
-            .iter()
+        // In either conversation: `/new` ends both.
+        self.session_messages()
             .any(|m| matches!(m.kind, MessageKind::User | MessageKind::Assistant { .. }))
     }
 

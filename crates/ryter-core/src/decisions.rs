@@ -72,11 +72,9 @@ fn section(lines: &[&str], plan_file: &str) -> Option<(usize, usize)> {
 /// Record `entry` against `plan_file` (a path in the project, as the session
 /// holds it) at `stamp` (`YYYY-MM-DD HH:MM`). Returns the file.
 pub fn record_at(root: &Path, plan_file: &str, entry: &Entry, stamp: &str) -> Result<PathBuf> {
+    crate::plan::own_folder(root)?;
     let path = root.join(FILE);
     let io = |e: std::io::Error| Error::Io(format!("{}: {e}", path.display()));
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(io)?;
-    }
     let old = match std::fs::read_to_string(&path) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => HEADER.to_string(),

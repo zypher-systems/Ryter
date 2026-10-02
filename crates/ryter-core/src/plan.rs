@@ -43,9 +43,30 @@ fn document(title: &str, plan: &str) -> String {
     }
 }
 
+/// The folder Ryter keeps its own record of the work in, under the
+/// project's top: `.ryter/`, made if it isn't there. Refused when it is a
+/// link: what Ryter writes is the project's, and a link would send it
+/// somewhere else.
+pub fn own_folder(root: &Path) -> Result<PathBuf> {
+    let dir = root.join(".ryter");
+    if dir
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
+        return Err(Error::Io(format!(
+            "{} is a link: Ryter writes its plans, decisions and reports in the project \
+             itself",
+            dir.display()
+        )));
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| Error::Io(format!("{}: {e}", dir.display())))?;
+    Ok(dir)
+}
+
 /// Save an approved plan under `root`, on `day` (`YYYY-MM-DD`). Returns the
 /// file. A plan of the same name on the same day gets a number: `-2`, `-3`.
 pub fn save_on(root: &Path, day: &str, title: &str, plan: &str) -> Result<PathBuf> {
+    own_folder(root)?;
     let dir = root.join(DIR);
     let io = |e: std::io::Error| Error::Io(format!("{}: {e}", dir.display()));
     std::fs::create_dir_all(&dir).map_err(io)?;

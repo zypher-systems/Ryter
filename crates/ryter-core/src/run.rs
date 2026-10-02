@@ -163,8 +163,10 @@ pub enum Found {
     Broken(String),
     /// The user approved exactly this.
     Approved(RunFile),
-    /// It is there, and the user hasn't approved what it says now.
-    Unapproved(RunFile),
+    /// It is there, and the user hasn't approved what it says now. With
+    /// the text it was read from: a yes is to that text, and to no other
+    /// the file may hold by the time the yes comes.
+    Unapproved(RunFile, String),
 }
 
 fn digest(text: &str) -> String {
@@ -207,33 +209,30 @@ pub fn find(root: &Path, home: &Path) -> Found {
     if approvals(home).get(&key(root)) == Some(&digest(&text)) {
         Found::Approved(run)
     } else {
-        Found::Unapproved(run)
+        Found::Unapproved(run, text)
     }
 }
 
 /// Save `run` as the project's run file and record that the user approved
 /// it. Returns the file.
 pub fn save_approved(root: &Path, home: &Path, run: &RunFile) -> Result<PathBuf> {
+    let dir = crate::plan::own_folder(root)?;
     let path = root.join(FILE);
     let io = |e: std::io::Error| Error::Io(format!("{}: {e}", path.display()));
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(io)?;
-    }
     let text = run.text();
-    std::fs::write(&path, &text).map_err(io)?;
+    // Written beside it and moved into place: a file there that is a link
+    // is replaced, not written through to what it points at.
+    let tmp = dir.join("run.toml.tmp");
+    std::fs::write(&tmp, &text).map_err(io)?;
+    std::fs::rename(&tmp, &path).map_err(io)?;
     approve(root, home, &text)?;
     Ok(path)
 }
 
-/// Record that the user approved the run file as it is on disk.
-pub fn approve_as_is(root: &Path, home: &Path) -> Result<()> {
-    let path = root.join(FILE);
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| Error::Io(format!("{}: {e}", path.display())))?;
-    approve(root, home, &text)
-}
-
-fn approve(root: &Path, home: &Path, text: &str) -> Result<()> {
+/// Record that the user approved a run file holding exactly `text`: what
+/// [`find`] read and they were shown. The file is not read again, so one
+/// rewritten while they were reading is not what they approved.
+pub fn approve(root: &Path, home: &Path, text: &str) -> Result<()> {
     let mut all = approvals(home);
     all.insert(key(root), digest(text));
     let out = toml::to_string(&all).map_err(|e| Error::Io(e.to_string()))?;
@@ -258,6 +257,10 @@ pub struct Started {
     /// The start command, when it stayed in the foreground: Ryter holds it,
     /// and stops it by ending its process group.
     child: Option<std::process::Child>,
+    /// The start command's process group, when the command itself returned
+    /// and left something running in it (`./server &`). Ended on stop, by
+    /// this process only: it is the group this process started.
+    group: Option<u32>,
     /// Where the start command's output goes.
     pub log: PathBuf,
 }
@@ -271,13 +274,18 @@ impl Started {
             address: left.address,
             stop: left.stop,
             child: None,
+            group: None,
             log,
         }
     }
 
-    /// The process group of a start command that is still running.
+    /// The process group of a start command that is still running, or of
+    /// what it left running.
     pub fn pgid(&self) -> Option<u32> {
-        self.child.as_ref().map(std::process::Child::id)
+        self.child
+            .as_ref()
+            .map(std::process::Child::id)
+            .or(self.group)
     }
 
     /// What a later session needs to know, to offer to stop it.
@@ -310,11 +318,18 @@ pub struct Left {
 }
 
 fn left_path(home: &Path, root: &Path) -> PathBuf {
-    let name: String = key(root)
+    let key = key(root);
+    // The folder's name to read by, and a digest of its whole path to tell
+    // it from every other: `my-app` and `my_app` shared one note.
+    let name: String = root
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
-    home.join("running").join(format!("{name}.toml"))
+    home.join("running")
+        .join(format!("{name}-{}.toml", &digest(&key)[..16]))
 }
 
 /// Remember that this project's product was left running.
@@ -506,11 +521,12 @@ fn start_settling(
     let mut command = crate::tools::shell::command(cmd, root);
     command.stdout(out).stderr(err);
     let mut child = command.spawn().map_err(|e| Error::Config(e.to_string()))?;
+    let pgid = child.id();
     let began = Instant::now();
     let mut exited = false;
     let how = loop {
         if cancel.is_cancelled() {
-            crate::tools::shell::end_child(&mut child);
+            take_down(run, root, &mut child, exited);
             return Ok(Start::Cancelled);
         }
         if !exited {
@@ -541,11 +557,9 @@ fn start_settling(
                         Answer::Nothing(e) => format!("did not answer ({e})"),
                         Answer::Listening => "is listening".into(),
                     };
-                    if !exited {
-                        crate::tools::shell::end_child(&mut child);
-                    }
+                    let undone = take_down(run, root, &mut child, exited);
                     return Ok(Start::Failed(format!(
-                        "`{cmd}` ran, but after {}s {url} {why}:\n{}",
+                        "`{cmd}` ran, but after {}s {url} {why}. {undone}.\n{}",
                         timeout.as_secs(),
                         tail(log, 30)
                     )));
@@ -568,11 +582,48 @@ fn start_settling(
             at: crate::clock::stamp(),
             address: run.ready.clone(),
             stop: run.stop.clone(),
+            // What a command that returned left running in its group
+            // (`./server &`) is Ryter's to end too.
+            group: (exited && crate::tools::shell::group_alive(pgid)).then_some(pgid),
             child: (!exited).then_some(child),
             log: log.to_path_buf(),
         },
         how,
     })
+}
+
+/// A start that didn't come up, or was cancelled, is taken down again: what
+/// it started is nobody's otherwise. Nothing records it, so `/stop` would
+/// say Ryter started nothing while a stack whose health check failed stayed
+/// up. Returns what was done, in words.
+fn take_down(run: &RunFile, root: &Path, child: &mut std::process::Child, exited: bool) -> String {
+    let pgid = child.id();
+    if !exited {
+        crate::tools::shell::end_child(child);
+        return "Ryter ended the start command".to_string();
+    }
+    let mut did = Vec::new();
+    if let Some(stop) = run.stop.as_deref() {
+        // Its own cancel: the turn's may already be set, and this has to run.
+        let fresh = crate::cancel::Cancel::new();
+        did.push(
+            match crate::tools::shell::run_command_live(stop, root, COMMAND_TIMEOUT, &fresh, None) {
+                Ok(crate::tools::shell::Run::Ok(_)) => {
+                    format!("Ryter ran `{stop}` to take it down")
+                }
+                _ => format!("`{stop}` did not take it down: it may still be running"),
+            },
+        );
+    }
+    if crate::tools::shell::group_alive(pgid) {
+        crate::tools::shell::end_group(pgid);
+        did.push("Ryter ended what the start command left running".to_string());
+    }
+    if did.is_empty() {
+        "The run file has no stop command, so what it started may still be running".to_string()
+    } else {
+        did.join(", and ")
+    }
 }
 
 /// Stop a product Ryter started: its stop command, then the start command
@@ -606,6 +657,11 @@ pub fn stop(
     if let Some(mut child) = started.child.take() {
         crate::tools::shell::end_child(&mut child);
         did.push("ended the start command".to_string());
+    } else if let Some(pgid) = started.group.take() {
+        if crate::tools::shell::group_alive(pgid) {
+            crate::tools::shell::end_group(pgid);
+            did.push("ended what the start command left running".to_string());
+        }
     }
     match failed {
         Some(why) => Err(why),
@@ -701,11 +757,19 @@ mod tests {
             start: Some("make up".into()),
             ..RunFile::default()
         };
-        assert_eq!(
+        let Found::Unapproved(run, text) = find(root.path(), home.path()) else {
+            panic!("a run file nobody approved is approved");
+        };
+        assert_eq!(run, theirs);
+        // Rewritten while the user was reading: their yes is to what they
+        // read, so what is there now is still not approved.
+        std::fs::write(root.path().join(FILE), "start = \"make pwned\"\n").unwrap();
+        approve(root.path(), home.path(), &text).unwrap();
+        assert!(matches!(
             find(root.path(), home.path()),
-            Found::Unapproved(theirs.clone())
-        );
-        approve_as_is(root.path(), home.path()).unwrap();
+            Found::Unapproved(..)
+        ));
+        std::fs::write(root.path().join(FILE), &text).unwrap();
         assert_eq!(find(root.path(), home.path()), Found::Approved(theirs));
         // Saved from the panel.
         let path = save_approved(root.path(), home.path(), &cms()).unwrap();
@@ -716,7 +780,7 @@ mod tests {
         let mut text = std::fs::read_to_string(&path).unwrap();
         text = text.replace("docker compose down", "docker compose down -v");
         std::fs::write(&path, &text).unwrap();
-        let Found::Unapproved(now) = find(root.path(), home.path()) else {
+        let Found::Unapproved(now, _) = find(root.path(), home.path()) else {
             panic!("a changed run file is still approved");
         };
         assert_eq!(now.stop.as_deref(), Some("docker compose down -v"));
@@ -726,8 +790,20 @@ mod tests {
         std::fs::write(other.path().join(FILE), cms().text()).unwrap();
         assert!(matches!(
             find(other.path(), home.path()),
-            Found::Unapproved(_)
+            Found::Unapproved(..)
         ));
+        // A run file that is a link is replaced, not written through.
+        let elsewhere = TempDir::new().unwrap();
+        let target = elsewhere.path().join("theirs.txt");
+        std::fs::write(&target, "not Ryter's\n").unwrap();
+        std::fs::remove_file(other.path().join(FILE)).unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&target, other.path().join(FILE)).unwrap();
+            save_approved(other.path(), home.path(), &cms()).unwrap();
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), "not Ryter's\n");
+            assert_eq!(find(other.path(), home.path()), Found::Approved(cms()));
+        }
         // One that can't be read says why.
         std::fs::write(&path, "start = [1, 2\n").unwrap();
         assert!(matches!(find(root.path(), home.path()), Found::Broken(_)));
@@ -876,6 +952,24 @@ mod tests {
         );
         assert!(!crate::tools::shell::group_alive(pgid));
         assert_eq!(std::fs::read_to_string(&log).unwrap(), "serving\n");
+        // Returns, having left a server running behind it, with no stop
+        // command: what it left is Ryter's to end.
+        let run = RunFile {
+            start: Some("sleep 60 &".into()),
+            ..RunFile::default()
+        };
+        let Start::Up { started, .. } =
+            start(&run, root.path(), &log, Duration::from_secs(20), &cancel).unwrap()
+        else {
+            panic!("did not start");
+        };
+        let pgid = started.pgid().expect("what it left running is held");
+        assert!(crate::tools::shell::group_alive(pgid));
+        assert_eq!(
+            stop(started, root.path(), &cancel).unwrap(),
+            "ended what the start command left running"
+        );
+        assert!(!crate::tools::shell::group_alive(pgid));
         // Nothing to start.
         assert!(matches!(
             start(
@@ -917,6 +1011,43 @@ mod tests {
             Start::Failed(why) => assert!(why.contains("did not answer"), "{why}"),
             other => panic!("{other:?}"),
         }
+        // A start that returned but never came up is taken down again: a
+        // stack whose health check fails is not left up with nothing to
+        // stop it by.
+        let run = RunFile {
+            start: Some("echo up > state".into()),
+            ready: Some(url.clone()),
+            stop: Some("echo down > state".into()),
+            ..RunFile::default()
+        };
+        match start(&run, root.path(), &log, Duration::from_millis(600), &cancel).unwrap() {
+            Start::Failed(why) => assert!(
+                why.contains("Ryter ran `echo down > state` to take it down"),
+                "{why}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("state")).unwrap(),
+            "down\n"
+        );
+        // Cancelled during the wait: the same.
+        std::fs::remove_file(root.path().join("state")).unwrap();
+        let stopped = crate::cancel::Cancel::new();
+        let flag = stopped.clone();
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(400));
+            flag.cancel();
+        });
+        assert!(matches!(
+            start(&run, root.path(), &log, Duration::from_secs(20), &stopped).unwrap(),
+            Start::Cancelled
+        ));
+        t.join().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("state")).unwrap(),
+            "down\n"
+        );
     }
 
     #[test]
@@ -931,9 +1062,18 @@ mod tests {
             pid: None,
         };
         remember(home.path(), root.path(), &left).unwrap();
-        assert_eq!(remembered(home.path(), root.path()), Some(left));
+        assert_eq!(remembered(home.path(), root.path()), Some(left.clone()));
         let other = TempDir::new().unwrap();
         assert_eq!(remembered(home.path(), other.path()), None);
+        // Two folders whose names differ only in punctuation are two
+        // projects.
+        let parent = TempDir::new().unwrap();
+        let (dash, under) = (parent.path().join("my-app"), parent.path().join("my_app"));
+        std::fs::create_dir_all(&dash).unwrap();
+        std::fs::create_dir_all(&under).unwrap();
+        remember(home.path(), &dash, &left).unwrap();
+        assert!(remembered(home.path(), &dash).is_some());
+        assert_eq!(remembered(home.path(), &under), None);
         forget(home.path(), root.path());
         assert_eq!(remembered(home.path(), root.path()), None);
     }

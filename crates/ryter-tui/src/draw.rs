@@ -330,11 +330,15 @@ fn prompt_keys(view: &View, theme: Theme, width: usize) -> Line<'static> {
     if view.panels.top().is_none() && view.palette.is_none() && view.composer.is_empty() {
         keys.insert(0, ("$".into(), "spend".into(), Hint::Useful));
     }
+    // Three columns between keys, and one after the last: the gap before
+    // the border's corner is not worth a key.
     let used = |keys: &[(String, String, Hint)]| -> usize {
-        keys.iter()
+        (keys
+            .iter()
             .map(|(k, l, _)| wrap::width(k) + 1 + wrap::width(l) + 3)
             .sum::<usize>()
-            + 1
+            + 1)
+        .saturating_sub(2)
     };
     while used(&keys) > width && keys.len() > 1 {
         let worst = keys
@@ -345,7 +349,8 @@ fn prompt_keys(view: &View, theme: Theme, width: usize) -> Line<'static> {
         keys.remove(worst);
     }
     let mut spans = vec![Span::styled(" ", Style::default().bg(theme.bg))];
-    for (k, l, _) in keys {
+    let last = keys.len().saturating_sub(1);
+    for (i, (k, l, _)) in keys.into_iter().enumerate() {
         spans.push(Span::styled(
             k,
             Style::default()
@@ -354,7 +359,7 @@ fn prompt_keys(view: &View, theme: Theme, width: usize) -> Line<'static> {
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(
-            format!(" {l}   "),
+            format!(" {l}{}", if i == last { " " } else { "   " }),
             Style::default().fg(theme.dim).bg(theme.bg),
         ));
     }

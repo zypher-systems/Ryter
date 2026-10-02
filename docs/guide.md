@@ -214,7 +214,7 @@ One model works in your project, in the build hat to start with. `Tab` switches 
 
 **The test hat has a conversation of its own.** The plan, build and review hats share one conversation. The tester doesn't read it: it judges the product from the plan, the decisions and from using it, not from the builder's account of the work.
 
-- **`Tab` to Test** and the chat shows the tester's thread, under a line that names it ("TEST THREAD"). `Tab` away and the shared conversation is back as you left it. Each keeps its own scroll position.
+- **`Tab` to Test** and the chat shows the tester's thread, under a line that names it ("TEST THREAD"). `Tab` away and the shared conversation is back as you left it. Each keeps its own scroll position and its own context gauge.
 - **It continues through the session.** The tester remembers what it tried before, so "retest the health check" works. Both conversations are saved, and both come back when you resume the session.
 - **A turn stays in its own conversation.** You can look at the main chat while a test runs, or at the tester's thread while a build does: what a running turn says goes to the conversation it is part of. The model can't switch into or out of the test hat in the middle of a turn; that is yours to do with `Tab`.
 - **What it may run:** what the build hat runs without asking (your toolchains, the project's programs, its containers), plus requests to the project's own address: `curl` to `localhost`, `127.0.0.1` or a `.localhost` name, saving only to `/tmp` or your home folder. What the build hat asks about, it asks about. It can't edit, delete or move the project's files, and a redirect into the project is refused.
@@ -258,15 +258,18 @@ stop  = "docker compose down"
 ```
 
 - **The model drafts it, you approve it.** The first time the tester needs it, it reads the project and proposes the commands in a panel: `y` approves and saves the file, `e` says what to change, `n` rejects. Leave out what the project doesn't have.
+- **You are shown every word.** A command longer than the panel wraps under itself, and `y` is taken only once the last row has been on screen: what you approve here runs without another question. A command that deletes or discards something is pointed out above the list.
 - **Ryter runs what you approved, itself.** Starting waits until `ready` answers (any answer that isn't a server error), for up to five minutes. A start command that stays in the foreground (`npm run dev`, `cargo run`) is kept running by Ryter; through the shell tool it would be cut off when the command didn't return.
-- **Approval is of what the file says.** It is kept in `~/.ryter/run-approved.toml`, not in the project. A run file that came with a clone, or that anyone changed since (you, the model, a `git pull`), is shown to you again before anything in it runs.
-- **Limits:** a command Ryter runs for nobody (`sudo`, inline code) can't be in it, and `ready` has to be an address on this machine. Headless, `--always-approve` is your yes to the file as it stands; without it nothing in the file runs.
+- **Approval is of what you were shown.** It is kept in `~/.ryter/run-approved.toml`, not in the project. A run file that came with a clone, or that anyone changed since (you, the model, a `git pull`), is shown to you again before anything in it runs, and a file rewritten while you were reading is not the one you approved.
+- **Limits:** a command Ryter runs for nobody (`sudo`, inline code) can't be in it, and `ready` has to be an address on this machine. Only the test hat runs these commands.
+- **Headless** (`ryter -p --hat test`), nobody can approve anything, so the model can't save a run file. One you wrote yourself runs with `--always-approve`, as far as that flag reaches in the test hat: nothing outside the project, nothing that deletes or rewrites the project's files. It is not recorded as approved, so the TUI still asks.
+- **A start that doesn't come up is taken down again.** If the start command returned but `ready` never answered, or you pressed `esc` while it was waiting, Ryter runs the stop command (or ends what the start command left running) and says so. Nothing half-started is left behind without a way to stop it.
 
 **The product is left running.** After a test the product stays up, so you can look at what the tester saw. The chat says where it is.
 
 - **`/stop`** stops it: the `stop` command, or, when the file has none, ending the start command Ryter is holding.
 - **Quitting asks.** With the product still up, `^c` shows "stop the project?": `⏎` stops it and leaves, `n` leaves it running, `esc` stays.
-- **A later session knows.** Left running, it is remembered: the next session in that project says so, and `/stop` there runs the `stop` command. A start command left running with no `stop` command is yours to end; Ryter gives you its process number and doesn't end a process it can't be sure is the one it started.
+- **A later session knows.** Left running, it is remembered: the next session in that project says so, the tester doesn't start it a second time, and `/stop` there runs the `stop` command. A start command left running with no `stop` command is yours to end; Ryter gives you its process number and doesn't end a process it can't be sure is the one it started.
 - **Only what Ryter started.** It never stops containers or processes it didn't start, and never removes volumes unless your `stop` command says to.
 
 **Approving a plan.** When the model has a plan, it shows it in a panel instead of writing it into the chat: the goal, the steps, the files, the risks, and how to verify it. `↑`/`↓` and `PgUp`/`PgDn` scroll a long one. You answer:
@@ -318,7 +321,7 @@ stop  = "docker compose down"
 - **Your toolchains,** whatever the subcommand: `cargo`, `npm`, `pnpm`, `yarn`, `bun`, `node`, `python`, `pip`, `uv`, `pytest`, `go`, `make`, `mvn`, `gradle`, `dotnet`, and the rest of their kind. `cargo install`, `npm install` and `pip install` included.
 - **The project's own programs:** `./scripts/setup.sh`, `bin/cms-admin`, `./manage.py`, and `bash` given a script file of the project's.
 - **Programs you installed under your home folder:** whatever `PATH` finds in `~/.cargo/bin`, `~/.local/bin`, a node or python manager's folder.
-- **The project's containers,** with `docker` or `podman`: `build`, `compose build`, `up`, `down`, `run`, `exec`, `restart`, `logs`, `ps`, `pull`, and `docker run` with folders of the project's mounted.
+- **The project's containers,** with `docker` or `podman`: `build`, `compose build`, `up`, `down`, `run`, `exec`, `restart`, `logs`, `ps`, `pull`, and `docker run` with folders of the project's (or of `/tmp`) mounted. Paths inside the container, such as `-w /app` or `ls /app`, are the container's and are not judged.
 - **`cd`** into a folder of the project.
 
 These still ask:
@@ -328,7 +331,9 @@ These still ask:
 - **Deleting and moving:** `rm`, `mv`, `chmod`, `git reset --hard`, and removing a stack's volumes (`docker compose down -v`, `docker volume rm`, any `prune`). `y` only, with no "allow for this session".
 - **Publishing and signing in:** `cargo publish`, `npm publish`, `npm login`, `docker push`, `docker login`.
 - **Tools that work on a service somewhere else:** `gh`, `aws`, `gcloud`, `kubectl`, `terraform`, `curl`, `wget`.
-- **In Docker:** stopping or removing a container by name (`docker stop`, `docker rm`), since it may not be this project's; another machine (`-H`, `--context`); a compose file outside the project; and giving a container the host (`--privileged`, a mount of `/`, the Docker socket, or a folder where keys are kept).
+- **A script that isn't the project's:** `python3 /tmp/probe.py`, `node ~/x.js`. The project's own scripts run.
+- **A command that prints files it is handed out of sight:** `… | xargs cat`, `find … -exec grep …`.
+- **In Docker:** copying files in or out of a container (`docker cp`), a mount of your home folder or the folder above the project, stopping or removing a container by name (`docker stop`, `docker rm`), since it may not be this project's; another machine (`-H`, `--context`); a compose file outside the project; and giving a container the host (`--privileged`, a mount of `/`, the Docker socket, or a folder where keys are kept).
 
 A toolchain runs the project's code: `cargo build` runs its build script and `npm install` its install scripts. If you don't want that unasked, a sandbox profile limits what any command can touch (see "Sandbox profiles").
 
@@ -352,7 +357,7 @@ The plan and review hats still change nothing in the project itself. What is ope
 
 **A sandbox profile is stricter than this for your home folder.** With `workspace` or `read-only` chosen in `/settings`, `/tmp` is open as it is here, but the system itself shuts your home folder (beyond your tools and their caches) to every command, whatever the rules above allow. The model is told so, so a refusal isn't reported as a broken tool. To have your home folder open to commands, the profile has to be `off`.
 
-**What review may run** is judged by the command's form, not the tool's name. `cargo test`, `cargo clippy`, `cargo fmt --check`, `npm test`, `npm run lint`, `npx vitest run`, `npx tsc --noEmit`, `npx prettier --check`, `pytest`, `ruff check`, `black --check`, `go test`, `go vet`, `make test`, and the like run. `cargo fmt`, `npm install`, `npm run format`, `npx <any package>`, `ruff --fix`, `make install`, and `python -m pip install` don't. Review may still run the project's own code, which is what tests do.
+**What review may run** is judged by the command's form, not the tool's name. `cargo test`, `cargo clippy`, `cargo fmt --check`, `npm test`, `npm run lint`, `npx vitest run`, `npx tsc --noEmit`, `npx prettier --check`, `pytest`, `ruff check`, `black --check`, `go test`, `go vet`, `make test`, and the like run. `cargo fmt`, `npm install`, `npm run format`, `npx <any package>`, `ruff --fix`, `make install`, and `python -m pip install` don't. Review may still run the project's own code, which is what tests do: a file of the project's, and no other. A script in `/tmp`, your home folder or its own notes is refused, since it could have written it a moment ago. `xargs` in front of a command that prints files (`cat`, `grep`) is refused too, in the plan hat as well: the files it is handed can't be checked, and a secret could be among them. Search with `grep -rn` or `rg` and a folder.
 
 **Commands the gate refuses in every hat:**
 - the never-run list (`sudo`, `ssh`, `dd`, `mkfs`, `systemctl`, `crontab`, …), however it's wrapped: `env -i sudo`, `timeout 5 sudo`, `nice dd`, `xargs ssh`, `find -exec sudo`, `busybox rm`, `s\udo`;

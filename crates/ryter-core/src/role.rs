@@ -41,7 +41,8 @@ pub enum Role {
 }
 
 /// Which conversation a turn is part of.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Thread {
     /// The one the plan, build and review hats share.
     #[default]

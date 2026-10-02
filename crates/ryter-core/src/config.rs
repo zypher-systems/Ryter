@@ -1679,6 +1679,25 @@ fn trust_path() -> PathBuf {
     home_dir().join("trusted.json")
 }
 
+/// Whether `root` has anything trust is asked about: a `.ryter/` folder
+/// holding skills, commands, configuration or anything else the project
+/// brings.
+///
+/// Ryter keeps its own record of the work there too (approved plans, the
+/// decisions file, the run file, test reports). Those are written by Ryter
+/// with the user's yes, and none of them is loaded as configuration, so a
+/// folder holding nothing else is not something to ask about. Asked anyway,
+/// every project Ryter had saved a plan in opened with "trust this
+/// project's .ryter/?".
+pub fn asks_for_trust(root: &Path) -> bool {
+    const OWN: &[&str] = &["plans", "tests", "decisions.md", "run.toml"];
+    fs::read_dir(root.join(".ryter")).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .any(|e| !OWN.contains(&e.file_name().to_string_lossy().as_ref()))
+    })
+}
+
 /// Whether `root` is a trusted project folder.
 pub fn is_trusted(root: &Path) -> bool {
     let Ok(canon) = fs::canonicalize(root) else {
@@ -1721,6 +1740,26 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::TempDir;
+
+    /// Trust is asked for what a project brings, not for Ryter's own
+    /// record of the work in it.
+    #[test]
+    fn ryters_own_files_are_not_asked_about() {
+        let proj = tempfile::TempDir::new().unwrap();
+        let p = proj.path();
+        assert!(!asks_for_trust(p), "no .ryter folder");
+        fs::create_dir_all(p.join(".ryter/plans")).unwrap();
+        fs::create_dir_all(p.join(".ryter/tests")).unwrap();
+        fs::write(p.join(".ryter/plans/2026-10-01-cms.md"), "# plan\n").unwrap();
+        fs::write(p.join(".ryter/decisions.md"), "# Decisions\n").unwrap();
+        fs::write(p.join(".ryter/run.toml"), "start = \"x\"\n").unwrap();
+        assert!(!asks_for_trust(p), "only Ryter's own files");
+        fs::create_dir_all(p.join(".ryter/skills/deploy")).unwrap();
+        assert!(asks_for_trust(p), "a project skill");
+        fs::remove_dir_all(p.join(".ryter/skills")).unwrap();
+        fs::write(p.join(".ryter/config.toml"), "").unwrap();
+        assert!(asks_for_trust(p), "project configuration");
+    }
 
     #[test]
     fn ui_section_is_optional_and_sparse() {

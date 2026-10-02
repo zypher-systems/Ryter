@@ -368,13 +368,13 @@ pub fn run(init: WorkerInit) {
             Ok(Work::Turn { text, reply }) => {
                 if let Some(a) = &mut agent {
                     a.ctx.cancel.reset();
-                    let before = a.session.meta.checkpoints.len();
+                    let before = a.session.changed_turns;
                     let out = match rt.block_on(a.turn(&text)) {
                         Ok(r) => {
                             // A build turn that finished and changed files:
                             // offer a review. Not for a turn another program
                             // asked for over MCP.
-                            let changed = a.session.meta.checkpoints.len() > before;
+                            let changed = a.session.changed_turns > before;
                             if changed
                                 && reply.is_none()
                                 && r.reason == ryter_core::StopReason::Completed
@@ -509,6 +509,7 @@ pub fn run(init: WorkerInit) {
                 if let Some(a) = &mut agent {
                     let _ = a.put_on(role);
                 }
+                let _ = ev_tx.send(AgentEvent::HatSet { role });
             }
             Ok(Work::SetOfferAudit(on)) => {
                 cfg.ui.offer_audit = on;
@@ -758,6 +759,10 @@ pub fn run(init: WorkerInit) {
                     emit_mcp_status(&a, &ev_tx);
                     refresh_live(&a, &live_status, &live_spend);
                     let _ = ev_tx.send(a.checkpoint_event());
+                    let mut a = a;
+                    // As at startup: a product an earlier session left
+                    // running is still this one's to stop.
+                    let _ = a.announce_product();
                     agent = Some(a);
                 }
             }

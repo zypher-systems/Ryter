@@ -336,9 +336,14 @@ fn read_only(prog: &str, words: &[String]) -> bool {
 }
 
 /// Commands whose file arguments must not be a secret: they print contents.
+///
+/// Every read-only command that prints what is in a file has to be here: one
+/// that isn't (`hexdump`, `rev`, `column`, `paste` and `comm` weren't) prints
+/// `.env` in any hat. A test holds the two lists together.
 const READERS: &[&str] = &[
-    "cat", "head", "tail", "less", "more", "strings", "xxd", "od", "base64", "grep", "egrep",
-    "fgrep", "rg", "nl", "tac", "cut", "awk", "sed", "sort", "uniq", "diff", "cmp", "jq", "yq",
+    "cat", "head", "tail", "less", "more", "strings", "xxd", "od", "hexdump", "base64", "grep",
+    "egrep", "fgrep", "rg", "nl", "tac", "rev", "cut", "awk", "sed", "sort", "uniq", "diff", "cmp",
+    "comm", "paste", "column", "jq", "yq",
 ];
 
 /// What the review hat may run: the forms of build, test, and lint tools
@@ -719,10 +724,7 @@ fn runs_freely_in(
     if REACHES_OUT.contains(&prog) || publishes(prog, args) {
         return false;
     }
-    if matches!(
-        prog,
-        "docker" | "podman" | "docker-compose" | "podman-compose"
-    ) {
+    if is_container_tool(prog) {
         return containers_freely(prog, args, ctx);
     }
     if TOOLCHAINS.contains(&prog) || prog.starts_with("cargo-") {
@@ -733,20 +735,41 @@ fn runs_freely_in(
         return args
             .iter()
             .find(|a| !a.starts_with('-'))
-            .is_some_and(|f| resolve(ctx, f).is_some_and(|p| p.is_file()));
+            .is_some_and(|f| in_project(f, ctx) && resolve(ctx, f).is_some_and(|p| p.is_file()));
     }
     own_program(raw, ctx, path, home)
 }
 
+fn is_container_tool(prog: &str) -> bool {
+    matches!(
+        prog,
+        "docker" | "podman" | "docker-compose" | "podman-compose"
+    )
+}
+
 /// A `docker` or `podman` command the hats that do the work run without
 /// asking: building, starting, stopping and using the project's stack.
-///
-/// What still asks is what a stack doesn't need and a person would want to
-/// see first: destroying data (volumes, prune), touching containers that
-/// may not be this project's (`docker stop`, `docker rm`), publishing
-/// (`push`, `login`), another machine (`-H`, `--context`), and giving a
-/// container the host (`--privileged`, a mount from outside the project).
 fn containers_freely(prog: &str, args: &[String], ctx: &ToolContext) -> bool {
+    container_decision(prog, args, ctx) == Decision::Allow
+}
+
+/// What a `docker` or `podman` command comes to in the hats that do the
+/// work.
+///
+/// Building, starting, stopping and using the project's stack runs. What
+/// asks is what a stack doesn't need and a person would want to see first:
+/// destroying data (volumes, prune), touching containers that may not be
+/// this project's (`docker stop`, `docker rm`), copying files in or out
+/// (`cp`), publishing (`push`, `login`), another machine (`-H`,
+/// `--context`), and giving a container the host (`--privileged`).
+///
+/// The paths it judges are this machine's: a compose file, a build
+/// context, the folder a mount hands over. Those stay in the project (a
+/// mount may also be scratch space); anywhere else is a question every
+/// time, and a place where keys are kept is refused. Paths inside the
+/// container (`-w /app`, `ls /app`) are not this machine's and are not
+/// judged.
+fn container_decision(prog: &str, args: &[String], ctx: &ToolContext) -> Decision {
     // Another machine, the whole host, or a registry.
     const NEVER_FREE: &[&str] = &[
         "-H",
@@ -860,34 +883,55 @@ fn containers_freely(prog: &str, args: &[String], ctx: &ToolContext) -> bool {
         "--cpu-shares",
         "-c",
     ];
-    let ours = |v: &str| {
-        resolve(ctx, v).is_some()
-            || resolve_outside(ctx, v).is_some_and(|p| free_place(&p, ctx, true))
+    // A path on this machine that isn't the project's: a question every
+    // time, or a refusal where keys are kept. One only the shell can read
+    // (`$X`) is a question too.
+    let elsewhere = |v: &str| match resolve_outside(ctx, v) {
+        Some(p) if forbidden_to_read(&p, ctx) => Decision::Deny,
+        _ => Decision::AskOutside,
     };
-    // A mount hands the container a folder: a named volume, or a folder of
-    // the project's or the user's. Not the system, the Docker socket, or a
-    // place where keys are kept.
-    let mount_ok = |m: &str| -> bool {
+    // A file or folder a command is pointed at: the project's.
+    let file = |v: &str| {
+        if in_project(v, ctx) {
+            Decision::Allow
+        } else {
+            elsewhere(v)
+        }
+    };
+    // A folder a container is handed: a named volume, a folder of the
+    // project's, or scratch space. Not the folder above the project, which
+    // holds the projects beside it; not the user's own folder; not the
+    // Docker socket.
+    let mount = |m: &str| -> Decision {
         let source = if m.contains("type=") || m.contains("source=") || m.contains("src=") {
             if m.contains("type=volume") || m.contains("type=tmpfs") {
-                return true;
+                return Decision::Allow;
             }
             match m.split(',').find_map(|kv| {
                 kv.strip_prefix("source=")
                     .or_else(|| kv.strip_prefix("src="))
             }) {
                 Some(s) => s,
-                None => return false,
+                None => return Decision::Ask,
             }
         } else {
             match m.split_once(':') {
                 Some((s, _)) => s,
                 // An anonymous volume at a path in the container.
-                None => return true,
+                None => return Decision::Allow,
             }
         };
         let is_path = source.starts_with(['/', '.', '~']) || source.contains('$');
-        !is_path || ours(source)
+        if !is_path || in_project(source, ctx) {
+            return Decision::Allow;
+        }
+        let scratch = resolve_outside(ctx, source)
+            .is_some_and(|p| scratch_dirs().iter().any(|t| is_under(&p, t)));
+        if scratch {
+            Decision::Allow
+        } else {
+            elsewhere(source)
+        }
     };
     // The words that aren't options or their values, in order: the
     // subcommands, then what they are given.
@@ -896,6 +940,7 @@ fn containers_freely(prog: &str, args: &[String], ctx: &ToolContext) -> bool {
     } else {
         Vec::new()
     };
+    let mut worst = Decision::Allow;
     let mut removes_volumes = false;
     let mut i = 0;
     while let Some(a) = args.get(i).map(String::as_str) {
@@ -918,7 +963,8 @@ fn containers_freely(prog: &str, args: &[String], ctx: &ToolContext) -> bool {
             _ => (a, None),
         };
         if NEVER_FREE.contains(&name) {
-            return false;
+            worst = worst.and(Decision::Ask);
+            continue;
         }
         let mut value = || {
             attached.or_else(|| {
@@ -932,23 +978,23 @@ fn containers_freely(prog: &str, args: &[String], ctx: &ToolContext) -> bool {
             if name == "-f" && plain.iter().any(|p| matches!(*p, "logs" | "rm")) {
                 continue;
             }
-            match value() {
-                Some(v) if ours(v) => continue,
-                _ => return false,
-            }
+            worst = worst.and(match value() {
+                Some(v) => file(v),
+                None => Decision::Ask,
+            });
+            continue;
         }
         if running {
-            match name {
+            worst = worst.and(match name {
                 "-v" | "--volume" | "--mount" => match value() {
-                    Some(v) if mount_ok(v) => {}
-                    _ => return false,
+                    Some(v) => mount(v),
+                    None => Decision::Ask,
                 },
-                n if RUN_FLAGS.contains(&n) => {}
-                n if RUN_VALUED.contains(&n) => {
-                    if value().is_none() {
-                        return false;
-                    }
-                }
+                n if RUN_FLAGS.contains(&n) => Decision::Allow,
+                n if RUN_VALUED.contains(&n) => match value() {
+                    Some(_) => Decision::Allow,
+                    None => Decision::Ask,
+                },
                 // `-it`, `-itd`: a cluster of flags. `-eKEY=1`, `-p80:80`:
                 // a value attached.
                 n if !n.starts_with("--") && n.len() > 2 => {
@@ -956,38 +1002,51 @@ fn containers_freely(prog: &str, args: &[String], ctx: &ToolContext) -> bool {
                     let flags = n[1..]
                         .chars()
                         .all(|c| RUN_FLAGS.contains(&format!("-{c}").as_str()));
-                    let valued =
-                        RUN_VALUED.contains(&first) || (first == "-v" && mount_ok(&n[2..]));
-                    if !flags && !valued {
-                        return false;
+                    if flags || RUN_VALUED.contains(&first) {
+                        Decision::Allow
+                    } else if first == "-v" {
+                        mount(&n[2..])
+                    } else {
+                        Decision::Ask
                     }
                 }
-                _ => return false,
-            }
+                _ => Decision::Ask,
+            });
             continue;
         }
         match name {
             "-v" | "--volumes" => removes_volumes = true,
             n if plain == ["compose"] && COMPOSE_VALUED.contains(&n) => {
                 if value().is_none() {
-                    return false;
+                    worst = worst.and(Decision::Ask);
                 }
             }
             _ => {}
         }
     }
     let sub = plain.get(1).copied();
-    match plain.first().copied() {
+    let first = plain.first().copied();
+    // A build's context is a folder of this machine's.
+    if matches!(first, Some("build")) || (first == Some("buildx") && sub == Some("build")) {
+        for ctx_path in plain.iter().skip(1).filter(|w| **w != "build") {
+            if ctx_path.starts_with(['/', '.', '~']) {
+                worst = worst.and(file(ctx_path));
+            }
+        }
+    }
+    let runs = match first {
         Some("compose") => match sub {
             Some("down" | "rm") => !removes_volumes,
-            Some("push" | "publish") => false,
+            // `cp` moves files between a container and anywhere: in or out
+            // of the project, a secret among them.
+            Some("push" | "publish" | "cp") => false,
             Some(_) => true,
             None => false,
         },
         Some(
             "build" | "buildx" | "run" | "create" | "start" | "exec" | "logs" | "ps" | "images"
-            | "pull" | "inspect" | "version" | "info" | "tag" | "port" | "top" | "stats" | "cp"
-            | "wait" | "events" | "history" | "diff" | "search" | "attach",
+            | "pull" | "inspect" | "version" | "info" | "tag" | "port" | "top" | "stats" | "wait"
+            | "events" | "history" | "diff" | "search" | "attach",
         ) => true,
         // The groups: looking and making run; removing asks.
         Some(
@@ -1019,9 +1078,10 @@ fn containers_freely(prog: &str, args: &[String], ctx: &ToolContext) -> bool {
         ),
         // `docker --version`.
         None => args.iter().any(|a| a == "--version" || a == "-v"),
-        // stop, kill, rm, rmi, restart, prune, push, login, save, load, …
+        // stop, kill, rm, rmi, restart, prune, cp, push, login, save, load, …
         _ => false,
-    }
+    };
+    worst.and(if runs { Decision::Allow } else { Decision::Ask })
 }
 
 /// What a `docker` or `podman` command comes to, for a role that only
@@ -1490,10 +1550,25 @@ fn decide_segment_in(seg: &str, ctx: &ToolContext, in_container: bool) -> Decisi
     if NEVER.contains(&prog) || prog.starts_with("mkfs") {
         return Decision::Deny;
     }
+    // Files the gate can't see, handed to a command that prints them: a
+    // secret could be among them. A person can be asked; where nobody is,
+    // it is refused.
+    let unseen = if matches!(ctx.role, Role::SoloBuild | Role::SoloTest) {
+        Decision::Ask
+    } else {
+        Decision::Deny
+    };
+    if parsed.via_xargs && READERS.contains(&prog) {
+        return unseen;
+    }
     // `find -exec cmd {} ;` runs `cmd`: it answers to the same rules.
     let mut nested = Decision::Allow;
     for inner in exec_commands(prog, &words) {
         nested = nested.and(decide_segment(&inner, ctx));
+        // And what it is given is whatever `find` matched.
+        if program(&self::words(&inner)).is_some_and(|p| READERS.contains(&p)) {
+            nested = nested.and(unseen);
+        }
         if nested == Decision::Deny {
             return Decision::Deny;
         }
@@ -1562,8 +1637,11 @@ fn decide_segment_in(seg: &str, ctx: &ToolContext, in_container: bool) -> Decisi
             let raw = words
                 .get(parsed.args.wrapping_sub(1))
                 .map_or(prog, String::as_str);
-            let base = if (read_only(prog, &words) && !path_escapes(&words, ctx))
-                || runs_freely(prog, raw, args, ctx)
+            let own = &words[parsed.args.saturating_sub(1).min(words.len())..];
+            let base = if is_container_tool(prog) {
+                container_decision(prog, args, ctx)
+            } else if (read_only(prog, &words) && !path_escapes(&words, ctx))
+                || (runs_freely(prog, raw, args, ctx) && !runs_a_foreign_script(prog, own, ctx))
             {
                 Decision::Allow
             } else {
@@ -1575,8 +1653,15 @@ fn decide_segment_in(seg: &str, ctx: &ToolContext, in_container: bool) -> Decisi
             // A check or a look, at the project or one of the open places.
             // With no rule about where, `cat ~/.ssh/id_rsa` ran here
             // without a question: reading is all it does.
-            if checks_only(prog, args) || read_only(prog, &words) {
+            if read_only(prog, &words) {
                 if !in_container && path_escapes(&words, ctx) {
+                    Decision::Deny
+                } else {
+                    Decision::Allow
+                }
+            } else if checks_only(prog, args) {
+                // What it runs is the project's, and nothing else's.
+                if !in_container && leaves_project(&words, ctx) {
                     Decision::Deny
                 } else {
                     Decision::Allow
@@ -1607,8 +1692,11 @@ fn decide_segment_in(seg: &str, ctx: &ToolContext, in_container: bool) -> Decisi
             let raw = words
                 .get(parsed.args.wrapping_sub(1))
                 .map_or(prog, String::as_str);
-            let base = if (read_only(prog, &words) && !path_escapes(&words, ctx))
-                || runs_freely(prog, raw, args, ctx)
+            let own = &words[parsed.args.saturating_sub(1).min(words.len())..];
+            let base = if is_container_tool(prog) {
+                container_decision(prog, args, ctx)
+            } else if (read_only(prog, &words) && !path_escapes(&words, ctx))
+                || (runs_freely(prog, raw, args, ctx) && !runs_a_foreign_script(prog, own, ctx))
                 || own_request(prog, args, ctx)
             {
                 Decision::Allow
@@ -1989,6 +2077,22 @@ pub fn bash_hint(args: &Value) -> Option<&'static str> {
              names instead (`git ls-files '*.rs' | xargs wc -l`).",
         );
     }
+    let unseen = segments(cmd).iter().any(|s| {
+        let w = words(s);
+        let p = parse(&w);
+        let Some(prog) = p.prog else { return false };
+        (p.via_xargs && READERS.contains(&prog))
+            || exec_commands(prog, &w)
+                .iter()
+                .any(|inner| program(&words(inner)).is_some_and(|i| READERS.contains(&i)))
+    });
+    if unseen {
+        return Some(
+            "`xargs` and `find -exec` hand a command files that can't be checked before it \
+             runs, and this command prints what is in them: a secret could be among them. \
+             Search with `grep -rn PATTERN <folder>` or `rg`, or name the files.",
+        );
+    }
     segments(cmd)
         .iter()
         .map(|s| words(s))
@@ -2012,6 +2116,11 @@ pub fn bash_hint(args: &Value) -> Option<&'static str> {
 /// `-e`, `--eval`, `--print`, stdin, `deno eval`, or a REPL. `args` are the
 /// words after the interpreter.
 fn inline_code(prog: &str, args: &[String]) -> bool {
+    // Stdin by another name: `python3 /dev/stdin` reads its code from the
+    // pipe, as `python3 -` does. It looked like a script on disk.
+    if args.iter().any(|a| is_stdin(a)) {
+        return true;
+    }
     let flag = |fs: &[&str]| {
         args.iter()
             .any(|a| fs.iter().any(|f| a == f || a.starts_with(&format!("{f}="))))
@@ -2664,6 +2773,71 @@ fn makes_only_scratch(args: &[String], ctx: &ToolContext) -> bool {
     true
 }
 
+/// A path that is the command's own standard input (or another descriptor
+/// it was handed): `/dev/stdin`, `/dev/fd/0`, `/proc/self/fd/0`.
+fn is_stdin(word: &str) -> bool {
+    word == "/dev/stdin"
+        || word.starts_with("/dev/fd/")
+        || word
+            .strip_prefix("/proc/")
+            .and_then(|r| r.split_once('/'))
+            .is_some_and(|(_, rest)| rest.starts_with("fd/"))
+}
+
+/// Inside the project itself: not its notes folder, not scratch space, not
+/// the user's folder.
+fn in_project(word: &str, ctx: &ToolContext) -> bool {
+    resolve(ctx, word).is_some_and(|p| !is_under(&p, &real_path(&ctx.notes_dir)))
+}
+
+/// The words of a segment that are its arguments: not its options, and not
+/// a redirect or the file it names.
+fn plain_args(words: &[String]) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut skip = false;
+    for w in words.iter().skip(1) {
+        if skip {
+            skip = false;
+            continue;
+        }
+        match redirect(w, true) {
+            Redir::Next => skip = true,
+            Redir::To(_) | Redir::Dup => {}
+            Redir::No if w.starts_with('-') => {}
+            Redir::No => out.push(w.as_str()),
+        }
+    }
+    out
+}
+
+/// Whether a command that runs or checks code names anything outside the
+/// project: a path that isn't the project's, or one only the shell can
+/// read. The review hat runs the project's own files and no others: a
+/// script in scratch space or its notes is one it could have written a
+/// moment ago, which is inline code by another road.
+fn leaves_project(words: &[String], ctx: &ToolContext) -> bool {
+    plain_args(words).into_iter().any(|w| {
+        w.starts_with('~')
+            || w.contains('$')
+            || (looks_like_path(w) && !nowhere(w) && !in_project(w, ctx))
+    })
+}
+
+/// An interpreter given a script that isn't the project's: `python3
+/// /tmp/x.py`, `node notes/probe.js`. `python3 -m …` runs a module, and
+/// names no script.
+fn runs_a_foreign_script(prog: &str, words: &[String], ctx: &ToolContext) -> bool {
+    const RUN_FILES: &[&str] = &[
+        "python", "python3", "node", "nodejs", "tsx", "ts-node", "deno", "bun", "ruby", "php",
+    ];
+    if !RUN_FILES.contains(&prog) || words.iter().any(|w| w == "-m") {
+        return false;
+    }
+    plain_args(words)
+        .into_iter()
+        .any(|w| (w.contains('/') || w.contains('.')) && !nowhere(w) && !in_project(w, ctx))
+}
+
 /// The standard devices: writing to them writes no file, and reading them
 /// reads none.
 fn nowhere(word: &str) -> bool {
@@ -2902,6 +3076,7 @@ fn outside_segment(prog: &str, words: &[String], ctx: &ToolContext) -> Decision 
     // space and the user's folder included: "allow all" covers the project,
     // and `rm -rf ~/x` is not something it should cover.
     let destroys = DESTRUCTIVE.contains(&prog) || deleting_find(prog, words);
+    let containers = is_container_tool(prog);
     let mut outside = false;
     let mut writes_outside = false;
     let mut expect_redirect = false;
@@ -2940,7 +3115,10 @@ fn outside_segment(prog: &str, words: &[String], ctx: &ToolContext) -> Decision 
             }
             continue;
         }
-        if w.starts_with('-') {
+        // A container command's words are its own to judge
+        // ([`container_decision`]): `/app` in `docker run … ls /app` is a
+        // path in the container, not here.
+        if w.starts_with('-') || containers {
             continue;
         }
         let pathish = looks_like_path(w)
@@ -3495,6 +3673,253 @@ mod tests {
             "",
         ] {
             assert!(!url_host(other).is_some_and(own_host), "{other}");
+        }
+    }
+
+    /// A secret file is not printed by any command that prints files, in any
+    /// hat. The check ran for a list of such commands that had fallen behind
+    /// the list of read-only ones: `hexdump .env` printed the keys.
+    #[test]
+    fn every_command_that_prints_a_file_refuses_a_secret() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join(".env"), "KEY=1\n").unwrap();
+        std::fs::write(d.join("server.pem"), "x").unwrap();
+        for role in [
+            Role::SoloBuild,
+            Role::SoloPlan,
+            Role::SoloReview,
+            Role::SoloTest,
+        ] {
+            for cmd in [
+                "hexdump .env",
+                "hexdump -C .env",
+                "rev .env",
+                "column .env",
+                "paste .env",
+                "comm .env .env",
+                "cat server.pem",
+                "tac .env",
+            ] {
+                assert_eq!(bash(cmd, role, d), Decision::Deny, "{role:?}: {cmd}");
+            }
+            // Counting it, or seeing that it is there, prints nothing of it.
+            assert_eq!(bash("ls -la .env", role, d), Decision::Allow, "{role:?}");
+            assert_eq!(bash("wc -l .env", role, d), Decision::Allow, "{role:?}");
+        }
+        // Every read-only command either prints files, and is checked, or
+        // is named here as one that doesn't.
+        const NOT_PRINTING: &[&str] = &[
+            "ls",
+            "wc",
+            "file",
+            "which",
+            "type",
+            "stat",
+            "du",
+            "df",
+            "basename",
+            "dirname",
+            "realpath",
+            "readlink",
+            "pwd",
+            "echo",
+            "printf",
+            "true",
+            "false",
+            "date",
+            "uname",
+            "hostname",
+            "whoami",
+            "id",
+            "tr",
+            "seq",
+            "fd",
+            "find",
+            "tree",
+            "sha256sum",
+            "sha1sum",
+            "md5sum",
+            "shasum",
+            "cksum",
+        ];
+        for prog in READ_ONLY {
+            assert!(
+                READERS.contains(prog) || NOT_PRINTING.contains(prog),
+                "{prog} is read-only: does it print a file's contents?"
+            );
+        }
+    }
+
+    /// A command that prints files, given files the gate can't see (through
+    /// `xargs`, or `find -exec … {}`), could be handed a secret. It is a
+    /// question where someone can be asked, and refused where not.
+    #[test]
+    fn files_handed_to_a_printing_command_out_of_sight_are_not_just_read() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join(".env"), "KEY=1\n").unwrap();
+        for cmd in [
+            "find . -name .env -print | xargs cat",
+            "cat filelist | xargs cat",
+            "echo .env | xargs hexdump",
+            "git ls-files | xargs grep TOKEN",
+            "fd env -x cat",
+        ] {
+            for role in [Role::SoloPlan, Role::SoloReview] {
+                assert_eq!(bash(cmd, role, d), Decision::Deny, "{role:?}: {cmd}");
+            }
+            for role in [Role::SoloBuild, Role::SoloTest] {
+                assert_eq!(bash(cmd, role, d), Decision::Ask, "{role:?}: {cmd}");
+            }
+        }
+        // `find -exec` runs a command the gate can't follow file by file:
+        // only the build hat may, and it asks.
+        for cmd in [
+            "find . -name .env -exec cat {} +",
+            "find . -type f -exec grep -l KEY {} \\;",
+        ] {
+            for role in [Role::SoloPlan, Role::SoloReview, Role::SoloTest] {
+                assert_eq!(bash(cmd, role, d), Decision::Deny, "{role:?}: {cmd}");
+            }
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Ask, "{cmd}");
+        }
+        // What doesn't print a file is as it was, and so is a search that
+        // names where it looks.
+        for role in [Role::SoloPlan, Role::SoloReview, Role::SoloBuild] {
+            for cmd in [
+                "git ls-files '*.rs' | xargs wc -l",
+                "grep -rn TOKEN src",
+                "find . -name '*.rs' | sort",
+            ] {
+                assert_eq!(bash(cmd, role, d), Decision::Allow, "{role:?}: {cmd}");
+            }
+        }
+    }
+
+    /// Code piped to an interpreter is inline code however the pipe is
+    /// spelled, and the review hat runs only files that are the project's:
+    /// one it wrote to scratch space or its notes a moment ago is its own
+    /// code, not the work under review.
+    #[test]
+    fn the_review_hat_runs_only_the_projects_own_files() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::create_dir_all(d.join("scripts")).unwrap();
+        std::fs::write(d.join("scripts/check.py"), "print(1)\n").unwrap();
+        for role in [Role::SoloBuild, Role::SoloReview, Role::SoloTest] {
+            for cmd in [
+                "echo 'import os' | python3 /dev/stdin",
+                "echo 'x' | node /dev/stdin",
+                "cat x.py | python3 /dev/fd/0",
+                "cat x.py | python3 /proc/self/fd/0",
+                "cat x.sh | bash /dev/stdin",
+            ] {
+                assert_eq!(bash(cmd, role, d), Decision::Deny, "{role:?}: {cmd}");
+            }
+        }
+        for cmd in [
+            "python3 /tmp/ryter-probe.py",
+            "node /tmp/ryter-probe.js",
+            "python3 notes/probe.py",
+            "pytest /tmp/ryter-tests",
+            "go run /tmp/ryter-probe.go",
+            "cargo run --manifest-path /tmp/ryter-x/Cargo.toml",
+            "make -f /tmp/ryter-Makefile test",
+            "printf 'print(1)' > /tmp/ryter-probe.py && python3 /tmp/ryter-probe.py",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloReview, d), Decision::Deny, "{cmd}");
+        }
+        for cmd in [
+            "python3 scripts/check.py",
+            "python3 -m pytest -q",
+            "pytest tests/test_app.py -q > /tmp/ryter-out.txt 2>&1",
+            "cargo test",
+            "cat /tmp/ryter-out.txt",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloReview, d), Decision::Allow, "{cmd}");
+        }
+        // In the hats that do the work, a script that isn't the project's
+        // is a question; the project's own runs.
+        for role in [Role::SoloBuild, Role::SoloTest] {
+            for cmd in [
+                "python3 /tmp/ryter-probe.py",
+                "node /tmp/ryter-probe.js",
+                "python3 notes/probe.py",
+                "bash /tmp/ryter-probe.sh",
+            ] {
+                assert_eq!(bash(cmd, role, d), Decision::Ask, "{role:?}: {cmd}");
+            }
+            assert_eq!(
+                bash("python3 scripts/check.py", role, d),
+                Decision::Allow,
+                "{role:?}"
+            );
+            assert_eq!(
+                bash("python3 -m venv /tmp/ryter-venv", role, d),
+                Decision::Allow,
+                "{role:?}"
+            );
+        }
+    }
+
+    /// Copying into or out of a container moves files the gate can't judge
+    /// by the command's form, and a mount hands a container a folder: both
+    /// stay inside the project, or ask.
+    #[test]
+    fn containers_are_not_a_way_round_the_projects_edge() {
+        // Outside scratch space: there the folder above the project is
+        // `/tmp`, which a container may be handed.
+        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/policy-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = tempfile::Builder::new().tempdir_in(&base).unwrap();
+        let d = dir.path();
+        std::fs::write(d.join(".env"), "KEY=1\n").unwrap();
+        for role in [Role::SoloBuild, Role::SoloTest] {
+            for cmd in [
+                "docker cp web:/x src/main.rs",
+                "docker cp .env web:/tmp/",
+                "docker compose cp web:/x src/main.rs",
+                "docker run --rm -v ..:/x alpine",
+                "docker run --rm -v ../..:/x alpine",
+                "docker run --rm -v ~/stuff:/x alpine",
+                "docker compose -f ../compose.yml up -d",
+                "docker compose --project-directory .. up -d",
+            ] {
+                assert_ne!(bash(cmd, role, d), Decision::Allow, "{role:?}: {cmd}");
+            }
+            // A path inside the container is the container's: `/app` there
+            // is not `/app` here, and was asked about every time.
+            for cmd in [
+                "docker run --rm -v .:/app alpine ls /app",
+                "docker run --rm -w /app -v .:/app cms:dev pytest /app/tests",
+                "docker compose exec web cat /app/config.py",
+                "docker compose exec -w /srv web ls /srv",
+                "docker exec -it cms-web-1 tail -f /var/log/app.log",
+                "docker run --rm -v ./data:/data alpine",
+                "docker run --rm -v /tmp/ryter-scratch:/out alpine",
+                "docker run --rm -v cms-data:/var/lib/data alpine",
+                "docker compose -f docker-compose.yml up -d",
+            ] {
+                assert_eq!(bash(cmd, role, d), Decision::Allow, "{role:?}: {cmd}");
+            }
+            // The host's own folders are a question "allow all" doesn't
+            // answer, and where keys are kept is refused.
+            for cmd in [
+                "docker run --rm -v /:/host alpine",
+                "docker run --rm -v /etc:/etc:ro alpine",
+                "docker run --rm --mount type=bind,source=/opt/data,target=/d alpine",
+                "docker build -f /opt/other/Dockerfile .",
+                "docker build /opt/other",
+            ] {
+                assert_eq!(bash(cmd, role, d), Decision::AskOutside, "{role:?}: {cmd}");
+            }
+            for cmd in [
+                "docker run --rm -v ~/.ssh:/root/.ssh alpine",
+                "docker run --rm -v ~/.aws:/root/.aws:ro alpine",
+            ] {
+                assert_eq!(bash(cmd, role, d), Decision::Deny, "{role:?}: {cmd}");
+            }
         }
     }
 

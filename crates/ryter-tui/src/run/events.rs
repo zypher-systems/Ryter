@@ -59,16 +59,37 @@ fn receipt(view: &mut View, verb: &Verb, tools: u32, duration_ms: u64) -> String
 /// conversation, and the screen follows it.
 pub fn apply(view: &mut View, ev: AgentEvent) {
     use ryter_core::Thread;
+    // The agent saying which hat it put on at the user's Tab. Once it has
+    // caught up with every Tab, its word stands: a Tab pressed while it was
+    // changing hats itself would otherwise leave the screen naming a hat
+    // the agent is not in.
+    if let AgentEvent::HatSet { role } = &ev {
+        view.agent_hat = *role;
+        view.hats_pending = view.hats_pending.saturating_sub(1);
+        if view.hats_pending == 0 && view.mode != *role {
+            view.mode = *role;
+            view.show(role.thread());
+        }
+        return;
+    }
     let shown = view.shown;
     let target = match &ev {
         AgentEvent::TurnStarted { role, .. } => {
             view.turn_thread = role.thread();
+            view.turn_open = true;
+            view.agent_hat = *role;
             view.turn_thread
         }
         // A hat change the agent makes, and a report the tester files, are
         // said in the conversation the other hats share.
         AgentEvent::ModeChanged { .. } | AgentEvent::Tested { .. } => Thread::Main,
-        _ if view.busy => view.turn_thread,
+        // How full a conversation is belongs to that conversation's gauge,
+        // whenever it is measured.
+        AgentEvent::Context { thread, .. } => *thread,
+        // Until a turn closes, what arrives is that turn's: a stop or an
+        // error ends the busy state first, and the turn's closing line
+        // used to land in whichever conversation was on screen.
+        _ if view.turn_open => view.turn_thread,
         _ => shown,
     };
     view.show(target);
@@ -76,12 +97,20 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
     // back out of it. A change of hat within one conversation leaves the
     // screen where the user put it.
     let follow = match &ev {
-        AgentEvent::ModeChanged { role } if role.thread() != view.turn_thread => {
+        AgentEvent::ModeChanged { role } if role.thread() != view.agent_hat.thread() => {
             Some(role.thread())
         }
         _ => None,
     };
+    if let AgentEvent::ModeChanged { role } = &ev {
+        view.agent_hat = *role;
+    }
+    let closes = matches!(ev, AgentEvent::TurnFinished { .. });
     apply_to_shown(view, ev);
+    if closes {
+        view.turn_open = false;
+        view.starting_product = None;
+    }
     match follow {
         Some(thread) => {
             view.turn_thread = thread;
@@ -322,6 +351,8 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             }
             view.product = Some(now);
         }
+        // Taken in `apply`, before anything is routed.
+        AgentEvent::HatSet { .. } => {}
         AgentEvent::ModeChanged { role } => {
             view.mode = *role;
             // A hat on a model of its own says which: the next message
@@ -377,6 +408,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             pct,
             messages,
             breakdown,
+            ..
         } => {
             view.ctx_pct = Some(*pct);
             view.ctx_tokens = Some(*tokens);
@@ -442,6 +474,9 @@ fn on_tool_call(
     let target = toolview::target(name, args);
     view.tool_calls
         .insert(id.to_string(), (name.to_string(), target.clone()));
+    if name == "run_project" && args.get("action").and_then(|a| a.as_str()) == Some("start") {
+        view.starting_product = Some(id.to_string());
+    }
     let speaker = role.is_solo();
     // Reads and searches fold into one row while they keep coming; the
     // chat is for the work.
@@ -526,6 +561,9 @@ fn on_tool_result(
 ) {
     use crate::chat::toolview;
     let (tool, target) = view.tool_calls.remove(id).unwrap_or_default();
+    if view.starting_product.as_deref() == Some(id) {
+        view.starting_product = None;
+    }
     if toolview::is_lookup(&tool) {
         if is_error {
             let body = wrap::truncate(output.trim(), TOOL_ERROR_CHARS);

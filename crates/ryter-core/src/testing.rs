@@ -319,6 +319,7 @@ pub fn subject(plan_file: Option<&str>, title: &str) -> String {
 /// `subject`. A second report of the same subject on the same day is `-2`,
 /// then `-3`: an earlier one is never written over. Returns the file.
 pub fn save_on(root: &Path, day: &str, subject: &str, text: &str) -> Result<PathBuf> {
+    crate::plan::own_folder(root)?;
     let dir = root.join(DIR);
     let io = |e: std::io::Error| Error::Io(format!("{}: {e}", dir.display()));
     std::fs::create_dir_all(&dir).map_err(io)?;

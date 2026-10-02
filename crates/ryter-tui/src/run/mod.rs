@@ -195,7 +195,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         ));
     }
     actions::load_project_spend(&mut view, &home, &cwd);
-    if cwd.join(".ryter").is_dir() && !trusted {
+    if config::asks_for_trust(&cwd) && !trusted {
         view.panels.push(Box::new(TrustModal::default()));
     }
 
@@ -291,6 +291,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         last_doctor: None,
         want_redraw: false,
         want_quit: false,
+        quit_after_turn: false,
         stop_reply: None,
         want_edit: None,
     };
@@ -516,6 +517,9 @@ fn loop_ui(
                 actions::perform(view, cx, a);
                 dirty = true;
             }
+        }
+        if cx.quit_after_turn && !view.busy {
+            cx.want_quit = true;
         }
         // A quit that asked for the product to be stopped leaves once it
         // is; if it could not be stopped, the user is told and stays.

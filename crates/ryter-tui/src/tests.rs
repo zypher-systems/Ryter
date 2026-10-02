@@ -740,9 +740,7 @@ fn with_rail() -> View {
 #[test]
 fn the_rail_names_the_session_and_shows_the_hat_and_spend() {
     let v = with_rail();
-    // Wide enough for every key on the prompt's edge: two columns narrower
-    // and the least needed one (`^b hide rail`) makes way.
-    let text = render_to_string(&v, 144, 44);
+    let text = render_to_string(&v, 140, 44);
     if std::env::var_os("SHOW").is_some() {
         println!("{text}");
     }
@@ -1499,6 +1497,9 @@ fn the_test_hat_shows_its_own_conversation() {
     assert!(text.contains("ask the tester · Tab: plan"), "{text}");
     // The rail's session block still counts the whole session.
     assert!(text.contains("2 turns"), "{text}");
+    // Its context fills on its own: nothing said here yet, whatever the
+    // shared conversation holds.
+    assert_eq!(v.ctx_tokens, Some(0));
     // What is typed here is the tester's.
     let _ = v.submit_user("test the search".into(), "test the search".into());
     assert_eq!(v.turn_thread, Thread::Test);
@@ -1509,6 +1510,28 @@ fn the_test_hat_shows_its_own_conversation() {
     v.mode = Role::SoloBuild;
     v.show(Thread::Main);
     assert_eq!(chat_bodies(&v), main_before);
+    assert_eq!(
+        v.ctx_tokens,
+        Some(24_000),
+        "the shared conversation's own gauge"
+    );
+    // A measurement of the tester's conversation, arriving while the shared
+    // one is on screen, moves the tester's gauge and not this one.
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::Context {
+            tokens: 9_000,
+            window: 200_000,
+            pct: 4,
+            messages: 3,
+            breakdown: Vec::new(),
+            thread: Thread::Test,
+        },
+    );
+    assert_eq!(v.ctx_tokens, Some(24_000));
+    v.show(Thread::Test);
+    assert_eq!(v.ctx_tokens, Some(9_000));
+    v.show(Thread::Main);
     let text = render_to_string(&v, 140, 44);
     assert!(
         !text.contains("TEST THREAD") && !text.contains("the search fails"),
@@ -1975,4 +1998,190 @@ fn a_resumed_session_shows_its_reports_as_cards() {
         }
     ));
     assert_eq!((v.test_runs, v.retest), (1, Some(3)));
+}
+
+/// A turn stopped or failed while the other conversation is on screen
+/// closes in its own. `Cancelled` and `Error` end the busy state before
+/// the turn's last event arrives, and the closing line used to land in
+/// whichever conversation was being looked at.
+#[test]
+fn a_stopped_turn_closes_in_its_own_conversation() {
+    use ryter_core::Thread;
+    for ending in [
+        AgentEvent::Cancelled,
+        AgentEvent::Error {
+            message: "provider unreachable".into(),
+        },
+    ] {
+        let mut v = ledger();
+        let main_before = chat_bodies(&v);
+        v.show(Thread::Test);
+        let _ = v.submit_user("test it".into(), "test it".into());
+        crate::run_events_apply(
+            &mut v,
+            AgentEvent::TurnStarted {
+                turn: 3,
+                role: Role::SoloTest,
+            },
+        );
+        // The user goes to read the main chat while the test runs.
+        v.show(Thread::Main);
+        crate::run_events_apply(&mut v, ending.clone());
+        crate::run_events_apply(
+            &mut v,
+            AgentEvent::TurnFinished {
+                turn: 3,
+                tools: 2,
+                duration_ms: 900,
+            },
+        );
+        assert_eq!(
+            chat_bodies(&v),
+            main_before,
+            "{ending:?}: {:?}",
+            chat_bodies(&v)
+        );
+        v.show(Thread::Test);
+        let closing = chat_bodies(&v).last().cloned().unwrap_or_default();
+        assert!(
+            closing.contains("stopped") || closing.contains("failed"),
+            "{ending:?}: {:?}",
+            chat_bodies(&v)
+        );
+        // And what comes after the turn has closed goes to the screen.
+        v.show(Thread::Main);
+        crate::run_events_apply(
+            &mut v,
+            AgentEvent::Notice {
+                message: "after the turn".into(),
+            },
+        );
+        assert!(chat_bodies(&v).contains(&"after the turn".to_string()));
+    }
+}
+
+/// `/test` puts the tester's conversation on screen whatever the user was
+/// last doing. The rule compared against where their own last message
+/// went: after a message to the tester and a Tab away, a `/test` ran off
+/// screen, with the hat reading test over the main chat.
+#[test]
+fn the_screen_follows_a_test_whatever_came_before() {
+    use ryter_core::Thread;
+    let mut v = ledger();
+    // A message to the tester, then Tab back to build.
+    v.mode = Role::SoloTest;
+    v.show(Thread::Test);
+    let _ = v.submit_user("retest 3".into(), "retest 3".into());
+    one_turn(&mut v, Role::SoloTest, "still fails");
+    v.mode = Role::SoloBuild;
+    v.show(Thread::Main);
+    v.hats_pending += 1;
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::HatSet {
+            role: Role::SoloBuild,
+        },
+    );
+    // `/test`: the agent puts on the test hat itself.
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::ModeChanged {
+            role: Role::SoloTest,
+        },
+    );
+    assert_eq!((v.shown, v.mode), (Thread::Test, Role::SoloTest));
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::Notice {
+            message: "Ryter · test what changed".into(),
+        },
+    );
+    assert!(chat_bodies(&v).contains(&"Ryter · test what changed".to_string()));
+}
+
+/// A Tab pressed while the agent is changing hats itself is the user's
+/// choice of the next hat, and the screen says so once the agent has
+/// caught up. The agent's own change back used to be the last word on
+/// screen while the agent then put on the hat the Tab asked for: the next
+/// message went out in one hat with the rail naming another.
+#[test]
+fn a_tab_during_the_agents_own_hat_change_is_not_lost() {
+    use ryter_core::Thread;
+    let mut v = ledger();
+    assert_eq!(v.mode, Role::SoloBuild);
+    // A test starts: the agent puts on the test hat.
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::ModeChanged {
+            role: Role::SoloTest,
+        },
+    );
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnStarted {
+            turn: 4,
+            role: Role::SoloTest,
+        },
+    );
+    // The user tabs to plan to read the main chat (what `set_mode` does).
+    v.mode = Role::SoloPlan;
+    v.show(Thread::Main);
+    v.hats_pending += 1;
+    // The test ends and the agent goes back to the hat it came from.
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnFinished {
+            turn: 4,
+            tools: 1,
+            duration_ms: 10,
+        },
+    );
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::ModeChanged {
+            role: Role::SoloBuild,
+        },
+    );
+    assert_eq!(v.mode, Role::SoloBuild, "the agent's word, for now");
+    // Then it applies the Tab, and says so.
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::HatSet {
+            role: Role::SoloPlan,
+        },
+    );
+    assert_eq!((v.mode, v.shown), (Role::SoloPlan, Thread::Main));
+    // Tabs pressed quickly: only the last one's echo is the hat.
+    v.mode = Role::SoloTest;
+    v.show(Thread::Test);
+    v.hats_pending += 2;
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::HatSet {
+            role: Role::SoloReview,
+        },
+    );
+    assert_eq!((v.mode, v.shown), (Role::SoloTest, Thread::Test));
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::HatSet {
+            role: Role::SoloTest,
+        },
+    );
+    assert_eq!((v.mode, v.shown), (Role::SoloTest, Thread::Test));
+}
+
+/// `/new` asks before it ends a session with anything said in it, in
+/// either conversation.
+#[test]
+fn a_session_has_content_in_either_conversation() {
+    use ryter_core::Thread;
+    let mut v = ledger();
+    assert!(v.has_content());
+    v.show(Thread::Test);
+    assert!(v.messages.is_empty());
+    assert!(
+        v.has_content(),
+        "the main conversation's content counts here too"
+    );
 }

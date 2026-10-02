@@ -137,6 +137,11 @@ pub struct Session {
     thread: Thread,
     /// The other thread, while it isn't in use.
     parked: Vec<Message>,
+    /// How many build turns in this process have gone on to change files.
+    /// "Did that turn change anything?" was asked of the list of
+    /// checkpoints, which stops growing at fifty: past that, no fix was
+    /// seen as a change and no review of it was offered.
+    pub changed_turns: u64,
 }
 
 /// The file a thread's messages are kept in.
@@ -178,6 +183,7 @@ impl Session {
             transcript: Vec::new(),
             thread: Thread::Main,
             parked: Vec::new(),
+            changed_turns: 0,
         };
         s.write_meta()?;
         File::create(s.dir.join("events.jsonl")).map_err(|e| Error::Io(e.to_string()))?;
@@ -204,6 +210,7 @@ impl Session {
             transcript,
             thread: Thread::Main,
             parked,
+            changed_turns: 0,
         })
     }
 

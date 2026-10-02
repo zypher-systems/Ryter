@@ -62,6 +62,9 @@ pub struct Ctx {
     pub want_redraw: bool,
     /// Set when the loop should exit.
     pub want_quit: bool,
+    /// Quit once the running turn has ended: it was starting the product,
+    /// and what a half-made start left behind is taken down first.
+    pub quit_after_turn: bool,
     /// The worker's word on a stop asked for at quit: the loop exits once
     /// it says the product was stopped, and stays if it could not be.
     pub stop_reply: Option<mpsc::Receiver<std::result::Result<String, String>>>,
@@ -96,6 +99,17 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         Action::Many(list) => {
             for a in list {
                 perform(view, cx, a);
+            }
+        }
+        // The product is being started this moment. Left now, a stack that
+        // was half up would stay up with nothing recorded to stop it by:
+        // the start is cancelled, which takes it down, and then Ryter
+        // leaves.
+        Action::Quit if view.busy && view.starting_product.is_some() => {
+            if !cx.quit_after_turn {
+                cx.quit_after_turn = true;
+                cx.cancel.cancel();
+                view.system("stopping what was being started, then leaving…");
             }
         }
         // A product Ryter started is still up: ask before leaving it.
@@ -492,6 +506,10 @@ fn new_session(view: &mut View, cx: &mut Ctx) {
     view.panels.clear();
     panel::sync_composer(view);
     view.reset_transcript();
+    // The hat stays, and with it whose conversation is on screen: `/new`
+    // in the test hat showed the shared conversation while the next
+    // message went to the tester.
+    view.show(view.mode.thread());
     view.spend = None;
     view.spend_unknown = false;
     view.unpriced_calls = 0;
@@ -575,6 +593,7 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
         .meta
         .mode
         .map_or(ryter_core::Role::SoloBuild, ryter_core::Role::hat);
+    view.agent_hat = view.mode;
     view.spend = session.meta.spend_usd_total;
     view.spend_unknown = session.meta.spend_unknown;
     view.connection = session.meta.connection.clone();
@@ -886,6 +905,7 @@ fn set_mode(view: &mut View, cx: &mut Ctx, role: ryter_core::Role) {
     // The tester has a conversation of its own: its hat shows that one,
     // and any other hat shows the one they share.
     view.show(role.thread());
+    view.hats_pending += 1;
     cx.send(Work::SetRole(role));
 }
 

@@ -159,6 +159,28 @@ pub(crate) fn end_child(child: &mut std::process::Child) {
     }
 }
 
+/// End process group `pgid`, which a command Ryter started left running
+/// after it returned: ask it to stop, give it a few seconds, then kill
+/// what is left.
+pub(crate) fn end_group(pgid: u32) {
+    if pgid == 0 || !group_alive(pgid) {
+        return;
+    }
+    let _ = Command::new("bash")
+        .arg("-c")
+        .arg(format!("kill -TERM -- -{pgid}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let asked = std::time::Instant::now();
+    while group_alive(pgid) && asked.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    if group_alive(pgid) {
+        kill_group(pgid);
+    }
+}
+
 /// Run `cmd` under `bash -c` in `cwd`, in its own process group so cancel
 /// and timeout kill everything it started, passing its newest output lines
 /// to `live` as they arrive.

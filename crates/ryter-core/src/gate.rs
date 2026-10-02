@@ -343,7 +343,7 @@ impl Agent {
                 " How it runs is in `.ryter/run.toml`, which the user approved: start it with \
                  run_project."
             }
-            crate::run::Found::Unapproved(_) => {
+            crate::run::Found::Unapproved(..) => {
                 " It has a `.ryter/run.toml` the user has not approved as it stands: \
                  run_project will ask them."
             }
@@ -352,18 +352,21 @@ impl Agent {
                  one with propose_run."
             }
         });
-        if self.product.is_some() || crate::run::remembered(&self.home, &root).is_some() {
-            s.push_str(" The product is already running: Ryter started it earlier.");
-        }
+        let running = self.product.is_some() || crate::run::remembered(&self.home, &root).is_some();
         if let Some(last) = crate::testing::latest(&root) {
             s.push_str(&format!(
                 " The last report filed here is `{last}`: retest what failed in it first."
             ));
         }
-        s.push_str(
+        s.push_str(if running {
+            " Ryter started the product earlier and it should still be up: run_project \
+             (action `start`) says whether it is, and starts it only if it has gone. Run \
+             its tests, then try each scenario. File your report with report_test, and \
+             leave the product running."
+        } else {
             " Start it, run its tests, then try each scenario. File your report with \
-             report_test, and leave the product running.",
-        );
+             report_test, and leave the product running."
+        });
         s
     }
 
@@ -531,7 +534,7 @@ impl Agent {
         if self.role != Role::SoloBuild {
             self.wear(Role::SoloBuild)?;
         }
-        let before = self.session.meta.checkpoints.len();
+        let before = self.session.changed_turns;
         let out = self
             .turn(
                 "[Ryter] The test report above has failures. Fix what it found, one failure \
@@ -542,7 +545,7 @@ impl Agent {
         if out.is_err() {
             return Ok(TestRun::Failed);
         }
-        Ok(if self.session.meta.checkpoints.len() > before {
+        Ok(if self.session.changed_turns > before {
             TestRun::Fixed
         } else {
             TestRun::Failed
@@ -635,12 +638,12 @@ impl Agent {
         let mut offered = offered;
         let mut last = String::new();
         loop {
-            let before = self.session.meta.checkpoints.len();
+            let before = self.session.changed_turns;
             let Some((text, verdict)) = self.review_once(offered).await? else {
                 return Ok((last, false));
             };
             last = text;
-            let fixed = self.session.meta.checkpoints.len() > before;
+            let fixed = self.session.changed_turns > before;
             if !fixed || !self.offers_reviews() || self.role != Role::SoloBuild {
                 return Ok((last, verdict == Some(true) && !fixed));
             }
@@ -677,15 +680,22 @@ impl Agent {
         }
 
         let system = self.system_prompt()?;
+        // A review reads the conversation the work was done in. Asked for
+        // from the test hat, the session has the tester's thread in use:
+        // what the review will read, and so what it costs, is the shared
+        // one's.
+        let was = self.session.thread();
+        self.session.use_thread(crate::role::Thread::Main);
         // A limit its first step would pass: say so, rather than ask for a
         // yes to a review that stops before it starts.
         let spent = self.session.meta.spend_usd_total.unwrap_or(0.0);
-        if let Fit::No(why) = self.review_fit(&model, &connection, &system, spent) {
-            return self.say(why).map(|_| None);
-        }
-
+        let fit = self.review_fit(&model, &connection, &system, spent);
         // What the user agrees to before anything is spent.
         let context_tokens = self.conversation_tokens(&system) + job.diff_tokens;
+        self.session.use_thread(was);
+        if let Fit::No(why) = fit {
+            return self.say(why).map(|_| None);
+        }
         let past = history(&self.home, &model);
         let cost = if local {
             "runs on this machine, $0".to_string()
@@ -750,7 +760,7 @@ impl Agent {
         if prior != Role::SoloReview {
             self.wear(Role::SoloReview)?;
         }
-        let from = self.session.transcript.len();
+        let from = self.session.messages_of(crate::role::Thread::Main).len();
         let spent_from = self.session.spend_log().map_or(0, |l| l.len());
         let brief = self.review_brief(&job);
         let out = self.turn(&brief).await;
@@ -766,9 +776,13 @@ impl Agent {
         }
         // The verdict is the reviewer's last one: after a FAIL the build
         // hat may have gone on in the same turn, and its words end it.
+        // Read from the shared conversation by name: the hat the user was
+        // in is back by now, and it may be the tester's. Read from the
+        // thread in use, a review asked for in the test hat took its
+        // verdict from the tester's last words.
         let said = self
             .session
-            .transcript
+            .messages_of(crate::role::Thread::Main)
             .iter()
             .skip(from)
             .filter(|m| m.role == "assistant")
