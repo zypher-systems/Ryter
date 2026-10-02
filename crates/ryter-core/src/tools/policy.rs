@@ -1768,7 +1768,7 @@ fn decide_bash(args: &Value, ctx: &ToolContext) -> Decision {
 /// runs `make`. Read as the program, `then sudo id` was a command the gate
 /// didn't know, which asks, and it never met the list of what never runs.
 const LEADS: &[&str] = &[
-    "if", "then", "else", "elif", "do", "while", "until", "!", "{", "coproc",
+    "if", "then", "else", "elif", "do", "while", "until", "!", "{",
 ];
 
 /// Shell words that close what one of [`LEADS`] opened, and run nothing.
@@ -1789,13 +1789,35 @@ fn led_by_keyword(seg: &str) -> bool {
     strip_keywords(&mut words(seg))
 }
 
+/// The words of a segment from its command on: the shell's own words
+/// taken off the front, wherever they stand. `time` and `!` may come
+/// before one (`time while sudo id; do …`, `time function f { … }`), and
+/// read as a wrapper `time` made the shell's word the program, with what
+/// followed it unjudged.
+fn command_words(seg: &str, ctx: &ToolContext) -> Vec<String> {
+    let mut words = read(seg, ctx, false);
+    loop {
+        strip_keywords(&mut words);
+        let parsed = parse(&words);
+        let at = parsed.args.saturating_sub(1);
+        let shells_own = parsed.prog.is_some_and(|p| {
+            LEADS.contains(&p)
+                || CLOSES.contains(&p)
+                || matches!(p, "function" | "for" | "select" | "case")
+        });
+        if !shells_own || at == 0 {
+            return words;
+        }
+        words.drain(..at);
+    }
+}
+
 /// Where a `cd` or `pushd` segment leaves the shell, when it is one, and
 /// whether the folder is there now (one made earlier in the same command
 /// isn't yet). A folder the gate can't read (`cd "$DIR"`, `cd -`) is
 /// [`Cwd::Unknown`].
 fn moves_to(seg: &str, ctx: &ToolContext) -> Option<(Cwd, bool)> {
-    let mut words = read(seg, ctx, false);
-    strip_keywords(&mut words);
+    let words = command_words(seg, ctx);
     let parsed = parse(&words);
     let prog = parsed.prog?;
     if prog == "popd" {
@@ -1847,13 +1869,17 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
 /// `docker exec` or `compose run` runs, so the paths it names are the
 /// container's, not this machine's.
 fn decide_segment_in(seg: &str, ctx: &ToolContext, in_container: bool) -> Decision {
-    let mut words = read(seg, ctx, false);
-    strip_keywords(&mut words);
+    let words = command_words(seg, ctx);
     // A function gives a name to commands, and the name is then a command:
     // `function cat { … }; cat` ran whatever was in the braces as `cat`,
     // which every hat may run. A command is judged by its name, so a
-    // command that changes what a name means is refused.
-    if words.first().is_some_and(|w| w == "function") {
+    // command that changes what a name means is refused. `coproc NAME
+    // { … }` is written the same way, and its body is in the same part of
+    // the line, where nothing judges it.
+    if words
+        .first()
+        .is_some_and(|w| w == "function" || w == "coproc")
+    {
         return Decision::Deny;
     }
     // `for f in …`, `case x in`: they run nothing themselves, but what
@@ -2268,6 +2294,9 @@ fn judge(
             return Decision::Deny;
         }
         if !works && git_leaves(from_prog, &seen, ctx) {
+            return Decision::Deny;
+        }
+        if git_prints_a_tracked_secret(from_prog, ctx) {
             return Decision::Deny;
         }
         // `git grep --no-index` and `--untracked` search the files that
@@ -2828,6 +2857,19 @@ pub fn bash_hint(args: &Value, ctx: &ToolContext) -> Option<&'static str> {
                 )
         })
     });
+    let git_would_print_one = segments(cmd).iter().any(|s| {
+        let w = read(s, ctx, false);
+        let p = parse(&w);
+        p.prog == Some("git")
+            && git_prints_a_tracked_secret(&w[p.args.saturating_sub(1).min(w.len())..], ctx)
+    });
+    if git_would_print_one {
+        return Some(
+            "This repository tracks a secret file (`.env`, a key), and this command would \
+             print it with the rest. Say which paths after `--`, so the secret is left out: \
+             `git diff -- src`, `git grep PATTERN -- src tests`, `git show HEAD -- src`.",
+        );
+    }
     if searches_a_secret {
         return Some(
             "This search would read a secret file (`.env`, a key) in the folders it covers,              so it is refused. Name the folders to search (`grep -rn PATTERN src/`), say              which files (`--include='*.rs'`), or use `rg`, which leaves hidden and ignored              files out.",
@@ -4105,6 +4147,82 @@ fn git_leaves(from_git: &[String], seen: &[String], ctx: &ToolContext) -> bool {
     })
 }
 
+/// A `git` command that prints what is in files, in a repository that
+/// tracks a secret, with nothing to say the secret is left out. A file
+/// being tracked doesn't make it one to print: `git grep KEY` printed the
+/// `.env` that `cat .env` was refused, and so does `git diff` once the
+/// file has changed.
+///
+/// Paths after `--` say which files: where they cover no secret, the
+/// command runs. Which files those are is asked of git itself
+/// (`git ls-files`), since the patterns are git's to read.
+fn git_prints_a_tracked_secret(from_git: &[String], ctx: &ToolContext) -> bool {
+    let args = from_git.get(1..).unwrap_or_default();
+    let has = |fs: &[&str]| {
+        args.iter()
+            .any(|a| fs.iter().any(|f| a == f || a.starts_with(&format!("{f}="))))
+    };
+    let sub = args
+        .iter()
+        .find(|w| !w.starts_with('-'))
+        .map(String::as_str);
+    let names_only = has(&[
+        "--stat",
+        "--name-only",
+        "--name-status",
+        "--shortstat",
+        "--numstat",
+        "--summary",
+        "--no-patch",
+        "-s",
+    ]);
+    let patch = has(&["-p", "-u", "--patch", "--cc", "-c", "--full-diff"])
+        || args
+            .iter()
+            .any(|a| a.starts_with("-L") || a.starts_with("-G") || a.starts_with("-S"));
+    let prints = match sub {
+        Some("grep") => !has(&[
+            "-l",
+            "--files-with-matches",
+            "-L",
+            "--files-without-match",
+            "-c",
+            "--count",
+        ]),
+        Some("diff" | "show") => !names_only || patch,
+        Some("log" | "whatchanged" | "stash") => patch,
+        Some("cat-file") => !has(&["-t", "-s", "-e"]),
+        _ => false,
+    };
+    if !prints {
+        return false;
+    }
+    let Some(dir) = base(ctx) else {
+        return false;
+    };
+    let mut git = std::process::Command::new("git");
+    git.current_dir(&dir)
+        // Nothing of the repository's own is run to answer this.
+        .args(["-c", "core.fsmonitor=", "ls-files", "-z"])
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    if let Some(at) = args.iter().position(|a| a == "--") {
+        if at + 1 < args.len() {
+            git.arg("--").args(&args[at + 1..]);
+        }
+    }
+    let Ok(out) = git.output() else {
+        return false;
+    };
+    out.status.success()
+        && out
+            .stdout
+            .split(|b| *b == 0)
+            .filter(|name| !name.is_empty())
+            .any(|name| is_secret(&dir.join(String::from_utf8_lossy(name).as_ref()), ctx))
+}
+
 /// What a search through folders would read.
 enum Tree {
     /// No folder is searched, or none of its files is a secret.
@@ -4251,6 +4369,13 @@ fn searched_tree(prog: &str, from_prog: &[String], ctx: &ToolContext) -> Tree {
         "--field-context-separator",
     ];
     let mut plain: Vec<&str> = Vec::new();
+    // `--include='*.py'`, `rg -g '*.py'`: only files of those names are
+    // read. They are taken from the same reading of the options as the
+    // places are: read on their own, `-e '--include=*.txt'` (a pattern)
+    // was taken for a filter, and the search was judged on fewer files
+    // than it read.
+    let mut only: Vec<String> = Vec::new();
+    let mut narrows = true;
     let mut pattern_elsewhere = prog == "diff";
     let mut unknown = false;
     let mut at = 0;
@@ -4260,16 +4385,27 @@ fn searched_tree(prog: &str, from_prog: &[String], ctx: &ToolContext) -> Tree {
             plain.extend(args[at..].iter().map(String::as_str));
             break;
         }
-        if let Some(name) = a.strip_prefix("--") {
-            let name = format!("--{}", name.split('=').next().unwrap_or(name));
+        if let Some(long) = a.strip_prefix("--") {
+            let (name, attached) = match long.split_once('=') {
+                Some((n, v)) => (format!("--{n}"), Some(v)),
+                None => (format!("--{long}"), None),
+            };
             pattern_elsewhere |= matches!(name.as_str(), "--regexp" | "--file" | "--files");
-            if !a.contains('=') {
+            let mut value = attached;
+            if attached.is_none() {
                 if LONG_VALUED.contains(&name.as_str()) {
+                    value = args.get(at).map(String::as_str);
                     at += 1;
                 } else if prog != "diff" {
                     // It may take the next word as its value.
                     unknown = true;
                 }
+            }
+            match name.as_str() {
+                "--include" | "--glob" => only.extend(value.map(str::to_string)),
+                // A filter the gate doesn't work out: nothing is narrowed.
+                "--iglob" | "--glob-case-insensitive" | "--type-add" => narrows = false,
+                _ => {}
             }
             continue;
         }
@@ -4280,8 +4416,15 @@ fn searched_tree(prog: &str, from_prog: &[String], ctx: &ToolContext) -> Tree {
                         pattern_elsewhere |= matches!(c, 'e' | 'f');
                         // The rest of the word is its value, or the next
                         // word is.
-                        if a[1 + k + c.len_utf8()..].is_empty() {
+                        let rest = &a[1 + k + c.len_utf8()..];
+                        let value = if rest.is_empty() {
                             at += 1;
+                            args.get(at - 1).map(String::as_str)
+                        } else {
+                            Some(rest)
+                        };
+                        if c == 'g' {
+                            only.extend(value.map(str::to_string));
                         }
                         break;
                     }
@@ -4313,28 +4456,22 @@ fn searched_tree(prog: &str, from_prog: &[String], ctx: &ToolContext) -> Tree {
             None => return Tree::Unread,
         }
     }
-    // `--include='*.py'`, `rg -g '*.py'`: only files of those names are
-    // read. A pattern that leaves files out (`!*.lock`) narrows nothing
-    // here, and neither does one the gate can't read.
-    let mut only: Vec<Vec<char>> = Vec::new();
-    let mut i = 0;
-    while let Some(a) = args.get(i).map(String::as_str) {
-        i += 1;
-        let pattern = match a {
-            "--include" | "-g" | "--glob" => {
-                i += 1;
-                args.get(i - 1).map(String::as_str)
-            }
-            _ => a
-                .strip_prefix("--include=")
-                .or_else(|| a.strip_prefix("--glob="))
-                .or_else(|| a.strip_prefix("-g").filter(|_| prog == "rg")),
-        };
-        if let Some(p) = pattern.filter(|p| !p.starts_with('!') && !p.contains(['$', '{'])) {
-            let name = p.rsplit('/').next().unwrap_or(p);
-            only.push(name.chars().collect());
-        }
+    // A filter that leaves files out (`!*.lock`), or that the gate can't
+    // read as a plain name pattern (a list in braces, an escape), narrows
+    // nothing: every file is looked at.
+    if only
+        .iter()
+        .any(|p| p.starts_with('!') || p.contains(['$', '{', '\\']))
+    {
+        narrows = false;
     }
+    let only: Vec<Vec<char>> = if narrows {
+        only.iter()
+            .map(|p| p.rsplit('/').next().unwrap_or(p).chars().collect())
+            .collect()
+    } else {
+        Vec::new()
+    };
     let read = |name: &std::ffi::OsStr| {
         only.is_empty() || {
             let name: Vec<char> = name.to_string_lossy().chars().collect();
@@ -7495,6 +7632,20 @@ mod tests {
             "cat() { printf x > src/main.py; }; cat",
             "cat () { ls; }; cat",
             "ls() ( rm -rf src ); ls",
+            // The shell's word behind `time` or `!` is still the shell's.
+            "time function cat { python3 -c 'print(1)'; }; cat",
+            "time -p function cat { ls; }; cat",
+            "! function cat { ls; }; cat",
+            "time while sudo id; do true; done",
+            "time if cat .env; then true; fi",
+            "time ! sudo id",
+            "time for f in ~/.ssh/*; do true; done",
+            // A coprocess with a name is written as a function is.
+            "coproc cat { python3 -c 'print(1)'; }",
+            "coproc CAT { rm -rf src; }",
+            "coproc ls { sudo id; }",
+            "coproc { ls; }",
+            "coproc ls",
             "if true; then function cat { ls; }; fi; cat",
             "f() { ls; }",
         ]);
@@ -7910,6 +8061,63 @@ mod tests {
         assert_eq!(m.decide("eslint --fix .", Role::SoloReview), Decision::Deny);
     }
 
+    /// A file being tracked doesn't make it one to print. In a repository
+    /// that tracks a secret, a `git` command that prints files says which
+    /// (paths after `--`), or it is refused: `git grep KEY` printed `.env`.
+    #[cfg(unix)]
+    #[test]
+    fn git_prints_no_tracked_secret() {
+        let m = machine();
+        let git = |args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .current_dir(&m.proj)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["add", "README.md", "src/main.py", "tests/run.py"]);
+        // Nothing secret is tracked yet: git is as it was.
+        m.runs(
+            &HATS,
+            &["git grep x", "git diff", "git show HEAD", "git log -p -3"],
+        );
+        std::fs::write(m.proj.join("src/server.pem"), "x\n").unwrap();
+        git(&["add", "-f", ".env", "src/server.pem"]);
+        m.refused(&[
+            "git grep x",
+            "git grep --cached x",
+            "git grep -n x -- .",
+            "git grep x -- src",
+            "git diff",
+            "git diff --cached",
+            "git diff HEAD",
+            "git show HEAD",
+            "git log -p",
+            "git log --patch -3",
+            "git stash show -p",
+            "git cat-file -p HEAD",
+            "time git grep x",
+        ]);
+        m.runs(
+            &HATS,
+            &[
+                "git grep x -- tests",
+                "git grep x -- '*.py'",
+                "git diff -- tests README.md",
+                "git diff --stat",
+                "git show --stat HEAD",
+                "git log --oneline -5",
+                "git log -p -- tests",
+                "git status --short",
+                "git grep -l x",
+            ],
+        );
+    }
+
     /// A search through folders reads every file in them: `grep -r KEY .`
     /// printed the `.env` that `cat .env` was refused. It is refused where
     /// a secret is among the files it would read, and runs where none is.
@@ -7980,6 +8188,31 @@ mod tests {
                 "git grep --no-index x src",
             ],
         );
+        // A filter is read from the same options as everything else: a
+        // pattern that looks like one is a pattern, and a filter the gate
+        // doesn't work out narrows nothing.
+        std::fs::write(m.proj.join("src/server.pem"), "x\n").unwrap();
+        m.refused(&[
+            "grep -r -e '--include=*.txt' -e x src",
+            "rg -e '-g*.txt' -e x src",
+            "rg -g '*.txt' --iglob '*' x src",
+            "rg --iglob '*.PEM' x src",
+            "rg --glob-case-insensitive -g '*.PEM' x src",
+            "rg -g '*.txt' -g '*.{pem,key}' x src",
+            "rg -g '*.txt' -g '*.pem' x src",
+            "rg -g '!*.py' x src",
+            "grep -r --include='*.txt' --include '*.pem' x src",
+            "grep -r x src -- --include=*.txt",
+        ]);
+        m.runs(
+            &HATS,
+            &[
+                "rg -g '*.py' -g '*.md' x src",
+                "grep -r --include='*.py' x src",
+                "grep -r --include '*.py' -e x src",
+            ],
+        );
+        std::fs::remove_file(m.proj.join("src/server.pem")).unwrap();
         // A search that goes into linked folders reads what is in them.
         // The link was looked at, and the folder behind it was not.
         let behind = m.proj.parent().unwrap().join("behind");
