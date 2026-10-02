@@ -329,6 +329,28 @@ fn spec(name: &str) -> Option<ToolSpec> {
                 "stop":{"type":"string","description":"stops what start started"}
             }}),
         ),
+        "report_test" => (
+            "File your test report. Call it once, when you have finished testing, as your \
+             last tool call. List every scenario you tried, in order, each with how it \
+             went: `pass`, `fail`, or `not_reached` (it depended on one that failed). For \
+             a failure say what you expected, what happened (the status, the error line), \
+             and the exact steps to see it again: the builder fixes from this without \
+             having seen what you saw. The report goes to the user and the builder, and \
+             into a file under `.ryter/tests/`. Don't soften a failure, and don't report \
+             a pass you didn't see.",
+            json!({"type":"object","properties":{
+                "title":{"type":"string","description":"what was tested, in a few words"},
+                "scenarios":{"type":"array","items":{"type":"object","properties":{
+                    "name":{"type":"string","description":"what you tried, in a few words"},
+                    "result":{"type":"string","enum":["pass","fail","not_reached"]},
+                    "expected":{"type":"string","description":"for a failure: what should have happened"},
+                    "got":{"type":"string","description":"for a failure: what happened, with the status or the error line"},
+                    "to_see_it":{"type":"string","description":"for a failure: the exact steps to see it again"},
+                    "note":{"type":"string","description":"a word more: `21 passed`, or for not_reached what it needs (`needs 3`)"}
+                },"required":["name","result"]}},
+                "summary":{"type":"string","description":"what you could not test, and why"}
+            },"required":["title","scenarios"]}),
+        ),
         "run_project" => (
             "Run the project's own approved commands from `.ryter/run.toml`. `start` \
              starts the product and waits until it is up; it stays up after your turn. \
@@ -388,6 +410,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "bash",
             "propose_run",
             "run_project",
+            "report_test",
             "ask_user",
             "load_skill",
             "show_page",
@@ -436,9 +459,9 @@ pub fn execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput
         "ask_user" => ask_user(args, ctx),
         // The agent loop answers this itself: it changes who the agent is.
         "request_hat" | "present_plan" | "record_decision" | "load_skill" | "show_page"
-        | "update_rules" | "propose_run" | "run_project" => Ok(ToolOutput::err(format!(
-            "{name} is handled by the agent loop"
-        ))),
+        | "update_rules" | "propose_run" | "run_project" | "report_test" => Ok(ToolOutput::err(
+            format!("{name} is handled by the agent loop"),
+        )),
         "web_fetch" => web::web_fetch(args, ctx),
         "web_search" => web::web_search(args, ctx),
         other => Ok(ToolOutput::err(format!("unknown tool {other}"))),

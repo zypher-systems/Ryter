@@ -930,16 +930,24 @@ fn the_commit_receipt_says_whether_this_work_was_reviewed() {
         "{}",
         receipt(&v)
     );
-    v.last_review = Some((tree, "x-ai/grok-4.7".into(), Some(false)));
+    v.last_review = Some((tree.clone(), "x-ai/grok-4.7".into(), Some(false)));
     assert!(
-        receipt(&v).contains("· review ✗ grok-4.7"),
+        receipt(&v).contains("· review ✗ grok-4.7 · not tested"),
+        "{}",
+        receipt(&v)
+    );
+    // And tested, by the test hat's model.
+    v.last_test = Some((tree, "moonshot/kimi-k3".into(), true));
+    assert!(
+        receipt(&v).ends_with("· review ✗ grok-4.7 · test ✓ kimi-k3"),
         "{}",
         receipt(&v)
     );
     // A change after the review: what is committed is not what was read.
     std::fs::write(repo.path().join("config.rs"), "rewritten\n").unwrap();
     assert!(
-        receipt(&v).contains("· not reviewed after the last change"),
+        receipt(&v)
+            .ends_with("· not reviewed after the last change · not tested after the last change"),
         "{}",
         receipt(&v)
     );
@@ -1640,12 +1648,29 @@ fn a_resumed_session_has_both_conversations() {
     .unwrap();
     s.push_to(Thread::Test, msg("assistant", "it fails"))
         .unwrap();
+    // A test Ryter started: its brief is the model's to read.
+    s.push_to(
+        Thread::Test,
+        msg(
+            "user",
+            "[hat: test — x]\n\n[Ryter] Test the work as its user would. The plan the user \
+             approved is in `.ryter/plans/x.md`.",
+        ),
+    )
+    .unwrap();
     s.set_mode(Role::SoloTest).unwrap();
     let mut v = ledger();
     crate::run::fill_view_from_session(&mut v, &s);
     // Left in the test hat: the tester's conversation is on screen.
     assert_eq!((v.mode, v.shown), (Role::SoloTest, Thread::Test));
-    assert_eq!(chat_bodies(&v), ["test the list", "it fails"]);
+    assert_eq!(
+        chat_bodies(&v),
+        [
+            "test the list",
+            "it fails",
+            "Ryter · test the work as its user would"
+        ]
+    );
     v.show(Thread::Main);
     assert_eq!(chat_bodies(&v), ["build the list", "built"]);
     // A new session has neither.
@@ -1784,4 +1809,168 @@ fn the_projects_commands_are_named_for_what_they_do() {
             )),
         "{steps:?}"
     );
+}
+
+fn tested(passed: bool) -> AgentEvent {
+    AgentEvent::Tested {
+        model: "moonshot/kimi-k3".into(),
+        headline: if passed {
+            "✓ 5 of 5 passed".into()
+        } else {
+            "✗ 2 of 5 failed".into()
+        },
+        passed,
+        rows: [
+            "✓ 1  the stack starts and is healthy",
+            "✓ 2  first-run setup creates the admin",
+            "✗ 3  /manage/ after login",
+            "     expected the page list",
+            "     got 500: NoReverseMatch 'pages:list'",
+            "     to see it: start the stack, log in, open /manage/",
+            "✗ 4  publish a page · not reached (needs 3)",
+            "✓ 5  pytest in the container · 21 passed",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+        file: ".ryter/tests/2026-10-01-cms-2.md".into(),
+        first_failed: (!passed).then_some(3),
+        tree: Some("t1".into()),
+        total_usd: Some(0.21),
+        duration_ms: 100_000,
+    }
+}
+
+/// The tester's report comes back into the conversation the other hats
+/// share, as the user approved it: failures opened out, passes one line,
+/// the file it is in, and where the product was left running. The tester's
+/// own turn closes on what it reported.
+#[test]
+fn a_tests_report_is_a_card_in_the_main_conversation() {
+    use ryter_core::Thread;
+    let mut v = with_rail();
+    crate::run_events_apply(&mut v, product(true));
+    // A test run: the agent puts on the test hat, works, files its report,
+    // and the hat the user was in comes back.
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::ModeChanged {
+            role: Role::SoloTest,
+        },
+    );
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnStarted {
+            turn: 7,
+            role: Role::SoloTest,
+        },
+    );
+    crate::run_events_apply(&mut v, tested(false));
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnFinished {
+            turn: 7,
+            tools: 6,
+            duration_ms: 100_000,
+        },
+    );
+    // In the tester's thread: its turn closes on the report, and the line
+    // over the thread counts the run.
+    assert_eq!(v.shown, Thread::Test);
+    let thread = render_to_string(&v, 140, 44);
+    assert!(thread.contains("✗ 2 of 5 failed · 1:40"), "{thread}");
+    assert!(
+        thread.contains("TEST THREAD · 1 run this session · tab: main chat"),
+        "{thread}"
+    );
+    assert!(
+        thread.contains("ask the tester, or: retest 3 · Tab: build"),
+        "{thread}"
+    );
+    assert!(!thread.contains("full report"), "{thread}");
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::ModeChanged {
+            role: Role::SoloBuild,
+        },
+    );
+    assert_eq!(v.shown, Thread::Main);
+    let text = render_to_string(&v, 140, 60);
+    let mut at = 0;
+    for want in [
+        "switched to the test hat",
+        "▣  test · kimi-k3 · ✗ 2 of 5 failed · 1:40 · $0.21",
+        "│  ✓ 1  the stack starts and is healthy",
+        "│  ✓ 2  first-run setup creates the admin",
+        "│  ✗ 3  /manage/ after login",
+        "│       expected the page list",
+        "│       got 500: NoReverseMatch 'pages:list'",
+        "│       to see it: start the stack, log in, open /manage/",
+        "│  ✗ 4  publish a page · not reached (needs 3)",
+        "│  ✓ 5  pytest in the container · 21 passed",
+        "│  full report  .ryter/tests/2026-10-01-cms-2.md",
+        "the project is still running at http://localhost:8000",
+        "/stop stops it (docker compose down)",
+        "switched to the build hat",
+    ] {
+        let i = text[at..]
+            .find(want)
+            .unwrap_or_else(|| panic!("{want:?} is missing or out of order:\n{text}"));
+        at += i;
+    }
+    // The commit's receipt carries it, for the files that were tested.
+    assert_eq!(
+        v.last_test,
+        Some((Some("t1".into()), "moonshot/kimi-k3".into(), false))
+    );
+    // A second run, all passing: counted, and nothing to retest.
+    crate::run_events_apply(&mut v, tested(true));
+    assert_eq!((v.test_runs, v.retest), (2, None));
+    v.show(Thread::Test);
+    let thread = render_to_string(&v, 140, 44);
+    assert!(
+        thread.contains("TEST THREAD · 2 runs this session"),
+        "{thread}"
+    );
+}
+
+/// A resumed session shows the reports it was given as the cards they
+/// were, and counts them.
+#[test]
+fn a_resumed_session_shows_its_reports_as_cards() {
+    use ryter_core::Thread;
+    let home = tempfile::TempDir::new().unwrap();
+    let cwd = tempfile::TempDir::new().unwrap();
+    let mut s =
+        ryter_core::Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+    let report = "[Ryter] The test hat (kimi-k3) used the product and filed this report: ✗ 2 of \
+                  5 failed.\n✓ 1  the stack starts\n✗ 2  publish · not reached (needs 3)\n✗ 3  \
+                  /manage/ after login\n     got 500\nAlso: the media library was not \
+                  tested.\nThe full report is in `.ryter/tests/2026-10-01-cms.md`. The tester \
+                  worked in a conversation of its own and changed nothing.";
+    s.push_message(ryter_core::Message {
+        role: "user".into(),
+        content: report.into(),
+        tool_call_id: None,
+        tool_calls: None,
+    })
+    .unwrap();
+    let mut v = ledger();
+    crate::run::fill_view_from_session(&mut v, &s);
+    assert_eq!(v.shown, Thread::Main);
+    assert_eq!(
+        chat_bodies(&v),
+        [
+            "test · kimi-k3 · ✗ 2 of 5 failed\n✓ 1  the stack starts\n✗ 2  publish · not reached \
+          (needs 3)\n✗ 3  /manage/ after login\n     got 500\nfull report  \
+          .ryter/tests/2026-10-01-cms.md"
+        ]
+    );
+    assert!(matches!(
+        v.messages[0].kind,
+        crate::chat::MessageKind::System {
+            level: crate::chat::SystemLevel::Report { failed: true }
+        }
+    ));
+    assert_eq!((v.test_runs, v.retest), (1, Some(3)));
 }

@@ -62,7 +62,9 @@ pub fn save_on(root: &Path, day: &str, title: &str, plan: &str) -> Result<PathBu
 
 /// [`save_on`] today.
 pub fn save(root: &Path, title: &str, plan: &str) -> Result<PathBuf> {
-    save_on(root, &crate::prompt::today_utc(), title, plan)
+    // The user's own date: a plan approved in the evening was filed under
+    // tomorrow's.
+    save_on(root, &crate::clock::today(), title, plan)
 }
 
 #[cfg(test)]

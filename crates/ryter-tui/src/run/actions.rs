@@ -210,6 +210,24 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             view.warn("a review reads the finished work: wait for this turn to end");
         }
         Action::ReviewNow => cx.send(Work::ReviewNow),
+        Action::TestNow if view.busy => {
+            view.warn("a test uses the finished work: wait for this turn to end");
+        }
+        Action::TestNow => cx.send(Work::TestNow),
+        Action::StopTestOffers => {
+            if let Some(tx) = cx.perm_reply.take() {
+                let _ = tx.send(Permission::Deny);
+            }
+            view.ui.offer_test = false;
+            cx.cfg.ui.offer_test = false;
+            if let Err(e) = config::save_settings(&cx.home, &cx.cfg) {
+                view.error(e.to_string());
+            }
+            cx.send(Work::SetOfferTest(false));
+            view.system(
+                "no more test offers · /test still runs one · /settings turns them back on",
+            );
+        }
         Action::StopReviewOffers => {
             if let Some(tx) = cx.perm_reply.take() {
                 let _ = tx.send(Permission::Deny);
@@ -615,11 +633,86 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
     }
 }
 
+/// How the tester's report starts, in the conversation it was handed to.
+const REPORT_PREFIX: &str = "[Ryter] The test hat (";
+
+/// A saved report message as the card it was shown as: its text, whether
+/// anything in it failed, and the first failed scenario's number.
+fn report_card(content: &str) -> (String, bool, Option<usize>) {
+    let mut lines = content.lines();
+    let first = lines.next().unwrap_or("");
+    let tester = first
+        .strip_prefix(REPORT_PREFIX)
+        .and_then(|r| r.split(')').next())
+        .unwrap_or("");
+    let headline = first
+        .rsplit("filed this report: ")
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('.');
+    let mut body = format!("test · {tester} · {headline}");
+    let mut retest = None;
+    for l in lines {
+        match l.strip_prefix("The full report is in `") {
+            Some(rest) => {
+                body.push_str(&format!(
+                    "\nfull report  {}",
+                    rest.split('`').next().unwrap_or("")
+                ));
+            }
+            // What could not be tested is in the file; the card is the
+            // scenarios.
+            None if l.starts_with("Also: ") => {}
+            None => {
+                body.push('\n');
+                body.push_str(l);
+                // `✗ 3  /manage/ after login`, and not a scenario that was
+                // only not reached.
+                if retest.is_none() && !l.contains("· not reached") {
+                    retest = l
+                        .strip_prefix("✗ ")
+                        .and_then(|r| r.split_whitespace().next())
+                        .and_then(|n| n.parse().ok());
+                }
+            }
+        }
+    }
+    (body, headline.starts_with('✗'), retest)
+}
+
 /// Rebuild one conversation's chat from its saved messages, through the
 /// same path a live turn takes, so a resumed session reads as it did.
 fn fill_chat(view: &mut View, messages: &[ryter_core::Message], model: &str) {
     for m in messages {
         match m.role.as_str() {
+            // The tester's report, as it was handed in: a card, not
+            // something the user typed.
+            "user" if m.content.starts_with(REPORT_PREFIX) => {
+                let (body, failed, retest) = report_card(&m.content);
+                view.report(body, failed);
+                view.test_runs += 1;
+                view.retest = retest;
+            }
+            // What Ryter asked of the model (a review, a test, the fixes):
+            // said in a line, as it was when it happened. The brief itself
+            // is for the model, and the user didn't type it.
+            "user" if strip_hat_note(&m.content).starts_with("[Ryter] ") => {
+                let asked = strip_hat_note(&m.content);
+                let first = asked
+                    .trim_start_matches("[Ryter] ")
+                    .split(['.', ':'])
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                let mut said = String::from("Ryter · ");
+                let mut chars = first.chars();
+                if let Some(c) = chars.next() {
+                    said.extend(c.to_lowercase());
+                    said.push_str(chars.as_str());
+                }
+                view.turn += 1;
+                view.system(said);
+            }
             "user" if !m.content.trim().is_empty() => {
                 view.turn += 1;
                 view.push(MessageKind::User, strip_hat_note(&m.content));
@@ -644,7 +737,13 @@ fn fill_chat(view: &mut View, messages: &[ryter_core::Message], model: &str) {
                             AgentEvent::ToolCall {
                                 id: c.id.clone(),
                                 name: c.name.clone(),
-                                summary: Some(ryter_core::tool_summary(&c.name, &args)),
+                                // The project's command isn't in the call,
+                                // and the run file may have changed since.
+                                summary: Some(if c.name == "run_project" {
+                                    String::new()
+                                } else {
+                                    ryter_core::tool_summary(&c.name, &args)
+                                }),
                                 args,
                                 role: view.mode,
                             },
@@ -919,6 +1018,7 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
         open_pages: view.ui.open_pages,
     });
     cx.send(Work::SetOfferAudit(view.ui.offer_audit));
+    cx.send(Work::SetOfferTest(view.ui.offer_test));
 }
 
 fn set_budget(view: &mut View, cx: &mut Ctx, usd: f64) {

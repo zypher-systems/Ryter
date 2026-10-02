@@ -243,6 +243,17 @@ pub const COMMANDS: &[CommandSpec] = &[
         },
     ),
     spec(
+        "test",
+        &[],
+        Category::Session,
+        "The test hat starts the product and uses it now, against the approved plan",
+        None,
+        false,
+        None,
+        false,
+        |_, _| Action::TestNow,
+    ),
+    spec(
         "stop",
         &[],
         Category::Session,

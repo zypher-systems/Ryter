@@ -2,17 +2,21 @@
 
 Designed with the user on 2026-10-01, a mockup for each choice. This page is what the build is held to; where the build has to differ, it says so here.
 
-**Built so far:** the hat itself, its own thread, its seat in `/models`, what it may run, `.ryter/decisions.md`, `.ryter/run.toml` with its approval panel, `/stop`, and the question on quit. **Not built yet:** the report into the main conversation, `/test`, and the offer after a review.
+**All of it is built:** the hat and its own thread, its seat in `/models`, what it may run, `.ryter/decisions.md`, `.ryter/run.toml` with its approval panel, `/stop` and the question on quit, the report into the main conversation and its file, `/test`, the offer after a review that passed, and the receipt.
 
 **Where the build differs from the mockups:**
 
 - **Tab order.** The screen mockup's hint says "Tab: plan" from the test hat. The order built is the existing one with Test added at the end: build → plan → review → test → build, so the hint reads "Tab: build". After a failed test the next hat is usually build.
-- **The thread's header line** reads "TEST THREAD · its own conversation · tab: main chat" until there are test runs to count.
-- **The composer's hint** reads "ask the tester" until there is a report with a scenario to name ("retest 3").
+- **The thread's header line** reads "TEST THREAD · its own conversation · tab: main chat" until a report has been filed; then it counts them ("2 runs this session").
+- **The composer's hint** reads "ask the tester" until a report has a failure to name ("retest 3").
+- **The offer says "leaves it running"** where its mockup said "stops it": the later choice (left running until you say) decides.
+- **Durations read "1:40"**, as everywhere else in the chat, where the mockup had "1m40s".
+- **Ryter's opening line in the thread** is a note ("Ryter · test the work against the plan", with the plan's file under it), not a message from a speaker called Ryter, and it doesn't count the changed files.
+- **A failed test asks "fix what the test found?"** once the report is in the main conversation. The mockup's sentence was that it works like a failed review; a review asks from inside its own turn, which a turn in the tester's thread can't do.
 - **What the tester may run** was changed by the user after the mockup (see that section).
 - **The run file is asked about again when it changes.** The mockup shows one approval. A file that came with the project, or was changed after you approved it, is shown again before anything in it runs.
 - **The question on quit has a third key,** `esc`, to stay in Ryter. With no stop command the second line reads "no stop command: its start command is ended".
-- **When the product comes up** the chat says "the project is running at …, started 14:02 · /stop stops it (docker compose down)". The mockup's "still running" line belongs to the report, which is not built yet.
+- **When the product comes up** the tester's thread says "the project is running at …, started 14:02 · /stop stops it (docker compose down)". Under the report, the main conversation says "the project is still running at …" and "/stop stops it (docker compose down)", as the mockup has it.
 
 ## What was decided
 

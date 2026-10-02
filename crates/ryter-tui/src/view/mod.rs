@@ -261,6 +261,16 @@ pub struct View {
     /// The product Ryter started for a test, while it is up: `/stop` stops
     /// it, and quitting asks about it.
     pub product: Option<ProductUp>,
+    /// The test hat's last report: the files it tested (as a git tree), its
+    /// model, and whether everything passed. For a commit receipt.
+    pub last_test: Option<(Option<String>, String, bool)>,
+    /// Reports the tester has filed this session.
+    pub test_runs: usize,
+    /// The first scenario that failed in the last report: what "retest 3"
+    /// would name.
+    pub retest: Option<usize>,
+    /// The report filed in the running turn, for that turn's closing line.
+    pub turn_report: Option<String>,
 }
 
 /// Aggregated spend row for `/spend`.
@@ -413,6 +423,10 @@ impl View {
             turn_thread: ryter_core::Thread::Main,
             parked: ParkedChat::default(),
             product: None,
+            last_test: None,
+            test_runs: 0,
+            retest: None,
+            turn_report: None,
         }
     }
 
@@ -493,6 +507,17 @@ impl View {
         self.push(
             MessageKind::System {
                 level: SystemLevel::Info,
+            },
+            text,
+        );
+    }
+
+    /// A report handed in to this conversation, as a card: its headline,
+    /// then its rows.
+    pub fn report(&mut self, text: impl Into<String>, failed: bool) {
+        self.push(
+            MessageKind::System {
+                level: SystemLevel::Report { failed },
             },
             text,
         );
@@ -588,6 +613,10 @@ impl View {
         self.show(ryter_core::Thread::Main);
         self.parked = ParkedChat::default();
         self.turn_thread = ryter_core::Thread::Main;
+        self.test_runs = 0;
+        self.retest = None;
+        self.turn_report = None;
+        self.last_test = None;
         self.messages.clear();
         self.reasoning.clear();
         self.history.clear();

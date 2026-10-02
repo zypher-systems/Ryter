@@ -31,6 +31,7 @@ pub mod sandbox;
 pub mod session;
 pub mod skill;
 pub mod spend;
+pub mod testing;
 pub mod tools;
 pub mod trace;
 pub mod update;

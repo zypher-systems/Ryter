@@ -268,6 +268,7 @@ fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
                     match level {
                         SystemLevel::Warn => "!",
                         SystemLevel::Error => "✕",
+                        SystemLevel::Report { .. } => "▣",
                         _ => "·",
                     },
                     msg.accent(theme),

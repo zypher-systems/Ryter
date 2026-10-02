@@ -81,6 +81,9 @@ pub struct Agent {
     pub machine: String,
     /// The product a test started, while Ryter holds it.
     pub product: Option<crate::run::Started>,
+    /// The tester's report: filed in the running turn, then given to the
+    /// conversation the other hats share when the turn ends.
+    pub filed: crate::testing::Desk,
 }
 
 /// Output ceiling per round of the conversation.
@@ -169,11 +172,25 @@ impl Agent {
         let turn = next_turn();
         let started = std::time::Instant::now();
         let mut tools = 0u32;
+        let spent_from = self.session.meta.spend_usd_total;
         self.emit(AgentEvent::TurnStarted {
             turn,
             role: self.role,
         })?;
         let out = self.turn_inner(user, &mut tools).await;
+        // A report filed in this turn goes to the conversation the other
+        // hats share, however the turn ended: what the tester found is
+        // found.
+        if let Some(filed) = self.filed.pending.take() {
+            let usd = match (spent_from, self.session.meta.spend_usd_total) {
+                (from, Some(now)) => Some((now - from.unwrap_or(0.0)).max(0.0)),
+                _ => None,
+            };
+            let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            if let Err(e) = self.deliver_report(filed, usd, ms) {
+                crate::trace::log(&self.home, &format!("test report: {e}"));
+            }
+        }
         // However the turn ended (done, cancelled, failed), record what it
         // left for `/undo`.
         if let Err(e) = self.finish_turn_record() {
@@ -535,6 +552,7 @@ impl Agent {
                                 | "record_decision"
                                 | "propose_run"
                                 | "run_project"
+                                | "report_test"
                                 | "load_skill"
                                 | "show_page"
                                 | "update_rules"
@@ -548,6 +566,7 @@ impl Agent {
                                 "record_decision" => self.record_decision(&args),
                                 "propose_run" => self.propose_run(&args),
                                 "run_project" => self.run_project(&args),
+                                "report_test" => self.report_test(&args),
                                 "load_skill" => Ok(self.load_skill(&args)),
                                 "update_rules" => self.update_rules(&args),
                                 _ => self.show_page(&args),
@@ -1079,11 +1098,15 @@ impl Agent {
         };
         let by = match text("decided_by") {
             Some("user") => "you".to_string(),
-            Some("model") => format!(
-                "{} hat ({})",
-                self.role,
-                self.model.rsplit('/').next().unwrap_or(&self.model)
-            ),
+            Some("model") => {
+                // The model this hat runs on, which may be its own.
+                let (_, model, _) = self.hat_stack();
+                format!(
+                    "{} hat ({})",
+                    self.role,
+                    model.rsplit('/').next().unwrap_or(&model)
+                )
+            }
             _ => {
                 return Ok(ToolOutput::err(
                     "record_decision needs `decided_by`: `user` when they told you to, \
@@ -1136,7 +1159,7 @@ impl Agent {
     }
 
     /// The folder the project's own files are in.
-    fn root(&self) -> PathBuf {
+    pub(crate) fn root(&self) -> PathBuf {
         self.project_root
             .clone()
             .unwrap_or_else(|| self.ctx.workspace.clone())
@@ -1511,6 +1534,96 @@ impl Agent {
                 "run_project: unknown action {other:?}: start, test, stop, or status"
             ))),
         }
+    }
+
+    /// `report_test`: the tester's report. It is written to its file now,
+    /// and given to the conversation the other hats share when the turn
+    /// ends.
+    fn report_test(&mut self, args: &Value) -> Result<crate::tools::ToolOutput> {
+        use crate::tools::ToolOutput;
+        if self.role != Role::SoloTest {
+            return Ok(ToolOutput::err(format!(
+                "a test report is filed from the test hat, not the {} hat",
+                self.role
+            )));
+        }
+        let report = match crate::testing::Report::from_args(args) {
+            Ok(r) => r,
+            Err(why) => return Ok(ToolOutput::err(why)),
+        };
+        let root = self.root();
+        let plan = self.session.meta.plan_file.clone();
+        // The model the test hat runs on, which may be its own.
+        let (_, model, _) = self.hat_stack();
+        let tester = model.rsplit('/').next().unwrap_or(&model);
+        let text = report.document(plan.as_deref(), tester, &crate::clock::stamp());
+        let subject = crate::testing::subject(plan.as_deref(), &report.title);
+        let path = match crate::testing::save_on(&root, &crate::clock::today(), &subject, &text) {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(ToolOutput::err(format!(
+                    "the report could not be saved ({e}). Give it as your answer instead."
+                )));
+            }
+        };
+        let file = path
+            .strip_prefix(&root)
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        let headline = report.headline();
+        // A second report in one turn takes the first one's place: the
+        // file of each is kept.
+        self.filed.pending = Some(crate::testing::Filed {
+            report,
+            file: file.clone(),
+        });
+        Ok(ToolOutput::ok(format!(
+            "Filed: {headline}. It is saved as `{file}` and goes to the user and the builder \
+             when your turn ends. End your turn now, in a line or two: say where the product \
+             is running."
+        )))
+    }
+
+    /// Give a filed report to the conversation the other hats share, and
+    /// tell the screen.
+    fn deliver_report(
+        &mut self,
+        filed: crate::testing::Filed,
+        total_usd: Option<f64>,
+        duration_ms: u64,
+    ) -> Result<()> {
+        // The model the test hat runs on, which may be its own.
+        let (_, model, _) = self.stack_for(Role::SoloTest);
+        let tester = model.rsplit('/').next().unwrap_or(&model).to_string();
+        self.session.push_to(
+            crate::role::Thread::Main,
+            Message {
+                role: "user".into(),
+                content: filed.report.message(&tester, &filed.file),
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        )?;
+        self.filed.delivered = Some(filed.report.passed());
+        // What was tested, as the files stood: a change after this is not
+        // covered by the report.
+        let tree = crate::review::root(&self.ctx.workspace).ok().and_then(|r| {
+            let base = crate::review::head_base(&r);
+            let changes = crate::review::changes(&r, &base).ok()?;
+            crate::review::tree_of(&r, &changes.now)
+        });
+        self.emit(AgentEvent::Tested {
+            model,
+            headline: filed.report.headline(),
+            passed: filed.report.passed(),
+            rows: filed.report.rows(),
+            file: filed.file,
+            first_failed: filed.report.first_failed(),
+            tree,
+            total_usd,
+            duration_ms,
+        })
     }
 
     /// Put on `role`: the hat, what its tools may do, where the session was
@@ -2322,6 +2435,7 @@ mod tests {
             cfg: None,
             machine: String::new(),
             product: None,
+            filed: Default::default(),
         };
         (home, cwd, agent)
     }
@@ -3847,6 +3961,474 @@ mod tests {
         assert!(tool.content.contains("not valid JSON"), "{}", tool.content);
     }
 
+    const FAILING: &str = r#"{
+        "title": "greeting",
+        "scenarios": [
+            {"name": "the greeting is printed", "result": "pass", "note": "2 passed"},
+            {"name": "the greeting names the user", "result": "fail",
+             "expected": "hi there, ann", "got": "hi there",
+             "to_see_it": "run ./hello ann"},
+            {"name": "the farewell", "result": "not_reached", "note": "needs 2"}
+        ]
+    }"#;
+
+    fn report(json: &str) -> Vec<StreamDelta> {
+        call("report_test", serde_json::from_str(json).unwrap())
+    }
+
+    /// An uncommitted change in a git workspace, with the user answering
+    /// each prompt with the next of `answers` (no, once they run out).
+    /// Returns the events and every prompt the user was shown.
+    async fn checked(
+        script: Vec<Vec<StreamDelta>>,
+        answers: Vec<crate::user_io::Permission>,
+        run: impl AsyncFnOnce(&mut Agent),
+    ) -> (TempDir, TempDir, Agent, Vec<AgentEvent>, Vec<String>) {
+        let (home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(script));
+        agent.put_on(Role::SoloBuild).unwrap();
+        agent.ctx.always_approve = true;
+        std::fs::write(cwd.path().join("hello.txt"), "hi there\nand more\n").unwrap();
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        let asked = std::thread::spawn(move || {
+            let mut asked = Vec::new();
+            let mut answers = answers.into_iter();
+            while let Ok(req) = rx.recv() {
+                if let crate::user_io::UserRequest::Permission {
+                    tool,
+                    summary,
+                    reply,
+                    ..
+                } = req
+                {
+                    asked.push(format!("{tool}: {summary}"));
+                    let _ = reply.send(answers.next().unwrap_or(crate::user_io::Permission::Deny));
+                }
+            }
+            asked
+        });
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        run(&mut agent).await;
+        agent.ctx.user_io = None;
+        agent.sink = None;
+        let asked = asked.join().unwrap();
+        (home, cwd, agent, events.try_iter().collect(), asked)
+    }
+
+    fn kinds(asked: &[String]) -> Vec<&str> {
+        asked
+            .iter()
+            .map(|a| a.split(':').next().unwrap_or(""))
+            .collect()
+    }
+
+    /// `/test`: the user sees who tests, what it will do and what it should
+    /// cost, and says yes. The test is a turn in the tester's own
+    /// conversation. Its report comes back into the conversation the other
+    /// hats share, as one message the builder can fix from, and into a
+    /// file; the hat the user was in comes back.
+    #[tokio::test]
+    async fn a_tests_report_comes_back_to_the_conversation() {
+        use crate::role::Thread;
+        use crate::user_io::Permission;
+        let (_home, cwd, agent, events, asked) = checked(
+            vec![report(FAILING), say("It fails. The product is up.")],
+            vec![Permission::Allow],
+            async |a| a.test_now().await.unwrap(),
+        )
+        .await;
+        assert_eq!(kinds(&asked), ["test", "fix offer"]);
+        assert!(
+            asked[0].contains("grok-4.6 on spacexai (the test hat's model)")
+                && asked[0]
+                    .contains("starts the project and tests what changed, leaves it running")
+                && asked[0].contains("about $"),
+            "{asked:?}"
+        );
+        // The tester's conversation opens with what Ryter asked of it.
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Notice { message } if message == "Ryter · test what changed"
+        )));
+        // The tester was told where to start, in its own conversation.
+        let test = agent.session.messages_of(Thread::Test);
+        assert!(
+            test[0].content.starts_with("[hat: test"),
+            "{}",
+            test[0].content
+        );
+        for want in [
+            "[Ryter] Test the work as its user would.",
+            "No plan was approved for this work",
+            "1 file changed (+2 −1): hello.txt.",
+            "It has no run file yet",
+            "File your report with report_test",
+        ] {
+            assert!(
+                test[0].content.contains(want),
+                "missing {want:?}: {}",
+                test[0].content
+            );
+        }
+        // The report is the shared conversation's, and nothing else of the
+        // tester's is.
+        let main = agent.session.messages_of(Thread::Main);
+        assert_eq!(main.len(), 1, "{main:?}");
+        assert_eq!(main[0].role, "user");
+        assert_eq!(
+            main[0].content,
+            "[Ryter] The test hat (grok-4.6) used the product and filed this report: ✗ 2 of 3 \
+             failed.\n\
+             ✓ 1  the greeting is printed · 2 passed\n\
+             ✗ 2  the greeting names the user\n     \
+             expected hi there, ann\n     \
+             got hi there\n     \
+             to see it: run ./hello ann\n\
+             ✗ 3  the farewell · not reached (needs 2)\n\
+             The full report is in `.ryter/tests/"
+                .to_string()
+                + &crate::clock::today()
+                + "-greeting.md`. The tester worked in a conversation of its own and changed \
+                   nothing."
+        );
+        // The file, and the screen.
+        let file = format!(".ryter/tests/{}-greeting.md", crate::clock::today());
+        let doc = std::fs::read_to_string(cwd.path().join(&file)).unwrap();
+        assert!(doc.contains("- Result: ✗ 2 of 3 failed") && doc.contains("- Plan: none approved"));
+        let tested: Vec<&AgentEvent> = events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::Tested { .. }))
+            .collect();
+        assert_eq!(tested.len(), 1);
+        let AgentEvent::Tested {
+            model,
+            headline,
+            passed,
+            rows,
+            file: said,
+            first_failed,
+            tree,
+            ..
+        } = tested[0]
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            (model.as_str(), headline.as_str(), *passed, *first_failed),
+            ("grok-4.6", "✗ 2 of 3 failed", false, Some(2))
+        );
+        assert_eq!(rows.len(), 6);
+        assert_eq!(said, &file);
+        assert!(tree.is_some(), "what was tested is not recorded");
+        // The hat went to test and came back.
+        let hats: Vec<Role> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::ModeChanged { role } => Some(*role),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(hats, [Role::SoloTest, Role::SoloBuild]);
+        assert_eq!(agent.role, Role::SoloBuild);
+    }
+
+    /// A hat on a model of its own signs its work with that model: the
+    /// report says who tested, and a decision says who decided.
+    #[tokio::test]
+    async fn a_hats_own_model_is_named_as_the_one_that_did_it() {
+        use crate::role::Thread;
+        use crate::user_io::Permission;
+        let own = |a: &mut Agent, hat: &str, model: &str| {
+            let cfg = a.cfg.get_or_insert_with(Default::default);
+            cfg.specialists.insert(
+                hat.into(),
+                crate::config::RoleModel {
+                    connection: Some("spacexai".into()),
+                    model: Some(model.into()),
+                },
+            );
+        };
+        let passing =
+            r#"{"title": "greeting", "scenarios": [{"name": "it greets", "result": "pass"}]}"#;
+        let (_home, cwd, agent, events, _) = checked(
+            vec![report(passing), say("All good.")],
+            vec![Permission::Allow],
+            async |a| {
+                own(a, "test", "moonshot/kimi-k3");
+                a.test_now().await.unwrap();
+            },
+        )
+        .await;
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Tested { model, .. } if model == "moonshot/kimi-k3"
+        )));
+        assert!(
+            agent.session.messages_of(Thread::Main)[0]
+                .content
+                .starts_with("[Ryter] The test hat (kimi-k3) used the product"),
+        );
+        let file = format!(".ryter/tests/{}-greeting.md", crate::clock::today());
+        let doc = std::fs::read_to_string(cwd.path().join(file)).unwrap();
+        assert!(doc.contains("- Tested by: kimi-k3 · "), "{doc}");
+        // And a decision the build hat's own model made.
+        let (_home, cwd, _agent, _events, _) = checked(
+            vec![decision("model"), say("done")],
+            Vec::new(),
+            async |a| {
+                own(a, "build", "vendor/builder-b");
+                a.session.set_plan_file(Some(CMS_PLAN.into())).unwrap();
+                a.turn("go on").await.unwrap();
+            },
+        )
+        .await;
+        let decisions = std::fs::read_to_string(cwd.path().join(crate::decisions::FILE)).unwrap();
+        assert!(
+            decisions.contains("- Decided by: build hat (builder-b) · "),
+            "{decisions}"
+        );
+    }
+
+    /// A review that passes is followed by the offer of a test, with its
+    /// cost. No is no: nothing runs.
+    #[tokio::test]
+    async fn a_review_that_passes_offers_a_test() {
+        use crate::user_io::Permission;
+        let (_home, _cwd, agent, events, asked) = checked(
+            vec![say("VERDICT: PASS")],
+            vec![Permission::Allow, Permission::Deny],
+            async |a| {
+                a.review_now().await.unwrap();
+            },
+        )
+        .await;
+        assert_eq!(kinds(&asked), ["review", "test offer"]);
+        assert!(
+            asked[1].starts_with("test offer: Test this work?\n"),
+            "{asked:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::Tested { .. }))
+        );
+        assert!(
+            agent
+                .session
+                .messages_of(crate::role::Thread::Test)
+                .is_empty()
+        );
+        // One that fails, or gives no verdict, offers no test.
+        for review in [
+            "- hello.txt:1 wrong (blocking)\n\nVERDICT: FAIL",
+            "looks fine",
+        ] {
+            let (_home, _cwd, _agent, _events, asked) = checked(
+                vec![say(review)],
+                vec![Permission::Allow, Permission::Allow],
+                async |a| {
+                    a.review_now().await.unwrap();
+                },
+            )
+            .await;
+            assert_eq!(kinds(&asked), ["review"], "{review}");
+        }
+        // With test offers off, a passing review ends there.
+        let (_home, _cwd, _agent, _events, asked) = checked(
+            vec![say("VERDICT: PASS")],
+            vec![Permission::Allow, Permission::Allow],
+            async |a| {
+                if let Some(c) = a.cfg.as_mut() {
+                    c.ui.offer_test = false;
+                }
+                a.review_now().await.unwrap();
+            },
+        )
+        .await;
+        assert_eq!(kinds(&asked), ["review"]);
+    }
+
+    /// A failed test offers its fixes in the build hat, in the conversation
+    /// the report is part of. The fixes are new work: a review of them is
+    /// offered, and a test after that.
+    #[tokio::test]
+    async fn a_failed_tests_fixes_are_offered_then_reviewed() {
+        use crate::role::Thread;
+        use crate::user_io::Permission;
+        let (_home, cwd, agent, events, asked) = checked(
+            vec![
+                // The test.
+                report(FAILING),
+                say("It fails."),
+                // The fix, in the build hat.
+                write("hello.txt", "hi there, ann\n"),
+                say("Fixed the greeting."),
+                // The review of the fix.
+                say("VERDICT: PASS"),
+            ],
+            vec![
+                Permission::Allow,
+                Permission::Allow,
+                Permission::Allow,
+                Permission::Deny,
+            ],
+            async |a| a.test_now().await.unwrap(),
+        )
+        .await;
+        assert_eq!(
+            kinds(&asked),
+            ["test", "fix offer", "review offer", "test offer"]
+        );
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("hello.txt")).unwrap(),
+            "hi there, ann\n"
+        );
+        // The builder was sent the report, then asked to fix it.
+        let main: Vec<&str> = agent
+            .session
+            .messages_of(Thread::Main)
+            .iter()
+            .filter(|m| m.role == "user")
+            .map(|m| m.content.as_str())
+            .collect();
+        assert!(main[0].starts_with("[Ryter] The test hat"), "{main:?}");
+        assert!(
+            main[1].contains("[Ryter] The test report above has failures. Fix what it found"),
+            "{main:?}"
+        );
+        assert_eq!(reviewed(&events), [Some(true)]);
+        assert_eq!(agent.role, Role::SoloBuild);
+    }
+
+    /// A tester that files no report is said to have filed none; one that
+    /// passes offers nothing more; and a report can be filed in any turn
+    /// in the test hat, not only one Ryter started.
+    #[tokio::test]
+    async fn a_report_is_what_comes_back_and_only_a_report() {
+        use crate::role::Thread;
+        use crate::user_io::Permission;
+        let (_home, _cwd, agent, events, asked) = checked(
+            vec![say("It looks fine to me.")],
+            vec![Permission::Allow],
+            async |a| a.test_now().await.unwrap(),
+        )
+        .await;
+        assert_eq!(kinds(&asked), ["test"]);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Notice { message } if message.starts_with("the tester filed no report")
+        )));
+        assert!(agent.session.messages_of(Thread::Main).is_empty());
+        // All passing: no fixes to offer.
+        let passing =
+            r#"{"title": "greeting", "scenarios": [{"name": "it greets", "result": "pass"}]}"#;
+        let (_home, _cwd, _agent, events, asked) = checked(
+            vec![report(passing), say("All good.")],
+            vec![Permission::Allow, Permission::Allow],
+            async |a| a.test_now().await.unwrap(),
+        )
+        .await;
+        assert_eq!(kinds(&asked), ["test"]);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Tested { passed: true, headline, .. } if headline == "✓ 1 of 1 passed"
+        )));
+        // The user in the test hat, asking for a retest themselves.
+        let (_home, _cwd, agent, events, asked) = checked(
+            vec![report(passing), say("Scenario 1 passes now.")],
+            Vec::new(),
+            async |a| {
+                a.put_on(Role::SoloTest).unwrap();
+                a.turn("retest 1").await.unwrap();
+            },
+        )
+        .await;
+        assert!(asked.is_empty());
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, AgentEvent::Tested { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(agent.session.messages_of(Thread::Main).len(), 1);
+        // And a report is the tester's to file.
+        let (_home, cwd, _agent, events, _) =
+            checked(vec![report(passing), say("done")], Vec::new(), async |a| {
+                a.turn("report it").await.unwrap();
+            })
+            .await;
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::Tested { .. }))
+        );
+        assert!(!cwd.path().join(".ryter/tests").exists());
+    }
+
+    /// The tester is pointed at the plan, the decisions made since, the run
+    /// file, and its last report: everything it starts from, since it has
+    /// not read the conversation.
+    #[tokio::test]
+    async fn the_tester_is_told_where_to_start() {
+        use crate::role::Thread;
+        use crate::user_io::Permission;
+        let (_home, _cwd, agent, _events, asked) = checked(
+            vec![say("nothing to test yet")],
+            vec![Permission::Allow],
+            async |a| {
+                let root = a.root();
+                let plan = crate::plan::save_on(
+                    &root,
+                    "2026-10-01",
+                    "cms",
+                    "## Goal\nx\n\n## How to verify\n- log in\n- open /manage/\n- publish a page\n",
+                )
+                .unwrap();
+                let rel = plan.strip_prefix(&root).unwrap().display().to_string();
+                a.session.set_plan_file(Some(rel.clone())).unwrap();
+                crate::decisions::record(
+                    &root,
+                    &rel,
+                    &crate::decisions::Entry {
+                        title: "No export".into(),
+                        plan_said: "step 4".into(),
+                        built_instead: "none".into(),
+                        why: "the user said so".into(),
+                        by: "you".into(),
+                    },
+                )
+                .unwrap();
+                crate::run::save_approved(
+                    &root,
+                    &a.home,
+                    &crate::run::RunFile {
+                        test: vec!["echo ok".into()],
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                crate::testing::save_on(&root, "2026-10-01", "cms", "an earlier report").unwrap();
+                a.test_now().await.unwrap();
+            },
+        )
+        .await;
+        assert!(
+            asked[0].contains("starts the project, runs 3 scenarios from the plan"),
+            "{asked:?}"
+        );
+        let brief = &agent.session.messages_of(Thread::Test)[0].content;
+        for want in [
+            "The plan the user approved is in `.ryter/plans/2026-10-01-cms.md`.",
+            "is recorded in `.ryter/decisions.md`, under `## plan: 2026-10-01-cms.md` (1 entry)",
+            "How it runs is in `.ryter/run.toml`, which the user approved",
+            "The last report filed here is `.ryter/tests/2026-10-01-cms.md`: retest what failed",
+        ] {
+            assert!(brief.contains(want), "missing {want:?}: {brief}");
+        }
+    }
+
     /// How a review is asked for in these tests.
     struct ReviewRun {
         /// The user's answer to every prompt.
@@ -3892,6 +4474,9 @@ mod tests {
         let (home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(script));
         let cfg = agent.cfg.as_mut().unwrap();
         cfg.ui.offer_audit = run.offers_on;
+        // These are about the review; what follows one that passes has
+        // tests of its own.
+        cfg.ui.offer_test = false;
         cfg.spend.review_usd = run.limit;
         if run.own_model {
             cfg.specialists.insert(
@@ -4150,6 +4735,9 @@ mod tests {
             ),
             "{brief}"
         );
+        // The decisions file is what the work is held against, not a
+        // change to review.
+        assert!(brief.contains("1 file, +2 −1."), "{brief}");
         let (_home, _cwd, agent, _events, _) = review_run(
             ReviewRun {
                 plan: Some(plan),

@@ -65,6 +65,8 @@ pub fn decide(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
         // The run file is the user's to approve, and Ryter runs only what
         // they approved.
         "propose_run" | "run_project" => Decision::Allow,
+        // A report is written by Ryter, in its own folder.
+        "report_test" => Decision::Allow,
         "web_fetch" | "web_search" => {
             if ctx.web {
                 Decision::Allow

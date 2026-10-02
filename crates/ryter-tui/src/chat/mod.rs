@@ -85,6 +85,12 @@ pub enum SystemLevel {
     Error,
     /// A dim horizontal rule with the body centred in it (`R-EVT-04`).
     Rule,
+    /// A report handed in from somewhere else: the tester's, in the
+    /// conversation the other hats share. `failed` picks its colour.
+    Report {
+        /// Something in it failed.
+        failed: bool,
+    },
     /// What a turn came to, closing it on the ledger: `✓ 4 tools · 1 file
     /// (+9 −1) · 0:12 · $0.004`. The folded form of a finished turn shows it.
     Receipt,
@@ -190,6 +196,7 @@ impl Message {
                 SystemLevel::Info => "system".into(),
                 SystemLevel::Warn => "warning".into(),
                 SystemLevel::Error => "error".into(),
+                SystemLevel::Report { .. } => "test".into(),
                 SystemLevel::Rule | SystemLevel::Receipt => String::new(),
             },
         }
@@ -209,6 +216,7 @@ impl Message {
                 SystemLevel::Info => "· ",
                 SystemLevel::Warn => "! ",
                 SystemLevel::Error => "✕ ",
+                SystemLevel::Report { .. } => "▣ ",
                 SystemLevel::Rule | SystemLevel::Receipt => "",
             },
         }
@@ -227,6 +235,8 @@ impl Message {
                 SystemLevel::Info | SystemLevel::Rule | SystemLevel::Receipt => theme.dim,
                 SystemLevel::Warn => theme.warn,
                 SystemLevel::Error => theme.error,
+                SystemLevel::Report { failed: true } => theme.error,
+                SystemLevel::Report { failed: false } => theme.success,
             },
         }
     }

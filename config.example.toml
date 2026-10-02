@@ -53,6 +53,7 @@ timestamps = true          # HH:MM on speaker headers (the ledger: beside each q
 line_numbers = true        # gutter in code blocks
 receipts = true            # /commit adds a `Ryter:` trailer: model, cost, tests
 offer_audit = true         # after a build turn that changed files, offer a review (asks first, shows the cost)
+offer_test = true          # after a review that passed, offer a test of the running product (asks first, shows the cost)
 open_pages = true          # open a page the model shows (show_page) in your browser; off, you get the link only
 
 [mcp]

@@ -168,6 +168,8 @@ pub struct UiConfig {
     pub receipts: bool,
     /// After a build turn that changed files, offer an audit (`/audit`).
     pub offer_audit: bool,
+    /// After a review that passed, offer a test (`/test`).
+    pub offer_test: bool,
     /// `ledger` (one reading column on a timeline, status in the bottom
     /// bar) | `classic` (chat beside the info cards, as before 0.6.0).
     pub layout: String,
@@ -196,6 +198,7 @@ impl Default for UiConfig {
             line_numbers: true,
             receipts: true,
             offer_audit: true,
+            offer_test: true,
             layout: "ledger".into(),
             open_pages: true,
         }
@@ -214,6 +217,7 @@ pub const UI_KEYS: &[&str] = &[
     "line_numbers",
     "receipts",
     "offer_audit",
+    "offer_test",
     "layout",
     "open_pages",
 ];
@@ -1147,6 +1151,8 @@ struct UiFile {
     #[serde(skip_serializing_if = "Option::is_none")]
     offer_audit: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    offer_test: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     layout: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     open_pages: Option<bool>,
@@ -1165,6 +1171,7 @@ impl From<&UiConfig> for UiFile {
             line_numbers: Some(ui.line_numbers),
             receipts: Some(ui.receipts),
             offer_audit: Some(ui.offer_audit),
+            offer_test: Some(ui.offer_test),
             layout: Some(ui.layout.clone()),
             open_pages: Some(ui.open_pages),
         }
@@ -1205,6 +1212,9 @@ impl UiFile {
         }
         if let Some(v) = self.offer_audit {
             ui.offer_audit = v;
+        }
+        if let Some(v) = self.offer_test {
+            ui.offer_test = v;
         }
         if let Some(v) = self.layout {
             ui.layout = v;

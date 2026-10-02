@@ -19,7 +19,7 @@
                                             │  profile               ‹ off ›                               default ┃
                                             │                                                                      ┃
                                             │                 OFF           workspace     read-only                ┃
-                                            │ project files   read, write   read, write   read                     ┃
+                                            │ project files   read, write   read, write   read                     │
                                             │ rest of home    read, write   no            no                       │
                                             │ your tools      yes           yes           yes                      │
                                             │ your keys       rule only †   never         never                    │

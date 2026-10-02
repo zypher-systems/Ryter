@@ -11,7 +11,7 @@
                                                     │ price unknown            │
                                                     │ reasoning  auto · medium │
                                                     ╰──────────────────────────╯
-╭─ commands ──────────────────────────── 4 of 30 ─╮ ╭─ spend ──────────────────╮
+╭─ commands ──────────────────────────── 4 of 31 ─╮ ╭─ spend ──────────────────╮
 │ mo                                              │ │ session            $?.?? │
 │›/models         Choose models: one for ever… ▸  │ ╰──────────────────────────╯
 │ /tools          Tool permission mode         ▸  │ ╭─ budget ─────────── off ─╮

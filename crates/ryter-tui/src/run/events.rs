@@ -14,7 +14,19 @@ const TOOL_ERROR_CHARS: usize = 600;
 /// A turn's closing line on the ledger: `✓ 4 tools · 1 file (1 changed, +9
 /// −1) · 1 command (1 ok) · 12s · $0.004`. Measured by Ryter, not reported by
 /// the model.
-fn receipt(view: &View, verb: &Verb, tools: u32, duration_ms: u64) -> String {
+fn receipt(view: &mut View, verb: &Verb, tools: u32, duration_ms: u64) -> String {
+    // A turn in which the tester filed its report closes on the report:
+    // `✗ 2 of 5 failed · 1:40 · $0.21`.
+    let report = view.turn_report.take();
+    if let (Some(headline), Verb::Done) = (report, verb) {
+        let mut parts = vec![headline, crate::chat::fmt_duration(duration_ms)];
+        if let Some(now) = view.spend {
+            parts.push(crate::chat::turn_usd(
+                now - view.turn_spend_from.unwrap_or(0.0),
+            ));
+        }
+        return parts.join(" · ");
+    }
     let mut parts = vec![match verb {
         Verb::Stopped => "⊘ stopped".to_string(),
         Verb::Failed => "✕ failed".to_string(),
@@ -53,7 +65,9 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
             view.turn_thread = role.thread();
             view.turn_thread
         }
-        AgentEvent::ModeChanged { .. } => Thread::Main,
+        // A hat change the agent makes, and a report the tester files, are
+        // said in the conversation the other hats share.
+        AgentEvent::ModeChanged { .. } | AgentEvent::Tested { .. } => Thread::Main,
         _ if view.busy => view.turn_thread,
         _ => shown,
     };
@@ -215,14 +229,64 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 Some(false) => "✗ blocking problems",
                 None => "no verdict",
             };
+            // To the tenth of a cent, as a turn's cost is: a review that
+            // cost $0.003 read "$0.00".
             let cost = total_usd.map_or_else(String::new, |usd| {
-                format!(" · {}", ryter_core::format_usd(Some(usd)))
+                format!(" · {}", crate::chat::turn_usd(usd))
             });
             view.system(format!(
                 "review · {} · {said}{cost}",
                 crate::chat::short_model(model)
             ));
             view.last_review = Some((tree.clone(), model.clone(), *verdict));
+        }
+        AgentEvent::Tested {
+            model,
+            headline,
+            passed,
+            rows,
+            file,
+            first_failed,
+            tree,
+            total_usd,
+            duration_ms,
+        } => {
+            let mut head = format!(
+                "test · {} · {headline} · {}",
+                crate::chat::short_model(model),
+                crate::chat::fmt_duration(*duration_ms)
+            );
+            if let Some(usd) = total_usd {
+                head.push_str(&format!(" · {}", crate::chat::turn_usd(*usd)));
+            }
+            let mut body = head;
+            for row in rows {
+                body.push('\n');
+                body.push_str(row);
+            }
+            body.push_str(&format!("\nfull report  {file}"));
+            view.report(body, !passed);
+            // Left running, so the user can look at what the tester saw.
+            if let Some(p) = &view.product {
+                let at = p
+                    .address
+                    .as_ref()
+                    .map(|a| format!(" at {a}"))
+                    .unwrap_or_default();
+                let how = p
+                    .stop
+                    .as_ref()
+                    .map(|s| format!(" ({s})"))
+                    .unwrap_or_default();
+                view.system(format!(
+                    "the project is still running{at}\n/stop stops it{how}"
+                ));
+            }
+            view.last_test = Some((tree.clone(), model.clone(), *passed));
+            view.test_runs += 1;
+            view.retest = *first_failed;
+            // The tester's own turn closes on what it reported.
+            view.turn_report = Some(headline.clone());
         }
         AgentEvent::Session { id, title } => {
             view.session_id = id.clone();
@@ -280,6 +344,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 view.last_tests = None;
                 view.tests_stale = false;
                 view.last_review = None;
+                view.last_test = None;
                 view.panels
                     .stack
                     .retain(|p| !matches!(p.kind(), "commit" | "changes"));

@@ -56,6 +56,7 @@ impl Commit {
             tests: view.last_tests.clone(),
             tests_stale: view.tests_stale,
             review: review::Reviewed::of(view.last_review.as_ref(), now.as_deref()),
+            test: review::Tested::of(view.last_test.as_ref(), now.as_deref()),
         };
         let mut c = Self {
             files,

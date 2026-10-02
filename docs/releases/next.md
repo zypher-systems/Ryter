@@ -67,7 +67,14 @@ added at the top, and this comment removed.
   - **How the project runs is its own file,** `.ryter/run.toml`: the start command, an address that answers once it is up, the test commands, and the stop command. The tester proposes it and you approve it on a panel (`y` approve, `e` adjust, `n` reject). Ryter then runs those commands itself, and keeps a start command that stays in the foreground (`npm run dev`) running.
   - **A run file is approved by what it says.** One that came with the project, or was changed after you approved it, is shown to you again before anything in it runs.
   - **The product is left running** after a test, and the chat says where. `/stop` stops it, quitting asks whether to stop it, and the next session in that project is told it is still up.
-  - **Not in this release:** the tester's report coming back into the main conversation, `/test`, and an offer to test after a review. Today its findings stay in its thread.
+  - **Its report comes back into the main conversation** as a card: a pass is one line, a failure is written out with what was expected, what happened and how to see it again. The model you build with is given the same report, so "fix 3" works. The tester's working stays in its own thread.
+  - **The full report is a file** under `.ryter/tests/`, named for the day and the plan. An earlier report is never written over.
+  - **A test is offered after a review that passed,** with what it should cost; `/test` asks for one at any time; `s` on the offer stops the offers.
+  - **A failed test offers its fixes** in the build hat. The fixes are new work, so a review of them is offered, and a test after that.
+  - **The commit receipt says whether the work was tested:** "test ✓ kimi-k3", "test ✗ kimi-k3", "not tested", or "not tested after the last change".
+- **Ryter's own files are not the work.** Approved plans, the decisions file, the run file and test reports are kept in the project. A review no longer counts them as changed files, and writing one no longer makes a review read "not reviewed after the last change".
+- **A plan's file is named for your date.** It was named for the date in UTC, so a plan approved in the evening was filed under tomorrow's.
+- **A review's cost is shown to the tenth of a cent** ("$0.003"), as a turn's is. One that cost less than half a cent read "$0.00".
 - **Where the work differs from the plan, the difference and its reason are recorded.** An approved plan is not edited. The entries go in `.ryter/decisions.md` in the project, under the plan they belong to: what the plan said, what is built instead, why, and who decided.
   - An entry is added when you tell the model to leave out, add or change something the plan says, and when the model finds a step can't be done as written and takes another way to the same goal.
   - The chat says "decision recorded: No export button in this pass". Nothing is asked.
@@ -139,6 +146,17 @@ added at the top, and this comment removed.
   - "test the list": the request went to the tester's model with that one message and eleven tools. It ran the project's `./run-tests.sh` and a `curl` to `localhost` with no prompt. Its attempt to write a file in the project was refused: "the test hat can't edit files".
   - `Tab` back to build: the main chat as it was left, with nothing of the tester's. A message there went to the main model with the main conversation only.
   - `ryter resume`, with the session left in the test hat: it opened on the tester's thread, and the next message continued it (the request carried all nine messages of that thread).
+- **The whole chain,** in the TUI against a stand-in provider, with the review and test hats each on a model of their own and a small real web server as the product:
+  - A build turn changed a file, and a review was offered. `⏎`: the review passed, and a test was offered: "tester-k on local (the test hat's model) · starts the project and tests what changed, leaves it running · about $0.05–$0.49".
+  - `⏎`: the screen went to the tester's thread. It proposed the run file (`y`), started the server, ran the tests, requested a page that wasn't there, and filed a report with one failure.
+  - The main conversation then showed "switched to the test hat (tester-k)", the card "▣ test · tester-k · ✗ 1 of 3 failed · 4.3s · $0.006" with the failure written out and "full report .ryter/tests/2026-10-01-greeting-page.md", "the project is still running at …", and "switched to the build hat".
+  - "fix what the test found?" `⏎`: the main model was sent the report and wrote the missing file, and a review of the fix was offered.
+  - The tester's thread: "TEST THREAD · 1 run this session", its steps (`setup`, `start`, `test`, `run`, `report`), its turn closed with "✗ 1 of 3 failed", and the prompt read "ask the tester, or: retest 3".
+  - `/commit` after the fix: the receipt ended "not reviewed after the last change · not tested after the last change".
+  - `/test` on its own asked first, with no "stop offering" key.
+  - Quit with the product up, stop it, `ryter resume`: the tester's thread was back, with Ryter's request to it as one line.
+  - **Bugs this found:** the report named the model every hat uses, not the tester's own; the report's file was dated in UTC; and the run file and the report, being new files in the project, would have made a passed review read as out of date. All fixed, with tests.
+  - Not tried: any of it with a real model, which is the next step.
 - **The run file,** in the TUI against a stand-in provider, with a small real web server as the product:
   - The tester proposed a start command, a ready address and one test command. The panel showed them under "how this project runs". `e` and "also run ./lint.sh": the model proposed again with both. `y`: the chat said "run file · approved and saved to .ryter/run.toml", and the file held the four lines.
   - Start: the server came up in 0.3s and the chat said "the project is running at http://127.0.0.1:57341/, started 20:56 · /stop stops it". The tests ran ("✓ 2 passed"), and `curl` to the server returned 200 with no prompt.

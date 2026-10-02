@@ -219,7 +219,31 @@ One model works in your project, in the build hat to start with. `Tab` switches 
 - **A turn stays in its own conversation.** You can look at the main chat while a test runs, or at the tester's thread while a build does: what a running turn says goes to the conversation it is part of. The model can't switch into or out of the test hat in the middle of a turn; that is yours to do with `Tab`.
 - **What it may run:** what the build hat runs without asking (your toolchains, the project's programs, its containers), plus requests to the project's own address: `curl` to `localhost`, `127.0.0.1` or a `.localhost` name, saving only to `/tmp` or your home folder. What the build hat asks about, it asks about. It can't edit, delete or move the project's files, and a redirect into the project is refused.
 - **Its own model:** the *Test* seat in `/models`. Starting a test thread on a different model costs nothing extra, since there is no conversation for it to re-read.
-- **Not built yet:** the report that comes back into the main conversation, `/test`, and the offer after a passed review. Today the tester's findings stay in its thread, and you carry them to the build hat yourself. The approved design is in `docs/test-hat.md`.
+
+**A test, and its report.** A test is the test hat using the product: it starts it, runs its tests, tries each scenario the plan says to verify, and files a report.
+
+- **Offered after a review that passed.** `⏎` runs it, `n` passes, `s` stops the offers (`/settings` → *test offers*, or `[ui] offer_test`, turns them back on). **`/test`** asks for one at any time.
+- **Every test asks first,** naming the model, what it will do, and a cost range; after a few tests, also what your last ones with that model cost. A test is longer than a review, so its range is wider. There is no separate limit for a test: your session budget holds it.
+- **What the tester starts from:** the plan you approved and its entries in `.ryter/decisions.md`, the files that changed, the run file, and its own last report. Not the conversation.
+- **The report comes back as a card** in the main conversation. A pass is one line; a failure is opened out with what was expected, what happened, and how to see it again:
+
+  ```
+  ▣  test · kimi-k3 · ✗ 2 of 5 failed · 1:40 · $0.21
+  │  ✓ 1  the stack starts and is healthy
+  │  ✗ 3  /manage/ after login
+  │       expected the page list
+  │       got 500: NoReverseMatch 'pages:list'
+  │       to see it: start the stack, log in, open /manage/
+  │  ✗ 4  publish a page · not reached (needs 3)
+  │  full report  .ryter/tests/2026-10-01-cms-2.md
+  ```
+
+  The model you build with is given the same report, so "fix 3" works. The tester's working (its commands, logs and dead ends) stays in its own thread.
+- **The full report is a file** in `.ryter/tests/`, named for the day and the plan. An earlier report is never written over: a second one that day is `-2`.
+- **A failed test offers its fixes** in the build hat. Say yes and the builder works from the report. The fixes are new work, so a review of them is offered, and a test after that.
+- **You can ask the tester yourself.** In the test hat, "retest 3" or "try the upload with a large file" is a message like any other; a report it files lands in the main conversation the same way.
+- **The commit says whether the work was tested:** the receipt ends with "test ✓ kimi-k3", "test ✗ kimi-k3", "not tested", or "not tested after the last change".
+- **Ryter's own files are not the work.** Plans, decisions, the run file and test reports are in the project, but a review doesn't read them as changes, and writing one doesn't make a review or a test out of date.
 
 **How a project runs: `.ryter/run.toml`.** The tester needs four things from a project: the command that starts it, an address that answers once it is up, its test commands, and the command that stops it.
 
@@ -278,7 +302,7 @@ stop  = "docker compose down"
 - **Every review asks first,** naming the model, what it will read, and a cost range. After a few reviews it also shows what your last ones with that model cost. `n` spends nothing. If the review hat follows the model every hat uses, the prompt says the reviewer is the model that built the work.
 - **It is a turn in the conversation,** in the review hat, and the hat you were in comes back when it ends. The reviewer has read what you asked for, and the model you build with reads the findings next, so "fix those" works. Because it reads the conversation, a reviewer on another model pays to read it once; the chat says what that costs.
 - **It checks against the plan.** If you approved a plan, the reviewer is pointed at its file and checks that the change does what it says, all of it and nothing more. It is also pointed at that plan's entries in `.ryter/decisions.md`: what you decided to do differently is not held against the work. With no plan it checks against what you asked for. Then correctness, tests and safety.
-- **It ends with a verdict:** `VERDICT: PASS` or `VERDICT: FAIL`, with findings marked **blocking** or **note**. The chat repeats it under the review: "review · grok-4.7 · ✗ blocking problems · $0.04".
+- **It ends with a verdict:** `VERDICT: PASS` or `VERDICT: FAIL`, with findings marked **blocking** or **note**. The chat repeats it under the review: "review · grok-4.7 · ✗ blocking problems · $0.040".
 - **A failed review offers its fixes.** The reviewer asks to switch to the build hat; say yes and the build hat fixes them in the same turn. The fixes are new work, so a review of them is offered.
 - **The commit says whether the work was reviewed.** The receipt on `/commit` ends with "review ✓ grok-4.7", "review ✗ grok-4.7", "not reviewed", or "not reviewed after the last change". A verdict holds for the files the reviewer read: change one afterwards, by hand or with the model, and the receipt says so.
 - **A limit, if you want one.** `/settings` → *review usd* is the most one turn in the review hat may spend (0 is no limit). Each step is priced before it's sent. When about one step's room is left, or three quarters of the limit is spent, the reviewer is told to stop exploring and write up. A step that would pass the limit isn't sent, and a review stopped that way has no verdict. A model with no known price isn't run under a limit, since the limit couldn't hold it.

@@ -301,7 +301,12 @@ fn thread_line(view: &View, theme: Theme, width: usize) -> Option<Line<'static>>
     }
     let dim = Style::default().fg(theme.dim).bg(theme.bg);
     let name = "TEST THREAD";
-    let rest = " · its own conversation · tab: main chat";
+    let rest = match view.test_runs {
+        0 => " · its own conversation · tab: main chat".to_string(),
+        1 => " · 1 run this session · tab: main chat".to_string(),
+        n => format!(" · {n} runs this session · tab: main chat"),
+    };
+    let rest = rest.as_str();
     let rest = wrap::truncate(rest, width.saturating_sub(wrap::width(name)));
     Some(Line::from(vec![
         Span::styled(

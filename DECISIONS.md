@@ -12,6 +12,26 @@ Why, not what. Non-obvious choices are recorded here, newest first.
 - **Why:** "There is too many unknowns for crew to work effectively without the user." No real project had completed in crew mode; the benchmark's clean runs were on small tasks with checks already set.
 - **Where:** `ROADMAP.md` (Direction). The code to go, when it goes: `crew.rs`, `queue.rs`, `tiering.rs`, `estimate.rs`, the crew parts of `agent.rs`, and the crew panels, about 10,000 of 72,000 lines; `bench.rs` is rebuilt on the hats.
 
+### 2026-10-01 — A test's report: one message back, a file, and the receipt
+- **By:** lead, building to the user's design (`docs/test-hat.md`: failures open and passes one line; offered after a review that passed). Third of three patches.
+- **Decision:**
+  - **The report is a tool call** (`report_test`), not text to parse. Each scenario has a result Ryter can count, and a failure without what happened is sent back to the tester before anything is filed.
+  - **It is delivered when the tester's turn ends,** by `Agent::turn`, however the turn ended and whoever started it. So a report filed after "retest 3" typed in the test hat lands in the main conversation the same way as one from `/test`.
+  - **It goes into the shared conversation as a user message from Ryter,** with the same rows the card shows. The builder fixes from it. Nothing else of the tester's thread crosses over.
+  - **The chain is one loop** (`gate::checks`): review, then test, then the fixes, each leading to the next only on a pass (review) or on fixes made (test). It replaced `review` calling itself for fixes and would otherwise have needed a test calling a review calling a test.
+  - **The fix offer is Ryter's question, after the report is in.** A failed review asks from inside the reviewer's turn with `request_hat`; a turn in the tester's thread can't carry on in another conversation.
+  - **What identifies the work ignores Ryter's own files.** `review::tree_of` is a digest of the commit's files without plans, decisions, the run file and reports. It was the git tree, and a test writes its report into the project: a review that passed read as stale the moment the work was tested. The review's job leaves the same files out.
+  - **A hat's work is signed by the model it ran on** (`hat_stack`), in the report, its file, and a decision's "decided by". `self.model` is the model every hat follows.
+  - **Files the user looks for are dated by their clock** (`clock::today`), plans included.
+- **Chosen vs rejected:**
+  - Rejected a limit for a test in this patch. A review's limit works by pricing each step against it; a test's steps include minutes of the product starting. The session budget holds it, and the estimate says how wide the range is.
+  - Rejected stopping a turn when the report is filed. The tester is told to end in a line or two; cutting it off would lose "the product is up at …".
+  - Rejected showing the summary (what could not be tested) on the card. It is in the message the builder reads and in the file; the card is the scenarios.
+  - Kept "not tested" on every receipt, as "not reviewed" is, though a user who never tests will see it on every commit.
+- **Found on the way:** see the release notes ("Bugs this found"): the tester's model name, the UTC date, and the stale review.
+- **Where:** `crates/ryter-core/src/testing.rs`, `gate.rs` (`checks`, `test_once`, `test_brief`, `offer_fixes`), `agent.rs` (`report_test`, `deliver_report`), `review.rs` (`tree_of`, `is_bookkeeping`, `Tested`); `crates/ryter-tui/src/run/events.rs` (`Tested`), `run/actions.rs` (`report_card`), `chat/mod.rs` (`SystemLevel::Report`)
+- **Residual risk:** whether a real model files a useful report, or one at all, has not been tried. Two user messages in a row reach the provider when a report is followed by the user's next message. The estimate for a test is a guess until there is history.
+
 ### 2026-10-01 — The run file: Ryter runs what the user approved
 - **By:** lead, building to the user's design (`docs/test-hat.md`: the model drafts it, the user approves it; the product is left running until the user says). Second of three patches.
 - **Decision:**

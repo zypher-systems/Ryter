@@ -45,6 +45,12 @@ pub fn stamp_at(epoch_secs: u64, offset_secs: i32) -> String {
     )
 }
 
+/// Today's date here (`YYYY-MM-DD`): what a file the user will look for is
+/// named for.
+pub fn today() -> String {
+    stamp().chars().take(10).collect()
+}
+
 /// [`stamp_at`] now, here.
 pub fn stamp() -> String {
     let now = std::time::SystemTime::now()

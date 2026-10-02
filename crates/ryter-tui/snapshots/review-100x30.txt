@@ -21,7 +21,7 @@
    switched to the build hat · Tab to change it again          ┃
                                                                ┃
  · system                                                      ┃
-   review · claude-opus-5.5 · ✗ blocking problems · $0.04      ┃
+   review · claude-opus-5.5 · ✗ blocking problems · $0.040     ┃
  · ✓ done · 0 tools · 0:03                                                         ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮

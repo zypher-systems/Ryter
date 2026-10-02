@@ -80,6 +80,33 @@ pub enum AgentEvent {
         /// USD total for this call. `None` means unknown price (`$?.??`).
         total_usd: Option<f64>,
     },
+    /// The test hat filed a report. It is in the conversation the other
+    /// hats share from here on, and in its file.
+    Tested {
+        /// Tester model id.
+        model: String,
+        /// `✗ 2 of 5 failed`, `✓ 5 of 5 passed`.
+        headline: String,
+        /// Whether every scenario passed.
+        passed: bool,
+        /// The report's rows: a pass one line, a failure opened out.
+        rows: Vec<String>,
+        /// The report's file, as a path in the project.
+        file: String,
+        /// The number of the first scenario that failed, for "retest 3".
+        #[serde(default)]
+        first_failed: Option<usize>,
+        /// The files it tested, as a git tree: a commit of anything else
+        /// was not tested.
+        #[serde(default)]
+        tree: Option<String>,
+        /// What the turn that filed it cost; `None` when unpriced.
+        #[serde(default)]
+        total_usd: Option<f64>,
+        /// How long that turn took.
+        #[serde(default)]
+        duration_ms: u64,
+    },
     /// The product a test started is up, or was stopped. While it is up the
     /// user can stop it (`/stop`), and is asked about it on quit.
     Product {
