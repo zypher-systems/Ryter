@@ -23,6 +23,7 @@ mod outside;
 pub mod page;
 pub mod plan;
 pub mod project;
+mod project_file;
 pub mod prompt;
 pub mod review;
 pub mod role;

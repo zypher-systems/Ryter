@@ -3,7 +3,7 @@
 use regex::RegexBuilder;
 use serde_json::Value;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 
 use crate::diff::FileDiff;
 use crate::error::{Error, Result};
@@ -15,7 +15,11 @@ const DEFAULT_LINE_LIMIT: usize = 2_000;
 
 pub fn read_file(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     let path = require_path(args, ctx)?;
-    let text = match fs::read_to_string(&path) {
+    let text = match open_for_read(&path, ctx).and_then(|mut file| {
+        let mut text = String::new();
+        file.read_to_string(&mut text)?;
+        Ok(text)
+    }) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
             return Ok(ToolOutput::err(format!(
@@ -290,15 +294,19 @@ pub fn grep(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     let mut hits = Vec::new();
     for dent in walker.flatten() {
         let path = dent.path();
-        if !path.is_file() {
+        if !dent.file_type().is_some_and(|kind| kind.is_file()) {
             continue;
         }
         if crate::tools::policy::is_secret(path, ctx) {
             continue;
         }
-        let Ok(text) = fs::read_to_string(path) else {
+        let Ok(mut file) = open_for_read(path, ctx) else {
             continue;
         };
+        let mut text = String::new();
+        if file.read_to_string(&mut text).is_err() {
+            continue;
+        }
         let rel = path.strip_prefix(&ctx.workspace).unwrap_or(path);
         for (i, line) in text.lines().enumerate() {
             if re.is_match(line) {
@@ -322,6 +330,34 @@ pub fn grep(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         out.push_str("\n… stopped at 200 matches; narrow with path or include");
     }
     Ok(ToolOutput::ok(out))
+}
+
+fn open_for_read(path: &std::path::Path, ctx: &ToolContext) -> std::io::Result<fs::File> {
+    for root in [&ctx.workspace, &ctx.notes_dir] {
+        // Preserve the walked relative path: canonicalizing a file here
+        // would hide the link that the anchored reader must refuse.
+        for base in [
+            root.clone(),
+            fs::canonicalize(root).unwrap_or_else(|_| root.clone()),
+        ] {
+            if let Ok(rel) = path.strip_prefix(&base) {
+                if crate::tools::policy::is_secret(path, ctx) {
+                    return Err(std::io::Error::other("protected file"));
+                }
+                return crate::project_file::open(root, rel);
+            }
+        }
+    }
+    // Direct reads may also have been authorized outside the project by
+    // require_resolved. They arrive canonicalized; retain that permission
+    // while refusing links swapped in after the gate checked the path.
+    if path.is_absolute() && !crate::tools::policy::is_secret(path, ctx) {
+        return crate::project_file::open(
+            std::path::Path::new("/"),
+            path.strip_prefix("/").unwrap(),
+        );
+    }
+    Err(std::io::Error::other("file is outside the workspace"))
 }
 
 pub fn glob_files(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
