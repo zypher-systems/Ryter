@@ -18,6 +18,8 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 
 ## Now
 
+- **Unreleased — review repair 6b: session recovery.** Resume recovers torn final records in either conversation and the spend ledger, keeps an original backup, and reports the recovery. Complete/middle corruption fails without changing the logs. Spending reconciles from the ledger without lowering older cached totals; uncertain recovery keeps the budget closed.
+
 - **Unreleased — review repair 5: project lifecycle.** Run commands preserve quoted spaces and newlines. Every failed start cleans up its owned process group and approved stop command; failed cleanup stays recorded and retryable, including after resume. Readiness requires successful HTTP over HTTP or HTTPS, and an occupied address is not claimed by a new start.
 
 - **Unreleased — review repair 4: streamed tool identity.** Chat and Messages retain per-call indices; Responses retains item identity separately from its result call ID. Interleaved calls reconstruct and execute their own arguments on all three protocols.

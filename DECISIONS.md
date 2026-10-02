@@ -2,6 +2,13 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Recover only a torn JSONL tail, preserving the original
+- **Decision:** Inspect both conversation files and the spend ledger before repair. An unterminated final record that ends during JSON or UTF-8 decoding can be removed after syncing an exact backup. A malformed complete record or corruption before another line remains an error. A complete final record without a newline is retained and separated from the next append.
+- **Why:** Interrupted appends should not hide valid history, but silently skipping arbitrary corruption would manufacture a different conversation or spending total. Recovery announces its backup path in CLI/TUI. Metadata and transcript replacement use unique staging files, synced before atomic rename. On Linux/macOS, append, recovery and replacement share an advisory file lock so a live append cannot be mistaken for an interrupted one.
+- **Spending:** Recompute the ledger total and retain the greater of it and the old cached total. Cached spending above the ledger, incomplete rows, or a recovered tail mark accounting incomplete. Persist that uncertainty before removing the tail, so interruption during recovery cannot unlock a budget.
+- **Limits:** A process killed before any usage or spend record reaches disk still has no reconstructable charge. Session writers must not share a live session; unique staging names prevent staging-file collisions but are not a multi-writer transaction protocol.
+- **Where:** `session.rs`, recovery notices in agent startup and TUI session switching; regressions cover both threads, split UTF-8, backups, append/resume, malformed records and both ledger/meta interruption orders.
+
 ### 2026-10-02 — A failed lifecycle operation keeps ownership until cleanup succeeds
 - **Decision:** Nonzero startup exits, wait errors, timeouts and cancellation share cleanup. Failed cleanup returns its handle to the agent and persists a pending flag with the approved stop command. A later start cannot discard a pending cleanup record; `/stop` retries it. Earlier-session process numbers remain insufficient authority to kill a process.
 - **Why:** A launcher can fail after starting children or a partial stack. Dropping its record made those resources impossible to stop through Ryter.
