@@ -120,14 +120,18 @@ fn braces(word: &str, out: &mut Vec<String>) -> bool {
                     }
                     return true;
                 }
-                // `{a..e}`, `{01..10}`: a run.
+                // `{a..e}`, `{01..10}`: a run. An older shell (the one
+                // macOS ships) leaves some of these as written, a step or
+                // a padded number among them, so the word as written is
+                // listed too.
                 if let Some(list) = parts.first().filter(|_| run).and_then(|p| run_of(p)) {
                     for part in list {
                         if !braces(&format!("{pre}{part}{post}"), out) {
                             return false;
                         }
                     }
-                    return true;
+                    let kept = format!("{pre}{}{}}}{post}", quoted('{'), parts[0]);
+                    return braces(&kept, out);
                 }
             }
             // `{x}`, or no closing brace: the shell leaves it as written.
