@@ -350,7 +350,7 @@ Anywhere else (`/opt`, `/srv`, another disk), the build hat asks each time and n
 
 The plan and review hats still change nothing in the project itself. What is open to them is scratch space and your home folder: a place to keep a test's output, not a way to edit the work.
 
-**A sandbox profile is stricter than all of this.** With `workspace` or `read-only` chosen in `/settings`, the system itself shuts `/tmp` and your home folder (beyond your tools and their caches) to every command, whatever the rules above allow. The model is told so, and where its scratch folder is, so a refusal isn't reported as a broken tool. To have `/tmp` and your home folder open, the profile has to be `off`.
+**A sandbox profile is stricter than this for your home folder.** With `workspace` or `read-only` chosen in `/settings`, `/tmp` is open as it is here, but the system itself shuts your home folder (beyond your tools and their caches) to every command, whatever the rules above allow. The model is told so, so a refusal isn't reported as a broken tool. To have your home folder open to commands, the profile has to be `off`.
 
 **What review may run** is judged by the command's form, not the tool's name. `cargo test`, `cargo clippy`, `cargo fmt --check`, `npm test`, `npm run lint`, `npx vitest run`, `npx tsc --noEmit`, `npx prettier --check`, `pytest`, `ruff check`, `black --check`, `go test`, `go vet`, `make test`, and the like run. `cargo fmt`, `npm install`, `npm run format`, `npx <any package>`, `ruff --fix`, `make install`, and `python -m pip install` don't. Review may still run the project's own code, which is what tests do.
 
@@ -577,7 +577,7 @@ A sandbox limits which files the model's commands can reach. It is enforced by t
 | The rest of your home folder | read, write | no | no |
 | Your tools | yes | yes | yes |
 | Your keys | by rule only | never | never |
-| `/tmp` | read, write | no | no |
+| `/tmp` | read, write | read, write | read, write |
 | Network | yes | yes | yes |
 | Docker | yes | yes | yes |
 
@@ -598,7 +598,9 @@ A tool folder that is a symbolic link is left out, since a grant on a link is a 
 
 They can also write the tools' download caches (`~/.cargo/registry`, `~/.npm`, pip's, uv's, Go's and others), so a build that fetches a dependency works.
 
-**What stays shut:** the rest of your home folder, `~/.ssh`, the tools' saved logins (`~/.cargo/credentials.toml`, `~/.npmrc`, `~/.config/git/credentials`), Ryter's keys, and `/tmp`. Ryter also closes its own process to the commands it runs, so a key held in its memory or its environment can't be read from `/proc`. Temporary files go to `~/.ryter/tmp`, and `TMPDIR` points commands there.
+**Scratch space is open:** `/tmp` and `/var/tmp`, to read and write, under both profiles. Scripts and tools name `/tmp` outright, and with it shut they failed with "Permission denied".
+
+**What stays shut:** the rest of your home folder, `~/.ssh`, the tools' saved logins (`~/.cargo/credentials.toml`, `~/.npmrc`, `~/.config/git/credentials`), and Ryter's keys. Ryter also closes its own process to the commands it runs, so a key held in its memory or its environment can't be read from `/proc`.
 
 **What a sandbox doesn't do:**
 

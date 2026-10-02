@@ -15,8 +15,12 @@
 //! - **Part of Ryter's own folder:** its scratch folder, logs, sessions,
 //!   and pages to write; skills and the rules file to read.
 //!
+//! - **Scratch space,** to read and write: `/tmp` and `/var/tmp`. Tools and
+//!   scripts name `/tmp` outright, and with it shut they failed with
+//!   "Permission denied".
+//!
 //! Never the rest of the home folder, `~/.ssh`, the tools' saved logins
-//! (`~/.cargo/credentials.toml`, `~/.npmrc`), Ryter's keys, or `/tmp`.
+//! (`~/.cargo/credentials.toml`, `~/.npmrc`), or Ryter's keys.
 //! Landlock has no "all but this" rule, so each is a list of what is
 //! granted, never a parent with exceptions.
 //!
@@ -85,7 +89,6 @@ pub fn probe() -> String {
 
 thread_local! {
     static ACTIVE: std::cell::Cell<SandboxProfile> = const { std::cell::Cell::new(SandboxProfile::Off) };
-    static SCRATCH: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 
 /// The profile [`apply`] put on this thread, `Off` when none. Landlock binds
@@ -214,6 +217,13 @@ const SYSTEM_READ: &[&str] = &[
     "/home/linuxbrew/.linuxbrew",
 ];
 
+/// Scratch space, to read and write under every profile. It was shut, with
+/// `TMPDIR` pointed at a folder of Ryter's own: that served tools that ask
+/// where temporary files go, and failed every script and tool that names
+/// `/tmp` itself.
+#[cfg(target_os = "linux")]
+const SCRATCH: &[&str] = &["/tmp", "/var/tmp"];
+
 /// Devices to read and write. `git` opens `/dev/null` for writing as it
 /// starts, so with `/dev` read-only it could not run at all.
 #[cfg(target_os = "linux")]
@@ -295,27 +305,8 @@ pub fn apply_on(
     {
         apply_linux(profile, workspace, home, machine)?;
         ACTIVE.with(|a| a.set(profile));
-        SCRATCH.with(|s| *s.borrow_mut() = Some(canonicalize_or(home).join("tmp")));
         Ok(())
     }
-}
-
-/// Where a command run from a sandbox should keep its temporary files, or
-/// `None` outside one. `/tmp` isn't granted: other projects, and other
-/// programs' sockets, live there. `mktemp` and every tool that asks for a
-/// temporary file failed until `TMPDIR` pointed here.
-///
-/// The thread that applied the profile knows its scratch folder. A thread
-/// it started is in the same sandbox without knowing, so it is recognised
-/// by what the sandbox does: the temporary folder can't be listed.
-pub fn scratch() -> Option<PathBuf> {
-    if let Some(dir) = SCRATCH.with(|s| s.borrow().clone()) {
-        return Some(dir);
-    }
-    if cfg!(target_os = "linux") && std::fs::read_dir(std::env::temp_dir()).is_err() {
-        return Some(crate::config::home_dir().join("tmp"));
-    }
-    None
 }
 
 #[cfg(target_os = "linux")]
@@ -380,10 +371,6 @@ fn apply_linux(
         SandboxProfile::ReadOnly => AccessFs::from_read(abi),
         SandboxProfile::Workspace | SandboxProfile::Off => all,
     };
-    // Do not allow `/tmp` itself: TempDir and other projects live there.
-    // Scratch is `~/.ryter/tmp` (or `$RYTER_HOME/tmp`), and `TMPDIR` points
-    // commands at it ([`scratch`]).
-    //
     // Granting all of `~/.ryter` used to hand tools read/write on
     // `~/.ryter/keys/<connection>`, so even the `read-only` profile let a
     // builder's bash read every API key. Landlock has no negative rules, so the
@@ -396,6 +383,7 @@ fn apply_linux(
     let mut write = writable_set(&home);
     write.extend(caches);
     write.extend(existing(DEVICES));
+    write.extend(existing(SCRATCH));
     // A rule on a file can carry only the rights a file has: the rest are
     // for folders, and asking for them on a file is refused.
     let (read_dirs, read_files) = by_kind(read);
@@ -500,6 +488,16 @@ fn existing(paths: &[&str]) -> Vec<std::path::PathBuf> {
 mod tests {
     use super::*;
 
+    /// A folder for a test that puts a profile on a thread, outside
+    /// scratch space: `/tmp` is open under every profile, so what a test
+    /// expects to be shut has to be somewhere else.
+    #[cfg(target_os = "linux")]
+    fn outside_scratch() -> tempfile::TempDir {
+        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/sandbox-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        tempfile::Builder::new().tempdir_in(base).unwrap()
+    }
+
     /// The writable set must not include the plaintext key store.
     #[cfg(target_os = "linux")]
     #[test]
@@ -578,10 +576,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn workspace_denies_paths_outside_on_this_thread() {
-        use tempfile::TempDir;
-        let ws = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let outside = TempDir::new().unwrap();
+        let ws = outside_scratch();
+        let home = outside_scratch();
+        let outside = outside_scratch();
         std::fs::write(ws.path().join("in.txt"), "inside").unwrap();
         std::fs::write(outside.path().join("secret.txt"), "nope").unwrap();
         let ws_p = ws.path().to_path_buf();
@@ -614,9 +611,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn pages_and_skills_work_under_the_sandbox() {
-        use tempfile::TempDir;
-        let ws = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
+        let ws = outside_scratch();
+        let home = outside_scratch();
         std::fs::create_dir_all(home.path().join("skills/mine")).unwrap();
         std::fs::write(home.path().join("skills/mine/SKILL.md"), "body").unwrap();
         std::fs::create_dir_all(home.path().join("keys")).unwrap();
@@ -651,9 +647,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn read_only_blocks_writes_in_workspace() {
-        use tempfile::TempDir;
-        let ws = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
+        let ws = outside_scratch();
+        let home = outside_scratch();
         std::fs::write(ws.path().join("a.txt"), "x").unwrap();
         let ws_p = ws.path().to_path_buf();
         let home_p = home.path().to_path_buf();
@@ -676,10 +671,9 @@ mod tests {
     #[test]
     fn a_real_toolchain_works_in_the_sandbox() {
         use std::os::unix::fs::PermissionsExt;
-        use tempfile::TempDir;
-        let ws = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let user = TempDir::new().unwrap();
+        let ws = outside_scratch();
+        let home = outside_scratch();
+        let user = outside_scratch();
         let u = user.path().to_path_buf();
         let file = |rel: &str, text: &str| {
             let p = u.join(rel);
@@ -791,40 +785,39 @@ mod tests {
                 ws_p.join("target/tmp/again.rmeta"),
             )
             .unwrap();
-            // Out of the scratch folder into the project too.
-            std::fs::create_dir_all(home_p.join("tmp")).unwrap();
-            std::fs::write(home_p.join("tmp/made"), "x").unwrap();
-            std::fs::rename(home_p.join("tmp/made"), ws_p.join("made")).unwrap();
+            // Out of scratch space into the project too, as a tool that
+            // builds in `/tmp` and moves the result into place does.
+            let scratch = tempfile::TempDir::new().unwrap();
+            std::fs::write(scratch.path().join("made"), "x").unwrap();
+            if std::fs::rename(scratch.path().join("made"), ws_p.join("made")).is_err() {
+                // Another filesystem: a move is a copy there, sandbox or not.
+                std::fs::copy(scratch.path().join("made"), ws_p.join("made")).unwrap();
+            }
             // But nothing moves into a folder that is only read.
             assert!(std::fs::rename(ws_p.join("made"), u.join("bin/made")).is_err());
             // The project is written. A folder of Ryter's own that nothing
             // was granted for is not: `worktrees` was, for crew mode.
             std::fs::write(ws_p.join("a.txt"), "edited").unwrap();
             assert!(std::fs::create_dir_all(home_p.join("worktrees/sess/t1")).is_err());
-            // Temporary files go to Ryter's scratch folder, through the shell tool.
-            assert_eq!(scratch().as_deref(), Some(home_p.join("tmp").as_path()));
+            // Temporary files go where every tool expects them: `/tmp` is
+            // open, to `mktemp` and to a script that names it outright.
             let cancel = crate::cancel::Cancel::new();
             let made = crate::tools::shell::run_command(
-                "f=$(mktemp) && echo x > \"$f\" && dirname \"$f\"",
+                "f=$(mktemp) && echo x > \"$f\" && cat \"$f\" && rm \"$f\" && \
+                 echo y > /tmp/ryter-sandbox-probe.$$ && rm /tmp/ryter-sandbox-probe.$$ && echo fine",
                 &ws_p,
                 std::time::Duration::from_secs(20),
                 &cancel,
             )
             .unwrap();
-            match made {
-                crate::tools::shell::Run::Ok(out) => {
-                    assert!(
-                        out.contains(&home_p.join("tmp").display().to_string()),
-                        "{out}"
-                    );
-                }
-                other => panic!("mktemp failed in the sandbox: {other:?}"),
-            }
-            assert!(std::fs::read_dir("/tmp").is_err(), "/tmp is open");
+            assert_eq!(
+                made,
+                crate::tools::shell::Run::Ok("x\nfine\n".into()),
+                "scratch space is shut"
+            );
         })
         .join()
         .expect("sandbox thread");
-        assert_eq!(scratch(), None, "only inside a sandbox");
     }
 
     /// The tools a profile reaches are the ones that exist, each as itself.

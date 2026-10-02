@@ -12,6 +12,16 @@ Why, not what. Non-obvious choices are recorded here, newest first.
 - **Why:** "There is too many unknowns for crew to work effectively without the user." No real project had completed in crew mode; the benchmark's clean runs were on small tasks with checks already set.
 - **Where:** `ROADMAP.md` (Direction). The code to go, when it goes: `crew.rs`, `queue.rs`, `tiering.rs`, `estimate.rs`, the crew parts of `agent.rs`, and the crew panels, about 10,000 of 72,000 lines; `bench.rs` is rebuilt on the hats.
 
+### 2026-10-01 — `/tmp` is open under the sandbox profiles
+- **By:** the user ("lets fix it all"), after being told that their `sandbox = "workspace"` setting shuts `/tmp` and the home folder whatever the gate allows. This reverses a choice in the 2026-10-01 sandbox entry below ("Never … `/tmp`").
+- **Decision:** `workspace` and `read-only` grant `/tmp` and `/var/tmp`, to read and write. The `TMPDIR` redirect to `~/.ryter/tmp`, and the way a sandboxed thread recognised itself (its temporary folder could not be listed), are removed: with `/tmp` open neither is needed.
+- **Chosen vs rejected:**
+  - Rejected opening the home folder under a profile in the same patch. Landlock has no "all but this" rule: the home folder could only be opened by listing its entries when the profile is applied, minus the protected ones, and a new entry directly in `~` or `~/.config` still could not be created. What a profile is for is the user's to decide; it is on the roadmap. Until then the gate is looser than a profile for the home folder, the guide says so, and the model is told.
+  - Rejected changing the user's own setting to `off`. It is theirs, in `/settings`.
+- **What this gives up:** other programs' files in `/tmp` are readable and writable by a sandboxed command, as they are with no profile. `/tmp` was shut for that reason.
+- **Tests:** the sandbox's own tests made their folders in `/tmp`, so with `/tmp` granted every "this is shut" check would have passed for the wrong reason or failed. They make them under `target/sandbox-tests` now.
+- **Where:** `crates/ryter-core/src/sandbox.rs` (`SCRATCH`), `tools/shell.rs`, `prompt.rs` (`machine`); `crates/ryter-tui/src/panel/settings.rs` (the table's `/tmp` row)
+
 ### 2026-10-01 — A test's report: one message back, a file, and the receipt
 - **By:** lead, building to the user's design (`docs/test-hat.md`: failures open and passes one line; offered after a review that passed). Third of three patches.
 - **Decision:**

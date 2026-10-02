@@ -322,7 +322,7 @@ const SANDBOX_ROWS: &[(&str, [&str; 3])] = &[
     ("rest of home", ["read, write", "no", "no"]),
     ("your tools", ["yes", "yes", "yes"]),
     ("your keys", ["rule only †", "never", "never"]),
-    ("/tmp", ["read, write", "no", "no"]),
+    ("/tmp", ["read, write", "read, write", "read, write"]),
     ("network", ["yes", "yes", "yes"]),
     ("docker", ["yes", "yes *", "yes *"]),
 ];
@@ -660,7 +660,7 @@ mod tests {
             (4, "rest of home    read, write   no            no"),
             (5, "your tools      yes           yes           yes"),
             (6, "your keys       rule only †   never         never"),
-            (7, "/tmp            read, write   no            no"),
+            (7, "/tmp            read, write   read, write   read, write"),
             (8, "network         yes           yes           yes"),
             (9, "docker          yes           yes *         yes *"),
             (

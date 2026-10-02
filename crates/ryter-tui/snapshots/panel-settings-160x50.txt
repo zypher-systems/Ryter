@@ -23,7 +23,7 @@
                                             │ rest of home    read, write   no            no                       │
                                             │ your tools      yes           yes           yes                      │
                                             │ your keys       rule only †   never         never                    │
-                                            │ /tmp            read, write   no            no                       │
+                                            │ /tmp            read, write   read, write   read, write              │
                                             │ network         yes           yes           yes                      │
                                             │ docker          yes           yes *         yes *                    │
                                             │                                                                      │

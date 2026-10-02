@@ -1548,6 +1548,11 @@ fn decide_segment_in(seg: &str, ctx: &ToolContext, in_container: bool) -> Decisi
         return Decision::Ask.and(outside).and(nested);
     }
     let args = &words[parsed.args.min(words.len())..];
+    // A temporary file in scratch space is nobody's file: every hat may
+    // make one. `f=$(mktemp)` asked each time.
+    if prog == "mktemp" && makes_only_scratch(args, ctx) {
+        return Decision::Allow.and(nested);
+    }
     let base = match ctx.role {
         // A normal agent in the user's tree. Looking runs, and so does
         // the work of building: the project's toolchains, its own programs,
@@ -2605,7 +2610,8 @@ fn path_escapes(words: &[String], ctx: &ToolContext) -> bool {
     // was judged on its own. Everywhere else a substitution may be a path.
     let prints = matches!(program(words), Some("echo" | "printf"));
     for w in words.iter().skip(1) {
-        if w.starts_with('-') || (prints && w.contains(SUBST)) {
+        // `echo $f` prints a variable; it opens nothing.
+        if w.starts_with('-') || (prints && (w.contains(SUBST) || w.contains('$'))) {
             continue;
         }
         // Asked of commands that only read.
@@ -2628,6 +2634,34 @@ fn path_escapes(words: &[String], ctx: &ToolContext) -> bool {
         }
     }
     false
+}
+
+/// `mktemp` in a form that makes its file in scratch space: no template of
+/// its own (a bare one is made in the folder the command runs in, which is
+/// the project), and any folder it is given is an open place.
+fn makes_only_scratch(args: &[String], ctx: &ToolContext) -> bool {
+    let open = |dir: &str| {
+        resolve(ctx, dir).is_none()
+            && resolve_outside(ctx, dir).is_some_and(|p| free_place(&p, ctx, true))
+    };
+    let mut i = 0;
+    while let Some(a) = args.get(i).map(String::as_str) {
+        i += 1;
+        match a {
+            "-d" | "-q" | "-u" | "-t" | "--directory" | "--quiet" | "--dry-run" => {}
+            "-p" | "--tmpdir" => match args.get(i) {
+                Some(dir) if open(dir) => i += 1,
+                // `--tmpdir` alone is the default folder.
+                None if a == "--tmpdir" => {}
+                _ => return false,
+            },
+            _ => match a.strip_prefix("--tmpdir=") {
+                Some(dir) if open(dir) => {}
+                _ => return false,
+            },
+        }
+    }
+    true
 }
 
 /// The standard devices: writing to them writes no file, and reading them
@@ -3229,6 +3263,22 @@ mod tests {
         assert_eq!(sh("echo x > /tmp/ryter-scratch/f"), Decision::Allow);
         assert_eq!(sh("ls /tmp"), Decision::Allow);
         assert_eq!(sh("cat /tmp/ryter-scratch/f"), Decision::Allow);
+        // A temporary file in scratch space is made by any hat, unasked;
+        // one named into the project is a file in the project.
+        for role in [Role::SoloBuild, Role::SoloPlan, Role::SoloReview] {
+            for cmd in [
+                "mktemp",
+                "mktemp -d",
+                "f=$(mktemp) && echo $f",
+                "mktemp -p /tmp",
+                "mktemp -d --tmpdir=/tmp",
+            ] {
+                assert_eq!(bash(cmd, role, d), Decision::Allow, "{role:?}: {cmd}");
+            }
+            for cmd in ["mktemp probe.XXXX", "mktemp -p .", "mktemp -p /etc"] {
+                assert_ne!(bash(cmd, role, d), Decision::Allow, "{role:?}: {cmd}");
+            }
+        }
         // The standard devices are nowhere, as an argument as in a redirect.
         assert_eq!(sh("grep -c x /dev/null"), Decision::Allow);
         assert_eq!(bash("cat /dev/null", Role::SoloPlan, d), Decision::Allow);

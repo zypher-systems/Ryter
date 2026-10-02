@@ -137,11 +137,7 @@ pub fn container_tools_in(path: Option<&std::ffi::OsStr>) -> (bool, bool) {
 /// - **The sandbox.** A command refused by the profile fails with
 ///   "Permission denied", and the model reported a broken tool or a missing
 ///   one. It is told what the profile shuts and where scratch space is.
-pub fn machine(
-    (docker, podman): (bool, bool),
-    sandbox: crate::sandbox::SandboxProfile,
-    scratch: Option<&Path>,
-) -> String {
+pub fn machine((docker, podman): (bool, bool), sandbox: crate::sandbox::SandboxProfile) -> String {
     use crate::sandbox::SandboxProfile;
     let mut lines = Vec::new();
     match (docker, podman) {
@@ -160,14 +156,6 @@ pub fn machine(
         (false, false) => {}
     }
     if sandbox != SandboxProfile::Off {
-        let scratch = scratch
-            .map(|s| {
-                format!(
-                    " Keep temporary files in `{}` (`TMPDIR` points there).",
-                    s.display()
-                )
-            })
-            .unwrap_or_default();
         let project = if sandbox == SandboxProfile::ReadOnly {
             "They can read the project and can't write it."
         } else {
@@ -175,10 +163,10 @@ pub fn machine(
         };
         lines.push(format!(
             "- Sandbox: commands and file edits run under the `{sandbox}` profile, which the \
-             user chose. {project} `/tmp` and the rest of the user's folder are shut: a \
-             \"Permission denied\" there is the profile, not a broken or missing tool.{scratch} \
-             If the work needs more, say so: the user changes the profile in /settings. \
-             Docker's own work is not limited by it."
+             user chose. {project} `/tmp` is open. The rest of the user's folder is shut: a \
+             \"Permission denied\" there is the profile, not a broken or missing tool. If the \
+             work needs more, say so: the user changes the profile in /settings. Docker's own \
+             work is not limited by it."
         ));
     }
     if lines.is_empty() {
@@ -193,7 +181,6 @@ pub fn machine_here() -> String {
     machine(
         container_tools_in(std::env::var_os("PATH").as_deref()),
         crate::sandbox::active(),
-        crate::sandbox::scratch().as_deref(),
     )
 }
 
@@ -208,7 +195,7 @@ mod tests {
     #[test]
     fn the_model_is_told_about_containers_and_the_sandbox() {
         use crate::sandbox::SandboxProfile;
-        let both = machine((true, true), SandboxProfile::Off, None);
+        let both = machine((true, true), SandboxProfile::Off);
         assert!(
             both.starts_with("\n## This machine\n- Containers: Docker and Podman"),
             "{both}"
@@ -217,25 +204,20 @@ mod tests {
             both.contains("Use Docker") && !both.contains("Sandbox"),
             "{both}"
         );
-        let only_podman = machine((false, true), SandboxProfile::Off, None);
+        let only_podman = machine((false, true), SandboxProfile::Off);
         assert!(only_podman.contains("Podman is installed") && !only_podman.contains("Use Docker"));
-        assert!(machine((true, false), SandboxProfile::Off, None).contains("Docker is installed"));
-        assert_eq!(machine((false, false), SandboxProfile::Off, None), "");
-        let boxed = machine(
-            (false, false),
-            SandboxProfile::Workspace,
-            Some(Path::new("/home/u/.ryter/tmp")),
-        );
+        assert!(machine((true, false), SandboxProfile::Off).contains("Docker is installed"));
+        assert_eq!(machine((false, false), SandboxProfile::Off), "");
+        let boxed = machine((false, false), SandboxProfile::Workspace);
         assert!(
             boxed.contains("under the `workspace` profile")
-                && boxed.contains("`/tmp` and the rest of the user's folder are shut")
-                && boxed.contains("Keep temporary files in `/home/u/.ryter/tmp`")
+                && boxed.contains("`/tmp` is open. The rest of the user's folder is shut")
                 && boxed.contains("They can write the project"),
             "{boxed}"
         );
-        let ro = machine((false, false), SandboxProfile::ReadOnly, None);
+        let ro = machine((false, false), SandboxProfile::ReadOnly);
         assert!(
-            ro.contains("can't write it") && !ro.contains("TMPDIR"),
+            ro.contains("can't write it") && ro.contains("`/tmp` is open"),
             "{ro}"
         );
     }
