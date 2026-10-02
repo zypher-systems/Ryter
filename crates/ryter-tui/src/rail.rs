@@ -31,9 +31,10 @@ pub fn shown(view: &View, width: u16) -> bool {
 /// What each hat does, in a line.
 fn hat_words(mode: Role) -> (&'static str, &'static str, &'static str) {
     match mode {
-        Role::SoloPlan => ("PLAN", "reads and designs only", "build · review"),
-        Role::SoloReview => ("REVIEW", "reads the changes, reports", "build · plan"),
-        _ => ("BUILD", "edits files, runs commands", "plan · review"),
+        Role::SoloPlan => ("PLAN", "reads and designs only", "build·review·test"),
+        Role::SoloReview => ("REVIEW", "reads the changes, reports", "plan·build·test"),
+        Role::SoloTest => ("TEST", "uses the product", "plan·build·review"),
+        _ => ("BUILD", "edits files, runs commands", "plan·review·test"),
     }
 }
 
@@ -199,14 +200,14 @@ fn session(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>>
                 .add_modifier(Modifier::BOLD),
         )));
     }
+    // The session's, in both conversations, whichever is on screen.
     let turns = view
-        .messages
-        .iter()
+        .session_messages()
         .filter(|m| matches!(m.kind, MessageKind::User))
         .count();
     let since = view
-        .messages
-        .first()
+        .session_messages()
+        .next()
         .map(|m| format!("since {} · ", m.at.hhmm()))
         .unwrap_or_default();
     lines.push(Line::from(Span::styled(

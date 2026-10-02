@@ -527,8 +527,64 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
     view.spend_unknown = session.meta.spend_unknown;
     view.connection = session.meta.connection.clone();
     view.model = session.meta.model.clone();
-    let model = view.model.clone();
-    for m in &session.transcript {
+    // Both conversations: the one the hats share, then the tester's.
+    use ryter_core::Thread;
+    for thread in [Thread::Main, Thread::Test] {
+        view.show(thread);
+        // The tester's answers are named for the test hat's model. In the
+        // shared conversation the saved messages don't say which hat's
+        // model wrote each, so they carry the one every hat uses.
+        let model = match thread {
+            Thread::Test => view
+                .specialists
+                .get("test")
+                .filter(|r| r.is_override())
+                .and_then(|r| r.model.clone())
+                .unwrap_or_else(|| view.model.clone()),
+            Thread::Main => view.model.clone(),
+        };
+        fill_chat(view, session.messages_of(thread), &model);
+        view.turn = view.turn.max(1);
+        view.scroll.to_bottom();
+    }
+    view.show(view.mode.thread());
+    view.spend_by_role.clear();
+    view.spend_by_conn.clear();
+    view.spend_rows_role.clear();
+    view.spend_rows_conn.clear();
+    view.unpriced_calls = 0;
+    if let Ok(recs) = session.spend_log() {
+        for r in recs {
+            let role = r.role.to_string();
+            for (key, map) in [
+                (role.clone(), &mut view.spend_rows_role),
+                (r.connection.clone(), &mut view.spend_rows_conn),
+            ] {
+                let row = map.entry(key).or_default();
+                row.calls += 1;
+                row.input += r.input_tokens;
+                row.output += r.output_tokens;
+                row.cached += r.cached_tokens;
+                match r.total_usd {
+                    Some(v) => row.usd += v,
+                    None => row.unpriced = true,
+                }
+            }
+            match r.total_usd {
+                Some(v) => {
+                    *view.spend_by_role.entry(role).or_insert(0.0) += v;
+                    *view.spend_by_conn.entry(r.connection).or_insert(0.0) += v;
+                }
+                None => view.unpriced_calls += 1,
+            }
+        }
+    }
+}
+
+/// Rebuild one conversation's chat from its saved messages, through the
+/// same path a live turn takes, so a resumed session reads as it did.
+fn fill_chat(view: &mut View, messages: &[ryter_core::Message], model: &str) {
+    for m in messages {
         match m.role.as_str() {
             "user" if !m.content.trim().is_empty() => {
                 view.turn += 1;
@@ -538,7 +594,7 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
                 if !m.content.trim().is_empty() {
                     view.push(
                         MessageKind::Assistant {
-                            model: model.clone(),
+                            model: model.to_string(),
                         },
                         m.content.clone(),
                     );
@@ -582,39 +638,6 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
                 }
             }
             _ => {}
-        }
-    }
-    view.turn = view.turn.max(1);
-    view.scroll.to_bottom();
-    view.spend_by_role.clear();
-    view.spend_by_conn.clear();
-    view.spend_rows_role.clear();
-    view.spend_rows_conn.clear();
-    view.unpriced_calls = 0;
-    if let Ok(recs) = session.spend_log() {
-        for r in recs {
-            let role = r.role.to_string();
-            for (key, map) in [
-                (role.clone(), &mut view.spend_rows_role),
-                (r.connection.clone(), &mut view.spend_rows_conn),
-            ] {
-                let row = map.entry(key).or_default();
-                row.calls += 1;
-                row.input += r.input_tokens;
-                row.output += r.output_tokens;
-                row.cached += r.cached_tokens;
-                match r.total_usd {
-                    Some(v) => row.usd += v,
-                    None => row.unpriced = true,
-                }
-            }
-            match r.total_usd {
-                Some(v) => {
-                    *view.spend_by_role.entry(role).or_insert(0.0) += v;
-                    *view.spend_by_conn.entry(r.connection).or_insert(0.0) += v;
-                }
-                None => view.unpriced_calls += 1,
-            }
         }
     }
 }
@@ -727,6 +750,9 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
 /// Switch hats. A switch while a turn runs applies to the next message.
 fn set_mode(view: &mut View, cx: &mut Ctx, role: ryter_core::Role) {
     view.mode = role;
+    // The tester has a conversation of its own: its hat shows that one,
+    // and any other hat shows the one they share.
+    view.show(role.thread());
     cx.send(Work::SetRole(role));
 }
 

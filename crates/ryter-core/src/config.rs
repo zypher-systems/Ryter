@@ -726,7 +726,7 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
 }
 
 /// The hats that can have a model of their own, as `specialists` names them.
-pub const HAT_ROLES: &[&str] = &["plan", "build", "review"];
+pub const HAT_ROLES: &[&str] = &["plan", "build", "review", "test"];
 
 /// `~/.ryter/hats.toml`: the model each hat runs on, where it has its own.
 pub fn hats_path(home: &Path) -> PathBuf {

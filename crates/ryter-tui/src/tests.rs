@@ -703,7 +703,13 @@ fn ledger() -> View {
         "why does load() ignore a missing file?".into(),
         "why does load() ignore a missing file?".into(),
     );
-    crate::run_events_apply(&mut v, AgentEvent::TurnStarted { turn: 1 });
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnStarted {
+            turn: 1,
+            role: Role::SoloBuild,
+        },
+    );
     v.on_token("A first run has no config yet, so it falls back to the defaults.");
     v.spend = Some(0.014);
     crate::run_events_apply(
@@ -746,7 +752,7 @@ fn the_rail_names_the_session_and_shows_the_hat_and_spend() {
         "2 turns",
         " BUILD",
         "edits files, runs commands",
-        "plan · review   tab switch",
+        "plan·review·test   tab switch",
         "MODEL",
         "24k of 200k tokens",
         "SPEND",
@@ -768,9 +774,18 @@ fn the_rail_names_the_session_and_shows_the_hat_and_spend() {
     v.mode = Role::SoloPlan;
     let text = render_to_string(&v, 140, 44);
     assert!(
-        text.contains(" PLAN") && text.contains("build · review"),
+        text.contains(" PLAN") && text.contains("build·review·test"),
         "{text}"
     );
+    v.mode = Role::SoloTest;
+    let text = render_to_string(&v, 140, 44);
+    for want in [
+        " TEST",
+        " uses the product",
+        "plan·build·review   tab switch",
+    ] {
+        assert!(text.contains(want), "missing {want:?}:\n{text}");
+    }
     // Narrow, or hidden with ^b: the ledger as it was.
     for v in [
         with_rail(),
@@ -1173,7 +1188,10 @@ fn reviewed(verdict: Option<bool>) -> View {
         AgentEvent::ModeChanged {
             role: ryter_core::Role::SoloReview,
         },
-        AgentEvent::TurnStarted { turn: 2 },
+        AgentEvent::TurnStarted {
+            turn: 2,
+            role: Role::SoloBuild,
+        },
         AgentEvent::Token { text: body.into() },
         AgentEvent::TurnFinished {
             turn: 2,
@@ -1432,4 +1450,206 @@ fn render_theme_preview() {
             std::fs::write(format!("{out}/{scene}-{name}.ansi"), ansi(&buf)).unwrap();
         }
     }
+}
+
+fn chat_bodies(v: &View) -> Vec<String> {
+    v.messages.iter().map(|m| m.body.clone()).collect()
+}
+
+fn one_turn(v: &mut View, role: Role, say: &str) {
+    crate::run_events_apply(v, AgentEvent::TurnStarted { turn: 9, role });
+    crate::run_events_apply(v, AgentEvent::Token { text: say.into() });
+    crate::run_events_apply(
+        v,
+        AgentEvent::TurnFinished {
+            turn: 9,
+            tools: 0,
+            duration_ms: 10,
+        },
+    );
+}
+
+/// The test hat shows the tester's own conversation, under a line that
+/// names it. Any other hat shows the one they share, as it was left.
+#[test]
+fn the_test_hat_shows_its_own_conversation() {
+    use ryter_core::Thread;
+    let mut v = with_rail();
+    let main_before = chat_bodies(&v);
+    assert!(!main_before.is_empty());
+    v.mode = Role::SoloTest;
+    v.show(Thread::Test);
+    assert!(v.messages.is_empty(), "{:?}", chat_bodies(&v));
+    let text = render_to_string(&v, 140, 44);
+    assert!(
+        text.contains("TEST THREAD · its own conversation · tab: main chat"),
+        "{text}"
+    );
+    assert!(!text.contains("why does load()"), "{text}");
+    assert!(text.contains("ask the tester · Tab: build"), "{text}");
+    // The rail's session block still counts the whole session.
+    assert!(text.contains("2 turns"), "{text}");
+    // What is typed here is the tester's.
+    let _ = v.submit_user("test the search".into(), "test the search".into());
+    assert_eq!(v.turn_thread, Thread::Test);
+    one_turn(&mut v, Role::SoloTest, "the search fails");
+    assert!(chat_bodies(&v).iter().any(|b| b == "the search fails"));
+    assert!(v.test_thread_started());
+    // Back in the shared conversation: nothing of the tester's.
+    v.mode = Role::SoloBuild;
+    v.show(Thread::Main);
+    assert_eq!(chat_bodies(&v), main_before);
+    let text = render_to_string(&v, 140, 44);
+    assert!(
+        !text.contains("TEST THREAD") && !text.contains("the search fails"),
+        "{text}"
+    );
+    assert!(v.test_thread_started());
+    // Without the rail, the strip at the top names it.
+    v.panel_visible = false;
+    v.show(Thread::Test);
+    let text = render_to_string(&v, 100, 30);
+    assert!(text.contains(" test thread "), "{text}");
+}
+
+/// What a turn says goes into the conversation the turn is part of,
+/// whichever is on screen: the user can look at the main chat while a test
+/// runs, and at the tester's while a build does.
+#[test]
+fn a_running_turn_writes_to_its_own_conversation() {
+    use ryter_core::Thread;
+    let mut v = ledger();
+    let main_before = chat_bodies(&v).len();
+    // A test turn starts; the user tabs back to the main chat mid-turn.
+    v.show(Thread::Test);
+    let _ = v.submit_user("test it".into(), "test it".into());
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnStarted {
+            turn: 3,
+            role: Role::SoloTest,
+        },
+    );
+    v.show(Thread::Main);
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::Token {
+            text: "two scenarios fail".into(),
+        },
+    );
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::Notice {
+            message: "a note from the turn".into(),
+        },
+    );
+    assert_eq!(v.shown, Thread::Main, "the screen stays where it was put");
+    assert_eq!(chat_bodies(&v).len(), main_before, "{:?}", chat_bodies(&v));
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnFinished {
+            turn: 3,
+            tools: 0,
+            duration_ms: 10,
+        },
+    );
+    assert_eq!(chat_bodies(&v).len(), main_before);
+    v.show(Thread::Test);
+    let test = chat_bodies(&v);
+    assert!(
+        test.contains(&"two scenarios fail".to_string())
+            && test.contains(&"a note from the turn".to_string()),
+        "{test:?}"
+    );
+    // Between turns, a note goes to the conversation on screen.
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::Notice {
+            message: "said between turns".into(),
+        },
+    );
+    assert!(chat_bodies(&v).contains(&"said between turns".to_string()));
+}
+
+/// When the agent changes hats itself into the tester's conversation or
+/// out of it, the screen follows, and the change is said in the main
+/// conversation. A change within one conversation leaves the screen where
+/// the user put it.
+#[test]
+fn the_screen_follows_the_agent_into_a_test_and_back() {
+    use ryter_core::Thread;
+    let mut v = ledger();
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::ModeChanged {
+            role: Role::SoloTest,
+        },
+    );
+    assert_eq!((v.shown, v.mode), (Thread::Test, Role::SoloTest));
+    one_turn(&mut v, Role::SoloTest, "all five pass");
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::ModeChanged {
+            role: Role::SoloBuild,
+        },
+    );
+    assert_eq!((v.shown, v.mode), (Thread::Main, Role::SoloBuild));
+    let main = chat_bodies(&v);
+    assert!(
+        main.iter()
+            .any(|b| b.starts_with("switched to the test hat"))
+            && main
+                .iter()
+                .any(|b| b.starts_with("switched to the build hat")),
+        "{main:?}"
+    );
+    assert!(!main.contains(&"all five pass".to_string()), "{main:?}");
+    // The user is reading the tester's conversation while a review starts
+    // in the main one: the screen is not taken from them.
+    v.show(Thread::Test);
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::ModeChanged {
+            role: Role::SoloReview,
+        },
+    );
+    assert_eq!(v.shown, Thread::Test);
+}
+
+/// A resumed session brings both conversations back, each in its place.
+#[test]
+fn a_resumed_session_has_both_conversations() {
+    use ryter_core::Thread;
+    let home = tempfile::TempDir::new().unwrap();
+    let cwd = tempfile::TempDir::new().unwrap();
+    let mut s =
+        ryter_core::Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+    let msg = |role: &str, content: &str| ryter_core::Message {
+        role: role.into(),
+        content: content.into(),
+        tool_call_id: None,
+        tool_calls: None,
+    };
+    s.push_message(msg("user", "[hat: build — x]\n\nbuild the list"))
+        .unwrap();
+    s.push_message(msg("assistant", "built")).unwrap();
+    s.push_to(
+        Thread::Test,
+        msg("user", "[hat: test — x]\n\ntest the list"),
+    )
+    .unwrap();
+    s.push_to(Thread::Test, msg("assistant", "it fails"))
+        .unwrap();
+    s.set_mode(Role::SoloTest).unwrap();
+    let mut v = ledger();
+    crate::run::fill_view_from_session(&mut v, &s);
+    // Left in the test hat: the tester's conversation is on screen.
+    assert_eq!((v.mode, v.shown), (Role::SoloTest, Thread::Test));
+    assert_eq!(chat_bodies(&v), ["test the list", "it fails"]);
+    v.show(Thread::Main);
+    assert_eq!(chat_bodies(&v), ["build the list", "built"]);
+    // A new session has neither.
+    v.reset_transcript();
+    assert!(v.messages.is_empty() && !v.test_thread_started());
+    assert_eq!(v.shown, Thread::Main);
 }

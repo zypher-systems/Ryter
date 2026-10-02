@@ -43,6 +43,7 @@ One model works in your files. `Tab` cycles its hat, and the message box shows t
 | **plan** | reads and proposes; shows you a plan to approve, adjust or reject; changes nothing |
 | **build** | changes your files; your toolchains and the project's containers run, and edits, deletions and publishing ask first |
 | **review** | runs the tests and critiques what changed, against the plan you approved; changes nothing |
+| **test** | starts the product and uses it as its user would, in a conversation of its own; changes nothing |
 
 - **A plan is approved in its own panel.** `y` saves it under `.ryter/plans/` and the build starts from that file. Where the work later differs from it, the difference and the reason are recorded in `.ryter/decisions.md`, which a review reads.
 - **Each hat can have its own model** (`/models`). The hats share one conversation, and Ryter says what it costs when a different model takes over.

@@ -35,8 +35,8 @@ struct Cli {
     #[arg(short = 'c', long = "continue")]
     resume: bool,
 
-    /// build | plan | review. Default: build, or the hat a continued
-    /// session was left in.
+    /// build | plan | review | test. Default: build, or the hat a
+    /// continued session was left in.
     #[arg(long)]
     hat: Option<String>,
 
@@ -357,7 +357,7 @@ async fn run_prompt(
     let hat = match cli.hat.as_deref() {
         Some("crew" | "lead") => {
             return Err(Error::Config(
-                "crew mode was removed: --hat takes build, plan, or review".into(),
+                "crew mode was removed: --hat takes build, plan, review, or test".into(),
             ));
         }
         Some(h) => Some(h.parse::<Role>()?),

@@ -12,6 +12,25 @@ Why, not what. Non-obvious choices are recorded here, newest first.
 - **Why:** "There is too many unknowns for crew to work effectively without the user." No real project had completed in crew mode; the benchmark's clean runs were on small tasks with checks already set.
 - **Where:** `ROADMAP.md` (Direction). The code to go, when it goes: `crew.rs`, `queue.rs`, `tiering.rs`, `estimate.rs`, the crew parts of `agent.rs`, and the crew panels, about 10,000 of 72,000 lines; `bench.rs` is rebuilt on the hats.
 
+### 2026-10-01 — The Test hat: a second conversation in one session
+- **By:** lead, building to the user's design (`docs/test-hat.md`). This is the first of three patches: the hat and its thread. The run file, the report, `/test` and the offer follow.
+- **Decision:**
+  - **One session, two transcripts.** `Session` holds the thread in use in `transcript` and the other one parked; `use_thread` swaps them, and each has its file (`transcript.jsonl`, `test.jsonl`). The agent's loop reads and writes `session.transcript` in about forty places, and none of them changed: the hat decides which thread that is (`Role::thread`, `Agent::put_on`, and again at the top of every turn).
+  - **One spend log, one budget.** A test is part of the session. The tester's calls are in `spend.jsonl` under the `test` role, and "which model last read this conversation" is asked per thread.
+  - **The view swaps chats the same way** (`View::show`): messages, turn count, scroll position and render cache move together, so each conversation comes back as it was left.
+  - **An event goes to the conversation its turn is part of**, not to the one on screen (`events::apply`). `TurnStarted` carries the hat for that. Without it, tabbing to the main chat during a test would have poured the tester's output into it.
+  - **The screen follows the agent only across conversations.** A hat change the agent makes into or out of the test hat moves the screen; one within the shared conversation (plan to build) leaves it where the user put it.
+  - **No hat change mid-turn into or out of Test.** `request_hat` refuses it: the tool call being answered would be left in one thread and its result written to the other, which providers reject. The tester's tool list has no `request_hat`, `present_plan` or `record_decision`.
+  - **The tester's own tool list.** It is a separate conversation, so its list costs the shared one's cache nothing.
+  - **What it runs** is the build hat's run-freely rule plus `curl` to this machine (`own_request`), parsed strictly: every URL on a loopback or `.localhost` host, no `user@`, nothing saved into the project, no file sent that it may not read, and any option the gate doesn't know makes it ask.
+- **Chosen vs rejected:**
+  - Rejected a second `Session` (its own folder, spend and budget). A test is not a separate piece of work to the user, and the report has to land in the first conversation.
+  - Rejected tagging each message with its thread in one file. Compaction, repair of unanswered tool calls and resume all read "the transcript"; two files leave them as they are.
+  - Rejected blocking `Tab` while a turn runs. A test takes minutes, and the user will want to read the main chat meanwhile.
+  - Kept the Tab order build → plan → review → test. The approved screen mockup's hint says "Tab: plan" from Test; this says "Tab: build". Said in `docs/test-hat.md`.
+- **Where:** `crates/ryter-core/src/role.rs` (`Thread`), `session.rs`, `agent.rs` (`put_on`), `tools/policy.rs` (`own_request`), `prompts/solo.md` ("A test"); `crates/ryter-tui/src/view/mod.rs` (`show`), `run/events.rs` (`apply`), `run/actions.rs` (`fill_chat`), `draw.rs` (`thread_line`)
+- **Residual risk:** the context gauge and the "this turn" figures on the rail are the last turn's, whichever conversation it was in. Each thread compacts on its own. Nothing was run with a real model, and no real product was started.
+
 ### 2026-10-01 — Less asking: toolchains, containers, scratch space and the home folder
 - **By:** the user ("one of the things I want to avoid is too much asking. It should be able to run docker/podman from within the working directory to build stacks, if it needs access to apps stored in the home drive like rust or other libraries it should be able to execute those freely. The hats should also be able to write to home directory or /tmp without interaction. I would prefer to steer the models to docker if its there rather than podman"). This also replaces the Test hat's "anything else asks first", which the user had approved from a mockup earlier the same day.
 - **Decision (what the user asked for):**

@@ -38,7 +38,46 @@ fn receipt(view: &View, verb: &Verb, tools: u32, duration_ms: u64) -> String {
     parts.join(" · ")
 }
 
+/// Apply an agent event to the chat it belongs to.
+///
+/// What a turn says goes into the conversation that turn is part of, which
+/// may not be the one on screen: the user can Tab to the main chat while a
+/// test runs, or to the tester's while a build does. A hat change the
+/// agent makes itself (a review, a test run) is said in the main
+/// conversation, and the screen follows it.
 pub fn apply(view: &mut View, ev: AgentEvent) {
+    use ryter_core::Thread;
+    let shown = view.shown;
+    let target = match &ev {
+        AgentEvent::TurnStarted { role, .. } => {
+            view.turn_thread = role.thread();
+            view.turn_thread
+        }
+        AgentEvent::ModeChanged { .. } => Thread::Main,
+        _ if view.busy => view.turn_thread,
+        _ => shown,
+    };
+    view.show(target);
+    // The screen follows the agent into the tester's conversation and
+    // back out of it. A change of hat within one conversation leaves the
+    // screen where the user put it.
+    let follow = match &ev {
+        AgentEvent::ModeChanged { role } if role.thread() != view.turn_thread => {
+            Some(role.thread())
+        }
+        _ => None,
+    };
+    apply_to_shown(view, ev);
+    match follow {
+        Some(thread) => {
+            view.turn_thread = thread;
+            view.show(thread);
+        }
+        None => view.show(shown),
+    }
+}
+
+fn apply_to_shown(view: &mut View, ev: AgentEvent) {
     // The workbench shows the files as they are: read them again after
     // anything that changes them.
     if matches!(

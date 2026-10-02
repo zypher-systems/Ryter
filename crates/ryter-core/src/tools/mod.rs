@@ -350,6 +350,23 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
         // One list for every hat, so switching hats never changes the tool
         // definitions (and never throws away the prompt cache). The gate
         // decides what each hat may run.
+        // The tester works in a thread of its own, so its list is its own
+        // too: nothing for planning or for changing the project's rules.
+        Role::SoloTest => &[
+            "read_file",
+            "list_dir",
+            "grep",
+            "glob",
+            "write",
+            "bash",
+            "ask_user",
+            "load_skill",
+            "show_page",
+            "search_tool",
+            "use_tool",
+            "web_fetch",
+            "web_search",
+        ],
         Role::SoloPlan | Role::SoloBuild | Role::SoloReview => &[
             "read_file",
             "list_dir",
@@ -527,7 +544,7 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
         // A hat that can't do this: say which one can, so the model tells the
         // user instead of hunting for a way round.
         Decision::Deny
-            if matches!(ctx.role, Role::SoloPlan | Role::SoloReview)
+            if matches!(ctx.role, Role::SoloPlan | Role::SoloReview | Role::SoloTest)
                 && matches!(name, "write" | "search_replace" | "bash")
                 && !(name == "bash" && policy::bash_hint(args).is_some()) =>
         {
@@ -535,7 +552,9 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
                 "denied: the {} hat can't {} — tell the user; they can press Tab to switch to \
                  build.{}",
                 ctx.role,
-                if name == "bash" {
+                if name == "bash" && ctx.role == Role::SoloTest {
+                    "delete, move or rewrite the project's files"
+                } else if name == "bash" {
                     "run commands that change things"
                 } else {
                     "edit files"

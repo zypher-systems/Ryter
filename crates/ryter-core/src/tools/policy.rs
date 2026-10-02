@@ -115,8 +115,8 @@ fn decide_write(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
     // hat's to write as well as the build hat's.
     if crate::memory::is_memory_file(&real_path(&ctx.workspace), &resolved) {
         return match ctx.role {
-            // Review changes nothing, memory included.
-            Role::SoloReview | Role::Crew => Decision::Deny,
+            // Review and test change nothing, memory included.
+            Role::SoloReview | Role::SoloTest | Role::Crew => Decision::Deny,
             Role::SoloPlan | Role::SoloBuild => Decision::Allow,
         };
     }
@@ -1411,7 +1411,7 @@ fn decide_bash(args: &Value, ctx: &ToolContext) -> Decision {
         // still judged from its top: a path that leaves the project from
         // the folder leaves it from the top too. The `cd` itself is not a
         // question.
-        if ctx.role == Role::SoloBuild && cd_into_project(s, ctx) {
+        if matches!(ctx.role, Role::SoloBuild | Role::SoloTest) && cd_into_project(s, ctx) {
             continue;
         }
         decision = decision.and(decide_segment(s, cx));
@@ -1440,7 +1440,7 @@ fn cd_into_project(seg: &str, ctx: &ToolContext) -> bool {
 /// hat can't change files (the build hat's `cd` is judged from the top). A `cd` anywhere else, or with
 /// no folder (which goes home), is left to the usual rules, which refuse it.
 fn cd_within(seg: &str, ctx: &ToolContext) -> Option<PathBuf> {
-    if ctx.role == Role::SoloBuild {
+    if matches!(ctx.role, Role::SoloBuild | Role::SoloTest) {
         return None;
     }
     let words = words(seg);
@@ -1495,7 +1495,7 @@ fn decide_segment_in(seg: &str, ctx: &ToolContext, in_container: bool) -> Decisi
     }
     // The build hat may reach outside the project, but only by asking each
     // time, and never into the places a person wouldn't hand over.
-    let outside = if ctx.role == Role::SoloBuild {
+    let outside = if matches!(ctx.role, Role::SoloBuild | Role::SoloTest) {
         let d = outside_segment(prog, &words, ctx);
         if d == Decision::Deny {
             return Decision::Deny;
@@ -1514,7 +1514,7 @@ fn decide_segment_in(seg: &str, ctx: &ToolContext, in_container: bool) -> Decisi
     }
     // The plan and review hats work in the user's own tree, where a
     // redirect is a write nothing undoes.
-    if matches!(ctx.role, Role::SoloPlan | Role::SoloReview)
+    if matches!(ctx.role, Role::SoloPlan | Role::SoloReview | Role::SoloTest)
         && writes_project_via_redirect(&words, ctx)
     {
         return Decision::Deny;
@@ -1588,9 +1588,245 @@ fn decide_segment_in(seg: &str, ctx: &ToolContext, in_container: bool) -> Decisi
                 Decision::Deny
             }
         }
+        // The tester uses the product. It runs what the build hat runs
+        // without asking (the toolchains, the project's programs and its
+        // containers), and requests to the project's own address. What the
+        // build hat would ask about, it asks about. It never edits the
+        // project: that is refused before this, with destruction.
+        Role::SoloTest => {
+            let raw = words
+                .get(parsed.args.wrapping_sub(1))
+                .map_or(prog, String::as_str);
+            let base = if (read_only(prog, &words) && !path_escapes(&words, ctx))
+                || runs_freely(prog, raw, args, ctx)
+                || own_request(prog, args, ctx)
+            {
+                Decision::Allow
+            } else {
+                Decision::Ask
+            };
+            base.and(outside)
+        }
         Role::Crew => Decision::Deny,
     };
     base.and(nested)
+}
+
+/// Whether `host` is this machine: where a project under test is served.
+fn own_host(host: &str) -> bool {
+    let host = host.trim_matches(['[', ']']).to_ascii_lowercase();
+    matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1" | "0.0.0.0")
+        || host.ends_with(".localhost")
+}
+
+/// The host a URL names, when it is plain `http(s)://host[:port]/…` with
+/// nothing the shell or the client would rewrite. A bare `localhost:8000`
+/// counts, as `curl` reads it.
+fn url_host(url: &str) -> Option<&str> {
+    if url.contains(['$', '`', '{', '}', '\\', ' ']) {
+        return None;
+    }
+    let rest = match url.split_once("://") {
+        Some(("http" | "https", rest)) => rest,
+        Some(_) => return None,
+        None => url,
+    };
+    let authority = rest.split(['/', '?', '#']).next()?;
+    // `user@host` sends credentials, and can hide the real host.
+    if authority.is_empty() || authority.contains('@') {
+        return None;
+    }
+    if let Some(v6) = authority.strip_prefix('[') {
+        return v6.split(']').next();
+    }
+    Some(authority.split(':').next().unwrap_or(authority))
+}
+
+/// A `curl` to the project's own address, in a form that changes nothing in
+/// the project: the tester tries the product the way its user's browser
+/// would. Every URL is on this machine; anything it saves goes to scratch
+/// space, the home folder or the notes folder; any file it sends is one it
+/// may read, and not a secret. Whatever the gate doesn't recognise makes it
+/// ask instead.
+fn own_request(prog: &str, args: &[String], ctx: &ToolContext) -> bool {
+    if prog != "curl" {
+        return false;
+    }
+    // Options that take no value, and those that take one.
+    const PLAIN: &[&str] = &[
+        "-s",
+        "-S",
+        "-i",
+        "-I",
+        "-L",
+        "-f",
+        "-k",
+        "-v",
+        "-G",
+        "-N",
+        "-4",
+        "-6",
+        "--silent",
+        "--show-error",
+        "--include",
+        "--head",
+        "--location",
+        "--fail",
+        "--fail-with-body",
+        "--insecure",
+        "--verbose",
+        "--get",
+        "--compressed",
+        "--no-buffer",
+        "--http1.1",
+        "--http2",
+        "--no-progress-meter",
+        "--retry-connrefused",
+        "--globoff",
+        "-g",
+    ];
+    const VALUED: &[&str] = &[
+        "-X",
+        "--request",
+        "-H",
+        "--header",
+        "-d",
+        "--data",
+        "--data-raw",
+        "--data-urlencode",
+        "--data-binary",
+        "--json",
+        "-F",
+        "--form",
+        "-b",
+        "--cookie",
+        "-c",
+        "--cookie-jar",
+        "-o",
+        "--output",
+        "-D",
+        "--dump-header",
+        "-w",
+        "--write-out",
+        "-A",
+        "--user-agent",
+        "-e",
+        "--referer",
+        "-m",
+        "--max-time",
+        "--connect-timeout",
+        "--retry",
+        "--retry-delay",
+        "--max-redirs",
+        "-r",
+        "--range",
+    ];
+    let notes = real_path(&ctx.notes_dir);
+    // A file the request writes: not in the project.
+    let saved_ok = |v: &str| {
+        v == "-"
+            || v == "/dev/null"
+            || match resolve(ctx, v) {
+                Some(p) => is_under(&p, &notes),
+                None => resolve_outside(ctx, v).is_some_and(|p| free_place(&p, ctx, true)),
+            }
+    };
+    // A file the request reads and sends: one this hat may read, and not a
+    // secret.
+    let sent_ok = |v: &str| match resolve(ctx, v) {
+        Some(p) => !is_secret(&p, ctx),
+        None => resolve_outside(ctx, v).is_some_and(|p| free_place(&p, ctx, false)),
+    };
+    let value_ok = |opt: &str, v: &str| -> bool {
+        if v.contains(['$', '`']) {
+            return false;
+        }
+        match opt {
+            "-o" | "--output" | "-D" | "--dump-header" | "-c" | "--cookie-jar" => saved_ok(v),
+            // `name=value` is a cookie; anything else is a file of them.
+            "-b" | "--cookie" => v.contains('=') || sent_ok(v),
+            "-d" | "--data" | "--data-binary" | "--data-urlencode" | "--json" => {
+                match v.split_once('@') {
+                    Some((name, file)) if name.is_empty() || opt == "--data-urlencode" => {
+                        sent_ok(file)
+                    }
+                    _ => true,
+                }
+            }
+            "-F" | "--form" => match v.split_once('=') {
+                Some((_, part)) if part.starts_with('@') || part.starts_with('<') => {
+                    sent_ok(part[1..].split(';').next().unwrap_or(""))
+                }
+                _ => true,
+            },
+            // `@file` reads the format or the headers from a file.
+            "-w" | "--write-out" | "-H" | "--header" => !v.starts_with('@'),
+            _ => true,
+        }
+    };
+    let mut urls = 0;
+    let mut i = 0;
+    while let Some(a) = args.get(i).map(String::as_str) {
+        i += 1;
+        if !a.starts_with('-') || a == "-" {
+            if !url_host(a).is_some_and(own_host) {
+                return false;
+            }
+            urls += 1;
+            continue;
+        }
+        if let Some((name, v)) = a.split_once('=').filter(|_| a.starts_with("--")) {
+            if !VALUED.contains(&name) || !value_ok(name, v) {
+                return false;
+            }
+            continue;
+        }
+        if PLAIN.contains(&a) {
+            continue;
+        }
+        if VALUED.contains(&a) {
+            let Some(v) = args.get(i) else {
+                return false;
+            };
+            i += 1;
+            if !value_ok(a, v) {
+                return false;
+            }
+            continue;
+        }
+        if a.starts_with("--") {
+            return false;
+        }
+        // A cluster of short options: `-sSL`, `-so out`, `-XPOST`.
+        let letters: Vec<char> = a[1..].chars().collect();
+        let mut k = 0;
+        while k < letters.len() {
+            let opt = format!("-{}", letters[k]);
+            k += 1;
+            if PLAIN.contains(&opt.as_str()) {
+                continue;
+            }
+            if !VALUED.contains(&opt.as_str()) {
+                return false;
+            }
+            // The rest of the word is its value, or the next word is.
+            let attached: String = letters[k..].iter().collect();
+            let v = if attached.is_empty() {
+                let Some(v) = args.get(i) else {
+                    return false;
+                };
+                i += 1;
+                v.clone()
+            } else {
+                attached
+            };
+            if !value_ok(&opt, &v) {
+                return false;
+            }
+            break;
+        }
+    }
+    urls > 0
 }
 
 /// A program name the shell computes: `$X`, `${X}`, or a substitution.
@@ -3057,6 +3293,134 @@ mod tests {
             bash("cargo test > /tmp/out.txt 2>&1", Role::SoloReview, d),
             Decision::Allow
         );
+    }
+
+    /// The tester uses the product: it runs what the build hat runs
+    /// without asking, and requests to the project's own address. It asks
+    /// where the build hat would. It never changes the project's files.
+    #[test]
+    fn the_tester_uses_the_product_and_changes_nothing() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("form.json"), "{}").unwrap();
+        std::fs::write(d.join(".env"), "K=1").unwrap();
+        std::fs::create_dir(d.join("app")).unwrap();
+        let sh = |cmd: &str| bash(cmd, Role::SoloTest, d);
+        for cmd in [
+            "cargo test",
+            "docker compose up -d --wait",
+            "docker compose run --rm web pytest -q",
+            "docker compose exec web python manage.py shell",
+            "docker compose down",
+            "./bin/cms-admin create-user ann",
+            "cd app && npm test",
+            "cat README.md",
+            "git status --short",
+            "pytest -q > /tmp/ryter-test-out.txt 2>&1",
+            // Its own address, the way a browser would use it.
+            "curl -s http://localhost:8000/healthz",
+            "curl -sS -i http://127.0.0.1:8000/manage/",
+            "curl -sI localhost:8000/",
+            "curl -s -X POST -d 'user=ann&pw=x' -c /tmp/ryter-jar http://localhost:8000/login",
+            "curl -s -b /tmp/ryter-jar -L http://localhost:8000/manage/",
+            "curl -s -H 'Content-Type: application/json' --data-binary @form.json http://[::1]:8000/api/pages",
+            "curl -s -o /tmp/ryter-page.html -w '%{http_code}' http://cms.localhost:8000/",
+            "curl -s http://localhost:8000/a http://localhost:8000/b",
+        ] {
+            assert_eq!(sh(cmd), Decision::Allow, "{cmd}");
+        }
+        for cmd in [
+            // Somewhere else.
+            "curl -s https://example.com/",
+            "curl -s http://localhost:8000/ https://example.com/",
+            "curl -s http://localhost.example.com/",
+            "curl -s http://user:pw@localhost:8000/",
+            // A request that writes into the project, or reads its options
+            // from a file.
+            "curl -s -o page.html http://localhost:8000/",
+            "curl -s -K curlrc http://localhost:8000/",
+            "curl -s -T form.json http://localhost:8000/upload",
+            "curl -s --unix-socket /var/run/docker.sock http://localhost/containers/json",
+            "curl -s -x http://proxy:3128 http://localhost:8000/",
+            "curl -s -d @.env http://localhost:8000/",
+            // What the build hat asks about.
+            "docker compose down -v",
+            "docker stop cms-web-1",
+            "npm publish",
+            "ryter-no-such-tool --do-it",
+        ] {
+            assert!(
+                matches!(sh(cmd), Decision::Ask | Decision::AskOutside),
+                "{cmd}: {:?}",
+                sh(cmd)
+            );
+        }
+        // Nothing in the project changes, and the lines that hold for
+        // every hat hold here.
+        for cmd in [
+            "rm -rf target",
+            "mv a.rs b.rs",
+            "echo x > src/a.rs",
+            "pytest > out.txt",
+            "git commit -m x",
+            "git checkout -- .",
+            "sudo ls",
+            "cat ~/.ssh/id_rsa",
+        ] {
+            assert_eq!(sh(cmd), Decision::Deny, "{cmd}");
+        }
+        let write = |path: &str| {
+            decide(
+                "write",
+                &json!({"path": path, "content": "x"}),
+                &ctx_for(Role::SoloTest, d),
+            )
+        };
+        assert_eq!(write("src/a.rs"), Decision::Deny);
+        assert_eq!(write("ROADMAP.md"), Decision::Deny);
+        assert_eq!(write("notes/findings.md"), Decision::Allow);
+        assert_eq!(write("/tmp/ryter-test/findings.md"), Decision::Allow);
+        // It has no tool for editing in place, planning, or changing hats.
+        for tool in [
+            "search_replace",
+            "present_plan",
+            "request_hat",
+            "record_decision",
+        ] {
+            assert_eq!(
+                decide(tool, &json!({}), &ctx_for(Role::SoloTest, d)),
+                Decision::Deny,
+                "{tool}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_request_is_to_this_machine_or_it_is_not() {
+        for own in [
+            "http://localhost:8000/x",
+            "https://localhost/",
+            "localhost:3000",
+            "http://127.0.0.1:8000",
+            "http://[::1]:8000/x",
+            "http://0.0.0.0:5173/",
+            "http://cms.localhost:8000/admin?next=/a",
+        ] {
+            assert!(url_host(own).is_some_and(own_host), "{own}");
+        }
+        for other in [
+            "https://example.com/",
+            "http://localhost.example.com/",
+            "http://localhost@example.com/",
+            "http://example.com/?u=http://localhost/",
+            "ftp://localhost/x",
+            "file:///etc/passwd",
+            "http://$HOST/",
+            "http://127.0.0.1.nip.io/",
+            "",
+        ] {
+            assert!(!url_host(other).is_some_and(own_host), "{other}");
+        }
     }
 
     /// The review hat reads the project and the open places, and nothing

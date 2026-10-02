@@ -10,7 +10,7 @@ use crate::error::{Error, Result};
 use crate::event::AgentEvent;
 use crate::ids::SessionId;
 use crate::llm::Message;
-use crate::role::Role;
+use crate::role::{Role, Thread};
 use crate::spend::Usage;
 
 /// What a build turn left, for an undo of only its files.
@@ -131,8 +131,20 @@ pub struct Session {
     pub dir: PathBuf,
     /// Index.
     pub meta: Meta,
-    /// Messages sent to the model.
+    /// Messages sent to the model: the thread in use.
     pub transcript: Vec<Message>,
+    /// Which thread that is.
+    thread: Thread,
+    /// The other thread, while it isn't in use.
+    parked: Vec<Message>,
+}
+
+/// The file a thread's messages are kept in.
+fn thread_file(thread: Thread) -> &'static str {
+    match thread {
+        Thread::Main => "transcript.jsonl",
+        Thread::Test => "test.jsonl",
+    }
 }
 
 impl Session {
@@ -164,6 +176,8 @@ impl Session {
             dir,
             meta,
             transcript: Vec::new(),
+            thread: Thread::Main,
+            parked: Vec::new(),
         };
         s.write_meta()?;
         File::create(s.dir.join("events.jsonl")).map_err(|e| Error::Io(e.to_string()))?;
@@ -181,11 +195,15 @@ impl Session {
         let text =
             fs::read_to_string(dir.join("meta.json")).map_err(|e| Error::Io(e.to_string()))?;
         let meta: Meta = serde_json::from_str(&text).map_err(|e| Error::Io(e.to_string()))?;
-        let transcript = read_jsonl::<Message>(&dir.join("transcript.jsonl"))?;
+        let transcript = read_jsonl::<Message>(&dir.join(thread_file(Thread::Main)))?;
+        // A session from before the test hat has no such file: an empty thread.
+        let parked = read_jsonl::<Message>(&dir.join(thread_file(Thread::Test)))?;
         Ok(Self {
             dir: dir.to_path_buf(),
             meta,
             transcript,
+            thread: Thread::Main,
+            parked,
         })
     }
 
@@ -287,10 +305,44 @@ impl Session {
         Ok(())
     }
 
-    /// Append a transcript message.
+    /// The thread `transcript` is.
+    pub fn thread(&self) -> Thread {
+        self.thread
+    }
+
+    /// Make `thread` the one in use: `transcript` is its messages from here
+    /// on, and new messages are added to it. The other thread is kept as it
+    /// is.
+    pub fn use_thread(&mut self, thread: Thread) {
+        if thread != self.thread {
+            std::mem::swap(&mut self.transcript, &mut self.parked);
+            self.thread = thread;
+        }
+    }
+
+    /// The messages of `thread`, whichever is in use.
+    pub fn messages_of(&self, thread: Thread) -> &[Message] {
+        if thread == self.thread {
+            &self.transcript
+        } else {
+            &self.parked
+        }
+    }
+
+    /// Append a message to the thread in use.
     pub fn push_message(&mut self, msg: Message) -> Result<()> {
-        append_jsonl(&self.dir.join("transcript.jsonl"), &msg)?;
-        self.transcript.push(msg);
+        self.push_to(self.thread, msg)
+    }
+
+    /// Append a message to `thread`, whichever is in use: how the tester's
+    /// report reaches the conversation the other hats share.
+    pub fn push_to(&mut self, thread: Thread, msg: Message) -> Result<()> {
+        append_jsonl(&self.dir.join(thread_file(thread)), &msg)?;
+        if thread == self.thread {
+            self.transcript.push(msg);
+        } else {
+            self.parked.push(msg);
+        }
         self.touch()?;
         Ok(())
     }
@@ -308,10 +360,12 @@ impl Session {
         Ok(n)
     }
 
-    /// Rewrite `transcript.jsonl` after compaction. Events log is unchanged.
+    /// Rewrite the file of the thread in use, after compaction. Events log
+    /// is unchanged.
     pub fn replace_transcript(&mut self, messages: Vec<Message>) -> Result<()> {
-        let path = self.dir.join("transcript.jsonl");
-        let tmp = self.dir.join("transcript.jsonl.tmp");
+        let name = thread_file(self.thread);
+        let path = self.dir.join(name);
+        let tmp = self.dir.join(format!("{name}.tmp"));
         let mut f = File::create(&tmp).map_err(|e| Error::Io(e.to_string()))?;
         for m in &messages {
             let mut line = serde_json::to_string(m).map_err(|e| Error::Io(e.to_string()))?;
@@ -738,6 +792,65 @@ mod tests {
             ]
         );
         assert_eq!(answer_unanswered(&fixed).1, 0);
+    }
+
+    fn msg(role: &str, content: &str) -> Message {
+        Message {
+            role: role.into(),
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    fn said(messages: &[Message]) -> Vec<&str> {
+        messages.iter().map(|m| m.content.as_str()).collect()
+    }
+
+    /// The tester's thread is kept apart from the conversation the other
+    /// hats share: each has its own messages and its own file, a message
+    /// can be put in either from the other, and both come back when the
+    /// session is opened again.
+    #[test]
+    fn the_test_thread_is_kept_apart_from_the_main_one() {
+        let home = TempDir::new().unwrap();
+        let cwd = TempDir::new().unwrap();
+        let mut s = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+        assert_eq!(s.thread(), Thread::Main);
+        s.push_message(msg("user", "build the list")).unwrap();
+        s.use_thread(Thread::Test);
+        assert!(s.transcript.is_empty());
+        s.push_message(msg("user", "test the list")).unwrap();
+        s.push_message(msg("assistant", "it fails")).unwrap();
+        // The report, put in the main thread while the test one is in use.
+        s.push_to(Thread::Main, msg("user", "the test's report"))
+            .unwrap();
+        assert_eq!(said(&s.transcript), ["test the list", "it fails"]);
+        assert_eq!(
+            said(s.messages_of(Thread::Main)),
+            ["build the list", "the test's report"]
+        );
+        // Compacting one thread leaves the other alone.
+        s.replace_transcript(vec![msg("user", "test, compacted")])
+            .unwrap();
+        s.use_thread(Thread::Main);
+        s.use_thread(Thread::Main);
+        assert_eq!(said(&s.transcript), ["build the list", "the test's report"]);
+        assert_eq!(said(s.messages_of(Thread::Test)), ["test, compacted"]);
+        let dir = s.dir.clone();
+        drop(s);
+        let again = Session::open(&dir).unwrap();
+        assert_eq!(again.thread(), Thread::Main);
+        assert_eq!(
+            said(&again.transcript),
+            ["build the list", "the test's report"]
+        );
+        assert_eq!(said(again.messages_of(Thread::Test)), ["test, compacted"]);
+        // A session from before the test hat has no file for it.
+        std::fs::remove_file(dir.join("test.jsonl")).unwrap();
+        let old = Session::open(&dir).unwrap();
+        assert!(old.messages_of(Thread::Test).is_empty());
+        assert_eq!(old.transcript.len(), 2);
     }
 
     #[test]

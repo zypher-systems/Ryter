@@ -51,6 +51,8 @@ pub enum AgentEvent {
     TurnStarted {
         /// Monotonic turn number within the process.
         turn: u64,
+        /// The hat it runs in, which says whose conversation it is part of.
+        role: Role,
     },
     /// A user turn ended, however it ended.
     TurnFinished {

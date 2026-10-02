@@ -197,9 +197,7 @@ impl Agent {
 
     /// Wear `role` from here on, and say so.
     fn wear(&mut self, role: Role) -> Result<()> {
-        self.role = role;
-        self.ctx.role = role;
-        self.session.set_mode(role)?;
+        self.put_on(role)?;
         self.emit(AgentEvent::ModeChanged { role })
     }
 

@@ -414,8 +414,7 @@ pub fn run(init: WorkerInit) {
                             // removed, opens in build.
                             let role = s.meta.mode.map_or(Role::SoloBuild, Role::hat);
                             swap_session(a, s);
-                            a.role = role;
-                            a.ctx.role = role;
+                            let _ = a.put_on(role);
                             a.model = a.session.meta.model.clone();
                             a.connection = a.session.meta.connection.clone();
                             refresh_live(a, &live_status, &live_spend);
@@ -495,9 +494,7 @@ pub fn run(init: WorkerInit) {
             }
             Ok(Work::SetRole(role)) => {
                 if let Some(a) = &mut agent {
-                    a.role = role;
-                    a.ctx.role = role;
-                    let _ = a.session.set_mode(role);
+                    let _ = a.put_on(role);
                 }
             }
             Ok(Work::SetOfferAudit(on)) => {

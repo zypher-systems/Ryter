@@ -160,14 +160,17 @@ impl Agent {
         // it was, the model was sent the message bare, with nothing to
         // work with.
         if !self.role.is_solo() {
-            self.role = self.role.hat();
-            self.ctx.role = self.role;
-            self.session.set_mode(self.role)?;
+            self.put_on(self.role.hat())?;
         }
+        // And in that hat's conversation: the tester has its own.
+        self.session.use_thread(self.role.thread());
         let turn = next_turn();
         let started = std::time::Instant::now();
         let mut tools = 0u32;
-        self.emit(AgentEvent::TurnStarted { turn })?;
+        self.emit(AgentEvent::TurnStarted {
+            turn,
+            role: self.role,
+        })?;
         let out = self.turn_inner(user, &mut tools).await;
         // However the turn ended (done, cancelled, failed), record what it
         // left for `/undo`.
@@ -870,10 +873,19 @@ impl Agent {
                 "unknown hat {hat:?}: build, plan, or review"
             )));
         };
-        if !to.is_solo() || !self.role.is_solo() {
-            return Ok(ToolOutput::err(
-                "hats are solo mode's; crew mode is the user's to enter with /crew",
-            ));
+        // A turn can't carry on in another conversation: the call being
+        // answered here would be left behind in this one.
+        if to.thread() != self.role.thread() {
+            return Ok(ToolOutput::err(if self.role == Role::SoloTest {
+                "the test hat works in its own thread, so this turn can't carry on in \
+                 another hat. Say what you found; the user switches hats with Tab."
+                    .to_string()
+            } else {
+                format!(
+                    "the {to} hat works in its own thread, so this turn can't carry on in \
+                     it. Tell the user to press Tab to the {to} hat."
+                )
+            }));
         }
         if to == self.role {
             return Ok(ToolOutput {
@@ -899,9 +911,7 @@ impl Agent {
         match answer {
             crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
                 let from = self.role;
-                self.role = to;
-                self.ctx.role = to;
-                self.session.set_mode(to)?;
+                self.put_on(to)?;
                 self.emit(AgentEvent::ModeChanged { role: to })?;
                 let now = match to {
                     Role::SoloBuild => "you may now change files and run commands",
@@ -946,7 +956,9 @@ impl Agent {
                 "present_plan needs `title` (a few words) and `plan` (the plan, in Markdown)",
             ));
         };
-        if !self.role.is_solo() {
+        // Approving a plan starts the build in this turn, which a turn in
+        // the tester's own thread can't do.
+        if !self.role.is_solo() || self.role.thread() != crate::role::Thread::Main {
             return Ok(ToolOutput::err(
                 "plans are presented from the plan and build hats",
             ));
@@ -995,9 +1007,7 @@ impl Agent {
                 })?;
                 let from = self.role;
                 if from != Role::SoloBuild {
-                    self.role = Role::SoloBuild;
-                    self.ctx.role = Role::SoloBuild;
-                    self.session.set_mode(Role::SoloBuild)?;
+                    self.put_on(Role::SoloBuild)?;
                     self.emit(AgentEvent::ModeChanged {
                         role: Role::SoloBuild,
                     })?;
@@ -1111,6 +1121,15 @@ impl Agent {
             "Recorded in `{}`, under the plan `{plan_file}`. A review will read it.",
             crate::decisions::FILE
         )))
+    }
+
+    /// Put on `role`: the hat, what its tools may do, where the session was
+    /// left, and the conversation it works in.
+    pub fn put_on(&mut self, role: Role) -> Result<()> {
+        self.role = role;
+        self.ctx.role = role;
+        self.session.use_thread(role.thread());
+        self.session.set_mode(role)
     }
 
     /// Whether a tool call may change the user's files: an edit, or a command
@@ -1630,6 +1649,7 @@ impl Agent {
 
     /// Emit a [`AgentEvent::Context`] for the TUI / `--json`.
     pub fn emit_context(&mut self) -> Result<()> {
+        self.session.use_thread(self.role.thread());
         let r = self.context_report()?;
         let sys = self.system_prompt().unwrap_or_default();
         let breakdown = crate::compact::breakdown(&sys, &self.session.transcript);
@@ -1644,6 +1664,7 @@ impl Agent {
 
     /// Deterministic compact. Always emits [`AgentEvent::Compacted`].
     pub fn compact_now(&mut self) -> Result<crate::compact::ContextReport> {
+        self.session.use_thread(self.role.thread());
         let sys = self.system_prompt().unwrap_or_default();
         let before = crate::compact::estimate_tokens(&sys, &self.session.transcript);
         // What must outlive the messages dropped: where the approved plan is.
@@ -1720,14 +1741,16 @@ impl Agent {
     }
 
     /// The model that last read this conversation, from the spend log: a
-    /// different one now reads all of it again, at the full price.
+    /// different one now reads all of it again, at the full price. The
+    /// tester's thread has its own readers.
     fn last_reader(&self) -> Option<String> {
+        let thread = self.role.thread();
         self.session
             .spend_log()
             .ok()?
             .into_iter()
             .rev()
-            .find(|r| r.role.is_solo())
+            .find(|r| r.role.is_solo() && r.role.thread() == thread)
             .map(|r| r.model)
     }
 
@@ -2043,6 +2066,8 @@ mod tests {
         models: Mutex<Vec<String>>,
         /// How many tools each call was offered.
         tools: Mutex<Vec<usize>>,
+        /// The conversation each call was sent.
+        said: Mutex<Vec<Vec<String>>>,
     }
 
     #[async_trait::async_trait]
@@ -2050,6 +2075,13 @@ mod tests {
         async fn stream(&self, req: CompletionRequest) -> Result<crate::llm::DeltaStream> {
             self.models.lock().unwrap().push(req.model.clone());
             self.tools.lock().unwrap().push(req.tools.len());
+            self.said.lock().unwrap().push(
+                req.messages
+                    .iter()
+                    .filter(|m| m.role != "system")
+                    .map(|m| m.content.clone())
+                    .collect(),
+            );
             let deltas = vec![
                 StreamDelta::Text("ok".into()),
                 StreamDelta::Usage(Usage {
@@ -2067,6 +2099,155 @@ mod tests {
         async fn list_models(&self) -> Result<Vec<crate::llm::ModelInfo>> {
             Ok(Vec::new())
         }
+    }
+
+    /// The tester works in a conversation of its own. It is not sent what
+    /// the builder and the user said, and the builder is not sent the
+    /// tester's working. Each carries on where it left off, and both are
+    /// there when the session is opened again.
+    #[tokio::test]
+    async fn the_tester_has_a_conversation_of_its_own() {
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        let asked = Arc::new(Asked::default());
+        agent.provider = asked.clone();
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("build the page list").await.unwrap();
+        agent.put_on(Role::SoloTest).unwrap();
+        agent.turn("test the page list").await.unwrap();
+        agent.turn("retest scenario 3").await.unwrap();
+        agent.put_on(Role::SoloBuild).unwrap();
+        agent.turn("fix what failed").await.unwrap();
+        let said = asked.said.lock().unwrap().clone();
+        let shape: Vec<Vec<&str>> = said
+            .iter()
+            .map(|call| {
+                call.iter()
+                    .map(|m| m.rsplit("\n\n").next().unwrap_or(m))
+                    .collect()
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                vec!["build the page list"],
+                vec!["test the page list"],
+                vec!["test the page list", "ok", "retest scenario 3"],
+                vec!["build the page list", "ok", "fix what failed"],
+            ]
+        );
+        assert!(said[1][0].starts_with("[hat: test"), "{:?}", said[1]);
+        assert!(said[3][2].starts_with("[hat: build"), "{:?}", said[3]);
+        // The tester is offered its own, shorter list of tools.
+        let tools = asked.tools.lock().unwrap().clone();
+        assert!(
+            tools[1] < tools[0] && tools[1] == tools[2] && tools[0] == tools[3],
+            "{tools:?}"
+        );
+        // Each turn says which hat, so the screen knows whose it is.
+        let hats: Vec<Role> = events
+            .try_iter()
+            .filter_map(|e| match e {
+                AgentEvent::TurnStarted { role, .. } => Some(role),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            hats,
+            [
+                Role::SoloBuild,
+                Role::SoloTest,
+                Role::SoloTest,
+                Role::SoloBuild
+            ]
+        );
+        // On disk, and after the session is opened again.
+        use crate::role::Thread;
+        assert_eq!(agent.session.messages_of(Thread::Main).len(), 4);
+        assert_eq!(agent.session.messages_of(Thread::Test).len(), 4);
+        let again = crate::session::Session::open(&agent.session.dir).unwrap();
+        assert_eq!(again.messages_of(Thread::Main).len(), 4);
+        assert_eq!(again.messages_of(Thread::Test).len(), 4);
+        assert_eq!(again.meta.mode, Some(Role::SoloBuild));
+        // The spend is one session's, with the tester's part named.
+        let spent: Vec<Role> = again.spend_log().unwrap().iter().map(|r| r.role).collect();
+        assert_eq!(
+            spent,
+            [
+                Role::SoloBuild,
+                Role::SoloTest,
+                Role::SoloTest,
+                Role::SoloBuild
+            ]
+        );
+    }
+
+    /// A turn can't carry on in another conversation: the hat is the
+    /// user's to change with Tab, into the test hat and out of it. And the
+    /// tester presents no plan and records no decision.
+    #[tokio::test]
+    async fn a_turn_does_not_cross_into_another_conversation() {
+        async fn result_of(hat: Role, call_: Vec<StreamDelta>) -> (String, Role) {
+            let p = ReplayProvider::scripted(vec![call_, say("done")]);
+            let (_home, _cwd, mut agent) = repo_setup(p);
+            agent.put_on(hat).unwrap();
+            agent.ctx.always_approve = true;
+            let (io, rx) = crate::user_io::UserIo::pair();
+            agent.ctx.user_io = Some(io);
+            let answers = std::thread::spawn(move || {
+                let mut n = 0;
+                while let Ok(req) = rx.recv() {
+                    n += 1;
+                    match req {
+                        crate::user_io::UserRequest::Permission { reply, .. } => {
+                            let _ = reply.send(crate::user_io::Permission::Allow);
+                        }
+                        crate::user_io::UserRequest::Plan { reply, .. } => {
+                            let _ = reply.send(crate::user_io::PlanAnswer::Approve);
+                        }
+                        _ => {}
+                    }
+                }
+                n
+            });
+            agent.turn("go").await.unwrap();
+            agent.ctx.user_io = None;
+            let asked = answers.join().unwrap();
+            assert_eq!(asked, 0, "the user was asked");
+            let result = agent
+                .session
+                .transcript
+                .iter()
+                .find(|m| m.role == "tool")
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            (result, agent.role)
+        }
+        let hat = |to: &str| {
+            call(
+                "request_hat",
+                serde_json::json!({"hat": to, "reason": "carry on"}),
+            )
+        };
+        let (result, role) = result_of(Role::SoloTest, hat("build")).await;
+        assert!(
+            result.contains("the test hat works in its own thread"),
+            "{result}"
+        );
+        assert_eq!(role, Role::SoloTest);
+        let (result, role) = result_of(Role::SoloBuild, hat("test")).await;
+        assert!(result.contains("press Tab to the test hat"), "{result}");
+        assert_eq!(role, Role::SoloBuild);
+        let plan = call(
+            "present_plan",
+            serde_json::json!({"title": "A plan", "plan": A_PLAN}),
+        );
+        let (result, role) = result_of(Role::SoloTest, plan).await;
+        assert!(
+            result.contains("plans are presented from the plan and build hats"),
+            "{result}"
+        );
+        assert_eq!(role, Role::SoloTest);
     }
 
     /// A hat with a model of its own is run on it; the others follow the

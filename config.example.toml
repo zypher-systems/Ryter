@@ -24,7 +24,7 @@ x_title = "Ryter"
 connection = "spacexai"
 model = "grok-4.6"
 
-# A hat can have a model of its own: plan, build, review. Set them in the TUI
+# A hat can have a model of its own: plan, build, review, test. Set them in the TUI
 # (/models), or uncomment:
 # [specialists.review]
 # connection = "openrouter"

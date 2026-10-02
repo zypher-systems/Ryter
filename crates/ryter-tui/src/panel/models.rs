@@ -879,7 +879,7 @@ mod tests {
         p.set_models(&v, &catalog());
         let t = text(&p, &v);
         assert!(t.contains("›  All hats  grok-4.7"), "{t}");
-        for hat in ["Plan", "Build", "Review"] {
+        for hat in ["Plan", "Build", "Review", "Test"] {
             assert!(
                 t.contains(&format!("{hat:<9} follows all hats")),
                 "{hat}:\n{t}"
@@ -989,8 +989,7 @@ mod tests {
                 if role == "build" && connection == "spacexai"
         ));
 
-        // The auditor, the last seat: ← goes back without setting, and the
-        // cursor stays on the last seat after a set.
+        // The reviewer: ← goes back without setting.
         assert_eq!(p.seat(), 3);
         key(&mut p, &mut v, KeyCode::Right);
         assert!(matches!(key(&mut p, &mut v, KeyCode::Left), Outcome::Stay));
@@ -1002,11 +1001,21 @@ mod tests {
             Outcome::Act(Action::SetHatModel { role, model, .. })
                 if role == "review" && model == "qwen/qwen3.7-max"
         ));
-        assert_eq!((p.focus, p.seat()), (Focus::Seats, 3));
+        assert_eq!((p.focus, p.seat()), (Focus::Seats, 4));
+
+        // The tester, the last seat: the cursor stays on it after a set.
+        key(&mut p, &mut v, KeyCode::Right);
+        v.composer.set_text("minimax");
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetHatModel { role, model, .. })
+                if role == "test" && model == "minimax/minimax-m2.7"
+        ));
+        assert_eq!((p.focus, p.seat()), (Focus::Seats, 4));
 
         // Each seat set is ticked; esc closes, keeping them.
         let t = text(&p, &v);
-        for seat in ["✓ All hats", "✓ Plan", "✓ Build", "✓ Review"] {
+        for seat in ["✓ All hats", "✓ Plan", "✓ Build", "✓ Review", "✓ Test"] {
             assert!(t.contains(seat), "{seat}: {t}");
         }
         assert!(matches!(key(&mut p, &mut v, KeyCode::Esc), Outcome::Close));
@@ -1031,14 +1040,17 @@ mod tests {
         ));
         key(&mut p, &mut v, KeyCode::Down);
         key(&mut p, &mut v, KeyCode::Down);
-        assert!(matches!(key(&mut p, &mut v, KeyCode::Down), Outcome::Stay));
         assert_eq!(p.seat(), 3);
         p.set_models(&v, &catalog());
         let on = p.filtered(&v)[p.selected].id.clone();
         assert_eq!(
             on, "qwen/qwen3.7-max",
-            "the auditor's list opens on its model"
+            "the reviewer's list opens on its model"
         );
+        // The tester is the last seat: ↓ stops there.
+        key(&mut p, &mut v, KeyCode::Down);
+        assert!(matches!(key(&mut p, &mut v, KeyCode::Down), Outcome::Stay));
+        assert_eq!(p.seat(), 4);
 
         let p = Models::new(&mut v, Some("build".into()));
         assert_eq!((p.focus, p.seat()), (Focus::Models, 2));
@@ -1089,7 +1101,9 @@ mod tests {
     #[test]
     fn the_last_seat_opens_on_the_model_just_set() {
         let mut v = hats_view();
-        let mut p = Models::new(&mut v, Some("review".into()));
+        let reviewer = v.specialists["review"].clone();
+        v.specialists.insert("test".into(), reviewer);
+        let mut p = Models::new(&mut v, Some("test".into()));
         p.set_models(&v, &catalog());
         assert_eq!(
             p.filtered(&v)[p.selected].id,
@@ -1100,9 +1114,9 @@ mod tests {
         assert!(matches!(
             key(&mut p, &mut v, KeyCode::Enter),
             Outcome::Act(Action::SetHatModel { role, model, .. })
-                if role == "review" && model == "minimax/minimax-m2.7"
+                if role == "test" && model == "minimax/minimax-m2.7"
         ));
-        assert_eq!((p.focus, p.seat()), (Focus::Seats, 3));
+        assert_eq!((p.focus, p.seat()), (Focus::Seats, 4));
         assert_eq!(p.filtered(&v)[p.selected].id, "minimax/minimax-m2.7");
         key(&mut p, &mut v, KeyCode::Right);
         assert!(matches!(
@@ -1158,7 +1172,7 @@ mod tests {
         let mut models = catalog();
         models.push(row("shared-model", "openrouter", Some((1.0, 2.0))));
         models.push(row("shared-model", "spacexai", Some((1.0, 2.0))));
-        let mut p = Models::new(&mut v, Some("review".into()));
+        let mut p = Models::new(&mut v, Some("test".into()));
         p.set_models(&v, &models);
         for c in "shared".chars() {
             key(&mut p, &mut v, KeyCode::Char(c));

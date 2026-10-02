@@ -3,6 +3,8 @@
 
 mod actions;
 #[cfg(test)]
+pub(crate) use actions::fill_view_from_session;
+#[cfg(test)]
 pub(crate) use actions::load_project_spend;
 pub(crate) mod events;
 pub(crate) mod keys;

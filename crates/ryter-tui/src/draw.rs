@@ -251,6 +251,13 @@ fn draw_with_rail(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         width: col_w,
         ..r
     };
+    // Whose conversation this is, when it is the tester's.
+    if let Some(line) = thread_line(view, theme, usize::from(col_w)) {
+        frame.render_widget(
+            Paragraph::new(line).style(Style::default().bg(theme.bg)),
+            column(rows[0]),
+        );
+    }
     let chat = column(body);
     let cf = draw_chat(frame, chat, view, theme);
     if view.panels.is_empty() {
@@ -284,6 +291,28 @@ fn draw_with_rail(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         activity: act,
         composer: comp,
     }
+}
+
+/// The line over the tester's conversation: `TEST THREAD · tab: main chat`.
+/// `None` for the conversation the other hats share, which needs no name.
+fn thread_line(view: &View, theme: Theme, width: usize) -> Option<Line<'static>> {
+    if view.shown != ryter_core::Thread::Test {
+        return None;
+    }
+    let dim = Style::default().fg(theme.dim).bg(theme.bg);
+    let name = "TEST THREAD";
+    let rest = " · its own conversation · tab: main chat";
+    let rest = wrap::truncate(rest, width.saturating_sub(wrap::width(name)));
+    Some(Line::from(vec![
+        Span::styled(
+            name,
+            Style::default()
+                .fg(theme.mode(ryter_core::Role::SoloTest))
+                .bg(theme.bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(rest, dim),
+    ]))
 }
 
 /// The keys that matter now, for the prompt's border: the bottom bar's, less
@@ -370,7 +399,12 @@ fn draw_view_strip(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     };
     let mut spans = vec![Span::styled(" ", dim)];
     spans.extend(tab(
-        "chat",
+        // The tester's conversation is named; the shared one is "chat".
+        if view.shown == ryter_core::Thread::Test {
+            "test thread"
+        } else {
+            "chat"
+        },
         if now == LedgerView::Changes {
             "esc"
         } else {

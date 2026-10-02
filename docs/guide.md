@@ -190,26 +190,36 @@ Without a tty, use headless:
 ```sh
 ryter -p "add a --json flag" --always-approve
 ryter -p "…" --json                  # NDJSON AgentEvent stream
-ryter -c -p "continue"               # continue the latest session: transcript, tasks, open patch
+ryter -c -p "continue"               # continue the latest session
 ```
 
 `--always-approve` treats Ask as Allow. Deny still wins.
 
 ## Hats
 
-One model works in your project, in the build hat to start with. `Tab` switches its hat (build → plan → review), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. The header, the message box's badge, and its border all show the hat in its own color. A switch applies to your next message. The model can also offer a switch itself: after a review ("fix these?") it asks with a yes/no prompt, and on `y` it carries on in the new hat in the same turn. A plan has its own panel, below.
+One model works in your project, in the build hat to start with. `Tab` switches its hat (build → plan → review → test), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. The header, the message box's badge, and its border all show the hat in its own color. A switch applies to your next message. The model can also offer a switch itself: after a review ("fix these?") it asks with a yes/no prompt, and on `y` it carries on in the new hat in the same turn. A plan has its own panel, below.
 
 | Hat | May | May not |
 | --- | --- | --- |
 | **build** (default) | edit files and run commands. Your toolchains, the project's own programs and its containers run without asking; edits ask (or run with `a` for the session / `--always-approve`); so do commands that delete, publish, or that Ryter doesn't know (see "What runs without asking") | read secrets, push, run inline interpreter code |
 | **plan** | read, search, run read-only commands, and show you a plan to approve | edit source, run anything that changes the project |
 | **review** | read, run the tests and linters, read-only git | write anything, not even by redirect; install, format, or fix |
+| **test** | start the product, run its tests and use it: everything the build hat runs without asking, and requests to the project's own address (`curl localhost:8000/…`) | edit or write the project's files, delete or move anything in it |
 
-**A model for each hat.** Every hat runs on one model until you give a hat its own. `/models` lists the seats on the left: *All hats*, then *Plan*, *Build* and *Review*, each showing its model or "follows all hats". Pick a seat, pick a model, `⏎`, and the cursor moves to the next seat, so one visit sets them all. To put a hat back, choose `default` at the top of its list. The choice is kept in `~/.ryter/hats.toml`.
+**A model for each hat.** Every hat runs on one model until you give a hat its own. `/models` lists the seats on the left: *All hats*, then *Plan*, *Build*, *Review* and *Test*, each showing its model or "follows all hats". Pick a seat, pick a model, `⏎`, and the cursor moves to the next seat, so one visit sets them all. To put a hat back, choose `default` at the top of its list. The choice is kept in `~/.ryter/hats.toml`.
 
 - **Where it shows:** the rail and the status line name the model your next message goes to, which is the current hat's.
 - **What a switch costs:** the hats share one conversation. A model that hasn't read it yet reads all of it at the full price the first time, and Ryter says so in the chat as it happens: "review hat · grok-4.7 re-reads 42k tokens, about $0.13". Nothing stops; the line is there so the cost isn't a surprise. Going back to a model that has read the conversation costs the same again if its provider's cache has lapsed.
 - **A use for it:** a strong model for the plan, a cheaper one to build it, and a different one to review, so the review isn't the model that built it marking its own work.
+
+**The test hat has a conversation of its own.** The plan, build and review hats share one conversation. The tester doesn't read it: it judges the product from the plan, the decisions and from using it, not from the builder's account of the work.
+
+- **`Tab` to Test** and the chat shows the tester's thread, under a line that names it ("TEST THREAD"). `Tab` away and the shared conversation is back as you left it. Each keeps its own scroll position.
+- **It continues through the session.** The tester remembers what it tried before, so "retest the health check" works. Both conversations are saved, and both come back when you resume the session.
+- **A turn stays in its own conversation.** You can look at the main chat while a test runs, or at the tester's thread while a build does: what a running turn says goes to the conversation it is part of. The model can't switch into or out of the test hat in the middle of a turn; that is yours to do with `Tab`.
+- **What it may run:** what the build hat runs without asking (your toolchains, the project's programs, its containers), plus requests to the project's own address: `curl` to `localhost`, `127.0.0.1` or a `.localhost` name, saving only to `/tmp` or your home folder. What the build hat asks about, it asks about. It can't edit, delete or move the project's files, and a redirect into the project is refused.
+- **Its own model:** the *Test* seat in `/models`. Starting a test thread on a different model costs nothing extra, since there is no conversation for it to re-read.
+- **Not built yet:** the report that comes back into the main conversation, `/test`, the offer after a passed review, and the saved start and stop commands. Today the tester's findings stay in its thread, and you carry them to the build hat yourself. The approved design is in `docs/test-hat.md`.
 
 **Approving a plan.** When the model has a plan, it shows it in a panel instead of writing it into the chat: the goal, the steps, the files, the risks, and how to verify it. `↑`/`↓` and `PgUp`/`PgDn` scroll a long one. You answer:
 
@@ -583,7 +593,8 @@ When these files exist, the model **reads** them on every turn (capped), and is 
 ~/.ryter/sessions/<cwd-slug>/<id>/
   meta.json
   events.jsonl
-  transcript.jsonl
+  transcript.jsonl # the conversation the plan, build and review hats share
+  test.jsonl       # the test hat's own conversation, once it has one
   spend.jsonl
   notes/           # the plan hat's notes
 ```

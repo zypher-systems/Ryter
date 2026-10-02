@@ -22,6 +22,11 @@ pub enum Role {
     /// nothing.
     #[serde(rename = "review")]
     SoloReview,
+    /// Test hat: using the product as its user would. Starts it, runs its
+    /// tests, tries it, and reports; edits nothing. It works in a thread of
+    /// its own, not the conversation the other hats share.
+    #[serde(rename = "test")]
+    SoloTest,
     /// A role from crew mode, which was removed. Nothing runs as it: it is
     /// what a session saved before then names in its spend and its mode, so
     /// those still load.
@@ -35,7 +40,28 @@ pub enum Role {
     Crew,
 }
 
+/// Which conversation a turn is part of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Thread {
+    /// The one the plan, build and review hats share.
+    #[default]
+    Main,
+    /// The test hat's own.
+    Test,
+}
+
 impl Role {
+    /// The conversation this hat works in. The tester judges the product
+    /// from the plan and from using it, not from the builder's account of
+    /// it, so it doesn't read the conversation the work was done in.
+    pub fn thread(self) -> Thread {
+        if self == Self::SoloTest {
+            Thread::Test
+        } else {
+            Thread::Main
+        }
+    }
+
     /// Whether this hat may change the project's files.
     pub fn writes_source(self) -> bool {
         self == Self::SoloBuild
@@ -56,11 +82,12 @@ impl Role {
         }
     }
 
-    /// The hat `Tab` moves to: build → plan → review → build.
+    /// The hat `Tab` moves to: build → plan → review → test → build.
     pub fn next_hat(self) -> Self {
         match self {
             Self::SoloBuild => Self::SoloPlan,
             Self::SoloPlan => Self::SoloReview,
+            Self::SoloReview => Self::SoloTest,
             _ => Self::SoloBuild,
         }
     }
@@ -68,7 +95,8 @@ impl Role {
     /// The hat `Shift+Tab` moves to.
     pub fn prev_hat(self) -> Self {
         match self {
-            Self::SoloBuild => Self::SoloReview,
+            Self::SoloBuild => Self::SoloTest,
+            Self::SoloTest => Self::SoloReview,
             Self::SoloReview => Self::SoloPlan,
             _ => Self::SoloBuild,
         }
@@ -92,7 +120,11 @@ impl Role {
                 "[hat: review — nothing may change; read and run tests. When asked for a review, \
                  end with findings, blocking ones first, then your verdict]",
             ),
-            _ => None,
+            Self::SoloTest => Some(
+                "[hat: test — use the product as its user would: start it, run its tests, try \
+                 it, and report what works and what doesn't. Change nothing in the project]",
+            ),
+            Self::Crew => None,
         }
     }
 
@@ -103,6 +135,7 @@ impl Role {
             Self::SoloPlan => "plan",
             Self::SoloBuild => "build",
             Self::SoloReview => "review",
+            Self::SoloTest => "test",
         }
     }
 }
@@ -121,8 +154,9 @@ impl FromStr for Role {
             "plan" => Ok(Self::SoloPlan),
             "build" => Ok(Self::SoloBuild),
             "review" => Ok(Self::SoloReview),
+            "test" => Ok(Self::SoloTest),
             other => Err(Error::Config(format!(
-                "unknown hat {other:?}: build, plan, or review"
+                "unknown hat {other:?}: build, plan, review, or test"
             ))),
         }
     }
@@ -136,7 +170,24 @@ mod tests {
     fn only_the_build_hat_writes_source() {
         assert!(Role::SoloBuild.writes_source());
         assert!(!Role::SoloPlan.writes_source() && !Role::SoloReview.writes_source());
+        assert!(!Role::SoloTest.writes_source());
         assert!(!Role::Crew.writes_source());
+    }
+
+    /// The tester has a conversation of its own; every other hat shares
+    /// one. A session from crew mode is part of the shared one.
+    #[test]
+    fn only_the_test_hat_has_its_own_thread() {
+        assert_eq!(Role::SoloTest.thread(), Thread::Test);
+        for hat in [
+            Role::SoloPlan,
+            Role::SoloBuild,
+            Role::SoloReview,
+            Role::Crew,
+        ] {
+            assert_eq!(hat.thread(), Thread::Main, "{hat}");
+        }
+        assert!(Role::SoloTest.is_solo() && Role::SoloTest.hat_note().is_some());
     }
 
     /// A session saved in crew mode names roles that are gone. Its spend
@@ -163,16 +214,21 @@ mod tests {
     }
 
     #[test]
-    fn tab_cycles_build_plan_review() {
+    fn tab_cycles_build_plan_review_test() {
         let mut h = Role::SoloBuild;
         let mut seen = Vec::new();
-        for _ in 0..3 {
+        for _ in 0..4 {
             seen.push(h.as_str());
             h = h.next_hat();
         }
-        assert_eq!(seen, ["build", "plan", "review"]);
+        assert_eq!(seen, ["build", "plan", "review", "test"]);
         assert_eq!(h, Role::SoloBuild);
-        assert_eq!(Role::SoloBuild.prev_hat(), Role::SoloReview);
+        // And back the other way.
+        for back in ["test", "review", "plan", "build"] {
+            h = h.prev_hat();
+            assert_eq!(h.as_str(), back);
+        }
+        assert_eq!("test".parse::<Role>().unwrap(), Role::SoloTest);
         // Round-trips as the hat name, in logs and sessions.
         assert_eq!(
             serde_json::to_string(&Role::SoloReview).unwrap(),

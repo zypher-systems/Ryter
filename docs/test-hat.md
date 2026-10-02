@@ -1,6 +1,15 @@
 # The Test hat: approved design
 
-Designed with the user on 2026-10-01, a mockup for each choice. Nothing here is built yet. This page is what the build is held to; where the build has to differ, it says so up front.
+Designed with the user on 2026-10-01, a mockup for each choice. This page is what the build is held to; where the build has to differ, it says so here.
+
+**Built so far:** the hat itself, its own thread, its seat in `/models`, what it may run, and `.ryter/decisions.md`. **Not built yet:** the report into the main conversation, `/test` and the offer, `.ryter/run.toml`, and stopping what a test started.
+
+**Where the build differs from the mockups:**
+
+- **Tab order.** The screen mockup's hint says "Tab: plan" from the test hat. The order built is the existing one with Test added at the end: build → plan → review → test → build, so the hint reads "Tab: build". After a failed test the next hat is usually build.
+- **The thread's header line** reads "TEST THREAD · its own conversation · tab: main chat" until there are test runs to count.
+- **The composer's hint** reads "ask the tester" until there is a report with a scenario to name ("retest 3").
+- **What the tester may run** was changed by the user after the mockup (see that section).
 
 ## What was decided
 
