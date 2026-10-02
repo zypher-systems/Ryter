@@ -266,9 +266,8 @@ impl Agent {
             if self.ctx.cancel.is_cancelled() {
                 return self.finish_cancelled(last_text).await;
             }
-            if let Some(e) = self.over_budget().or_else(|| self.unpriced_stop()) {
-                return Err(e);
-            }
+            let (provider, model, connection) = self.hat_stack();
+            self.admit_request(&model)?;
             self.maybe_compact()?;
             if self.session.transcript.len() < compactions {
                 // Compaction already rewrote the prefix; memory can catch up free.
@@ -278,7 +277,6 @@ impl Agent {
 
             // The hat's own model, when it has one. Worked out each round: a
             // hat can change mid-turn (an approved plan goes on to build).
-            let (provider, model, connection) = self.hat_stack();
             if reader.as_deref() != Some(model.as_str()) {
                 if reader.is_some() {
                     if let Some(message) = self.reread_notice(&model, &system) {
@@ -338,78 +336,75 @@ impl Agent {
             let mut calls = ToolCallAccumulator::default();
             let mut usage = Usage::default();
             let mut reported_cost: Option<f64> = None;
+            let mut saw_usage = false;
+            let mut saw_done = false;
             // Set when the provider says the answer hit the output ceiling.
             let mut truncated = false;
 
-            loop {
-                if self.ctx.cancel.is_cancelled() {
-                    return self.finish_cancelled(last_text).await;
+            let received: Result<()> = async {
+                loop {
+                    if self.ctx.cancel.is_cancelled() {
+                        return Err(Error::Cancelled);
+                    }
+                    let delta = tokio::select! {
+                        biased;
+                        () = self.ctx.cancel.cancelled() => {
+                            return Err(Error::Cancelled);
+                        }
+                        d = stream.next() => d,
+                    };
+                    let Some(delta) = delta else {
+                        break;
+                    };
+                    match delta? {
+                        StreamDelta::Text(t) => {
+                            text.push_str(&t);
+                            self.emit(AgentEvent::Token { text: t })?;
+                        }
+                        StreamDelta::Reasoning(t) => {
+                            self.emit(AgentEvent::Reasoning { text: t })?;
+                        }
+                        StreamDelta::ToolCall {
+                            id,
+                            name,
+                            arguments,
+                        } => calls.push(&id, &name, &arguments),
+                        StreamDelta::Usage(u) => {
+                            usage = usage.merge(u);
+                            saw_usage = true;
+                        }
+                        StreamDelta::ReportedCost(c) => reported_cost = Some(c),
+                        StreamDelta::Truncated => truncated = true,
+                        StreamDelta::Done => saw_done = true,
+                    }
                 }
-                let delta = tokio::select! {
-                    biased;
-                    () = self.ctx.cancel.cancelled() => {
-                        return self.finish_cancelled(if text.is_empty() { last_text } else { text }).await;
-                    }
-                    d = stream.next() => d,
-                };
-                let Some(delta) = delta else {
-                    break;
-                };
-                match delta? {
-                    StreamDelta::Text(t) => {
-                        text.push_str(&t);
-                        self.emit(AgentEvent::Token { text: t })?;
-                    }
-                    StreamDelta::Reasoning(t) => {
-                        self.emit(AgentEvent::Reasoning { text: t })?;
-                    }
-                    StreamDelta::ToolCall {
-                        id,
-                        name,
-                        arguments,
-                    } => calls.push(&id, &name, &arguments),
-                    StreamDelta::Usage(u) => usage = usage.merge(u),
-                    StreamDelta::ReportedCost(c) => reported_cost = Some(c),
-                    StreamDelta::Truncated => truncated = true,
-                    StreamDelta::Done => {}
-                }
-            }
 
-            let local = self
-                .cfg
-                .as_ref()
-                .and_then(|c| c.connections.get(&connection))
-                .is_some_and(|c| c.is_local());
-            let total_usd = reported_cost.or_else(|| {
-                if local {
-                    Some(0.0)
-                } else {
-                    self.book.cost(&model, usage)
-                }
-            });
-            self.session.record_spend(spend_record(
-                connection.clone(),
-                model.clone(),
-                self.role,
+                Ok(())
+            }
+            .await;
+            let total_usd = self.record_call(
+                &connection,
+                &model,
                 usage,
-                total_usd,
-            ))?;
-            self.emit(AgentEvent::Spend {
-                connection: connection.clone(),
-                model: model.clone(),
-                role: self.role,
-                input_tokens: usage.input_tokens,
-                output_tokens: usage.output_tokens,
-                cached_tokens: usage.cached_tokens,
-                total_usd,
-            })?;
+                reported_cost,
+                saw_usage,
+                received.is_ok() && saw_done,
+            )?;
+            if let Err(error) = received {
+                if matches!(error, Error::Cancelled) {
+                    return self
+                        .finish_cancelled(if text.is_empty() { last_text } else { text })
+                        .await;
+                }
+                return Err(error);
+            }
 
             if let Some(e) = self.over_budget() {
                 return Err(e);
             }
             // A budget can't stop what it can't price. This round's reply is
             // kept; the next call stops before it is sent (`unpriced_stop`).
-            if total_usd.is_none() && self.budget_usd > 0.0 {
+            if total_usd.is_none() && self.budget_usd > 0.0 && !self.session.meta.spend_incomplete {
                 self.emit(AgentEvent::Notice {
                     message: format!(
                         "{} has no price, so the ${:.2} budget can't see what it \
@@ -2170,6 +2165,7 @@ impl Agent {
 
     /// One model call outside a turn: no tools, low reasoning, spend recorded.
     async fn one_shot(&mut self, system: &str, user: &str, max_tokens: u32) -> Result<String> {
+        self.admit_request(&self.model)?;
         let req = CompletionRequest {
             model: self.model.clone(),
             system: Some(system.to_string()),
@@ -2191,50 +2187,45 @@ impl Agent {
         let mut text = String::new();
         let mut usage = Usage::default();
         let mut reported_cost: Option<f64> = None;
-        loop {
-            // Drafting a commit message could otherwise wait on a stuck
-            // provider with no way to stop it.
-            let delta = tokio::select! {
-                biased;
-                () = self.ctx.cancel.cancelled() => return Err(Error::Cancelled),
-                d = stream.next() => d,
-            };
-            let Some(delta) = delta else { break };
-            match delta? {
-                StreamDelta::Text(t) => text.push_str(&t),
-                StreamDelta::Usage(u) => usage = usage.merge(u),
-                StreamDelta::ReportedCost(c) => reported_cost = Some(c),
-                _ => {}
+        let mut saw_usage = false;
+        let mut saw_done = false;
+        let received: Result<()> = async {
+            loop {
+                // Drafting a commit message could otherwise wait on a stuck
+                // provider with no way to stop it.
+                let delta = tokio::select! {
+                    biased;
+                    () = self.ctx.cancel.cancelled() => return Err(Error::Cancelled),
+                    d = stream.next() => d,
+                };
+                let Some(delta) = delta else { break };
+                match delta? {
+                    StreamDelta::Text(t) => text.push_str(&t),
+                    StreamDelta::Usage(u) => {
+                        usage = usage.merge(u);
+                        saw_usage = true;
+                    }
+                    StreamDelta::ReportedCost(c) => reported_cost = Some(c),
+                    StreamDelta::Done => saw_done = true,
+                    _ => {}
+                }
             }
+            Ok(())
         }
-        let local = self
-            .cfg
-            .as_ref()
-            .and_then(|c| c.connections.get(&self.connection))
-            .is_some_and(|c| c.is_local());
-        let total_usd = reported_cost.or_else(|| {
-            if local {
-                Some(0.0)
-            } else {
-                self.book.cost(&self.model, usage)
-            }
-        });
-        self.session.record_spend(spend_record(
-            self.connection.clone(),
-            self.model.clone(),
-            self.role,
+        .await;
+        self.record_call(
+            &self.connection.clone(),
+            &self.model.clone(),
             usage,
-            total_usd,
-        ))?;
-        self.emit(AgentEvent::Spend {
-            connection: self.connection.clone(),
-            model: self.model.clone(),
-            role: self.role,
-            input_tokens: usage.input_tokens,
-            output_tokens: usage.output_tokens,
-            cached_tokens: usage.cached_tokens,
-            total_usd,
-        })?;
+            reported_cost,
+            saw_usage,
+            received.is_ok() && saw_done,
+        )?;
+        received?;
+        if let Some(error) = self.over_budget() {
+            return Err(error);
+        }
+
         Ok(text)
     }
 
@@ -2457,14 +2448,63 @@ impl Agent {
         (self.budget_usd > 0.0 && spent >= self.budget_usd).then(|| self.budget_error(None))
     }
 
-    /// Before a call: this model's last call had no price and it still has
-    /// none, so with a budget set it would spend where the budget can't see.
-    fn unpriced_stop(&self) -> Option<Error> {
-        let unpriced = self.session.meta.unpriced_model.as_deref()?;
-        // The model about to be called: this hat's.
-        let (_, model, _) = self.hat_stack();
-        (self.budget_usd > 0.0 && unpriced == model && self.book.rates(&model).is_none())
-            .then(|| self.budget_error(Some(model.clone())))
+    /// Every inference path uses the same admission check before sending.
+    fn admit_request(&self, model: &str) -> Result<()> {
+        if let Some(error) = self.over_budget() {
+            return Err(error);
+        }
+        if self.budget_usd > 0.0 {
+            if self.session.meta.spend_incomplete {
+                return Err(self.budget_error(None));
+            }
+            if self.session.meta.unpriced_model.as_deref() == Some(model)
+                && self.book.rates(model).is_none()
+            {
+                return Err(self.budget_error(Some(model.into())));
+            }
+        }
+        Ok(())
+    }
+
+    /// Finalize accounting before propagating stream errors or cancellation.
+    fn record_call(
+        &mut self,
+        connection: &str,
+        model: &str,
+        usage: Usage,
+        reported_cost: Option<f64>,
+        saw_usage: bool,
+        complete: bool,
+    ) -> Result<Option<f64>> {
+        let local = self
+            .cfg
+            .as_ref()
+            .and_then(|c| c.connections.get(connection))
+            .is_some_and(|c| c.is_local());
+        let reported_cost = reported_cost.filter(|c| c.is_finite() && *c >= 0.0);
+        let total_usd = if local {
+            Some(0.0)
+        } else {
+            reported_cost.or_else(|| saw_usage.then(|| self.book.cost(model, usage)).flatten())
+        };
+        let mut record = spend_record(connection.into(), model.into(), self.role, usage, total_usd);
+        record.incomplete = !local && reported_cost.is_none() && (!complete || !saw_usage);
+        let incomplete = record.incomplete;
+        self.session.record_spend(record)?;
+        self.emit(AgentEvent::Spend {
+            connection: connection.into(),
+            model: model.into(),
+            role: self.role,
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cached_tokens: usage.cached_tokens,
+            total_usd,
+            incomplete,
+        })?;
+        if incomplete && (self.budget_usd > 0.0 || !complete) {
+            self.emit(AgentEvent::Notice { message: "This request's accounting is incomplete. Reported tokens and known cost have been saved as a lower bound; a configured budget will stop further requests in this session.".into() })?;
+        }
+        Ok(total_usd)
     }
 
     fn budget_error(&self, unpriced: Option<String>) -> Error {
@@ -2472,6 +2512,7 @@ impl Agent {
             spent: self.session.meta.spend_usd_total.unwrap_or(0.0),
             cap: self.budget_usd,
             unpriced,
+            incomplete: self.session.meta.spend_incomplete,
         }
     }
 
@@ -2491,6 +2532,138 @@ mod tests {
     use crate::tools::ToolContext;
     use std::sync::Mutex;
     use tempfile::TempDir;
+
+    struct InterruptedUsage {
+        cancel: Option<Arc<crate::Cancel>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for InterruptedUsage {
+        async fn stream(&self, _: CompletionRequest) -> Result<crate::llm::DeltaStream> {
+            let cancel = self.cancel.clone();
+            let usage = futures_util::stream::iter(vec![Ok(StreamDelta::Usage(Usage {
+                input_tokens: 1_000,
+                ..Usage::default()
+            }))]);
+            let end = futures_util::stream::once(async move {
+                if let Some(cancel) = cancel {
+                    cancel.cancel();
+                    Err(Error::Cancelled)
+                } else {
+                    Err(Error::Provider("fixture failure after usage".into()))
+                }
+            });
+            Ok(Box::pin(usage.chain(end)))
+        }
+        async fn list_models(&self) -> Result<Vec<crate::llm::ModelInfo>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn interrupted_turns_and_drafts_keep_usage_and_stop_a_budget_after_resume() {
+        for draft in [false, true] {
+            for cancel in [false, true] {
+                let (_home, _cwd, mut agent) = setup(ReplayProvider::new(vec![]));
+                agent.provider = Arc::new(InterruptedUsage {
+                    cancel: cancel.then(|| agent.ctx.cancel.clone()),
+                });
+                if draft {
+                    assert!(agent.one_shot("system", "draft", 100).await.is_err());
+                } else {
+                    let result = agent.turn("fixture").await;
+                    if cancel {
+                        assert_eq!(result.unwrap().reason, StopReason::Cancelled);
+                    } else {
+                        assert!(result.is_err());
+                    }
+                }
+                let rows = agent.session.spend_log().unwrap();
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].input_tokens, 1_000);
+                assert_eq!(rows[0].total_usd, Some(0.002));
+                assert!(rows[0].incomplete);
+                agent.session = Session::open(&agent.session.dir).unwrap();
+                assert!(agent.session.meta.spend_unknown && agent.session.meta.spend_incomplete);
+                agent.ctx.cancel = crate::Cancel::new();
+                agent.budget_usd = 1.0;
+                let provider = Arc::new(Asked::default());
+                agent.provider = provider.clone();
+                assert!(matches!(
+                    agent.one_shot("system", "draft", 100).await,
+                    Err(Error::Budget {
+                        incomplete: true,
+                        ..
+                    })
+                ));
+                assert!(provider.models.lock().unwrap().is_empty());
+                assert_eq!(agent.session.spend_log().unwrap().len(), 1);
+                agent.budget_usd = 0.0;
+                agent
+                    .one_shot("system", "explicitly continue", 100)
+                    .await
+                    .unwrap();
+                assert_eq!(provider.models.lock().unwrap().len(), 1);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn drafting_obeys_exhausted_and_unpriced_budgets_before_sending() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![]));
+        std::fs::write(cwd.path().join("README.md"), "changed").unwrap();
+        let provider = Arc::new(Asked::default());
+        agent.provider = provider.clone();
+        agent.budget_usd = 1.0;
+        agent.session.meta.spend_usd_total = Some(1.0);
+        assert!(matches!(
+            agent.draft_commit(&["README.md".into()]).await,
+            Err(Error::Budget { .. })
+        ));
+        agent.session.meta.spend_usd_total = Some(0.0);
+        agent.model = "unknown-fixture".into();
+        agent.session.meta.unpriced_model = Some(agent.model.clone());
+        assert!(matches!(
+            agent.draft_commit(&["README.md".into()]).await,
+            Err(Error::Budget {
+                unpriced: Some(_),
+                ..
+            })
+        ));
+        assert!(provider.models.lock().unwrap().is_empty());
+        assert!(agent.session.spend_log().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn missing_usage_is_unknown_and_reported_cost_is_kept_on_failure() {
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::new(vec![
+            StreamDelta::Text("ok".into()),
+            StreamDelta::Done,
+        ]));
+        agent.one_shot("system", "draft", 100).await.unwrap();
+        let rows = agent.session.spend_log().unwrap();
+        assert_eq!(rows[0].total_usd, None);
+        assert!(rows[0].incomplete);
+        // A provider's final bill is authoritative even if delivery of the
+        // answer later fails; do not price the same tokens a second time.
+        agent
+            .record_call(
+                "spacexai",
+                "grok-4.6",
+                Usage {
+                    input_tokens: 1_000,
+                    ..Usage::default()
+                },
+                Some(0.25),
+                true,
+                false,
+            )
+            .unwrap();
+        let rows = agent.session.spend_log().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].total_usd, Some(0.25));
+        assert!(!rows[1].incomplete);
+    }
 
     fn setup(provider: ReplayProvider) -> (TempDir, TempDir, Agent) {
         let home = TempDir::new().unwrap();
@@ -4910,7 +5083,15 @@ mod tests {
                 offered: true,
                 ..ReviewRun::default()
             },
-            vec![say("Nothing to report.\n\nVERDICT: PASS")],
+            vec![vec![
+                StreamDelta::Text("Nothing to report.\n\nVERDICT: PASS".into()),
+                StreamDelta::Usage(Usage {
+                    input_tokens: 100,
+                    output_tokens: 10,
+                    ..Usage::default()
+                }),
+                StreamDelta::Done,
+            ]],
         )
         .await;
         assert_eq!(asked.len(), 1, "{asked:?}");

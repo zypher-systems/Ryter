@@ -445,6 +445,8 @@ A model your account can't use (a data policy that refuses it, no tool support, 
 
 Every model call is priced before the next request. Roll-ups: session, turn, hat, connection. Persisted in `spend.jsonl`.
 
+Overrides must supply both `input_per_million` and `output_per_million`; all supplied rates must be finite and nonnegative. Missing or invalid rates remain unknown. Explicit zero is valid for a free model.
+
 Sources, high wins: TOML `[pricing."<model>"]` → OpenRouter catalog (when ingested) → shipped SpaceXAI table. Provider-reported cost on a stream wins for that turn.
 
 Unknown rates show `$?.??` plus token counts. Ryter never invents `$0.00` for an unpriced model.
@@ -460,6 +462,8 @@ output_per_million = 15.0
 ```
 
 Prompt caching is priced in parts: cache reads at the cached rate, cache writes at the cache-write rate, the rest at the input rate. Each rate falls back to the input rate when unset.
+
+Cancelled or failed streams keep any reported usage and estimated cost as a lower bound. If the final accounting is missing, the session is marked incomplete. A configured budget then blocks further model calls, including commit-message drafting, even after resume or a model change. Start a separate session or explicitly use `/budget off` to continue with unknown spend.
 
 A session budget is optional. With one, the turn stops when spend reaches it and says so (exit `3` in headless). Raise it and say continue. Without one, nothing stops on cost and you watch the spend card.
 
