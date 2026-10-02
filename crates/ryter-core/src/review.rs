@@ -290,8 +290,8 @@ pub fn commit(dir: &Path, paths: &[String], message: &str) -> Result<String> {
         return Err(Error::Io("the commit message is empty".into()));
     }
     let top = root(dir)?;
-    let msg_file = git(&top, &["rev-parse", "--git-path", "RYTER_COMMIT_MSG"])?;
-    let msg_file = top.join(msg_file.trim());
+    let scratch = git::Scratch::new(&top)?;
+    let msg_file = scratch.path().join("message");
     std::fs::write(&msg_file, message).map_err(|e| Error::Io(e.to_string()))?;
     let mut add = vec!["add", "-A", "--"];
     add.extend(paths.iter().map(String::as_str));
@@ -308,7 +308,6 @@ pub fn commit(dir: &Path, paths: &[String], message: &str) -> Result<String> {
         args.extend(paths.iter().map(String::as_str));
         git(&top, &args)
     });
-    let _ = std::fs::remove_file(&msg_file);
     result?;
     Ok(git(&top, &["log", "-1", "--format=%h %s"])?
         .trim()
@@ -592,6 +591,8 @@ mod tests {
     fn commit_takes_only_the_chosen_files() {
         let d = repo();
         let p = d.path();
+        let legacy = p.join(".git/RYTER_COMMIT_MSG");
+        fs::write(&legacy, "another operation's message").unwrap();
         fs::write(p.join("keep.txt"), "changed\n").unwrap();
         fs::write(p.join("new.txt"), "a\n").unwrap();
         fs::write(p.join("later.txt"), "not yet\n").unwrap();
@@ -616,6 +617,17 @@ mod tests {
             "staged.txt\n"
         );
         assert!(p.join("later.txt").exists());
+        assert_eq!(
+            fs::read_to_string(&legacy).unwrap(),
+            "another operation's message"
+        );
+        assert!(commit(p, &["missing-file".into()], "fails").is_err());
+        assert!(
+            !fs::read_dir(p.join(".git"))
+                .unwrap()
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with("ryter-tmp-"))
+        );
     }
 
     #[test]

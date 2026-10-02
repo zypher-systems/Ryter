@@ -32,6 +32,10 @@ pub trait InboundHost: Send + Sync {
     fn status(&self) -> StatusSnapshot;
     /// Spend summary (no secrets).
     fn spend(&self) -> String;
+    /// Bounded snapshot of the active conversation, refreshed after completed work.
+    fn transcript(&self) -> String {
+        String::new()
+    }
     /// Cancel in-flight work. Safe to call while [`prompt`](Self::prompt) is running.
     fn cancel(&self);
     /// Cancel only this connection's reserved prompt on disconnect or write failure.
@@ -103,6 +107,14 @@ impl InboundHost for EchoHost {
     fn spend(&self) -> String {
         "$0.00".into()
     }
+    fn transcript(&self) -> String {
+        super::transcript_snapshot(&[crate::llm::Message {
+            role: "user".into(),
+            content: self.last(),
+            tool_call_id: None,
+            tool_calls: None,
+        }])
+    }
     fn cancel(&self) {}
 }
 
@@ -158,7 +170,7 @@ pub fn handle(host: &dyn InboundHost, req: &RpcRequest) -> Option<RpcResponse> {
                 .unwrap_or("");
             let text = match uri {
                 "ryter://session/spend" => host.spend(),
-                "ryter://session/transcript" => host.status().session,
+                "ryter://session/transcript" => host.transcript(),
                 _ => format!("unknown resource {uri}"),
             };
             Some(RpcResponse::ok(
@@ -471,6 +483,28 @@ mod tests {
     use super::*;
     use crate::mcp::rpc::RpcRequest;
 
+    #[test]
+    fn transcript_resource_returns_conversation_content() {
+        let host = EchoHost::default();
+        host.prompt("fixture conversation").unwrap();
+        let response = handle(
+            &host,
+            &RpcRequest {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(1)),
+                method: "resources/read".into(),
+                params: Some(json!({"uri": "ryter://session/transcript"})),
+            },
+        )
+        .unwrap();
+        let result = response.result.unwrap();
+        assert_eq!(result["contents"][0]["mimeType"], "text/plain");
+        assert_eq!(
+            result["contents"][0]["text"],
+            "[user]\nfixture conversation\n\n"
+        );
+    }
+
     /// This host deliberately shares the prompt lock with status/spend, like
     /// the old CLI host. A blocked observer must not hold up cancellation.
     struct BlockingHost {
@@ -500,6 +534,10 @@ mod tests {
         fn spend(&self) -> String {
             let _agent = self.agent.lock().unwrap();
             "$0.00".into()
+        }
+        fn transcript(&self) -> String {
+            let _agent = self.agent.lock().unwrap();
+            "conversation".into()
         }
         fn cancel(&self) {
             let _ = self.stopped.send(());
@@ -599,7 +637,9 @@ mod tests {
                     jsonrpc: "2.0".into(),
                     id: Some(json!(id)),
                     method: "resources/read".into(),
-                    params: Some(json!({"uri": "ryter://session/spend"})),
+                    params: Some(
+                        json!({"uri": if id % 2 == 0 { "ryter://session/spend" } else { "ryter://session/transcript" }}),
+                    ),
                 };
                 client.write_all(req.to_line().as_bytes()).unwrap();
             }

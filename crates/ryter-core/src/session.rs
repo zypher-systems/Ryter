@@ -934,6 +934,35 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn simultaneous_session_appends_remain_complete_on_resume() {
+        let home = TempDir::new().unwrap();
+        let session = Session::create(home.path(), home.path(), "c".into(), "m".into()).unwrap();
+        let gate = std::sync::Barrier::new(4);
+        std::thread::scope(|scope| {
+            for writer in 0..4 {
+                let gate = &gate;
+                let dir = &session.dir;
+                scope.spawn(move || {
+                    let mut writer_session = Session::open(dir).unwrap();
+                    gate.wait();
+                    for n in 0..25 {
+                        writer_session
+                            .push_message(msg("user", &format!("{writer}:{n}")))
+                            .unwrap();
+                    }
+                });
+            }
+        });
+        let resumed = Session::open(&session.dir).unwrap();
+        let unique: std::collections::HashSet<_> =
+            resumed.transcript.iter().map(|m| &m.content).collect();
+        assert_eq!(unique.len(), 100);
+        assert_eq!(resumed.transcript.len(), 100);
+        assert!(resumed.recovery_notices.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn recovery_waits_for_a_live_append_to_finish() {
         use std::sync::mpsc;
         use std::time::Duration;

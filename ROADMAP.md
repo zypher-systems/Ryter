@@ -20,6 +20,10 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 
 - **Unreleased — review repair 1 follow-up: protected path components.** Shared secret classification now catches credential directories at the project root as well as nested paths. All four hats reject direct reads, shell reads and linked aliases; grep skips their contents. Example environment files and published verification keys remain readable.
 
+- **Unreleased — review repair 8d: Git scratch ownership.** Each checkpoint, initial-index probe and commit message owns a unique private scratch directory in Git metadata. Cleanup runs on success and failure. Concurrent snapshots preserve the real index; concurrent session appends remain readable after resume.
+
+- **Unreleased — review repair 8c: MCP transcript and public guidance.** Inbound transcript reads return bounded active-conversation snapshots without taking the agent lock. CLI socket examples supply a path, and current documentation describes four hats and the actual command/sandbox permissions.
+
 - **Unreleased — review repair 8b: installation and dependency checks.** Bootstrap installation verifies signed checksums with the updater’s pinned key and uses unique atomic staging. Tampered/missing signatures, changed archives and linked executables preserve the existing install. CI checks dependency advisories, declared licenses and registries; release archives carry dependency notices. Removed unused YAML/plist loaders and replaced the yanked yoke-derive version. Two transitive maintenance notices (bincode and paste) remain explicitly tracked pending upstream/UI migrations.
 
 - **Unreleased — review repair 7b: bounded output.** Shell pipes retain fixed head/tail buffers while draining continuously. File paging and grep stream bounded lines; oversized/skipped lines and capped search results are explicit. Edit/diff inputs and directory/note enumeration have finite limits too.
