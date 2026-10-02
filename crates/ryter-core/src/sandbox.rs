@@ -303,6 +303,9 @@ pub fn apply_on(
     }
     #[cfg(target_os = "linux")]
     {
+        // Ryter's own records are kept by a thread that is not in the
+        // sandbox, and it has to exist before there is one.
+        crate::outside::start();
         apply_linux(profile, workspace, home, machine)?;
         ACTIVE.with(|a| a.set(profile));
         Ok(())

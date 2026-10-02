@@ -76,6 +76,21 @@ pub struct ToolContext {
     /// Where a running command's output goes as it arrives. `None` where
     /// only the result matters.
     pub live: Option<LiveOutput>,
+    /// Where a shell command's relative paths start. The project's top,
+    /// until a `cd` in the same command moves it.
+    pub cwd: Cwd,
+}
+
+/// The folder a shell command is in when one of its parts runs.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Cwd {
+    /// The project's top: where every command starts.
+    #[default]
+    Project,
+    /// A folder an earlier `cd` in the same command moved to.
+    At(std::path::PathBuf),
+    /// Somewhere the gate can't read: `cd "$DIR"`, `cd -`.
+    Unknown,
 }
 
 /// Takes a running command's latest output lines.
@@ -598,7 +613,7 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
         Decision::Deny
             if matches!(ctx.role, Role::SoloPlan | Role::SoloReview | Role::SoloTest)
                 && matches!(name, "write" | "search_replace" | "bash")
-                && !(name == "bash" && policy::bash_hint(args).is_some()) =>
+                && !(name == "bash" && policy::bash_hint(args, ctx).is_some()) =>
         {
             Ok(ToolOutput::err(format!(
                 "denied: the {} hat can't {} — tell the user; they can press Tab to switch to \
@@ -619,11 +634,11 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
                 }
             )))
         }
-        Decision::Deny if name == "bash" && policy::bash_hint(args).is_some() => {
+        Decision::Deny if name == "bash" && policy::bash_hint(args, ctx).is_some() => {
             Ok(ToolOutput::err(format!(
                 "denied: bash {} — {}",
                 crate::user_io::summary_args(name, args),
-                policy::bash_hint(args).unwrap_or_default()
+                policy::bash_hint(args, ctx).unwrap_or_default()
             )))
         }
         Decision::Deny => Ok(ToolOutput::err(format!(
@@ -733,6 +748,7 @@ mod tests {
             user_io: None,
             allowed: Default::default(),
             web: false,
+            cwd: Default::default(),
         }
     }
 
@@ -957,7 +973,12 @@ mod tests {
     #[test]
     fn scratch_space_is_written_without_asking() {
         let dir = TempDir::new().unwrap();
-        let outside = TempDir::new().unwrap();
+        // A folder of scratch space with an ordinary name: a hidden one
+        // beside the project is where tools look for configuration.
+        let outside = tempfile::Builder::new()
+            .prefix("ryter-scratch-")
+            .tempdir()
+            .unwrap();
         for role in [Role::SoloBuild, Role::SoloPlan, Role::SoloReview] {
             let target = outside.path().join(format!("{role}.txt"));
             let args = json!({"path": target.to_string_lossy(), "content": "hi"});

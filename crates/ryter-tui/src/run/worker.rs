@@ -872,6 +872,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
             user_io: Some(b.user_io),
             allowed: Default::default(),
             web: b.cfg.features.web,
+            cwd: Default::default(),
         },
         connection: b.conn_name,
         model: b.model,

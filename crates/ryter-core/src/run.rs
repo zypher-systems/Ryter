@@ -179,11 +179,24 @@ fn approvals_path(home: &Path) -> PathBuf {
     home.join("run-approved.toml")
 }
 
+/// What the user has approved. Kept in Ryter's own folder, which a sandbox
+/// profile shuts to the thread that runs commands: read and written
+/// outside it ([`crate::outside`]), or an approval could be neither found
+/// nor saved under a profile.
 fn approvals(home: &Path) -> BTreeMap<String, String> {
-    std::fs::read_to_string(approvals_path(home))
-        .ok()
-        .and_then(|t| toml::from_str(&t).ok())
-        .unwrap_or_default()
+    let path = approvals_path(home);
+    crate::outside::run(move || approvals_here(&path)).unwrap_or_default()
+}
+
+/// The approvals on file: none when there is no file, an error when
+/// there is one that can't be read (it is not then written over).
+fn approvals_here(path: &Path) -> Result<BTreeMap<String, String>> {
+    let bad = |e: String| Error::Io(format!("{}: {e}", path.display()));
+    match std::fs::read_to_string(path) {
+        Ok(t) => toml::from_str(&t).map_err(|e| bad(e.message().to_string())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+        Err(e) => Err(bad(e.to_string())),
+    }
 }
 
 /// The name a project's approval is kept under: its real path.
@@ -196,7 +209,9 @@ fn key(root: &Path) -> String {
 
 /// Read the project's run file, and whether what it says is approved.
 pub fn find(root: &Path, home: &Path) -> Found {
-    let text = match std::fs::read_to_string(root.join(FILE)) {
+    // The project's own file. A link there is not read: what it points at
+    // would be shown on the approval panel, and to the model.
+    let text = match crate::plan::read_own(root, FILE) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Found::None,
         Err(e) => return Found::Broken(e.to_string()),
@@ -216,15 +231,8 @@ pub fn find(root: &Path, home: &Path) -> Found {
 /// Save `run` as the project's run file and record that the user approved
 /// it. Returns the file.
 pub fn save_approved(root: &Path, home: &Path, run: &RunFile) -> Result<PathBuf> {
-    let dir = crate::plan::own_folder(root)?;
-    let path = root.join(FILE);
-    let io = |e: std::io::Error| Error::Io(format!("{}: {e}", path.display()));
     let text = run.text();
-    // Written beside it and moved into place: a file there that is a link
-    // is replaced, not written through to what it points at.
-    let tmp = dir.join("run.toml.tmp");
-    std::fs::write(&tmp, &text).map_err(io)?;
-    std::fs::rename(&tmp, &path).map_err(io)?;
+    let path = crate::plan::write_own(root, FILE, &text)?;
     approve(root, home, &text)?;
     Ok(path)
 }
@@ -233,12 +241,18 @@ pub fn save_approved(root: &Path, home: &Path, run: &RunFile) -> Result<PathBuf>
 /// [`find`] read and they were shown. The file is not read again, so one
 /// rewritten while they were reading is not what they approved.
 pub fn approve(root: &Path, home: &Path, text: &str) -> Result<()> {
-    let mut all = approvals(home);
-    all.insert(key(root), digest(text));
-    let out = toml::to_string(&all).map_err(|e| Error::Io(e.to_string()))?;
+    let (key, digest) = (key(root), digest(text));
     let path = approvals_path(home);
-    std::fs::create_dir_all(home).map_err(|e| Error::Io(e.to_string()))?;
-    std::fs::write(&path, out).map_err(|e| Error::Io(format!("{}: {e}", path.display())))
+    let home = home.to_path_buf();
+    // Read, changed and written in one go, so two approvals close
+    // together both stay.
+    crate::outside::run(move || {
+        let mut all = approvals_here(&path)?;
+        all.insert(key, digest);
+        let out = toml::to_string(&all).map_err(|e| Error::Io(e.to_string()))?;
+        std::fs::create_dir_all(&home).map_err(|e| Error::Io(e.to_string()))?;
+        std::fs::write(&path, out).map_err(|e| Error::Io(format!("{}: {e}", path.display())))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -335,21 +349,29 @@ fn left_path(home: &Path, root: &Path) -> PathBuf {
 /// Remember that this project's product was left running.
 pub fn remember(home: &Path, root: &Path, left: &Left) -> Result<()> {
     let path = left_path(home, root);
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| Error::Io(e.to_string()))?;
-    }
     let text = toml::to_string(left).map_err(|e| Error::Io(e.to_string()))?;
-    std::fs::write(&path, text).map_err(|e| Error::Io(format!("{}: {e}", path.display())))
+    // In Ryter's own folder, where a command can't write one: the note
+    // holds the command `/stop` will run.
+    crate::outside::run(move || {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| Error::Io(e.to_string()))?;
+        }
+        std::fs::write(&path, text).map_err(|e| Error::Io(format!("{}: {e}", path.display())))
+    })
 }
 
 /// The product an earlier turn or session started here, if any.
 pub fn remembered(home: &Path, root: &Path) -> Option<Left> {
-    toml::from_str(&std::fs::read_to_string(left_path(home, root)).ok()?).ok()
+    let path = left_path(home, root);
+    toml::from_str(&crate::outside::run(move || std::fs::read_to_string(path)).ok()?).ok()
 }
 
 /// Forget it: it was stopped.
 pub fn forget(home: &Path, root: &Path) {
-    let _ = std::fs::remove_file(left_path(home, root));
+    let path = left_path(home, root);
+    crate::outside::run(move || {
+        let _ = std::fs::remove_file(path);
+    });
 }
 
 /// How asking `url` went.
@@ -800,8 +822,20 @@ mod tests {
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(&target, other.path().join(FILE)).unwrap();
+            // And one that is a link is not read: what it points at would
+            // be shown on the approval panel.
+            assert!(matches!(find(other.path(), home.path()), Found::Broken(_)));
+            // The name the text used to be written under first, linked to
+            // a file of the user's: approving a run file overwrote it.
+            let tmp = elsewhere.path().join("theirs-too.txt");
+            std::fs::write(&tmp, "not Ryter's either\n").unwrap();
+            std::os::unix::fs::symlink(&tmp, other.path().join(".ryter/run.toml.tmp")).unwrap();
             save_approved(other.path(), home.path(), &cms()).unwrap();
             assert_eq!(std::fs::read_to_string(&target).unwrap(), "not Ryter's\n");
+            assert_eq!(
+                std::fs::read_to_string(&tmp).unwrap(),
+                "not Ryter's either\n"
+            );
             assert_eq!(find(other.path(), home.path()), Found::Approved(cms()));
         }
         // One that can't be read says why.
@@ -1076,5 +1110,96 @@ mod tests {
         assert_eq!(remembered(home.path(), &under), None);
         forget(home.path(), root.path());
         assert_eq!(remembered(home.path(), root.path()), None);
+    }
+
+    /// Under a sandbox profile, the thread that runs the model's commands
+    /// can't write Ryter's own folder, and must not be able to: a command
+    /// would write its own approval there. Ryter's records are kept from
+    /// outside the sandbox, so an approval is still found and saved, and a
+    /// product left running is still remembered. With the home folder where
+    /// it normally is (not in the project, not in `/tmp`), every one of
+    /// these failed with "Permission denied".
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn approvals_and_what_is_running_are_kept_under_a_sandbox() {
+        use crate::sandbox::SandboxProfile;
+        // Not under `/tmp`, which every profile opens.
+        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/sandbox-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        for profile in [SandboxProfile::Workspace, SandboxProfile::ReadOnly] {
+            let home = tempfile::Builder::new().tempdir_in(&base).unwrap();
+            let root = tempfile::Builder::new().tempdir_in(&base).unwrap();
+            // Approved before the sandbox: it has to be found inside it.
+            std::fs::create_dir_all(root.path().join(".ryter")).unwrap();
+            std::fs::write(root.path().join(FILE), "start = \"make up\"\n").unwrap();
+            approve(root.path(), home.path(), "start = \"make up\"\n").unwrap();
+            let (home, root) = (home.path().to_path_buf(), root.path().to_path_buf());
+            std::thread::spawn(move || {
+                if let Err(e) = crate::sandbox::apply(profile, &root, &home) {
+                    eprintln!("sandbox apply skipped: {e}");
+                    return;
+                }
+                // The sandbox holds: this thread, and so every command it
+                // runs, can't write an approval.
+                let direct = std::fs::write(approvals_path(&home), "forged = \"x\"\n");
+                assert_eq!(
+                    direct.unwrap_err().kind(),
+                    std::io::ErrorKind::PermissionDenied,
+                    "{profile}"
+                );
+                let forged = crate::tools::shell::command(
+                    &format!("echo forged >> '{}'", approvals_path(&home).display()),
+                    &root,
+                )
+                .status()
+                .unwrap();
+                assert!(!forged.success(), "{profile}: a command wrote an approval");
+                // Ryter's own records still work.
+                assert!(
+                    matches!(find(&root, &home), Found::Approved(_)),
+                    "{profile}: an approval made before the sandbox is not found in it"
+                );
+                save_approved(&root, &home, &cms()).unwrap();
+                assert_eq!(find(&root, &home), Found::Approved(cms()), "{profile}");
+                // The first plan, decision and report of a project: their
+                // folders are made outside the sandbox too.
+                let plan = crate::plan::save_on(&root, "2026-10-02", "A plan", "body").unwrap();
+                assert!(plan.is_file(), "{profile}");
+                let entry = crate::decisions::Entry {
+                    title: "t".into(),
+                    plan_said: "a".into(),
+                    built_instead: "b".into(),
+                    why: "c".into(),
+                    by: "you".into(),
+                };
+                crate::decisions::record(&root, ".ryter/plans/2026-10-02-a-plan.md", &entry)
+                    .unwrap();
+                crate::testing::save_on(&root, "2026-10-02", "a-plan", "report").unwrap();
+                // A thread this one starts is in the sandbox as well, and
+                // its records are kept the same way.
+                let (h, r) = (home.clone(), root.clone());
+                std::thread::spawn(move || approve(&r, &h, &cms().text()))
+                    .join()
+                    .unwrap()
+                    .unwrap();
+                // A job that panics does so here, and the next still runs.
+                let panicked =
+                    std::panic::catch_unwind(|| crate::outside::run(|| panic!("in a job")));
+                assert!(panicked.is_err());
+                assert_eq!(find(&root, &home), Found::Approved(cms()), "{profile}");
+                let left = Left {
+                    at: "2026-10-01 14:02".into(),
+                    address: Some("http://localhost:8000/".into()),
+                    stop: Some("docker compose down".into()),
+                    pid: None,
+                };
+                remember(&home, &root, &left).unwrap();
+                assert_eq!(remembered(&home, &root), Some(left), "{profile}");
+                forget(&home, &root);
+                assert_eq!(remembered(&home, &root), None, "{profile}");
+            })
+            .join()
+            .expect("sandboxed thread");
+        }
     }
 }

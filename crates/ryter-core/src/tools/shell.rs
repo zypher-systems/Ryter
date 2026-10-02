@@ -116,6 +116,15 @@ pub(crate) fn command(cmd: &str, cwd: &std::path::Path) -> Command {
         // put them in the transcript.
         .env_remove("XAI_API_KEY")
         .env_remove("OPENROUTER_API_KEY")
+        // The gate reads a command as the shell would with nothing set
+        // that changes how it reads: where `cd sub` goes, which names a
+        // pattern leaves out, what a new shell runs first.
+        .env_remove("CDPATH")
+        .env_remove("GLOBIGNORE")
+        .env_remove("BASH_ENV")
+        .env_remove("ENV")
+        .env_remove("SHELLOPTS")
+        .env_remove("BASHOPTS")
         .stdin(Stdio::null());
     if let Ok(vars) = KEY_VARS.read() {
         for var in vars.iter() {
@@ -415,6 +424,7 @@ mod tests {
             user_io: None,
             allowed: Default::default(),
             web: false,
+            cwd: Default::default(),
         };
         let waiter = cancel.clone();
         std::thread::spawn(move || {

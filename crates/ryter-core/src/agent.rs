@@ -2507,6 +2507,7 @@ mod tests {
             user_io: None,
             allowed: Default::default(),
             web: false,
+            cwd: Default::default(),
         };
         let agent = Agent {
             provider: Arc::new(provider),

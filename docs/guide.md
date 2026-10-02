@@ -217,6 +217,7 @@ One model works in your project, in the build hat to start with. `Tab` switches 
 - **`Tab` to Test** and the chat shows the tester's thread, under a line that names it ("TEST THREAD"). `Tab` away and the shared conversation is back as you left it. Each keeps its own scroll position and its own context gauge.
 - **It continues through the session.** The tester remembers what it tried before, so "retest the health check" works. Both conversations are saved, and both come back when you resume the session.
 - **A turn stays in its own conversation.** You can look at the main chat while a test runs, or at the tester's thread while a build does: what a running turn says goes to the conversation it is part of. The model can't switch into or out of the test hat in the middle of a turn; that is yours to do with `Tab`.
+- **It makes nothing in the project either:** `touch`, `mkdir` and `cp` into the project are refused, as edits are.
 - **What it may run:** what the build hat runs without asking (your toolchains, the project's programs, its containers), plus requests to the project's own address: `curl` to `localhost`, `127.0.0.1` or a `.localhost` name, saving only to `/tmp` or your home folder. What the build hat asks about, it asks about. It can't edit, delete or move the project's files, and a redirect into the project is refused.
 - **Its own model:** the *Test* seat in `/models`. Starting a test thread on a different model costs nothing extra, since there is no conversation for it to re-read.
 
@@ -261,6 +262,7 @@ stop  = "docker compose down"
 - **You are shown every word.** A command longer than the panel wraps under itself, and `y` is taken only once the last row has been on screen: what you approve here runs without another question. A command that deletes or discards something is pointed out above the list.
 - **Ryter runs what you approved, itself.** Starting waits until `ready` answers (any answer that isn't a server error), for up to five minutes. A start command that stays in the foreground (`npm run dev`, `cargo run`) is kept running by Ryter; through the shell tool it would be cut off when the command didn't return.
 - **Approval is of what you were shown.** It is kept in `~/.ryter/run-approved.toml`, not in the project. A run file that came with a clone, or that anyone changed since (you, the model, a `git pull`), is shown to you again before anything in it runs, and a file rewritten while you were reading is not the one you approved.
+- **It is the project's own file, or it is not read.** Ryter writes the run file, and its plans, decisions and reports, into the project and never through a link: a project that arrives with a link where one of those files goes has the link replaced, not followed, and a link there is not read either.
 - **Limits:** a command Ryter runs for nobody (`sudo`, inline code) can't be in it, and `ready` has to be an address on this machine. Only the test hat runs these commands.
 - **Headless** (`ryter -p --hat test`), nobody can approve anything, so the model can't save a run file. One you wrote yourself runs with `--always-approve`, as far as that flag reaches in the test hat: nothing outside the project, nothing that deletes or rewrites the project's files. It is not recorded as approved, so the TUI still asks.
 - **A start that doesn't come up is taken down again.** If the start command returned but `ready` never answered, or you pressed `esc` while it was waiting, Ryter runs the stop command (or ends what the start command left running) and says so. Nothing half-started is left behind without a way to stop it.
@@ -331,39 +333,61 @@ These still ask:
 - **Deleting and moving:** `rm`, `mv`, `chmod`, `git reset --hard`, and removing a stack's volumes (`docker compose down -v`, `docker volume rm`, any `prune`). `y` only, with no "allow for this session".
 - **Publishing and signing in:** `cargo publish`, `npm publish`, `npm login`, `docker push`, `docker login`.
 - **Tools that work on a service somewhere else:** `gh`, `aws`, `gcloud`, `kubectl`, `terraform`, `curl`, `wget`.
-- **A script that isn't the project's:** `python3 /tmp/probe.py`, `node ~/x.js`. The project's own scripts run.
+- **A script that isn't the project's:** `python3 /tmp/probe.py`, `node ~/x.js`. The project's own scripts run. The same goes for a build tool pointed at a file or folder outside the project: `make -f /tmp/x.mk`, `npm --prefix /tmp/x test`, `cargo build --manifest-path=/tmp/x/Cargo.toml`.
 - **A command that prints files it is handed out of sight:** `… | xargs cat`, `find … -exec grep …`.
-- **In Docker:** copying files in or out of a container (`docker cp`), a mount of your home folder or the folder above the project, stopping or removing a container by name (`docker stop`, `docker rm`), since it may not be this project's; another machine (`-H`, `--context`); a compose file outside the project; and giving a container the host (`--privileged`, a mount of `/`, the Docker socket, or a folder where keys are kept).
+- **A path only the shell can read:** `cat "$FILE"`, a `cd "$DIR"` and everything after it, a pattern with thousands of matches. The gate can't see where it leads.
+- **A variable that makes a program load or run something else:** `LD_PRELOAD=…`, `PATH=/tmp:$PATH`, `NODE_OPTIONS='--require …'`, `PYTHONPATH` or `NODE_PATH` outside the project, `RUSTC_WRAPPER`, most `GIT_…` variables, `DOCKER_HOST`. Ordinary ones run: `NODE_ENV=test`, `DATABASE_URL=…`, `RUST_BACKTRACE=1`, `PATH="$HOME/.cargo/bin:$PATH"`.
+- **In Docker:** copying files in or out of a container (`docker cp`); a mount or a build context that is your home folder or the folder above the project, however the path is written (`../..`, `src/../..`); build output written anywhere but the project, `/tmp` or your home folder (`-o`, `--output`); a build from an address (`docker build https://…`); a `docker build` option Ryter doesn't know; stopping or removing a container by name (`docker stop`, `docker rm`), since it may not be this project's; another machine (`-H`, `--context`, `DOCKER_HOST`); a compose file outside the project; and giving a container the host (`--privileged`, a mount of `/`, the Docker socket). A folder where keys are kept is refused, as a mount, a context, a `--secret` or a place to write.
 
 A toolchain runs the project's code: `cargo build` runs its build script and `npm install` its install scripts. If you don't want that unasked, a sandbox profile limits what any command can touch (see "Sandbox profiles").
 
 **Docker or Podman.** When both are installed the model is told to use Docker, unless you ask for Podman. With one installed it is told which.
 
-**Outside the project.** Two places are open to every hat, to read and to write, without a question:
+**How a command is read.** The gate judges what will run, not what was written. Before it decides, it does what the shell would do:
 
-- **Scratch space:** `/tmp` and your system's temporary folder.
-- **Your home folder,** where tools keep their caches, configuration and builds.
+- **Patterns and lists are expanded,** and every file they match is judged: `cat .en?` is `cat .env`, and `cat ~/.s?h/id_rsa` is the key. A pattern in quotes is a pattern for the program (`find -name '*.py'`), and is left alone.
+- **A `cd` moves where the rest is judged from.** `cd app && npm test` is judged in `app/`. Where a `cd` may not have run (after `||`, in a subshell, under `if`), the rest is judged from both places.
+- **An option's value is a path like any other:** `--file=.env` and `-f.env` get the answer `.env` gets.
+- **The shell's own words are not the program:** in `if …; then make; fi` the command is `make`.
+- **A redirect is read wherever it is written** (`echo x>file`), and a backslash at the end of a line joins it to the next.
+- **A link is judged by what it points at,** whatever the link is called.
+
+What the shell is told to read another way, the gate can't read at all, and refuses in every hat: setting `HOME`, `IFS`, `CDPATH`, `GLOBIGNORE` or `BASH_ENV`; `shopt`, `alias`, `hash`, `trap` and `enable`; and `env -C`, which runs a command in another folder.
+
+What the gate can read but not see through (a path in a variable, files handed over by `xargs`) is a question in the build and test hats and refused in plan and review. "Allow all" and `--always-approve` answer that question yes in advance, as they do any other.
+
+**Outside the project.** Scratch space (`/tmp`, `/var/tmp` and your system's temporary folder) is open to every hat, to read and to write, without a question. Your home folder, where tools keep their caches, configuration and builds, is open to every hat to read, and to the build and test hats to write.
 
 With these exceptions:
 
 - **Never read or written:** credentials (`~/.ryter`, `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.docker`, `~/.config/gh`, and the like), your tools' saved logins (`~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials.toml`, `~/.git-credentials`), your shell history, your browser's and mail client's folders, and secret files (`.env`, `*.pem`, `*.key`) wherever they are.
 - **Never written:** shell startup files (`~/.bashrc`, `~/.zshrc`, `~/.profile`, …) and system folders (`/etc`, `/usr`, …).
+- **What something runs later asks each time,** in the build hat, and is refused in the others: a tool's own configuration in your home folder (`~/.gitconfig`, `~/.cargo/config.toml`, `~/.config/pip`, `~/.curlrc`), a folder of programs (`~/.local/bin`, `~/.cargo/bin`, any folder on your `PATH`), a program that is already there, and the files Python loads at every start. A line in one of those is a command the next `git status` or `cargo test` runs.
 - **Another project:** a folder under your home that is a git repository other than this one can be read, but writing there asks each time in the build hat and is refused in the others.
 - **Deleting or moving** anything outside the project asks each time, scratch space and your home folder included.
 
 Anywhere else (`/opt`, `/srv`, another disk), the build hat asks each time and no other hat writes. Those prompts say "outside the project" and offer only `y` (allow once) or `n`. "Allow all" and `--always-approve` don't cover them, so headless refuses them.
 
-The plan and review hats still change nothing in the project itself. What is open to them is scratch space and your home folder: a place to keep a test's output, not a way to edit the work.
+The plan and review hats change nothing in the project and write nothing in your home folder. What they may write is scratch space: a place to keep a test's output. Not a file a tool would read as configuration on its way up from the project: for a project kept in `/tmp`, that rules out a `conftest.py` or a `.cargo/config.toml` beside it, while `/tmp/out.txt` is fine.
 
 **A sandbox profile is stricter than this for your home folder.** With `workspace` or `read-only` chosen in `/settings`, `/tmp` is open as it is here, but the system itself shuts your home folder (beyond your tools and their caches) to every command, whatever the rules above allow. The model is told so, so a refusal isn't reported as a broken tool. To have your home folder open to commands, the profile has to be `off`.
 
-**What review may run** is judged by the command's form, not the tool's name. `cargo test`, `cargo clippy`, `cargo fmt --check`, `npm test`, `npm run lint`, `npx vitest run`, `npx tsc --noEmit`, `npx prettier --check`, `pytest`, `ruff check`, `black --check`, `go test`, `go vet`, `make test`, and the like run. `cargo fmt`, `npm install`, `npm run format`, `npx <any package>`, `ruff --fix`, `make install`, and `python -m pip install` don't. Review may still run the project's own code, which is what tests do: a file of the project's, and no other. A script in `/tmp`, your home folder or its own notes is refused, since it could have written it a moment ago. `xargs` in front of a command that prints files (`cat`, `grep`) is refused too, in the plan hat as well: the files it is handed can't be checked, and a secret could be among them. Search with `grep -rn` or `rg` and a folder.
+**What review may run** is judged by the command's form, not the tool's name. `cargo test`, `cargo clippy`, `cargo fmt --check`, `npm test`, `npm run lint`, `npx vitest run`, `npx tsc --noEmit`, `npx prettier --check`, `pytest`, `ruff check`, `black --check`, `go test`, `go vet`, `make test`, and the like run. `cargo fmt`, `npm install`, `npm run format`, `npx <any package>`, `ruff --fix`, `make install`, and `python -m pip install` don't. Review may still run the project's own code, which is what tests do: a file of the project's, and no other. A script in `/tmp`, your home folder or its own notes is refused, since it could have written it a moment ago. That holds for every road to one:
+
+- a path outside the project anywhere in the command, an option's value or a path inside a longer argument included (`--manifest-path=/tmp/x/Cargo.toml`, `--config '{"globalSetup":"/tmp/x.js"}'`), and an address (`deno run https://…`);
+- an option before the script (`node -r`, `python3 -i`), a module that isn't a check or the project's own (`python3 -m json.tool`), a variable set on `make`'s command line (`make test CC=…`);
+- a variable set on the command, other than a short list that changes how output looks or which mode a suite runs in (`CI`, `NO_COLOR`, `RUST_BACKTRACE`, `NODE_ENV`, a search path inside the project, a `PATH` of folders the hat can't write).
+
+`xargs` in front of a command that prints files (`cat`, `grep`) is refused too, in the plan hat as well: the files it is handed can't be checked, and a secret could be among them. Search with `grep -rn` or `rg` and a folder.
 
 **Commands the gate refuses in every hat:**
 - the never-run list (`sudo`, `ssh`, `dd`, `mkfs`, `systemctl`, `crontab`, …), however it's wrapped: `env -i sudo`, `timeout 5 sudo`, `nice dd`, `xargs ssh`, `find -exec sudo`, `busybox rm`, `s\udo`;
 - a command whose name comes from a variable or `$(…)`, and `eval`;
-- inline code for an interpreter (`python -c`, `node -e`, `deno eval`, heredocs): write it to a file and run the file;
-- `git -c` settings that name a program (`alias.x=!cmd`, `core.sshCommand`, `core.pager`, …) and `git --exec-path`.
+- inline code for an interpreter, however the flag is spelled (`python -c`, `python3 -bc`, `node -pe`, `perl -E`, `php -r`, `bash -lc`), standard input, here-strings and heredocs: write it to a file and run the file;
+- a tool handed a command as text: `make --eval`, `go test -exec`, `cargo --config`, `npm exec -c`, `python3 -m timeit`, `awk` calling `system()`;
+- a secret handed to a program that isn't just looking at the file: `cp .env notes.txt`, `tar cf x.tar .env`, `source .env`, a copy or an archive of a folder that holds one, a variable set to it (`x=.env; cat $x`). `ls -l .env`, `test -f .env`, and a container's or `node`'s `--env-file` still run;
+- a secret printed by any road: a pattern that matches it (`cat .en?`), an option's value (`diff --from-file=.env`), a link to it, a search through a folder that holds it (`grep -r KEY .`; name the folders, say which files with `--include`, or use `rg`, which leaves hidden and ignored files out), `git` (`git diff --no-index /dev/null .env`, `git show HEAD:.env`), or a command in one of the project's containers (`docker compose exec web cat /app/.env`);
+- `git -c` settings that name a program (`alias.x=!cmd`, `core.sshCommand`, `core.pager`, …), `git --exec-path`, and `--upload-pack`.
 
 `env` alone, which prints every variable, is not read-only. Commands run without Ryter's own API keys in their environment.
 
@@ -607,6 +631,8 @@ They can also write the tools' download caches (`~/.cargo/registry`, `~/.npm`, p
 
 **What stays shut:** the rest of your home folder, `~/.ssh`, the tools' saved logins (`~/.cargo/credentials.toml`, `~/.npmrc`, `~/.config/git/credentials`), and Ryter's keys. Ryter also closes its own process to the commands it runs, so a key held in its memory or its environment can't be read from `/proc`.
 
+**Ryter's own records are kept from outside the sandbox:** which run file you approved, which product it left running, and its plans, decisions and reports in the project. A command can't write them, so it can't approve a run file for you, and a profile doesn't stop Ryter keeping them: under `read-only` too, an approved plan is saved.
+
 **What a sandbox doesn't do:**
 
 - **It doesn't limit the network.**
@@ -622,7 +648,7 @@ They can also write the tools' download caches (`~/.cargo/registry`, `~/.npm`, p
 - **Build:** reading runs; edits and commands that change things ask; destruction always asks.
 - **Plan:** reading and read-only commands; it may write the project's memory files and its own notes, nothing else.
 - **Review:** reading, tests, linters and read-only git; no writes at all.
-- Denied in every hat: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files.
+- Denied in every hat: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files. An example file (`.env.example`, `.env.sample`) is not a secret.
 - Shell commands are judged per segment (`a && b` is two commands). Privilege escalation, disk writes, `git push`, and piping into a shell are denied. In the TUI a permission modal shows the tool and its arguments: `⏎` or `y` allow this call, `n` deny, `a` allow that kind of action for the rest of the session; destructive commands and writes outside the project take only `y` (see [Approving](#talking-to-ryter)). Headless (no TUI) fail-closes.
 - `ask_user` lets the model ask a question; the TUI shows it as a modal (number keys pick a choice, or type free text).
 - `[features] web = true` offers `web_fetch` / `web_search`. Localhost and private IPs are blocked.

@@ -115,7 +115,7 @@ fn history_path(home: &Path) -> std::path::PathBuf {
 
 /// What the user's recent reviews with `model` cost, oldest first.
 pub fn history(home: &Path, model: &str) -> Vec<f64> {
-    let Ok(text) = std::fs::read_to_string(history_path(home)) else {
+    let Some(text) = past_text(history_path(home)) else {
         return Vec::new();
     };
     let all: Vec<f64> = text
@@ -132,7 +132,16 @@ fn remember(home: &Path, past: &Past) {
 }
 
 fn remember_at(path: &Path, past: &Past) {
-    let _ = crate::session::append_jsonl(path, past);
+    // In Ryter's own folder, which a sandbox profile shuts: kept outside it.
+    let (path, past) = (path.to_path_buf(), past.clone());
+    crate::outside::run(move || {
+        let _ = crate::session::append_jsonl(&path, &past);
+    });
+}
+
+/// A history file's text, read where a sandbox profile doesn't reach.
+fn past_text(path: std::path::PathBuf) -> Option<String> {
+    crate::outside::run(move || std::fs::read_to_string(path)).ok()
 }
 
 /// `Some(true)` for a `VERDICT: PASS` line, `Some(false)` for any other
@@ -195,7 +204,7 @@ fn test_history_path(home: &Path) -> std::path::PathBuf {
 
 /// What the user's recent tests with `model` cost, oldest first.
 pub fn test_history(home: &Path, model: &str) -> Vec<f64> {
-    let Ok(text) = std::fs::read_to_string(test_history_path(home)) else {
+    let Some(text) = past_text(test_history_path(home)) else {
         return Vec::new();
     };
     let all: Vec<f64> = text
@@ -421,7 +430,7 @@ impl Agent {
             .meta
             .plan_file
             .as_deref()
-            .and_then(|f| std::fs::read_to_string(root.join(f)).ok())
+            .and_then(|f| crate::plan::read_own(&root, f).ok())
             .map(|plan| crate::testing::scenarios_in_plan(&plan));
         let what = match scenarios {
             Some(Some(1)) => "starts the project, runs 1 scenario from the plan".to_string(),

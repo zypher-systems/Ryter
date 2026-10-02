@@ -72,10 +72,9 @@ fn section(lines: &[&str], plan_file: &str) -> Option<(usize, usize)> {
 /// Record `entry` against `plan_file` (a path in the project, as the session
 /// holds it) at `stamp` (`YYYY-MM-DD HH:MM`). Returns the file.
 pub fn record_at(root: &Path, plan_file: &str, entry: &Entry, stamp: &str) -> Result<PathBuf> {
-    crate::plan::own_folder(root)?;
     let path = root.join(FILE);
     let io = |e: std::io::Error| Error::Io(format!("{}: {e}", path.display()));
-    let old = match std::fs::read_to_string(&path) {
+    let old = match crate::plan::read_own(root, FILE) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => HEADER.to_string(),
         Err(e) => return Err(io(e)),
@@ -116,8 +115,7 @@ pub fn record_at(root: &Path, plan_file: &str, entry: &Entry, stamp: &str) -> Re
     }
     let mut text = before.join("\n");
     text.push('\n');
-    std::fs::write(&path, text).map_err(io)?;
-    Ok(path)
+    crate::plan::write_own(root, FILE, &text)
 }
 
 /// [`record_at`] now, in local time.
@@ -127,7 +125,7 @@ pub fn record(root: &Path, plan_file: &str, entry: &Entry) -> Result<PathBuf> {
 
 /// How many decisions are recorded against `plan_file`.
 pub fn count_for(root: &Path, plan_file: &str) -> usize {
-    let Ok(text) = std::fs::read_to_string(root.join(FILE)) else {
+    let Ok(text) = crate::plan::read_own(root, FILE) else {
         return 0;
     };
     let lines: Vec<&str> = text.lines().collect();

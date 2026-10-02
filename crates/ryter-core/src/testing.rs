@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 /// The folder, under the project's top.
 pub const DIR: &str = ".ryter/tests";
@@ -319,30 +319,28 @@ pub fn subject(plan_file: Option<&str>, title: &str) -> String {
 /// `subject`. A second report of the same subject on the same day is `-2`,
 /// then `-3`: an earlier one is never written over. Returns the file.
 pub fn save_on(root: &Path, day: &str, subject: &str, text: &str) -> Result<PathBuf> {
-    crate::plan::own_folder(root)?;
-    let dir = root.join(DIR);
-    let io = |e: std::io::Error| Error::Io(format!("{}: {e}", dir.display()));
-    std::fs::create_dir_all(&dir).map_err(io)?;
-    let base = format!("{day}-{}", slug(subject));
-    let mut path = dir.join(format!("{base}.md"));
-    let mut n = 2;
-    while path.exists() {
-        path = dir.join(format!("{base}-{n}.md"));
-        n += 1;
-    }
-    std::fs::write(&path, text).map_err(io)?;
-    Ok(path)
+    crate::plan::save_new(root, DIR, &format!("{day}-{}", slug(subject)), text)
 }
 
 /// The newest report in the project, as a path under its top.
 pub fn latest(root: &Path) -> Option<String> {
     let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
-    for entry in std::fs::read_dir(root.join(DIR)).ok()?.flatten() {
+    // Reports Ryter wrote: files of the project's own, in a folder of its
+    // own. A link among them is somebody else's, and names a file the
+    // tester would then be pointed at.
+    let dir = crate::plan::own_dir_there(root, DIR)?;
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
         let path = entry.path();
         if path.extension().is_none_or(|e| e != "md") {
             continue;
         }
-        let at = entry.metadata().and_then(|m| m.modified()).ok()?;
+        let Ok(meta) = path.symlink_metadata() else {
+            continue;
+        };
+        if !meta.file_type().is_file() {
+            continue;
+        }
+        let at = meta.modified().ok()?;
         if newest.as_ref().is_none_or(|(t, _)| at >= *t) {
             newest = Some((at, path));
         }
@@ -535,6 +533,19 @@ mod tests {
         assert_eq!(second, root.path().join(".ryter/tests/2026-10-01-cms-2.md"));
         assert_eq!(std::fs::read_to_string(&first).unwrap(), "one");
         assert!(latest(root.path()).is_some_and(|p| p.starts_with(".ryter/tests/2026-10-01-cms")));
+        // A link among the reports is not one of them: the tester is
+        // pointed at the newest report, and would read what it points at.
+        #[cfg(unix)]
+        {
+            let elsewhere = TempDir::new().unwrap();
+            let theirs = elsewhere.path().join("key");
+            std::fs::write(&theirs, "a secret").unwrap();
+            std::os::unix::fs::symlink(&theirs, root.path().join(DIR).join("2099-01-01-newest.md"))
+                .unwrap();
+            assert!(
+                latest(root.path()).is_some_and(|p| p.starts_with(".ryter/tests/2026-10-01-cms"))
+            );
+        }
     }
 
     #[test]

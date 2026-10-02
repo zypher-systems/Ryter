@@ -19,6 +19,7 @@ pub mod ids;
 pub mod llm;
 pub mod mcp;
 pub mod memory;
+mod outside;
 pub mod page;
 pub mod plan;
 pub mod project;

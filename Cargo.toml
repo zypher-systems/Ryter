@@ -49,7 +49,7 @@ base64 = "0.22"
 flate2 = "1"
 tar = "0.4"
 # Kills an update probe that hangs, and what it started (its process group).
-rustix = { version = "1", features = ["process"] }
+rustix = { version = "1", features = ["process", "fs"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
