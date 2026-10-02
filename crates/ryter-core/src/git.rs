@@ -1,6 +1,9 @@
 //! Git helpers: the repository a turn works in, and the snapshots that
 //! `/undo`, `/changes` and a review are measured against.
 
+mod scratch;
+pub(crate) use scratch::Scratch;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -50,15 +53,8 @@ pub fn checkpoint(dir: &Path, name: &str) -> Result<Option<String>> {
     if !is_repo(dir) {
         return Ok(None);
     }
-    let index = std::path::PathBuf::from(
-        git(dir, &["rev-parse", "--git-path", "ryter-undo-index"])?.trim(),
-    );
-    let index = if index.is_absolute() {
-        index
-    } else {
-        dir.join(index)
-    };
-    let _ = std::fs::remove_file(&index);
+    let scratch = Scratch::new(dir)?;
+    let index = scratch.path().join("index");
     let has_head = head(dir).is_ok();
     if has_head {
         git_with_index(dir, &index, &["read-tree", "HEAD"])?;
@@ -67,7 +63,6 @@ pub fn checkpoint(dir: &Path, name: &str) -> Result<Option<String>> {
     let tree = git_with_index(dir, &index, &["write-tree"])?
         .trim()
         .to_string();
-    let _ = std::fs::remove_file(&index);
     let mut args = vec!["commit-tree", tree.as_str(), "-m", "ryter undo checkpoint"];
     if has_head {
         args.extend(["-p", "HEAD"]);
@@ -119,7 +114,17 @@ pub fn restore_checkpoint(dir: &Path, sha: &str) -> Result<usize> {
 pub fn paths_between(dir: &Path, from: &str, to: &str) -> Result<Vec<String>> {
     Ok(git(
         dir,
-        &["diff", "--name-only", "--no-renames", "-z", from, to, "--"],
+        &[
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "--no-relative",
+            "-z",
+            from,
+            to,
+            "--",
+            ".",
+        ],
     )?
     .split('\0')
     .filter(|p| !p.is_empty())
@@ -130,6 +135,25 @@ pub fn paths_between(dir: &Path, from: &str, to: &str) -> Result<Vec<String>> {
 /// Put `paths` back as snapshot `sha` has them: restore the ones it has,
 /// delete the ones it doesn't. Nothing else is touched. Returns how many.
 pub fn restore_paths(dir: &Path, sha: &str, paths: &[String]) -> Result<usize> {
+    // Diff paths are repository-relative, even when the session started
+    // inside a subdirectory. Both git and filesystem operations must use
+    // that same root; otherwise app/file becomes app/app/file.
+    let root = PathBuf::from(git(dir, &["rev-parse", "--show-toplevel"])?.trim());
+    let dir = root.as_path();
+    // Do not turn an invalid snapshot or a corrupt saved path into a
+    // deletion. Validate the complete request before changing any file.
+    git(dir, &["cat-file", "-e", &format!("{sha}^{{tree}}")])?;
+    for path in paths {
+        if path.is_empty()
+            || Path::new(path)
+                .components()
+                .any(|p| !matches!(p, std::path::Component::Normal(_)))
+        {
+            return Err(Error::Io(format!(
+                "invalid repository-relative restore path: {path}"
+            )));
+        }
+    }
     let mut keep = Vec::new();
     let mut n = 0;
     for p in paths {
@@ -140,7 +164,14 @@ pub fn restore_paths(dir: &Path, sha: &str, paths: &[String]) -> Result<usize> {
         }
     }
     for chunk in keep.chunks(200) {
-        let mut args = vec!["restore", "--source", sha, "--worktree", "--"];
+        let mut args = vec![
+            "--literal-pathspecs",
+            "restore",
+            "--source",
+            sha,
+            "--worktree",
+            "--",
+        ];
         args.extend(chunk.iter().copied());
         git(dir, &args)?;
         n += chunk.len();
@@ -362,17 +393,14 @@ fn swept_in(dir: &Path, created: bool, repos: &[String]) -> Error {
 /// don't take a staged entry out.
 fn repos_to_add(dir: &Path) -> Result<Vec<String>> {
     let git_dir = PathBuf::from(git(dir, &["rev-parse", "--absolute-git-dir"])?.trim());
-    static PROBES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let n = PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let index = git_dir.join(format!("ryter-first-commit-{}-{n}", std::process::id()));
-    let _ = std::fs::remove_file(&index);
+    let scratch = Scratch::new(dir)?;
+    let index = scratch.path().join("index");
     let real = git_dir.join("index");
     if real.is_file() {
         std::fs::copy(&real, &index).map_err(|e| Error::Io(e.to_string()))?;
     }
     let staged = git_with_index(dir, &index, &["add", "-A"])
         .and_then(|_| git_with_index(dir, &index, &["ls-files", "-s", "-z"]));
-    let _ = std::fs::remove_file(&index);
     Ok(gitlinks_in(&staged?))
 }
 
@@ -558,6 +586,128 @@ pub fn init_repo(dir: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn simultaneous_snapshots_own_their_indices_and_preserve_user_staging() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+        init_repo(root).unwrap();
+        std::fs::write(root.join("README.md"), "staged\n").unwrap();
+        git(root, &["add", "README.md"]).unwrap();
+        std::fs::write(root.join("README.md"), "working\n").unwrap();
+        let index = std::fs::read(root.join(".git/index")).unwrap();
+        let legacy = root.join(".git/ryter-undo-index");
+        std::fs::write(&legacy, "belongs to somebody else").unwrap();
+        let gate = std::sync::Barrier::new(8);
+        let shas = std::thread::scope(|scope| {
+            let jobs: Vec<_> = (0..8)
+                .map(|i| {
+                    let gate = &gate;
+                    scope.spawn(move || {
+                        gate.wait();
+                        checkpoint(root, &format!("parallel-{i}")).unwrap().unwrap()
+                    })
+                })
+                .collect();
+            jobs.into_iter()
+                .map(|j| j.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        for sha in shas {
+            assert_eq!(
+                git(root, &["show", &format!("{sha}:README.md")]).unwrap(),
+                "working\n"
+            );
+        }
+        assert_eq!(std::fs::read(root.join(".git/index")).unwrap(), index);
+        assert_eq!(
+            std::fs::read_to_string(legacy).unwrap(),
+            "belongs to somebody else"
+        );
+        // An invalid ref fails after creating the snapshot and must clean up too.
+        assert!(checkpoint(root, "invalid name").is_err());
+        assert!(
+            !std::fs::read_dir(root.join(".git"))
+                .unwrap()
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with("ryter-tmp-"))
+        );
+    }
+
+    #[test]
+    fn nested_restore_uses_root_paths_and_preserves_unrelated_work() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        init_repo(root).unwrap();
+        let app = root.join("app");
+        std::fs::create_dir(&app).unwrap();
+        for file in [
+            "changed.txt",
+            "deleted.txt",
+            "literal[1].txt",
+            "line\nbreak.txt",
+        ] {
+            std::fs::write(app.join(file), "before").unwrap();
+        }
+        let before = checkpoint(&app, "before").unwrap().unwrap();
+        std::fs::write(app.join("changed.txt"), "after").unwrap();
+        std::fs::write(app.join("literal[1].txt"), "after").unwrap();
+        std::fs::write(app.join("line\nbreak.txt"), "after").unwrap();
+        std::fs::remove_file(app.join("deleted.txt")).unwrap();
+        std::fs::write(app.join("added.txt"), "added").unwrap();
+        std::fs::write(root.join("sibling.txt"), "user work during turn").unwrap();
+        let after = checkpoint(&app, "after").unwrap().unwrap();
+        std::fs::write(app.join("unrelated.txt"), "later user work").unwrap();
+        std::fs::write(root.join("sibling.txt"), "later sibling work").unwrap();
+        git(root, &["add", "sibling.txt"]).unwrap();
+        let index = git(root, &["ls-files", "--stage"]).unwrap();
+        let branch_head = head(root).unwrap();
+        // User configuration must not change the coordinate system.
+        git(root, &["config", "diff.relative", "true"]).unwrap();
+        let paths = paths_between(&app, &before, &after).unwrap();
+        assert_eq!(paths.len(), 5, "{paths:?}");
+        assert!(paths.iter().all(|p| p.starts_with("app/")));
+        assert_eq!(restore_paths(&app, &before, &paths).unwrap(), 5);
+        for file in [
+            "changed.txt",
+            "deleted.txt",
+            "literal[1].txt",
+            "line\nbreak.txt",
+        ] {
+            assert_eq!(std::fs::read_to_string(app.join(file)).unwrap(), "before");
+        }
+        assert!(!app.join("added.txt").exists());
+        assert_eq!(restore_paths(&app, &after, &paths).unwrap(), 5);
+        assert_eq!(
+            std::fs::read_to_string(app.join("changed.txt")).unwrap(),
+            "after"
+        );
+        assert!(!app.join("deleted.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(app.join("added.txt")).unwrap(),
+            "added"
+        );
+        assert_eq!(
+            std::fs::read_to_string(app.join("unrelated.txt")).unwrap(),
+            "later user work"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("sibling.txt")).unwrap(),
+            "later sibling work"
+        );
+        assert_eq!(git(root, &["ls-files", "--stage"]).unwrap(), index);
+        assert_eq!(head(root).unwrap(), branch_head);
+        assert!(restore_paths(&app, "invalid-snapshot", &["app/added.txt".into()]).is_err());
+        assert!(
+            restore_paths(
+                &app,
+                &before,
+                &["app/added.txt".into(), "../outside".into()]
+            )
+            .is_err()
+        );
+        assert!(app.join("added.txt").exists());
+    }
 
     fn tracked(dir: &Path) -> Vec<String> {
         git(dir, &["ls-files"])

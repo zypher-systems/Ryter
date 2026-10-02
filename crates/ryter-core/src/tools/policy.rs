@@ -5741,33 +5741,7 @@ pub(crate) fn is_secret(path: &Path, ctx: &ToolContext) -> bool {
         .strip_prefix(&workspace)
         .or_else(|_| path.strip_prefix(&ctx.workspace))
         .unwrap_or(path);
-    let name = rel
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    // A public key is published, not kept: `release.pub.pem` is checked
-    // into a repository so anyone can verify with it.
-    let public = [".pub.pem", ".pub.key", "public.pem", "pubkey.pem"]
-        .iter()
-        .any(|e| name.ends_with(e));
-    if name == ".env" || ((name.ends_with(".pem") || name.ends_with(".key")) && !public) {
-        return true;
-    }
-    let s = rel
-        .to_string_lossy()
-        .replace('\\', "/")
-        .to_ascii_lowercase();
-    // `.env.example` and its kind are what a project ships to say which
-    // variables it wants: they hold no values of anybody's.
-    let example = [".example", ".sample", ".template", ".dist", ".defaults"]
-        .iter()
-        .any(|e| name.ends_with(e));
-    s.contains("/.ssh/")
-        || s.contains("credential")
-        || s.contains("/.ryter/")
-        || s.ends_with(".env")
-        || (s.starts_with(".env") && !example)
+    super::secret::is_secret(rel)
 }
 
 #[cfg(test)]
@@ -5793,6 +5767,7 @@ mod tests {
 
     fn ctx_for(role: Role, dir: &Path) -> ToolContext {
         ToolContext {
+            sandbox: None,
             live: None,
             workspace: dir.to_path_buf(),
             notes_dir: dir.join("notes"),
@@ -5811,6 +5786,200 @@ mod tests {
 
     fn bash(cmd: &str, role: Role, dir: &Path) -> Decision {
         decide("bash", &json!({"command": cmd}), &ctx_for(role, dir))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_search_and_reads_keep_nested_secrets_private_in_every_hat() {
+        use std::os::unix::fs::symlink;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("project");
+        std::fs::create_dir_all(root.join("config")).unwrap();
+        std::fs::write(tmp.path().join("outside.txt"), "PRIVATE_SENTINEL").unwrap();
+        for file in [
+            ".env",
+            "config/.env.production",
+            "config/.env.local",
+            "config/private.key",
+            ".ssh/config",
+            "nested/.ssh/id_ed25519",
+            ".aws/config",
+            ".gnupg/private.dat",
+            ".azure/tokens.json",
+            ".kube/config",
+            ".docker/config.json",
+            ".npmrc",
+            ".netrc",
+        ] {
+            std::fs::create_dir_all(root.join(file).parent().unwrap()).unwrap();
+            std::fs::write(root.join(file), "PRIVATE_SENTINEL").unwrap();
+        }
+        symlink("config/.env.production", root.join("alias.txt")).unwrap();
+        symlink(".ssh/config", root.join("ssh-alias.txt")).unwrap();
+        symlink("../outside.txt", root.join("outside-alias.txt")).unwrap();
+        symlink("config", root.join("linked-folder")).unwrap();
+        for file in [
+            "config/.env.example",
+            "config/.env.sample",
+            "config/release.pub.pem",
+            "plain.txt",
+        ] {
+            std::fs::write(root.join(file), "PUBLIC_SENTINEL").unwrap();
+        }
+        for role in [
+            Role::SoloPlan,
+            Role::SoloBuild,
+            Role::SoloReview,
+            Role::SoloTest,
+        ] {
+            let c = ctx_for(role, &root);
+            for path in [
+                ".env",
+                "config/.env.production",
+                "config/.env.local",
+                "config/private.key",
+                ".ssh/config",
+                "nested/.ssh/id_ed25519",
+                ".aws/config",
+                ".gnupg/private.dat",
+                ".azure/tokens.json",
+                ".kube/config",
+                ".docker/config.json",
+                ".npmrc",
+                ".netrc",
+                "alias.txt",
+                "ssh-alias.txt",
+                "linked-folder/.env.production",
+            ] {
+                assert_eq!(
+                    decide("read_file", &json!({"path": path}), &c),
+                    Decision::Deny,
+                    "{role:?}: {path}"
+                );
+                assert_eq!(
+                    decide("bash", &json!({"command":format!("cat {path}")}), &c),
+                    Decision::Deny,
+                    "shell {role:?}: {path}"
+                );
+                assert!(
+                    crate::tools::fs::read_file(&json!({"path":path}), &c).is_err(),
+                    "reader {role:?}: {path}"
+                );
+            }
+            let private =
+                crate::tools::gated_execute("grep", &json!({"pattern": "PRIVATE_SENTINEL"}), &c)
+                    .unwrap();
+            assert_eq!(private.text, "no matches", "{role:?}");
+            for path in [
+                "config/.env.example",
+                "config/.env.sample",
+                "config/release.pub.pem",
+                "plain.txt",
+            ] {
+                let output =
+                    crate::tools::gated_execute("read_file", &json!({"path": path}), &c).unwrap();
+                assert!(
+                    output.text.contains("PUBLIC_SENTINEL"),
+                    "{role:?}: {path}: {output:?}"
+                );
+            }
+            let public =
+                crate::tools::gated_execute("grep", &json!({"pattern": "PUBLIC_SENTINEL"}), &c)
+                    .unwrap();
+            assert!(public.text.contains("plain.txt"));
+        }
+    }
+
+    /// A project keeps Dockerfiles and server config in `.docker/`. Matched
+    /// as a credential folder at any depth, every hat was refused them and
+    /// the build hat could not work on such a project. The logins are in
+    /// `config.json`, and the whole of `~/.docker` stays shut.
+    #[test]
+    fn a_projects_docker_folder_is_its_work_and_only_the_logins_are_secret() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("project");
+        let work = [
+            ".docker/Dockerfile",
+            ".docker/nginx/default.conf",
+            "services/api/.docker/Dockerfile",
+        ];
+        let logins = [".docker/config.json", "services/api/.docker/config.json"];
+        for (files, body) in [
+            (&work[..], "FROM alpine"),
+            (&logins[..], "PRIVATE_SENTINEL"),
+        ] {
+            for file in files {
+                std::fs::create_dir_all(root.join(file).parent().unwrap()).unwrap();
+                std::fs::write(root.join(file), body).unwrap();
+            }
+        }
+        for role in [
+            Role::SoloPlan,
+            Role::SoloBuild,
+            Role::SoloReview,
+            Role::SoloTest,
+        ] {
+            let c = ctx_for(role, &root);
+            for path in work {
+                let read =
+                    crate::tools::gated_execute("read_file", &json!({"path": path}), &c).unwrap();
+                assert!(
+                    read.text.contains("FROM alpine"),
+                    "{role:?}: {path}: {read:?}"
+                );
+                assert_eq!(
+                    decide("bash", &json!({"command": format!("cat {path}")}), &c),
+                    Decision::Allow,
+                    "shell {role:?}: {path}"
+                );
+            }
+            let found =
+                crate::tools::gated_execute("grep", &json!({"pattern": "alpine"}), &c).unwrap();
+            for path in work {
+                assert!(found.text.contains(path), "{role:?}: {path}: {found:?}");
+            }
+            for path in logins {
+                assert_eq!(
+                    decide("read_file", &json!({"path": path}), &c),
+                    Decision::Deny,
+                    "{role:?}: {path}"
+                );
+                assert_eq!(
+                    decide("bash", &json!({"command": format!("cat {path}")}), &c),
+                    Decision::Deny,
+                    "shell {role:?}: {path}"
+                );
+                assert!(
+                    crate::tools::fs::read_file(&json!({"path": path}), &c).is_err(),
+                    "reader {role:?}: {path}"
+                );
+            }
+            let private =
+                crate::tools::gated_execute("grep", &json!({"pattern": "PRIVATE_SENTINEL"}), &c)
+                    .unwrap();
+            assert_eq!(private.text, "no matches", "{role:?}");
+            if let Some(home) = home_dir() {
+                let path = home.join(".docker/contexts/meta.json");
+                assert_eq!(
+                    decide("read_file", &json!({"path": path}), &c),
+                    Decision::Deny,
+                    "{role:?}: {}",
+                    path.display()
+                );
+            }
+        }
+        // An edit there is decided like an edit to any other project file.
+        let build = ctx_for(Role::SoloBuild, &root);
+        let edit = |path: &str| {
+            let args = json!({"path": path, "old": "alpine", "new": "debian"});
+            decide("search_replace", &args, &build)
+        };
+        std::fs::write(root.join("Dockerfile"), "FROM alpine").unwrap();
+        assert_ne!(edit("Dockerfile"), Decision::Deny);
+        for path in work {
+            assert_eq!(edit(path), edit("Dockerfile"), "{path}");
+        }
+        assert_eq!(edit(".docker/config.json"), Decision::Deny);
     }
 
     /// A workspace reached through a symlink (every temp folder on macOS:

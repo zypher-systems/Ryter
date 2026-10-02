@@ -33,6 +33,8 @@ pub enum Work {
         text: String,
         /// Optional reply channel.
         reply: Option<mpsc::Sender<String>>,
+        /// Per-request cancellation when this turn came from MCP.
+        inbound: Option<Arc<super::InboundTurn>>,
     },
     /// Fresh session.
     New,
@@ -173,6 +175,8 @@ pub struct WorkerInit {
     pub live_status: Arc<Mutex<StatusSnapshot>>,
     /// Spend text for inbound MCP.
     pub live_spend: Arc<Mutex<String>>,
+    /// Bounded active conversation for inbound MCP.
+    pub live_transcript: Arc<Mutex<String>>,
     /// Permission / question channel to the UI.
     pub user_io: UserIo,
 }
@@ -259,11 +263,18 @@ pub fn run(init: WorkerInit) {
         cancel,
         live_status,
         live_spend,
+        live_transcript,
         user_io,
     } = init;
-    if let Err(e) = sandbox::apply(profile, &cwd, &home) {
-        send_err(&ev_tx, e.to_string());
-        return;
+    // Before a provider is connected there is no agent, and the panels can
+    // still revert and commit: that Git work gets this scope.
+    let idle_scope = sandbox::Scope::for_profile(profile, &home);
+    let idle_notes = session.notes_dir();
+    if let Some(scope) = &idle_scope {
+        if let Err(e) = scope.check(&cwd, &idle_notes) {
+            send_err(&ev_tx, e.to_string());
+            return;
+        }
     }
     let rt = match sandbox::runtime(profile) {
         Ok(rt) => rt,
@@ -277,6 +288,7 @@ pub fn run(init: WorkerInit) {
     if let (Some(key), Some(s)) = (key, session_hold.take()) {
         let a = build_agent(BuildAgent {
             cfg: &cfg,
+            profile,
             conn,
             key,
             session: s,
@@ -294,7 +306,7 @@ pub fn run(init: WorkerInit) {
             send_err(&ev_tx, e.to_string());
         }
         emit_mcp_status(&a, &ev_tx);
-        refresh_live(&a, &live_status, &live_spend);
+        refresh_live(&a, &live_status, &live_spend, &live_transcript);
         let _ = ev_tx.send(a.checkpoint_event());
         let mut a = a;
         // A product an earlier session left running is still Ryter's to stop.
@@ -365,9 +377,19 @@ pub fn run(init: WorkerInit) {
         match work_rx.recv_timeout(Duration::from_millis(200)) {
             Ok(Work::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => continue,
-            Ok(Work::Turn { text, reply }) => {
+            Ok(Work::Turn {
+                text,
+                reply,
+                inbound,
+            }) => {
                 if let Some(a) = &mut agent {
-                    a.ctx.cancel.reset();
+                    if let Some(ticket) = &inbound {
+                        if !ticket.start(&a.ctx.cancel) {
+                            continue;
+                        }
+                    } else {
+                        a.ctx.cancel.reset();
+                    }
                     let before = a.session.changed_turns;
                     let out = match rt.block_on(a.turn(&text)) {
                         Ok(r) => {
@@ -388,7 +410,10 @@ pub fn run(init: WorkerInit) {
                         // The agent reported it, before closing the turn.
                         Err(_) => String::new(),
                     };
-                    refresh_live(a, &live_status, &live_spend);
+                    if let Some(ticket) = &inbound {
+                        ticket.finish();
+                    }
+                    refresh_live(a, &live_status, &live_spend, &live_transcript);
                     if let Some(reply) = reply {
                         let _ = reply.send(out);
                     }
@@ -430,7 +455,7 @@ pub fn run(init: WorkerInit) {
                             let _ = a.put_on(role);
                             a.model = a.session.meta.model.clone();
                             a.connection = a.session.meta.connection.clone();
-                            refresh_live(a, &live_status, &live_spend);
+                            refresh_live(a, &live_status, &live_spend, &live_transcript);
                             let _ = ev_tx.send(session_event(a));
                             let _ = ev_tx.send(a.checkpoint_event());
                         }
@@ -529,7 +554,7 @@ pub fn run(init: WorkerInit) {
                     if let Err(e) = rt.block_on(a.test_now()) {
                         send_err(&ev_tx, e.to_string());
                     }
-                    refresh_live(a, &live_status, &live_spend);
+                    refresh_live(a, &live_status, &live_spend, &live_transcript);
                 } else {
                     send_err(&ev_tx, "no API key — /provider set-key".into());
                 }
@@ -540,7 +565,7 @@ pub fn run(init: WorkerInit) {
                     if let Err(e) = rt.block_on(a.review_now()) {
                         send_err(&ev_tx, e.to_string());
                     }
-                    refresh_live(a, &live_status, &live_spend);
+                    refresh_live(a, &live_status, &live_spend, &live_transcript);
                 } else {
                     send_err(&ev_tx, "no API key — /provider set-key".into());
                 }
@@ -590,7 +615,9 @@ pub fn run(init: WorkerInit) {
             Ok(Work::RevertHunk { base, path, hunk }) => {
                 let result = match &mut agent {
                     Some(a) => a.revert_hunk(&base, &path, hunk),
-                    None => ryter_core::review::revert_hunk(&cwd, &base, &path, hunk),
+                    None => scoped(&idle_scope, &cwd, &idle_notes, || {
+                        ryter_core::review::revert_hunk(&cwd, &base, &path, hunk)
+                    }),
                 };
                 let _ = ev_tx.send(AgentEvent::Reverted {
                     path: format!("{path} (change {})", hunk + 1),
@@ -600,7 +627,9 @@ pub fn run(init: WorkerInit) {
             Ok(Work::Revert { base, path }) => {
                 let result = match &mut agent {
                     Some(a) => a.revert_file(&base, &path),
-                    None => ryter_core::review::revert_file(&cwd, &base, &path),
+                    None => scoped(&idle_scope, &cwd, &idle_notes, || {
+                        ryter_core::review::revert_file(&cwd, &base, &path)
+                    }),
                 };
                 let _ = ev_tx.send(AgentEvent::Reverted {
                     path,
@@ -621,7 +650,14 @@ pub fn run(init: WorkerInit) {
                 let _ = ev_tx.send(AgentEvent::CommitDraft { message, error });
             }
             Ok(Work::Commit { paths, message }) => {
-                let (summary, error) = match ryter_core::review::commit(&cwd, &paths, &message) {
+                // The repository's hooks run in a commit: scoped like a tool.
+                let result = match &agent {
+                    Some(a) => a.commit(&paths, &message),
+                    None => scoped(&idle_scope, &cwd, &idle_notes, || {
+                        ryter_core::review::commit(&cwd, &paths, &message)
+                    }),
+                };
+                let (summary, error) = match result {
                     Ok(s) => (Some(s), None),
                     Err(e) => (None, Some(e.to_string())),
                 };
@@ -735,11 +771,12 @@ pub fn run(init: WorkerInit) {
                     a.connection = name.clone();
                     a.model = new_model.clone();
                     let _ = a.session.set_route(name, new_model);
-                    refresh_live(a, &live_status, &live_spend);
+                    refresh_live(a, &live_status, &live_spend, &live_transcript);
                 } else if let Some(mut s) = session_hold.take() {
                     let _ = s.set_route(name.clone(), new_model.clone());
                     let a = build_agent(BuildAgent {
                         cfg: &cfg,
+                        profile,
                         conn: c,
                         key: new_key,
                         session: s,
@@ -757,7 +794,7 @@ pub fn run(init: WorkerInit) {
                         send_err(&ev_tx, e.to_string());
                     }
                     emit_mcp_status(&a, &ev_tx);
-                    refresh_live(&a, &live_status, &live_spend);
+                    refresh_live(&a, &live_status, &live_spend, &live_transcript);
                     let _ = ev_tx.send(a.checkpoint_event());
                     let mut a = a;
                     // As at startup: a product an earlier session left
@@ -774,6 +811,19 @@ fn send_err(tx: &mpsc::Sender<AgentEvent>, message: String) {
     let _ = tx.send(AgentEvent::Error { message });
 }
 
+/// Git work with no agent to scope it: under the profile, when there is one.
+fn scoped<T: Send>(
+    scope: &Option<sandbox::Scope>,
+    cwd: &Path,
+    notes: &Path,
+    run: impl FnOnce() -> ryter_core::Result<T> + Send,
+) -> ryter_core::Result<T> {
+    match scope {
+        Some(scope) => scope.run(cwd, notes, run),
+        None => run(),
+    }
+}
+
 fn session_event(a: &Agent) -> AgentEvent {
     AgentEvent::Session {
         id: a.session.meta.id.to_string(),
@@ -783,6 +833,7 @@ fn session_event(a: &Agent) -> AgentEvent {
 
 fn swap_session(a: &mut Agent, s: Session) {
     a.session = s;
+    a.announce_recovery();
     a.ctx.notes_dir = a.session.notes_dir();
 }
 
@@ -814,7 +865,16 @@ fn emit_mcp_status(a: &Agent, tx: &mpsc::Sender<AgentEvent>) {
     let _ = tx.send(AgentEvent::McpStatus { servers });
 }
 
-fn refresh_live(agent: &Agent, status: &Mutex<StatusSnapshot>, spend: &Mutex<String>) {
+fn refresh_live(
+    agent: &Agent,
+    status: &Mutex<StatusSnapshot>,
+    spend: &Mutex<String>,
+    transcript: &Mutex<String>,
+) {
+    let text = ryter_core::mcp::transcript_snapshot(&agent.session.transcript);
+    if let Ok(mut saved) = transcript.lock() {
+        *saved = text;
+    }
     if let Ok(mut s) = status.lock() {
         *s = StatusSnapshot {
             model: agent.model.clone(),
@@ -830,6 +890,7 @@ fn refresh_live(agent: &Agent, status: &Mutex<StatusSnapshot>, spend: &Mutex<Str
 
 struct BuildAgent<'a> {
     cfg: &'a Config,
+    profile: sandbox::SandboxProfile,
     conn: ConnectionConfig,
     key: String,
     session: Session,
@@ -855,6 +916,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         book: PriceBook::from_config(b.cfg),
         session: b.session,
         ctx: ToolContext {
+            sandbox: sandbox::Scope::for_profile(b.profile, b.home),
             live: None,
             workspace: b.cwd.to_path_buf(),
             notes_dir: notes,
@@ -886,7 +948,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         trusted: b.trusted,
         context_window: 0,
         cfg: Some(b.cfg.clone()),
-        machine: ryter_core::prompt::machine_here(),
+        machine: ryter_core::prompt::machine_for(b.profile),
         product: None,
         filed: Default::default(),
     }

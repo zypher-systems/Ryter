@@ -79,6 +79,9 @@ pub enum AgentEvent {
         cached_tokens: u64,
         /// USD total for this call. `None` means unknown price (`$?.??`).
         total_usd: Option<f64>,
+        /// Any reported tokens and cost are a lower bound, not a final bill.
+        #[serde(default)]
+        incomplete: bool,
     },
     /// The test hat filed a report. It is in the conversation the other
     /// hats share from here on, and in its file.

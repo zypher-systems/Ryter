@@ -31,6 +31,9 @@ pub struct Config {
     /// Per-model USD rates; always wins over shipped / catalog prices.
     #[serde(default)]
     pub pricing: BTreeMap<String, PriceOverride>,
+    /// Per-model context windows in tokens, overriding cached catalog limits.
+    #[serde(default)]
+    pub context_windows: BTreeMap<String, u64>,
     /// Inbound MCP server knobs.
     #[serde(default)]
     pub mcp: McpSettings,
@@ -130,6 +133,7 @@ impl Default for Config {
             specialists: BTreeMap::new(),
             spend: SpendConfig::default(),
             pricing: BTreeMap::new(),
+            context_windows: BTreeMap::new(),
             mcp: McpSettings::default(),
             mcp_servers: BTreeMap::new(),
             hooks: Vec::new(),
@@ -1115,6 +1119,7 @@ struct ConfigFile {
     // key must not need every other, nor wipe the user's.
     spend: Option<toml::Value>,
     pricing: BTreeMap<String, PriceOverride>,
+    context_windows: BTreeMap<String, u64>,
     mcp: Option<McpSettings>,
     mcp_servers: BTreeMap<String, McpServerConfig>,
     hooks: Vec<HookConfig>,
@@ -1252,6 +1257,7 @@ impl ConfigFile {
                 Err(e) => cfg.warnings.push(format!("[spend] ignored: {e}")),
             }
         }
+        cfg.context_windows.extend(self.context_windows);
         for (k, v) in self.pricing {
             cfg.pricing.insert(k, v);
         }
@@ -1278,6 +1284,11 @@ impl ConfigFile {
 }
 
 fn validate(cfg: &Config) -> Result<()> {
+    if cfg.context_windows.values().any(|v| *v == 0) {
+        return Err(Error::Config(
+            "[context_windows] values must be positive token counts".into(),
+        ));
+    }
     if !cfg.connections.contains_key(&cfg.default_connection) {
         return Err(Error::Config(format!(
             "default_connection {:?} is not a known connection",
@@ -2125,6 +2136,24 @@ mod tests {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
         let err = load_at(dir.path(), None, false).unwrap_err();
         assert!(err.to_string().contains("chmod 600"));
+    }
+
+    #[test]
+    fn model_context_limits_load_and_reject_zero() {
+        let home = TempDir::new().unwrap();
+        let path = home.path().join("config.toml");
+        fs::write(&path, "[context_windows]\n\"local/small\" = 8192\n").unwrap();
+        assert_eq!(
+            load_at(home.path(), None, false).unwrap().context_windows["local/small"],
+            8192
+        );
+        fs::write(&path, "[context_windows]\n\"local/small\" = 0\n").unwrap();
+        assert!(
+            load_at(home.path(), None, false)
+                .unwrap_err()
+                .to_string()
+                .contains("positive")
+        );
     }
 
     #[test]

@@ -23,14 +23,57 @@ pub struct StatusSnapshot {
 
 /// Host the inbound tools talk to (the session and its agent).
 pub trait InboundHost: Send + Sync {
+    /// Prepare a reserved prompt before the dispatcher accepts cancellation.
+    /// Hosts that reset a shared cancel flag must do it here, not in `prompt`.
+    fn prepare_prompt(&self) {}
     /// Run one user turn: a normal user message, worked on in the build hat.
     fn prompt(&self, text: &str) -> Result<String>;
     /// Status line.
     fn status(&self) -> StatusSnapshot;
     /// Spend summary (no secrets).
     fn spend(&self) -> String;
+    /// Bounded snapshot of the active conversation, refreshed after completed work.
+    fn transcript(&self) -> String {
+        String::new()
+    }
     /// Cancel in-flight work. Safe to call while [`prompt`](Self::prompt) is running.
     fn cancel(&self);
+    /// Cancel only this connection's reserved prompt on disconnect or write failure.
+    /// Queued hosts should distinguish it from unrelated interactive work.
+    fn cancel_prompt(&self) {
+        self.cancel();
+    }
+}
+
+// A host can be shared by many socket sessions. Reserve it before spawning a
+// prompt so a rejected connection never owns (or cancels) somebody else's turn.
+// The permit borrows the host, keeping its data address valid until release.
+static PROMPT_OWNERS: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+
+struct PromptPermit<'a> {
+    host: &'a dyn InboundHost,
+}
+
+impl<'a> PromptPermit<'a> {
+    fn acquire(host: &'a dyn InboundHost) -> Option<Self> {
+        let key = host as *const dyn InboundHost as *const () as usize;
+        let mut owners = PROMPT_OWNERS.lock().unwrap_or_else(|e| e.into_inner());
+        if owners.contains(&key) {
+            return None;
+        }
+        owners.push(key);
+        Some(Self { host })
+    }
+}
+
+impl Drop for PromptPermit<'_> {
+    fn drop(&mut self) {
+        let key = self.host as *const dyn InboundHost as *const () as usize;
+        PROMPT_OWNERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|owner| *owner != key);
+    }
 }
 
 /// In-memory echo host (also used by `ryter mcp echo`).
@@ -63,6 +106,14 @@ impl InboundHost for EchoHost {
     }
     fn spend(&self) -> String {
         "$0.00".into()
+    }
+    fn transcript(&self) -> String {
+        super::transcript_snapshot(&[crate::llm::Message {
+            role: "user".into(),
+            content: self.last(),
+            tool_call_id: None,
+            tool_calls: None,
+        }])
     }
     fn cancel(&self) {}
 }
@@ -119,7 +170,7 @@ pub fn handle(host: &dyn InboundHost, req: &RpcRequest) -> Option<RpcResponse> {
                 .unwrap_or("");
             let text = match uri {
                 "ryter://session/spend" => host.spend(),
-                "ryter://session/transcript" => host.status().session,
+                "ryter://session/transcript" => host.transcript(),
                 _ => format!("unknown resource {uri}"),
             };
             Some(RpcResponse::ok(
@@ -224,8 +275,9 @@ fn token_eq(a: &str, b: &str) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// One JSON-RPC line session. `ryter_prompt` runs on a helper thread so the same
-/// connection can send `ryter_cancel` / `notifications/cancelled` while it is in flight.
+/// One JSON-RPC line session. Blocking host requests run on bounded workers;
+/// cancellation and authentication stay on the connection thread. Hosts must
+/// cooperate with cancellation and reject overlapping turns across connections.
 pub fn serve_session<R, W>(
     reader: R,
     mut writer: W,
@@ -236,7 +288,11 @@ where
     R: std::io::Read + Send + 'static,
     W: Write,
 {
-    let (line_tx, line_rx) = std::sync::mpsc::channel::<String>();
+    use std::sync::mpsc::{self, RecvTimeoutError};
+    use std::time::Duration;
+
+    const MAX_PENDING: usize = 8;
+    let (line_tx, line_rx) = mpsc::sync_channel::<String>(64);
     std::thread::spawn(move || {
         let reader = std::io::BufReader::new(reader);
         for line in reader.lines() {
@@ -250,121 +306,148 @@ where
             }
         }
     });
-    let mut authed = tokens.is_empty();
-    while let Ok(line) = line_rx.recv() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let req: RpcRequest = match serde_json::from_str(&line) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("mcp: bad json: {e}");
-                continue;
-            }
-        };
-        if !tokens.is_empty() && !authed {
-            if req.method == "initialize" {
-                let got = req.params.as_ref().and_then(|p| {
-                    p.get("token")
-                        .or_else(|| p.get("bearer"))
-                        .and_then(Value::as_str)
-                });
-                let ok = got.is_some_and(|g| tokens.iter().any(|t| token_eq(t, g)));
-                if !ok {
-                    if let Some(id) = req.id.clone() {
-                        let resp = RpcResponse::err(id, -32001, "unauthorized");
-                        writer
-                            .write_all(resp.to_line().as_bytes())
-                            .map_err(|e| Error::Io(e.to_string()))?;
-                        writer.flush().map_err(|e| Error::Io(e.to_string()))?;
+    let send = |writer: &mut W, resp: RpcResponse| -> Result<()> {
+        writer
+            .write_all(resp.to_line().as_bytes())
+            .and_then(|()| writer.flush())
+            .map_err(|e| Error::Io(e.to_string()))
+    };
+    // Keep the permit outside the scope: error paths cancel and join the
+    // old worker before another connection can claim the same host.
+    let mut permit = None;
+    let result = std::thread::scope(|scope| {
+        let (done_tx, done_rx) = mpsc::channel();
+        let mut workers: Vec<std::thread::ScopedJoinHandle<'_, ()>> = Vec::new();
+        let mut authed = tokens.is_empty();
+        let mut pending = 0;
+        let mut prompting = false;
+        let mut closed = false;
+        let result = (|| {
+            loop {
+                while let Ok((prompt, response)) = done_rx.try_recv() {
+                    pending -= 1;
+                    if prompt {
+                        prompting = false;
+                        permit = None;
                     }
-                    return Err(Error::Config("unauthorized".into()));
-                }
-                authed = true;
-            } else {
-                if let Some(id) = req.id.clone() {
-                    let resp = RpcResponse::err(id, -32001, "unauthorized");
-                    writer
-                        .write_all(resp.to_line().as_bytes())
-                        .map_err(|e| Error::Io(e.to_string()))?;
-                    writer.flush().map_err(|e| Error::Io(e.to_string()))?;
-                }
-                continue;
-            }
-        }
-        if is_prompt(&req) {
-            let args = req
-                .params
-                .clone()
-                .unwrap_or(json!({}))
-                .get("arguments")
-                .cloned()
-                .unwrap_or(json!({}));
-            let id = req.id.clone().unwrap_or(json!(null));
-            let (done_tx, done_rx) = std::sync::mpsc::channel();
-            // Prompt may block; cancel arrives on `line_rx`.
-            let text = args
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            std::thread::scope(|s| {
-                s.spawn(|| {
-                    let r = host.prompt(&text);
-                    let _ = done_tx.send(r);
-                });
-                loop {
-                    match done_rx.try_recv() {
-                        Ok(result) => {
-                            let resp = match result {
-                                Ok(text) => RpcResponse::ok(
-                                    id.clone(),
-                                    json!({ "content": [{ "type": "text", "text": text }] }),
-                                ),
-                                Err(e) => RpcResponse::err(id.clone(), -32000, e.to_string()),
-                            };
-                            if writer.write_all(resp.to_line().as_bytes()).is_err() {
-                                return;
-                            }
-                            let _ = writer.flush();
-                            return;
-                        }
-                        Err(std::sync::mpsc::TryRecvError::Disconnected) => return,
-                        Err(std::sync::mpsc::TryRecvError::Empty) => {
-                            match line_rx.recv_timeout(std::time::Duration::from_millis(20)) {
-                                Ok(line) => {
-                                    if let Ok(extra) = serde_json::from_str::<RpcRequest>(&line) {
-                                        if extra.method == "notifications/cancelled"
-                                            || is_cancel_call(&extra)
-                                        {
-                                            host.cancel();
-                                        }
-                                        if let Some(resp) = handle(host, &extra) {
-                                            let _ = writer.write_all(resp.to_line().as_bytes());
-                                            let _ = writer.flush();
-                                        }
-                                    }
-                                }
-                                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                                    let _ = done_rx.recv();
-                                    return;
-                                }
-                            }
-                        }
+                    if let Some(resp) = response {
+                        send(&mut writer, resp)?;
                     }
                 }
-            });
-            continue;
+                let mut i = 0;
+                while i < workers.len() {
+                    if workers[i].is_finished() {
+                        workers
+                            .swap_remove(i)
+                            .join()
+                            .map_err(|_| Error::Io("MCP request worker panicked".into()))?;
+                    } else {
+                        i += 1;
+                    }
+                }
+                if closed {
+                    if pending == 0 {
+                        return Ok(());
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                    continue;
+                }
+                let line = match line_rx.recv_timeout(Duration::from_millis(20)) {
+                    Ok(line) => line,
+                    Err(RecvTimeoutError::Timeout) => continue,
+                    Err(RecvTimeoutError::Disconnected) => {
+                        closed = true;
+                        if prompting {
+                            host.cancel_prompt();
+                        }
+                        continue;
+                    }
+                };
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let req: RpcRequest = match serde_json::from_str(&line) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("mcp: bad json: {e}");
+                        continue;
+                    }
+                };
+                if !authed {
+                    let got = req.params.as_ref().and_then(|p| {
+                        p.get("token")
+                            .or_else(|| p.get("bearer"))
+                            .and_then(Value::as_str)
+                    });
+                    if req.method == "initialize"
+                        && got.is_some_and(|g| tokens.iter().any(|t| token_eq(t, g)))
+                    {
+                        authed = true;
+                    } else {
+                        if let Some(id) = req.id.clone() {
+                            send(&mut writer, RpcResponse::err(id, -32001, "unauthorized"))?;
+                        }
+                        if req.method == "initialize" {
+                            return Err(Error::Config("unauthorized".into()));
+                        }
+                        continue;
+                    }
+                }
+                let prompt = is_prompt(&req);
+                // Only host-dependent methods can block. Keep cancel, ping,
+                // discovery and initialization available even at capacity.
+                let blocking = req.method == "resources/read"
+                    || (req.method == "tools/call" && !is_cancel_call(&req));
+                if !blocking {
+                    if let Some(resp) = handle(host, &req) {
+                        send(&mut writer, resp)?;
+                    }
+                } else if pending >= MAX_PENDING || (prompt && prompting) {
+                    if let Some(id) = req.id {
+                        send(
+                            &mut writer,
+                            RpcResponse::err(
+                                id,
+                                -32000,
+                                "busy; retry after the current request finishes",
+                            ),
+                        )?;
+                    }
+                } else {
+                    if prompt {
+                        permit = PromptPermit::acquire(host);
+                        if permit.is_none() {
+                            if let Some(id) = req.id {
+                                send(
+                                    &mut writer,
+                                    RpcResponse::err(
+                                        id,
+                                        -32000,
+                                        "busy; a prompt is already running",
+                                    ),
+                                )?;
+                            }
+                            continue;
+                        }
+                        host.prepare_prompt();
+                    }
+                    pending += 1;
+                    prompting |= prompt;
+                    let done_tx = done_tx.clone();
+                    workers.push(scope.spawn(move || {
+                        let response = handle(host, &req);
+                        let _ = done_tx.send((prompt, response));
+                    }));
+                }
+            }
+        })();
+        if prompting {
+            host.cancel_prompt();
         }
-        if let Some(resp) = handle(host, &req) {
-            writer
-                .write_all(resp.to_line().as_bytes())
-                .map_err(|e| Error::Io(e.to_string()))?;
-            writer.flush().map_err(|e| Error::Io(e.to_string()))?;
-        }
-    }
-    Ok(())
+        result
+    });
+    drop(permit);
+    result
 }
 
 fn is_prompt(req: &RpcRequest) -> bool {
@@ -399,6 +482,231 @@ pub fn serve_echo() -> Result<()> {
 mod tests {
     use super::*;
     use crate::mcp::rpc::RpcRequest;
+
+    #[test]
+    fn transcript_resource_returns_conversation_content() {
+        let host = EchoHost::default();
+        host.prompt("fixture conversation").unwrap();
+        let response = handle(
+            &host,
+            &RpcRequest {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(1)),
+                method: "resources/read".into(),
+                params: Some(json!({"uri": "ryter://session/transcript"})),
+            },
+        )
+        .unwrap();
+        let result = response.result.unwrap();
+        assert_eq!(result["contents"][0]["mimeType"], "text/plain");
+        assert_eq!(
+            result["contents"][0]["text"],
+            "[user]\nfixture conversation\n\n"
+        );
+    }
+
+    /// This host deliberately shares the prompt lock with status/spend, like
+    /// the old CLI host. A blocked observer must not hold up cancellation.
+    struct BlockingHost {
+        agent: std::sync::Mutex<()>,
+        started: std::sync::mpsc::Sender<()>,
+        stopped: std::sync::mpsc::Sender<()>,
+        release: std::sync::mpsc::Sender<()>,
+        wait: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl InboundHost for BlockingHost {
+        fn prompt(&self, _: &str) -> Result<String> {
+            let _agent = self.agent.lock().unwrap();
+            self.started.send(()).unwrap();
+            // A failed regression releases itself instead of hanging the suite.
+            self.wait
+                .lock()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(3))
+                .map_err(|_| Error::Config("cancellation did not arrive".into()))?;
+            Ok("stopped".into())
+        }
+        fn status(&self) -> StatusSnapshot {
+            let _agent = self.agent.lock().unwrap();
+            StatusSnapshot::default()
+        }
+        fn spend(&self) -> String {
+            let _agent = self.agent.lock().unwrap();
+            "$0.00".into()
+        }
+        fn transcript(&self) -> String {
+            let _agent = self.agent.lock().unwrap();
+            "conversation".into()
+        }
+        fn cancel(&self) {
+            let _ = self.stopped.send(());
+            let _ = self.release.send(());
+        }
+    }
+
+    fn tool(id: u64, name: &str) -> RpcRequest {
+        RpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(id)),
+            method: "tools/call".into(),
+            params: Some(json!({"name": name, "arguments": {"text": "go"}})),
+        }
+    }
+
+    #[test]
+    fn cancellation_survives_blocked_observers_overlapping_prompts_and_disconnect() {
+        use std::net::{Shutdown, TcpListener, TcpStream};
+        use std::sync::mpsc;
+        use std::time::Duration;
+        for ending in ["ryter_cancel", "notification", "disconnect"] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let server = listener.accept().unwrap().0;
+            let (started, started_rx) = mpsc::channel();
+            let (stopped, stopped_rx) = mpsc::channel();
+            let (release, wait) = mpsc::channel();
+            let host = std::sync::Arc::new(BlockingHost {
+                agent: Default::default(),
+                started,
+                stopped,
+                release,
+                wait: std::sync::Mutex::new(wait),
+            });
+            let owner_host = host.clone();
+            let worker = std::thread::spawn(move || {
+                serve_session(
+                    server.try_clone().unwrap(),
+                    server,
+                    owner_host.as_ref(),
+                    &[],
+                )
+            });
+            client
+                .write_all(tool(1, "ryter_prompt").to_line().as_bytes())
+                .unwrap();
+            started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            let mut second = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            second
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let second_server = listener.accept().unwrap().0;
+            let rejected = std::thread::spawn(move || {
+                serve_session(
+                    second_server.try_clone().unwrap(),
+                    second_server,
+                    host.as_ref(),
+                    &[],
+                )
+            });
+            second
+                .write_all(tool(99, "ryter_prompt").to_line().as_bytes())
+                .unwrap();
+            second.shutdown(Shutdown::Write).unwrap();
+            let mut second_reply = String::new();
+            std::io::Read::read_to_string(&mut second, &mut second_reply).unwrap();
+            rejected.join().unwrap().unwrap();
+            let response: RpcResponse = serde_json::from_str(second_reply.trim()).unwrap();
+            assert_eq!(response.id, json!(99));
+            assert!(response.error.unwrap().message.contains("busy"));
+            assert!(
+                stopped_rx.try_recv().is_err(),
+                "rejected client cancelled the owner's prompt"
+            );
+
+            for req in [
+                tool(2, "ryter_status"),
+                tool(3, "ryter_spend"),
+                tool(4, "ryter_prompt"),
+            ] {
+                client.write_all(req.to_line().as_bytes()).unwrap();
+            }
+            let mut reader = std::io::BufReader::new(client.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let busy: RpcResponse = serde_json::from_str(&line).unwrap();
+            assert_eq!(busy.id, json!(4));
+            assert!(busy.error.unwrap().message.contains("busy"));
+            // Fill every worker with blocked resource reads; cancellation must
+            // still get through once the dispatcher starts returning busy.
+            for id in 5..14 {
+                let req = RpcRequest {
+                    jsonrpc: "2.0".into(),
+                    id: Some(json!(id)),
+                    method: "resources/read".into(),
+                    params: Some(
+                        json!({"uri": if id % 2 == 0 { "ryter://session/spend" } else { "ryter://session/transcript" }}),
+                    ),
+                };
+                client.write_all(req.to_line().as_bytes()).unwrap();
+            }
+            match ending {
+                "disconnect" => client.shutdown(Shutdown::Write).unwrap(),
+                "notification" => client
+                    .write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\"}\n")
+                    .unwrap(),
+                _ => client
+                    .write_all(tool(14, "ryter_cancel").to_line().as_bytes())
+                    .unwrap(),
+            }
+            let cancelled = stopped_rx.recv_timeout(Duration::from_secs(1));
+            if ending != "disconnect" {
+                client.shutdown(Shutdown::Write).unwrap();
+            }
+            let result = worker.join().unwrap();
+            assert!(cancelled.is_ok(), "{ending} was blocked");
+            result.unwrap();
+            let mut rest = String::new();
+            std::io::Read::read_to_string(&mut reader, &mut rest).unwrap();
+            let replies: Vec<RpcResponse> = rest
+                .lines()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect();
+            assert!(
+                replies
+                    .iter()
+                    .any(|r| r.id == json!(1) && r.result.is_some())
+            );
+        }
+    }
+
+    #[test]
+    fn authentication_precedes_cancel_and_worker_dispatch() {
+        let host = EchoHost::default();
+        let input = format!(
+            "{}{}",
+            tool(1, "ryter_prompt").to_line(),
+            RpcRequest {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(2)),
+                method: "initialize".into(),
+                params: Some(json!({"token": "wrong"}))
+            }
+            .to_line()
+        );
+        let mut output = Vec::new();
+        assert!(
+            serve_session(
+                std::io::Cursor::new(input),
+                &mut output,
+                &host,
+                &["fixture".into()]
+            )
+            .is_err()
+        );
+        assert_eq!(host.last(), "");
+        assert!(String::from_utf8(output).unwrap().lines().all(|line| {
+            serde_json::from_str::<RpcResponse>(line)
+                .unwrap()
+                .error
+                .unwrap()
+                .code
+                == -32001
+        }));
+    }
 
     #[test]
     fn list_and_echo() {

@@ -22,7 +22,7 @@ pub enum Error {
     Io(String),
 
     /// Session spend cap hit, or a call it could not price.
-    #[error("{}", budget_message(*spent, *cap, unpriced.as_deref()))]
+    #[error("{}", budget_message(*spent, *cap, unpriced.as_deref(), *incomplete))]
     Budget {
         /// USD spent so far (known prices only).
         spent: f64,
@@ -30,6 +30,8 @@ pub enum Error {
         cap: f64,
         /// A model whose call had no price, so the cap could not see it.
         unpriced: Option<String>,
+        /// An interrupted request left this session's actual spend unknown.
+        incomplete: bool,
     },
 
     /// An outbound MCP server failed, timed out, or went away.
@@ -41,7 +43,12 @@ pub enum Error {
     Cancelled,
 }
 
-fn budget_message(spent: f64, cap: f64, unpriced: Option<&str>) -> String {
+fn budget_message(spent: f64, cap: f64, unpriced: Option<&str>, incomplete: bool) -> String {
+    if incomplete {
+        return format!(
+            "the ${cap:.2} budget cannot account for an earlier request: its usage record is incomplete. Known spend is at least ${spent:.4}. Start a new session, or explicitly turn this session's budget off (`/budget off`) to continue with unknown spend"
+        );
+    }
     match unpriced {
         Some(model) => format!(
             "the ${cap:.2} budget can't see what {model} costs: it has no price, so \

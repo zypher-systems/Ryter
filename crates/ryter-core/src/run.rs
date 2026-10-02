@@ -76,10 +76,11 @@ fn quoted(s: &str) -> String {
 }
 
 impl RunFile {
-    /// One line each, trimmed; nothing that is empty.
+    /// Trim outer whitespace and omit empty fields. Shell text inside a
+    /// command, including quoted spaces and newlines, is preserved exactly.
     pub fn tidy(mut self) -> Self {
         let one = |s: String| {
-            let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
+            let s = s.trim().to_string();
             (!s.is_empty()).then_some(s)
         };
         self.start = self.start.and_then(one);
@@ -262,6 +263,8 @@ pub fn approve(root: &Path, home: &Path, text: &str) -> Result<()> {
 /// A product Ryter started for a test, and how to stop it.
 #[derive(Debug)]
 pub struct Started {
+    /// A failed cleanup must be retried before another start.
+    pub cleanup_pending: bool,
     /// When, as the user's clock reads (`YYYY-MM-DD HH:MM`).
     pub at: String,
     /// Where it answers, if the run file says.
@@ -284,6 +287,7 @@ impl Started {
     /// is Ryter's to use now.
     pub fn left(left: Left, log: PathBuf) -> Self {
         Self {
+            cleanup_pending: left.cleanup_pending,
             at: left.at,
             address: left.address,
             stop: left.stop,
@@ -305,6 +309,7 @@ impl Started {
     /// What a later session needs to know, to offer to stop it.
     pub fn note(&self) -> Left {
         Left {
+            cleanup_pending: self.cleanup_pending,
             at: self.at.clone(),
             address: self.address.clone(),
             stop: self.stop.clone(),
@@ -316,6 +321,9 @@ impl Started {
 /// A product left running by a session that has ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Left {
+    /// Cleanup failed; lack of a healthy endpoint does not clear this record.
+    #[serde(default)]
+    pub cleanup_pending: bool,
     /// When it was started.
     pub at: String,
     /// Where it answers.
@@ -386,11 +394,11 @@ pub enum Answer {
 }
 
 impl Answer {
-    /// Whether the product is up: an answer that isn't a server error.
+    /// A successful HTTP response or redirect proves readiness.
     pub fn up(&self) -> bool {
         match self {
-            Self::Status(s) => *s < 500,
-            Self::Listening => true,
+            Self::Status(s) => (200..400).contains(s),
+            Self::Listening => false,
             Self::Nothing(_) => false,
         }
     }
@@ -430,56 +438,45 @@ fn parts(url: &str) -> Option<(bool, String, u16, String)> {
 
 /// Ask `url` once whether the product is up.
 pub fn ask(url: &str, timeout: Duration) -> Answer {
-    use std::io::{Read, Write};
-    use std::net::{TcpStream, ToSocketAddrs};
-    let Some((tls, host, port, path)) = parts(url) else {
+    if parts(url).is_none() {
         return Answer::Nothing(format!("{url} is not an http address"));
-    };
-    let addrs = match (host.as_str(), port).to_socket_addrs() {
-        Ok(a) => a.collect::<Vec<_>>(),
-        Err(e) => return Answer::Nothing(e.to_string()),
-    };
-    let mut last = "no address".to_string();
-    for addr in addrs {
-        let mut stream = match TcpStream::connect_timeout(&addr, timeout) {
-            Ok(s) => s,
-            Err(e) => {
-                last = e.to_string();
-                continue;
-            }
-        };
-        if tls {
-            return Answer::Listening;
-        }
-        let _ = stream.set_read_timeout(Some(timeout));
-        let _ = stream.set_write_timeout(Some(timeout));
-        let req = format!(
-            "GET {path} HTTP/1.0\r\nHost: {host}:{port}\r\nUser-Agent: ryter\r\nConnection: close\r\n\r\n"
-        );
-        if let Err(e) = stream.write_all(req.as_bytes()) {
-            last = e.to_string();
-            continue;
-        }
-        let mut head = [0u8; 64];
-        let n = match stream.read(&mut head) {
-            Ok(n) => n,
-            Err(e) => {
-                last = e.to_string();
-                continue;
-            }
-        };
-        // `HTTP/1.1 200 OK`
-        let line = String::from_utf8_lossy(&head[..n]);
-        return match line
-            .split_whitespace()
-            .nth(1)
-            .and_then(|s| s.parse::<u16>().ok())
-        {
-            Some(status) if line.starts_with("HTTP/") => Answer::Status(status),
-            _ => Answer::Nothing("it answered, but not in HTTP".into()),
-        };
     }
-    Answer::Nothing(last)
+    let url = if url.contains("://") {
+        url.to_string()
+    } else {
+        format!("http://{url}")
+    };
+    // The caller can be on a Tokio thread. A blocking client must be
+    // created and dropped outside that runtime. HTTPS must complete TLS
+    // and return an HTTP response, rather than merely accept a TCP socket.
+    std::thread::spawn(move || {
+        let result = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .timeout(timeout)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .and_then(|client| client.get(&url).send());
+        match result {
+            Ok(response) => Answer::Status(response.status().as_u16()),
+            Err(error) => Answer::Nothing(error.to_string()),
+        }
+    })
+    .join()
+    .unwrap_or_else(|_| Answer::Nothing("readiness request failed".into()))
+}
+
+/// Whether an address is occupied. Liveness is deliberately weaker than
+/// readiness: an unhealthy server must not be mistaken for an absent one.
+pub(crate) fn listening(url: &str, timeout: Duration) -> bool {
+    use std::net::{TcpStream, ToSocketAddrs};
+    let Some((_, host, port, _)) = parts(url) else {
+        return false;
+    };
+    (host.as_str(), port)
+        .to_socket_addrs()
+        .is_ok_and(|mut addresses| {
+            addresses.any(|address| TcpStream::connect_timeout(&address, timeout).is_ok())
+        })
 }
 
 /// How starting the product went.
@@ -494,6 +491,13 @@ pub enum Start {
     },
     /// The start command failed, or the product never answered.
     Failed(String),
+    /// Startup failed and cleanup failed too. Keep ownership for `/stop`.
+    CleanupFailed {
+        /// Resources or an approved stop command to retain for retry.
+        started: Started,
+        /// Both the startup failure and the cleanup failure.
+        why: String,
+    },
     /// The turn was cancelled; what was started was stopped.
     Cancelled,
 }
@@ -548,8 +552,14 @@ fn start_settling(
     let mut exited = false;
     let how = loop {
         if cancel.is_cancelled() {
-            take_down(run, root, &mut child, exited);
-            return Ok(Start::Cancelled);
+            return Ok(failed_start(
+                run,
+                root,
+                log,
+                child,
+                "startup cancelled".into(),
+                true,
+            ));
         }
         if !exited {
             match child.try_wait() {
@@ -558,10 +568,26 @@ fn start_settling(
                     let how = status
                         .code()
                         .map_or("was killed".to_string(), |c| format!("exited {c}"));
-                    return Ok(Start::Failed(format!("`{cmd}` {how}:\n{}", tail(log, 30))));
+                    return Ok(failed_start(
+                        run,
+                        root,
+                        log,
+                        child,
+                        format!("`{cmd}` {how}:\n{}", tail(log, 30)),
+                        false,
+                    ));
                 }
                 Ok(None) => {}
-                Err(e) => return Err(Error::Config(e.to_string())),
+                Err(e) => {
+                    return Ok(failed_start(
+                        run,
+                        root,
+                        log,
+                        child,
+                        format!("could not inspect `{cmd}`: {e}"),
+                        false,
+                    ));
+                }
             }
         }
         match run.ready.as_deref() {
@@ -579,12 +605,18 @@ fn start_settling(
                         Answer::Nothing(e) => format!("did not answer ({e})"),
                         Answer::Listening => "is listening".into(),
                     };
-                    let undone = take_down(run, root, &mut child, exited);
-                    return Ok(Start::Failed(format!(
-                        "`{cmd}` ran, but after {}s {url} {why}. {undone}.\n{}",
-                        timeout.as_secs(),
-                        tail(log, 30)
-                    )));
+                    return Ok(failed_start(
+                        run,
+                        root,
+                        log,
+                        child,
+                        format!(
+                            "`{cmd}` ran, but after {}s {url} {why}.\n{}",
+                            timeout.as_secs(),
+                            tail(log, 30)
+                        ),
+                        false,
+                    ));
                 }
             }
             // No address to ask: a command that returned has started it; one
@@ -601,6 +633,7 @@ fn start_settling(
     };
     Ok(Start::Up {
         started: Started {
+            cleanup_pending: false,
             at: crate::clock::stamp(),
             address: run.ready.clone(),
             stop: run.stop.clone(),
@@ -614,44 +647,42 @@ fn start_settling(
     })
 }
 
-/// A start that didn't come up, or was cancelled, is taken down again: what
-/// it started is nobody's otherwise. Nothing records it, so `/stop` would
-/// say Ryter started nothing while a stack whose health check failed stayed
-/// up. Returns what was done, in words.
-fn take_down(run: &RunFile, root: &Path, child: &mut std::process::Child, exited: bool) -> String {
-    let pgid = child.id();
-    if !exited {
-        crate::tools::shell::end_child(child);
-        return "Ryter ended the start command".to_string();
-    }
-    let mut did = Vec::new();
-    if let Some(stop) = run.stop.as_deref() {
-        // Its own cancel: the turn's may already be set, and this has to run.
-        let fresh = crate::cancel::Cancel::new();
-        did.push(
-            match crate::tools::shell::run_command_live(stop, root, COMMAND_TIMEOUT, &fresh, None) {
-                Ok(crate::tools::shell::Run::Ok(_)) => {
-                    format!("Ryter ran `{stop}` to take it down")
-                }
-                _ => format!("`{stop}` did not take it down: it may still be running"),
-            },
-        );
-    }
-    if crate::tools::shell::group_alive(pgid) {
-        crate::tools::shell::end_group(pgid);
-        did.push("Ryter ended what the start command left running".to_string());
-    }
-    if did.is_empty() {
-        "The run file has no stop command, so what it started may still be running".to_string()
-    } else {
-        did.join(", and ")
+/// Every failed start uses the same cleanup path, including a launcher
+/// that exits nonzero after leaving background children or a partial stack.
+fn failed_start(
+    run: &RunFile,
+    root: &Path,
+    log: &Path,
+    child: std::process::Child,
+    why: String,
+    cancelled: bool,
+) -> Start {
+    let mut started = Started {
+        cleanup_pending: false,
+        at: crate::clock::stamp(),
+        address: run.ready.clone(),
+        stop: run.stop.clone(),
+        child: Some(child),
+        group: None,
+        log: log.to_path_buf(),
+    };
+    // Cleanup is still needed when the user's turn has been cancelled.
+    match stop(&mut started, root, &crate::Cancel::new()) {
+        Ok(_) if cancelled => Start::Cancelled,
+        Ok(did) => Start::Failed(format!("{why}\nCleanup: {did}.")),
+        Err(cleanup) => Start::CleanupFailed {
+            started,
+            why: format!(
+                "{why}\nCleanup failed: {cleanup}. The product may still be running; its stop command is retained for retry."
+            ),
+        },
     }
 }
 
 /// Stop a product Ryter started: its stop command, then the start command
 /// itself if Ryter still holds it. Returns what was done, in words.
 pub fn stop(
-    mut started: Started,
+    started: &mut Started,
     root: &Path,
     cancel: &crate::cancel::Cancel,
 ) -> std::result::Result<String, String> {
@@ -686,12 +717,21 @@ pub fn stop(
         }
     }
     match failed {
-        Some(why) => Err(why),
-        None if did.is_empty() => Err(
-            "the run file has no stop command, and the start command is not Ryter's to end"
-                .to_string(),
-        ),
-        None => Ok(did.join(", then ")),
+        Some(why) => {
+            started.cleanup_pending = true;
+            Err(why)
+        }
+        None if did.is_empty() => {
+            started.cleanup_pending = true;
+            Err(
+                "the run file has no stop command, and the start command is not Ryter's to end"
+                    .to_string(),
+            )
+        }
+        None => {
+            started.cleanup_pending = false;
+            Ok(did.join(", then "))
+        }
     }
 }
 
@@ -716,6 +756,70 @@ mod tests {
             ],
             stop: Some("docker compose down".into()),
         }
+    }
+
+    #[test]
+    fn command_whitespace_survives_approval_and_reload() {
+        let root = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let command = "printf '%s' 'a  b'\nprintf '%s' 'second\nline'";
+        let run = RunFile {
+            start: Some(format!("  {command}  ")),
+            stop: Some("printf '%s' 'x\t y'".into()),
+            test: vec!["cat <<'EOF'\na  b\nEOF".into()],
+            ..Default::default()
+        }
+        .tidy();
+        assert_eq!(run.start.as_deref(), Some(command));
+        save_approved(root.path(), home.path(), &run).unwrap();
+        assert_eq!(find(root.path(), home.path()), Found::Approved(run.clone()));
+        assert_eq!(toml::from_str::<RunFile>(&run.text()).unwrap(), run);
+        std::fs::write(root.path().join(FILE), run.text().replace("a  b", "a b")).unwrap();
+        assert!(matches!(
+            find(root.path(), home.path()),
+            Found::Unapproved(..)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_nonzero_launcher_stops_its_background_children() {
+        let root = TempDir::new().unwrap();
+        let run = RunFile {
+            start: Some("bash -c 'trap \"echo stopped > child-stopped; exit\" TERM; echo ready > child-ready; while :; do :; done' & echo $! > child-pid; until test -f child-ready; do :; done; exit 7".into()),
+            ..Default::default()
+        };
+        let result = start(
+            &run,
+            root.path(),
+            &root.path().join("log"),
+            Duration::from_secs(2),
+            &crate::Cancel::new(),
+        )
+        .unwrap();
+        let stopped = root.path().join("child-stopped").exists();
+        if !stopped {
+            // Even a regression must not leave the fixture spinning.
+            let pid: u32 = std::fs::read_to_string(root.path().join("child-pid"))
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            let _ = std::process::Command::new("bash")
+                .args(["-c", &format!("kill -TERM {pid}")])
+                .status();
+        }
+        assert!(stopped, "background child was not stopped");
+        assert!(
+            matches!(result, Start::Failed(ref why) if why.contains("exited 7")),
+            "{result:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("child-stopped"))
+                .unwrap()
+                .trim(),
+            "stopped"
+        );
     }
 
     /// The file reads as it was approved, and reads back the same.
@@ -758,7 +862,7 @@ mod tests {
             ready: None,
         }
         .tidy();
-        assert_eq!(messy.start.as_deref(), Some("npm run dev"));
+        assert_eq!(messy.start.as_deref(), Some("npm run\n dev"));
         assert_eq!(messy.test, ["npm test"]);
         assert_eq!(messy.stop, None);
         assert!(RunFile::default().is_empty() && !messy.is_empty());
@@ -900,9 +1004,23 @@ mod tests {
         assert!(!answer.up(), "a server error is not up");
         t.join().unwrap();
         assert!(
-            Answer::Status(404).up(),
-            "a page that isn't there still answered"
+            !Answer::Status(404).up(),
+            "a missing health endpoint is not ready"
         );
+        assert!(!Answer::Status(401).up());
+        assert!(
+            !Answer::Listening.up(),
+            "a TCP listener is not a health check"
+        );
+        let (plain_url, plain) = server(200, 1);
+        assert!(
+            !ask(
+                &plain_url.replacen("http:", "https:", 1),
+                Duration::from_secs(2)
+            )
+            .up()
+        );
+        plain.join().unwrap();
         // Nothing listening: the port was just released.
         assert!(matches!(
             ask(&url, Duration::from_millis(300)),
@@ -929,7 +1047,7 @@ mod tests {
             stop: Some("echo down > state".into()),
             ..RunFile::default()
         };
-        let Start::Up { started, how } =
+        let Start::Up { mut started, how } =
             start(&run, root.path(), &log, Duration::from_secs(20), &cancel).unwrap()
         else {
             panic!("did not start");
@@ -941,7 +1059,7 @@ mod tests {
             "up\n"
         );
         assert_eq!(
-            stop(started, root.path(), &cancel).unwrap(),
+            stop(&mut started, root.path(), &cancel).unwrap(),
             "echo down > state"
         );
         assert_eq!(
@@ -965,7 +1083,7 @@ mod tests {
             start: Some("echo serving; sleep 60".into()),
             ..RunFile::default()
         };
-        let Start::Up { started, how } = start_settling(
+        let Start::Up { mut started, how } = start_settling(
             &run,
             root.path(),
             &log,
@@ -981,7 +1099,7 @@ mod tests {
         assert!(crate::tools::shell::group_alive(pgid));
         assert_eq!(started.note().pid, Some(pgid));
         assert_eq!(
-            stop(started, root.path(), &cancel).unwrap(),
+            stop(&mut started, root.path(), &cancel).unwrap(),
             "ended the start command"
         );
         assert!(!crate::tools::shell::group_alive(pgid));
@@ -992,7 +1110,7 @@ mod tests {
             start: Some("sleep 60 &".into()),
             ..RunFile::default()
         };
-        let Start::Up { started, .. } =
+        let Start::Up { mut started, .. } =
             start(&run, root.path(), &log, Duration::from_secs(20), &cancel).unwrap()
         else {
             panic!("did not start");
@@ -1000,7 +1118,7 @@ mod tests {
         let pgid = started.pgid().expect("what it left running is held");
         assert!(crate::tools::shell::group_alive(pgid));
         assert_eq!(
-            stop(started, root.path(), &cancel).unwrap(),
+            stop(&mut started, root.path(), &cancel).unwrap(),
             "ended what the start command left running"
         );
         assert!(!crate::tools::shell::group_alive(pgid));
@@ -1055,10 +1173,7 @@ mod tests {
             ..RunFile::default()
         };
         match start(&run, root.path(), &log, Duration::from_millis(600), &cancel).unwrap() {
-            Start::Failed(why) => assert!(
-                why.contains("Ryter ran `echo down > state` to take it down"),
-                "{why}"
-            ),
+            Start::Failed(why) => assert!(why.contains("Cleanup: echo down > state"), "{why}"),
             other => panic!("{other:?}"),
         }
         assert_eq!(
@@ -1090,6 +1205,7 @@ mod tests {
         let root = TempDir::new().unwrap();
         assert_eq!(remembered(home.path(), root.path()), None);
         let left = Left {
+            cleanup_pending: false,
             at: "2026-10-01 14:02".into(),
             address: Some("http://localhost:8000".into()),
             stop: Some("docker compose down".into()),
@@ -1188,6 +1304,7 @@ mod tests {
                 assert!(panicked.is_err());
                 assert_eq!(find(&root, &home), Found::Approved(cms()), "{profile}");
                 let left = Left {
+                    cleanup_pending: false,
                     at: "2026-10-01 14:02".into(),
                     address: Some("http://localhost:8000/".into()),
                     stop: Some("docker compose down".into()),

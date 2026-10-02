@@ -12,8 +12,8 @@
 //!   else is on `PATH` there. Without them most projects can't build.
 //! - **The tools' download caches,** to write: a build that fetches a
 //!   dependency writes it there.
-//! - **Part of Ryter's own folder:** its scratch folder, logs, sessions,
-//!   and pages to write; skills and the rules file to read.
+//! - **Part of Ryter's own folder:** the active session's notes and pages
+//!   to write; skills and the rules file to read. Records stay outside tools.
 //!
 //! - **Scratch space,** to read and write: `/tmp` and `/var/tmp`. Tools and
 //!   scripts name `/tmp` outright, and with it shut they failed with
@@ -37,7 +37,7 @@ use crate::error::{Error, Result};
 pub enum SandboxProfile {
     /// No Landlock. Default.
     Off,
-    /// Workspace + `~/.ryter` writable; the rest of the tree is unreachable except a small read set.
+    /// Workspace and active notes/pages writable, with a small shared read set.
     Workspace,
     /// Like [`Self::Workspace`] but the project tree is read-only.
     ReadOnly,
@@ -73,6 +73,120 @@ impl FromStr for SandboxProfile {
             ))),
         }
     }
+}
+
+/// A tool scope follows the active session without constraining the agent's
+/// record-writing thread. Each invocation creates a fresh restricted thread.
+#[derive(Debug, Clone)]
+pub struct Scope {
+    /// Requested profile.
+    pub profile: SandboxProfile,
+    home: PathBuf,
+    machine: Machine,
+}
+
+impl Scope {
+    /// No worker is needed when the user chose `off`.
+    pub fn for_profile(profile: SandboxProfile, home: &Path) -> Option<Self> {
+        (profile != SandboxProfile::Off).then(|| Self {
+            profile,
+            home: home.to_path_buf(),
+            machine: Machine::here(),
+        })
+    }
+
+    /// Prove enforcement before beginning a session's provider requests.
+    pub fn check(&self, workspace: &Path, notes: &Path) -> Result<()> {
+        self.run(workspace, notes, || Ok(()))
+    }
+
+    /// Run built-in tool or approved lifecycle work with only this session's
+    /// notes/pages granted. Errors applying the profile never run the closure.
+    pub fn run<T: Send>(
+        &self,
+        workspace: &Path,
+        notes: &Path,
+        run: impl FnOnce() -> Result<T> + Send,
+    ) -> Result<T> {
+        let home = std::fs::canonicalize(&self.home).map_err(|e| Error::Config(e.to_string()))?;
+        let workspace =
+            std::fs::canonicalize(workspace).map_err(|e| Error::Config(e.to_string()))?;
+        let rel = notes
+            .strip_prefix(&self.home)
+            .or_else(|_| notes.strip_prefix(&home))
+            .map_err(|_| Error::Config("sandbox notes must belong to this Ryter home".into()))?;
+        let parts: Vec<_> = rel.components().collect();
+        if parts.len() != 4
+            || parts[0].as_os_str() != "sessions"
+            || parts[3].as_os_str() != "notes"
+            || parts
+                .iter()
+                .any(|p| !matches!(p, std::path::Component::Normal(_)))
+        {
+            return Err(Error::Config(
+                "sandbox notes must be home/sessions/project/session/notes".into(),
+            ));
+        }
+        if home.starts_with(&workspace) {
+            return Err(Error::Config("sandbox cannot isolate sessions when the workspace contains Ryter's home; choose a Ryter home outside the workspace".into()));
+        }
+        #[cfg(target_os = "linux")]
+        if SYSTEM_READ
+            .iter()
+            .chain(SCRATCH)
+            .any(|root| home.starts_with(root))
+        {
+            return Err(Error::Config("sandbox cannot isolate a Ryter home inside shared system or scratch directories; choose a private home outside them".into()));
+        }
+        let notes = child_dir(&home, rel)?;
+        let pages = child_dir(&home, &Path::new("pages").join(parts[2].as_os_str()))?;
+        // Start the clerk from the unrestricted parent before any tool thread.
+        crate::outside::start();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    apply_scoped(
+                        self.profile,
+                        &workspace,
+                        &home,
+                        &self.machine,
+                        &[notes, pages],
+                    )?;
+                    run()
+                })
+                .join()
+                .map_err(|_| Error::Config("sandbox tool thread panicked".into()))?
+        })
+    }
+}
+
+/// Create only real child directories: a storage alias must never turn into a
+/// grant on another session or the key store. The configured root may be linked.
+fn child_dir(root: &Path, relative: &Path) -> Result<PathBuf> {
+    let mut path = root.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(Error::Config(
+                "sandbox grant contains a non-relative component".into(),
+            ));
+        };
+        path.push(name);
+        match std::fs::create_dir(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(Error::Config(e.to_string())),
+        }
+        if !path
+            .symlink_metadata()
+            .is_ok_and(|m| m.file_type().is_dir())
+        {
+            return Err(Error::Config(format!(
+                "sandbox storage must be a real directory: {}",
+                path.display()
+            )));
+        }
+    }
+    Ok(path)
 }
 
 /// Probe whether this kernel can enforce Landlock. Never applies a ruleset.
@@ -251,8 +365,19 @@ pub fn tool_reach(machine: &Machine) -> (Vec<PathBuf>, Vec<PathBuf>) {
     // grant on what it points at: `~/.cache/pip` linked to `~/.ssh` would
     // open the keys. A linked tool folder is left out.
     let real = |p: &Path| {
-        p.symlink_metadata()
-            .is_ok_and(|m| !m.file_type().is_symlink())
+        let Ok(relative) = p.strip_prefix(home) else {
+            return false;
+        };
+        let mut current = home.to_path_buf();
+        relative.components().all(|part| {
+            if !matches!(part, std::path::Component::Normal(_)) {
+                return false;
+            }
+            current.push(part);
+            current
+                .symlink_metadata()
+                .is_ok_and(|m| !m.file_type().is_symlink())
+        })
     };
     let under = |list: &[&str]| -> Vec<PathBuf> {
         list.iter()
@@ -291,12 +416,22 @@ pub fn apply_on(
     home: &Path,
     machine: &Machine,
 ) -> Result<()> {
+    apply_scoped(profile, workspace, home, machine, &[])
+}
+
+fn apply_scoped(
+    profile: SandboxProfile,
+    workspace: &Path,
+    home: &Path,
+    machine: &Machine,
+    writable: &[PathBuf],
+) -> Result<()> {
     if profile == SandboxProfile::Off {
         return Ok(());
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (workspace, home, machine);
+        let _ = (workspace, home, machine, writable);
         Err(Error::Config(format!(
             "sandbox {profile} requested but Landlock is Linux-only"
         )))
@@ -306,7 +441,7 @@ pub fn apply_on(
         // Ryter's own records are kept by a thread that is not in the
         // sandbox, and it has to exist before there is one.
         crate::outside::start();
-        apply_linux(profile, workspace, home, machine)?;
+        apply_linux(profile, workspace, home, machine, writable)?;
         ACTIVE.with(|a| a.set(profile));
         Ok(())
     }
@@ -330,6 +465,7 @@ fn apply_linux(
     workspace: &Path,
     home: &Path,
     machine: &Machine,
+    writable: &[PathBuf],
 ) -> Result<()> {
     use landlock::{
         ABI, Access, AccessFs, CompatLevel, Compatible, Ruleset, RulesetAttr, RulesetCreatedAttr,
@@ -379,11 +515,18 @@ fn apply_linux(
     // builder's bash read every API key. Landlock has no negative rules, so the
     // writable set is enumerated instead. Keys are resolved before `apply` runs,
     // so nothing here needs them.
-    let (tools, caches) = tool_reach(machine);
+    let (mut tools, mut caches) = tool_reach(machine);
+    // PATH/cache grants must not reopen any part of Ryter's private store.
+    let separate = |path: &PathBuf| {
+        let path = canonicalize_or(path);
+        !path.starts_with(&home) && !home.starts_with(path)
+    };
+    tools.retain(separate);
+    caches.retain(separate);
     let mut read = existing(SYSTEM_READ);
-    read.extend(readable_set(&home));
+    read.extend(readable_set(&home)?);
     read.extend(tools);
-    let mut write = writable_set(&home);
+    let mut write = writable.to_vec();
     write.extend(caches);
     write.extend(existing(DEVICES));
     write.extend(existing(SCRATCH));
@@ -433,22 +576,13 @@ fn by_kind(paths: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<PathBuf>) {
     paths.into_iter().partition(|p| p.is_dir())
 }
 
-/// Directories a sandboxed thread may write, created if missing.
-///
-/// Enumerated rather than granting `~/.ryter` wholesale: Landlock has no
-/// negative rules, so any grant on the parent would re-expose `keys/`.
-#[cfg(target_os = "linux")]
-fn writable_set(home: &Path) -> Vec<std::path::PathBuf> {
-    made(home, &["tmp", "logs", "sessions", "pages"])
-}
-
 /// What a sandboxed thread may read in `~/.ryter`, beyond what it writes:
 /// the user's skills, which the model loads, and their rules file, which
 /// goes in every prompt. Read only: a rules file the sandboxed shell could
 /// write would change without the user being asked.
 #[cfg(target_os = "linux")]
-fn readable_set(home: &Path) -> Vec<std::path::PathBuf> {
-    let mut set = made(home, &["skills"]);
+fn readable_set(home: &Path) -> Result<Vec<std::path::PathBuf>> {
+    let mut set = vec![child_dir(home, Path::new("skills"))?];
     // The file itself, and only a real one. A link there would be followed,
     // and one pointing at `keys/<connection>` would hand the key to the
     // sandbox. `home` is resolved; the name is joined on and not resolved.
@@ -459,18 +593,7 @@ fn readable_set(home: &Path) -> Vec<std::path::PathBuf> {
     {
         set.push(rules);
     }
-    set
-}
-
-#[cfg(target_os = "linux")]
-fn made(home: &Path, subs: &[&str]) -> Vec<std::path::PathBuf> {
-    subs.iter()
-        .map(|sub| {
-            let p = home.join(sub);
-            let _ = std::fs::create_dir_all(&p);
-            canonicalize_or(&p)
-        })
-        .collect()
+    Ok(set)
 }
 
 #[cfg(target_os = "linux")]
@@ -488,17 +611,38 @@ fn existing(paths: &[&str]) -> Vec<std::path::PathBuf> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A folder for a test that puts a profile on a thread, outside
     /// scratch space: `/tmp` is open under every profile, so what a test
     /// expects to be shut has to be somewhere else.
     #[cfg(target_os = "linux")]
-    fn outside_scratch() -> tempfile::TempDir {
+    pub(crate) fn outside_scratch() -> tempfile::TempDir {
         let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/sandbox-tests");
         std::fs::create_dir_all(&base).unwrap();
         tempfile::Builder::new().tempdir_in(base).unwrap()
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn fixture_scope(profile: SandboxProfile, home: &Path) -> Scope {
+        Scope {
+            profile,
+            home: home.to_path_buf(),
+            machine: Machine::default(),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn supported(scope: &Scope, workspace: &Path, notes: &Path) -> bool {
+        if let Err(e) = scope.check(workspace, notes) {
+            let message = e.to_string();
+            assert!(message.contains("Landlock is unavailable"), "{message}");
+            eprintln!("kernel cannot enforce Landlock: {message}");
+            false
+        } else {
+            true
+        }
     }
 
     /// The writable set must not include the plaintext key store.
@@ -507,31 +651,14 @@ mod tests {
     fn sandbox_does_not_grant_the_key_store() {
         use tempfile::TempDir;
         let home = TempDir::new().unwrap();
-        let ws = TempDir::new().unwrap();
-        std::fs::create_dir_all(home.path().join("keys")).unwrap();
-        std::fs::write(home.path().join("keys/spacexai"), "xai-secret").unwrap();
-        // Landlock is applied to the calling thread and cannot be undone, so
-        // this asserts the rule set rather than applying it.
-        let rw = writable_set(home.path());
-        assert!(
-            !rw.iter().any(|p| p.ends_with("keys")),
-            "keys must never be writable: {rw:?}"
-        );
-        assert!(
-            !rw.iter().any(|p| p == home.path()),
-            "granting all of ~/.ryter re-exposes keys: {rw:?}"
-        );
-        assert!(rw.iter().any(|p| p.ends_with("sessions")), "{rw:?}");
-        assert!(rw.iter().any(|p| p.ends_with("tmp")), "{rw:?}");
-        assert!(rw.iter().any(|p| p.ends_with("pages")), "{rw:?}");
-        let ro = readable_set(home.path());
+        let ro = readable_set(home.path()).unwrap();
         assert!(
             ro.iter().all(|p| p.ends_with("skills")),
             "only skills is read beyond the writable set: {ro:?}"
         );
         // With a rules file, that one file too, and never the keys.
         crate::rules::save(home.path(), "- a rule").unwrap();
-        let ro = readable_set(home.path());
+        let ro = readable_set(home.path()).unwrap();
         assert!(
             ro.iter().any(|p| p.ends_with("RYTER.md")) && !ro.iter().any(|p| p.ends_with("keys")),
             "{ro:?}"
@@ -546,12 +673,136 @@ mod tests {
             crate::rules::path(home.path()),
         )
         .unwrap();
-        let ro = readable_set(home.path());
+        let ro = readable_set(home.path()).unwrap();
         assert!(
             ro.iter().all(|p| p.ends_with("skills")),
             "a linked rules file adds nothing: {ro:?}"
         );
-        let _ = ws;
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn scopes_switch_sessions_without_exposing_records_or_old_grants() {
+        use crate::session::Session;
+        let ws = outside_scratch();
+        let home = outside_scratch();
+        let scope = fixture_scope(SandboxProfile::Workspace, home.path());
+        let first =
+            Session::create(home.path(), ws.path(), "fixture".into(), "fixture".into()).unwrap();
+        if !supported(&scope, ws.path(), &first.notes_dir()) {
+            return;
+        }
+        let second =
+            Session::create(home.path(), ws.path(), "fixture".into(), "fixture".into()).unwrap();
+        // A new session is created after the first scope was already used.
+        for (current, other) in [(&first, &second), (&second, &first), (&first, &second)] {
+            let notes = current.notes_dir();
+            let pages = home.path().join("pages").join(current.meta.id.as_str());
+            let other_pages = home.path().join("pages").join(other.meta.id.as_str());
+            std::fs::create_dir_all(&other_pages).unwrap();
+            std::fs::write(other.notes_dir().join("private"), "other notes").unwrap();
+            std::fs::write(other_pages.join("private"), "other page").unwrap();
+            scope
+                .run(ws.path(), &notes, || {
+                    std::fs::write(notes.join("mine"), "allowed").unwrap();
+                    std::fs::write(pages.join("mine"), "allowed").unwrap();
+                    std::fs::write(ws.path().join("project"), "allowed").unwrap();
+                    for denied in [
+                        other.notes_dir().join("private"),
+                        other_pages.join("private"),
+                        other.dir.join("meta.json"),
+                        current.dir.join("meta.json"),
+                        current.dir.join("spend.jsonl"),
+                        current.dir.join("transcript.jsonl"),
+                    ] {
+                        assert!(std::fs::read(&denied).is_err(), "read {}", denied.display());
+                        assert!(
+                            std::fs::write(&denied, "corrupt").is_err(),
+                            "write {}",
+                            denied.display()
+                        );
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            assert_eq!(active(), SandboxProfile::Off);
+            let mut resumed = Session::open(&current.dir).unwrap();
+            resumed.set_title("bookkeeping after scoped tool").unwrap();
+            assert!(Session::open(&current.dir).is_ok());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linked_storage_and_overlapping_home_fail_before_running_tools() {
+        use std::os::unix::fs::symlink;
+        let ws = outside_scratch();
+        for link in [
+            "sessions",
+            "sessions/project",
+            "sessions/project/s1",
+            "sessions/project/s1/notes",
+            "pages",
+            "pages/s1",
+            "skills",
+        ] {
+            let home = outside_scratch();
+            let target = outside_scratch();
+            let path = home.path().join(link);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            symlink(target.path(), &path).unwrap();
+            let scope = fixture_scope(SandboxProfile::Workspace, home.path());
+            assert!(
+                scope
+                    .run(
+                        ws.path(),
+                        &home.path().join("sessions/project/s1/notes"),
+                        || {
+                            panic!("linked storage must never run a tool");
+                            #[allow(unreachable_code)]
+                            Ok(())
+                        }
+                    )
+                    .is_err(),
+                "{link}"
+            );
+        }
+        let home = ws.path().join("private");
+        std::fs::create_dir(&home).unwrap();
+        let scope = fixture_scope(SandboxProfile::Workspace, &home);
+        assert!(
+            scope
+                .check(ws.path(), &home.join("sessions/project/s1/notes"))
+                .unwrap_err()
+                .to_string()
+                .contains("workspace contains")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn path_entries_cannot_reopen_private_session_storage() {
+        let user = outside_scratch();
+        let home = user.path().join("private");
+        let ws = outside_scratch();
+        let secret = home.join("sessions/other/private");
+        std::fs::create_dir_all(secret.parent().unwrap()).unwrap();
+        std::fs::write(&secret, "private").unwrap();
+        let mut scope = fixture_scope(SandboxProfile::Workspace, &home);
+        scope.machine = Machine {
+            user_home: Some(user.path().into()),
+            path: format!("{}:{}", home.display(), home.join("sessions").display()),
+        };
+        let notes = home.join("sessions/project/s1/notes");
+        if !supported(&scope, ws.path(), &notes) {
+            return;
+        }
+        scope
+            .run(ws.path(), &notes, || {
+                assert!(std::fs::read(&secret).is_err());
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -621,29 +872,32 @@ mod tests {
         std::fs::create_dir_all(home.path().join("keys")).unwrap();
         std::fs::write(home.path().join("keys/spacexai"), "xai-secret").unwrap();
         crate::rules::save(home.path(), "- a rule").unwrap();
-        let (ws_p, home_p) = (ws.path().to_path_buf(), home.path().to_path_buf());
-        let handle = std::thread::spawn(move || {
-            if let Err(e) = apply(SandboxProfile::ReadOnly, &ws_p, &home_p) {
-                eprintln!("sandbox apply skipped: {e}");
-                return;
-            }
-            assert_eq!(active(), SandboxProfile::ReadOnly);
-            // The user's rules are read for every prompt, and can't be
-            // written from in here, by Ryter or by a shell command.
-            assert_eq!(crate::rules::load(&home_p).as_deref(), Some("- a rule"));
-            assert!(crate::rules::save(&home_p, "- another").is_err());
-            assert!(std::fs::write(crate::rules::path(&home_p), "x").is_err());
-            let page = home_p.join("pages/s1/report.html");
-            std::fs::create_dir_all(page.parent().unwrap()).unwrap();
-            std::fs::write(&page, "<p>x</p>").unwrap();
-            assert_eq!(
-                std::fs::read_to_string(home_p.join("skills/mine/SKILL.md")).unwrap(),
-                "body"
-            );
-            assert!(std::fs::write(home_p.join("skills/mine/x"), "y").is_err());
-            assert!(std::fs::read_to_string(home_p.join("keys/spacexai")).is_err());
-        });
-        handle.join().expect("sandbox thread");
+        let home_p = home.path().to_path_buf();
+        let scope = fixture_scope(SandboxProfile::ReadOnly, home.path());
+        let notes = home.path().join("sessions/project/s1/notes");
+        if !supported(&scope, ws.path(), &notes) {
+            return;
+        }
+        scope
+            .run(ws.path(), &notes, || {
+                assert_eq!(active(), SandboxProfile::ReadOnly);
+                // The user's rules are read for every prompt, and can't be
+                // written from in here, by Ryter or by a shell command.
+                assert_eq!(crate::rules::load(&home_p).as_deref(), Some("- a rule"));
+                assert!(crate::rules::save(&home_p, "- another").is_err());
+                assert!(std::fs::write(crate::rules::path(&home_p), "x").is_err());
+                let page = home_p.join("pages/s1/report.html");
+                std::fs::create_dir_all(page.parent().unwrap()).unwrap();
+                std::fs::write(&page, "<p>x</p>").unwrap();
+                assert_eq!(
+                    std::fs::read_to_string(home_p.join("skills/mine/SKILL.md")).unwrap(),
+                    "body"
+                );
+                assert!(std::fs::write(home_p.join("skills/mine/x"), "y").is_err());
+                assert!(std::fs::read_to_string(home_p.join("keys/spacexai")).is_err());
+                Ok(())
+            })
+            .unwrap();
         assert_eq!(active(), SandboxProfile::Off, "only the sandboxed thread");
     }
 

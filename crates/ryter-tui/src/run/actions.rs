@@ -162,7 +162,11 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             }
             cx.want_redraw = true;
         }
-        Action::Submit(text) => cx.send(Work::Turn { text, reply: None }),
+        Action::Submit(text) => cx.send(Work::Turn {
+            text,
+            reply: None,
+            inbound: None,
+        }),
         Action::Cancel => {
             if view.busy {
                 cx.cancel.cancel();
@@ -626,12 +630,16 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
     view.unpriced_calls = 0;
     if let Ok(recs) = session.spend_log() {
         for r in recs {
+            if r.incomplete && r.total_usd.is_some() {
+                view.unpriced_calls += 1;
+            }
             let role = r.role.to_string();
             for (key, map) in [
                 (role.clone(), &mut view.spend_rows_role),
                 (r.connection.clone(), &mut view.spend_rows_conn),
             ] {
                 let row = map.entry(key).or_default();
+                row.unpriced |= r.incomplete;
                 row.calls += 1;
                 row.input += r.input_tokens;
                 row.output += r.output_tokens;

@@ -18,6 +18,39 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 
 ## Now
 
+- **Live acceptance evidence:** [ten-task OpenRouter run](docs/acceptance-2026-10-02.md), $0.418755831 of $5: six hidden-test passes, five complete passing hat flows, three false review passes and three false Test passes. Keep external review and improve requirement coverage before treating model verdicts as completion evidence.
+
+- **Unreleased — review repair 8a: acceptance and benchmark.** A full simulated session covers plan approval, build, review, approved Test commands, resume, undo/redo, later user edits and commit receipts. Isolated CLI checks cover routing, all four hats, interrupted accounting, budgets and recovery. The ten-task benchmark now validates references, measures hidden acceptance and false passes, and distinguishes simulated accounting from opt-in live charges. Explicit CLI routes override saved hat defaults for that run.
+
+- **Unreleased — review repair 7c: session sandbox scopes.** Each tool, hook, automatic Git operation and approved lifecycle command runs in a fresh scope with only the active session’s notes and pages. Other sessions and private records stay closed. Session switching keeps working without accumulating grants.
+
+
+- **Unreleased — review repair 1 follow-up: protected path components.** Shared secret classification now catches credential directories at the project root as well as nested paths. All four hats reject direct reads, shell reads and linked aliases; grep skips their contents. Example environment files and published verification keys remain readable.
+
+- **Unreleased — review repair 8d: Git scratch ownership.** Each checkpoint, initial-index probe and commit message owns a unique private scratch directory in Git metadata. Cleanup runs on success and failure. Concurrent snapshots preserve the real index; concurrent session appends remain readable after resume.
+
+- **Unreleased — review repair 8c: MCP transcript and public guidance.** Inbound transcript reads return bounded active-conversation snapshots without taking the agent lock. CLI socket examples supply a path, and current documentation describes four hats and the actual command/sandbox permissions.
+
+- **Unreleased — review repair 8b: installation and dependency checks.** Bootstrap installation verifies signed checksums with the updater’s pinned key and uses unique atomic staging. Tampered/missing signatures, changed archives and linked executables preserve the existing install. CI checks dependency advisories, declared licenses and registries; release archives carry dependency notices. Removed unused YAML/plist loaders and replaced the yanked yoke-derive version. Two transitive maintenance notices (bincode and paste) remain explicitly tracked pending upstream/UI migrations.
+
+- **Unreleased — review repair 7b: bounded output.** Shell pipes retain fixed head/tail buffers while draining continuously. File paging and grep stream bounded lines; oversized/skipped lines and capped search results are explicit. Edit/diff inputs and directory/note enumeration have finite limits too.
+
+- **Unreleased — review repair 7a: context limits.** Admission and the gauge follow the active hat’s route, include tool schemas and reserve output space. Configured or cached model limits override the fallback. Compaction retains user constraints and assistant notes, can shorten older tool results within one turn, and must reduce size. Oversized turns and commit drafts stop before calling the provider.
+
+- **Unreleased — review repair 6b: session recovery.** Resume recovers torn final records in either conversation and the spend ledger, keeps an original backup, and reports the recovery. Complete/middle corruption fails without changing the logs. Spending reconciles from the ledger without lowering older cached totals; uncertain recovery keeps the budget closed.
+
+- **Unreleased — review repair 6a: MCP responsiveness.** Blocking requests use bounded workers while cancellation stays available; overlapping prompts receive a busy response. CLI status and spend use completed-turn snapshots, and a disconnected prompt owner cancels its active work.
+
+- **Unreleased — review repair 5: project lifecycle.** Run commands preserve quoted spaces and newlines. Every failed start cleans up its owned process group and approved stop command; failed cleanup stays recorded and retryable, including after resume. Readiness requires successful HTTP over HTTP or HTTPS, and an occupied address is not claimed by a new start.
+
+- **Unreleased — review repair 4: streamed tool identity.** Chat and Messages retain per-call indices; Responses retains item identity separately from its result call ID. Interleaved calls reconstruct and execute their own arguments on all three protocols.
+
+- **Unreleased — review repair 2b: undo from nested directories.** Snapshot differences retain repository-relative paths and stay within the launch directory. Undo and redo restore those paths from the repository root, preserving unrelated files, the branch and the user’s staging area.
+- **Unreleased — review repair 2a: socket paths.** Binding an MCP socket preserves every existing path, including stale sockets. An occupied name produces an actionable error instead of deleting data.
+- **Unreleased — review repair 3: spending integrity.** Commit drafting obeys the same budget admission checks as turns. Interrupted calls retain reported usage and mark accounting incomplete; a budget then stops further requests even after resume. Missing override rates remain unknown.
+
+- **Unreleased — review repair 1: file-read boundaries.** Project instructions, prompt overrides and memory refuse linked files and directories; memory has one 48 KB cap. Search refuses linked files, and nested `.env` variants follow the same secret rules as root files. Regression tests cover all four hats. Remaining repair stages are in `docs/review-2026-10-02.md`.
+
 Work that is in `dev` and not yet released is marked *Unreleased*, and its notes collect in `docs/releases/next.md`. An entry gets its version when it's released.
 
 - **0.11.0 — the gate judges what runs, not what was written.** From the release's first round of external reviews. The gate expands patterns and lists as the shell does and judges every match; follows `cd`; reads option values, unspaced redirects and the shell's own words; refuses what changes how the shell reads (`HOME=…`, `shopt`, `env -C`); reads inline-code flags per interpreter; judges `git`, searches through folders and container paths. The plan and review hats no longer write the user's folder. Ryter's own files are never written or read through a link, and its records are kept from outside the sandbox.
@@ -187,7 +220,7 @@ Ryter is one mode: one model in the project, with a hat for each stage of the wo
 - **Recorded wire fixtures + a live smoke test.** Tool calling was broken on two backends while 212 tests passed, because every test used idealized deltas. Record real SSE per provider (tool calls, parallel calls, truncation) and replay those; add one nightly live round trip per built-in provider.
 - **Streamed `bash` output** (the shell already passes a running command's newest lines to a hook nothing listens on), and **reconcile the context gauge** with the provider's real `input_tokens` rather than bytes/4.
 - **macOS without the sandbox**, labelled Linux-only.
-- Anthropic extended thinking + tools (thinking blocks must be echoed back on `messages`); compaction that keeps a summary rather than a file list; `ryter-cli` tests; confirm grok-4.6's context window (500k in `window_for`, 256k in fixtures); a hat on a model with a smaller window than the main one can overflow before the conversation is compacted; rename `[orchestrator]`, `[specialists.*]` and the `Solo*` names in the code now that there is one mode.
+- Anthropic extended thinking + tools (thinking blocks must be echoed back on `messages`); `ryter-cli` tests; confirm grok-4.6's context window (500k in `window_for`, 256k in fixtures); rename `[orchestrator]`, `[specialists.*]` and the `Solo*` names in the code now that there is one mode.
 
 Previously listed:
 

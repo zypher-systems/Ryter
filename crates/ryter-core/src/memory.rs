@@ -9,12 +9,34 @@ const MEMORY_CAP: usize = 48_000;
 pub fn load_project_memory(project_root: Option<&Path>) -> Option<String> {
     let root = project_root?;
     let mut out = String::new();
-    append_file(&mut out, "ROADMAP.md", &root.join("ROADMAP.md"));
-    append_file(&mut out, "DECISIONS.md", &root.join("DECISIONS.md"));
+    append_file(&mut out, root, "ROADMAP.md");
+    append_file(&mut out, root, "DECISIONS.md");
     if let Ok(rd) = fs::read_dir(root.join("notes")) {
-        let mut files: Vec<_> = rd.flatten().map(|e| e.path()).collect();
-        files.sort();
+        // Keep only the first 128 Markdown names in sorted order. Scanning a
+        // large notes directory must not allocate a path for every entry.
+        let mut files = std::collections::BTreeSet::new();
+        let mut limited = false;
+        for entry in rd.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("md") {
+                continue;
+            }
+            files.insert(path);
+            if files.len() > 128 {
+                files.pop_last();
+                limited = true;
+            }
+        }
+        if limited {
+            let note = "[memory limited to the first 128 note filenames]\n";
+            if out.len() + note.len() <= MEMORY_CAP {
+                out.push_str(note);
+            }
+        }
         for p in files {
+            if out.len() >= MEMORY_CAP {
+                break;
+            }
             if p.extension().and_then(|e| e.to_str()) != Some("md") {
                 continue;
             }
@@ -22,39 +44,30 @@ pub fn load_project_memory(project_root: Option<&Path>) -> Option<String> {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            append_file(&mut out, &format!("notes/{name}"), &p);
+            append_file(&mut out, root, &format!("notes/{name}"));
         }
     }
     if out.is_empty() { None } else { Some(out) }
 }
 
-fn append_file(out: &mut String, label: &str, path: &Path) {
-    let Ok(raw) = fs::read_to_string(path) else {
-        return;
-    };
-    if raw.trim().is_empty() {
+fn append_file(out: &mut String, root: &Path, label: &str) {
+    let header = format!("### {label}\n");
+    let cap = MEMORY_CAP.saturating_sub(out.len() + header.len() + 2);
+    if cap < crate::project_file::TRUNCATED.len() {
         return;
     }
-    let body = truncate(&raw);
-    out.push_str("### ");
-    out.push_str(label);
-    out.push('\n');
+    let Ok(body) = crate::project_file::read(root, Path::new(label), cap) else {
+        return;
+    };
+    if body.trim().is_empty() {
+        return;
+    }
+    out.push_str(&header);
     out.push_str(&body);
     if !body.ends_with('\n') {
         out.push('\n');
     }
     out.push('\n');
-}
-
-fn truncate(s: &str) -> String {
-    if s.len() <= MEMORY_CAP {
-        return s.to_string();
-    }
-    let mut cut = MEMORY_CAP;
-    while cut > 0 && !s.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    format!("{}\n\n…(truncated)\n", &s[..cut])
 }
 
 /// The project's memory files: `ROADMAP.md`, `DECISIONS.md`, `notes/*.md`.
@@ -79,6 +92,36 @@ pub fn is_memory_file(workspace: &Path, path: &Path) -> bool {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn note_enumeration_keeps_a_bounded_sorted_set() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir(dir.path().join("notes")).unwrap();
+        for i in (0..256).rev() {
+            fs::write(
+                dir.path().join(format!("notes/{i:03}.md")),
+                format!("note-{i:03}"),
+            )
+            .unwrap();
+        }
+        let memory = load_project_memory(Some(dir.path())).unwrap();
+        assert!(memory.contains("first 128 note filenames"));
+        assert!(memory.contains("note-000") && memory.contains("note-127"));
+        assert!(!memory.contains("note-128") && !memory.contains("note-255"));
+    }
+
+    #[test]
+    fn memory_has_one_aggregate_byte_limit() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir(dir.path().join("notes")).unwrap();
+        for file in ["ROADMAP.md", "DECISIONS.md", "notes/one.md", "notes/two.md"] {
+            fs::write(dir.path().join(file), "é".repeat(8_000)).unwrap();
+        }
+        let memory = load_project_memory(Some(dir.path())).unwrap();
+        assert!(memory.len() <= MEMORY_CAP);
+        assert!(memory.contains("ROADMAP.md") && memory.contains("DECISIONS.md"));
+        assert!(memory.contains("truncated"));
+    }
 
     #[test]
     fn load_includes_roadmap_and_notes() {
