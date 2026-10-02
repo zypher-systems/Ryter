@@ -725,7 +725,7 @@ Why, not what. Non-obvious choices are recorded here, newest first.
 - **Why:** the user can pay $25–$90 for one review. A budget that silently doesn't apply is worse than none.
 - **Where:** `crates/ryter-core/src/llm/parse.rs` (`usage_from`), `spend.rs`, `agent.rs` (`over_budget`, `unpriced_stop`), `meter.rs`, `session.rs`, `queue.rs`, `error.rs`
 - **Residual risk:**
-  - One unpriced call is always made before the stop.
+  - One unpriced call is always made before the stop, for each unpriced model. `Meta.unpriced_models` holds every one: a single slot let two unpriced models taking turns replace each other, and neither was stopped.
   - Long-context rates don't raise the cache-write rate.
   - A crew task id reused after its task was removed inherits nothing, but one removed and re-added with the same id during a single run would.
 
