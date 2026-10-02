@@ -1803,7 +1803,7 @@ fn command_words(seg: &str, ctx: &ToolContext) -> Vec<String> {
         let shells_own = parsed.prog.is_some_and(|p| {
             LEADS.contains(&p)
                 || CLOSES.contains(&p)
-                || matches!(p, "function" | "for" | "select" | "case")
+                || matches!(p, "function" | "coproc" | "for" | "select" | "case")
         });
         if !shells_own || at == 0 {
             return words;
@@ -4157,70 +4157,211 @@ fn git_leaves(from_git: &[String], seen: &[String], ctx: &ToolContext) -> bool {
 /// command runs. Which files those are is asked of git itself
 /// (`git ls-files`), since the patterns are git's to read.
 fn git_prints_a_tracked_secret(from_git: &[String], ctx: &ToolContext) -> bool {
-    let args = from_git.get(1..).unwrap_or_default();
-    let has = |fs: &[&str]| {
-        args.iter()
-            .any(|a| fs.iter().any(|f| a == f || a.starts_with(&format!("{f}="))))
+    // git's own options come before the verb, and some take a value as
+    // the next word: `git -c color.ui=false grep`, `git -C . diff`. Read
+    // as the verb, that value made the command one that prints nothing.
+    // The same options `decide_git` passes over.
+    const VALUED: &[&str] = &[
+        "-c",
+        "--config-env",
+        "-C",
+        "--git-dir",
+        "--work-tree",
+        "--namespace",
+        "--super-prefix",
+        "--list-cmds",
+        "--attr-source",
+        "--exec-path",
+    ];
+    // Where git is told to work: the repository whose files are listed.
+    let mut places: Vec<String> = Vec::new();
+    let mut i = 1;
+    while let Some(w) = from_git.get(i).map(String::as_str) {
+        if !w.starts_with('-') {
+            break;
+        }
+        i += 1;
+        let (name, attached) = match w.split_once('=') {
+            Some((n, v)) if w.starts_with("--") => (n, Some(v.to_string())),
+            _ => (w, None),
+        };
+        let value = if attached.is_none() && VALUED.contains(&name) {
+            i += 1;
+            from_git.get(i - 1).cloned()
+        } else {
+            attached
+        };
+        if matches!(name, "-C" | "--git-dir" | "--work-tree") {
+            places.push(name.to_string());
+            places.push(value.unwrap_or_default());
+        }
+    }
+    let Some(sub) = from_git.get(i).map(String::as_str) else {
+        return false;
     };
-    let sub = args
+    let args = from_git.get(i + 1..).unwrap_or_default();
+    // The verb's own options, up to `--`, without the values they take:
+    // `-e '-l'` is a pattern, not "names only".
+    let valued_short = match sub {
+        "grep" => "efABCmO",
+        _ => "nSG",
+    };
+    let mut options: Vec<&str> = Vec::new();
+    let mut k = 0;
+    while let Some(a) = args.get(k).map(String::as_str) {
+        k += 1;
+        if a == "--" {
+            break;
+        }
+        if a.len() < 2 || !a.starts_with('-') {
+            continue;
+        }
+        options.push(a);
+        if a.starts_with("--") {
+            if !a.contains('=')
+                && matches!(a, "--max-depth" | "--threads" | "--max-count" | "--skip")
+            {
+                k += 1;
+            }
+            continue;
+        }
+        for (at, c) in a[1..].char_indices() {
+            if valued_short.contains(c) {
+                if a[1 + at + c.len_utf8()..].is_empty() {
+                    k += 1;
+                }
+                break;
+            }
+        }
+    }
+    // An option that leaves what is in the files out of what is printed,
+    // or says nothing about it. One that isn't here is taken to print:
+    // `-pu`, `-U3`, `--patch-with-stat`, `--full-diff`.
+    let quiet = |o: &str| {
+        matches!(
+            o,
+            "--stat"
+                | "--name-only"
+                | "--name-status"
+                | "--shortstat"
+                | "--numstat"
+                | "--summary"
+                | "--no-patch"
+                | "-s"
+                | "--cached"
+                | "--staged"
+                | "--oneline"
+                | "--graph"
+                | "--decorate"
+                | "--no-decorate"
+                | "--all"
+                | "--branches"
+                | "--tags"
+                | "--remotes"
+                | "--reverse"
+                | "--first-parent"
+                | "--merges"
+                | "--no-merges"
+                | "--follow"
+                | "--abbrev-commit"
+                | "--no-color"
+                | "-q"
+                | "--quiet"
+                | "--no-ext-diff"
+                | "--no-textconv"
+                | "--date-order"
+                | "--topo-order"
+                | "--author-date-order"
+                | "-n"
+                | "-i"
+        ) || [
+            "--stat=",
+            "--format=",
+            "--pretty=",
+            "--since=",
+            "--until=",
+            "--after=",
+            "--before=",
+            "--author=",
+            "--committer=",
+            "--grep=",
+            "--date=",
+            "--max-count=",
+            "--skip=",
+            "--abbrev=",
+            "--color=",
+            "--decorate=",
+        ]
         .iter()
-        .find(|w| !w.starts_with('-'))
-        .map(String::as_str);
-    let names_only = has(&[
-        "--stat",
-        "--name-only",
-        "--name-status",
-        "--shortstat",
-        "--numstat",
-        "--summary",
-        "--no-patch",
-        "-s",
-    ]);
-    let patch = has(&["-p", "-u", "--patch", "--cc", "-c", "--full-diff"])
-        || args
-            .iter()
-            .any(|a| a.starts_with("-L") || a.starts_with("-G") || a.starts_with("-S"));
+        .any(|p| o.starts_with(p))
+            || (o.len() > 1 && o[1..].chars().all(|c| c.is_ascii_digit()))
+            || (o.starts_with("-n") && o[2..].chars().all(|c| c.is_ascii_digit()))
+    };
+    let names_only = options.iter().any(|o| {
+        matches!(
+            *o,
+            "--stat"
+                | "--name-only"
+                | "--name-status"
+                | "--shortstat"
+                | "--numstat"
+                | "--summary"
+                | "--no-patch"
+                | "-s"
+        ) || o.starts_with("--stat=")
+    });
+    let all_quiet = options.iter().all(|o| quiet(o));
     let prints = match sub {
-        Some("grep") => !has(&[
-            "-l",
-            "--files-with-matches",
-            "-L",
-            "--files-without-match",
-            "-c",
-            "--count",
-        ]),
-        Some("diff" | "show") => !names_only || patch,
-        Some("log" | "whatchanged" | "stash") => patch,
-        Some("cat-file") => !has(&["-t", "-s", "-e"]),
+        // Names or counts only, by a real option of its own.
+        "grep" => !options.iter().any(|o| {
+            matches!(
+                *o,
+                "--files-with-matches" | "--files-without-match" | "--name-only" | "--count"
+            ) || (!o.starts_with("--")
+                && o[1..]
+                    .chars()
+                    .take_while(|c| !valued_short.contains(*c))
+                    .any(|c| matches!(c, 'l' | 'L' | 'c')))
+        }),
+        "diff" | "show" => !(names_only && all_quiet),
+        "log" | "whatchanged" | "stash" => !all_quiet,
+        "cat-file" => !options.iter().any(|o| matches!(*o, "-t" | "-s" | "-e")),
         _ => false,
     };
     if !prints {
         return false;
     }
     let Some(dir) = base(ctx) else {
-        return false;
+        return true;
     };
     let mut git = std::process::Command::new("git");
     git.current_dir(&dir)
+        .args(&places)
         // Nothing of the repository's own is run to answer this.
-        .args(["-c", "core.fsmonitor=", "ls-files", "-z"])
+        .args(["-c", "core.fsmonitor=", "ls-files", "-z", "--full-name"])
         .env("GIT_OPTIONAL_LOCKS", "0")
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+    // Paths after `--` say which files are printed. Not with
+    // `--full-diff`, where they choose the commits and every file of
+    // those commits is printed.
+    let whole = options.contains(&"--full-diff");
     if let Some(at) = args.iter().position(|a| a == "--") {
-        if at + 1 < args.len() {
+        if !whole && at + 1 < args.len() {
             git.arg("--").args(&args[at + 1..]);
         }
     }
-    let Ok(out) = git.output() else {
-        return false;
-    };
-    out.status.success()
-        && out
+    match git.output() {
+        Ok(out) if out.status.success() => out
             .stdout
             .split(|b| *b == 0)
             .filter(|name| !name.is_empty())
-            .any(|name| is_secret(&dir.join(String::from_utf8_lossy(name).as_ref()), ctx))
+            .any(|name| is_secret(Path::new(String::from_utf8_lossy(name).as_ref()), ctx)),
+        // Where there is no repository, nothing is tracked. Where there
+        // is one and git can't list it, the command is one the gate
+        // couldn't look into.
+        _ => !places.is_empty() || real_path(&dir).ancestors().any(|a| a.join(".git").exists()),
+    }
 }
 
 /// What a search through folders would read.
@@ -7646,6 +7787,10 @@ mod tests {
             "coproc ls { sudo id; }",
             "coproc { ls; }",
             "coproc ls",
+            "time coproc CAT { python3 -c 'print(1)'; }",
+            "time -p coproc CAT { python3 -c 'print(1)'; }",
+            "time coproc { python3 -c 'print(1)'; }",
+            "time time coproc CAT { python3 -c 'print(1)'; }",
             "if true; then function cat { ls; }; fi; cat",
             "f() { ls; }",
         ]);
@@ -8101,6 +8246,37 @@ mod tests {
             "git stash show -p",
             "git cat-file -p HEAD",
             "time git grep x",
+            // git's own options before the verb, and their values.
+            "git -c foo.bar=1 grep x",
+            "git -c color.ui=false grep x",
+            "git -c foo.bar=1 diff",
+            "git -C . grep x",
+            "git -C . diff",
+            "git --git-dir .git grep x",
+            "git --git-dir=.git grep x",
+            "git --work-tree . grep x",
+            "git -c foo.bar=1 -C . --no-pager grep x",
+            "git --namespace n grep x",
+            "git --super-prefix p grep x",
+            "git --attr-source HEAD grep x",
+            "git --config-env foo.bar=HOME grep x",
+            "git --list-cmds main grep x",
+            "git --no-pager grep x",
+            "cd src && git -C .. grep x",
+            // A pattern that looks like "names only" is a pattern.
+            "git grep -e '-l' -e x",
+            "git grep -e '--count' -e x",
+            "git grep -e -c x",
+            // Every way of asking for the patch.
+            "git log -pu -1 --format=",
+            "git log -U3 -1",
+            "git diff --stat --patch-with-stat",
+            "git diff --stat -U3",
+            "git diff --stat -p",
+            "git show --stat --patch HEAD",
+            "git log --stat --cc",
+            // Its paths choose the commits, not the files printed.
+            "git log -p --full-diff -1 --format= -- tests",
         ]);
         m.runs(
             &HATS,
@@ -8114,6 +8290,13 @@ mod tests {
                 "git log -p -- tests",
                 "git status --short",
                 "git grep -l x",
+                "git grep -c x",
+                "git grep -il x",
+                "git -c foo.bar=1 grep -l x",
+                "git -C . diff --stat",
+                "git -C . grep x -- tests",
+                "git log --oneline --graph --all -20",
+                "git log -5 --format='%h %s' --since=1.week",
             ],
         );
     }
