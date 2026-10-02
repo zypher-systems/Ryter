@@ -3,7 +3,7 @@
 use regex::RegexBuilder;
 use serde_json::Value;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 
 use crate::diff::FileDiff;
 use crate::error::{Error, Result};
@@ -12,57 +12,96 @@ use crate::tools::{ToolContext, ToolOutput};
 
 /// Lines returned when the caller does not ask for a range.
 const DEFAULT_LINE_LIMIT: usize = 2_000;
+const MAX_EDIT_BYTES: usize = 2_000_000;
+
+fn edit_text(path: &std::path::Path) -> Result<Option<String>> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(Error::Config(e.to_string())),
+    };
+    let mut bytes = Vec::new();
+    file.take(MAX_EDIT_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| Error::Config(e.to_string()))?;
+    if bytes.len() > MAX_EDIT_BYTES {
+        return Err(Error::Config(format!(
+            "{} exceeds the {MAX_EDIT_BYTES}-byte edit/diff limit; use a focused project command",
+            path.display()
+        )));
+    }
+    Ok(String::from_utf8(bytes).ok())
+}
 
 pub fn read_file(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     let path = require_path(args, ctx)?;
-    let text = match open_for_read(&path, ctx).and_then(|mut file| {
-        let mut text = String::new();
-        file.read_to_string(&mut text)?;
-        Ok(text)
-    }) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
-            return Ok(ToolOutput::err(format!(
-                "{} is not a text file (compiled or binary); read the source instead",
-                path.display()
-            )));
-        }
-        Err(e) => return Err(Error::Config(e.to_string())),
-    };
-    // `offset` is 1-based to match the line numbers this prints.
+    let file = open_for_read(&path, ctx).map_err(|e| Error::Config(e.to_string()))?;
+    let mut reader = BufReader::new(file);
     let offset = args
         .get("offset")
         .and_then(Value::as_u64)
-        .map(|n| n.max(1) as usize - 1)
-        .unwrap_or(0);
+        .unwrap_or(1)
+        .max(1)
+        .saturating_sub(1);
     let limit = args
         .get("limit")
         .and_then(Value::as_u64)
-        .map(|n| n.max(1) as usize)
-        .unwrap_or(DEFAULT_LINE_LIMIT);
-    let all: Vec<&str> = text.lines().collect();
-    let total = all.len();
-    let end = offset.saturating_add(limit).min(total);
-    let mut out: String = all
-        .get(offset..end)
-        .unwrap_or_default()
-        .iter()
-        .enumerate()
-        .map(|(i, l)| format!("{:>4}|{l}", offset + i + 1))
-        .collect::<Vec<_>>()
-        .join("\n");
-    if end < total {
-        out.push_str(&format!(
-            "\n… {} more lines; read again with offset {} …",
-            total - end,
-            end + 1
-        ));
+        .unwrap_or(DEFAULT_LINE_LIMIT as u64)
+        .max(1);
+    let mut number = 0u64;
+    let mut out = String::new();
+    while number < offset.saturating_add(limit) {
+        let cap = if number < offset {
+            0
+        } else {
+            super::MAX_TOOL_OUTPUT_BYTES
+        };
+        let line = super::bounded::line(&mut reader, cap, &ctx.cancel)
+            .map_err(|e| Error::Config(e.to_string()))?;
+        let Some(line) = line else {
+            break;
+        };
+        number += 1;
+        if number <= offset {
+            continue;
+        }
+        let truncated = line.truncated;
+        let text = match line.text() {
+            Ok(text) => text,
+            Err(_) => {
+                return Ok(ToolOutput::err(format!(
+                    "{} is not a text file (compiled or binary); read the source instead",
+                    path.display()
+                )));
+            }
+        };
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&format!("{number:>4}|{text}"));
+        if truncated {
+            out.push_str(
+                "\n… this line exceeds the byte limit; its remaining bytes were skipped …",
+            );
+        }
+        if out.len() >= super::MAX_TOOL_OUTPUT_BYTES {
+            break;
+        }
     }
-    if offset >= total && total > 0 {
+    if number <= offset && number > 0 {
         out = format!(
-            "offset {} is past the end of the file ({total} lines)",
-            offset + 1
+            "offset {} is past the end of the file ({number} lines)",
+            offset.saturating_add(1)
         );
+    } else if !reader
+        .fill_buf()
+        .map_err(|e| Error::Config(e.to_string()))?
+        .is_empty()
+    {
+        out.push_str(&format!(
+            "\n… more lines; read again with offset {} …",
+            number.saturating_add(1)
+        ));
     }
     Ok(ToolOutput::ok(out))
 }
@@ -73,12 +112,17 @@ pub fn write_file(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         .get("content")
         .and_then(Value::as_str)
         .ok_or_else(|| Error::Config("write: missing content".into()))?;
+    if content.len() > MAX_EDIT_BYTES {
+        return Ok(ToolOutput::err(
+            "content exceeds the 2000000-byte edit limit; split the change",
+        ));
+    }
+    let old = edit_text(&path)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| Error::Config(e.to_string()))?;
     }
     // Say what happened, for the model and the chat: a new file, or a
     // rewrite and how big it was before.
-    let old = fs::read_to_string(&path).ok();
     let before = old.as_deref().map(|t| t.lines().count());
     let mut f = fs::File::create(&path).map_err(|e| Error::Config(e.to_string()))?;
     f.write_all(content.as_bytes())
@@ -102,7 +146,19 @@ pub fn search_replace(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         .get("new_string")
         .and_then(Value::as_str)
         .ok_or_else(|| Error::Config("search_replace: missing new_string".into()))?;
-    let text = fs::read_to_string(&path).map_err(|e| Error::Config(e.to_string()))?;
+    let text = edit_text(&path)?
+        .ok_or_else(|| Error::Config("file is missing or is not UTF-8 text".into()))?;
+    if new.len() > MAX_EDIT_BYTES
+        || text
+            .len()
+            .saturating_sub(old.len())
+            .saturating_add(new.len())
+            > MAX_EDIT_BYTES
+    {
+        return Ok(ToolOutput::err(
+            "replacement exceeds the 2000000-byte edit limit; split the change",
+        ));
+    }
     if old.is_empty() {
         return Ok(ToolOutput::err(
             "old_string is empty; quote the lines to replace (or use write for a new file)",
@@ -155,14 +211,27 @@ pub fn search_replace(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
 /// to approve it. `None` when it wouldn't apply (the tool will say why).
 pub fn preview(name: &str, args: &Value, ctx: &ToolContext) -> Option<FileDiff> {
     let path = require_path(args, ctx).ok()?;
-    let old = fs::read_to_string(&path).ok();
+    let old = edit_text(&path).ok()?;
     let new = match name {
-        "write" => args.get("content")?.as_str()?.to_string(),
+        "write" => {
+            let content = args.get("content")?.as_str()?;
+            if content.len() > MAX_EDIT_BYTES {
+                return None;
+            }
+            content.to_string()
+        }
         "search_replace" | "propose_edit" => {
             let text = old.as_deref()?;
             let from = args.get("old_string")?.as_str()?;
             let to = args.get("new_string")?.as_str()?;
-            if from.is_empty() || text.matches(from).count() != 1 {
+            if from.is_empty()
+                || text.matches(from).count() != 1
+                || text
+                    .len()
+                    .saturating_sub(from.len())
+                    .saturating_add(to.len())
+                    > MAX_EDIT_BYTES
+            {
                 return None;
             }
             text.replacen(from, to, 1)
@@ -248,18 +317,29 @@ pub fn list_dir(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         Some(p) if !p.is_empty() => require_resolved(ctx, p)?,
         _ => ctx.workspace.clone(),
     };
-    let mut names = Vec::new();
+    let mut names = std::collections::BTreeSet::new();
+    let mut limited = false;
     let rd = fs::read_dir(&path).map_err(|e| Error::Config(e.to_string()))?;
     for ent in rd.flatten() {
+        if ctx.cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         let name = ent.file_name().to_string_lossy().into_owned();
         if name.starts_with('.') {
             continue;
         }
         let suffix = if ent.path().is_dir() { "/" } else { "" };
-        names.push(format!("{name}{suffix}"));
+        names.insert(format!("{name}{suffix}"));
+        if names.len() > 1_000 {
+            names.pop_last();
+            limited = true;
+        }
     }
-    names.sort();
-    Ok(ToolOutput::ok(names.join("\n")))
+    let mut out = names.into_iter().collect::<Vec<_>>().join("\n");
+    if limited {
+        out.push_str("\n… first 1000 names; narrow the directory or use glob");
+    }
+    Ok(ToolOutput::ok(out))
 }
 
 pub fn grep(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
@@ -291,43 +371,66 @@ pub fn grep(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         builder.overrides(ov.build().map_err(|e| Error::Config(e.to_string()))?);
     }
     let walker = builder.build();
-    let mut hits = Vec::new();
+    let mut out = String::new();
+    let mut hits = 0;
+    let mut skipped = 0usize;
+    let mut limited = false;
     for dent in walker.flatten() {
+        if ctx.cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         let path = dent.path();
-        if !dent.file_type().is_some_and(|kind| kind.is_file()) {
+        if !dent.file_type().is_some_and(|kind| kind.is_file())
+            || crate::tools::policy::is_secret(path, ctx)
+        {
             continue;
         }
-        if crate::tools::policy::is_secret(path, ctx) {
-            continue;
-        }
-        let Ok(mut file) = open_for_read(path, ctx) else {
+        let Ok(file) = open_for_read(path, ctx) else {
             continue;
         };
-        let mut text = String::new();
-        if file.read_to_string(&mut text).is_err() {
-            continue;
-        }
+        let mut reader = BufReader::new(file);
         let rel = path.strip_prefix(&ctx.workspace).unwrap_or(path);
-        for (i, line) in text.lines().enumerate() {
-            if re.is_match(line) {
-                hits.push(format!("{}:{}:{line}", rel.display(), i + 1));
-                if hits.len() >= 200 {
+        let mut number = 0u64;
+        loop {
+            let line = super::bounded::line(&mut reader, 64_000, &ctx.cancel)
+                .map_err(|e| Error::Config(e.to_string()))?;
+            let Some(line) = line else {
+                break;
+            };
+            number += 1;
+            if line.truncated {
+                skipped += 1;
+                continue;
+            }
+            let Ok(text) = line.text() else {
+                break;
+            };
+            if re.is_match(&text) {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(&format!("{}:{number}:{text}", rel.display()));
+                hits += 1;
+                if hits >= 200 || out.len() >= super::MAX_TOOL_OUTPUT_BYTES {
+                    limited = true;
                     break;
                 }
             }
         }
-        if hits.len() >= 200 {
+        if limited {
             break;
         }
     }
-    // An empty string reads as a tool failure to some models; say it plainly,
-    // and say when the list was cut short.
-    if hits.is_empty() {
-        return Ok(ToolOutput::ok("no matches"));
+    if out.is_empty() {
+        out.push_str("no matches");
     }
-    let mut out = hits.join("\n");
-    if hits.len() >= 200 {
-        out.push_str("\n… stopped at 200 matches; narrow with path or include");
+    if limited {
+        out.push_str("\n… stopped at the match/output limit (at most 200 matches); narrow with path or include");
+    }
+    if skipped > 0 {
+        out.push_str(&format!(
+            "\n… skipped {skipped} lines over 64000 bytes; results may be incomplete"
+        ));
     }
     Ok(ToolOutput::ok(out))
 }

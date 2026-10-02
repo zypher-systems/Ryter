@@ -595,6 +595,8 @@ When a terminal isn't the right place for an answer (a report, a comparison, a c
 - **Hooks see these tools too.** `PreToolUse` and `PostToolUse` hooks run for `show_page`, `load_skill` and `request_hat`, just as for `bash` or `write`. A hook can deny a page.
 - **The skill tells the model** to use only facts from the session, to say where they came from, and to make the page work in light and dark and at phone width.
 
+Tool output is bounded while it is read. Shell commands retain the first and last output bytes and report how much was omitted. File reads support `offset` and `limit`; a line over 32 KB is shortened explicitly. Search skips lines over 64 KB and reports that its results may be incomplete. Whole-file edit/diff tools stop at 2 MB; use a focused project command for larger files. Directory listings show at most 1,000 sorted names, and prompt memory includes at most 128 Markdown note files within its 48 KB total cap.
+
 ## Context
 
 `/context` shows the active hat’s estimated context use, including tool schemas and an output allowance of up to one quarter of its window (at most 32,768 tokens). Its window comes from `[context_windows]`, a cached provider catalog, or a matching saved route. Without that information, the existing fallback is 500k for `grok-4.6` and 200k otherwise; these are estimates. For a model or local server with a different limit, set its model ID under `[context_windows]` in your config, for example `"your-model-id" = 32768`.

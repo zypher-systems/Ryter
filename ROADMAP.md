@@ -18,6 +18,8 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 
 ## Now
 
+- **Unreleased — review repair 7b: bounded output.** Shell pipes retain fixed head/tail buffers while draining continuously. File paging and grep stream bounded lines; oversized/skipped lines and capped search results are explicit. Edit/diff inputs and directory/note enumeration have finite limits too.
+
 - **Unreleased — review repair 7a: context limits.** Admission and the gauge follow the active hat’s route, include tool schemas and reserve output space. Configured or cached model limits override the fallback. Compaction retains user constraints and assistant notes, can shorten older tool results within one turn, and must reduce size. Oversized turns and commit drafts stop before calling the provider.
 
 - **Unreleased — review repair 6b: session recovery.** Resume recovers torn final records in either conversation and the spend ledger, keeps an original backup, and reports the recovery. Complete/middle corruption fails without changing the logs. Spending reconciles from the ledger without lowering older cached totals; uncertain recovery keeps the budget closed.

@@ -1,5 +1,6 @@
 //! Built-in tools and the single permission gate.
 
+mod bounded;
 mod fs;
 mod policy;
 pub(crate) mod shell;
@@ -903,6 +904,40 @@ mod tests {
         let capped = cap_output(text);
         assert!(capped.contains("elided"));
         assert!(capped.len() < MAX_TOOL_OUTPUT_BYTES + 200);
+    }
+
+    #[test]
+    fn oversized_lines_have_bounded_results_and_do_not_hide_later_matches() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(Role::SoloBuild, dir.path());
+        let path = dir.path().join("huge.txt");
+        let mut file = std::fs::File::create(&path).unwrap();
+        use std::io::Write;
+        for _ in 0..1000 {
+            file.write_all(&[b'x'; 8192]).unwrap();
+        }
+        file.write_all(b"\nneedle after giant line\n").unwrap();
+        let first = execute("read_file", &json!({"path": "huge.txt", "limit": 1}), &c).unwrap();
+        assert!(first.text.len() < MAX_TOOL_OUTPUT_BYTES + 256);
+        assert!(first.text.contains("remaining bytes were skipped"));
+        assert!(first.text.contains("offset 2"));
+        let next = execute("read_file", &json!({"path": "huge.txt", "offset": 2}), &c).unwrap();
+        assert!(next.text.contains("   2|needle after giant line"));
+        let search = execute("grep", &json!({"pattern": "needle"}), &c).unwrap();
+        assert!(search.text.contains("huge.txt:2:needle after giant line"));
+        assert!(search.text.contains("skipped 1 lines over 64000 bytes"));
+        let no_hit = execute("grep", &json!({"pattern": "not present"}), &c).unwrap();
+        assert!(no_hit.text.contains("results may be incomplete"));
+        let edit = execute(
+            "write",
+            &json!({"path": "huge.txt", "content": "replacement"}),
+            &c,
+        );
+        assert!(edit.is_err());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            8_192_000 + b"\nneedle after giant line\n".len() as u64
+        );
     }
 
     #[test]

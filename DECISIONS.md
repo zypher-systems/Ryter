@@ -2,6 +2,12 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Bound memory while reading, before formatting tool results
+- **Decision:** Retain 32 KB per shell pipe, split between its head and most recent tail, while counting and draining every byte. Live output uses the bounded tail. File paging retains at most 32 KB per line and stops when its output budget is reached; skipped offsets allocate no line content. Grep streams lines up to 64 KB, reports longer lines skipped, and stops at its result budget or 200 hits.
+- **Why:** Truncating a result after collecting all output does not bound the memory used by a noisy process or a giant file. The first command output and final error/summary are both useful, so pipe capture retains both ends and reports the omitted byte count.
+- **Other readers:** Whole-file edits and approval diffs stop at 2 MB rather than constructing an unbounded diff. Directory listings keep the first 1,000 sorted names; project memory keeps the first 128 Markdown note names and the existing aggregate byte cap. Limits are explicit, never a false complete/no-match result.
+- **Where:** `tools/bounded.rs`, shell/file tools and project memory; generated readers exercise multi-megabyte lines without preallocating their contents, plus pipe capture, paging/search after a giant line, preservation of oversized files, and bounded note enumeration.
+
 ### 2026-10-02 — Admit requests against the active route’s context window
 - **Decision:** Resolve `[context_windows]` overrides, a matching base-route override, the active connection’s cached catalog, a matching last route, then the existing fallback. A base model’s window never overrides a different hat. Count schemas, message/tool-call content and requested output before both turns and auxiliary requests. Reserve up to a quarter of the window for output, capped at 32,768 tokens.
 - **Why:** A smaller hat could inherit the base model’s large gauge, and a single long tool turn could overflow without triggering compaction. Guard the actual request again after review instructions are added; if the request still cannot fit, stop before sending it and retain the user’s task.
