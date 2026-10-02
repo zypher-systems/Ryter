@@ -516,6 +516,8 @@ TCP requires `--token` (or `RYTER_MCP_TOKEN`) on `initialize.params.token`. Bind
 
 `ryter mcp serve` uses a restricted always-approve: workspace file edits, read, grep, tests; deny `rm -rf`, credential paths, work outside cwd. `--always-approve` only widens this if `[mcp] allow_dangerous = true`.
 
+Status and spend remain available during a prompt; the CLI reports the last completed turn’s snapshot. A second MCP prompt receives a busy response while one is active. Closing the prompt connection cancels its pending work.
+
 `[mcp] inbound = false` disables the server. Esc or `/cancel` (or `ryter_cancel`) stops the in-flight turn and kills bash process groups.
 
 ## Customization
@@ -676,6 +678,8 @@ A project can keep **why** on disk, not only in a conversation:
 When these files exist, the model **reads** them on every turn (capped), and is told to update them as work changes and to add a short entry to `DECISIONS.md` when it makes a non-obvious decision. When you ask why something is a certain way, it should quote `DECISIONS.md` and open the files it names. Ryter doesn't create them: a project that has none gets none until you or the model writes one. The plan hat may write these files; the review hat may not.
 
 ## Sessions
+
+If an interrupted append leaves a torn final record, resume keeps the valid history and reports the path of an exact backup. Complete or middle-of-file corruption stops resume for deliberate recovery. Recovered or inconsistent spending remains marked incomplete, so an enabled budget stops further requests.
 
 ```
 ~/.ryter/sessions/<cwd-slug>/<id>/
