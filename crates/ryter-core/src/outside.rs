@@ -25,7 +25,9 @@ thread_local! {
 }
 
 /// Start the thread that works outside the sandbox. Called before a
-/// sandbox is applied; a thread started after one is inside it.
+/// sandbox is applied; a thread started after one is inside it. Only
+/// Linux has a sandbox to be outside of.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn start() {
     CLERK.get_or_init(|| {
         let (tx, rx) = channel::<Job>();
