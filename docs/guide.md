@@ -319,16 +319,17 @@ stop  = "docker compose down"
 
 **What runs without asking** in the build hat. A question for every `cargo build` and `docker compose up` was answered yes every time, so these run:
 
-- **Looking:** `ls`, `cat`, `grep`, `git status`, `git diff` and the like.
+- **Looking:** `ls`, `cat`, `grep`, `git status`, `git diff` and the like, `sed -n` used to pick lines out (`sed -n '1,40p' file`), and `sleep`.
+- **Requests to the project's own address:** `curl` to `localhost`, `127.0.0.1` or a `.localhost` name, as the test hat makes them. A URL kept in a variable earlier in the same command is read: `B=http://localhost:8000; curl $B/health`.
 - **Your toolchains,** whatever the subcommand: `cargo`, `npm`, `pnpm`, `yarn`, `bun`, `node`, `python`, `pip`, `uv`, `pytest`, `go`, `make`, `mvn`, `gradle`, `dotnet`, and the rest of their kind. `cargo install`, `npm install` and `pip install` included.
 - **The project's own programs:** `./scripts/setup.sh`, `bin/cms-admin`, `./manage.py`, and `bash` given a script file of the project's.
 - **Programs you installed under your home folder:** whatever `PATH` finds in `~/.cargo/bin`, `~/.local/bin`, a node or python manager's folder.
 - **The project's containers,** with `docker` or `podman`: `build`, `compose build`, `up`, `down`, `run`, `exec`, `restart`, `logs`, `ps`, `pull`, and `docker run` with folders of the project's (or of `/tmp`) mounted. Paths inside the container, such as `-w /app` or `ls /app`, are the container's and are not judged.
-- **`cd`** into a folder of the project.
+- **`cd`** into a folder of the project, `/tmp` or your home folder.
 
 These still ask:
 
-- **Edits** to the project's files, until you press `a` on one.
+- **Edits** to the project's files, until you press `a` on one or approve a plan: a plan says which files it will make and change, so once you approve it the edits stop asking for the rest of the session.
 - **Changing files by hand:** `mkdir`, `cp`, `sed -i` and other system programs that aren't a toolchain. `a` on the prompt allows that command for the session.
 - **Deleting and moving:** `rm`, `mv`, `chmod`, `git reset --hard`, and removing a stack's volumes (`docker compose down -v`, `docker volume rm`, any `prune`). `y` only, with no "allow for this session".
 - **Publishing and signing in:** `cargo publish`, `npm publish`, `npm login`, `docker push`, `docker login`.

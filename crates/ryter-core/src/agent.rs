@@ -1033,8 +1033,17 @@ impl Agent {
                     .display()
                     .to_string();
                 self.session.set_plan_file(Some(shown.clone()))?;
+                // A plan says which files it will make and change, and the
+                // user approved it: its edits are not asked about one by
+                // one. Each is still shown, and `/undo` takes them back.
+                if let Ok(mut allowed) = self.ctx.allowed.lock() {
+                    allowed.insert("edit".into());
+                }
                 self.emit(AgentEvent::Notice {
-                    message: format!("plan · approved and saved to {shown}"),
+                    message: format!(
+                        "plan · approved and saved to {shown} · edits to the project's files \
+                         won't ask for the rest of this session"
+                    ),
                 })?;
                 let from = self.role;
                 if from != Role::SoloBuild {
@@ -2508,6 +2517,7 @@ mod tests {
             allowed: Default::default(),
             web: false,
             cwd: Default::default(),
+            vars: Default::default(),
         };
         let agent = Agent {
             provider: Arc::new(provider),

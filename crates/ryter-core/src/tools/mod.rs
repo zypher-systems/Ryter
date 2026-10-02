@@ -79,6 +79,9 @@ pub struct ToolContext {
     /// Where a shell command's relative paths start. The project's top,
     /// until a `cd` in the same command moves it.
     pub cwd: Cwd,
+    /// Variables an earlier part of the same shell command set to a plain
+    /// value (`B=http://localhost:8001`), so `$B` later can be read.
+    pub vars: Vec<(String, String)>,
 }
 
 /// The folder a shell command is in when one of its parts runs.
@@ -749,6 +752,7 @@ mod tests {
             allowed: Default::default(),
             web: false,
             cwd: Default::default(),
+            vars: Default::default(),
         }
     }
 

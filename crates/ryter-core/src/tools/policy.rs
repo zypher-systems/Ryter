@@ -218,6 +218,8 @@ const READ_ONLY: &[&str] = &[
     "false",
     "test",
     "[",
+    "sleep",
+    ":",
     "date",
     "uname",
     "hostname",
@@ -352,7 +354,50 @@ fn runs_or_edits(prog: &str, words: &[String]) -> bool {
 
 /// On the read-only list, and not in a form that writes a file or runs one.
 fn read_only(prog: &str, words: &[String]) -> bool {
-    READ_ONLY.contains(&prog) && !writes_output_file(prog, words) && !runs_or_edits(prog, words)
+    (READ_ONLY.contains(&prog) && !writes_output_file(prog, words) && !runs_or_edits(prog, words))
+        || (prog == "sed" && sed_only_prints(words))
+}
+
+/// `sed` used to pick lines out: `sed -n '1,40p' file`, `sed -n '1p;$p'`,
+/// `sed -n '/^location/p'`, `sed 5q`. Its script is nothing but addresses
+/// with `p` or `q`: no editing in place, no file written or read, no
+/// command run.
+fn sed_only_prints(words: &[String]) -> bool {
+    let args: Vec<&str> = words
+        .iter()
+        .skip_while(|w| w.rsplit('/').next() != Some("sed"))
+        .skip(1)
+        .map(String::as_str)
+        .collect();
+    let mut scripts: Vec<&str> = Vec::new();
+    let mut i = 0;
+    let mut first_plain = true;
+    while let Some(a) = args.get(i) {
+        i += 1;
+        match *a {
+            "-n" | "--quiet" | "--silent" | "-E" | "-r" | "--regexp-extended" => {}
+            "-e" | "--expression" => {
+                scripts.extend(args.get(i));
+                i += 1;
+                first_plain = false;
+            }
+            a if a.starts_with('-') && a.len() > 1 => return false,
+            a if first_plain => {
+                scripts.push(a);
+                first_plain = false;
+            }
+            _ => {}
+        }
+    }
+    static PRINTS: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let prints = PRINTS.get_or_init(|| {
+        let address = r"(\d+|\$|/[^/;]*/)";
+        regex::Regex::new(&format!(
+            r"^(\s*{address}?(\s*,\s*{address})?\s*[pq]?\s*(;|$))+$"
+        ))
+        .expect("a fixed pattern")
+    });
+    !scripts.is_empty() && scripts.iter().all(|s| prints.is_match(s))
 }
 
 /// Commands whose file arguments must not be a secret: they print contents.
@@ -1713,6 +1758,9 @@ fn decide_bash(args: &Value, ctx: &ToolContext) -> Decision {
     // the place is certain (what follows runs only if the `cd` did); the
     // doubt comes back when the chain ends.
     let mut places = vec![ctx.cwd.clone()];
+    // Variables set to a plain value by a part of the command that is sure
+    // to have run: read where they are used later.
+    let mut vars: Vec<(String, String)> = ctx.vars.clone();
     let mut doubt: Vec<Cwd> = Vec::new();
     let mut decision = Decision::Allow;
     let add = |to: &mut Vec<Cwd>, from: &[Cwd]| {
@@ -1732,6 +1780,7 @@ fn decide_bash(args: &Value, ctx: &ToolContext) -> Decision {
             let cx = ToolContext {
                 live: None,
                 cwd: at.clone(),
+                vars: vars.clone(),
                 ..ctx.clone()
             };
             decision = decision.and(decide_segment(&s.text, &cx));
@@ -1742,6 +1791,56 @@ fn decide_bash(args: &Value, ctx: &ToolContext) -> Decision {
         }
         if decision == Decision::Deny {
             return Decision::Deny;
+        }
+        // `NAME=value` alone, at the top of the command: set for sure. Set
+        // anywhere else, or to something only the shell can read, the
+        // name is one the gate no longer knows.
+        let set = words(&s.text);
+        let for_sure = !s.inside && s.before == Sep::Then && !led_by_keyword(&s.text);
+        if !set.is_empty() && set.iter().all(|w| assigned(w).is_some()) {
+            for w in &set {
+                let Some((name, value)) = assigned(w) else {
+                    continue;
+                };
+                vars.retain(|(n, _)| n != name);
+                if for_sure && !w.contains("+=") && !value.contains(['$', '`']) {
+                    vars.push((name.to_string(), value.to_string()));
+                }
+            }
+        } else {
+            // A builtin that sets variables (`export B=…`, `read B`, a
+            // `for` loop): the names it mentions are no longer known.
+            let mut said = set;
+            strip_keywords(&mut said);
+            if matches!(
+                program(&said),
+                Some(
+                    "export"
+                        | "declare"
+                        | "typeset"
+                        | "local"
+                        | "readonly"
+                        | "unset"
+                        | "read"
+                        | "mapfile"
+                        | "readarray"
+                        | "getopts"
+                        | "printf"
+                        | "for"
+                        | "select"
+                        | "let"
+                        | "eval"
+                        | "source"
+                        | "."
+                )
+            ) {
+                vars.retain(|(n, _)| {
+                    !said.iter().any(|w| {
+                        w.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                            .any(|part| part == n)
+                    })
+                });
+            }
         }
         if moved.is_empty() {
             continue;
@@ -2287,6 +2386,16 @@ fn judge(
     if matches!(prog, "cd" | "pushd") && cd_into_project(from_prog, ctx) {
         return Decision::Allow;
     }
+    // Into scratch space or the user's folder, in the hats that do the
+    // work: moving there changes nothing, and what runs there is judged
+    // from there.
+    if works && matches!(prog, "cd" | "pushd") {
+        if let [dir] = plain_args(from_prog).as_slice() {
+            if resolve_outside(ctx, dir).is_some_and(|p| p.is_dir() && free_place(&p, ctx, false)) {
+                return Decision::Allow;
+            }
+        }
+    }
     if prog == "git" {
         // To git a quoted pattern is a pattern still: `git log -p -- '.en*'`.
         let every = read(seg, ctx, true);
@@ -2441,7 +2550,7 @@ fn judge(
                     // A secret handed to a program that isn't known to
                     // keep it to itself.
                     && !names_a_secret(from_prog, ctx))
-                || (ctx.role == Role::SoloTest && own_request(prog, args, ctx))
+                || own_request(prog, args, ctx)
             {
                 Decision::Allow
             } else {
@@ -2502,7 +2611,7 @@ fn own_host(host: &str) -> bool {
 /// nothing the shell or the client would rewrite. A bare `localhost:8000`
 /// counts, as `curl` reads it.
 fn url_host(url: &str) -> Option<&str> {
-    if url.contains(['$', '`', '{', '}', '\\', ' ']) {
+    if url.contains(['`', '{', '}', '\\', ' ']) {
         return None;
     }
     let rest = match url.split_once("://") {
@@ -2511,6 +2620,11 @@ fn url_host(url: &str) -> Option<&str> {
         None => url,
     };
     let authority = rest.split(['/', '?', '#']).next()?;
+    // A variable in the path or the query can't change where the request
+    // goes; one in the host can.
+    if authority.contains('$') {
+        return None;
+    }
     // `user@host` sends credentials, and can hide the real host.
     if authority.is_empty() || authority.contains('@') {
         return None;
@@ -2617,7 +2731,13 @@ fn own_request(prog: &str, args: &[String], ctx: &ToolContext) -> bool {
         None => resolve_outside(ctx, v).is_some_and(|p| free_place(&p, ctx, false)),
     };
     let value_ok = |opt: &str, v: &str| -> bool {
-        if v.contains(['$', '`']) {
+        // A value only the shell can read may name a file (`-d @$F`,
+        // `-o $OUT`). In what is sent as plain data it is only data.
+        let data = matches!(
+            opt,
+            "-d" | "--data" | "--data-raw" | "--json" | "-H" | "--header" | "-X" | "--request"
+        ) && !v.contains('@');
+        if v.contains('`') || (v.contains('$') && !data) {
             return false;
         }
         match opt {
@@ -2643,6 +2763,20 @@ fn own_request(prog: &str, args: &[String], ctx: &ToolContext) -> bool {
             _ => true,
         }
     };
+    // Without its redirects, which are judged with every other one.
+    let mut kept: Vec<String> = Vec::new();
+    let mut skip = false;
+    for a in args {
+        if std::mem::take(&mut skip) {
+            continue;
+        }
+        match redirect(a, true) {
+            Redir::Next => skip = true,
+            Redir::To(_) | Redir::Dup => {}
+            Redir::No => kept.push(a.clone()),
+        }
+    }
+    let args = kept.as_slice();
     let mut urls = 0;
     let mut i = 0;
     while let Some(a) = args.get(i).map(String::as_str) {
@@ -3747,6 +3881,46 @@ fn words(seg: &str) -> Vec<String> {
     lex(seg).iter().map(|w| expand::plain(w)).collect()
 }
 
+/// `word` with the variables an earlier part of the command set put in:
+/// `$B/health` after `B=http://localhost:8001`. One that wasn't set there
+/// stays as written, a word only the shell can read.
+fn known_variables(word: &str, vars: &[(String, String)]) -> String {
+    if !word.contains('$') || vars.is_empty() {
+        return word.to_string();
+    }
+    let mut out = word.to_string();
+    // Longest names first, so `$BASE` is not read as `$B` and `ASE`.
+    let mut by_length: Vec<&(String, String)> = vars.iter().collect();
+    by_length.sort_by_key(|(name, _)| std::cmp::Reverse(name.len()));
+    for (name, value) in by_length {
+        // Put in as the shell would leave it inside quotes: no pattern in
+        // the value is expanded again.
+        let value: String = value.chars().map(expand::quoted).collect();
+        out = out.replace(&format!("${{{name}}}"), &value);
+        let plain = format!("${name}");
+        let mut rest = out.as_str();
+        let mut done = String::new();
+        while let Some(at) = rest.find(&plain) {
+            let after = &rest[at + plain.len()..];
+            done.push_str(&rest[..at]);
+            // `$BASE` is another variable, not `$B` and then `ASE`.
+            if after
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                done.push_str(&plain);
+            } else {
+                done.push_str(&value);
+            }
+            rest = after;
+        }
+        done.push_str(rest);
+        out = done;
+    }
+    out
+}
+
 /// The words of a segment as the command will be given them: split as the
 /// shell splits them, with its lists and patterns expanded ([`expand`]).
 /// With `every_pattern`, a quoted pattern is expanded too: what a program
@@ -3760,7 +3934,9 @@ fn read(seg: &str, ctx: &ToolContext, every_pattern: bool) -> Vec<String> {
     };
     lex(seg)
         .iter()
+        .map(|w| known_variables(w, &ctx.vars))
         .flat_map(|w| {
+            let w = &w;
             if every_pattern {
                 expand::expand(&expand::plain(w), &at)
             } else {
@@ -3992,7 +4168,14 @@ fn path_escapes(words: &[String], ctx: &ToolContext) -> bool {
     // `echo $(…)` prints what the substitution printed, and that command
     // was judged on its own. Everywhere else a substitution may be a path.
     let prints = matches!(program(words), Some("echo" | "printf"));
+    // `sed -n '1p;$p'`: the `$` is the last line, in a script that only
+    // prints ([`sed_only_prints`]).
+    let mut sed_script = program(words) == Some("sed") && sed_only_prints(words);
     for w in words.iter().skip(1) {
+        if sed_script && !w.starts_with('-') {
+            sed_script = false;
+            continue;
+        }
         // `echo $f` prints a variable; it opens nothing.
         if w.starts_with('-') || (prints && (w.contains(SUBST) || w.contains('$'))) {
             continue;
@@ -4199,7 +4382,21 @@ fn git_prints_a_tracked_secret(from_git: &[String], ctx: &ToolContext) -> bool {
     let Some(sub) = from_git.get(i).map(String::as_str) else {
         return false;
     };
-    let args = from_git.get(i + 1..).unwrap_or_default();
+    // Its arguments, without redirects and the files they name:
+    // `-- app/main.py 2>/dev/null` names one path.
+    let mut args: Vec<String> = Vec::new();
+    let mut skip = false;
+    for w in from_git.get(i + 1..).unwrap_or_default() {
+        if std::mem::take(&mut skip) {
+            continue;
+        }
+        match redirect(w, true) {
+            Redir::Next => skip = true,
+            Redir::To(_) | Redir::Dup => {}
+            Redir::No => args.push(w.clone()),
+        }
+    }
+    let args = args.as_slice();
     // The verb's own options, up to `--`, without the values they take:
     // `-e '-l'` is a pattern, not "names only".
     let valued_short = match sub {
@@ -5339,6 +5536,10 @@ fn outside_segment(prog: &str, words: &[String], own: usize, ctx: &ToolContext) 
         if w.starts_with('-') || containers {
             continue;
         }
+        // An address handed to a program that fetches one is not a path.
+        if REACHES_OUT.contains(&prog) && (w.contains("://") || url_host(w).is_some_and(own_host)) {
+            continue;
+        }
         // `git log $BASE..HEAD`: a range of revisions, not a path.
         if prog == "git" && w.contains('$') && w.contains("..") {
             continue;
@@ -5465,10 +5666,14 @@ fn arg_path(args: &Value) -> Option<String> {
 /// workspace cannot point the tools at `~/.ssh`. Paths that do not exist yet
 /// are checked against the nearest existing parent.
 pub fn resolve(ctx: &ToolContext, raw: &str) -> Option<PathBuf> {
-    // `~` and `$VAR` only mean something to a shell. Refusing them here keeps
-    // `> ~/.bashrc` from resolving to `<workspace>/~/.bashrc`.
+    // `~` and `$VAR` only mean something to a shell: `> ~/.bashrc` is not
+    // `<workspace>/~/.bashrc`. Where the shell's meaning can be read
+    // (`~/work/proj/app.py`, the project by its own full name), it is.
     if raw.starts_with('~') || raw.contains('$') {
-        return None;
+        let abs = resolve_outside(ctx, raw)?;
+        let inside = is_under(&abs, &real_path(&ctx.workspace))
+            || is_under(&abs, &real_path(&ctx.notes_dir));
+        return inside.then_some(abs);
     }
     let p = Path::new(raw);
     let joined = if p.is_absolute() {
@@ -5600,6 +5805,7 @@ mod tests {
             allowed: Default::default(),
             web: false,
             cwd: Default::default(),
+            vars: Default::default(),
         }
     }
 
@@ -5980,6 +6186,8 @@ mod tests {
             "false",
             "test",
             "[",
+            "sleep",
+            ":",
             "date",
             "uname",
             "hostname",
@@ -8209,6 +8417,60 @@ mod tests {
             ],
         );
         assert_eq!(m.decide("eslint --fix .", Role::SoloReview), Decision::Deny);
+    }
+
+    /// What a hat does all day runs without a question. A real session
+    /// (a small Docker web app, from plan to a passing test) stopped for
+    /// more than twenty: `sleep 3` after starting the stack, every `curl`
+    /// to the app in the build hat, a URL kept in a variable, `cd /tmp`,
+    /// the project named by its full path, and `sed -n '1p'` on a pipe.
+    #[cfg(unix)]
+    #[test]
+    fn building_and_trying_a_web_app_does_not_stop_to_ask() {
+        let m = machine();
+        let proj = m.proj.display().to_string();
+        let full = |cmd: &str| cmd.replace("PROJ", &proj);
+        for cmd in [
+            "docker compose up --build -d && sleep 3 && docker compose ps",
+            "docker compose up --build -d >/dev/null 2>&1; sleep 4; docker compose run --rm web pytest -q 2>&1 | tail -3",
+            "set -e\ncurl -s http://localhost:8001/health\necho\ncurl -s -X POST localhost:8001/api/items -H 'Content-Type: application/json' -d '{\"name\":\"Widget\",\"quantity\":3}'",
+            "curl -s -o /dev/null -w '%{http_code}\\n' http://localhost:8001/",
+            "curl -s -X PUT localhost:8001/api/items/1 -H 'Content-Type: application/json' -d '{\"name\":\"W\"}' >/dev/null",
+            "curl -s -X POST http://localhost:8001/items -d 'name=Bad&quantity=abc' -o /tmp/p.html -w '%{http_code}\\n'; head -c 300 /tmp/p.html",
+            "B=http://localhost:8001; curl -s $B/health; echo; curl -s -i -X POST $B/items -d 'name=Gadget&sku=G1' | head -5",
+            "B=http://localhost:8001\ncurl -s -i -X POST $B/items -d 'name=Dup&sku=G1' | sed -n '1p;/^location/p'\ncurl -s $B/api/items",
+            "B=http://localhost:8001\nfor e in sku quantity name; do echo \"== $e\"; curl -s \"$B/items/new?error=$e\" | grep -A1 error; done",
+            "cd /tmp; docker compose -f PROJ/docker-compose.yml ps 2>&1 | tail -3",
+            "cd PROJ; docker compose up --build -d --wait 2>&1 | tail -3; git diff --stat | tail -2",
+            "grep -n 'def ' PROJ/src/main.py | head -50",
+            "sed -n '1,40p' src/main.py",
+            "sed -n '1p;$p' README.md",
+        ] {
+            let cmd = full(cmd);
+            for role in [Role::SoloBuild, Role::SoloTest] {
+                assert_eq!(m.decide(&cmd, role), Decision::Allow, "{role:?}: {cmd}");
+            }
+        }
+        // What still asks: an edit, an address somewhere else, a host
+        // only the shell can read.
+        for cmd in [
+            "sed -i 's/8000/8001/' README.md",
+            "sed 's/a/b/w out.txt' README.md",
+            "sed -n '1e id' README.md",
+            "curl -s https://example.com/",
+            "B=https://example.com; curl -s $B/x",
+            "curl -s \"http://localhost:8001$loc\"",
+            "false && B=http://localhost:8001; curl -s $B/x",
+            "B=http://localhost:8001; read B; curl -s $B/x",
+        ] {
+            assert_ne!(m.decide(cmd, Role::SoloBuild), Decision::Allow, "{cmd}");
+        }
+        // And a variable doesn't open what its value wouldn't.
+        m.refused(&[
+            "F=.env; cat $F",
+            "D=~/.ssh; cat $D/id_rsa",
+            "P=.en; cat ${P}v",
+        ]);
     }
 
     /// A file being tracked doesn't make it one to print. In a repository
