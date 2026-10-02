@@ -2,6 +2,11 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Socket setup never unlinks an existing name
+- **Decision:** Let Unix socket bind claim a new name atomically. Existing files, links, directories, live sockets and stale sockets are preserved.
+- **Why:** A failed connection can mean an ordinary file or insufficient permissions, not just a stale socket. Even checking the inode before unlink leaves a replacement race. Explicit removal of a confirmed stale socket trades automatic crash recovery for preserving user data.
+- **Where:** `mcp/listen.rs`; regression coverage checks each path kind and the original live listener.
+
 ### 2026-10-01 — One mode: crew mode is retired, the user is the lead
 - **By:** the user
 - **Decision:** Ryter becomes one mode, the solo interface with a hat per stage (plan, build, review, test) and optionally a model per hat. Crew mode gets no further work and is removed once the one-mode flow has taken a real project from a plan to a tested change.
