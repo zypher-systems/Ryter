@@ -9,6 +9,11 @@ Why, not what. Non-obvious choices are recorded here, newest first.
 - **Commands:** Only outer whitespace is trimmed. Shell whitespace, quotes, line breaks and here-documents inside a command are part of the approved program and survive serialization unchanged.
 - **Where:** `run.rs`, `agent.rs`; isolated regressions cover orphan cleanup, failed-stop retry, resumed ownership, port occupancy, TLS versus TCP, and exact command approval.
 
+### 2026-10-02 — Stream identity survives each independent SSE frame
+- **Decision:** Carry a stream key alongside a tool call’s result ID. Chat and Messages use their wire index; Responses uses its item ID and returns the distinct `call_id` with the tool result. The accumulator uses keys before its legacy serial fallback.
+- **Why:** Argument fragments often omit the call ID. Assigning them to the most recent call combines parallel requests into invalid JSON or the wrong arguments. Parsing each HTTP frame independently must preserve enough identity to reconstruct the calls later.
+- **Where:** `llm/parse.rs`, `llm/mod.rs`, `agent.rs`; wire fixtures and execution tests cover all three protocols, plus a definition arriving after its first argument fragment.
+
 ### 2026-10-02 — Undo uses one path coordinate system
 - **Decision:** Snapshot differences are explicitly repository-relative regardless of `diff.relative`; their pathspec is scoped to the session’s launch directory. Restore and deletion both run from the repository root, with literal pathspecs. Validate snapshots and relative paths before changing files.
 - **Why:** A session launched in `app/` otherwise treated `app/file` as `app/app/file`. Sibling projects and later user edits must not become part of that session’s undo.

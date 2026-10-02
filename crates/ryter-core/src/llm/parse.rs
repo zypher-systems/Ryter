@@ -174,6 +174,10 @@ fn push_chat(out: &mut Vec<StreamDelta>, data: &str) -> Result<bool> {
                 _ => String::new(),
             };
             out.push(StreamDelta::ToolCall {
+                stream_key: call
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .map(|i| i.to_string()),
                 id: id.to_string(),
                 name: name.to_string(),
                 arguments,
@@ -212,7 +216,12 @@ fn push_responses(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) -
                 .unwrap_or("");
             let arguments = v.get("delta").and_then(Value::as_str).unwrap_or("");
             out.push(StreamDelta::ToolCall {
-                id: id.to_string(),
+                stream_key: (!id.is_empty()).then(|| id.to_string()).or_else(|| {
+                    v.get("output_index")
+                        .and_then(Value::as_u64)
+                        .map(|i| format!("index:{i}"))
+                }),
+                id: String::new(),
                 name: String::new(),
                 arguments: arguments.to_string(),
             });
@@ -221,8 +230,18 @@ fn push_responses(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) -
             let item = &v["item"];
             if item.get("type").and_then(Value::as_str) == Some("function_call") {
                 out.push(StreamDelta::ToolCall {
-                    id: item
+                    stream_key: item
                         .get("id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .or_else(|| {
+                            v.get("output_index")
+                                .and_then(Value::as_u64)
+                                .map(|i| format!("index:{i}"))
+                        }),
+                    id: item
+                        .get("call_id")
+                        .or_else(|| item.get("id"))
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .to_string(),
@@ -276,6 +295,10 @@ fn push_messages(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) ->
             let block = &v["content_block"];
             if block.get("type").and_then(Value::as_str) == Some("tool_use") {
                 out.push(StreamDelta::ToolCall {
+                    stream_key: v
+                        .get("index")
+                        .and_then(Value::as_u64)
+                        .map(|i| i.to_string()),
                     id: block
                         .get("id")
                         .and_then(Value::as_str)
@@ -313,6 +336,10 @@ fn push_messages(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) ->
                         .and_then(Value::as_str)
                         .unwrap_or("");
                     out.push(StreamDelta::ToolCall {
+                        stream_key: v
+                            .get("index")
+                            .and_then(Value::as_u64)
+                            .map(|i| i.to_string()),
                         id: String::new(),
                         name: String::new(),
                         arguments: arguments.to_string(),
