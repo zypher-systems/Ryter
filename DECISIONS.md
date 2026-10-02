@@ -6,6 +6,11 @@ Why, not what. Non-obvious choices are recorded here, newest first.
 - **Decision:** Snapshot differences are explicitly repository-relative regardless of `diff.relative`; their pathspec is scoped to the session’s launch directory. Restore and deletion both run from the repository root, with literal pathspecs. Validate snapshots and relative paths before changing files.
 - **Why:** A session launched in `app/` otherwise treated `app/file` as `app/app/file`. Sibling projects and later user edits must not become part of that session’s undo.
 - **Where:** `git::paths_between`, `git::restore_paths`; a round-trip regression covers nested launch, deletion, addition, newline/bracket names, the index, HEAD and unrelated work.
+### 2026-10-02 — Project-controlled links are not prompt input
+- **Decision:** Open project prompt inputs and search results through directory descriptors with no-follow flags on every relative component. The launch directory itself may be a link, so macOS temporary directories and linked workspaces keep working. Only regular files are read.
+- **Why:** Checking a path and then reading it still follows a link exchanged between the two operations. Instructions and memory are read before a tool permission prompt, so they need their own enforced boundary.
+- **Limits:** Prompt instructions and overrides are capped at 48 KB each; project memory shares a 48 KB total. Direct reads retain existing permission rules for ordinary user and scratch files. This does not identify hard links or classify secrets solely by their contents.
+- **Where:** `project_file.rs`, `prompt.rs`, `memory.rs`, `tools/fs.rs`, `tools/policy.rs`.
 
 ### 2026-10-01 — One mode: crew mode is retired, the user is the lead
 - **By:** the user
