@@ -111,7 +111,7 @@ impl Rates {
 /// Looks up rates: TOML override → catalog (OpenRouter) → shipped SpaceXAI table.
 #[derive(Debug, Clone, Default)]
 pub struct PriceBook {
-    overrides: HashMap<String, Rates>,
+    overrides: HashMap<String, Option<Rates>>,
     catalog: HashMap<String, Rates>,
 }
 
@@ -164,7 +164,7 @@ impl PriceBook {
     /// Rates for `model`, if known.
     pub fn rates(&self, model: &str) -> Option<Rates> {
         if let Some(r) = self.overrides.get(model) {
-            return Some(*r);
+            return *r;
         }
         if let Some(r) = self.catalog.get(model) {
             return Some(*r);
@@ -176,7 +176,9 @@ impl PriceBook {
     ///
     /// Zero tokens with known rates is `$0.00`. Unknown rates never become `$0.00`.
     pub fn cost(&self, model: &str, usage: Usage) -> Option<f64> {
-        self.rates(model).map(|r| r.cost(usage))
+        self.rates(model)
+            .map(|r| r.cost(usage))
+            .filter(|v| v.is_finite() && *v >= 0.0)
     }
 
     /// `$2/M input / $6/M output`, or `$?.??` when unknown.
@@ -226,18 +228,33 @@ fn trim_rate(v: f64) -> String {
     }
 }
 
-fn override_rates(o: &PriceOverride) -> Rates {
-    let input = o.input_per_million.unwrap_or(0.0);
-    Rates {
+fn override_rates(o: &PriceOverride) -> Option<Rates> {
+    // An override is a complete base-rate row, not permission to make an
+    // unspecified direction free. Explicit zero remains valid for local models.
+    let input = o.input_per_million?;
+    let output = o.output_per_million?;
+    if [
+        Some(input),
+        Some(output),
+        o.cached_per_million,
+        o.cache_write_per_million,
+    ]
+    .into_iter()
+    .flatten()
+    .any(|v| !v.is_finite() || v < 0.0)
+    {
+        return None;
+    }
+    Some(Rates {
         input_per_million: input,
         cached_per_million: o.cached_per_million.unwrap_or(input),
-        output_per_million: o.output_per_million.unwrap_or(0.0),
+        output_per_million: output,
         cache_write_per_million: o.cache_write_per_million,
         long_threshold: None,
         long_input_per_million: None,
         long_cached_per_million: None,
         long_output_per_million: None,
-    }
+    })
 }
 
 fn parse_per_token(raw: Option<&str>) -> crate::Result<Option<f64>> {
@@ -479,4 +496,58 @@ mod tests {
         assert!((r.cached_per_million - 0.3).abs() < 1e-9);
         assert!((r.cache_write_per_million.unwrap() - 3.75).abs() < 1e-9);
     }
+}
+#[test]
+fn missing_or_invalid_override_rates_never_become_free() {
+    for model in ["fixture-unknown", "grok-4.6"] {
+        for (input, output) in [
+            (Some(1.0), None),
+            (None, Some(1.0)),
+            (Some(-1.0), Some(1.0)),
+            (Some(f64::NAN), Some(1.0)),
+            (Some(1.0), Some(f64::INFINITY)),
+        ] {
+            let mut cfg = Config::default();
+            cfg.pricing.insert(
+                model.into(),
+                PriceOverride {
+                    input_per_million: input,
+                    output_per_million: output,
+                    ..PriceOverride::default()
+                },
+            );
+            let book = PriceBook::from_config(&cfg);
+            assert_eq!(
+                book.cost(
+                    model,
+                    Usage {
+                        output_tokens: 1_000,
+                        ..Usage::default()
+                    }
+                ),
+                None,
+                "{model}: {input:?}/{output:?}"
+            );
+        }
+    }
+    let mut cfg = Config::default();
+    cfg.pricing.insert(
+        "free-fixture".into(),
+        PriceOverride {
+            input_per_million: Some(0.0),
+            output_per_million: Some(0.0),
+            ..PriceOverride::default()
+        },
+    );
+    assert_eq!(
+        PriceBook::from_config(&cfg).cost(
+            "free-fixture",
+            Usage {
+                input_tokens: 100,
+                output_tokens: 100,
+                ..Usage::default()
+            }
+        ),
+        Some(0.0)
+    );
 }

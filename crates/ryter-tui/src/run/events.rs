@@ -232,9 +232,13 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             output_tokens,
             cached_tokens,
             total_usd,
+            incomplete,
         } => {
             if let Some(p) = &mut view.project_spend {
                 p.add(*role, model, *total_usd);
+                if *incomplete && total_usd.is_some() {
+                    p.unpriced_calls += 1;
+                }
             }
             on_spend(
                 view,
@@ -244,6 +248,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 *output_tokens,
                 *cached_tokens,
                 *total_usd,
+                *incomplete,
             );
         }
         AgentEvent::Reviewed {
@@ -658,10 +663,12 @@ fn on_spend(
     output_tokens: u64,
     cached_tokens: u64,
     total_usd: Option<f64>,
+    incomplete: bool,
 ) {
     let role_name = crate::view::role_label(&role.to_string()).to_string();
     {
         let row = view.spend_rows_role.entry(role_name.clone()).or_default();
+        row.unpriced |= incomplete;
         row.calls += 1;
         row.input += input_tokens;
         row.output += output_tokens;
@@ -677,6 +684,7 @@ fn on_spend(
             .spend_rows_conn
             .entry(connection.to_string())
             .or_default();
+        row.unpriced |= incomplete;
         row.calls += 1;
         row.input += input_tokens;
         row.output += output_tokens;
@@ -686,6 +694,13 @@ fn on_spend(
         } else {
             row.unpriced = true;
         }
+    }
+    if incomplete {
+        view.spend_unknown = true;
+        if total_usd.is_some() {
+            view.unpriced_calls += 1;
+        }
+        view.activity.cost_unknown = true;
     }
     match total_usd {
         Some(v) => {
@@ -704,7 +719,7 @@ fn on_spend(
     if role.is_solo() {
         // Tokens this turn become exact once accounting lands (`R-ACT-07`).
         view.activity.tokens = output_tokens;
-        view.activity.tokens_estimated = false;
+        view.activity.tokens_estimated = incomplete;
         match total_usd {
             Some(v) => view.activity.cost = Some(view.activity.cost.unwrap_or(0.0) + v),
             None => view.activity.cost_unknown = true,
@@ -945,6 +960,7 @@ mod tests {
                 output_tokens: 20,
                 cached_tokens: 0,
                 total_usd: Some(0.01),
+                incomplete: false,
             },
         );
         assert!(v.busy, "spend alone does not end the turn");
@@ -976,11 +992,35 @@ mod tests {
                 output_tokens: 1,
                 cached_tokens: 0,
                 total_usd: None,
+                incomplete: false,
             },
         );
         assert!(v.spend_unknown);
         assert_eq!(v.unpriced_calls, 1);
         assert_eq!(v.spend_label(), "$?.??");
+    }
+
+    #[test]
+    fn interrupted_accounting_keeps_known_cost_and_marks_it_incomplete() {
+        let mut v = view();
+        apply(
+            &mut v,
+            AgentEvent::Spend {
+                connection: "fixture".into(),
+                model: "fixture".into(),
+                role: Role::SoloBuild,
+                input_tokens: 1_000,
+                output_tokens: 0,
+                cached_tokens: 0,
+                total_usd: Some(0.002),
+                incomplete: true,
+            },
+        );
+        assert_eq!(v.spend, Some(0.002));
+        assert!(v.spend_unknown && v.activity.cost_unknown && v.activity.tokens_estimated);
+        assert!(v.spend_rows_role["build"].unpriced);
+        assert!(v.spend_rows_conn["fixture"].unpriced);
+        assert_eq!(v.unpriced_calls, 1);
     }
 
     #[test]

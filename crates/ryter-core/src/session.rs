@@ -75,6 +75,9 @@ pub struct Meta {
     /// True if any turn had unknown rates.
     #[serde(default)]
     pub spend_unknown: bool,
+    /// At least one request ended without a complete accounting record.
+    #[serde(default)]
+    pub spend_incomplete: bool,
     /// The model whose last call had no price. With a budget set, it is not
     /// called again until it has one: the budget could not see it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -122,6 +125,9 @@ pub struct SpendRecord {
     /// USD, or omitted when unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_usd: Option<f64>,
+    /// Counts and any estimated cost are a lower bound after interruption.
+    #[serde(default)]
+    pub incomplete: bool,
 }
 
 /// Open session on disk.
@@ -169,6 +175,7 @@ impl Session {
             title: String::new(),
             spend_usd_total: None,
             spend_unknown: false,
+            spend_incomplete: false,
             unpriced_model: None,
             plan_file: None,
             checkpoints: Vec::new(),
@@ -390,12 +397,16 @@ impl Session {
 
     /// Record a priced (or unpriced) model call.
     pub fn record_spend(&mut self, rec: SpendRecord) -> Result<()> {
-        self.count_spend(&rec)?;
-        append_jsonl(&self.dir.join("spend.jsonl"), &rec)
+        append_jsonl(&self.dir.join("spend.jsonl"), &rec)?;
+        self.count_spend(&rec)
     }
 
     /// Add a row to the session's totals.
     fn count_spend(&mut self, rec: &SpendRecord) -> Result<()> {
+        if rec.incomplete {
+            self.meta.spend_unknown = true;
+            self.meta.spend_incomplete = true;
+        }
         match rec.total_usd {
             Some(v) => {
                 self.meta.spend_usd_total = Some(self.meta.spend_usd_total.unwrap_or(0.0) + v);
@@ -611,6 +622,7 @@ pub fn spend_record(
         output_tokens: usage.output_tokens,
         cached_tokens: usage.cached_tokens,
         total_usd,
+        incomplete: false,
     }
 }
 
