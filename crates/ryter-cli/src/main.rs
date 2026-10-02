@@ -326,7 +326,7 @@ fn run_headless(cli: Cli) -> ryter_core::Result<ExitCode> {
 
 async fn run_prompt(
     cli: Cli,
-    cfg: ryter_core::Config,
+    mut cfg: ryter_core::Config,
     cwd: std::path::PathBuf,
     profile: SandboxProfile,
 ) -> ryter_core::Result<ExitCode> {
@@ -344,6 +344,11 @@ async fn run_prompt(
         cli.connection.as_deref(),
         cli.model.as_deref(),
     );
+    // An explicit headless route is for this run, including hat switches.
+    // Saved per-hat defaults must not silently select a different paid model.
+    if cli.connection.is_some() || cli.model.is_some() {
+        cfg.specialists.clear();
+    }
     let conn = cfg
         .connections
         .get(&conn_name)

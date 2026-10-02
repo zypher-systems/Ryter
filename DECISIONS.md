@@ -2,6 +2,13 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Acceptance evidence includes an independent hidden check
+- **Decision:** Keep a deterministic full-session test in the core and run actual CLI processes against a loopback provider. Restore a ten-task hats benchmark that validates every reference and proves each unchanged fixture fails hidden acceptance before any paid request. Hidden tests are revealed only after the live hats finish.
+- **Why:** Passing unit tests and a model’s own verdict do not demonstrate the assembled product or catch false passes. Simulated reference answers exercise the plumbing, while an intentionally broken builder calibrates false-pass detection. Neither is a model-quality score.
+- **Routing:** Explicit headless `--model`/`--connection` flags override per-hat defaults for the run without rewriting those defaults. Otherwise a requested low-cost model could silently be replaced by a saved, more expensive hat route.
+- **Live scope:** The user authorized OpenRouter through the app’s existing key, a low-cost model and $5 total for this acceptance run. No credentials are copied. Each isolated fixture session gets a small allocation; incomplete accounting stops further calls. The harness keeps events and commands as evidence and distinguishes expected negative checks from tool failures. No CI job makes paid calls.
+- **Limits:** A headless plan is a proposal followed by the harness’s explicit build instruction. Core acceptance separately exercises the interactive approval protocol. Live model verdicts remain evidence of what that model said, not a guarantee of correctness or an external review of Ryter.
+
 ### 2026-10-02 — Tool scopes follow the active session
 - **Decision:** Keep the agent’s bookkeeping on its parent thread. Run built-in tools, command hooks, automatic Git work and approved lifecycle commands on fresh Landlock threads. Grant only the active session’s notes and pages, plus the existing workspace/system/tool/cache/scratch allowances. Prove the requested profile before the first provider call; enforcement errors never execute a command.
 - **Why:** A permanent grant on all sessions exposes other projects. A permanent grant on just the initial session breaks new/resumed sessions because Landlock restrictions cannot be removed. Fresh workers follow the current notes path without accumulating grants; transcripts, spending, metadata and approvals stay outside command access.

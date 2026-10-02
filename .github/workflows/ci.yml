@@ -30,3 +30,18 @@ jobs:
         run: cargo test --workspace
       - name: version
         run: cargo run -p ryter-cli -- --version
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Offline CLI acceptance
+        run: python3 scripts/acceptance.py
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Linux'
+        with:
+          node-version: "22"
+      - name: Simulated hats benchmark
+        if: runner.os == 'Linux'
+        run: python3 bench/run.py --mode simulated
+      - name: False-pass negative control
+        if: runner.os == 'Linux'
+        run: python3 bench/run.py --mode simulated --simulate-broken-build --task pager-off-by-one

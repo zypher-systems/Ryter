@@ -2671,6 +2671,7 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
+    mod acceptance;
     use super::*;
     use crate::llm::ReplayProvider;
     use crate::tools::ToolContext;

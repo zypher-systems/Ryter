@@ -18,6 +18,8 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 
 ## Now
 
+- **Unreleased — review repair 8a: acceptance and benchmark.** A full simulated session covers plan approval, build, review, approved Test commands, resume, undo/redo, later user edits and commit receipts. Isolated CLI checks cover routing, all four hats, interrupted accounting, budgets and recovery. The ten-task benchmark now validates references, measures hidden acceptance and false passes, and distinguishes simulated accounting from opt-in live charges. Explicit CLI routes override saved hat defaults for that run.
+
 - **Unreleased — review repair 7c: session sandbox scopes.** Each tool, hook, automatic Git operation and approved lifecycle command runs in a fresh scope with only the active session’s notes and pages. Other sessions and private records stay closed. Session switching keeps working without accumulating grants.
 
 - **Unreleased — review repair 7b: bounded output.** Shell pipes retain fixed head/tail buffers while draining continuously. File paging and grep stream bounded lines; oversized/skipped lines and capped search results are explicit. Edit/diff inputs and directory/note enumeration have finite limits too.
