@@ -8,6 +8,13 @@ Why, not what. Non-obvious choices are recorded here, newest first.
 - **Lifetime:** Input closure cancels that connection's pending prompt and joins its request workers. Hosts must cooperate with cancellation; arbitrary blocking host code cannot be forcibly terminated safely. Status-only connections do not cancel another connection's work on disconnect.
 - **Where:** `mcp/server.rs`, CLI `ServeHost`, TUI `TuiAttach`; loopback regressions cover blocked observers, worker saturation, second prompts, cancellation calls/notifications, disconnect and authentication.
 
+### 2026-10-02 — A failed lifecycle operation keeps ownership until cleanup succeeds
+- **Decision:** Nonzero startup exits, wait errors, timeouts and cancellation share cleanup. Failed cleanup returns its handle to the agent and persists a pending flag with the approved stop command. A later start cannot discard a pending cleanup record; `/stop` retries it. Earlier-session process numbers remain insufficient authority to kill a process.
+- **Why:** A launcher can fail after starting children or a partial stack. Dropping its record made those resources impossible to stop through Ryter.
+- **Readiness:** Successful HTTP statuses and redirects (200–399) count as ready, with normal TLS verification for HTTPS. A TCP listener proves only occupancy; it prevents a second start and preserves an unhealthy server’s ownership record. A service that appears on the same port after the preflight check cannot be attributed solely by its address.
+- **Commands:** Only outer whitespace is trimmed. Shell whitespace, quotes, line breaks and here-documents inside a command are part of the approved program and survive serialization unchanged.
+- **Where:** `run.rs`, `agent.rs`; isolated regressions cover orphan cleanup, failed-stop retry, resumed ownership, port occupancy, TLS versus TCP, and exact command approval.
+
 ### 2026-10-02 — Stream identity survives each independent SSE frame
 - **Decision:** Carry a stream key alongside a tool call’s result ID. Chat and Messages use their wire index; Responses uses its item ID and returns the distinct `call_id` with the tool result. The accumulator uses keys before its legacy serial fallback.
 - **Why:** Argument fragments often omit the call ID. Assigning them to the most recent call combines parallel requests into invalid JSON or the wrong arguments. Parsing each HTTP frame independently must preserve enough identity to reconstruct the calls later.

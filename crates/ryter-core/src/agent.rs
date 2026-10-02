@@ -1453,13 +1453,12 @@ impl Agent {
     pub fn stop_product(&mut self) -> Result<std::result::Result<String, String>> {
         let root = self.root();
         let log = self.session.notes_dir().join("project.log");
-        let started = match self.product.take() {
+        let mut started = match self.product.take() {
             Some(s) => s,
             None => match crate::run::remembered(&self.home, &root) {
                 Some(left) if left.stop.is_none() => {
                     // An earlier session's foreground command: a process
                     // number is not proof it is still that process.
-                    crate::run::forget(&self.home, &root);
                     self.say_product()?;
                     return Ok(Err(match left.pid {
                         Some(pid) => format!(
@@ -1475,10 +1474,14 @@ impl Agent {
                 None => return Ok(Err("Ryter has not started this project".to_string())),
             },
         };
-        let out = crate::run::stop(started, &root, &self.ctx.cancel);
-        // Stopped or not, it is no longer Ryter's: a failed stop is the
-        // user's to look at.
-        crate::run::forget(&self.home, &root);
+        let out = crate::run::stop(&mut started, &root, &self.ctx.cancel);
+        if out.is_ok() {
+            crate::run::forget(&self.home, &root);
+        } else {
+            let note = started.note();
+            self.product = Some(started);
+            crate::run::remember(&self.home, &root, &note)?;
+        }
         self.say_product()?;
         Ok(out)
     }
@@ -1516,6 +1519,11 @@ impl Agent {
             }),
             "start" => {
                 if let Some(up) = &self.product {
+                    if up.cleanup_pending {
+                        return Ok(ToolOutput::err(
+                            "Cleanup failed. Retry `/stop` before starting the project again.",
+                        ));
+                    }
                     return Ok(ToolOutput::ok(format!(
                         "It is already running: Ryter started it at {}{}.",
                         up.at,
@@ -1529,9 +1537,14 @@ impl Agent {
                 // second time: the new one would die on its port, and
                 // `/stop` would then end the wrong one.
                 if let Some(left) = crate::run::remembered(&self.home, &root) {
+                    if left.cleanup_pending {
+                        return Ok(ToolOutput::err(
+                            "An earlier cleanup failed. Retry `/stop` before starting the project again.",
+                        ));
+                    }
                     let up = match (left.address.as_deref(), left.pid) {
                         (Some(url), _) => {
-                            crate::run::ask(url, std::time::Duration::from_secs(2)).up()
+                            crate::run::listening(url, std::time::Duration::from_secs(2))
                         }
                         (None, Some(pid)) => crate::tools::shell::group_alive(pid),
                         // A stack with only a stop command: taken to be up.
@@ -1554,6 +1567,13 @@ impl Agent {
                     Ok(run) => run,
                     Err(reply) => return Ok(reply),
                 };
+                if run.ready.as_deref().is_some_and(|url| {
+                    crate::run::listening(url, std::time::Duration::from_millis(800))
+                }) {
+                    return Ok(ToolOutput::err(
+                        "The ready address is already listening, but this session did not start it. Stop the existing service or choose another address before starting this project.",
+                    ));
+                }
                 let log = self.session.notes_dir().join("project.log");
                 let began = std::time::Instant::now();
                 match crate::run::start(&run, &root, &log, START_TIMEOUT, &self.ctx.cancel)? {
@@ -1570,6 +1590,13 @@ impl Agent {
                             began.elapsed().as_secs(),
                             log.display()
                         )))
+                    }
+                    Start::CleanupFailed { started, why } => {
+                        let note = started.note();
+                        self.product = Some(started);
+                        crate::run::remember(&self.home, &root, &note)?;
+                        self.say_product()?;
+                        Ok(ToolOutput::err(why))
                     }
                     Start::Failed(why) => Ok(ToolOutput::err(why)),
                     Start::Cancelled => Err(Error::Cancelled),
@@ -3143,6 +3170,65 @@ mod tests {
             .collect()
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn failed_cleanup_is_remembered_and_can_be_retried_after_resume() {
+        for failed_start in [false, true] {
+            let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![]));
+            agent.role = Role::SoloTest;
+            agent.ctx.role = Role::SoloTest;
+            let run = crate::run::RunFile {
+                start: Some(if failed_start { "exit 7" } else { "true" }.into()),
+                stop: Some("test -f allow-stop".into()),
+                ..Default::default()
+            };
+            crate::run::save_approved(cwd.path(), &agent.home, &run).unwrap();
+            let result = agent
+                .run_project(&serde_json::json!({"action": "start"}))
+                .unwrap();
+            if failed_start {
+                assert!(result.text.contains("Cleanup failed"), "{result:?}");
+            } else {
+                assert!(agent.stop_product().unwrap().is_err());
+            }
+            assert!(agent.product.is_some());
+            assert!(crate::run::remembered(&agent.home, cwd.path()).is_some());
+            // The launcher has exited; simulate the next session using the
+            // persisted command, without guessing ownership from an old PID.
+            agent.product = None;
+            let retry_start = agent
+                .run_project(&serde_json::json!({"action": "start"}))
+                .unwrap();
+            assert!(retry_start.text.contains("Retry `/stop`"));
+            std::fs::write(cwd.path().join("allow-stop"), "").unwrap();
+            assert!(agent.stop_product().unwrap().is_ok());
+            assert!(agent.product.is_none());
+            assert!(crate::run::remembered(&agent.home, cwd.path()).is_none());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unowned_ready_address_does_not_start_or_claim_a_service() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![]));
+        agent.role = Role::SoloTest;
+        agent.ctx.role = Role::SoloTest;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let run = crate::run::RunFile {
+            start: Some("echo started > state".into()),
+            ready: Some(format!("http://{}/health", listener.local_addr().unwrap())),
+            ..Default::default()
+        };
+        crate::run::save_approved(cwd.path(), &agent.home, &run).unwrap();
+        let result = agent
+            .run_project(&serde_json::json!({"action": "start"}))
+            .unwrap();
+        assert!(result.text.contains("already listening"), "{result:?}");
+        assert!(!cwd.path().join("state").exists());
+        assert!(agent.product.is_none());
+        assert!(crate::run::remembered(&agent.home, cwd.path()).is_none());
+    }
+
     /// The tester proposes how the project runs, the user approves it on a
     /// panel, and it is the project's run file from then on. Ryter starts
     /// the product and runs its tests with those commands, leaves it up,
@@ -3472,6 +3558,7 @@ mod tests {
             &agent.home,
             cwd.path(),
             &crate::run::Left {
+                cleanup_pending: false,
                 at: "2026-10-01 14:02".into(),
                 address: Some(url.clone()),
                 stop: None,
