@@ -1,7 +1,9 @@
 //! Built-in tools and the single permission gate.
 
+mod bounded;
 mod fs;
 mod policy;
+mod secret;
 pub(crate) mod shell;
 mod web;
 
@@ -52,6 +54,8 @@ pub use policy::{Decision, decide, removes_stack_data};
 /// Runtime context for a tool call.
 #[derive(Debug, Clone)]
 pub struct ToolContext {
+    /// Per-call sandbox; session storage outside notes/pages stays private.
+    pub sandbox: Option<crate::sandbox::Scope>,
     /// Project root. All source paths must stay inside it.
     pub workspace: std::path::PathBuf,
     /// The session's notes folder: the one place the plan hat may write.
@@ -82,6 +86,16 @@ pub struct ToolContext {
     /// Variables an earlier part of the same shell command set to a plain
     /// value (`B=http://localhost:8001`), so `$B` later can be read.
     pub vars: Vec<(String, String)>,
+}
+
+impl ToolContext {
+    /// Restrict tool/lifecycle work without constraining session record keeping.
+    pub fn sandboxed<T: Send>(&self, run: impl FnOnce() -> Result<T> + Send) -> Result<T> {
+        match &self.sandbox {
+            Some(scope) => scope.run(&self.workspace, &self.notes_dir, run),
+            None => run(),
+        }
+    }
 }
 
 /// The folder a shell command is in when one of its parts runs.
@@ -464,6 +478,10 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
 
 /// Run a built-in tool. Callers must have already applied [`decide`].
 pub fn execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
+    ctx.sandboxed(|| execute_inner(name, args, ctx))
+}
+
+fn execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     match name {
         "read_file" => fs::read_file(args, ctx),
         "list_dir" => fs::list_dir(args, ctx),
@@ -565,6 +583,10 @@ const CONTAINER_CHECKS: &str = " Docker is here, and tests and linters do run in
 
 /// Decide then execute. Deny/Ask do not run. PreToolUse hooks can still deny.
 pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
+    ctx.sandboxed(|| gated_execute_inner(name, args, ctx))
+}
+
+fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     if ctx.cancel.is_cancelled() {
         return Ok(ToolOutput::err("cancelled"));
     }
@@ -694,7 +716,11 @@ pub fn gated_execute(name: &str, args: &Value, ctx: &ToolContext) -> Result<Tool
 }
 
 fn run_with_hooks(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
-    with_hooks(name, args, ctx, || execute(name, args, ctx))
+    // The gate already entered this exact session scope. Hooks inherit it;
+    // do not create another worker or reopen grant directories from inside it.
+    let mut scoped = ctx.clone();
+    scoped.sandbox = None;
+    with_hooks(name, args, &scoped, || execute_inner(name, args, ctx))
 }
 
 /// Run a tool the agent handles itself (`show_page`, `load_skill`,
@@ -709,7 +735,7 @@ pub fn with_hooks(
 ) -> Result<ToolOutput> {
     if let Some(hooks) = &ctx.hooks {
         if let crate::hooks::HookDecision::Deny(msg) =
-            hooks.pre_tool(name, args, &ctx.workspace, ctx.role)
+            ctx.sandboxed(|| Ok(hooks.pre_tool(name, args, &ctx.workspace, ctx.role)))?
         {
             return Ok(ToolOutput::err(format!("hook denied: {msg}")));
         }
@@ -725,7 +751,10 @@ pub fn with_hooks(
         Err(e) => ToolOutput::err(format!("{name} failed: {e}")),
     };
     if let Some(hooks) = &ctx.hooks {
-        hooks.post_tool(name, args, &out.text, &ctx.workspace, ctx.role);
+        ctx.sandboxed(|| {
+            hooks.post_tool(name, args, &out.text, &ctx.workspace, ctx.role);
+            Ok(())
+        })?;
     }
     Ok(out)
 }
@@ -740,6 +769,7 @@ mod tests {
         let notes = root.join(".ryter-notes");
         std::fs::create_dir_all(&notes).unwrap();
         ToolContext {
+            sandbox: None,
             live: None,
             workspace: root.to_path_buf(),
             notes_dir: notes,
@@ -754,6 +784,57 @@ mod tests {
             cwd: Default::default(),
             vars: Default::default(),
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sandboxed_gate_and_hooks_follow_the_current_notes() {
+        use crate::sandbox::{
+            SandboxProfile,
+            tests::{fixture_scope, outside_scratch},
+        };
+        let ws = outside_scratch();
+        let home = outside_scratch();
+        let scope = fixture_scope(SandboxProfile::Workspace, home.path());
+        let mut c = ctx(Role::SoloBuild, ws.path());
+        c.always_approve = true;
+        c.notes_dir = home.path().join("sessions/project/first/notes");
+        if let Err(error) = scope.check(ws.path(), &c.notes_dir) {
+            assert!(error.to_string().contains("Landlock is unavailable"));
+            return;
+        }
+        c.sandbox = Some(scope);
+        let secret = home.path().join("private");
+        std::fs::write(&secret, "private\n").unwrap();
+        let command = format!(
+            "if IFS= read -r line < '{}'; then echo leaked; exit 2; fi; printf checked >> hooks.log",
+            secret.display()
+        );
+        c.hooks = Some(Arc::new(crate::hooks::HookSet::from_config(&[
+            crate::config::HookConfig {
+                event: "PreToolUse".into(),
+                command: Some(command.clone()),
+                url: None,
+                matcher: None,
+            },
+            crate::config::HookConfig {
+                event: "PostToolUse".into(),
+                command: Some(command),
+                url: None,
+                matcher: None,
+            },
+        ])));
+        for id in ["first", "second", "first"] {
+            c.notes_dir = home.path().join(format!("sessions/project/{id}/notes"));
+            let path = c.notes_dir.join("written");
+            let out = gated_execute("write", &json!({"path":path, "content":id}), &c).unwrap();
+            assert!(!out.is_error, "{}", out.text);
+            assert_eq!(std::fs::read_to_string(path).unwrap(), id);
+        }
+        assert_eq!(
+            std::fs::read_to_string(ws.path().join("hooks.log")).unwrap(),
+            "checked".repeat(6)
+        );
     }
 
     #[test]
@@ -903,6 +984,40 @@ mod tests {
         let capped = cap_output(text);
         assert!(capped.contains("elided"));
         assert!(capped.len() < MAX_TOOL_OUTPUT_BYTES + 200);
+    }
+
+    #[test]
+    fn oversized_lines_have_bounded_results_and_do_not_hide_later_matches() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(Role::SoloBuild, dir.path());
+        let path = dir.path().join("huge.txt");
+        let mut file = std::fs::File::create(&path).unwrap();
+        use std::io::Write;
+        for _ in 0..1000 {
+            file.write_all(&[b'x'; 8192]).unwrap();
+        }
+        file.write_all(b"\nneedle after giant line\n").unwrap();
+        let first = execute("read_file", &json!({"path": "huge.txt", "limit": 1}), &c).unwrap();
+        assert!(first.text.len() < MAX_TOOL_OUTPUT_BYTES + 256);
+        assert!(first.text.contains("remaining bytes were skipped"));
+        assert!(first.text.contains("offset 2"));
+        let next = execute("read_file", &json!({"path": "huge.txt", "offset": 2}), &c).unwrap();
+        assert!(next.text.contains("   2|needle after giant line"));
+        let search = execute("grep", &json!({"pattern": "needle"}), &c).unwrap();
+        assert!(search.text.contains("huge.txt:2:needle after giant line"));
+        assert!(search.text.contains("skipped 1 lines over 64000 bytes"));
+        let no_hit = execute("grep", &json!({"pattern": "not present"}), &c).unwrap();
+        assert!(no_hit.text.contains("results may be incomplete"));
+        let edit = execute(
+            "write",
+            &json!({"path": "huge.txt", "content": "replacement"}),
+            &c,
+        );
+        assert!(edit.is_err());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            8_192_000 + b"\nneedle after giant line\n".len() as u64
+        );
     }
 
     #[test]

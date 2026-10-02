@@ -70,7 +70,7 @@ pub struct Agent {
     pub project_root: Option<PathBuf>,
     /// Whether project prompts/config are trusted.
     pub trusted: bool,
-    /// Context window override. `0` uses the model default (grok-4.6 = 500k, else 200k).
+    /// Context override for the base route only. `0` uses configured/catalog limits.
     pub context_window: u64,
     /// The configuration: each hat's model, the review limit, the
     /// connections. Tests may leave this `None`.
@@ -255,7 +255,6 @@ impl Agent {
         // changed the prompt's prefix and threw away the provider's cache for
         // the whole conversation, every time memory was touched.
         let mut system = self.system_prompt()?;
-        let mut compactions = self.session.transcript.len();
         // The model that has read this conversation so far. A hat on another
         // model reads it all again, uncached: the user is told what that is.
         let mut reader = self.last_reader();
@@ -266,19 +265,14 @@ impl Agent {
             if self.ctx.cancel.is_cancelled() {
                 return self.finish_cancelled(last_text).await;
             }
-            if let Some(e) = self.over_budget().or_else(|| self.unpriced_stop()) {
-                return Err(e);
-            }
-            self.maybe_compact()?;
-            if self.session.transcript.len() < compactions {
-                // Compaction already rewrote the prefix; memory can catch up free.
-                system = self.system_prompt()?;
-            }
-            compactions = self.session.transcript.len();
+            let (provider, model, connection) = self.hat_stack();
+            self.admit_request(&model)?;
+            self.maybe_compact(&mut system, &model, &connection)?;
+            let window = self.model_window(&model, &connection);
+            let output = Self::output_allowance(window);
 
             // The hat's own model, when it has one. Worked out each round: a
             // hat can change mid-turn (an approved plan goes on to build).
-            let (provider, model, connection) = self.hat_stack();
             if reader.as_deref() != Some(model.as_str()) {
                 if reader.is_some() {
                     if let Some(message) = self.reread_notice(&model, &system) {
@@ -323,10 +317,11 @@ impl Agent {
                 // nothing unused. At 8192 a reasoning model in the build hat
                 // spent the whole budget drafting code in its reasoning and
                 // returned nothing.
-                max_tokens: Some(CONVERSATION_MAX_OUTPUT),
+                max_tokens: Some(output),
                 reasoning: crate::config::reasoning_effort(self.cfg.as_ref(), self.role, &model),
             };
 
+            crate::compact::ensure_fits(&req, window)?;
             let mut stream = tokio::select! {
                 biased;
                 () = self.ctx.cancel.cancelled() => {
@@ -338,78 +333,76 @@ impl Agent {
             let mut calls = ToolCallAccumulator::default();
             let mut usage = Usage::default();
             let mut reported_cost: Option<f64> = None;
+            let mut saw_usage = false;
+            let mut saw_done = false;
             // Set when the provider says the answer hit the output ceiling.
             let mut truncated = false;
 
-            loop {
-                if self.ctx.cancel.is_cancelled() {
-                    return self.finish_cancelled(last_text).await;
+            let received: Result<()> = async {
+                loop {
+                    if self.ctx.cancel.is_cancelled() {
+                        return Err(Error::Cancelled);
+                    }
+                    let delta = tokio::select! {
+                        biased;
+                        () = self.ctx.cancel.cancelled() => {
+                            return Err(Error::Cancelled);
+                        }
+                        d = stream.next() => d,
+                    };
+                    let Some(delta) = delta else {
+                        break;
+                    };
+                    match delta? {
+                        StreamDelta::Text(t) => {
+                            text.push_str(&t);
+                            self.emit(AgentEvent::Token { text: t })?;
+                        }
+                        StreamDelta::Reasoning(t) => {
+                            self.emit(AgentEvent::Reasoning { text: t })?;
+                        }
+                        StreamDelta::ToolCall {
+                            stream_key,
+                            id,
+                            name,
+                            arguments,
+                        } => calls.push_keyed(stream_key.as_deref(), &id, &name, &arguments),
+                        StreamDelta::Usage(u) => {
+                            usage = usage.merge(u);
+                            saw_usage = true;
+                        }
+                        StreamDelta::ReportedCost(c) => reported_cost = Some(c),
+                        StreamDelta::Truncated => truncated = true,
+                        StreamDelta::Done => saw_done = true,
+                    }
                 }
-                let delta = tokio::select! {
-                    biased;
-                    () = self.ctx.cancel.cancelled() => {
-                        return self.finish_cancelled(if text.is_empty() { last_text } else { text }).await;
-                    }
-                    d = stream.next() => d,
-                };
-                let Some(delta) = delta else {
-                    break;
-                };
-                match delta? {
-                    StreamDelta::Text(t) => {
-                        text.push_str(&t);
-                        self.emit(AgentEvent::Token { text: t })?;
-                    }
-                    StreamDelta::Reasoning(t) => {
-                        self.emit(AgentEvent::Reasoning { text: t })?;
-                    }
-                    StreamDelta::ToolCall {
-                        id,
-                        name,
-                        arguments,
-                    } => calls.push(&id, &name, &arguments),
-                    StreamDelta::Usage(u) => usage = usage.merge(u),
-                    StreamDelta::ReportedCost(c) => reported_cost = Some(c),
-                    StreamDelta::Truncated => truncated = true,
-                    StreamDelta::Done => {}
-                }
-            }
 
-            let local = self
-                .cfg
-                .as_ref()
-                .and_then(|c| c.connections.get(&connection))
-                .is_some_and(|c| c.is_local());
-            let total_usd = reported_cost.or_else(|| {
-                if local {
-                    Some(0.0)
-                } else {
-                    self.book.cost(&model, usage)
-                }
-            });
-            self.session.record_spend(spend_record(
-                connection.clone(),
-                model.clone(),
-                self.role,
+                Ok(())
+            }
+            .await;
+            let total_usd = self.record_call(
+                &connection,
+                &model,
                 usage,
-                total_usd,
-            ))?;
-            self.emit(AgentEvent::Spend {
-                connection: connection.clone(),
-                model: model.clone(),
-                role: self.role,
-                input_tokens: usage.input_tokens,
-                output_tokens: usage.output_tokens,
-                cached_tokens: usage.cached_tokens,
-                total_usd,
-            })?;
+                reported_cost,
+                saw_usage,
+                received.is_ok() && saw_done,
+            )?;
+            if let Err(error) = received {
+                if matches!(error, Error::Cancelled) {
+                    return self
+                        .finish_cancelled(if text.is_empty() { last_text } else { text })
+                        .await;
+                }
+                return Err(error);
+            }
 
             if let Some(e) = self.over_budget() {
                 return Err(e);
             }
             // A budget can't stop what it can't price. This round's reply is
             // kept; the next call stops before it is sent (`unpriced_stop`).
-            if total_usd.is_none() && self.budget_usd > 0.0 {
+            if total_usd.is_none() && self.budget_usd > 0.0 && !self.session.meta.spend_incomplete {
                 self.emit(AgentEvent::Notice {
                     message: format!(
                         "{} has no price, so the ${:.2} budget can't see what it \
@@ -744,7 +737,8 @@ impl Agent {
         let attended = self.ctx.user_io.is_some();
         let open = attended && self.cfg.as_ref().is_some_and(|c| c.ui.open_pages);
         // A browser started from a sandboxed thread would run in the sandbox.
-        let sandboxed = crate::sandbox::active() != crate::sandbox::SandboxProfile::Off;
+        let sandboxed = self.ctx.sandbox.is_some()
+            || crate::sandbox::active() != crate::sandbox::SandboxProfile::Off;
         let opened = open && !sandboxed && crate::page::open(&path);
         self.emit(AgentEvent::Notice {
             message: if opened {
@@ -826,7 +820,9 @@ impl Agent {
                 u32::from(c)
             )));
         }
-        if crate::sandbox::active() != crate::sandbox::SandboxProfile::Off {
+        if self.ctx.sandbox.is_some()
+            || crate::sandbox::active() != crate::sandbox::SandboxProfile::Off
+        {
             return Ok(ToolOutput::err(format!(
                 "the sandbox keeps {shown} read-only, so the rules weren't changed. Tell the \
                  user to edit the file, or to run without --sandbox to change it from here."
@@ -1457,13 +1453,12 @@ impl Agent {
     pub fn stop_product(&mut self) -> Result<std::result::Result<String, String>> {
         let root = self.root();
         let log = self.session.notes_dir().join("project.log");
-        let started = match self.product.take() {
+        let mut started = match self.product.take() {
             Some(s) => s,
             None => match crate::run::remembered(&self.home, &root) {
                 Some(left) if left.stop.is_none() => {
                     // An earlier session's foreground command: a process
                     // number is not proof it is still that process.
-                    crate::run::forget(&self.home, &root);
                     self.say_product()?;
                     return Ok(Err(match left.pid {
                         Some(pid) => format!(
@@ -1479,10 +1474,17 @@ impl Agent {
                 None => return Ok(Err("Ryter has not started this project".to_string())),
             },
         };
-        let out = crate::run::stop(started, &root, &self.ctx.cancel);
-        // Stopped or not, it is no longer Ryter's: a failed stop is the
-        // user's to look at.
-        crate::run::forget(&self.home, &root);
+        let out = self
+            .ctx
+            .sandboxed(|| Ok(crate::run::stop(&mut started, &root, &self.ctx.cancel)))
+            .unwrap_or_else(|error| Err(error.to_string()));
+        if out.is_ok() {
+            crate::run::forget(&self.home, &root);
+        } else {
+            let note = started.note();
+            self.product = Some(started);
+            crate::run::remember(&self.home, &root, &note)?;
+        }
         self.say_product()?;
         Ok(out)
     }
@@ -1520,6 +1522,11 @@ impl Agent {
             }),
             "start" => {
                 if let Some(up) = &self.product {
+                    if up.cleanup_pending {
+                        return Ok(ToolOutput::err(
+                            "Cleanup failed. Retry `/stop` before starting the project again.",
+                        ));
+                    }
                     return Ok(ToolOutput::ok(format!(
                         "It is already running: Ryter started it at {}{}.",
                         up.at,
@@ -1533,9 +1540,14 @@ impl Agent {
                 // second time: the new one would die on its port, and
                 // `/stop` would then end the wrong one.
                 if let Some(left) = crate::run::remembered(&self.home, &root) {
+                    if left.cleanup_pending {
+                        return Ok(ToolOutput::err(
+                            "An earlier cleanup failed. Retry `/stop` before starting the project again.",
+                        ));
+                    }
                     let up = match (left.address.as_deref(), left.pid) {
                         (Some(url), _) => {
-                            crate::run::ask(url, std::time::Duration::from_secs(2)).up()
+                            crate::run::listening(url, std::time::Duration::from_secs(2))
                         }
                         (None, Some(pid)) => crate::tools::shell::group_alive(pid),
                         // A stack with only a stop command: taken to be up.
@@ -1558,9 +1570,18 @@ impl Agent {
                     Ok(run) => run,
                     Err(reply) => return Ok(reply),
                 };
+                if run.ready.as_deref().is_some_and(|url| {
+                    crate::run::listening(url, std::time::Duration::from_millis(800))
+                }) {
+                    return Ok(ToolOutput::err(
+                        "The ready address is already listening, but this session did not start it. Stop the existing service or choose another address before starting this project.",
+                    ));
+                }
                 let log = self.session.notes_dir().join("project.log");
                 let began = std::time::Instant::now();
-                match crate::run::start(&run, &root, &log, START_TIMEOUT, &self.ctx.cancel)? {
+                match self.ctx.sandboxed(|| {
+                    crate::run::start(&run, &root, &log, START_TIMEOUT, &self.ctx.cancel)
+                })? {
                     Start::Up { started, how } => {
                         let note = started.note();
                         self.product = Some(started);
@@ -1574,6 +1595,13 @@ impl Agent {
                             began.elapsed().as_secs(),
                             log.display()
                         )))
+                    }
+                    Start::CleanupFailed { started, why } => {
+                        let note = started.note();
+                        self.product = Some(started);
+                        crate::run::remember(&self.home, &root, &note)?;
+                        self.say_product()?;
+                        Ok(ToolOutput::err(why))
                     }
                     Start::Failed(why) => Ok(ToolOutput::err(why)),
                     Start::Cancelled => Err(Error::Cancelled),
@@ -1594,13 +1622,15 @@ impl Agent {
                 let mut text = String::new();
                 let mut failed = 0;
                 for cmd in &run.test {
-                    let out = crate::tools::shell::run_command_live(
-                        cmd,
-                        &root,
-                        COMMAND_TIMEOUT,
-                        &self.ctx.cancel,
-                        self.ctx.live.as_ref(),
-                    )?;
+                    let out = self.ctx.sandboxed(|| {
+                        crate::tools::shell::run_command_live(
+                            cmd,
+                            &root,
+                            COMMAND_TIMEOUT,
+                            &self.ctx.cancel,
+                            self.ctx.live.as_ref(),
+                        )
+                    })?;
                     let (body, ok) = match out {
                         Run::Ok(o) => (o, true),
                         Run::Failed(o) => (o, false),
@@ -1702,11 +1732,16 @@ impl Agent {
         self.filed.delivered = Some(filed.report.passed());
         // What was tested, as the files stood: a change after this is not
         // covered by the report.
-        let tree = crate::review::root(&self.ctx.workspace).ok().and_then(|r| {
-            let base = crate::review::head_base(&r);
-            let changes = crate::review::changes(&r, &base).ok()?;
-            crate::review::tree_of(&r, &changes.now)
-        });
+        let tree = self
+            .ctx
+            .sandboxed(|| {
+                Ok(crate::review::root(&self.ctx.workspace).ok().and_then(|r| {
+                    let base = crate::review::head_base(&r);
+                    let changes = crate::review::changes(&r, &base).ok()?;
+                    crate::review::tree_of(&r, &changes.now)
+                }))
+            })
+            .unwrap_or_default();
         self.emit(AgentEvent::Tested {
             model,
             headline: filed.report.headline(),
@@ -1744,7 +1779,7 @@ impl Agent {
     /// put them back. A snapshot identical to the last one isn't kept twice.
     fn checkpoint_before_build(&mut self) -> Result<()> {
         let dir = self.ctx.workspace.clone();
-        match crate::git::ensure_repo(&dir) {
+        match self.ctx.sandboxed(|| crate::git::ensure_repo(&dir)) {
             Ok(Some(setup)) => {
                 let undo = if setup.created {
                     " If you didn't want a repository here, delete the `.git` folder."
@@ -1774,15 +1809,20 @@ impl Agent {
             self.session.meta.id,
             self.session.meta.checkpoints.len() + 1
         );
-        let Some(sha) = crate::git::checkpoint(&dir, &name)? else {
+        let Some(sha) = self.ctx.sandboxed(|| crate::git::checkpoint(&dir, &name))? else {
             return Ok(());
         };
         // This turn is about to change files, whether or not its starting
         // point is one already kept.
         self.session.changed_turns += 1;
         let same = self.session.meta.checkpoints.last().is_some_and(|last| {
-            crate::git::checkpoint_tree(&dir, last).ok()
-                == crate::git::checkpoint_tree(&dir, &sha).ok()
+            self.ctx
+                .sandboxed(|| crate::git::checkpoint_tree(&dir, last))
+                .ok()
+                == self
+                    .ctx
+                    .sandboxed(|| crate::git::checkpoint_tree(&dir, &sha))
+                    .ok()
         });
         if !same {
             self.session.push_checkpoint(sha)?;
@@ -1829,11 +1869,16 @@ impl Agent {
             .get(&start)
             .cloned()
             .unwrap_or_default();
-        if record.ignored.iter().any(|f| f.path == rel) || !crate::git::is_ignored(&dir, &rel) {
+        if record.ignored.iter().any(|f| f.path == rel)
+            || !self
+                .ctx
+                .sandboxed(|| Ok(crate::git::is_ignored(&dir, &rel)))
+                .unwrap_or(false)
+        {
             return Ok(());
         }
         record.ignored.push(crate::session::SavedFile {
-            before: crate::git::save_blob(&dir, &rel)?,
+            before: self.ctx.sandboxed(|| crate::git::save_blob(&dir, &rel))?,
             path: rel,
             after: None,
         });
@@ -1858,9 +1903,11 @@ impl Agent {
             self.session.meta.id,
             &start[..start.len().min(12)]
         );
-        record.after = crate::git::checkpoint(&dir, &name)?;
+        record.after = self.ctx.sandboxed(|| crate::git::checkpoint(&dir, &name))?;
         for f in &mut record.ignored {
-            f.after = crate::git::save_blob(&dir, &f.path)?;
+            f.after = self
+                .ctx
+                .sandboxed(|| crate::git::save_blob(&dir, &f.path))?;
         }
         self.session.set_turn_record(&start, record)
     }
@@ -1893,10 +1940,16 @@ impl Agent {
         let dir = self.ctx.workspace.clone();
         let id = self.session.meta.id.to_string();
         let redo_name = format!("{id}-redo-{}", self.session.meta.redo.len() + 1);
-        let Some(now) = crate::git::checkpoint(&dir, &redo_name)? else {
+        let Some(now) = self
+            .ctx
+            .sandboxed(|| crate::git::checkpoint(&dir, &redo_name))?
+        else {
             return Ok("nothing to undo: this folder has no repository to undo from".into());
         };
-        let now_tree = crate::git::checkpoint_tree(&dir, &now).ok();
+        let now_tree = self
+            .ctx
+            .sandboxed(|| crate::git::checkpoint_tree(&dir, &now))
+            .ok();
         while let Some(last) = self.session.meta.checkpoints.last().cloned() {
             let record = self
                 .session
@@ -1908,7 +1961,11 @@ impl Agent {
             // Skip checkpoints the files already match: undo means "go back
             // before the last change", not "restore what's already there".
             if record.ignored.is_empty()
-                && crate::git::checkpoint_tree(&dir, &last).ok() == now_tree
+                && self
+                    .ctx
+                    .sandboxed(|| crate::git::checkpoint_tree(&dir, &last))
+                    .ok()
+                    == now_tree
             {
                 self.session.pop_checkpoint()?;
                 continue;
@@ -1917,18 +1974,25 @@ impl Agent {
             // snapshot at the end. Sessions from before 0.5.2 have no end
             // snapshot: everything since the checkpoint, as undo did then.
             let end = record.after.clone().unwrap_or_else(|| now.clone());
-            let paths = crate::git::paths_between(&dir, &last, &end)?;
-            let since: std::collections::HashSet<String> =
-                crate::git::paths_between(&dir, &end, &now)?
-                    .into_iter()
-                    .collect();
+            let paths = self
+                .ctx
+                .sandboxed(|| crate::git::paths_between(&dir, &last, &end))?;
+            let since: std::collections::HashSet<String> = self
+                .ctx
+                .sandboxed(|| crate::git::paths_between(&dir, &end, &now))?
+                .into_iter()
+                .collect();
             let mut clash: Vec<String> = paths
                 .iter()
                 .filter(|p| since.contains(*p))
                 .cloned()
                 .collect();
             for f in &record.ignored {
-                if crate::git::save_blob(&dir, &f.path)? != f.after {
+                if self
+                    .ctx
+                    .sandboxed(|| crate::git::save_blob(&dir, &f.path))?
+                    != f.after
+                {
                     clash.push(f.path.clone());
                 }
             }
@@ -1944,14 +2008,21 @@ impl Agent {
             for f in &record.ignored {
                 saved.push(crate::session::SavedFile {
                     path: f.path.clone(),
-                    before: crate::git::save_blob(&dir, &f.path)?,
+                    before: self
+                        .ctx
+                        .sandboxed(|| crate::git::save_blob(&dir, &f.path))?,
                     after: f.before.clone(),
                 });
-                crate::git::put_blob(&dir, &f.path, f.before.as_deref())?;
+                self.ctx
+                    .sandboxed(|| crate::git::put_blob(&dir, &f.path, f.before.as_deref()))?;
             }
-            crate::git::restore_paths(&dir, &last, &paths)?;
+            self.ctx
+                .sandboxed(|| crate::git::restore_paths(&dir, &last, &paths))?;
             let undone_name = format!("{id}-undone-{}", self.session.meta.redo.len() + 1);
-            let undone = crate::git::checkpoint(&dir, &undone_name)?.unwrap_or_default();
+            let undone = self
+                .ctx
+                .sandboxed(|| crate::git::checkpoint(&dir, &undone_name))?
+                .unwrap_or_default();
             self.session.pop_checkpoint()?;
             self.session.push_redo(crate::session::Redo {
                 checkpoint: last,
@@ -2000,13 +2071,14 @@ impl Agent {
             return Ok("nothing to redo".into());
         };
         let dir = self.ctx.workspace.clone();
-        let Some(now) = crate::git::checkpoint(&dir, "now")? else {
+        let Some(now) = self.ctx.sandboxed(|| crate::git::checkpoint(&dir, "now"))? else {
             return Ok("nothing to redo".into());
         };
-        let since: std::collections::HashSet<String> =
-            crate::git::paths_between(&dir, &r.undone, &now)?
-                .into_iter()
-                .collect();
+        let since: std::collections::HashSet<String> = self
+            .ctx
+            .sandboxed(|| crate::git::paths_between(&dir, &r.undone, &now))?
+            .into_iter()
+            .collect();
         let mut clash: Vec<String> = r
             .paths
             .iter()
@@ -2014,7 +2086,11 @@ impl Agent {
             .cloned()
             .collect();
         for f in &r.ignored {
-            if crate::git::save_blob(&dir, &f.path)? != f.after {
+            if self
+                .ctx
+                .sandboxed(|| crate::git::save_blob(&dir, &f.path))?
+                != f.after
+            {
                 clash.push(f.path.clone());
             }
         }
@@ -2024,9 +2100,11 @@ impl Agent {
                 list(&clash)
             ));
         }
-        crate::git::restore_paths(&dir, &r.files, &r.paths)?;
+        self.ctx
+            .sandboxed(|| crate::git::restore_paths(&dir, &r.files, &r.paths))?;
         for f in &r.ignored {
-            crate::git::put_blob(&dir, &f.path, f.before.as_deref())?;
+            self.ctx
+                .sandboxed(|| crate::git::put_blob(&dir, &f.path, f.before.as_deref()))?;
         }
         self.session.pop_redo()?;
         self.session.push_checkpoint(r.checkpoint.clone())?;
@@ -2057,7 +2135,7 @@ impl Agent {
 
     fn revert_recorded(
         &mut self,
-        revert: impl FnOnce(&std::path::Path) -> Result<()>,
+        revert: impl FnOnce(&std::path::Path) -> Result<()> + Send,
     ) -> Result<()> {
         let dir = self.ctx.workspace.clone();
         let name = format!(
@@ -2070,15 +2148,17 @@ impl Agent {
             let start = self.session.meta.checkpoints.last().cloned();
             self.session.set_turn_checkpoint(start)?;
         }
-        let sha = crate::git::checkpoint(&dir, &name)?;
+        let sha = self.ctx.sandboxed(|| crate::git::checkpoint(&dir, &name))?;
         if let Some(sha) = &sha {
             self.session.push_checkpoint(sha.clone())?;
         }
-        revert(&dir)?;
+        self.ctx.sandboxed(|| revert(&dir))?;
         // Recorded like a turn, so `/undo` brings back this one file and
         // nothing the user changed around it.
         if let Some(sha) = sha {
-            let after = crate::git::checkpoint(&dir, &format!("{name}-after"))?;
+            let after = self
+                .ctx
+                .sandboxed(|| crate::git::checkpoint(&dir, &format!("{name}-after")))?;
             self.session.set_turn_record(
                 &sha,
                 crate::session::TurnRecord {
@@ -2091,13 +2171,25 @@ impl Agent {
         Ok(())
     }
 
+    /// Commit `paths` from the commit panel. The repository's hooks run in
+    /// it, so it is scoped like a tool call.
+    pub fn commit(&self, paths: &[String], message: &str) -> Result<String> {
+        let dir = self.ctx.workspace.clone();
+        self.ctx
+            .sandboxed(|| crate::review::commit(&dir, paths, message))
+    }
+
     /// Draft a commit message for `paths` (changes since `HEAD`), from the
     /// diff, the project's recent subjects, and this conversation's why.
     pub async fn draft_commit(&mut self, paths: &[String]) -> Result<String> {
         let dir = self.ctx.workspace.clone();
-        let changes = crate::review::changes(&dir, &crate::review::head_base(&dir))?;
-        let diff = crate::review::draft_diff(&dir, &changes, paths);
-        let subjects = crate::review::recent_subjects(&dir, 8);
+        let (diff, subjects) = self.ctx.sandboxed(|| {
+            let changes = crate::review::changes(&dir, &crate::review::head_base(&dir))?;
+            Ok((
+                crate::review::draft_diff(&dir, &changes, paths),
+                crate::review::recent_subjects(&dir, 8),
+            ))
+        })?;
         let mut prompt = String::new();
         if !subjects.is_empty() {
             prompt.push_str("Recent commit subjects in this project:\n");
@@ -2170,6 +2262,7 @@ impl Agent {
 
     /// One model call outside a turn: no tools, low reasoning, spend recorded.
     async fn one_shot(&mut self, system: &str, user: &str, max_tokens: u32) -> Result<String> {
+        self.admit_request(&self.model)?;
         let req = CompletionRequest {
             model: self.model.clone(),
             system: Some(system.to_string()),
@@ -2183,6 +2276,7 @@ impl Agent {
             max_tokens: Some(max_tokens),
             reasoning: Some("low".into()),
         };
+        crate::compact::ensure_fits(&req, self.model_window(&self.model, &self.connection))?;
         let mut stream = tokio::select! {
             biased;
             () = self.ctx.cancel.cancelled() => return Err(Error::Cancelled),
@@ -2191,70 +2285,119 @@ impl Agent {
         let mut text = String::new();
         let mut usage = Usage::default();
         let mut reported_cost: Option<f64> = None;
-        loop {
-            // Drafting a commit message could otherwise wait on a stuck
-            // provider with no way to stop it.
-            let delta = tokio::select! {
-                biased;
-                () = self.ctx.cancel.cancelled() => return Err(Error::Cancelled),
-                d = stream.next() => d,
-            };
-            let Some(delta) = delta else { break };
-            match delta? {
-                StreamDelta::Text(t) => text.push_str(&t),
-                StreamDelta::Usage(u) => usage = usage.merge(u),
-                StreamDelta::ReportedCost(c) => reported_cost = Some(c),
-                _ => {}
+        let mut saw_usage = false;
+        let mut saw_done = false;
+        let received: Result<()> = async {
+            loop {
+                // Drafting a commit message could otherwise wait on a stuck
+                // provider with no way to stop it.
+                let delta = tokio::select! {
+                    biased;
+                    () = self.ctx.cancel.cancelled() => return Err(Error::Cancelled),
+                    d = stream.next() => d,
+                };
+                let Some(delta) = delta else { break };
+                match delta? {
+                    StreamDelta::Text(t) => text.push_str(&t),
+                    StreamDelta::Usage(u) => {
+                        usage = usage.merge(u);
+                        saw_usage = true;
+                    }
+                    StreamDelta::ReportedCost(c) => reported_cost = Some(c),
+                    StreamDelta::Done => saw_done = true,
+                    _ => {}
+                }
             }
+            Ok(())
         }
-        let local = self
-            .cfg
-            .as_ref()
-            .and_then(|c| c.connections.get(&self.connection))
-            .is_some_and(|c| c.is_local());
-        let total_usd = reported_cost.or_else(|| {
-            if local {
-                Some(0.0)
-            } else {
-                self.book.cost(&self.model, usage)
-            }
-        });
-        self.session.record_spend(spend_record(
-            self.connection.clone(),
-            self.model.clone(),
-            self.role,
+        .await;
+        self.record_call(
+            &self.connection.clone(),
+            &self.model.clone(),
             usage,
-            total_usd,
-        ))?;
-        self.emit(AgentEvent::Spend {
-            connection: self.connection.clone(),
-            model: self.model.clone(),
-            role: self.role,
-            input_tokens: usage.input_tokens,
-            output_tokens: usage.output_tokens,
-            cached_tokens: usage.cached_tokens,
-            total_usd,
-        })?;
+            reported_cost,
+            saw_usage,
+            received.is_ok() && saw_done,
+        )?;
+        received?;
+        if let Some(error) = self.over_budget() {
+            return Err(error);
+        }
+
         Ok(text)
     }
 
-    /// `/context` snapshot (does not compact).
+    /// Resolve limits for the same route used to send the request. A base
+    /// route override must never leak onto another hat's smaller model.
+    fn model_window(&self, model: &str, connection: &str) -> u64 {
+        if let Some(window) = self
+            .cfg
+            .as_ref()
+            .and_then(|c| c.context_windows.get(model))
+            .filter(|v| **v > 0)
+        {
+            return *window;
+        }
+        if model == self.model && connection == self.connection && self.context_window > 0 {
+            return self.context_window;
+        }
+        if let Some(window) = crate::llm::model_cache::load(&self.home, connection)
+            .and_then(|(models, _)| models.into_iter().find(|m| m.id == model))
+            .and_then(|m| m.context_length)
+            .filter(|v| *v > 0)
+        {
+            return window;
+        }
+        if let Some(window) = crate::config::load_last_route(&self.home)
+            .filter(|r| r.model == model && r.connection == connection)
+            .and_then(|r| r.context_length)
+            .filter(|v| *v > 0)
+        {
+            return window;
+        }
+        crate::compact::window_for(model)
+    }
+
+    fn output_allowance(window: u64) -> u32 {
+        (window / 4).clamp(1, u64::from(CONVERSATION_MAX_OUTPUT)) as u32
+    }
+
+    fn report_for(
+        &self,
+        system: &str,
+        model: &str,
+        connection: &str,
+    ) -> crate::compact::ContextReport {
+        let window = self.model_window(model, connection);
+        crate::compact::request_report(
+            system,
+            self.session.messages_of(self.role.thread()),
+            &crate::tools::specs_for_opts(self.role, self.ctx.web),
+            window,
+            Self::output_allowance(window),
+        )
+    }
+
+    /// `/context` snapshot for the active hat, including schemas and output.
     pub fn context_report(&self) -> Result<crate::compact::ContextReport> {
-        let sys = self.system_prompt().unwrap_or_default();
-        Ok(crate::compact::report(
-            &sys,
-            &self.session.transcript,
-            &self.model,
-            self.context_window,
-        ))
+        let sys = self.system_prompt()?;
+        let (_, model, connection) = self.hat_stack();
+        Ok(self.report_for(&sys, &model, &connection))
     }
 
     /// Emit a [`AgentEvent::Context`] for the TUI / `--json`.
     pub fn emit_context(&mut self) -> Result<()> {
         self.session.use_thread(self.role.thread());
         let r = self.context_report()?;
-        let sys = self.system_prompt().unwrap_or_default();
-        let breakdown = crate::compact::breakdown(&sys, &self.session.transcript);
+        let sys = self.system_prompt()?;
+        let mut breakdown = crate::compact::breakdown(&sys, &self.session.transcript);
+        let tools = crate::tools::specs_for_opts(self.role, self.ctx.web);
+        let schemas = crate::compact::request_tokens("", &[], &tools, 0);
+        breakdown.push(("tool schemas".into(), schemas));
+        breakdown.push((
+            "output allowance".into(),
+            Self::output_allowance(r.window).into(),
+        ));
         self.emit(AgentEvent::Context {
             tokens: r.tokens,
             window: r.window,
@@ -2265,62 +2408,67 @@ impl Agent {
         })
     }
 
-    /// Deterministic compact. Always emits [`AgentEvent::Compacted`].
+    /// Deterministic compact. Emits [`AgentEvent::Compacted`] with measured size.
     pub fn compact_now(&mut self) -> Result<crate::compact::ContextReport> {
         self.session.use_thread(self.role.thread());
-        let sys = self.system_prompt().unwrap_or_default();
-        let before = crate::compact::estimate_tokens(&sys, &self.session.transcript);
-        // What must outlive the messages dropped: where the approved plan is.
-        let note = self
-            .session
-            .meta
-            .plan_file
-            .as_deref()
-            .map(|f| {
-                format!(
-                    "The plan the user approved is in `{f}`. Where the work differs from \
-                     it is recorded in `{}`.",
-                    crate::decisions::FILE
-                )
-            })
-            .unwrap_or_default();
+        let sys = self.system_prompt()?;
+        let (_, model, connection) = self.hat_stack();
+        let before = self.report_for(&sys, &model, &connection);
+        let note = self.session.meta.plan_file.as_deref().map(|f| format!(
+            "The plan the user approved is in `{f}`. Where the work differs from it is recorded in `{}`.",
+            crate::decisions::FILE)).unwrap_or_default();
         let next = crate::compact::compact(
             &self.session.transcript,
             &note,
             crate::compact::KEEP_USER_TURNS,
         );
-        if next.len() < self.session.transcript.len() {
+        let changed = crate::compact::estimate_tokens(&sys, &next)
+            < crate::compact::estimate_tokens(&sys, &self.session.transcript);
+        if changed {
             self.session.replace_transcript(next)?;
         }
-        let mut rep = crate::compact::report(
-            &sys,
-            &self.session.transcript,
-            &self.model,
-            self.context_window,
-        );
-        rep.compacted = true;
+        let mut rep = self.report_for(&sys, &model, &connection);
+        rep.compacted = changed;
         self.emit(AgentEvent::Compacted {
-            before,
+            before: before.tokens,
             after: rep.tokens,
             window: rep.window,
         })?;
         Ok(rep)
     }
 
-    fn maybe_compact(&mut self) -> Result<()> {
-        let rep = self.context_report()?;
-        if crate::compact::should_compact(&rep) {
-            self.compact_now()?;
+    fn maybe_compact(&mut self, system: &mut String, model: &str, connection: &str) -> Result<()> {
+        let rep = self.report_for(system, model, connection);
+        if crate::compact::should_compact(&rep) && self.compact_now()?.compacted {
+            // Compaction already changed the prefix; refresh project memory too.
+            *system = self.system_prompt()?;
         }
         Ok(())
     }
 
+    /// Surface any repairs made while opening the session.
+    pub fn announce_recovery(&self) {
+        for message in &self.session.recovery_notices {
+            if let Some(sink) = &self.sink {
+                let _ = sink.send(AgentEvent::Notice {
+                    message: message.clone(),
+                });
+            } else {
+                eprintln!("ryter: {message}");
+            }
+        }
+    }
+
     /// Run SessionStart hooks. Call once after the agent is constructed.
     pub fn fire_session_start(&self) -> Result<()> {
+        self.announce_recovery();
         let Some(hooks) = &self.ctx.hooks else {
             return Ok(());
         };
-        match hooks.session_start(&self.ctx.workspace, self.role) {
+        match self
+            .ctx
+            .sandboxed(|| Ok(hooks.session_start(&self.ctx.workspace, self.role)))?
+        {
             crate::hooks::HookDecision::Allow => Ok(()),
             crate::hooks::HookDecision::Deny(msg) => {
                 Err(Error::Config(format!("session start hook denied: {msg}")))
@@ -2360,17 +2508,12 @@ impl Agent {
     /// About how many tokens a model is sent to read the conversation: its
     /// instructions, the tools it is offered, and every message.
     pub(crate) fn conversation_tokens(&self, system: &str) -> u64 {
-        let tools = serde_json::to_string(&crate::tools::specs_for_opts(self.role, self.ctx.web))
-            .map_or(0, |t| t.len());
-        let bytes: usize = system.len()
-            + tools
-            + self
-                .session
-                .transcript
-                .iter()
-                .map(|m| m.content.len())
-                .sum::<usize>();
-        (bytes / 4) as u64
+        crate::compact::request_tokens(
+            system,
+            &self.session.transcript,
+            &crate::tools::specs_for_opts(self.role, self.ctx.web),
+            0,
+        )
     }
 
     /// What it costs `model` to read the conversation for the first time:
@@ -2457,14 +2600,63 @@ impl Agent {
         (self.budget_usd > 0.0 && spent >= self.budget_usd).then(|| self.budget_error(None))
     }
 
-    /// Before a call: this model's last call had no price and it still has
-    /// none, so with a budget set it would spend where the budget can't see.
-    fn unpriced_stop(&self) -> Option<Error> {
-        let unpriced = self.session.meta.unpriced_model.as_deref()?;
-        // The model about to be called: this hat's.
-        let (_, model, _) = self.hat_stack();
-        (self.budget_usd > 0.0 && unpriced == model && self.book.rates(&model).is_none())
-            .then(|| self.budget_error(Some(model.clone())))
+    /// Every inference path uses the same admission check before sending.
+    fn admit_request(&self, model: &str) -> Result<()> {
+        if let Some(error) = self.over_budget() {
+            return Err(error);
+        }
+        if self.budget_usd > 0.0 {
+            if self.session.meta.spend_incomplete {
+                return Err(self.budget_error(None));
+            }
+            if self.session.meta.unpriced_model.as_deref() == Some(model)
+                && self.book.rates(model).is_none()
+            {
+                return Err(self.budget_error(Some(model.into())));
+            }
+        }
+        Ok(())
+    }
+
+    /// Finalize accounting before propagating stream errors or cancellation.
+    fn record_call(
+        &mut self,
+        connection: &str,
+        model: &str,
+        usage: Usage,
+        reported_cost: Option<f64>,
+        saw_usage: bool,
+        complete: bool,
+    ) -> Result<Option<f64>> {
+        let local = self
+            .cfg
+            .as_ref()
+            .and_then(|c| c.connections.get(connection))
+            .is_some_and(|c| c.is_local());
+        let reported_cost = reported_cost.filter(|c| c.is_finite() && *c >= 0.0);
+        let total_usd = if local {
+            Some(0.0)
+        } else {
+            reported_cost.or_else(|| saw_usage.then(|| self.book.cost(model, usage)).flatten())
+        };
+        let mut record = spend_record(connection.into(), model.into(), self.role, usage, total_usd);
+        record.incomplete = !local && reported_cost.is_none() && (!complete || !saw_usage);
+        let incomplete = record.incomplete;
+        self.session.record_spend(record)?;
+        self.emit(AgentEvent::Spend {
+            connection: connection.into(),
+            model: model.into(),
+            role: self.role,
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cached_tokens: usage.cached_tokens,
+            total_usd,
+            incomplete,
+        })?;
+        if incomplete && (self.budget_usd > 0.0 || !complete) {
+            self.emit(AgentEvent::Notice { message: "This request's accounting is incomplete. Reported tokens and known cost have been saved as a lower bound; a configured budget will stop further requests in this session.".into() })?;
+        }
+        Ok(total_usd)
     }
 
     fn budget_error(&self, unpriced: Option<String>) -> Error {
@@ -2472,6 +2664,7 @@ impl Agent {
             spent: self.session.meta.spend_usd_total.unwrap_or(0.0),
             cap: self.budget_usd,
             unpriced,
+            incomplete: self.session.meta.spend_incomplete,
         }
     }
 
@@ -2486,15 +2679,156 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
+    mod acceptance;
     use super::*;
     use crate::llm::ReplayProvider;
     use crate::tools::ToolContext;
     use std::sync::Mutex;
     use tempfile::TempDir;
 
+    struct InterruptedUsage {
+        cancel: Option<Arc<crate::Cancel>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for InterruptedUsage {
+        async fn stream(&self, _: CompletionRequest) -> Result<crate::llm::DeltaStream> {
+            let cancel = self.cancel.clone();
+            let usage = futures_util::stream::iter(vec![Ok(StreamDelta::Usage(Usage {
+                input_tokens: 1_000,
+                ..Usage::default()
+            }))]);
+            let end = futures_util::stream::once(async move {
+                if let Some(cancel) = cancel {
+                    cancel.cancel();
+                    Err(Error::Cancelled)
+                } else {
+                    Err(Error::Provider("fixture failure after usage".into()))
+                }
+            });
+            Ok(Box::pin(usage.chain(end)))
+        }
+        async fn list_models(&self) -> Result<Vec<crate::llm::ModelInfo>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn interrupted_turns_and_drafts_keep_usage_and_stop_a_budget_after_resume() {
+        for draft in [false, true] {
+            for cancel in [false, true] {
+                let (_home, _cwd, mut agent) = setup(ReplayProvider::new(vec![]));
+                agent.provider = Arc::new(InterruptedUsage {
+                    cancel: cancel.then(|| agent.ctx.cancel.clone()),
+                });
+                if draft {
+                    assert!(agent.one_shot("system", "draft", 100).await.is_err());
+                } else {
+                    let result = agent.turn("fixture").await;
+                    if cancel {
+                        assert_eq!(result.unwrap().reason, StopReason::Cancelled);
+                    } else {
+                        assert!(result.is_err());
+                    }
+                }
+                let rows = agent.session.spend_log().unwrap();
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].input_tokens, 1_000);
+                assert_eq!(rows[0].total_usd, Some(0.002));
+                assert!(rows[0].incomplete);
+                agent.session = Session::open(&agent.session.dir).unwrap();
+                assert!(agent.session.meta.spend_unknown && agent.session.meta.spend_incomplete);
+                agent.ctx.cancel = crate::Cancel::new();
+                agent.budget_usd = 1.0;
+                let provider = Arc::new(Asked::default());
+                agent.provider = provider.clone();
+                assert!(matches!(
+                    agent.one_shot("system", "draft", 100).await,
+                    Err(Error::Budget {
+                        incomplete: true,
+                        ..
+                    })
+                ));
+                assert!(provider.models.lock().unwrap().is_empty());
+                assert_eq!(agent.session.spend_log().unwrap().len(), 1);
+                agent.budget_usd = 0.0;
+                agent
+                    .one_shot("system", "explicitly continue", 100)
+                    .await
+                    .unwrap();
+                assert_eq!(provider.models.lock().unwrap().len(), 1);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn drafting_obeys_exhausted_and_unpriced_budgets_before_sending() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![]));
+        std::fs::write(cwd.path().join("README.md"), "changed").unwrap();
+        let provider = Arc::new(Asked::default());
+        agent.provider = provider.clone();
+        agent.budget_usd = 1.0;
+        agent.session.meta.spend_usd_total = Some(1.0);
+        assert!(matches!(
+            agent.draft_commit(&["README.md".into()]).await,
+            Err(Error::Budget { .. })
+        ));
+        agent.session.meta.spend_usd_total = Some(0.0);
+        agent.model = "unknown-fixture".into();
+        agent.session.meta.unpriced_model = Some(agent.model.clone());
+        assert!(matches!(
+            agent.draft_commit(&["README.md".into()]).await,
+            Err(Error::Budget {
+                unpriced: Some(_),
+                ..
+            })
+        ));
+        assert!(provider.models.lock().unwrap().is_empty());
+        assert!(agent.session.spend_log().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn missing_usage_is_unknown_and_reported_cost_is_kept_on_failure() {
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::new(vec![
+            StreamDelta::Text("ok".into()),
+            StreamDelta::Done,
+        ]));
+        agent.one_shot("system", "draft", 100).await.unwrap();
+        let rows = agent.session.spend_log().unwrap();
+        assert_eq!(rows[0].total_usd, None);
+        assert!(rows[0].incomplete);
+        // A provider's final bill is authoritative even if delivery of the
+        // answer later fails; do not price the same tokens a second time.
+        agent
+            .record_call(
+                "spacexai",
+                "grok-4.6",
+                Usage {
+                    input_tokens: 1_000,
+                    ..Usage::default()
+                },
+                Some(0.25),
+                true,
+                false,
+            )
+            .unwrap();
+        let rows = agent.session.spend_log().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].total_usd, Some(0.25));
+        assert!(!rows[1].incomplete);
+    }
+
     fn setup(provider: ReplayProvider) -> (TempDir, TempDir, Agent) {
         let home = TempDir::new().unwrap();
         let cwd = TempDir::new().unwrap();
+        setup_in(provider, home, cwd)
+    }
+
+    fn setup_in(
+        provider: ReplayProvider,
+        home: TempDir,
+        cwd: TempDir,
+    ) -> (TempDir, TempDir, Agent) {
         std::fs::write(cwd.path().join("hello.txt"), "hi there").unwrap();
         let session = Session::create(
             home.path(),
@@ -2505,6 +2839,7 @@ mod tests {
         .unwrap();
         let notes = session.notes_dir();
         let ctx = ToolContext {
+            sandbox: None,
             live: None,
             workspace: cwd.path().to_path_buf(),
             notes_dir: notes,
@@ -2542,6 +2877,52 @@ mod tests {
         (home, cwd, agent)
     }
 
+    #[tokio::test]
+    async fn parallel_calls_execute_their_own_arguments_on_each_protocol() {
+        use crate::llm::{Backend, parse_sse};
+        for (backend, fixture) in [
+            (
+                Backend::ChatCompletions,
+                include_str!("../fixtures/parallel_chat.sse"),
+            ),
+            (
+                Backend::Messages,
+                include_str!("../fixtures/parallel_messages.sse"),
+            ),
+            (
+                Backend::Responses,
+                include_str!("../fixtures/parallel_responses.sse"),
+            ),
+        ] {
+            let (_home, cwd, mut agent) = setup(ReplayProvider::scripted(vec![
+                parse_sse(backend, fixture).unwrap(),
+                say("done"),
+            ]));
+            std::fs::write(cwd.path().join("a.txt"), "FIRST_FILE").unwrap();
+            std::fs::write(cwd.path().join("b.txt"), "SECOND_FILE").unwrap();
+            agent.turn("read both files").await.unwrap();
+            let results: Vec<_> = agent
+                .session
+                .transcript
+                .iter()
+                .filter(|m| m.role == "tool")
+                .collect();
+            assert_eq!(results.len(), 2, "{backend:?}");
+            assert_eq!(results[0].tool_call_id.as_deref(), Some("a"));
+            assert_eq!(results[1].tool_call_id.as_deref(), Some("b"));
+            assert!(
+                results[0].content.contains("FIRST_FILE"),
+                "{backend:?}: {:?}",
+                results[0]
+            );
+            assert!(
+                results[1].content.contains("SECOND_FILE"),
+                "{backend:?}: {:?}",
+                results[1]
+            );
+        }
+    }
+
     /// A session saved in crew mode names a role that is gone. Resumed, its
     /// next turn is in the build hat, with the hat's note and tools: run
     /// as the old role, the model was sent the message bare and offered
@@ -2576,6 +2957,7 @@ mod tests {
     fn write(path: &str, content: &str) -> Vec<StreamDelta> {
         vec![
             StreamDelta::ToolCall {
+                stream_key: None,
                 id: "w".into(),
                 name: "write".into(),
                 arguments: serde_json::json!({"path": path, "content": content}).to_string(),
@@ -2594,6 +2976,7 @@ mod tests {
     async fn a_build_turn_that_changes_nothing_touches_no_git() {
         let ls = vec![
             StreamDelta::ToolCall {
+                stream_key: None,
                 id: "b".into(),
                 name: "bash".into(),
                 arguments: serde_json::json!({"command": "ls"}).to_string(),
@@ -2616,6 +2999,7 @@ mod tests {
     fn call(name: &str, args: serde_json::Value) -> Vec<StreamDelta> {
         vec![
             StreamDelta::ToolCall {
+                stream_key: None,
                 id: format!("{name}-1"),
                 name: name.into(),
                 arguments: args.to_string(),
@@ -2918,6 +3302,65 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_cleanup_is_remembered_and_can_be_retried_after_resume() {
+        for failed_start in [false, true] {
+            let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![]));
+            agent.role = Role::SoloTest;
+            agent.ctx.role = Role::SoloTest;
+            let run = crate::run::RunFile {
+                start: Some(if failed_start { "exit 7" } else { "true" }.into()),
+                stop: Some("test -f allow-stop".into()),
+                ..Default::default()
+            };
+            crate::run::save_approved(cwd.path(), &agent.home, &run).unwrap();
+            let result = agent
+                .run_project(&serde_json::json!({"action": "start"}))
+                .unwrap();
+            if failed_start {
+                assert!(result.text.contains("Cleanup failed"), "{result:?}");
+            } else {
+                assert!(agent.stop_product().unwrap().is_err());
+            }
+            assert!(agent.product.is_some());
+            assert!(crate::run::remembered(&agent.home, cwd.path()).is_some());
+            // The launcher has exited; simulate the next session using the
+            // persisted command, without guessing ownership from an old PID.
+            agent.product = None;
+            let retry_start = agent
+                .run_project(&serde_json::json!({"action": "start"}))
+                .unwrap();
+            assert!(retry_start.text.contains("Retry `/stop`"));
+            std::fs::write(cwd.path().join("allow-stop"), "").unwrap();
+            assert!(agent.stop_product().unwrap().is_ok());
+            assert!(agent.product.is_none());
+            assert!(crate::run::remembered(&agent.home, cwd.path()).is_none());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unowned_ready_address_does_not_start_or_claim_a_service() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![]));
+        agent.role = Role::SoloTest;
+        agent.ctx.role = Role::SoloTest;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let run = crate::run::RunFile {
+            start: Some("echo started > state".into()),
+            ready: Some(format!("http://{}/health", listener.local_addr().unwrap())),
+            ..Default::default()
+        };
+        crate::run::save_approved(cwd.path(), &agent.home, &run).unwrap();
+        let result = agent
+            .run_project(&serde_json::json!({"action": "start"}))
+            .unwrap();
+        assert!(result.text.contains("already listening"), "{result:?}");
+        assert!(!cwd.path().join("state").exists());
+        assert!(agent.product.is_none());
+        assert!(crate::run::remembered(&agent.home, cwd.path()).is_none());
     }
 
     /// The tester proposes how the project runs, the user approves it on a
@@ -3249,6 +3692,7 @@ mod tests {
             &agent.home,
             cwd.path(),
             &crate::run::Left {
+                cleanup_pending: false,
                 at: "2026-10-01 14:02".into(),
                 address: Some(url.clone()),
                 stop: None,
@@ -4169,11 +4613,13 @@ mod tests {
     async fn esc_during_a_command_leaves_every_call_answered() {
         let two = vec![
             StreamDelta::ToolCall {
+                stream_key: None,
                 id: "slow".into(),
                 name: "bash".into(),
                 arguments: serde_json::json!({"command": "sleep 20"}).to_string(),
             },
             StreamDelta::ToolCall {
+                stream_key: None,
                 id: "next".into(),
                 name: "bash".into(),
                 arguments: serde_json::json!({"command": "ls"}).to_string(),
@@ -4212,6 +4658,7 @@ mod tests {
     async fn arguments_that_are_not_json_say_so() {
         let bad = vec![
             StreamDelta::ToolCall {
+                stream_key: None,
                 id: "b".into(),
                 name: "read_file".into(),
                 arguments: "{\"path\": \"hello.txt\"".into(),
@@ -4910,7 +5357,15 @@ mod tests {
                 offered: true,
                 ..ReviewRun::default()
             },
-            vec![say("Nothing to report.\n\nVERDICT: PASS")],
+            vec![vec![
+                StreamDelta::Text("Nothing to report.\n\nVERDICT: PASS".into()),
+                StreamDelta::Usage(Usage {
+                    input_tokens: 100,
+                    output_tokens: 10,
+                    ..Usage::default()
+                }),
+                StreamDelta::Done,
+            ]],
         )
         .await;
         assert_eq!(asked.len(), 1, "{asked:?}");
@@ -5164,6 +5619,7 @@ mod tests {
         // One step that used $0.75 of a $1.00 limit.
         let explored = vec![
             StreamDelta::ToolCall {
+                stream_key: None,
                 id: "r".into(),
                 name: "read_file".into(),
                 arguments: serde_json::json!({"path": "hello.txt"}).to_string(),
@@ -5242,6 +5698,7 @@ mod tests {
             vec![
                 StreamDelta::Text("Reading.".into()),
                 StreamDelta::ToolCall {
+                    stream_key: None,
                     id: id.into(),
                     name: "read_file".into(),
                     arguments: serde_json::json!({"path": "hello.txt"}).to_string(),
@@ -5317,6 +5774,7 @@ mod tests {
         let failed = vec![
             StreamDelta::Text("- hello.txt:2 wrong word (blocking)\n\nVERDICT: FAIL".into()),
             StreamDelta::ToolCall {
+                stream_key: None,
                 id: "h".into(),
                 name: "request_hat".into(),
                 arguments: serde_json::json!({"hat": "build", "reason": "fix the word"})
@@ -5804,7 +6262,11 @@ mod tests {
                 call("update_rules", serde_json::json!({"rules": "- a new rule"})),
                 say("done"),
             ]);
-            let (home, cwd, mut agent) = setup(p);
+            let (home, cwd, mut agent) = setup_in(
+                p,
+                crate::sandbox::tests::outside_scratch(),
+                crate::sandbox::tests::outside_scratch(),
+            );
             crate::rules::save(home.path(), "- Be brief.").unwrap();
             let dir = home.path().join("skills/mine");
             std::fs::create_dir_all(&dir).unwrap();
@@ -5816,10 +6278,12 @@ mod tests {
             let (io, _rx) = crate::user_io::UserIo::pair();
             agent.ctx.user_io = Some(io);
             let profile = crate::sandbox::SandboxProfile::Workspace;
-            if let Err(e) = crate::sandbox::apply(profile, cwd.path(), home.path()) {
+            let scope = crate::sandbox::tests::fixture_scope(profile, home.path());
+            if let Err(e) = scope.check(cwd.path(), &agent.session.notes_dir()) {
                 eprintln!("sandbox apply skipped: {e}");
                 return;
             }
+            agent.ctx.sandbox = Some(scope);
             let rt = crate::sandbox::runtime(profile).unwrap();
             rt.block_on(agent.turn("go")).unwrap();
             let results: Vec<&str> = agent
@@ -5847,6 +6311,167 @@ mod tests {
         })
         .join()
         .expect("sandboxed turn");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn automatic_checkpoints_keep_git_filters_in_the_session_sandbox() {
+        // Git reads HOME configuration even for local snapshots. Run this
+        // fixture in a separate process with an empty home, never the user's
+        // configuration or process-wide environment mutations in parallel tests.
+        if std::env::var_os("RYTER_SANDBOX_FILTER_CHILD").is_none() {
+            let fixture_home = TempDir::new().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "agent::tests::automatic_checkpoints_keep_git_filters_in_the_session_sandbox",
+                    "--nocapture",
+                ])
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                .env("HOME", fixture_home.path())
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("RYTER_SANDBOX_FILTER_CHILD", "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        use crate::sandbox::{
+            SandboxProfile,
+            tests::{fixture_scope, outside_scratch},
+        };
+        let (home, cwd, mut agent) = setup_in(
+            ReplayProvider::scripted(vec![write("hello.txt", "changed"), say("done")]),
+            outside_scratch(),
+            outside_scratch(),
+        );
+        let scope = fixture_scope(SandboxProfile::Workspace, home.path());
+        if let Err(error) = scope.check(cwd.path(), &agent.session.notes_dir()) {
+            assert!(error.to_string().contains("Landlock is unavailable"));
+            return;
+        }
+        crate::git::init_repo(cwd.path()).unwrap();
+        let secret = home.path().join("private");
+        std::fs::write(&secret, "private\n").unwrap();
+        std::fs::write(cwd.path().join(".gitattributes"), "*.txt filter=probe\n").unwrap();
+        let filter = format!(
+            "if IFS= read -r line < '{}'; then printf leaked > leaked; fi; printf ran >> filter.log; cat",
+            secret.display()
+        );
+        crate::git::git(cwd.path(), &["config", "filter.probe.clean", &filter]).unwrap();
+        agent.ctx.sandbox = Some(scope);
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("change hello").await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("hello.txt")).unwrap(),
+            "changed"
+        );
+        assert!(
+            cwd.path().join("filter.log").exists(),
+            "filter must actually run: {:?}",
+            rx.try_iter().collect::<Vec<_>>()
+        );
+        assert!(!cwd.path().join("leaked").exists());
+        assert!(!agent.session.spend_log().unwrap().is_empty());
+        assert!(Session::open(&agent.session.dir).is_ok());
+    }
+
+    /// The commit panel's commit runs the repository's hooks, and the build
+    /// hat may write a hook without a question. Called outside the scope, the
+    /// hook read a key under Ryter's home.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn the_commit_panel_keeps_git_hooks_in_the_session_sandbox() {
+        if std::env::var_os("RYTER_SANDBOX_HOOK_CHILD").is_none() {
+            let fixture_home = TempDir::new().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "agent::tests::the_commit_panel_keeps_git_hooks_in_the_session_sandbox",
+                    "--nocapture",
+                ])
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                .env("HOME", fixture_home.path())
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("RYTER_SANDBOX_HOOK_CHILD", "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        use crate::sandbox::{
+            SandboxProfile,
+            tests::{fixture_scope, outside_scratch},
+        };
+        use std::os::unix::fs::PermissionsExt;
+        let (home, cwd, mut agent) = setup_in(
+            ReplayProvider::scripted(vec![say("done")]),
+            outside_scratch(),
+            outside_scratch(),
+        );
+        let scope = fixture_scope(SandboxProfile::Workspace, home.path());
+        let notes = agent.session.notes_dir();
+        if let Err(error) = scope.check(cwd.path(), &notes) {
+            assert!(error.to_string().contains("Landlock is unavailable"));
+            return;
+        }
+        crate::git::init_repo(cwd.path()).unwrap();
+        for (key, value) in [
+            ("user.name", "Fixture"),
+            ("user.email", "fixture@example.com"),
+        ] {
+            crate::git::git(cwd.path(), &["config", key, value]).unwrap();
+        }
+        let secret = home.path().join("private");
+        std::fs::write(&secret, "private\n").unwrap();
+        let hook = cwd.path().join(".git/hooks/pre-commit");
+        std::fs::write(
+            &hook,
+            format!(
+                "#!/bin/sh\nif IFS= read -r line < '{}'; then printf leaked > leaked; fi\nprintf ran >> hook.log\n",
+                secret.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let commit = |name: &str, run: &dyn Fn(&[String]) -> Result<String>| {
+            std::fs::write(cwd.path().join(name), name).unwrap();
+            let summary = run(&[name.to_string()]).unwrap();
+            assert!(summary.ends_with(name), "{summary}");
+        };
+        // With an agent, as the worker calls it once a provider is connected.
+        agent.ctx.sandbox = Some(scope.clone());
+        commit("one.txt", &|paths| agent.commit(paths, "one.txt"));
+        // Without one, as the worker scopes it before a provider is connected.
+        commit("two.txt", &|paths| {
+            scope.run(cwd.path(), &notes, || {
+                crate::review::commit(cwd.path(), paths, "two.txt")
+            })
+        });
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("hook.log")).unwrap(),
+            "ranran",
+            "the hook must actually run"
+        );
+        assert!(!cwd.path().join("leaked").exists());
+        // The probe is real: outside the scope the same hook reads the key.
+        commit("three.txt", &|paths| {
+            crate::review::commit(cwd.path(), paths, "three.txt")
+        });
+        assert!(cwd.path().join("leaked").exists());
     }
 
     /// Solo mode in a folder of projects edits without making it a
@@ -5941,6 +6566,7 @@ mod tests {
         let p = ReplayProvider::scripted(vec![
             vec![
                 StreamDelta::ToolCall {
+                    stream_key: None,
                     id: "c1".into(),
                     name: "read_file".into(),
                     arguments: args,
@@ -6140,11 +6766,68 @@ mod tests {
         agent.turn("go on").await.unwrap();
     }
 
+    #[test]
+    fn context_uses_the_active_hat_catalog_and_includes_schemas_and_output() {
+        let (home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![]));
+        agent.context_window = 500_000;
+        let mut cfg = crate::config::Config::default();
+        cfg.specialists.insert(
+            "review".into(),
+            crate::config::RoleModel {
+                connection: Some(agent.connection.clone()),
+                model: Some("small-reviewer".into()),
+            },
+        );
+        agent.cfg = Some(cfg);
+        crate::llm::model_cache::save(
+            home.path(),
+            &agent.connection,
+            &[crate::llm::ModelInfo::named("small-reviewer", Some(24_000))],
+        );
+        agent.role = Role::SoloReview;
+        agent.ctx.role = Role::SoloReview;
+        let report = agent.context_report().unwrap();
+        assert_eq!(report.window, 24_000);
+        assert!(
+            report.tokens
+                > crate::compact::estimate_tokens(&agent.system_prompt().unwrap(), &[]) + 6_000
+        );
+        agent
+            .cfg
+            .as_mut()
+            .unwrap()
+            .context_windows
+            .insert("small-reviewer".into(), 12_000);
+        assert_eq!(agent.context_report().unwrap().window, 12_000);
+        agent.role = Role::SoloBuild;
+        assert_eq!(agent.context_report().unwrap().window, 500_000);
+    }
+
+    #[tokio::test]
+    async fn irreducible_context_stops_turns_and_drafts_before_provider_calls() {
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![]));
+        let provider = Arc::new(SeesReasoning::default());
+        agent.provider = provider.clone();
+        agent.context_window = 200;
+        let error = agent.turn("keep every requirement").await.unwrap_err();
+        assert!(error.to_string().contains("context for"), "{error}");
+        assert!(
+            agent
+                .session
+                .transcript
+                .iter()
+                .any(|m| m.content.contains("keep every requirement"))
+        );
+        assert!(agent.one_shot("", "draft", 400).await.is_err());
+        assert!(provider.seen.lock().unwrap().is_empty());
+        assert!(agent.session.spend_log().unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn auto_compact_shrinks_long_transcript() {
         let p = ReplayProvider::new(vec![StreamDelta::Text("done".into()), StreamDelta::Done]);
         let (_home, _cwd, mut agent) = setup(p);
-        agent.context_window = 200;
+        agent.context_window = 20_000;
         for i in 0..10 {
             agent
                 .session
@@ -6159,8 +6842,21 @@ mod tests {
                 .session
                 .push_message(Message {
                     role: "assistant".into(),
-                    content: "ok".into(),
+                    content: "still need to verify the new behavior".into(),
                     tool_call_id: None,
+                    tool_calls: Some(vec![crate::llm::AssistantToolCall {
+                        id: format!("c{i}"),
+                        name: "read_file".into(),
+                        arguments: r#"{"path":"hello.txt"}"#.into(),
+                    }]),
+                })
+                .unwrap();
+            agent
+                .session
+                .push_message(Message {
+                    role: "tool".into(),
+                    content: "data".repeat(4000),
+                    tool_call_id: Some(format!("c{i}")),
                     tool_calls: None,
                 })
                 .unwrap();

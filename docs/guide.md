@@ -1,8 +1,8 @@
 # Ryter user guide
 
-Ryter is a Bring-Your-Own-Key terminal coding harness. One model works in your project, with you. It wears one of three hats at a time (**plan**, **build**, **review**), and each hat can run on a model of its own.
+Ryter is a Bring-Your-Own-Key terminal coding harness. One model works in your project, with you. It wears one of four hats at a time (**plan**, **build**, **review**, **test**), and each hat can run on a model of its own.
 
-Linux is the first platform. macOS and Windows are later ports.
+Linux is the first platform. Release binaries also support macOS; Landlock requires Linux. Windows is not currently supported.
 
 ## Install
 
@@ -17,6 +17,8 @@ cargo build -p ryter-cli
 Put the `ryter` binary on your `PATH` if you want. Data lives in `~/.ryter/` (`RYTER_HOME` overrides).
 
 ### Updates
+
+The bootstrap installer authenticates `SHA256SUMS.sig` with the same pinned Ed25519 release key as the updater before checking or extracting the archive. A download mirror cannot supply a different key. It requires OpenSSL 3+; on a Mac with Homebrew OpenSSL, use `RYTER_INSTALL_OPENSSL="$(brew --prefix openssl@3)/bin/openssl"` when running the script. It refuses unsigned releases, including releases from before signing was introduced. Failed verification preserves an existing installation.
 
 A release installed with `install.sh` keeps itself up to date:
 
@@ -260,12 +262,12 @@ stop  = "docker compose down"
 
 - **The model drafts it, you approve it.** The first time the tester needs it, it reads the project and proposes the commands in a panel: `y` approves and saves the file, `e` says what to change, `n` rejects. Leave out what the project doesn't have.
 - **You are shown every word.** A command longer than the panel wraps under itself, and `y` is taken only once the last row has been on screen: what you approve here runs without another question. A command that deletes or discards something is pointed out above the list.
-- **Ryter runs what you approved, itself.** Starting waits until `ready` answers (any answer that isn't a server error), for up to five minutes. A start command that stays in the foreground (`npm run dev`, `cargo run`) is kept running by Ryter; through the shell tool it would be cut off when the command didn't return.
-- **Approval is of what you were shown.** It is kept in `~/.ryter/run-approved.toml`, not in the project. A run file that came with a clone, or that anyone changed since (you, the model, a `git pull`), is shown to you again before anything in it runs, and a file rewritten while you were reading is not the one you approved.
+- **Ryter runs what you approved, itself.** Starting waits for HTTP 200–399 from `ready`, for up to five minutes. HTTPS performs normal TLS certificate verification. A TCP connection or a 401/404 is not ready. If the address is already occupied, stop that service or choose another address before starting. A start command that stays in the foreground (`npm run dev`, `cargo run`) is kept running by Ryter; through the shell tool it would be cut off when the command didn't return.
+- **Approval is of what you were shown.** Quoted spaces and line breaks in commands survive saving and reloading unchanged. Approval is kept in `~/.ryter/run-approved.toml`, not in the project. A run file that came with a clone, or that anyone changed since (you, the model, a `git pull`), is shown to you again before anything in it runs, and a file rewritten while you were reading is not the one you approved.
 - **It is the project's own file, or it is not read.** Ryter writes the run file, and its plans, decisions and reports, into the project and never through a link: a project that arrives with a link where one of those files goes has the link replaced, not followed, and a link there is not read either.
 - **Limits:** a command Ryter runs for nobody (`sudo`, inline code) can't be in it, and `ready` has to be an address on this machine. Only the test hat runs these commands.
 - **Headless** (`ryter -p --hat test`), nobody can approve anything, so the model can't save a run file. One you wrote yourself runs with `--always-approve`, as far as that flag reaches in the test hat: nothing outside the project, nothing that deletes or rewrites the project's files. It is not recorded as approved, so the TUI still asks.
-- **A start that doesn't come up is taken down again.** If the start command returned but `ready` never answered, or you pressed `esc` while it was waiting, Ryter runs the stop command (or ends what the start command left running) and says so. Nothing half-started is left behind without a way to stop it.
+- **A start that doesn't come up is taken down again.** If startup exits with an error, `ready` never answers, or you press `esc`, Ryter runs the approved stop command and ends its owned process group. If cleanup or `/stop` fails, the record stays available for retry, including after resume. Retry `/stop` before starting it again.
 
 **The product is left running.** After a test the product stays up, so you can look at what the tester saw. The chat says where it is.
 
@@ -445,6 +447,8 @@ A model your account can't use (a data policy that refuses it, no tool support, 
 
 Every model call is priced before the next request. Roll-ups: session, turn, hat, connection. Persisted in `spend.jsonl`.
 
+Overrides must supply both `input_per_million` and `output_per_million`; all supplied rates must be finite and nonnegative. Missing or invalid rates remain unknown. Explicit zero is valid for a free model.
+
 Sources, high wins: TOML `[pricing."<model>"]` → OpenRouter catalog (when ingested) → shipped SpaceXAI table. Provider-reported cost on a stream wins for that turn.
 
 Unknown rates show `$?.??` plus token counts. Ryter never invents `$0.00` for an unpriced model.
@@ -460,6 +464,8 @@ output_per_million = 15.0
 ```
 
 Prompt caching is priced in parts: cache reads at the cached rate, cache writes at the cache-write rate, the rest at the input rate. Each rate falls back to the input rate when unset.
+
+Cancelled or failed streams keep any reported usage and estimated cost as a lower bound. If the final accounting is missing, the session is marked incomplete. A configured budget then blocks further model calls, including commit-message drafting, even after resume or a model change. Start a separate session or explicitly use `/budget off` to continue with unknown spend.
 
 A session budget is optional. With one, the turn stops when spend reaches it and says so (exit `3` in headless). Raise it and say continue. Without one, nothing stops on cost and you watch the spend card.
 
@@ -506,11 +512,13 @@ Esc stops a call at once. Ryter then tells the server it stopped waiting, and sk
 
 Enter on **token** creates or rotates a `ryt_…` secret stored in `~/.ryter/keys/mcp-inbound.toml` (mode 0600); it is masked until you press `v`. Enter on a link copies it into the chat so you can paste it. Live flags persist in `~/.ryter/mcp.toml` (does not rewrite `config.toml`).
 
-Another agent can also spawn `ryter mcp serve` (stdio), or `ryter serve --socket` / `--bind`. Tools: `ryter_prompt`, `ryter_status`, `ryter_spend`, `ryter_cancel`. Resources: `ryter://session/transcript`, `ryter://session/spend`. Keys are never returned.
+Another agent can also spawn `ryter mcp serve` (stdio), or `ryter serve --socket /tmp/ryter.sock` or `ryter serve --bind 127.0.0.1:8765`. Tools: `ryter_prompt`, `ryter_status`, `ryter_spend`, `ryter_cancel`. Resources: `ryter://session/transcript`, `ryter://session/spend`. The transcript is a plain-text snapshot of the active conversation, refreshed after worker operations. During a running turn it shows the previous snapshot. It retains recent messages within 64 KiB, at most 4 KiB per message, with explicit omission notices. Stored provider credentials are not included; conversation content is shared with authorized MCP clients.
 
 TCP requires `--token` (or `RYTER_MCP_TOKEN`) on `initialize.params.token`. Binding `0.0.0.0` / `::` requires `--i-mean-it`.
 
 `ryter mcp serve` uses a restricted always-approve: workspace file edits, read, grep, tests; deny `rm -rf`, credential paths, work outside cwd. `--always-approve` only widens this if `[mcp] allow_dangerous = true`.
+
+Status and spend remain available during a prompt; the CLI reports the last completed turn’s snapshot. A second MCP prompt receives a busy response while one is active. Closing the prompt connection cancels its pending work.
 
 `[mcp] inbound = false` disables the server. Esc or `/cancel` (or `ryter_cancel`) stops the in-flight turn and kills bash process groups.
 
@@ -584,14 +592,18 @@ A rule saved this way takes effect from your next message. For a rule that belon
 When a terminal isn't the right place for an answer (a report, a comparison, a chart, a plan to scan), the model builds a page. It loads the `canvas` skill, writes one self-contained HTML page, and shows it with `show_page`. You can also ask for one directly with `/canvas <what you want to see>`.
 
 - **Where pages live:** `~/.ryter/pages/<session>/<title>.html`, outside your project. Deleting the session deletes its pages. Showing a page with the same title replaces it, so the model revises in place.
-- **The chat links every page**, and Ryter opens it in your browser when there's a desktop. `[ui] open_pages = false` (`/settings` → *pages in browser*) keeps pages closed, and you get the link only. Under `--sandbox`, Ryter leaves pages closed too: a browser started from the sandboxed thread would run inside the sandbox.
+- **The chat links every page**, and Ryter opens it in your browser when there's a desktop. `[ui] open_pages = false` (`/settings` → *pages in browser*) keeps pages closed, and you get the link only. Under `--sandbox`, Ryter leaves pages closed too; open the displayed link yourself.
 - **A page loads nothing from the network:** no scripts, fonts or images from the web, and no form posts. Ryter puts a Content-Security-Policy at the very top of every page, ahead of anything the page contains. Everything the page shows is inline.
 - **Hooks see these tools too.** `PreToolUse` and `PostToolUse` hooks run for `show_page`, `load_skill` and `request_hat`, just as for `bash` or `write`. A hook can deny a page.
 - **The skill tells the model** to use only facts from the session, to say where they came from, and to make the page work in light and dark and at phone width.
 
+Tool output is bounded while it is read. Shell commands retain the first and last output bytes and report how much was omitted. File reads support `offset` and `limit`; a line over 32 KB is shortened explicitly. Search skips lines over 64 KB and reports that its results may be incomplete. Whole-file edit/diff tools stop at 2 MB; use a focused project command for larger files. Directory listings show at most 1,000 sorted names, and prompt memory includes at most 128 Markdown note files within its 48 KB total cap.
+
 ## Context
 
-`/context` opens a panel with estimated tokens vs the model window (500k for `grok-4.6`, 200k otherwise), a gauge, and a breakdown by contributor (system prompt, project files, transcript, tool output); `c` compacts. The info panel’s model card shows the same gauge. Auto-compact at 85%: older turns collapse to tools used, files touched, and the latest pass note; the last four user turns stay. `/compact` forces a pass. Resume reads the rewritten `transcript.jsonl`.
+`/context` shows the active hat’s estimated context use, including tool schemas and an output allowance of up to one quarter of its window (at most 32,768 tokens). Its window comes from `[context_windows]`, a cached provider catalog, or a matching saved route. Without that information, the existing fallback is 500k for `grok-4.6` and 200k otherwise; these are estimates. For a model or local server with a different limit, set its model ID under `[context_windows]` in your config, for example `"your-model-id" = 32768`.
+
+At 85%, compaction keeps older user constraints and assistant notes in an extract, retains the last four user turns, and shortens older bulky tool results when needed. Tool identities and the newest result batch stay intact. `/compact` or `c` in the panel forces a pass; resume reads the rewritten conversation. If the resulting request still exceeds the window, Ryter stops before calling the provider. Choose a larger-window model or start a new session with the remaining task. Counts still use bytes/4 rather than the provider’s tokenizer.
 
 ## Doctor and sandbox
 
@@ -613,18 +625,18 @@ A sandbox limits which files the model's commands can reach. It is enforced by t
 
 **When to use each:**
 
-- **`off`:** you are watching each step. Ryter's own rules still apply: it asks before a command that changes things, and refuses to read your keys. Nothing stops a command you approved from reaching the rest of your machine.
-- **`workspace`:** tools run without asking (`/tools always`, `--always-approve`, `ryter serve`), or you are working on code you don't trust. Commands can change only the project.
+- **`off`:** you are watching each step. Ryter's own rules still apply: file edits and destructive commands ask; supported toolchains and project commands can run without asking. The gate refuses direct reads of protected credentials. Nothing stops a command you approved from reaching the rest of your machine.
+- **`workspace`:** tools run without asking (`/tools always`, `--always-approve`, `ryter serve`), or you are working on code you don't trust. Commands can write the project, scratch directories, allowed tool caches, and the active session’s notes and pages.
 - **`read-only`:** you only want a review. Nothing in the project can be changed either, which also means nothing can be built into it.
 
 **What "your tools" means.** Under `workspace` and `read-only`, commands can read and run:
 
 - system folders (`/usr`, `/bin`, `/etc`), and where package managers install (`/opt`, `/nix`, `/snap`, Homebrew);
 - toolchains under your home folder: `~/.cargo/bin`, `~/.rustup`, node version managers (`~/.nvm`, `~/.volta`, `fnm`, `asdf`, `mise`), `~/.pyenv`, `~/.bun`, `~/.deno`, `~/go/bin`, `~/.local/bin`, pipx and uv;
-- any other folder on your `PATH` that is under your home folder, as that folder alone;
+- any other folder on your `PATH` that is under your home folder, as that folder alone, excluding folders that would expose Ryter’s private storage;
 - your git identity (`~/.gitconfig` and `~/.config/git/config`).
 
-A tool folder that is a symbolic link is left out, since a grant on a link is a grant on what it points at. If your `~/.npm` or `~/.cargo/registry` is a link to another disk, builds under the sandbox can't use that cache.
+A tool folder with a symbolic link anywhere below your home folder is left out, since a grant on a link is a grant on what it points at. If your `~/.npm` or `~/.cargo/registry` is a link to another disk, builds under the sandbox can't use that cache.
 
 They can also write the tools' download caches (`~/.cargo/registry`, `~/.npm`, pip's, uv's, Go's and others), so a build that fetches a dependency works.
 
@@ -632,9 +644,17 @@ They can also write the tools' download caches (`~/.cargo/registry`, `~/.npm`, p
 
 **What stays shut:** the rest of your home folder, `~/.ssh`, the tools' saved logins (`~/.cargo/credentials.toml`, `~/.npmrc`, `~/.config/git/credentials`), and Ryter's keys. Ryter also closes its own process to the commands it runs, so a key held in its memory or its environment can't be read from `/proc`.
 
-**Ryter's own records are kept from outside the sandbox:** which run file you approved, which product it left running, and its plans, decisions and reports in the project. A command can't write them, so it can't approve a run file for you, and a profile doesn't stop Ryter keeping them: under `read-only` too, an approved plan is saved.
+**Session access follows the session:** tools and command hooks can write only the active session’s notes and pages inside Ryter’s home. Other sessions, transcripts, spending records, metadata and approvals stay closed. New and resumed sessions get fresh scopes. Ryter’s own bookkeeping runs outside those scopes, so saving records still works. Automatic Git operations and approved project start/test/stop commands use the same profile.
+
+The configured Ryter home must be outside the workspace and outside shared system/scratch directories. A home under `/tmp`, for example, would be exposed by the scratch grant and is refused under a profile. Linked session, page or skill storage is refused. Choose a private home outside those locations or use `off`.
+
+Plans, decisions and test reports stored in the project follow the workspace’s access rights. Run-file approvals and lifecycle ownership are kept separately in Ryter’s home.
+
+**Git metadata must be reachable too.** For sandboxed Git workflows, launch Ryter from the repository root. A nested project whose Git metadata is outside the granted workspace may not have Git checkpoints or review available; the filesystem profile does not grant parent repositories automatically.
 
 **What a sandbox doesn't do:**
+
+- Separately configured outbound MCP servers run with their own permissions; this profile applies to Ryter’s built-in commands.
 
 - **It doesn't limit the network.**
 - **It doesn't contain Docker.** A command that can reach the Docker socket can mount the whole machine. If that matters, don't give the account Docker access. `docker build` works under a profile (its lock folder, `~/.docker/buildx`, is writable; the registry logins beside it stay shut).
@@ -646,7 +666,7 @@ They can also write the tools' download caches (`~/.cargo/registry`, `~/.npm`, p
 ## Safety
 
 - One gate: `decide(hat, tool, args)` → Allow / Ask / Deny. Every hat is offered the same tools; the gate decides what each may do with them.
-- **Build:** reading runs; edits and commands that change things ask; destruction always asks.
+- **Build:** reading and supported toolchains/project commands run without asking; file edits, publishing and unclassified commands ask; destruction always asks.
 - **Plan:** reading and read-only commands; it may write the project's memory files and its own notes, nothing else.
 - **Review:** reading, tests, linters and read-only git; no writes at all.
 - Denied in every hat: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files. An example file (`.env.example`, `.env.sample`) is not a secret.
@@ -671,6 +691,8 @@ When these files exist, the model **reads** them on every turn (capped), and is 
 
 ## Sessions
 
+If an interrupted append leaves a torn final record, resume keeps the valid history and reports the path of an exact backup. Complete or middle-of-file corruption stops resume for deliberate recovery. Recovered or inconsistent spending remains marked incomplete, so an enabled budget stops further requests.
+
 ```
 ~/.ryter/sessions/<cwd-slug>/<id>/
   meta.json
@@ -692,3 +714,28 @@ No SQLite. `ryter spend` uses the latest session for this directory.
 | 0 | ok |
 | 1 | error (including not a tty without `-p`) |
 | 3 | spend budget exceeded |
+
+## Repeatable acceptance checks
+
+From a source checkout, `cargo test --workspace` includes a complete simulated
+plan → build → review → test flow with approval, resume, undo/redo and commit
+receipts. After building the CLI, `python3 scripts/acceptance.py` checks real CLI
+processes against an isolated loopback provider, including spending, interrupted
+streams, recovery and permission refusals. These checks spend no provider credit.
+
+`python3 bench/run.py --mode simulated` exercises all ten retained benchmark
+fixtures. See [the benchmark guide](../bench/README.md) for reference validation,
+false-pass controls, saved reports and explicitly budgeted live runs. A model's
+review or test pass is its reported verdict; it does not prove the hidden tests
+will pass.
+
+For headless runs, explicit `--model` or `--connection` flags override saved
+hat-specific routes for that run. They do not rewrite those saved hat defaults.
+
+## Dependency maintenance
+
+`cargo deny --locked check advisories licenses sources` checks the shipped targets using `deny.toml` (cargo-deny 0.20.2). CI runs this on a free public Linux runner. The lockfile no longer uses the yanked `yoke-derive` release, and syntax highlighting no longer enables the unused YAML/plist loaders.
+
+Two specific maintenance advisories remain acknowledged in the configuration: `bincode` through syntect’s bundled syntax assets, and the build-time `paste` macro through ratatui 0.29. These are unmaintained-dependency notices, not vulnerability exceptions. New vulnerability advisories fail the check. Replacing them requires an upstream serialization change and a separate terminal-library migration.
+
+The license policy checks declared licenses and source registries. Release archives include a `third-party` folder with corresponding crate-source links and available license/copyright notices, generated by `python3 scripts/license_bundle.py OUTPUT`. The `option-ext` MPL-2.0 allowance is specific to that unmodified transitive dependency.

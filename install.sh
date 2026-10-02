@@ -9,7 +9,8 @@
 #   RYTER_DOWNLOAD_URL where release files are (default: GitHub; for mirrors)
 #
 # Linux (x86_64, arm64; static, any distro) and macOS (Apple Silicon, Intel).
-# Every download is checked against the release's SHA256SUMS before install.
+# Every download is checked against signed SHA256SUMS using the pinned release key.
+# Requires OpenSSL 3+ with Ed25519 support (RYTER_INSTALL_OPENSSL may name it).
 
 set -eu
 
@@ -23,6 +24,8 @@ need() { command -v "$1" >/dev/null 2>&1 || die "needs $1"; }
 need uname
 need tar
 need mkdir
+openssl_bin="${RYTER_INSTALL_OPENSSL:-openssl}"
+need "$openssl_bin"
 if command -v curl >/dev/null 2>&1; then
     fetch() { curl -fsSL "$1" -o "$2"; }
 elif command -v wget >/dev/null 2>&1; then
@@ -55,11 +58,30 @@ else
 fi
 
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT INT TERM
+stage=""
+cleanup() {
+    [ -z "$stage" ] || rm -f "$stage"
+    rm -rf "$tmp"
+}
+trap cleanup EXIT
+trap 'exit 1' INT TERM
+
+# Same trust anchor as the built-in updater. Mirrors cannot replace it.
+cat > "$tmp/release-key.pem" <<'RYTER_RELEASE_KEY'
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAHEf0ueXkc4v4QwCDBRhHnvJ6OouJ354zn/nBj4xOt/k=
+-----END PUBLIC KEY-----
+RYTER_RELEASE_KEY
 
 say "downloading $asset ${RYTER_VERSION:-(latest)}"
 fetch "$base/$asset" "$tmp/$asset" || die "download failed: $base/$asset"
 fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS" || die "download failed: $base/SHA256SUMS"
+fetch "$base/SHA256SUMS.sig" "$tmp/SHA256SUMS.sig" || die "release has no signature: refusing to install"
+tr -d '\r\n' < "$tmp/SHA256SUMS.sig" > "$tmp/signature.b64"
+"$openssl_bin" base64 -d -A -in "$tmp/signature.b64" -out "$tmp/signature.bin" || die "invalid release signature"
+"$openssl_bin" pkeyutl -verify -pubin -inkey "$tmp/release-key.pem" -rawin \
+    -in "$tmp/SHA256SUMS" -sigfile "$tmp/signature.bin" >/dev/null 2>&1 || \
+    die "signature verification failed: refusing to install (OpenSSL 3+ with Ed25519 is required)"
 
 want=$(grep " $asset\$" "$tmp/SHA256SUMS" | cut -d ' ' -f 1)
 [ -n "$want" ] || die "$asset is not listed in SHA256SUMS"
@@ -72,12 +94,18 @@ else
 fi
 [ "$want" = "$got" ] || die "checksum mismatch for $asset: refusing to install"
 
-tar -xzf "$tmp/$asset" -C "$tmp"
+# Extract only the expected executable after authenticating the archive.
+tar -xzf "$tmp/$asset" -C "$tmp" "ryter-$target/ryter"
+binary="$tmp/ryter-$target/ryter"
+[ -f "$binary" ] && [ ! -L "$binary" ] || die "release executable is missing or linked"
 mkdir -p "$DIR"
-# Replace atomically, so a running ryter keeps working until it exits.
-cp "$tmp/ryter-$target/ryter" "$DIR/.ryter.new"
-chmod 755 "$DIR/.ryter.new"
-mv "$DIR/.ryter.new" "$DIR/ryter"
+# A unique staging file cannot collide with another installer or follow a
+# pre-existing .ryter.new link. Rename keeps a running Ryter working.
+stage=$(mktemp "$DIR/.ryter.XXXXXX")
+cp "$binary" "$stage"
+chmod 755 "$stage"
+mv -f "$stage" "$DIR/ryter"
+stage=""
 
 say "installed $("$DIR/ryter" --version 2>/dev/null || echo ryter) to $DIR/ryter"
 case ":$PATH:" in

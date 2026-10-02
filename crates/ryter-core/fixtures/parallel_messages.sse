@@ -1,0 +1,22 @@
+data: {"type":"message_start","message":{"usage":{"input_tokens":25}}}
+
+data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"a","name":"read_file","input":{}}}
+
+data: {"type":"content_block_start","index":5,"content_block":{"type":"tool_use","id":"b","name":"read_file","input":{}}}
+
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"path\":"}}
+
+data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"{\"path\":"}}
+
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\"a.txt\"}"}}
+
+data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"\"b.txt\"}"}}
+
+data: {"type":"content_block_stop","index":2}
+
+data: {"type":"content_block_stop","index":5}
+
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":9}}
+
+data: {"type":"message_stop"}
+

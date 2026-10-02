@@ -86,6 +86,9 @@ impl ProjectSpend {
 
     fn count(&mut self, r: &SpendRecord) {
         self.calls += 1;
+        if r.incomplete && r.total_usd.is_some() {
+            self.unpriced_calls += 1;
+        }
         let Some(v) = r.total_usd else {
             self.unpriced_calls += 1;
             return;
@@ -188,6 +191,9 @@ pub fn spend_since(home: &Path, cwd: &Path, since_ms: u64) -> SpendSince {
                 continue;
             }
             out.calls += 1;
+            if r.incomplete && r.total_usd.is_some() {
+                out.unpriced += 1;
+            }
             match r.total_usd {
                 Some(usd) => {
                     out.usd += usd;

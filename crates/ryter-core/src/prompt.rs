@@ -16,8 +16,9 @@ pub fn load(home: &Path, project_root: Option<&Path>, trusted: bool) -> String {
     let name = "solo.md";
     if trusted {
         if let Some(root) = project_root {
-            let p = root.join(".ryter").join("prompts").join(name);
-            if let Ok(s) = fs::read_to_string(&p) {
+            if let Ok(s) =
+                crate::project_file::read(root, Path::new(".ryter/prompts/solo.md"), 48_000)
+            {
                 return s;
             }
         }
@@ -34,8 +35,7 @@ pub fn load(home: &Path, project_root: Option<&Path>, trusted: bool) -> String {
 pub fn load_project_instructions(project_root: Option<&Path>) -> Option<String> {
     let root = project_root?;
     for name in ["RYTER.md", "AGENTS.md"] {
-        let p = root.join(name);
-        if let Ok(s) = fs::read_to_string(&p) {
+        if let Ok(s) = crate::project_file::read(root, Path::new(name), 48_000) {
             if !s.trim().is_empty() {
                 return Some(s);
             }
@@ -178,9 +178,14 @@ pub fn machine((docker, podman): (bool, bool), sandbox: crate::sandbox::SandboxP
 
 /// [`machine`], for the machine and the thread this is called on.
 pub fn machine_here() -> String {
+    machine_for(crate::sandbox::active())
+}
+
+/// Machine guidance for the profile applied to scoped tool workers.
+pub fn machine_for(profile: crate::sandbox::SandboxProfile) -> String {
     machine(
         container_tools_in(std::env::var_os("PATH").as_deref()),
-        crate::sandbox::active(),
+        profile,
     )
 }
 
@@ -188,6 +193,41 @@ pub fn machine_here() -> String {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[cfg(unix)]
+    #[test]
+    fn project_links_never_enter_the_prompt() {
+        use std::os::unix::fs::symlink;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("project");
+        let home = tmp.path().join("home");
+        fs::create_dir_all(root.join(".ryter/prompts")).unwrap();
+        fs::create_dir_all(&home).unwrap();
+        let secret = tmp.path().join(".env");
+        fs::write(&secret, "FAKE_PRIVATE_SENTINEL").unwrap();
+        for file in [
+            "RYTER.md",
+            "AGENTS.md",
+            "ROADMAP.md",
+            "DECISIONS.md",
+            ".ryter/prompts/solo.md",
+        ] {
+            symlink(&secret, root.join(file)).unwrap();
+        }
+        fs::create_dir(tmp.path().join("private-notes")).unwrap();
+        fs::write(
+            tmp.path().join("private-notes/secret.md"),
+            "FAKE_PRIVATE_SENTINEL",
+        )
+        .unwrap();
+        symlink(tmp.path().join("private-notes"), root.join("notes")).unwrap();
+        for trusted in [false, true] {
+            assert!(!system(&home, Some(&root), trusted).contains("FAKE_PRIVATE_SENTINEL"));
+        }
+        fs::remove_file(root.join("RYTER.md")).unwrap();
+        fs::write(root.join("RYTER.md"), "PROJECT_INSTRUCTIONS").unwrap();
+        assert!(system(&home, Some(&root), false).contains("PROJECT_INSTRUCTIONS"));
+    }
 
     /// With both installed the model is told to use Docker; with one, which
     /// one; with neither, nothing. Under a sandbox profile it is told what

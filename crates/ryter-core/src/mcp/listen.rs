@@ -12,27 +12,35 @@ pub fn default_socket_path(home: &Path) -> PathBuf {
     home.join("ryter.sock")
 }
 
-/// Bind a Unix socket, replacing a stale file if nothing is listening.
+/// Bind a new Unix socket without removing anything already at the path.
+/// A stale socket must be removed explicitly after checking its owner.
 #[cfg(unix)]
 pub fn bind_unix(path: &Path) -> Result<std::os::unix::net::UnixListener> {
-    if path.exists() {
-        match std::os::unix::net::UnixStream::connect(path) {
-            Ok(_) => {
-                return Err(Error::Config(format!(
-                    "socket {} is already in use",
-                    path.display()
-                )));
-            }
-            Err(_) => {
-                let _ = std::fs::remove_file(path);
-            }
+    // macOS bind can follow a dangling symlink. exists() misses those;
+    // inspect the entry itself and fail closed on any inspection error.
+    match path.symlink_metadata() {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(_) => {
+            return Err(Error::Io(format!(
+                "{} already exists; choose another socket path or explicitly remove a confirmed stale socket",
+                path.display()
+            )));
         }
+        Err(e) => return Err(Error::Io(format!("{}: {e}", path.display()))),
     }
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| Error::Io(e.to_string()))?;
     }
-    let listener = std::os::unix::net::UnixListener::bind(path)
-        .map_err(|e| Error::Io(format!("{}: {e}", path.display())))?;
+    // Let bind claim the name atomically. Even an inode check followed by
+    // unlink can delete a different file substituted in between. A failed
+    // connection is not proof of a stale socket either (permissions, etc.).
+    let listener = std::os::unix::net::UnixListener::bind(path).map_err(|e| {
+        Error::Io(format!(
+            "{}: {e}. Existing paths are preserved; choose another socket path, \
+             or remove a stale socket only after checking no server owns it",
+            path.display()
+        ))
+    })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -119,6 +127,36 @@ mod tests {
             params: Some(params),
         }
         .to_line()
+    }
+
+    #[test]
+    fn binding_preserves_every_existing_path() {
+        use std::os::unix::fs::{FileTypeExt, symlink};
+        use std::os::unix::net::UnixListener;
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("file");
+        std::fs::write(&file, "user data").unwrap();
+        let folder = dir.path().join("folder");
+        std::fs::create_dir(&folder).unwrap();
+        let link = dir.path().join("link");
+        symlink(&file, &link).unwrap();
+        let dangling = dir.path().join("dangling");
+        symlink(dir.path().join("absent"), &dangling).unwrap();
+        let live = dir.path().join("live.sock");
+        let listener = UnixListener::bind(&live).unwrap();
+        let stale = dir.path().join("stale.sock");
+        drop(UnixListener::bind(&stale).unwrap());
+        for path in [&file, &folder, &link, &dangling, &live, &stale] {
+            assert!(bind_unix(path).is_err(), "{}", path.display());
+            assert!(path.symlink_metadata().is_ok());
+        }
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "user data");
+        assert_eq!(std::fs::read_link(&link).unwrap(), file);
+        assert!(folder.is_dir());
+        assert!(stale.symlink_metadata().unwrap().file_type().is_socket());
+        let client = UnixStream::connect(&live).unwrap();
+        let _accepted = listener.accept().unwrap();
+        drop(client);
     }
 
     #[test]

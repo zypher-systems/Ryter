@@ -158,9 +158,54 @@ pub fn report(
     }
 }
 
+/// Input, tool schemas and requested output allowance, using one estimate for
+/// admission and the context inspector. The estimate is not a model tokenizer.
+pub fn request_tokens(
+    system: &str,
+    messages: &[Message],
+    tools: &[crate::llm::ToolSpec],
+    output: u32,
+) -> u64 {
+    let schemas = serde_json::to_vec(tools).map_or(0, |v| v.len() as u64);
+    estimate_tokens(system, messages)
+        .saturating_add(schemas.div_ceil(4))
+        .saturating_add(output.into())
+}
+
+/// Context report that includes schemas and space reserved for the answer.
+pub fn request_report(
+    system: &str,
+    messages: &[Message],
+    tools: &[crate::llm::ToolSpec],
+    window: u64,
+    output: u32,
+) -> ContextReport {
+    let mut rep = report(system, messages, "", window);
+    rep.tokens = request_tokens(system, messages, tools, output);
+    rep.pct = (rep.tokens.saturating_mul(100) / rep.window.max(1)).min(100) as u8;
+    rep
+}
+
+/// Reject an estimated oversized request before it can incur provider cost.
+pub fn ensure_fits(request: &crate::llm::CompletionRequest, window: u64) -> crate::Result<()> {
+    let tokens = request_tokens(
+        request.system.as_deref().unwrap_or(""),
+        &request.messages,
+        &request.tools,
+        request.max_tokens.unwrap_or(0),
+    );
+    if tokens > window {
+        return Err(crate::Error::Config(format!(
+            "context for {} needs about {tokens} tokens including tools and output allowance, above its {window}-token window after compaction; use a larger-window model, start a new session with the remaining task, or correct [context_windows] if this limit is wrong",
+            request.model
+        )));
+    }
+    Ok(())
+}
+
 /// Whether auto-compact should run.
 pub fn should_compact(rep: &ContextReport) -> bool {
-    rep.pct >= AUTO_COMPACT_PCT && rep.messages > KEEP_USER_TURNS * 2
+    rep.pct >= AUTO_COMPACT_PCT
 }
 
 /// Replace the prefix with a deterministic extract. No-op when already short.
@@ -172,22 +217,52 @@ pub fn compact(messages: &[Message], note: &str, keep_user_turns: usize) -> Vec<
         .filter(|(_, m)| m.role == "user")
         .map(|(i, _)| i)
         .collect();
-    if user_idx.len() <= keep_user_turns {
-        return messages.to_vec();
+    let cut = if user_idx.len() > keep_user_turns {
+        user_idx[user_idx.len() - keep_user_turns.max(1)]
+    } else {
+        0
+    };
+    let mut out = if cut > 0 {
+        let mut next = vec![Message {
+            role: "user".into(),
+            content: extract_prefix(&messages[..cut], note),
+            tool_call_id: None,
+            tool_calls: None,
+        }];
+        next.extend(messages[cut..].iter().cloned());
+        next
+    } else {
+        messages.to_vec()
+    };
+    // A single user turn can contain many tool rounds. Keep call/result
+    // identities and all narrative, but shorten older bulky tool results.
+    // The newest result batch remains intact for the next model response.
+    let latest_call = out
+        .iter()
+        .rposition(|m| m.tool_calls.as_ref().is_some_and(|c| !c.is_empty()))
+        .unwrap_or(0);
+    for m in &mut out[..latest_call] {
+        if m.role == "tool" && m.content.len() > 2048 {
+            let mut head = 768;
+            while !m.content.is_char_boundary(head) {
+                head -= 1;
+            }
+            let mut tail = m.content.len() - 768;
+            while !m.content.is_char_boundary(tail) {
+                tail += 1;
+            }
+            m.content = format!(
+                "{}\n[earlier tool output shortened; re-read the source if needed]\n{}",
+                &m.content[..head],
+                &m.content[tail..]
+            );
+        }
     }
-    let cut = user_idx[user_idx.len() - keep_user_turns];
-    if cut == 0 {
-        return messages.to_vec();
+    if estimate_tokens("", &out) < estimate_tokens("", messages) {
+        out
+    } else {
+        messages.to_vec()
     }
-    let extract = extract_prefix(&messages[..cut], note);
-    let mut out = vec![Message {
-        role: "user".into(),
-        content: extract,
-        tool_call_id: None,
-        tool_calls: None,
-    }];
-    out.extend(messages[cut..].iter().cloned());
-    out
 }
 
 fn extract_prefix(old: &[Message], note: &str) -> String {
@@ -219,6 +294,13 @@ fn extract_prefix(old: &[Message], note: &str) -> String {
         s.push_str("Files touched: ");
         s.push_str(&files.into_iter().collect::<Vec<_>>().join(", "));
         s.push('\n');
+    }
+    s.push_str("Earlier user messages and assistant notes (verbatim):\n");
+    for m in old
+        .iter()
+        .filter(|m| matches!(m.role.as_str(), "user" | "assistant") && !m.content.is_empty())
+    {
+        s.push_str(&format!("\n{}:\n{}\n", m.role, m.content));
     }
     let note = note.trim();
     if !note.is_empty() {
@@ -323,6 +405,64 @@ mod tests {
             total >= est && total <= est + rows.len() as u64,
             "{total} vs {est}"
         );
+    }
+
+    #[test]
+    fn a_long_single_turn_shrinks_without_losing_constraints_or_tool_identity() {
+        let mut messages = vec![msg(
+            "user",
+            "Never change the public API; keep compatibility.",
+        )];
+        for i in 0..3 {
+            messages.push(Message {
+                role: "assistant".into(),
+                content: "Still need to validate compatibility".into(),
+                tool_call_id: None,
+                tool_calls: Some(vec![crate::llm::AssistantToolCall {
+                    id: format!("c{i}"),
+                    name: "read_file".into(),
+                    arguments: "{}".into(),
+                }]),
+            });
+            messages.push(Message {
+                role: "tool".into(),
+                content: "界".repeat(6000),
+                tool_call_id: Some(format!("c{i}")),
+                tool_calls: None,
+            });
+        }
+        let next = compact(&messages, "", 4);
+        assert_eq!(next.len(), messages.len());
+        assert!(estimate_tokens("", &next) < estimate_tokens("", &messages) / 2);
+        assert_eq!(next[0], messages[0]);
+        assert_eq!(next.last(), messages.last());
+        for (before, after) in messages.iter().zip(&next) {
+            assert_eq!(before.tool_calls, after.tool_calls);
+            assert_eq!(before.tool_call_id, after.tool_call_id);
+            if before.role != "tool" {
+                assert_eq!(before.content, after.content);
+            }
+        }
+        assert!(next[2].content.contains("re-read the source"));
+    }
+
+    #[test]
+    fn extracted_history_preserves_user_constraints_and_unfinished_work() {
+        let mut history = vec![
+            msg("user", "Keep the CSV format compatible."),
+            msg("assistant", "Still need the empty-file regression."),
+        ];
+        history.push(msg("tool", &"bulky output".repeat(2000)));
+        history.push(msg("user", "Continue"));
+        let next = compact(&history, "approved plan path", 1);
+        assert!(next[0].content.contains("Keep the CSV format compatible."));
+        assert!(
+            next[0]
+                .content
+                .contains("Still need the empty-file regression.")
+        );
+        assert!(next[0].content.contains("approved plan path"));
+        assert_eq!(next.last(), history.last());
     }
 
     #[test]

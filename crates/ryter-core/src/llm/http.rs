@@ -1365,10 +1365,11 @@ mod tests {
         while let Some(d) = stream.next().await {
             match d.unwrap() {
                 StreamDelta::ToolCall {
+                    stream_key,
                     id,
                     name,
                     arguments,
-                } => calls.push(&id, &name, &arguments),
+                } => calls.push_keyed(stream_key.as_deref(), &id, &name, &arguments),
                 StreamDelta::Usage(u) => usage = Some(u),
                 _ => {}
             }

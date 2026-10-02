@@ -326,7 +326,7 @@ fn run_headless(cli: Cli) -> ryter_core::Result<ExitCode> {
 
 async fn run_prompt(
     cli: Cli,
-    cfg: ryter_core::Config,
+    mut cfg: ryter_core::Config,
     cwd: std::path::PathBuf,
     profile: SandboxProfile,
 ) -> ryter_core::Result<ExitCode> {
@@ -344,6 +344,11 @@ async fn run_prompt(
         cli.connection.as_deref(),
         cli.model.as_deref(),
     );
+    // An explicit headless route is for this run, including hat switches.
+    // Saved per-hat defaults must not silently select a different paid model.
+    if cli.connection.is_some() || cli.model.is_some() {
+        cfg.specialists.clear();
+    }
     let conn = cfg
         .connections
         .get(&conn_name)
@@ -370,7 +375,10 @@ async fn run_prompt(
     } else {
         Session::create(&home, &cwd, conn_name.clone(), model.clone())?
     };
-    sandbox::apply(profile, &cwd, &home)?;
+    let tool_sandbox = sandbox::Scope::for_profile(profile, &home);
+    if let Some(scope) = &tool_sandbox {
+        scope.check(&cwd, &session.notes_dir())?;
+    }
     let notes = session.notes_dir();
     let (tx, rx) = mpsc::channel();
     let json = cli.json;
@@ -404,6 +412,7 @@ async fn run_prompt(
         book: PriceBook::from_config(&cfg),
         session,
         ctx: ToolContext {
+            sandbox: tool_sandbox,
             live: None,
             workspace: cwd.clone(),
             notes_dir: notes,
@@ -433,7 +442,7 @@ async fn run_prompt(
         trusted,
         context_window: 0,
         cfg: Some(cfg.clone()),
-        machine: ryter_core::prompt::machine_here(),
+        machine: ryter_core::prompt::machine_for(profile),
         product: None,
         filed: Default::default(),
     };
@@ -652,33 +661,83 @@ struct ServeHost {
     agent: std::sync::Mutex<Agent>,
     rt: std::sync::Mutex<tokio::runtime::Runtime>,
     cancel: Arc<ryter_core::Cancel>,
+    snapshot: std::sync::Mutex<(ryter_core::StatusSnapshot, String, String)>,
 }
 
-impl ryter_core::InboundHost for ServeHost {
-    fn prompt(&self, text: &str) -> ryter_core::Result<String> {
-        self.cancel.reset();
-        let mut agent = self
-            .agent
-            .lock()
-            .map_err(|e| Error::Config(e.to_string()))?;
-        let rt = self.rt.lock().map_err(|e| Error::Config(e.to_string()))?;
-        let r = rt.block_on(agent.turn(text))?;
-        Ok(r.text)
-    }
-
-    fn status(&self) -> ryter_core::StatusSnapshot {
-        let agent = self.agent.lock().expect("serve host");
-        ryter_core::StatusSnapshot {
-            model: agent.model.clone(),
-            connection: agent.connection.clone(),
-            session: agent.session.meta.id.to_string(),
-            last_error: String::new(),
+impl ServeHost {
+    fn new(agent: Agent, rt: tokio::runtime::Runtime) -> Self {
+        let snapshot = Self::snapshot(&agent, String::new());
+        Self {
+            cancel: agent.ctx.cancel.clone(),
+            agent: std::sync::Mutex::new(agent),
+            rt: std::sync::Mutex::new(rt),
+            snapshot: std::sync::Mutex::new(snapshot),
         }
     }
 
+    fn snapshot(agent: &Agent, last_error: String) -> (ryter_core::StatusSnapshot, String, String) {
+        let mut spend = format_usd(agent.session.meta.spend_usd_total);
+        if agent.session.meta.spend_unknown {
+            spend.push_str(" + unknown");
+        }
+        if agent.session.meta.spend_incomplete {
+            spend.push_str(" (incomplete)");
+        }
+        (
+            ryter_core::StatusSnapshot {
+                model: agent.model.clone(),
+                connection: agent.connection.clone(),
+                session: agent.session.meta.id.to_string(),
+                last_error,
+            },
+            spend,
+            ryter_core::mcp::transcript_snapshot(&agent.session.transcript),
+        )
+    }
+}
+
+impl ryter_core::InboundHost for ServeHost {
+    fn prepare_prompt(&self) {
+        self.cancel.reset();
+    }
+
+    fn prompt(&self, text: &str) -> ryter_core::Result<String> {
+        let mut agent = self
+            .agent
+            .try_lock()
+            .map_err(|_| Error::Config("busy; a prompt is already running".into()))?;
+        let rt = self.rt.lock().map_err(|e| Error::Config(e.to_string()))?;
+        let result = rt.block_on(agent.turn(text));
+        let last_error = result
+            .as_ref()
+            .err()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            *snapshot = Self::snapshot(&agent, last_error);
+        }
+        result.map(|r| r.text)
+    }
+
+    fn status(&self) -> ryter_core::StatusSnapshot {
+        self.snapshot
+            .lock()
+            .map(|s| s.0.clone())
+            .unwrap_or_default()
+    }
+
     fn spend(&self) -> String {
-        let agent = self.agent.lock().expect("serve host");
-        format_usd(agent.session.meta.spend_usd_total)
+        self.snapshot
+            .lock()
+            .map(|s| s.1.clone())
+            .unwrap_or_default()
+    }
+
+    fn transcript(&self) -> String {
+        self.snapshot
+            .lock()
+            .map(|s| s.2.clone())
+            .unwrap_or_default()
     }
 
     fn cancel(&self) {
@@ -708,13 +767,17 @@ fn mcp_serve() -> ryter_core::Result<()> {
         .ok()
         .map(|h| Arc::new(std::sync::Mutex::new(h)));
     let profile = cfg.sandbox.profile()?;
-    sandbox::apply(profile, &cwd, &home)?;
+    let tool_sandbox = sandbox::Scope::for_profile(profile, &home);
+    if let Some(scope) = &tool_sandbox {
+        scope.check(&cwd, &session.notes_dir())?;
+    }
     let rt = sandbox::runtime(profile).map_err(|e| Error::Io(e.to_string()))?;
     let agent = Agent {
         provider: Arc::new(provider),
         book: PriceBook::from_config(&cfg),
         session,
         ctx: ToolContext {
+            sandbox: tool_sandbox,
             live: None,
             workspace: cwd.clone(),
             notes_dir: notes,
@@ -747,7 +810,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
         trusted,
         context_window: 0,
         cfg: Some(cfg.clone()),
-        machine: ryter_core::prompt::machine_here(),
+        machine: ryter_core::prompt::machine_for(profile),
         product: None,
         filed: Default::default(),
     };
@@ -755,12 +818,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
         eprintln!("{e}");
         return Err(e);
     }
-    let cancel = agent.ctx.cancel.clone();
-    let host = ServeHost {
-        agent: std::sync::Mutex::new(agent),
-        rt: std::sync::Mutex::new(rt),
-        cancel,
-    };
+    let host = ServeHost::new(agent, rt);
     eprintln!("ryter mcp serve on stdio");
     ryter_core::serve_inbound(&host)
 }
@@ -829,7 +887,10 @@ fn serve_host_from_config(
         .ok()
         .map(|h| Arc::new(std::sync::Mutex::new(h)));
     let profile = cfg.sandbox.profile()?;
-    sandbox::apply(profile, cwd, &home)?;
+    let tool_sandbox = sandbox::Scope::for_profile(profile, &home);
+    if let Some(scope) = &tool_sandbox {
+        scope.check(cwd, &session.notes_dir())?;
+    }
     let rt = sandbox::runtime(profile).map_err(|e| Error::Io(e.to_string()))?;
     let cancel = ryter_core::Cancel::new();
     let agent = Agent {
@@ -837,6 +898,7 @@ fn serve_host_from_config(
         book: PriceBook::from_config(cfg),
         session,
         ctx: ToolContext {
+            sandbox: tool_sandbox,
             live: None,
             workspace: cwd.to_path_buf(),
             notes_dir: notes,
@@ -869,16 +931,12 @@ fn serve_host_from_config(
         trusted: config::is_trusted(cwd),
         context_window: 0,
         cfg: Some(cfg.clone()),
-        machine: ryter_core::prompt::machine_here(),
+        machine: ryter_core::prompt::machine_for(profile),
         product: None,
         filed: Default::default(),
     };
     agent.fire_session_start()?;
-    Ok(ServeHost {
-        agent: std::sync::Mutex::new(agent),
-        rt: std::sync::Mutex::new(rt),
-        cancel,
-    })
+    Ok(ServeHost::new(agent, rt))
 }
 
 fn project_spend_cmd() -> ryter_core::Result<()> {
@@ -886,7 +944,7 @@ fn project_spend_cmd() -> ryter_core::Result<()> {
     let p = ryter_core::project::project_spend(&config::home_dir(), &cwd)?;
     let unpriced = if p.unpriced_calls > 0 {
         format!(
-            "  ({} of {} calls unpriced, not included)",
+            "  ({} of {} calls unpriced or incomplete; total is a lower bound)",
             p.unpriced_calls, p.calls
         )
     } else {
@@ -950,16 +1008,17 @@ fn spend_cmd(id: Option<&str>) -> ryter_core::Result<()> {
         format_usd(session.meta.spend_usd_total)
     );
     if session.meta.spend_unknown {
-        println!("(some turns unpriced — shown as {})", format_usd(None));
+        println!("(some calls are unpriced or incomplete; the total is a lower bound)");
     }
     for rec in session.spend_log()? {
         println!(
-            "  {}  {:<14}  in={} out={}  {}",
+            "  {}  {:<14}  in={} out={}  {}{}",
             rec.role,
             rec.model,
             rec.input_tokens,
             rec.output_tokens,
-            format_usd(rec.total_usd)
+            format_usd(rec.total_usd),
+            if rec.incomplete { " (incomplete)" } else { "" }
         );
     }
     Ok(())

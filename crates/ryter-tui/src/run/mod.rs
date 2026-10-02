@@ -67,23 +67,84 @@ pub struct TuiOpts {
     pub session: Option<String>,
 }
 
+#[derive(Default)]
+struct InboundState {
+    cancelled: bool,
+    running: bool,
+}
+
+/// A queued MCP turn owns cancellation independently of the UI's current turn.
+#[derive(Default)]
+pub(super) struct InboundTurn(Mutex<InboundState>);
+
+impl InboundTurn {
+    fn start(&self, cancel: &Cancel) -> bool {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if state.cancelled {
+            return false;
+        }
+        cancel.reset();
+        state.running = true;
+        true
+    }
+    fn finish(&self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).running = false;
+    }
+    fn cancel(&self, cancel: &Cancel) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.cancelled = true;
+        if state.running {
+            cancel.cancel();
+        }
+    }
+    fn cancelled(&self) -> bool {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).cancelled
+    }
+}
+
 struct TuiAttach {
+    prompting: Mutex<()>,
+    inbound: Mutex<Arc<InboundTurn>>,
     work: mpsc::Sender<Work>,
     cancel: Arc<Cancel>,
     status: Arc<Mutex<StatusSnapshot>>,
     spend: Arc<Mutex<String>>,
+    transcript: Arc<Mutex<String>>,
 }
 
 impl InboundHost for TuiAttach {
+    fn prepare_prompt(&self) {
+        *self.inbound.lock().unwrap_or_else(|e| e.into_inner()) = Arc::new(InboundTurn::default());
+    }
+
     fn prompt(&self, text: &str) -> ryter_core::Result<String> {
+        let _turn = self.prompting.try_lock().map_err(|_| {
+            ryter_core::Error::Config("busy; an MCP prompt is already running".into())
+        })?;
+        let inbound = self
+            .inbound
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let (tx, rx) = mpsc::channel();
         self.work
             .send(Work::Turn {
                 text: text.to_string(),
                 reply: Some(tx),
+                inbound: Some(inbound.clone()),
             })
             .map_err(|e| ryter_core::Error::Io(e.to_string()))?;
-        rx.recv().map_err(|e| ryter_core::Error::Io(e.to_string()))
+        loop {
+            if inbound.cancelled() {
+                return Err(ryter_core::Error::Cancelled);
+            }
+            match rx.recv_timeout(Duration::from_millis(20)) {
+                Ok(text) => return Ok(text),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(_) if inbound.cancelled() => return Err(ryter_core::Error::Cancelled),
+                Err(e) => return Err(ryter_core::Error::Io(e.to_string())),
+            }
+        }
     }
 
     fn status(&self) -> StatusSnapshot {
@@ -94,8 +155,23 @@ impl InboundHost for TuiAttach {
         self.spend.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
+    fn transcript(&self) -> String {
+        self.transcript
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default()
+    }
+
     fn cancel(&self) {
+        self.cancel_prompt();
         self.cancel.cancel();
+    }
+
+    fn cancel_prompt(&self) {
+        self.inbound
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .cancel(&self.cancel);
     }
 }
 
@@ -225,6 +301,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         last_error: String::new(),
     }));
     let live_spend = Arc::new(Mutex::new(String::new()));
+    let live_transcript = Arc::new(Mutex::new(String::new()));
 
     // A newer release: checked at most once a day on a thread of its own,
     // never the worker's, which may be sandboxed.
@@ -256,16 +333,20 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         cancel: cancel.clone(),
         live_status: live_status.clone(),
         live_spend: live_spend.clone(),
+        live_transcript: live_transcript.clone(),
         user_io,
     };
     let _ = work_tx.send(Work::ListModels);
     std::thread::spawn(move || worker::run(init));
 
     let attach_host: Arc<dyn InboundHost> = Arc::new(TuiAttach {
+        prompting: Mutex::new(()),
+        inbound: Mutex::new(Arc::new(InboundTurn::default())),
         work: work_tx.clone(),
         cancel: cancel.clone(),
         status: live_status,
         spend: live_spend,
+        transcript: live_transcript,
     });
     let sock_path = start_inbound(&mut view, &cfg, &home, attach_host.clone());
 
@@ -758,5 +839,61 @@ fn edit_with_editor(
         Ok(s) if s.success() => view.system(format!("edited {}", path.display())),
         Ok(s) => view.warn(format!("{editor} exited with {s}")),
         Err(e) => view.error(format!("{editor}: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod inbound_cancel_tests {
+    use super::*;
+
+    #[test]
+    fn queued_and_finished_mcp_cancellation_does_not_cancel_ui_work() {
+        let cancel = Cancel::new();
+        let queued = InboundTurn::default();
+        queued.cancel(&cancel);
+        assert!(!cancel.is_cancelled());
+        assert!(!queued.start(&cancel));
+        let active = InboundTurn::default();
+        assert!(active.start(&cancel));
+        active.cancel(&cancel);
+        assert!(cancel.is_cancelled());
+        active.finish();
+        cancel.reset();
+        active.cancel(&cancel);
+        assert!(!cancel.is_cancelled());
+    }
+
+    #[test]
+    fn disconnected_queued_prompt_returns_without_waiting_for_the_ui_worker() {
+        let (work, queued) = mpsc::channel();
+        let host = Arc::new(TuiAttach {
+            prompting: Mutex::new(()),
+            inbound: Mutex::new(Arc::new(InboundTurn::default())),
+            work,
+            cancel: Cancel::new(),
+            status: Default::default(),
+            spend: Default::default(),
+            transcript: Default::default(),
+        });
+        host.prepare_prompt();
+        let caller = host.clone();
+        let waiting = std::thread::spawn(move || caller.prompt("queued"));
+        let work = queued.recv_timeout(Duration::from_secs(1)).unwrap();
+        let Work::Turn {
+            inbound: Some(ticket),
+            ..
+        } = &work
+        else {
+            panic!("expected turn")
+        };
+        *host.transcript.lock().unwrap() = "completed conversation".into();
+        assert_eq!(host.transcript(), "completed conversation");
+        host.cancel_prompt();
+        assert!(matches!(
+            waiting.join().unwrap(),
+            Err(ryter_core::Error::Cancelled)
+        ));
+        assert!(!host.cancel.is_cancelled());
+        assert!(!ticket.start(&host.cancel));
     }
 }
