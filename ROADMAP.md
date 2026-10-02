@@ -19,6 +19,8 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 ## Now
 
 - **Unreleased — review repair 2a: socket paths.** Binding an MCP socket preserves every existing path, including stale sockets. An occupied name produces an actionable error instead of deleting data.
+- **Unreleased — review repair 3: spending integrity.** Commit drafting obeys the same budget admission checks as turns. Interrupted calls retain reported usage and mark accounting incomplete; a budget then stops further requests even after resume. Missing override rates remain unknown.
+
 - **Unreleased — review repair 1: file-read boundaries.** Project instructions, prompt overrides and memory refuse linked files and directories; memory has one 48 KB cap. Search refuses linked files, and nested `.env` variants follow the same secret rules as root files. Regression tests cover all four hats. Remaining repair stages are in `docs/review-2026-10-02.md`.
 
 Work that is in `dev` and not yet released is marked *Unreleased*, and its notes collect in `docs/releases/next.md`. An entry gets its version when it's released.

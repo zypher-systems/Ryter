@@ -886,7 +886,7 @@ fn project_spend_cmd() -> ryter_core::Result<()> {
     let p = ryter_core::project::project_spend(&config::home_dir(), &cwd)?;
     let unpriced = if p.unpriced_calls > 0 {
         format!(
-            "  ({} of {} calls unpriced, not included)",
+            "  ({} of {} calls unpriced or incomplete; total is a lower bound)",
             p.unpriced_calls, p.calls
         )
     } else {
@@ -950,16 +950,17 @@ fn spend_cmd(id: Option<&str>) -> ryter_core::Result<()> {
         format_usd(session.meta.spend_usd_total)
     );
     if session.meta.spend_unknown {
-        println!("(some turns unpriced — shown as {})", format_usd(None));
+        println!("(some calls are unpriced or incomplete; the total is a lower bound)");
     }
     for rec in session.spend_log()? {
         println!(
-            "  {}  {:<14}  in={} out={}  {}",
+            "  {}  {:<14}  in={} out={}  {}{}",
             rec.role,
             rec.model,
             rec.input_tokens,
             rec.output_tokens,
-            format_usd(rec.total_usd)
+            format_usd(rec.total_usd),
+            if rec.incomplete { " (incomplete)" } else { "" }
         );
     }
     Ok(())

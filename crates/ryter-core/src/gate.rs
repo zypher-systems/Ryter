@@ -497,7 +497,10 @@ impl Agent {
                 &Past {
                     model: model.clone(),
                     context_tokens,
-                    usd: spent.iter().map(|r| r.total_usd).sum::<Option<f64>>(),
+                    usd: spent
+                        .iter()
+                        .map(|r| if r.incomplete { None } else { r.total_usd })
+                        .sum::<Option<f64>>(),
                 },
             );
         }
@@ -807,7 +810,7 @@ impl Agent {
             .collect();
         let total_usd = reviews
             .iter()
-            .map(|r| r.total_usd)
+            .map(|r| if r.incomplete { None } else { r.total_usd })
             .sum::<Option<f64>>()
             .filter(|_| !reviews.is_empty());
         // Stopped at its limit before anything was sent: no review ran.
