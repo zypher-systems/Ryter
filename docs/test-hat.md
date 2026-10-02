@@ -99,18 +99,22 @@ The first time a test is asked for, the model reads the project and proposes the
 
 ## What the tester may run
 
-It never edits or writes project files.
+The mockup first approved here had "anything else asks first". The user changed it the same day: too much asking. The tester runs what the build hat runs without asking, and never edits or writes project files.
 
 ```
   runs without asking
     the commands in .ryter/run.toml
     reading files, git status, test runners, linters
+    your toolchains and the project's own programs
+    the project's containers: build, up, down, run, exec, logs
     requests to the project's own address (curl localhost:8000/…)
+    writing to /tmp and your home folder
 
   asks first (y / n / a allow this kind for the session)
-    ./bin/cms-admin create-user ann
-    docker compose exec web python manage.py shell
+    removing volumes, stopping a container by name, docker push
+    publishing, and tools for a service elsewhere (gh, aws, kubectl)
     curl https://example.com/…
+    a system program that isn't a toolchain
 
   never
     editing or writing project files

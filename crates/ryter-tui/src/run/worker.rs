@@ -830,5 +830,6 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         trusted: b.trusted,
         context_window: 0,
         cfg: Some(b.cfg.clone()),
+        machine: ryter_core::prompt::machine_here(),
     }
 }

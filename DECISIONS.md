@@ -12,6 +12,32 @@ Why, not what. Non-obvious choices are recorded here, newest first.
 - **Why:** "There is too many unknowns for crew to work effectively without the user." No real project had completed in crew mode; the benchmark's clean runs were on small tasks with checks already set.
 - **Where:** `ROADMAP.md` (Direction). The code to go, when it goes: `crew.rs`, `queue.rs`, `tiering.rs`, `estimate.rs`, the crew parts of `agent.rs`, and the crew panels, about 10,000 of 72,000 lines; `bench.rs` is rebuilt on the hats.
 
+### 2026-10-01 — Less asking: toolchains, containers, scratch space and the home folder
+- **By:** the user ("one of the things I want to avoid is too much asking. It should be able to run docker/podman from within the working directory to build stacks, if it needs access to apps stored in the home drive like rust or other libraries it should be able to execute those freely. The hats should also be able to write to home directory or /tmp without interaction. I would prefer to steer the models to docker if its there rather than podman"). This also replaces the Test hat's "anything else asks first", which the user had approved from a mockup earlier the same day.
+- **Decision (what the user asked for):**
+  - The build hat runs toolchains, the project's own programs, programs under the home folder, and the project's containers without a prompt (`runs_freely`, `containers_freely` in `tools/policy.rs`). The Test hat will use the same rule.
+  - `/tmp` and the home folder are open to every hat, to read and write (`free_place`). The file tools follow the same rule as shell paths and redirects.
+  - The model is told which container tool is installed, and to use Docker when both are (`prompt::machine`).
+- **Guards I kept, which the user did not ask for.** Each one still asks (or refuses) where the request, read literally, would not:
+  - **Credentials and startup files** stay refused (`forbidden_outside`, as before).
+  - **Another git repository under the home folder** is not a free place. A sibling project is somebody's source, and nothing was asked to change it.
+  - **Destruction outside the project** asks every time, in `/tmp` and the home folder too. Otherwise "allow all" would cover `rm -rf ~/x`.
+  - **Publishing, sign-in and tools for a service elsewhere** (`cargo publish`, `npm login`, `docker push`, `gh`, `aws`, `kubectl`, `curl`): they leave the machine and can't be taken back.
+  - **In Docker:** removing volumes and `prune` (data), `docker stop`/`rm`/`kill` by name (the container may not be this project's; `compose` commands are scoped to the project and run), `-H`/`--context` (another machine), a compose file outside the project, and `--privileged`, a mount of the host, the Docker socket or a key folder.
+  - **System programs that change files by hand** (`mkdir`, `cp`, `sed -i`) still ask in the build hat, as edits do. `a` allows one for the session.
+- **Chosen vs rejected:**
+  - Rejected "any program runs unless it is destructive". The user named toolchains, containers and programs under the home folder; `sed -i` on the project is an edit, and edits ask.
+  - Rejected reading Docker's options after the image or service name. What follows it is the command inside the container (`uvicorn --host 0.0.0.0`), and reading it as Docker's made ordinary commands ask. Before it, every option of `run`, `create` and `exec` has to be one the gate knows, so `--privileged` after `--name web` is still seen.
+  - Rejected narrowing the build hat's boundary after `cd sub`. The rest of the command is judged from the project's top, which is never looser: a path that leaves the project from the folder leaves it from the top too.
+  - Rejected changing the sandbox. `workspace` shuts `/tmp` and the home folder at the system level, and the user's own settings have it on, so with it on these rules change nothing there. Opening `/tmp` under a profile needs the sandbox reworked (it recognises its own threads by `/tmp` being shut, and its tests live in `/tmp`), and how much of the home folder a profile should open is the user's to decide. The model is told what the profile shuts instead, and the question is on the roadmap.
+- **Found on the way:**
+  - **The review hat had no rule about where a read-only command pointed.** `cat ~/.ssh/id_rsa` and `cat /etc/passwd` were allowed there without a prompt, in every release with the hat (the plan hat checked the path; the review hat's branch never did). Found by the new test for the saved-login list, which expected a refusal in all three hats. The review hat now refuses a path outside the project and the open places, except in the command a `docker exec` or `compose run` runs, whose paths are the container's.
+  - Opening the home folder made the list of what is never read matter more, so it grew: the tools' saved logins, shell history, and the browser's and mail client's folders.
+  - `find <outside> -delete` was counted as reading, so it asked like `ls` instead of every time. Fixed.
+  - Reading is open a little wider than writing: the home folder itself (`ls ~`) and another repository under it.
+- **Where:** `crates/ryter-core/src/tools/policy.rs`, `tools/fs.rs` (`require_resolved`), `prompt.rs` (`machine`), `agent.rs` (`machine` field); `docs/guide.md` ("What runs without asking", "Outside the project")
+- **Residual risk:** a toolchain runs the project's code (build scripts, install scripts) without a prompt; `docker exec` reaches any container on the machine by name; a program under the home folder runs whatever it is; the home folder's files, other than the ones named as kept shut, are readable by every hat without a prompt, and what a model reads is sent to its provider. Nothing was run against a real stack.
+
 ### 2026-10-01 — The Test hat's design, and decisions recorded against the plan
 - **By:** the user, choice by choice from mockups (2026-10-01). The approved design is in `docs/test-hat.md`.
 - **The user's decisions:**

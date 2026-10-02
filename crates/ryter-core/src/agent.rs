@@ -75,6 +75,10 @@ pub struct Agent {
     /// The configuration: each hat's model, the review limit, the
     /// connections. Tests may leave this `None`.
     pub cfg: Option<crate::config::Config>,
+    /// What the model is told about this machine ([`crate::prompt::machine`]):
+    /// worked out once, where the agent is made, so the prompt doesn't change
+    /// from one message to the next.
+    pub machine: String,
 }
 
 /// Output ceiling per round of the conversation.
@@ -1808,11 +1812,10 @@ impl Agent {
     pub(crate) fn system_prompt(&self) -> Result<String> {
         // Every hat shares one prompt: the hat is a note on each message, so
         // switching doesn't change the prompt's prefix (or its cache).
-        Ok(crate::prompt::system(
-            &self.home,
-            self.project_root.as_deref(),
-            self.trusted,
-        ))
+        let mut system =
+            crate::prompt::system(&self.home, self.project_root.as_deref(), self.trusted);
+        system.push_str(&self.machine);
+        Ok(system)
     }
 
     async fn finish_cancelled(&mut self, text: String) -> Result<TurnResult> {
@@ -1904,6 +1907,7 @@ mod tests {
             trusted: false,
             context_window: 0,
             cfg: None,
+            machine: String::new(),
         };
         (home, cwd, agent)
     }

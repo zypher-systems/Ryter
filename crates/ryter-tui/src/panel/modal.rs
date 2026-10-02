@@ -196,6 +196,11 @@ impl PermissionModal {
             return ("writes outside the project · asked every time".into(), true);
         }
         match self.base_tool() {
+            // A stack's data is in its volumes, and nothing brings it back.
+            "bash" if self.strict && ryter_core::tools::removes_stack_data(&self.summary) => (
+                "removes containers' data (volumes) · nothing undoes it".into(),
+                true,
+            ),
             "bash" if self.strict => (
                 "deletes, moves, or discards files · /undo may not reach it".into(),
                 true,

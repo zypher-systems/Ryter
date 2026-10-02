@@ -41,7 +41,7 @@ One model works in your files. `Tab` cycles its hat, and the message box shows t
 | Hat | Does |
 | --- | --- |
 | **plan** | reads and proposes; shows you a plan to approve, adjust or reject; changes nothing |
-| **build** | changes your files; edits and commands that change things ask first |
+| **build** | changes your files; your toolchains and the project's containers run, and edits, deletions and publishing ask first |
 | **review** | runs the tests and critiques what changed, against the plan you approved; changes nothing |
 
 - **A plan is approved in its own panel.** `y` saves it under `.ryter/plans/` and the build starts from that file. Where the work later differs from it, the difference and the reason are recorded in `.ryter/decisions.md`, which a review reads.

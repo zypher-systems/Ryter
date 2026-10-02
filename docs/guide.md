@@ -146,7 +146,7 @@ The keys are on the card's last row:
 - **`⏎`** allows this call. An Enter pressed in the first half-second after the card opens is ignored, since it may have been meant to send a message.
 - **`a`** allows the kind of action the card names for the rest of the session: "edits to files in the project", or "`cargo test` commands". Anything else still asks.
 - **`n`** or **`Esc`** denies.
-- **Commands that delete, move, or discard files** (`rm`, `mv`, `git reset --hard`, `git clean`, deleting a branch) and **writes outside the project** take only **`y`**. Enter says so instead of approving, and there's no `a` for them.
+- **Commands that delete, move, or discard files** (`rm`, `mv`, `git reset --hard`, `git clean`, deleting a branch) and **writes outside the project that ask** (see "Outside the project") take only **`y`**. Enter says so instead of approving, and there's no `a` for them.
 
 `ask_user` questions and the first-run “trust this project?” prompt are modals with a heavy top border. `^c` on a prompt while a turn runs stops the turn.
 
@@ -201,7 +201,7 @@ One model works in your project, in the build hat to start with. `Tab` switches 
 
 | Hat | May | May not |
 | --- | --- | --- |
-| **build** (default) | edit files and run commands; edits and commands that change things ask (or run with `a` for that kind of action / `--always-approve`); destructive commands always ask; outside the project, writes ask **every time** (see below) | read secrets, push, run inline interpreter code |
+| **build** (default) | edit files and run commands. Your toolchains, the project's own programs and its containers run without asking; edits ask (or run with `a` for the session / `--always-approve`); so do commands that delete, publish, or that Ryter doesn't know (see "What runs without asking") | read secrets, push, run inline interpreter code |
 | **plan** | read, search, run read-only commands, and show you a plan to approve | edit source, run anything that changes the project |
 | **review** | read, run the tests and linters, read-only git | write anything, not even by redirect; install, format, or fix |
 
@@ -254,13 +254,45 @@ One model works in your project, in the build hat to start with. `Tab` switches 
 
 **What the chat shows.** The model narrates as it works: what it's doing next and why, each choice between approaches with its reason, and what it thinks went wrong when something fails. Each tool step shows what came of it, measured by Ryter: `new · 48 lines`, `rewrote · 76 lines (was 89)`, an edit's changed lines, `✓ 13 passed`, or `✗ exit 1` with the cause. Reads fold into one line, and a divider closes each turn that did work (`6 files (3 new, 3 changed, +153 −15) · 9 commands (9 ok) · 2:41`).
 
-**Outside the project.** The build hat can write elsewhere on your machine, such as `/tmp` or another folder, but only by asking each time. The prompt says "outside the project" and offers only `y` (allow once) or `n`. "Allow all" and `--always-approve` cover the project, not the rest of the machine, so headless refuses these writes.
+**What runs without asking** in the build hat. A question for every `cargo build` and `docker compose up` was answered yes every time, so these run:
 
-Some places are refused however they're asked for:
-- **Never read or written:** credentials (`~/.ryter`, `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config/gh`, and the like) and secret files.
+- **Looking:** `ls`, `cat`, `grep`, `git status`, `git diff` and the like.
+- **Your toolchains,** whatever the subcommand: `cargo`, `npm`, `pnpm`, `yarn`, `bun`, `node`, `python`, `pip`, `uv`, `pytest`, `go`, `make`, `mvn`, `gradle`, `dotnet`, and the rest of their kind. `cargo install`, `npm install` and `pip install` included.
+- **The project's own programs:** `./scripts/setup.sh`, `bin/cms-admin`, `./manage.py`, and `bash` given a script file of the project's.
+- **Programs you installed under your home folder:** whatever `PATH` finds in `~/.cargo/bin`, `~/.local/bin`, a node or python manager's folder.
+- **The project's containers,** with `docker` or `podman`: `build`, `compose build`, `up`, `down`, `run`, `exec`, `restart`, `logs`, `ps`, `pull`, and `docker run` with folders of the project's mounted.
+- **`cd`** into a folder of the project.
+
+These still ask:
+
+- **Edits** to the project's files, until you press `a` on one.
+- **Changing files by hand:** `mkdir`, `cp`, `sed -i` and other system programs that aren't a toolchain. `a` on the prompt allows that command for the session.
+- **Deleting and moving:** `rm`, `mv`, `chmod`, `git reset --hard`, and removing a stack's volumes (`docker compose down -v`, `docker volume rm`, any `prune`). `y` only, with no "allow for this session".
+- **Publishing and signing in:** `cargo publish`, `npm publish`, `npm login`, `docker push`, `docker login`.
+- **Tools that work on a service somewhere else:** `gh`, `aws`, `gcloud`, `kubectl`, `terraform`, `curl`, `wget`.
+- **In Docker:** stopping or removing a container by name (`docker stop`, `docker rm`), since it may not be this project's; another machine (`-H`, `--context`); a compose file outside the project; and giving a container the host (`--privileged`, a mount of `/`, the Docker socket, or a folder where keys are kept).
+
+A toolchain runs the project's code: `cargo build` runs its build script and `npm install` its install scripts. If you don't want that unasked, a sandbox profile limits what any command can touch (see "Sandbox profiles").
+
+**Docker or Podman.** When both are installed the model is told to use Docker, unless you ask for Podman. With one installed it is told which.
+
+**Outside the project.** Two places are open to every hat, to read and to write, without a question:
+
+- **Scratch space:** `/tmp` and your system's temporary folder.
+- **Your home folder,** where tools keep their caches, configuration and builds.
+
+With these exceptions:
+
+- **Never read or written:** credentials (`~/.ryter`, `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.docker`, `~/.config/gh`, and the like), your tools' saved logins (`~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials.toml`, `~/.git-credentials`), your shell history, your browser's and mail client's folders, and secret files (`.env`, `*.pem`, `*.key`) wherever they are.
 - **Never written:** shell startup files (`~/.bashrc`, `~/.zshrc`, `~/.profile`, …) and system folders (`/etc`, `/usr`, …).
+- **Another project:** a folder under your home that is a git repository other than this one can be read, but writing there asks each time in the build hat and is refused in the others.
+- **Deleting or moving** anything outside the project asks each time, scratch space and your home folder included.
 
-Reading outside the project is an ordinary question. Plan and review never write outside.
+Anywhere else (`/opt`, `/srv`, another disk), the build hat asks each time and no other hat writes. Those prompts say "outside the project" and offer only `y` (allow once) or `n`. "Allow all" and `--always-approve` don't cover them, so headless refuses them.
+
+The plan and review hats still change nothing in the project itself. What is open to them is scratch space and your home folder: a place to keep a test's output, not a way to edit the work.
+
+**A sandbox profile is stricter than all of this.** With `workspace` or `read-only` chosen in `/settings`, the system itself shuts `/tmp` and your home folder (beyond your tools and their caches) to every command, whatever the rules above allow. The model is told so, and where its scratch folder is, so a refusal isn't reported as a broken tool. To have `/tmp` and your home folder open, the profile has to be `off`.
 
 **What review may run** is judged by the command's form, not the tool's name. `cargo test`, `cargo clippy`, `cargo fmt --check`, `npm test`, `npm run lint`, `npx vitest run`, `npx tsc --noEmit`, `npx prettier --check`, `pytest`, `ruff check`, `black --check`, `go test`, `go vet`, `make test`, and the like run. `cargo fmt`, `npm install`, `npm run format`, `npx <any package>`, `ruff --fix`, `make install`, and `python -m pip install` don't. Review may still run the project's own code, which is what tests do.
 

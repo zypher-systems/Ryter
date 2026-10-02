@@ -356,12 +356,15 @@ fn require_path(args: &Value, ctx: &ToolContext) -> Result<std::path::PathBuf> {
 
 fn require_resolved(ctx: &ToolContext, raw: &str) -> Result<std::path::PathBuf> {
     resolve(ctx, raw)
-        // The build hat's outside writes reach here only after a person said
-        // yes to that exact path (policy: AskOutside).
+        // Outside the project: scratch space and the user's own folder are
+        // open to every hat. Anywhere else, the build hat's writes reach
+        // here only after a person said yes to that exact path (policy:
+        // AskOutside).
         .or_else(|| {
-            (ctx.role == crate::role::Role::SoloBuild)
-                .then(|| crate::tools::policy::resolve_outside(ctx, raw))
-                .flatten()
+            crate::tools::policy::resolve_outside(ctx, raw).filter(|p| {
+                ctx.role == crate::role::Role::SoloBuild
+                    || crate::tools::policy::free_place(p, ctx, false)
+            })
         })
         .ok_or_else(|| Error::Config(format!("path escapes workspace: {raw}")))
 }

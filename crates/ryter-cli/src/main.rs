@@ -431,6 +431,7 @@ async fn run_prompt(
         trusted,
         context_window: 0,
         cfg: Some(cfg.clone()),
+        machine: ryter_core::prompt::machine_here(),
     };
     agent.fire_session_start()?;
     let result = agent.turn(&prompt).await;
@@ -740,6 +741,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
         trusted,
         context_window: 0,
         cfg: Some(cfg.clone()),
+        machine: ryter_core::prompt::machine_here(),
     };
     if let Err(e) = agent.fire_session_start() {
         eprintln!("{e}");
@@ -857,6 +859,7 @@ fn serve_host_from_config(
         trusted: config::is_trusted(cwd),
         context_window: 0,
         cfg: Some(cfg.clone()),
+        machine: ryter_core::prompt::machine_here(),
     };
     agent.fire_session_start()?;
     Ok(ServeHost {

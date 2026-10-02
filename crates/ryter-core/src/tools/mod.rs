@@ -47,7 +47,7 @@ pub fn strict_prompt(name: &str, args: &Value) -> bool {
             .and_then(Value::as_str)
             .is_some_and(policy::destructive_command)
 }
-pub use policy::{Decision, decide};
+pub use policy::{Decision, decide, removes_stack_data};
 
 /// Runtime context for a tool call.
 #[derive(Debug, Clone)]
@@ -881,14 +881,28 @@ mod tests {
         assert_eq!(out.text.trim(), "1", "should not be a login shell");
     }
 
-    /// "Allow all" and --always-approve don't reach outside the project:
-    /// headless says so; a person's yes writes exactly there.
+    /// Scratch space outside the project is written without a question, in
+    /// any hat, with nobody there to ask.
+    #[test]
+    fn scratch_space_is_written_without_asking() {
+        let dir = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        for role in [Role::SoloBuild, Role::SoloPlan, Role::SoloReview] {
+            let target = outside.path().join(format!("{role}.txt"));
+            let args = json!({"path": target.to_string_lossy(), "content": "hi"});
+            let out = gated_execute("write", &args, &ctx(role, dir.path())).unwrap();
+            assert!(!out.is_error, "{role:?}: {out:?}");
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), "hi");
+        }
+    }
+
+    /// "Allow all" and --always-approve don't reach the rest of the
+    /// machine: headless says so, and a person is asked each time, told
+    /// where.
     #[test]
     fn outside_writes_need_a_yes_every_time() {
         let dir = TempDir::new().unwrap();
-        let outside = TempDir::new().unwrap();
-        let target = outside.path().join("scratch.txt");
-        let args = json!({"path": target.to_string_lossy(), "content": "hi"});
+        let args = json!({"path": "/opt/ryter-not-here/scratch.txt", "content": "hi"});
         let mut c = ctx(Role::SoloBuild, dir.path());
         c.always_approve = true;
         c.allowed.lock().unwrap().insert("edit".into());
@@ -897,23 +911,27 @@ mod tests {
             out.is_error && out.text.contains("outside the project"),
             "{out:?}"
         );
-        assert!(!target.exists());
         let (io, rx) = crate::user_io::UserIo::pair();
         c.user_io = Some(io);
         let asked = std::thread::spawn(move || match rx.recv().unwrap() {
             crate::user_io::UserRequest::Permission { tool, reply, .. } => {
-                let _ = reply.send(crate::user_io::Permission::Allow);
+                let _ = reply.send(crate::user_io::Permission::Deny);
                 tool
             }
             _ => String::new(),
         });
         let out = gated_execute("write", &args, &c).unwrap();
-        assert!(!out.is_error, "{out:?}");
-        assert_eq!(std::fs::read_to_string(&target).unwrap(), "hi");
+        assert!(
+            out.is_error && out.text.contains("denied by user"),
+            "{out:?}"
+        );
         assert!(
             asked.join().unwrap().ends_with(OUTSIDE),
             "the prompt says where"
         );
+        // No other hat is asked: it is refused.
+        let out = gated_execute("write", &args, &ctx(Role::SoloPlan, dir.path())).unwrap();
+        assert!(out.is_error, "{out:?}");
     }
 
     /// Refused inline code names the route that works; the route really works.

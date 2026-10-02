@@ -120,10 +120,144 @@ pub fn system(home: &Path, project_root: Option<&Path>, trusted: bool) -> String
     s
 }
 
+/// Whether `docker` and `podman` are on `path` (the `PATH` variable).
+pub fn container_tools_in(path: Option<&std::ffi::OsStr>) -> (bool, bool) {
+    let has = |name: &str| {
+        path.is_some_and(|p| std::env::split_paths(p).any(|dir| dir.join(name).is_file()))
+    };
+    (has("docker"), has("podman"))
+}
+
+/// What the model is told about the machine it is on: which container tool
+/// to use, and what a sandbox profile shuts.
+///
+/// - **Containers.** With both installed, models picked either, and a
+///   project built with one was started with the other. Docker when it is
+///   there.
+/// - **The sandbox.** A command refused by the profile fails with
+///   "Permission denied", and the model reported a broken tool or a missing
+///   one. It is told what the profile shuts and where scratch space is.
+pub fn machine(
+    (docker, podman): (bool, bool),
+    sandbox: crate::sandbox::SandboxProfile,
+    scratch: Option<&Path>,
+) -> String {
+    use crate::sandbox::SandboxProfile;
+    let mut lines = Vec::new();
+    match (docker, podman) {
+        (true, true) => lines.push(
+            "- Containers: Docker and Podman are both installed. Use Docker (`docker`, \
+             `docker compose`) for everything, including what a project's files call \
+             `podman`, unless the user asks for Podman."
+                .to_string(),
+        ),
+        (true, false) => lines
+            .push("- Containers: Docker is installed (`docker`, `docker compose`).".to_string()),
+        (false, true) => lines.push(
+            "- Containers: Podman is installed (`podman`, `podman compose`); Docker is not."
+                .to_string(),
+        ),
+        (false, false) => {}
+    }
+    if sandbox != SandboxProfile::Off {
+        let scratch = scratch
+            .map(|s| {
+                format!(
+                    " Keep temporary files in `{}` (`TMPDIR` points there).",
+                    s.display()
+                )
+            })
+            .unwrap_or_default();
+        let project = if sandbox == SandboxProfile::ReadOnly {
+            "They can read the project and can't write it."
+        } else {
+            "They can write the project and the tools' download caches."
+        };
+        lines.push(format!(
+            "- Sandbox: commands and file edits run under the `{sandbox}` profile, which the \
+             user chose. {project} `/tmp` and the rest of the user's folder are shut: a \
+             \"Permission denied\" there is the profile, not a broken or missing tool.{scratch} \
+             If the work needs more, say so: the user changes the profile in /settings. \
+             Docker's own work is not limited by it."
+        ));
+    }
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("\n## This machine\n{}\n", lines.join("\n"))
+    }
+}
+
+/// [`machine`], for the machine and the thread this is called on.
+pub fn machine_here() -> String {
+    machine(
+        container_tools_in(std::env::var_os("PATH").as_deref()),
+        crate::sandbox::active(),
+        crate::sandbox::scratch().as_deref(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// With both installed the model is told to use Docker; with one, which
+    /// one; with neither, nothing. Under a sandbox profile it is told what
+    /// is shut, so a refusal isn't reported as a missing tool.
+    #[test]
+    fn the_model_is_told_about_containers_and_the_sandbox() {
+        use crate::sandbox::SandboxProfile;
+        let both = machine((true, true), SandboxProfile::Off, None);
+        assert!(
+            both.starts_with("\n## This machine\n- Containers: Docker and Podman"),
+            "{both}"
+        );
+        assert!(
+            both.contains("Use Docker") && !both.contains("Sandbox"),
+            "{both}"
+        );
+        let only_podman = machine((false, true), SandboxProfile::Off, None);
+        assert!(only_podman.contains("Podman is installed") && !only_podman.contains("Use Docker"));
+        assert!(machine((true, false), SandboxProfile::Off, None).contains("Docker is installed"));
+        assert_eq!(machine((false, false), SandboxProfile::Off, None), "");
+        let boxed = machine(
+            (false, false),
+            SandboxProfile::Workspace,
+            Some(Path::new("/home/u/.ryter/tmp")),
+        );
+        assert!(
+            boxed.contains("under the `workspace` profile")
+                && boxed.contains("`/tmp` and the rest of the user's folder are shut")
+                && boxed.contains("Keep temporary files in `/home/u/.ryter/tmp`")
+                && boxed.contains("They can write the project"),
+            "{boxed}"
+        );
+        let ro = machine((false, false), SandboxProfile::ReadOnly, None);
+        assert!(
+            ro.contains("can't write it") && !ro.contains("TMPDIR"),
+            "{ro}"
+        );
+    }
+
+    #[test]
+    fn container_tools_are_found_on_the_path() {
+        let a = TempDir::new().unwrap();
+        let b = TempDir::new().unwrap();
+        std::fs::write(a.path().join("docker"), "").unwrap();
+        std::fs::write(b.path().join("podman"), "").unwrap();
+        let path = |dirs: &[&Path]| std::env::join_paths(dirs).unwrap();
+        assert_eq!(
+            container_tools_in(Some(&path(&[a.path(), b.path()]))),
+            (true, true)
+        );
+        assert_eq!(container_tools_in(Some(&path(&[a.path()]))), (true, false));
+        assert_eq!(container_tools_in(Some(&path(&[b.path()]))), (false, true));
+        assert_eq!(container_tools_in(None), (false, false));
+        // A folder named for the tool is not the tool.
+        std::fs::create_dir(a.path().join("podman")).unwrap();
+        assert_eq!(container_tools_in(Some(&path(&[a.path()]))), (true, false));
+    }
 
     #[test]
     fn civil_dates_are_right_across_leap_years() {

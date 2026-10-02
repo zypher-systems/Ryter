@@ -78,7 +78,12 @@ fn decide_read(args: &Value, ctx: &ToolContext) -> Decision {
         return Decision::Deny;
     };
     match resolve(ctx, &path) {
-        None => Decision::Deny,
+        // Outside the project: scratch space and the user's own folder
+        // read as they write.
+        None => match resolve_outside(ctx, &path) {
+            Some(p) if free_place(&p, ctx, false) => Decision::Allow,
+            _ => Decision::Deny,
+        },
         Some(p) if is_secret(&p, ctx) => Decision::Deny,
         Some(_) => Decision::Allow,
     }
@@ -89,11 +94,12 @@ fn decide_write(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
         return Decision::Deny;
     };
     let Some(resolved) = resolve(ctx, &path) else {
-        // Outside the project: the build hat may ask; nobody else may.
-        return if ctx.role == Role::SoloBuild {
-            outside_decision(ctx, &path)
-        } else {
-            Decision::Deny
+        // Outside the project. Scratch space and the user's own folder are
+        // open to every hat; anywhere else the build hat may ask, and nobody
+        // else may write.
+        return match outside_decision(ctx, &path) {
+            Decision::AskOutside if ctx.role != Role::SoloBuild => Decision::Deny,
+            d => d,
         };
     };
     if is_secret(&resolved, ctx) {
@@ -462,6 +468,553 @@ fn checks_only(prog: &str, args: &[String]) -> bool {
             Some("fmt") => has("--check"),
             _ => asks_version,
         },
+        _ => false,
+    }
+}
+
+/// The programs a project is built, run and tested with. In the hats that
+/// do the work they run without a question, whatever the subcommand: a
+/// prompt for every `cargo build` and `npm install` taught nothing, and the
+/// user answered yes each time.
+const TOOLCHAINS: &[&str] = &[
+    // Rust
+    "cargo",
+    "rustc",
+    "rustup",
+    "rustfmt",
+    "clippy-driver",
+    "rust-analyzer",
+    // JavaScript
+    "node",
+    "nodejs",
+    "npm",
+    "npx",
+    "pnpm",
+    "pnpx",
+    "yarn",
+    "bun",
+    "bunx",
+    "deno",
+    "tsc",
+    "tsx",
+    "ts-node",
+    "vite",
+    "vitest",
+    "jest",
+    "mocha",
+    "eslint",
+    "prettier",
+    "biome",
+    "turbo",
+    "nx",
+    "next",
+    "webpack",
+    "rollup",
+    "esbuild",
+    "playwright",
+    // Python
+    "python",
+    "python3",
+    "pip",
+    "pip3",
+    "pipx",
+    "uv",
+    "uvx",
+    "poetry",
+    "pdm",
+    "hatch",
+    "pytest",
+    "py.test",
+    "tox",
+    "nox",
+    "mypy",
+    "pyright",
+    "ruff",
+    "black",
+    "isort",
+    "flake8",
+    "pylint",
+    "pyflakes",
+    "autopep8",
+    "yapf",
+    "django-admin",
+    // Go, C, build tools
+    "go",
+    "gofmt",
+    "golangci-lint",
+    "make",
+    "gmake",
+    "just",
+    "cmake",
+    "ninja",
+    "meson",
+    "ctest",
+    "gcc",
+    "g++",
+    "cc",
+    "c++",
+    "clang",
+    "clang++",
+    // JVM, .NET, Swift, Zig
+    "mvn",
+    "mvnw",
+    "gradle",
+    "gradlew",
+    "java",
+    "javac",
+    "dotnet",
+    "swift",
+    "zig",
+    // Ruby, PHP, Elixir, Haskell
+    "ruby",
+    "bundle",
+    "bundler",
+    "gem",
+    "rake",
+    "rspec",
+    "php",
+    "composer",
+    "phpunit",
+    "mix",
+    "elixir",
+    "cabal",
+    "stack",
+    "ghc",
+];
+
+/// Programs whose whole point is somewhere else: a cloud, a cluster, a
+/// hosting service, a code host. They ask, wherever they are installed.
+const REACHES_OUT: &[&str] = &[
+    "gh",
+    "glab",
+    "aws",
+    "gcloud",
+    "az",
+    "kubectl",
+    "helm",
+    "terraform",
+    "tofu",
+    "pulumi",
+    "ansible",
+    "ansible-playbook",
+    "flyctl",
+    "fly",
+    "vercel",
+    "netlify",
+    "heroku",
+    "wrangler",
+    "firebase",
+    "doctl",
+    "twine",
+    "curl",
+    "wget",
+    "http",
+    "https",
+];
+
+/// A toolchain command that publishes, or signs in to somewhere that does:
+/// `cargo publish`, `npm login`, `gem push`. Those leave the machine and
+/// can't be taken back, so they ask.
+fn publishes(prog: &str, args: &[String]) -> bool {
+    let plain: Vec<&str> = args
+        .iter()
+        .map(String::as_str)
+        .filter(|a| !a.starts_with('-') && !a.starts_with('+'))
+        .collect();
+    let sub = plain.first().copied().unwrap_or("");
+    match prog {
+        "cargo" => matches!(sub, "publish" | "yank" | "login" | "logout" | "owner"),
+        "npm" | "pnpm" | "yarn" | "bun" => matches!(
+            sub,
+            "publish"
+                | "unpublish"
+                | "login"
+                | "logout"
+                | "adduser"
+                | "deprecate"
+                | "owner"
+                | "access"
+                | "token"
+                | "dist-tag"
+        ),
+        "gem" => matches!(sub, "push" | "yank" | "signin" | "owner"),
+        "poetry" | "uv" | "hatch" | "pdm" | "mix" | "composer" => {
+            matches!(sub, "publish") || plain.starts_with(&["hex", "publish"])
+        }
+        "dotnet" => plain.starts_with(&["nuget", "push"]),
+        "mvn" | "mvnw" => plain
+            .iter()
+            .any(|g| matches!(*g, "deploy" | "release:perform")),
+        "gradle" | "gradlew" => plain.iter().any(|t| {
+            t.rsplit(':')
+                .next()
+                .is_some_and(|t| t.starts_with("publish"))
+        }),
+        _ => false,
+    }
+}
+
+/// The file a command word names: a path as written, or the first match on
+/// `path` (the `PATH` variable) for a bare name.
+fn program_file(raw: &str, ctx: &ToolContext, path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    if raw.contains(['$', '`']) {
+        return None;
+    }
+    if raw.contains('/') || raw.starts_with('~') {
+        return resolve(ctx, raw).or_else(|| resolve_outside(ctx, raw));
+    }
+    std::env::split_paths(path?)
+        .map(|dir| dir.join(raw))
+        .find(|f| f.is_file())
+        .map(|f| real_path(&f))
+}
+
+/// Whether `raw` is a program of the project's, or one the user installed
+/// under their own folder (`~/.cargo/bin`, `~/.local/bin`, a node or python
+/// manager's folder).
+fn own_program(
+    raw: &str,
+    ctx: &ToolContext,
+    path: Option<&std::ffi::OsStr>,
+    home: Option<&Path>,
+) -> bool {
+    program_file(raw, ctx, path).is_some_and(|f| {
+        is_under(&f, &real_path(&ctx.workspace))
+            || (home.is_some_and(|h| is_under(&f, h)) && !forbidden_outside(&f, ctx))
+    })
+}
+
+/// A command the hats that do the work run without asking: a toolchain,
+/// the project's containers, one of the project's own programs, or one
+/// installed under the user's folder. Not one that publishes or reaches a
+/// service somewhere else.
+fn runs_freely(prog: &str, raw: &str, args: &[String], ctx: &ToolContext) -> bool {
+    runs_freely_in(
+        prog,
+        raw,
+        args,
+        ctx,
+        std::env::var_os("PATH").as_deref(),
+        std::env::var_os("HOME")
+            .map(|h| real_path(Path::new(&h)))
+            .as_deref(),
+    )
+}
+
+/// [`runs_freely`], given where programs are looked up and where the
+/// user's folder is.
+fn runs_freely_in(
+    prog: &str,
+    raw: &str,
+    args: &[String],
+    ctx: &ToolContext,
+    path: Option<&std::ffi::OsStr>,
+    home: Option<&Path>,
+) -> bool {
+    if REACHES_OUT.contains(&prog) || publishes(prog, args) {
+        return false;
+    }
+    if matches!(
+        prog,
+        "docker" | "podman" | "docker-compose" | "podman-compose"
+    ) {
+        return containers_freely(prog, args, ctx);
+    }
+    if TOOLCHAINS.contains(&prog) || prog.starts_with("cargo-") {
+        return true;
+    }
+    // A shell running a script file of the project's is that script.
+    if matches!(prog, "sh" | "bash" | "zsh" | "dash" | "ksh") {
+        return args
+            .iter()
+            .find(|a| !a.starts_with('-'))
+            .is_some_and(|f| resolve(ctx, f).is_some_and(|p| p.is_file()));
+    }
+    own_program(raw, ctx, path, home)
+}
+
+/// A `docker` or `podman` command the hats that do the work run without
+/// asking: building, starting, stopping and using the project's stack.
+///
+/// What still asks is what a stack doesn't need and a person would want to
+/// see first: destroying data (volumes, prune), touching containers that
+/// may not be this project's (`docker stop`, `docker rm`), publishing
+/// (`push`, `login`), another machine (`-H`, `--context`), and giving a
+/// container the host (`--privileged`, a mount from outside the project).
+fn containers_freely(prog: &str, args: &[String], ctx: &ToolContext) -> bool {
+    // Another machine, the whole host, or a registry.
+    const NEVER_FREE: &[&str] = &[
+        "-H",
+        "--host",
+        "--context",
+        "--url",
+        "--connection",
+        "--remote",
+        "--privileged",
+        "--push",
+        "--secret",
+        "--ssh",
+        "--rmi",
+        "-V",
+        "--renew-anon-volumes",
+    ];
+    // Options whose value is a file or folder: it has to be the project's.
+    const PROJECT_FILES: &[&str] = &[
+        "-f",
+        "--file",
+        "--project-directory",
+        "--env-file",
+        "--env-from-file",
+        "--iidfile",
+        "--cidfile",
+        "--label-file",
+    ];
+    // `compose`'s own options that take a value, before its subcommand.
+    const COMPOSE_VALUED: &[&str] = &[
+        "-p",
+        "--project-name",
+        "--profile",
+        "--ansi",
+        "--progress",
+        "--parallel",
+    ];
+    // `run`, `create` and `exec`: every option before the image or the
+    // container is read, because what follows it is the command inside,
+    // which is not ours to read. One this doesn't know makes it ask.
+    const RUN_FLAGS: &[&str] = &[
+        "-d",
+        "--detach",
+        "-i",
+        "--interactive",
+        "-t",
+        "--tty",
+        "-T",
+        "--no-TTY",
+        "--rm",
+        "--init",
+        "--no-deps",
+        "--build",
+        "--service-ports",
+        "--use-aliases",
+        "--remove-orphans",
+        "--quiet-pull",
+        "-q",
+        "--quiet",
+        "--read-only",
+        "-P",
+        "--publish-all",
+        "--no-healthcheck",
+        "--sig-proxy",
+    ];
+    const RUN_VALUED: &[&str] = &[
+        "-e",
+        "--env",
+        "-u",
+        "--user",
+        "-w",
+        "--workdir",
+        "--name",
+        "-l",
+        "--label",
+        "--pull",
+        "-p",
+        "--publish",
+        "--entrypoint",
+        "--network",
+        "--net",
+        "-h",
+        "--hostname",
+        "-m",
+        "--memory",
+        "--cpus",
+        "--platform",
+        "--restart",
+        "--add-host",
+        "--dns",
+        "--expose",
+        "--tmpfs",
+        "--ulimit",
+        "--shm-size",
+        "--health-cmd",
+        "--health-interval",
+        "--health-retries",
+        "--health-timeout",
+        "--log-driver",
+        "--log-opt",
+        "--stop-signal",
+        "--stop-timeout",
+        "--ip",
+        "--link",
+        "--network-alias",
+        "--cap-drop",
+        "--group-add",
+        "--detach-keys",
+        "--index",
+        "--annotation",
+        "--memory-swap",
+        "--cpu-shares",
+        "-c",
+    ];
+    let ours = |v: &str| {
+        resolve(ctx, v).is_some()
+            || resolve_outside(ctx, v).is_some_and(|p| free_place(&p, ctx, true))
+    };
+    // A mount hands the container a folder: a named volume, or a folder of
+    // the project's or the user's. Not the system, the Docker socket, or a
+    // place where keys are kept.
+    let mount_ok = |m: &str| -> bool {
+        let source = if m.contains("type=") || m.contains("source=") || m.contains("src=") {
+            if m.contains("type=volume") || m.contains("type=tmpfs") {
+                return true;
+            }
+            match m.split(',').find_map(|kv| {
+                kv.strip_prefix("source=")
+                    .or_else(|| kv.strip_prefix("src="))
+            }) {
+                Some(s) => s,
+                None => return false,
+            }
+        } else {
+            match m.split_once(':') {
+                Some((s, _)) => s,
+                // An anonymous volume at a path in the container.
+                None => return true,
+            }
+        };
+        let is_path = source.starts_with(['/', '.', '~']) || source.contains('$');
+        !is_path || ours(source)
+    };
+    // The words that aren't options or their values, in order: the
+    // subcommands, then what they are given.
+    let mut plain: Vec<&str> = if prog.ends_with("-compose") {
+        vec!["compose"]
+    } else {
+        Vec::new()
+    };
+    let mut removes_volumes = false;
+    let mut i = 0;
+    while let Some(a) = args.get(i).map(String::as_str) {
+        i += 1;
+        // Past `run`, `create` or `exec`: strict, up to the image.
+        let running = match plain.as_slice() {
+            [s] | ["compose" | "container", s] => matches!(*s, "run" | "create" | "exec"),
+            _ => false,
+        };
+        if !a.starts_with('-') || a == "-" {
+            plain.push(a);
+            if running {
+                // The image, service or container. The rest runs inside it.
+                break;
+            }
+            continue;
+        }
+        let (name, attached) = match a.split_once('=') {
+            Some((n, v)) if a.starts_with("--") => (n, Some(v)),
+            _ => (a, None),
+        };
+        if NEVER_FREE.contains(&name) {
+            return false;
+        }
+        let mut value = || {
+            attached.or_else(|| {
+                let v = args.get(i).map(String::as_str);
+                i += 1;
+                v
+            })
+        };
+        if PROJECT_FILES.contains(&name) {
+            // `logs -f` follows and `rm -f` forces: neither names a file.
+            if name == "-f" && plain.iter().any(|p| matches!(*p, "logs" | "rm")) {
+                continue;
+            }
+            match value() {
+                Some(v) if ours(v) => continue,
+                _ => return false,
+            }
+        }
+        if running {
+            match name {
+                "-v" | "--volume" | "--mount" => match value() {
+                    Some(v) if mount_ok(v) => {}
+                    _ => return false,
+                },
+                n if RUN_FLAGS.contains(&n) => {}
+                n if RUN_VALUED.contains(&n) => {
+                    if value().is_none() {
+                        return false;
+                    }
+                }
+                // `-it`, `-itd`: a cluster of flags. `-eKEY=1`, `-p80:80`:
+                // a value attached.
+                n if !n.starts_with("--") && n.len() > 2 => {
+                    let first = &n[..2];
+                    let flags = n[1..]
+                        .chars()
+                        .all(|c| RUN_FLAGS.contains(&format!("-{c}").as_str()));
+                    let valued =
+                        RUN_VALUED.contains(&first) || (first == "-v" && mount_ok(&n[2..]));
+                    if !flags && !valued {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+            continue;
+        }
+        match name {
+            "-v" | "--volumes" => removes_volumes = true,
+            n if plain == ["compose"] && COMPOSE_VALUED.contains(&n) => {
+                if value().is_none() {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    let sub = plain.get(1).copied();
+    match plain.first().copied() {
+        Some("compose") => match sub {
+            Some("down" | "rm") => !removes_volumes,
+            Some("push" | "publish") => false,
+            Some(_) => true,
+            None => false,
+        },
+        Some(
+            "build" | "buildx" | "run" | "create" | "start" | "exec" | "logs" | "ps" | "images"
+            | "pull" | "inspect" | "version" | "info" | "tag" | "port" | "top" | "stats" | "cp"
+            | "wait" | "events" | "history" | "diff" | "search" | "attach",
+        ) => true,
+        // The groups: looking and making run; removing asks.
+        Some(
+            "network" | "volume" | "image" | "container" | "system" | "context" | "manifest"
+            | "builder",
+        ) => matches!(
+            sub,
+            Some(
+                "ls" | "list"
+                    | "inspect"
+                    | "create"
+                    | "connect"
+                    | "df"
+                    | "info"
+                    | "show"
+                    | "build"
+                    | "pull"
+                    | "tag"
+                    | "history"
+                    | "logs"
+                    | "exec"
+                    | "run"
+                    | "start"
+                    | "top"
+                    | "port"
+                    | "stats"
+                    | "exists"
+            )
+        ),
+        // `docker --version`.
+        None => args.iter().any(|a| a == "--version" || a == "-v"),
+        // stop, kill, rm, rmi, restart, prune, push, login, save, load, …
         _ => false,
     }
 }
@@ -854,13 +1407,37 @@ fn decide_bash(args: &Value, ctx: &ToolContext) -> Decision {
             });
             continue;
         }
+        // The build hat's boundary is the whole project, so the rest is
+        // still judged from its top: a path that leaves the project from
+        // the folder leaves it from the top too. The `cd` itself is not a
+        // question.
+        if ctx.role == Role::SoloBuild && cd_into_project(s, ctx) {
+            continue;
+        }
         decision = decision.and(decide_segment(s, cx));
     }
     decision
 }
 
+/// A `cd` into a folder of the project that is there.
+fn cd_into_project(seg: &str, ctx: &ToolContext) -> bool {
+    let words = words(seg);
+    if program(&words) != Some("cd") {
+        return false;
+    }
+    let args: Vec<&String> = words
+        .iter()
+        .skip(1)
+        .filter(|w| !w.starts_with('-'))
+        .collect();
+    let [dir] = args.as_slice() else {
+        return false;
+    };
+    resolve(ctx, dir).is_some_and(|p| p.is_dir())
+}
+
 /// The folder a `cd` segment moves to, when it's inside the boundary and the
-/// hat can't change files (the build hat asks about `cd`). A `cd` anywhere else, or with
+/// hat can't change files (the build hat's `cd` is judged from the top). A `cd` anywhere else, or with
 /// no folder (which goes home), is left to the usual rules, which refuse it.
 fn cd_within(seg: &str, ctx: &ToolContext) -> Option<PathBuf> {
     if ctx.role == Role::SoloBuild {
@@ -883,6 +1460,13 @@ fn cd_within(seg: &str, ctx: &ToolContext) -> Option<PathBuf> {
 
 /// Judge one shell segment (no `;`, `&&`, `|`, or substitution inside).
 fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
+    decide_segment_in(seg, ctx, false)
+}
+
+/// [`decide_segment`]. `in_container`: the segment is the command a
+/// `docker exec` or `compose run` runs, so the paths it names are the
+/// container's, not this machine's.
+fn decide_segment_in(seg: &str, ctx: &ToolContext, in_container: bool) -> Decision {
     let words = words(seg);
     let parsed = parse(&words);
     if parsed.hidden {
@@ -930,7 +1514,9 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
     }
     // The plan and review hats work in the user's own tree, where a
     // redirect is a write nothing undoes.
-    if matches!(ctx.role, Role::SoloPlan | Role::SoloReview) && writes_via_redirect(&words) {
+    if matches!(ctx.role, Role::SoloPlan | Role::SoloReview)
+        && writes_project_via_redirect(&words, ctx)
+    {
         return Decision::Deny;
     }
     if prog == "git" {
@@ -958,9 +1544,17 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
     }
     let args = &words[parsed.args.min(words.len())..];
     let base = match ctx.role {
-        // A normal agent in the user's tree: looking runs, doing asks.
+        // A normal agent in the user's tree. Looking runs, and so does
+        // the work of building: the project's toolchains, its own programs,
+        // and its containers. What changes files by hand, or is unknown,
+        // asks.
         Role::SoloBuild => {
-            let base = if read_only(prog, &words) && !path_escapes(&words, ctx) {
+            let raw = words
+                .get(parsed.args.wrapping_sub(1))
+                .map_or(prog, String::as_str);
+            let base = if (read_only(prog, &words) && !path_escapes(&words, ctx))
+                || runs_freely(prog, raw, args, ctx)
+            {
                 Decision::Allow
             } else {
                 Decision::Ask
@@ -968,14 +1562,21 @@ fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
             base.and(outside)
         }
         Role::SoloReview => {
+            // A check or a look, at the project or one of the open places.
+            // With no rule about where, `cat ~/.ssh/id_rsa` ran here
+            // without a question: reading is all it does.
             if checks_only(prog, args) || read_only(prog, &words) {
-                Decision::Allow
+                if !in_container && path_escapes(&words, ctx) {
+                    Decision::Deny
+                } else {
+                    Decision::Allow
+                }
             } else {
                 // A project whose tests run in its containers is checked
                 // there: the command inside answers to these same rules.
                 match container_command(prog, args) {
                     InContainer::Looks => Decision::Allow,
-                    InContainer::Runs(inner) => decide_segment(&inner, ctx),
+                    InContainer::Runs(inner) => decide_segment_in(&inner, ctx, true),
                     InContainer::No => Decision::Deny,
                 }
             }
@@ -1069,6 +1670,9 @@ pub(crate) fn destructive_command(cmd: &str) -> bool {
         if DESTRUCTIVE.contains(&prog) || deleting_find(prog, &w) {
             return true;
         }
+        if removes_container_data(prog, args) {
+            return true;
+        }
         if prog == "git" {
             let sub = args
                 .iter()
@@ -1086,6 +1690,40 @@ pub(crate) fn destructive_command(cmd: &str) -> bool {
         }
         false
     })
+}
+
+/// Whether any part of `cmd` removes a stack's data
+/// ([`removes_container_data`]): what its prompt warns of.
+pub fn removes_stack_data(cmd: &str) -> bool {
+    segments(cmd).iter().any(|s| {
+        let w = words(s);
+        let p = parse(&w);
+        p.prog
+            .is_some_and(|prog| removes_container_data(prog, &w[p.args.min(w.len())..]))
+    })
+}
+
+/// A `docker` or `podman` command that destroys what a stack keeps: its
+/// volumes, or everything unused on the machine (`prune`). A database's
+/// data is in a volume, and nothing brings it back.
+fn removes_container_data(prog: &str, args: &[String]) -> bool {
+    if !matches!(
+        prog,
+        "docker" | "podman" | "docker-compose" | "podman-compose"
+    ) {
+        return false;
+    }
+    let plain: Vec<&str> = args
+        .iter()
+        .map(String::as_str)
+        .filter(|a| !a.starts_with('-'))
+        .collect();
+    let has = |fs: &[&str]| args.iter().any(|a| fs.contains(&a.as_str()));
+    let named = |w: &str| plain.contains(&w);
+    named("prune")
+        || (named("volume") && (named("rm") || named("remove")))
+        || ((named("down") || named("rm")) && has(&["-v", "--volumes"]))
+        || has(&["-V", "--renew-anon-volumes"])
 }
 
 /// Why a `bash` call was refused, when the refusal has a known way round.
@@ -1333,26 +1971,6 @@ fn decide_git(words: &[String], ctx: &ToolContext) -> Decision {
             }
         }
     }
-}
-
-/// A `>` / `>>` / `>|` redirect into a file (not `/dev/null`, not `>&2`).
-fn writes_via_redirect(words: &[String]) -> bool {
-    let mut expect = false;
-    for w in words {
-        if expect {
-            if w != "/dev/null" {
-                return true;
-            }
-            expect = false;
-            continue;
-        }
-        match redirect(w, false) {
-            Redir::Next => expect = true,
-            Redir::To(p) if p != "/dev/null" => return true,
-            _ => {}
-        }
-    }
-    false
 }
 
 /// What one word says about redirection.
@@ -1749,7 +2367,12 @@ fn path_escapes(words: &[String], ctx: &ToolContext) -> bool {
         if w.starts_with('-') || (prints && w.contains(SUBST)) {
             continue;
         }
+        // Asked of commands that only read.
+        let free = || resolve_outside(ctx, w).is_some_and(|p| free_place(&p, ctx, false));
         if w == "~" || w.starts_with("~/") || w.contains("$HOME") || w.contains("${HOME}") {
+            if free() {
+                continue;
+            }
             return true;
         }
         // `rm -rf $FOO/` can expand to anything, including `/`.
@@ -1759,7 +2382,7 @@ fn path_escapes(words: &[String], ctx: &ToolContext) -> bool {
         if !looks_like_path(w) {
             continue;
         }
-        if resolve(ctx, w).is_none() {
+        if resolve(ctx, w).is_none() && !free() {
             return true;
         }
     }
@@ -1850,6 +2473,42 @@ fn forbidden(path: &Path, ctx: &ToolContext, writing: bool) -> bool {
         ".config/gh",
         ".config/gcloud",
         ".local/share/keyrings",
+        // The tools' saved logins. The rest of the home folder is open
+        // without a question, so these are named.
+        ".npmrc",
+        ".yarnrc.yml",
+        ".pypirc",
+        ".cargo/credentials.toml",
+        ".cargo/credentials",
+        ".gem/credentials",
+        ".git-credentials",
+        ".config/git/credentials",
+        ".terraform.d",
+        ".vault-token",
+        ".pgpass",
+        ".my.cnf",
+        ".oci",
+        ".config/doctl",
+        ".config/hcloud",
+        ".config/rclone",
+        ".config/sops",
+        ".config/op",
+        ".config/1Password",
+        ".password-store",
+        // What was typed, and what the browser and the mail client hold.
+        ".bash_history",
+        ".zsh_history",
+        ".local/share/fish/fish_history",
+        ".mozilla",
+        ".thunderbird",
+        ".config/google-chrome",
+        ".config/chromium",
+        ".config/BraveSoftware",
+        ".config/microsoft-edge",
+        "Library/Keychains",
+        "Library/Cookies",
+        "Library/Application Support/Google/Chrome",
+        "Library/Application Support/Firefox",
     ];
     if SECRETS.iter().any(|h| path.starts_with(home.join(h))) {
         return true;
@@ -1885,11 +2544,61 @@ fn forbidden(path: &Path, ctx: &ToolContext, writing: bool) -> bool {
     path == home || HOME.iter().any(|h| path.starts_with(home.join(h)))
 }
 
-/// The build hat writing to `raw`, outside the project: ask every time, or
-/// refuse a place from [`forbidden_outside`].
+/// The folders that are scratch space on this machine.
+fn scratch_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = ["/tmp", "/var/tmp"].iter().map(PathBuf::from).collect();
+    dirs.push(std::env::temp_dir());
+    dirs.iter().map(|d| real_path(d)).collect()
+}
+
+/// Whether `path` is inside a repository: a folder with `.git` at or above
+/// it, below `stop`.
+fn in_a_repository(path: &Path, stop: &Path) -> bool {
+    path.ancestors()
+        .take_while(|a| *a != stop && a.starts_with(stop))
+        .any(|a| a.join(".git").exists())
+}
+
+/// Outside the project, but somewhere a command may read and write without
+/// asking: scratch space (`/tmp`), and the user's own folder. Tools keep
+/// their caches, configuration and builds there, and a question for each
+/// one taught nothing.
+///
+/// Not the places [`forbidden_outside`] names (keys, logins, startup files,
+/// the system), and not another project: a repository that isn't this one
+/// is somebody's source, and nothing here was asked to change it.
+pub(crate) fn free_place(path: &Path, ctx: &ToolContext, writing: bool) -> bool {
+    !forbidden(path, ctx, writing)
+        && free_place_in(
+            path,
+            &scratch_dirs(),
+            std::env::var_os("HOME")
+                .map(|h| real_path(Path::new(&h)))
+                .as_deref(),
+            writing,
+        )
+}
+
+/// [`free_place`], given where scratch space and the user's folder are.
+/// Reading reaches a little further than writing: the folder itself
+/// (`ls ~`), and another project in it, which is often what the work is
+/// being compared with.
+fn free_place_in(path: &Path, scratch: &[PathBuf], home: Option<&Path>, writing: bool) -> bool {
+    if scratch.iter().any(|t| is_under(path, t)) {
+        return true;
+    }
+    home.is_some_and(|home| {
+        is_under(path, home) && (!writing || (path != home && !in_a_repository(path, home)))
+    })
+}
+
+/// Writing to `raw`, outside the project: free in scratch space and the
+/// user's own folder, refused in a place from [`forbidden_outside`], and
+/// otherwise a question every time.
 fn outside_decision(ctx: &ToolContext, raw: &str) -> Decision {
     match resolve_outside(ctx, raw) {
         Some(p) if forbidden_outside(&p, ctx) => Decision::Deny,
+        Some(p) if free_place(&p, ctx, true) => Decision::Allow,
         Some(_) => Decision::AskOutside,
         // A variable we can't see through: ask, showing it as written.
         None => Decision::AskOutside,
@@ -1900,6 +2609,10 @@ fn outside_decision(ctx: &ToolContext, raw: &str) -> Decision {
 /// (`Allow`), a question every time, or a refusal. Reading outside the
 /// project is an ordinary question; writing there always asks.
 fn outside_segment(prog: &str, words: &[String], ctx: &ToolContext) -> Decision {
+    // Destruction outside the project is a question every time, scratch
+    // space and the user's folder included: "allow all" covers the project,
+    // and `rm -rf ~/x` is not something it should cover.
+    let destroys = DESTRUCTIVE.contains(&prog) || deleting_find(prog, words);
     let mut outside = false;
     let mut writes_outside = false;
     let mut expect_redirect = false;
@@ -1911,10 +2624,11 @@ fn outside_segment(prog: &str, words: &[String], ctx: &ToolContext) -> Decision 
                 continue;
             }
             if resolve(ctx, w).is_none() {
-                if outside_decision(ctx, w) == Decision::Deny {
-                    return Decision::Deny;
+                match outside_decision(ctx, w) {
+                    Decision::Deny => return Decision::Deny,
+                    Decision::Allow if !destroys => {}
+                    _ => writes_outside = true,
                 }
-                writes_outside = true;
             }
             continue;
         }
@@ -1929,10 +2643,11 @@ fn outside_segment(prog: &str, words: &[String], ctx: &ToolContext) -> Decision 
                 && rest != "/dev/null"
                 && resolve(ctx, rest).is_none()
             {
-                if outside_decision(ctx, rest) == Decision::Deny {
-                    return Decision::Deny;
+                match outside_decision(ctx, rest) {
+                    Decision::Deny => return Decision::Deny,
+                    Decision::Allow if !destroys => {}
+                    _ => writes_outside = true,
                 }
-                writes_outside = true;
             }
             continue;
         }
@@ -1946,15 +2661,16 @@ fn outside_segment(prog: &str, words: &[String], ctx: &ToolContext) -> Decision 
         if !pathish || resolve(ctx, w).is_some() {
             continue;
         }
-        let read_only = READ_ONLY.contains(&prog) || READERS.contains(&prog);
+        let read_only = !destroys && (READ_ONLY.contains(&prog) || READERS.contains(&prog));
         match resolve_outside(ctx, w) {
             // Even reading a key is refused; writing the system is too.
             Some(p) if forbidden_to_read(&p, ctx) => return Decision::Deny,
             Some(p) if !read_only && forbidden_outside(&p, ctx) => return Decision::Deny,
+            Some(p) if !destroys && free_place(&p, ctx, !read_only) => {}
             _ => outside = true,
         }
     }
-    let read_only = READ_ONLY.contains(&prog) || READERS.contains(&prog);
+    let read_only = !destroys && (READ_ONLY.contains(&prog) || READERS.contains(&prog));
     if writes_outside || (outside && !read_only) {
         Decision::AskOutside
     } else if outside {
@@ -1974,7 +2690,7 @@ fn redirect_escapes(words: &[String], ctx: &ToolContext) -> Option<String> {
             if w == "/dev/null" {
                 continue;
             }
-            if resolve(ctx, w).is_none() || is_secret(&resolve(ctx, w)?, ctx) {
+            if redirect_refused(w, ctx) {
                 return Some(w.clone());
             }
             continue;
@@ -1982,8 +2698,7 @@ fn redirect_escapes(words: &[String], ctx: &ToolContext) -> Option<String> {
         match redirect(w, true) {
             Redir::Next => expect = true,
             Redir::To(rest) if rest != "/dev/null" => {
-                let r = resolve(ctx, &rest);
-                if r.as_ref().is_none_or(|p| is_secret(p, ctx)) {
+                if redirect_refused(&rest, ctx) {
                     return Some(rest);
                 }
             }
@@ -1991,6 +2706,41 @@ fn redirect_escapes(words: &[String], ctx: &ToolContext) -> Option<String> {
         }
     }
     None
+}
+
+/// A redirect target no hat may use without a question: a secret in the
+/// project, or somewhere outside it that isn't a [`free_place`].
+fn redirect_refused(target: &str, ctx: &ToolContext) -> bool {
+    match resolve(ctx, target) {
+        Some(p) => is_secret(&p, ctx),
+        None => !resolve_outside(ctx, target).is_some_and(|p| free_place(&p, ctx, true)),
+    }
+}
+
+/// A `>` redirect into a file of the project: a write nothing undoes, for
+/// the hats that change nothing there. One into scratch space or the user's
+/// own folder is not.
+fn writes_project_via_redirect(words: &[String], ctx: &ToolContext) -> bool {
+    let mut expect = false;
+    let in_project = |t: &str| {
+        t != "/dev/null"
+            && resolve(ctx, t).is_some_and(|p| !is_under(&p, &real_path(&ctx.notes_dir)))
+    };
+    for w in words {
+        if expect {
+            expect = false;
+            if in_project(w) {
+                return true;
+            }
+            continue;
+        }
+        match redirect(w, false) {
+            Redir::Next => expect = true,
+            Redir::To(t) if in_project(&t) => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// True when a printing command was pointed at a secret.
@@ -2160,11 +2910,13 @@ mod tests {
         );
     }
 
-    /// The build hat may write outside the project only by asking every
-    /// time, and never into keys, credentials, shell startup files, or the
-    /// system, however the path is spelled.
+    /// Outside the project, scratch space and the user's own folder are
+    /// open to every hat without a question. Anywhere else the build hat
+    /// asks every time and no other hat writes. Keys, credentials, shell
+    /// startup files and the system are refused, however the path is
+    /// spelled.
     #[test]
-    fn the_build_hat_asks_before_writing_outside_the_project() {
+    fn outside_the_project_scratch_is_open_and_the_rest_asks() {
         let dir = TempDir::new().unwrap();
         let d = dir.path();
         let write = |role, path: &str| {
@@ -2174,8 +2926,15 @@ mod tests {
                 &ctx_for(role, d),
             )
         };
+        for role in [Role::SoloBuild, Role::SoloPlan, Role::SoloReview] {
+            assert_eq!(
+                write(role, "/tmp/ryter-scratch/notes.txt"),
+                Decision::Allow,
+                "{role:?}"
+            );
+        }
         assert_eq!(
-            write(Role::SoloBuild, "/tmp/ryter-scratch/notes.txt"),
+            write(Role::SoloBuild, "/opt/ryter-scratch/notes.txt"),
             Decision::AskOutside
         );
         for never in [
@@ -2192,20 +2951,61 @@ mod tests {
         }
         // Inside stays an ordinary question.
         assert_eq!(write(Role::SoloBuild, "src/a.rs"), Decision::Ask);
-        // No other hat writes outside at all.
+        // No other hat writes outside scratch space and the user's folder,
+        // or where keys are kept.
         for role in [Role::SoloPlan, Role::SoloReview] {
             assert_eq!(
-                write(role, "/tmp/ryter-scratch/notes.txt"),
+                write(role, "/opt/ryter-scratch/notes.txt"),
                 Decision::Deny,
                 "{role:?}"
             );
+            assert_eq!(write(role, "~/.ssh/config"), Decision::Deny, "{role:?}");
         }
         let sh = |cmd: &str| bash(cmd, Role::SoloBuild, d);
-        assert_eq!(sh("mkdir -p /tmp/ryter-scratch"), Decision::AskOutside);
-        assert_eq!(sh("python3 -m venv /tmp/ryter-venv"), Decision::AskOutside);
-        assert_eq!(sh("echo x > /tmp/ryter-scratch/f"), Decision::AskOutside);
+        // In scratch space a command is judged as it is inside the project:
+        // a toolchain runs, a redirect is free, and `mkdir` is no longer a
+        // question every time.
+        assert!(matches!(
+            sh("mkdir -p /tmp/ryter-scratch"),
+            Decision::Ask | Decision::Allow
+        ));
+        assert_eq!(sh("python3 -m venv /tmp/ryter-venv"), Decision::Allow);
+        assert_eq!(sh("echo x > /tmp/ryter-scratch/f"), Decision::Allow);
+        assert_eq!(sh("ls /tmp"), Decision::Allow);
+        assert_eq!(sh("cat /tmp/ryter-scratch/f"), Decision::Allow);
+        // The home folder is open, but not where logins, history and the
+        // browser's cookies are kept, to any hat, to read or to write.
+        for kept in [
+            "~/.npmrc",
+            "~/.pypirc",
+            "~/.cargo/credentials.toml",
+            "~/.git-credentials",
+            "~/.config/git/credentials",
+            "~/.bash_history",
+            "~/.mozilla/firefox/x.default/cookies.sqlite",
+            "~/.config/google-chrome/Default/Cookies",
+            "~/.password-store/work.gpg",
+        ] {
+            for role in [Role::SoloBuild, Role::SoloPlan, Role::SoloReview] {
+                assert_eq!(
+                    bash(&format!("cat {kept}"), role, d),
+                    Decision::Deny,
+                    "{role:?}: cat {kept}"
+                );
+                assert_eq!(write(role, kept), Decision::Deny, "{role:?}: write {kept}");
+                assert_eq!(
+                    decide("read_file", &json!({"path": kept}), &ctx_for(role, d)),
+                    Decision::Deny,
+                    "{role:?}: read_file {kept}"
+                );
+            }
+        }
+        // Anywhere else outside is still a question every time.
+        assert_eq!(sh("mkdir -p /opt/ryter-scratch"), Decision::AskOutside);
+        assert_eq!(sh("python3 -m venv /opt/venv"), Decision::AskOutside);
+        assert_eq!(sh("echo x > /opt/ryter-scratch/f"), Decision::AskOutside);
         assert_eq!(
-            sh("ls /tmp"),
+            sh("ls /opt"),
             Decision::Ask,
             "reading outside is an ordinary question"
         );
@@ -2219,15 +3019,372 @@ mod tests {
         assert_eq!(sh("echo x >> ~/.bashrc"), Decision::Deny);
         assert_eq!(sh("cat ~/.ssh/id_rsa"), Decision::Deny);
         assert_eq!(sh("cp key.pem ~/.ssh/"), Decision::Deny);
-        assert_eq!(sh("rm -rf /tmp/ryter-scratch"), Decision::AskOutside);
+        // Destruction outside the project is a question every time, in
+        // scratch space and the user's folder too: "allow all" covers the
+        // project, not `rm -rf ~/x`.
+        for cmd in [
+            "rm -rf /tmp/ryter-scratch",
+            "rm -rf /opt/ryter-scratch",
+            "rm -rf ~/ryter-scratch",
+            "mv a.rs ~/ryter-scratch/",
+            "find /tmp/ryter-scratch -name '*.log' -delete",
+        ] {
+            assert_eq!(sh(cmd), Decision::AskOutside, "{cmd}");
+        }
+        assert_eq!(sh("rm -rf target"), Decision::Ask);
         assert_eq!(
             sh("cargo test 2>/dev/null"),
-            Decision::Ask,
+            Decision::Allow,
             "/dev/null is nowhere"
         );
-        // The other hats: never.
-        assert_eq!(bash("echo x > /tmp/f", Role::SoloReview, d), Decision::Deny);
-        assert_eq!(bash("echo x > /tmp/f", Role::SoloPlan, d), Decision::Deny);
+        // The hats that change nothing in the project may keep output in
+        // scratch space, and nowhere else.
+        for role in [Role::SoloReview, Role::SoloPlan] {
+            assert_eq!(
+                bash("echo x > /tmp/f", role, d),
+                Decision::Allow,
+                "{role:?}"
+            );
+            assert_eq!(bash("echo x > /opt/f", role, d), Decision::Deny, "{role:?}");
+            assert_eq!(bash("echo x > f.txt", role, d), Decision::Deny, "{role:?}");
+            assert_eq!(
+                bash("echo x >> ~/.bashrc", role, d),
+                Decision::Deny,
+                "{role:?}"
+            );
+        }
+        assert_eq!(
+            bash("cargo test > /tmp/out.txt 2>&1", Role::SoloReview, d),
+            Decision::Allow
+        );
+    }
+
+    /// The review hat reads the project and the open places, and nothing
+    /// else. It had no rule about where a read-only command pointed, so it
+    /// could print an SSH key or the system's files without a question.
+    #[test]
+    fn the_review_hat_reads_nothing_it_was_not_handed() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        for cmd in [
+            "cat ~/.ssh/id_rsa",
+            "head -5 ~/.aws/credentials",
+            "cat /etc/passwd",
+            "cat /opt/other/secret.txt",
+            "grep -r token /etc",
+            "ls /",
+            "cat $HOME/.netrc",
+            "pytest /opt/other/tests",
+            "cat ../../../../../../etc/hostname",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloReview, d), Decision::Deny, "{cmd}");
+        }
+        for cmd in [
+            "cat src/main.rs",
+            "git diff HEAD",
+            "cargo test",
+            "pytest tests/test_app.py -q",
+            "cat /tmp/ryter-scratch/out.txt",
+            "ls ~",
+            "cat ~/workspace/other/README.md",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloReview, d), Decision::Allow, "{cmd}");
+        }
+    }
+
+    /// The user's own folder is open like scratch space, except where keys
+    /// and startup files are, and except another project: a repository that
+    /// isn't this one is somebody's source.
+    #[test]
+    fn the_users_folder_is_open_but_not_another_project() {
+        let home = TempDir::new().unwrap();
+        let h = home.path();
+        std::fs::create_dir_all(h.join("workspace/other/.git")).unwrap();
+        std::fs::create_dir_all(h.join("workspace/other/src")).unwrap();
+        std::fs::create_dir_all(h.join(".cache/tool")).unwrap();
+        let free = |rel: &str| free_place_in(&h.join(rel), &[], Some(h), true);
+        assert!(free("notes.txt"));
+        assert!(free(".cache/tool/index"));
+        assert!(free("scratch/new/deep/file"));
+        assert!(!free("workspace/other/src/main.rs"));
+        assert!(!free("workspace/other"));
+        // The folder itself, and anything not under it.
+        assert!(!free_place_in(h, &[], Some(h), true));
+        assert!(!free_place_in(Path::new("/opt/x"), &[], Some(h), true));
+        assert!(!free_place_in(&h.join("x"), &[], None, true));
+        // Scratch space, wherever it is.
+        assert!(free_place_in(
+            Path::new("/opt/scratch/x"),
+            &[PathBuf::from("/opt/scratch")],
+            None,
+            true
+        ));
+        // Reading reaches the folder itself and the other project.
+        let read = |rel: &str| free_place_in(&h.join(rel), &[], Some(h), false);
+        assert!(read("workspace/other/src/main.rs"));
+        assert!(free_place_in(h, &[], Some(h), false));
+        assert!(!free_place_in(Path::new("/opt/x"), &[], Some(h), false));
+    }
+
+    /// The build hat builds, starts, stops and uses the project's stack
+    /// without a question. A prompt for every `docker compose up` was
+    /// answered yes every time.
+    #[test]
+    fn the_build_hat_runs_the_projects_stack() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        for cmd in [
+            "docker compose build",
+            "docker compose up -d --wait",
+            "docker compose up -d --build web",
+            "docker compose down",
+            "docker compose -f docker-compose.yml -f compose.dev.yml up -d",
+            "docker compose --profile dev up -d",
+            "docker compose -p cms up -d",
+            "docker compose run --rm web pytest -q",
+            "docker compose run --rm -e DEBUG=1 -u app web python manage.py migrate",
+            "docker compose exec web python manage.py shell",
+            "docker compose exec -T db psql -U app -c 'select 1'",
+            "docker compose logs --tail 50 web",
+            "docker compose restart web",
+            "docker compose stop",
+            "docker compose rm -f web",
+            "docker compose pull",
+            "docker build -t cms:dev .",
+            "docker build -f docker/Dockerfile -t cms .",
+            "docker run --rm -it -p 8000:8000 -v ./data:/data cms:dev uvicorn app:app --host 0.0.0.0",
+            "docker run --rm --network host cms:dev pytest",
+            "docker run -d --name cms-db -e POSTGRES_PASSWORD=x -v cms-data:/var/lib/postgresql/data postgres:16",
+            "docker run --rm -v /tmp/ryter-scratch:/out cms:dev make report",
+            "docker exec -it cms-web-1 bash",
+            "docker ps -a",
+            "docker images",
+            "docker logs --tail 50 cms-web-1",
+            "docker inspect cms-web-1",
+            "docker --version",
+            "docker volume ls",
+            "docker network create cms-net",
+            "docker buildx build --load -t cms .",
+            "podman compose up -d",
+            "podman build -t cms .",
+            "docker-compose up -d",
+            "podman-compose down",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+        }
+        // What a stack doesn't need, and a person would want to see first.
+        for cmd in [
+            // Destroying data.
+            "docker compose down -v",
+            "docker compose down --volumes",
+            "docker compose down --rmi all",
+            "docker compose rm -v",
+            "docker compose up -d -V",
+            "docker system prune -af",
+            "docker volume rm cms-data",
+            "docker volume prune",
+            "docker image prune",
+            "docker container prune",
+            "docker network rm cms-net",
+            "docker rmi cms:dev",
+            // Containers that may not be this project's.
+            "docker stop cms-web-1",
+            "docker rm -f cms-web-1",
+            "docker kill cms-web-1",
+            "docker restart cms-web-1",
+            // Publishing.
+            "docker compose push",
+            "docker compose -p cms push",
+            "docker push cms:dev",
+            "docker login",
+            "docker build --push -t cms .",
+            // Another machine, or another project.
+            "docker -H tcp://10.0.0.5:2375 ps",
+            "docker --context prod compose up -d",
+            "docker compose -f /opt/other/compose.yml up -d",
+            "docker compose --project-directory /opt/other up -d",
+            "docker compose --env-file /opt/other/vars up -d",
+            // Giving a container the host.
+            "docker run --privileged cms:dev",
+            "docker run --name web --privileged cms:dev",
+            "docker run -v /:/host alpine ls /host",
+            "docker run -v /var/run/docker.sock:/var/run/docker.sock cms:dev",
+            "docker run --mount type=bind,source=/etc,target=/etc alpine",
+            "docker run -v ~/.ssh:/root/.ssh cms:dev",
+            "docker run --pid host cms:dev",
+            "docker run --cap-add SYS_ADMIN cms:dev",
+            "docker run --device /dev/sda cms:dev",
+            "docker build --secret id=key,src=key.pem .",
+            "docker build --ssh default .",
+            // An option this doesn't know, before the image.
+            "docker run --some-new-option cms:dev",
+            "docker save -o cms.tar cms:dev",
+            "docker swarm init",
+        ] {
+            assert_ne!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+        }
+        // The command inside the container is not Docker's to judge: its
+        // options are its own.
+        assert_eq!(
+            bash(
+                "docker compose exec web mytool --host 0.0.0.0 --privileged -v",
+                Role::SoloBuild,
+                d
+            ),
+            Decision::Allow
+        );
+        // The plan hat still starts nothing.
+        assert_eq!(
+            bash("docker compose up -d", Role::SoloPlan, d),
+            Decision::Deny
+        );
+        assert_eq!(
+            bash("docker compose up -d", Role::SoloReview, d),
+            Decision::Deny
+        );
+    }
+
+    /// Removing a stack's volumes, or pruning, is destruction: its prompt
+    /// takes `y` alone and never "allow for this session", which would have
+    /// covered every later `docker compose` command.
+    #[test]
+    fn removing_container_data_is_destruction() {
+        for cmd in [
+            "docker compose down -v",
+            "docker compose down --volumes",
+            "docker-compose rm -v",
+            "docker volume rm cms-data",
+            "docker volume prune",
+            "docker system prune -af",
+            "podman system prune",
+            "docker image prune",
+            "docker compose up -d -V",
+            "cd app && docker compose down -v",
+        ] {
+            assert!(destructive_command(cmd), "{cmd}");
+        }
+        for cmd in [
+            "docker compose down",
+            "docker compose up -d",
+            "docker compose run --rm -v ./data:/data web pytest",
+            "docker volume ls",
+            "docker --version",
+            "docker compose logs -f web",
+        ] {
+            assert!(!destructive_command(cmd), "{cmd}");
+        }
+        // The prompt's warning is for these, not for anything that names
+        // a folder called docker.
+        assert!(removes_stack_data("cd app && docker compose down -v"));
+        assert!(!removes_stack_data("rm -rf docker/volumes -v"));
+    }
+
+    /// The build hat runs the project's toolchains and its own programs
+    /// without a question, whatever the subcommand. Publishing, and tools
+    /// that work on a service somewhere else, still ask.
+    #[test]
+    fn toolchains_and_the_projects_own_programs_run_without_asking() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::create_dir_all(d.join("scripts")).unwrap();
+        std::fs::write(d.join("scripts/setup.sh"), "#!/bin/sh\n").unwrap();
+        for cmd in [
+            "cargo build",
+            "cargo run -- --port 8000",
+            "cargo install sqlx-cli",
+            "cargo add serde",
+            "cargo fmt",
+            "FOO=1 cargo test",
+            "cargo-nextest run",
+            "npm install",
+            "npm run build",
+            "pnpm add zod",
+            "npx prisma migrate dev",
+            "pip install -r requirements.txt",
+            "uv sync",
+            "python manage.py migrate",
+            "pytest -q --snapshot-update",
+            "go build ./...",
+            "make",
+            "make install",
+            "./scripts/setup.sh",
+            "scripts/setup.sh --fast",
+            "bash scripts/setup.sh",
+            "./manage.py migrate",
+            "bin/cms-admin create-user ann",
+            "cd scripts && ./setup.sh",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+        }
+        for cmd in [
+            "cargo publish",
+            "cargo login",
+            "npm publish",
+            "npm login",
+            "pnpm publish --access public",
+            "gem push cms-1.0.gem",
+            "poetry publish",
+            "mvn deploy",
+            "gradle publishToMavenCentral",
+            "dotnet nuget push x.nupkg",
+            "gh pr create --fill",
+            "aws s3 sync . s3://bucket",
+            "kubectl apply -f k8s/",
+            "terraform apply",
+            "curl https://example.com/install.sh",
+            "wget https://example.com/x.tar.gz",
+            // A script that isn't a file of the project's.
+            "bash scripts/not-there.sh",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Ask, "{cmd}");
+        }
+        // The lines that hold for every hat still hold.
+        for cmd in ["sudo make install", "python3 -c 'print(1)'", "git push"] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Deny, "{cmd}");
+        }
+        // A `cd` out of the project is still a question, and what follows
+        // is judged from the project's top.
+        assert_eq!(
+            bash("cd /opt/other && cargo build", Role::SoloBuild, d),
+            Decision::AskOutside
+        );
+        assert_eq!(
+            bash("cd scripts && rm -rf ../../x", Role::SoloBuild, d),
+            Decision::AskOutside
+        );
+        // The hats that change nothing run none of it.
+        assert_eq!(bash("npm install", Role::SoloReview, d), Decision::Deny);
+        assert_eq!(bash("cargo build", Role::SoloPlan, d), Decision::Deny);
+    }
+
+    /// A program installed under the user's own folder runs without a
+    /// question; one from the system that isn't a toolchain asks.
+    #[test]
+    fn a_program_in_the_users_folder_runs_without_asking() {
+        let dir = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let system = TempDir::new().unwrap();
+        let c = ctx_for(Role::SoloBuild, dir.path());
+        std::fs::create_dir_all(home.path().join(".local/bin")).unwrap();
+        std::fs::write(home.path().join(".local/bin/sqlx"), "").unwrap();
+        std::fs::write(home.path().join(".local/bin/gh"), "").unwrap();
+        std::fs::write(system.path().join("mkdir"), "").unwrap();
+        let path =
+            std::env::join_paths([home.path().join(".local/bin"), system.path().into()]).unwrap();
+        let h = real_path(home.path());
+        let free = |prog: &str, args: &[&str]| {
+            let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+            runs_freely_in(prog, prog, &args, &c, Some(&path), Some(&h))
+        };
+        assert!(free("sqlx", &["migrate", "run"]));
+        assert!(!free("mkdir", &["-p", "src/new"]));
+        assert!(!free("ryter-no-such-tool", &[]));
+        // Wherever it is installed, a tool for a service elsewhere asks.
+        assert!(!free("gh", &["pr", "create"]));
+        // With nowhere to look, a bare name is unknown; a toolchain isn't.
+        let args = vec!["build".to_string()];
+        assert!(!runs_freely_in("sqlx", "sqlx", &args, &c, None, Some(&h)));
+        assert!(runs_freely_in("cargo", "cargo", &args, &c, None, None));
     }
 
     /// A project that tests in its containers is checked there. The review
@@ -2333,15 +3490,12 @@ mod tests {
             bash("pytest > out.txt", Role::SoloReview, d),
             Decision::Deny
         );
-        // The other hats are as they were: the build hat asks, and the plan
-        // hat only reads files.
+        // The build hat builds and runs the stack itself (see
+        // `the_build_hat_runs_the_projects_stack`); the plan hat only reads
+        // files.
         assert_eq!(
             bash("docker compose build web", Role::SoloBuild, d),
-            Decision::Ask
-        );
-        assert_eq!(
-            bash("docker compose run --rm web pytest", Role::SoloBuild, d),
-            Decision::Ask
+            Decision::Allow
         );
         assert_eq!(bash("docker compose ps", Role::SoloPlan, d), Decision::Deny);
     }
@@ -2361,7 +3515,8 @@ mod tests {
                 &ctx_for(role, d),
             )
         };
-        // build: edits and changing commands ask; looking runs.
+        // build: edits ask, and so do commands that change files by hand;
+        // looking runs, and so do the project's toolchains.
         assert_eq!(write(Role::SoloBuild, "a.rs"), Decision::Ask);
         assert_eq!(
             write(Role::SoloBuild, ".env"),
@@ -2370,13 +3525,10 @@ mod tests {
         );
         assert_eq!(bash("ls -la", Role::SoloBuild, d), Decision::Allow);
         assert_eq!(bash("git status", Role::SoloBuild, d), Decision::Allow);
-        for cmd in [
-            "cargo test",
-            "npm install",
-            "rm -rf target",
-            "git commit -m x",
-            "mv a.rs b.rs",
-        ] {
+        for cmd in ["cargo test", "npm install", "cargo build --release"] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+        }
+        for cmd in ["rm -rf target", "git commit -m x", "mv a.rs b.rs"] {
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Ask, "{cmd}");
         }
         for cmd in [
@@ -2693,7 +3845,7 @@ mod tests {
         assert_eq!(bash("node --test", Role::SoloReview, d), Decision::Allow);
         assert_eq!(
             bash("node scripts/check.js", Role::SoloBuild, d),
-            Decision::Ask
+            Decision::Allow
         );
     }
 
@@ -2935,17 +4087,17 @@ mod tests {
         }
     }
 
-    /// Inside the project, the build hat's destruction and builds are a
-    /// question for the user, not a refusal.
+    /// Inside the project, the build hat's destruction and its changes to
+    /// files by hand are a question for the user, not a refusal.
     #[test]
     fn the_build_hat_asks_before_changing_the_project() {
         let dir = TempDir::new().unwrap();
         for cmd in [
             "rm -rf target",
             "rm -rf ./node_modules",
-            "cargo build --release",
             "mv src/a.rs src/b.rs",
             "chmod +x scripts/run.sh",
+            "ryter-no-such-tool --do-it",
         ] {
             assert_eq!(
                 bash(cmd, Role::SoloBuild, dir.path()),
@@ -3127,9 +4279,14 @@ mod tests {
                 "{cmd}"
             );
         }
-        // Into the project it is a write like any other: a question.
+        // Into the project it is the command's own output: judged as the
+        // command is.
         assert_eq!(
             bash("cargo test > out.txt", Role::SoloBuild, dir.path()),
+            Decision::Allow
+        );
+        assert_eq!(
+            bash("ryter-no-such-tool > out.txt", Role::SoloBuild, dir.path()),
             Decision::Ask
         );
     }
@@ -3151,8 +4308,17 @@ mod tests {
                 resolve(&ctx, "link/id_rsa").is_none(),
                 "a symlink must not escape the workspace"
             );
+            // Where the link leads decides: the system is not the
+            // project's to read through a link, and a secret is one
+            // wherever it is.
+            std::os::unix::fs::symlink("/etc", ws.join("etc")).unwrap();
             assert_eq!(
-                decide("read_file", &json!({"path": "link/id_rsa"}), &ctx),
+                decide("read_file", &json!({"path": "etc/hostname"}), &ctx),
+                Decision::Deny
+            );
+            std::fs::write(secret.join(".env"), "K=1").unwrap();
+            assert_eq!(
+                decide("read_file", &json!({"path": "link/.env"}), &ctx),
                 Decision::Deny
             );
         }
