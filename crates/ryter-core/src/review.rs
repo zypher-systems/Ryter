@@ -718,18 +718,22 @@ mod tests {
         use std::os::unix::fs::symlink;
         let d = repo();
         let p = d.path();
-        // The pipe, asked for by name: refused, not waited on.
         assert_eq!(count_lines(p, "nothing-here", 100), None);
         symlink("/dev/zero", p.join("endless")).unwrap();
         symlink("keep.txt", p.join("alias")).unwrap();
-        rustix::fs::mknodat(
-            rustix::fs::CWD,
-            p.join("pipe"),
-            rustix::fs::FileType::Fifo,
-            rustix::fs::Mode::from_raw_mode(0o600),
-            0,
-        )
-        .unwrap();
+        // A pipe, where the platform lets the test make one.
+        #[cfg(target_os = "linux")]
+        {
+            rustix::fs::mknodat(
+                rustix::fs::CWD,
+                p.join("pipe"),
+                rustix::fs::FileType::Fifo,
+                rustix::fs::Mode::from_raw_mode(0o600),
+                0,
+            )
+            .unwrap();
+        }
+        // Asked for by name: refused, not waited on.
         assert_eq!(count_lines(p, "pipe", 100), None);
         assert_eq!(count_lines(p, "endless", 100), None);
         fs::write(p.join("big.txt"), "x\n".repeat(600_000)).unwrap();
