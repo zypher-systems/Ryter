@@ -516,6 +516,8 @@ TCP requires `--token` (or `RYTER_MCP_TOKEN`) on `initialize.params.token`. Bind
 
 `ryter mcp serve` uses a restricted always-approve: workspace file edits, read, grep, tests; deny `rm -rf`, credential paths, work outside cwd. `--always-approve` only widens this if `[mcp] allow_dangerous = true`.
 
+Status and spend remain available during a prompt; the CLI reports the last completed turn’s snapshot. A second MCP prompt receives a busy response while one is active. Closing the prompt connection cancels its pending work.
+
 `[mcp] inbound = false` disables the server. Esc or `/cancel` (or `ryter_cancel`) stops the in-flight turn and kills bash process groups.
 
 ## Customization

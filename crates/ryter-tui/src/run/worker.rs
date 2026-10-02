@@ -33,6 +33,8 @@ pub enum Work {
         text: String,
         /// Optional reply channel.
         reply: Option<mpsc::Sender<String>>,
+        /// Per-request cancellation when this turn came from MCP.
+        inbound: Option<Arc<super::InboundTurn>>,
     },
     /// Fresh session.
     New,
@@ -365,9 +367,19 @@ pub fn run(init: WorkerInit) {
         match work_rx.recv_timeout(Duration::from_millis(200)) {
             Ok(Work::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => continue,
-            Ok(Work::Turn { text, reply }) => {
+            Ok(Work::Turn {
+                text,
+                reply,
+                inbound,
+            }) => {
                 if let Some(a) = &mut agent {
-                    a.ctx.cancel.reset();
+                    if let Some(ticket) = &inbound {
+                        if !ticket.start(&a.ctx.cancel) {
+                            continue;
+                        }
+                    } else {
+                        a.ctx.cancel.reset();
+                    }
                     let before = a.session.changed_turns;
                     let out = match rt.block_on(a.turn(&text)) {
                         Ok(r) => {
@@ -388,6 +400,9 @@ pub fn run(init: WorkerInit) {
                         // The agent reported it, before closing the turn.
                         Err(_) => String::new(),
                     };
+                    if let Some(ticket) = &inbound {
+                        ticket.finish();
+                    }
                     refresh_live(a, &live_status, &live_spend);
                     if let Some(reply) = reply {
                         let _ = reply.send(out);
