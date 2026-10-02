@@ -2,6 +2,13 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — Admit requests against the active route’s context window
+- **Decision:** Resolve `[context_windows]` overrides, a matching base-route override, the active connection’s cached catalog, a matching last route, then the existing fallback. A base model’s window never overrides a different hat. Count schemas, message/tool-call content and requested output before both turns and auxiliary requests. Reserve up to a quarter of the window for output, capped at 32,768 tokens.
+- **Why:** A smaller hat could inherit the base model’s large gauge, and a single long tool turn could overflow without triggering compaction. Guard the actual request again after review instructions are added; if the request still cannot fit, stop before sending it and retain the user’s task.
+- **Compaction:** Keep older user instructions and assistant narrative verbatim in the extract. Shorten older bulky tool results with an explicit re-read notice while retaining call/result IDs and the newest result batch. Save only a measurable reduction. Irreducible instructions and tool-call arguments produce an actionable stop instead of silent loss.
+- **Limits:** Token counts remain the bytes/4 heuristic, not a model tokenizer. Catalog data can age, and the existing 500k Grok / 200k other-model fallback is an estimate, not provider evidence. Users can supply the server’s actual window in `[context_windows]`; exact tokenizer calibration and provider-specific output maxima remain separate work.
+- **Where:** `compact.rs`, agent request admission/context reporting, configuration; regressions cover smaller hats, catalog/config precedence, tool schemas/output reserve, a single long turn, retained constraints, and no provider call for irreducible turns or drafts.
+
 ### 2026-10-02 — A failed lifecycle operation keeps ownership until cleanup succeeds
 - **Decision:** Nonzero startup exits, wait errors, timeouts and cancellation share cleanup. Failed cleanup returns its handle to the agent and persists a pending flag with the approved stop command. A later start cannot discard a pending cleanup record; `/stop` retries it. Earlier-session process numbers remain insufficient authority to kill a process.
 - **Why:** A launcher can fail after starting children or a partial stack. Dropping its record made those resources impossible to stop through Ryter.
