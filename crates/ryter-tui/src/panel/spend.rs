@@ -365,7 +365,7 @@ mod tests {
         let mut p = ryter_core::project::ProjectSpend::default();
         p.add(ryter_core::Role::SoloPlan, "opus", Some(0.91));
         p.add(ryter_core::Role::SoloBuild, "flash", Some(0.09));
-        p.add(ryter_core::Role::SoloReview, "grok", None);
+        p.add(ryter_core::Role::SoloAudit, "grok", None);
         v.project_spend = Some(p);
         let theme = Theme::truecolor_dark();
         let mut panel = Spend::default();

@@ -18,7 +18,7 @@
  ─────────────────── 2 files (1 new, 1 changed, +8 −1) · 2.1s ──────────────────── ┃│ cap                          off │
                                                                                    ┃╰──────────────────────────────────╯
  · system                                                                          ┃
-   switched to the review hat (claude-opus-5.5) · Tab to change it again           ┃
+   switched to the audit hat (claude-opus-5.5) · Tab to change it again            ┃
                                                                                    ┃
  claude-opus-5.5                                                                   ┃
    • blocking  app/server.js:6 : an empty query returns early, but  find  still    ┃
@@ -28,13 +28,13 @@
    VERDICT: FAIL                                                                   ┃
                                                                                    ┃
  · system                                                                          ┃
-   switched to the build hat · Tab to change it again                              ┃
+   audit · claude-opus-5.5 · ✗ failed, unfiled · $0.040                            ┃
                                                                                    ┃
  · system                                                                          ┃
-   review · claude-opus-5.5 · ✗ blocking problems · $0.040                         ┃
+   switched to the build hat · Tab to change it again                              ┃
  · ✓ done · 0 tools · 0:03                                                                             ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│› what should change? · Tab: review · / for commands                                                                  │
+│› what should change? · Tab: plan · ⇧Tab: specialists · / for commands                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- enter send    tab review    ⇧enter newline    / commands    ^r reasoning    ^b panel    ^c quit
+ enter send    tab plan    ⇧tab specialists    ⇧enter newline    / commands    ^r reasoning    ^b panel    ^c quit

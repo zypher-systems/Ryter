@@ -206,15 +206,29 @@ pub const COMMANDS: &[CommandSpec] = &[
         |_, _| Action::SetMode(ryter_core::Role::SoloPlan),
     ),
     spec(
+        "scribe",
+        &["docs"],
+        Category::Model,
+        "Scribe hat: write documentation only, change no code",
+        None,
+        false,
+        None,
+        false,
+        |_, _| Action::SetMode(ryter_core::Role::SoloScribe),
+    ),
+    spec(
         "review",
         &[],
-        Category::Model,
-        "Review hat: critique what changed; its model is set in /models",
+        Category::Session,
+        "/review is /audit now: the audit hat audits your uncommitted changes",
         None,
         false,
         None,
-        false,
-        |_, _| Action::SetMode(ryter_core::Role::SoloReview),
+        true,
+        |view, _| {
+            view.system("/review is /audit now · the audit hat audits the uncommitted changes");
+            Action::ReviewNow
+        },
     ),
     spec(
         "undo",
@@ -257,7 +271,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "audit",
         &["second", "second-opinion"],
         Category::Session,
-        "The review hat reviews your uncommitted changes now, against the approved plan",
+        "The audit hat audits your uncommitted changes now, against the approved plan",
         None,
         false,
         None,
@@ -534,14 +548,14 @@ pub fn run_command(view: &mut View, raw: &str) -> Action {
     if cmd == "test" {
         view.warn(
             "/test went with the test hat · the build hat starts and tests the product \
-             (run_project), /review checks the work",
+             (run_project), /audit checks the work",
         );
         return Action::None;
     }
     // Crew mode's commands, for someone who had them in their hands.
     if matches!(cmd, "crew" | "crews" | "solo" | "agents" | "auditor") {
         view.warn(format!(
-            "/{cmd} was part of crew mode, which was removed · the plan, build and review hats \
+            "/{cmd} was part of crew mode, which was removed · the plan, build and audit hats \
              do the work now (Tab) · /models gives each hat its model"
         ));
         return Action::None;

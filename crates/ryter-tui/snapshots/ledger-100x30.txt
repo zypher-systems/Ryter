@@ -1,4 +1,4 @@
- RYTER │ ○ PLAN    ◆ BUILD 1    ○ REVIEW                                               muzak · main
+ RYTER │ ○ PLAN    ◆ BUILD 1    ·   specialists                                        muzak · main
 ────────────────────────────────────────────────────────────────────────────────────────────────────
          ·  welcome · /help for keys
          ●  why does load() ignore a missing file? ··············· ✓ answered · 1.8s · $0.002  ▸
@@ -25,6 +25,6 @@
                                     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-  BUILD  › what should change? · Tab: review · / for commands
+  BUILD  › what should change? · Tab: plan · ⇧Tab: specialists · / for commands
 
- $ spend    enter send    tab review    / commands    ^t changes    ^b hat rack    ^c quit
+ $ spend    enter send    tab plan    ⇧tab specialists    / commands    ^b hat rack    ^c quit

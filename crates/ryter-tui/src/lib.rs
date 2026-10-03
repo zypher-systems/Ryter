@@ -27,4 +27,7 @@ pub use view::View;
 mod tests;
 
 #[cfg(test)]
-use run::{events::apply as run_events_apply, keys::handle as run_keys_handle};
+use run::{
+    events::apply as run_events_apply, keys::handle as run_keys_handle,
+    mouse_handle as run_mouse_handle,
+};

@@ -140,6 +140,9 @@ pub struct ToolContext {
     /// Variables an earlier part of the same shell command set to a plain
     /// value (`B=http://localhost:8001`), so `$B` later can be read.
     pub vars: Vec<(String, String)>,
+    /// The audit hat with no checkpoint to fall back on (a folder that is
+    /// not a git repository): held to read-only commands for the turn.
+    pub read_only: bool,
 }
 
 impl ToolContext {
@@ -372,6 +375,27 @@ fn spec(name: &str) -> Option<ToolSpec> {
                 "rules":{"type":"string","description":"the whole rules file, in Markdown, as it should be after the change"}
             },"required":["rules"]}),
         ),
+        "file_audit" => (
+            "File the audit, once, as your last call in the audit hat. `verdict` is pass or \
+             fail. `summary` is one line. `findings` are what you checked, worst first, each \
+             with `result` (pass, fail, not_reached), `title`, and for a failure `where` \
+             (path:line), `detail` (what is wrong) and `saw` (what you ran and what came back). \
+             `ran` lists the commands and tools you used. Ryter writes .ryter/audit.md and a \
+             dated copy, shows the user the audit, and hands it to the build hat if they say \
+             so. Don't write the audit into the chat instead.",
+            json!({"type":"object","properties":{
+                "verdict":{"type":"string","enum":["pass","fail"]},
+                "summary":{"type":"string","description":"one line: what was found"},
+                "findings":{"type":"array","items":{"type":"object","properties":{
+                    "result":{"type":"string","enum":["pass","fail","not_reached"]},
+                    "title":{"type":"string"},
+                    "where":{"type":"string","description":"path:line, or where it was seen"},
+                    "detail":{"type":"string","description":"what is wrong and why it matters"},
+                    "saw":{"type":"string","description":"what you ran and what came back"}
+                },"required":["result","title"]}},
+                "ran":{"type":"array","items":{"type":"string"},"description":"the commands and tools you used"}
+            },"required":["verdict","summary","findings"]}),
+        ),
         "present_plan" => (
             "Show the user a plan to approve before any work on it starts. Use it whenever \
              the user asks for a plan, and before work that is more than a small change. \
@@ -424,7 +448,7 @@ fn spec(name: &str) -> Option<ToolSpec> {
              `test` runs the project's test commands and returns their output. `stop` \
              stops what was started (the user usually does this, with /stop: leave the \
              product running when you finish). `status` says whether it is up. With no \
-             run file yet, propose one with propose_run. The build and review hats run \
+             run file yet, propose one with propose_run. The build and audit hats run \
              these; the plan hat starts nothing.",
             json!({"type":"object","properties":{
                 "action":{"type":"string","enum":["start","test","stop","status"]}
@@ -436,7 +460,7 @@ fn spec(name: &str) -> Option<ToolSpec> {
              new hat in this same turn. Never ask in plain text whether to switch: the user \
              can't answer that from here.",
             json!({"type":"object","properties":{
-                "hat":{"type":"string","enum":["build","plan","review"]},
+                "hat":{"type":"string","enum":["build","plan","audit","scribe"]},
                 "reason":{"type":"string","description":"one line the user sees, e.g. 'carry out the plan'"}
             },"required":["hat","reason"]}),
         ),
@@ -467,7 +491,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
         // One list for every hat, so switching hats never changes the tool
         // definitions (and never throws away the prompt cache). The gate
         // decides what each hat may run.
-        Role::SoloPlan | Role::SoloBuild | Role::SoloReview => &[
+        Role::SoloPlan | Role::SoloBuild | Role::SoloAudit | Role::SoloScribe => &[
             "read_file",
             "list_dir",
             "grep",
@@ -484,6 +508,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "update_rules",
             "propose_run",
             "run_project",
+            "file_audit",
             "search_tool",
             "use_tool",
             "web_fetch",
@@ -513,9 +538,9 @@ fn execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutp
         "ask_user" => ask_user(args, ctx),
         // The agent loop answers this itself: it changes who the agent is.
         "request_hat" | "present_plan" | "record_decision" | "load_skill" | "show_page"
-        | "update_rules" | "propose_run" | "run_project" => Ok(ToolOutput::err(format!(
-            "{name} is handled by the agent loop"
-        ))),
+        | "update_rules" | "propose_run" | "run_project" | "file_audit" => Ok(ToolOutput::err(
+            format!("{name} is handled by the agent loop"),
+        )),
         "web_fetch" => web::web_fetch(args, ctx),
         "web_search" => web::web_search(args, ctx),
         other => Ok(ToolOutput::err(format!("unknown tool {other}"))),
@@ -689,12 +714,26 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
         // A hat that can't do this: say which one can, so the model tells the
         // user instead of hunting for a way round.
         Decision::Deny
-            if matches!(ctx.role, Role::SoloPlan | Role::SoloReview)
-                && matches!(name, "write" | "search_replace" | "bash")
+            if matches!(
+                ctx.role,
+                Role::SoloPlan | Role::SoloAudit | Role::SoloScribe
+            ) && matches!(name, "write" | "search_replace" | "bash")
                 && !(name == "bash" && policy::bash_hint(args, ctx).is_some()) =>
         {
+            if ctx.role == Role::SoloAudit && name != "bash" {
+                return Ok(ToolOutput::err(
+                    "denied: the audit changes nothing; its findings go in audit.md \
+                     (file_audit). Tell the user: Shift+Tab to the build hat changes code.",
+                ));
+            }
+            if ctx.role == Role::SoloScribe && name != "bash" {
+                return Ok(ToolOutput::err(
+                    "denied: the scribe writes documentation (.md, .txt and their kind), \
+                     not this file. Tell the user: Shift+Tab to the build hat for code.",
+                ));
+            }
             Ok(ToolOutput::err(format!(
-                "denied: the {} hat can't {} — tell the user; they can press Tab to switch to \
+                "denied: the {} hat can't {} — tell the user; they can press {} to switch to \
                  build.{}",
                 ctx.role,
                 if name == "bash" {
@@ -702,8 +741,12 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                 } else {
                     "edit files"
                 },
-                if name == "bash" && ctx.role == Role::SoloReview && policy::names_containers(args)
-                {
+                if matches!(ctx.role, Role::SoloAudit | Role::SoloScribe) {
+                    "Shift+Tab"
+                } else {
+                    "Tab"
+                },
+                if name == "bash" && ctx.role == Role::SoloAudit && policy::names_containers(args) {
                     CONTAINER_CHECKS
                 } else {
                     ""
@@ -836,6 +879,9 @@ mod tests {
             web: false,
             cwd: Default::default(),
             vars: Default::default(),
+            // The audit hat with no checkpoint behind it (see policy's
+            // `ctx_for`).
+            read_only: role == Role::SoloAudit,
         }
     }
 
@@ -994,6 +1040,35 @@ mod tests {
         let out = gated_execute("read_file", &json!({"path": "README.md"}), &c).unwrap();
         assert!(!out.is_error);
         assert!(out.text.contains("hello"));
+    }
+
+    /// The scribe is told what it writes, and where code is written.
+    #[test]
+    fn a_scribe_write_of_code_says_where_code_goes() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        let c = ctx(Role::SoloScribe, dir.path());
+        let out = gated_execute(
+            "write",
+            &json!({"path": "src/main.rs", "content": "fn main() {}"}),
+            &c,
+        )
+        .unwrap();
+        assert!(
+            out.is_error && out.text.contains("the scribe writes documentation"),
+            "{out:?}"
+        );
+        assert!(!dir.path().join("src/main.rs").exists());
+        let out = gated_execute(
+            "write",
+            &json!({"path": "docs/notes.md", "content": "# Notes\n"}),
+            &c,
+        )
+        .unwrap();
+        assert!(!out.is_error, "{out:?}");
+        assert!(dir.path().join("docs/notes.md").exists());
+        let out = gated_execute("bash", &json!({"command": "cargo build"}), &c).unwrap();
+        assert!(out.is_error && out.text.contains("Shift+Tab"), "{out:?}");
     }
 
     #[test]
@@ -1157,7 +1232,7 @@ mod tests {
             .prefix("ryter-scratch-")
             .tempdir()
             .unwrap();
-        for role in [Role::SoloBuild, Role::SoloPlan, Role::SoloReview] {
+        for role in [Role::SoloBuild, Role::SoloPlan, Role::SoloAudit] {
             let target = outside.path().join(format!("{role}.txt"));
             let args = json!({"path": target.to_string_lossy(), "content": "hi"});
             let out = gated_execute("write", &args, &ctx(role, dir.path())).unwrap();
@@ -1261,13 +1336,36 @@ mod tests {
             out.is_error && out.text.contains("shell handed a command"),
             "{out:?}"
         );
-        let r = ctx(Role::SoloReview, dir.path());
+        let r = ctx(Role::SoloAudit, dir.path());
         let out =
             gated_execute("bash", &json!({ "command": "python3 -c 'print(1)'" }), &r).unwrap();
         assert!(out.is_error && out.text.contains("build hat"), "{out:?}");
         // Other refusals keep the general wording.
         let out = gated_execute("bash", &json!({ "command": "sudo ls" }), &c).unwrap();
         assert!(out.text.contains("outside policy"), "{out:?}");
+    }
+
+    /// The audit hat's write outside its own files is refused with where
+    /// its findings go, and the key that changes code.
+    #[test]
+    fn an_audit_write_is_pointed_at_its_file() {
+        let dir = TempDir::new().unwrap();
+        let mut c = ctx(Role::SoloAudit, dir.path());
+        c.read_only = false;
+        let out = gated_execute("write", &json!({"path": "src/a.rs", "content": "x"}), &c).unwrap();
+        assert!(
+            out.is_error && out.text.contains("findings go in audit.md"),
+            "{out:?}"
+        );
+        assert!(out.text.contains("Shift+Tab"), "{out:?}");
+        let out = gated_execute(
+            "write",
+            &json!({"path": ".ryter/audit.md", "content": "# Audit"}),
+            &c,
+        )
+        .unwrap();
+        assert!(!out.is_error, "{out:?}");
+        assert!(dir.path().join(".ryter/audit.md").exists());
     }
 
     /// Yolo: every question is a yes, the rest of the machine and the
@@ -1305,7 +1403,7 @@ mod tests {
     #[test]
     fn a_refused_container_command_says_what_does_run() {
         let dir = TempDir::new().unwrap();
-        let reviewer = ctx(Role::SoloReview, dir.path());
+        let reviewer = ctx(Role::SoloAudit, dir.path());
         for (cmd, containers) in [
             ("docker compose up -d --wait", true),
             ("cd app && podman-compose build", true),
@@ -1314,7 +1412,7 @@ mod tests {
             let out = gated_execute("bash", &json!({ "command": cmd }), &reviewer).unwrap();
             assert!(out.is_error, "{cmd}: {out:?}");
             assert!(
-                out.text.contains("the review hat can't run commands"),
+                out.text.contains("the audit hat can't run commands"),
                 "{out:?}"
             );
             assert_eq!(

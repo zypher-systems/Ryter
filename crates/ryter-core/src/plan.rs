@@ -11,6 +11,9 @@ use crate::error::{Error, Result};
 
 /// The folder, under the project's top.
 pub const DIR: &str = ".ryter/plans";
+/// The approved plan, at a path every hat knows: the latest one, replaced
+/// by each approval. The dated copies under [`DIR`] are kept.
+pub const FILE: &str = ".ryter/plan.md";
 
 /// The most a plan may be. One the user has to approve is one they can read.
 pub const MAX_BYTES: usize = 64 * 1024;
@@ -301,12 +304,34 @@ pub fn read_own(root: &Path, rel: &str) -> std::io::Result<String> {
 /// Save an approved plan under `root`, on `day` (`YYYY-MM-DD`). Returns the
 /// file. A plan of the same name on the same day gets a number: `-2`, `-3`.
 pub fn save_on(root: &Path, day: &str, title: &str, plan: &str) -> Result<PathBuf> {
-    save_new(
-        root,
-        DIR,
-        &format!("{day}-{}", slug(title)),
-        &document(title, plan),
-    )
+    let text = document(title, plan);
+    let dated = save_new(root, DIR, &format!("{day}-{}", slug(title)), &text)?;
+    // And at the fixed path, which every hat reads (`docs/specialists-design.md`
+    // R-PLAN-01): the latest approval, replaced by the next.
+    write_own(root, FILE, &text)?;
+    Ok(dated)
+}
+
+/// The plan on record in the project when a session has none: [`FILE`] as
+/// a project-relative path, or the dated copy under [`DIR`] with the same
+/// text when there is one, so the decisions recorded under it are found.
+/// `None` when there is no `plan.md`.
+pub fn on_record(root: &Path) -> Option<String> {
+    let text = read_own(root, FILE).ok()?;
+    let dated = std::fs::read_dir(root.join(DIR)).ok().and_then(|dir| {
+        let mut same: Vec<String> = dir
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let rel = format!("{DIR}/{name}");
+                (name.ends_with(".md") && read_own(root, &rel).ok()? == text).then_some(rel)
+            })
+            .collect();
+        // The latest of several, by name (they start with the day).
+        same.sort();
+        same.pop()
+    });
+    Some(dated.unwrap_or_else(|| FILE.to_string()))
 }
 
 /// [`save_on`] today.
@@ -320,6 +345,37 @@ pub fn save(root: &Path, title: &str, plan: &str) -> Result<PathBuf> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// Each approval replaces `plan.md` and adds a dated copy; the plan on
+    /// record is the dated copy with the same text, or `plan.md` alone.
+    #[test]
+    fn the_latest_plan_is_at_a_fixed_path_beside_its_dated_copy() {
+        let root = TempDir::new().unwrap();
+        assert_eq!(on_record(root.path()), None);
+        let first = save_on(root.path(), "2026-10-01", "First", "do a").unwrap();
+        let fixed = root.path().join(FILE);
+        assert_eq!(
+            std::fs::read_to_string(&fixed).unwrap(),
+            std::fs::read_to_string(&first).unwrap()
+        );
+        assert_eq!(
+            on_record(root.path()).as_deref(),
+            Some(".ryter/plans/2026-10-01-first.md")
+        );
+        let second = save_on(root.path(), "2026-10-02", "Second", "do b").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&fixed).unwrap(),
+            std::fs::read_to_string(&second).unwrap()
+        );
+        assert!(first.exists(), "the dated copy is kept");
+        assert_eq!(
+            on_record(root.path()).as_deref(),
+            Some(".ryter/plans/2026-10-02-second.md")
+        );
+        // Edited by hand, or copied in: `plan.md` on its own is the plan.
+        std::fs::write(&fixed, "# By hand\n\nnothing dated matches\n").unwrap();
+        assert_eq!(on_record(root.path()).as_deref(), Some(FILE));
+    }
 
     #[test]
     fn a_plan_is_saved_under_its_day_and_title() {

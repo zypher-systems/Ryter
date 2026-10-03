@@ -636,6 +636,8 @@ These are not decided. Each needs the user's answer before or during the work.
 
 ## 18. What changed in the building
 
+Since 2026-10-03 the rack has two rows and the review hat is the audit hat: see `docs/specialists-design.md`, which wins where the two differ.
+
 Each of these differs from the first draft. The requirement above already says what was
 built; this is the list, with the reason.
 

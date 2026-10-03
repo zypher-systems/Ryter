@@ -11,8 +11,8 @@
                   │›  All hats  grok-4.6             │ model           context   in/M  out/M  reasoning  connection                          │
                   │   Plan      follows all hats     │ grok-4.6           500k     $2     $6  auto       spacexai                            │
                   │   Build     follows all hats     │ grok-4.5           256k     $2     $6  auto       spacexai                            │
-                  │   Review    follows all hats     │ grok-4.3           256k  $1.25   $2.5  auto       spacexai                            │
-                  │                                  │ grok-build-0.1     256k     $1     $2  auto       spacexai                            │
+                  │   Audit     follows all hats     │ grok-4.3           256k  $1.25   $2.5  auto       spacexai                            │
+                  │   Scribe    follows all hats     │ grok-build-0.1     256k     $1     $2  auto       spacexai                            │
                   │                                  │                                                                                       │
                   │                                  │                                                                                       │
                   │                                  │                                                                                       │

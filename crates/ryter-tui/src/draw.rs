@@ -5,6 +5,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
+use ryter_core::Role;
 
 use crate::chat::{layout, wrap};
 use crate::composer::Mode as ComposerMode;
@@ -391,8 +392,46 @@ fn draw_top_bar(frame: &mut Frame, area: Rect, view: &View, theme: Theme, counts
         Span::styled(" RYTER", body.add_modifier(Modifier::BOLD)),
         Span::styled(" │ ", Style::default().fg(theme.faint).bg(bg)),
     ];
-    for (i, hat) in crate::rail::HATS.into_iter().enumerate() {
-        if i > 0 {
+    // The two rows of the rack, a dot between them. Narrower, the row the
+    // user is not in folds to its name and how many of its hats were worn;
+    // narrower still, only the row the user is in.
+    let row_of = |hats: &[Role]| hats.contains(&view.mode);
+    let fold = |hats: &[Role], name: &str| -> Vec<Span<'static>> {
+        let worn = hats.iter().filter(|h| view.rack.worn(**h)).count();
+        let mut v = vec![Span::styled(name.to_string(), dim)];
+        if worn > 0 {
+            v.push(Span::styled(format!(" ·{worn}"), dim));
+        }
+        v
+    };
+    let primary: &[Role] = &crate::rail::PRIMARY;
+    let specialists: &[Role] = &crate::rail::SPECIALISTS;
+    let in_primary = row_of(primary);
+    let (shown, folded): (Vec<Role>, Option<Vec<Span<'static>>>) =
+        if w >= usize::from(crate::rail::BOTH_MIN) {
+            (crate::rail::HATS.to_vec(), None)
+        } else if w >= usize::from(crate::rail::INSTRUMENTS_MIN) {
+            if in_primary {
+                (
+                    primary.to_vec(),
+                    Some(fold(specialists, crate::rail::SEPARATOR_LABEL)),
+                )
+            } else {
+                (specialists.to_vec(), Some(fold(primary, "plan · build")))
+            }
+        } else if in_primary {
+            (primary.to_vec(), None)
+        } else {
+            (specialists.to_vec(), None)
+        };
+    let dot = Span::styled(
+        format!("{gap}·{gap}"),
+        Style::default().fg(theme.faint).bg(bg),
+    );
+    for (i, hat) in shown.iter().copied().enumerate() {
+        if i > 0 && shown[i - 1].row() != hat.row() {
+            left.push(dot.clone());
+        } else if i > 0 {
             left.push(Span::styled(gap, dim));
         }
         let name = crate::rail::hat_name(hat);
@@ -418,6 +457,19 @@ fn draw_top_bar(frame: &mut Frame, area: Rect, view: &View, theme: Theme, counts
             left.push(Span::styled(count, dim));
         } else {
             left.push(Span::styled(format!("{mark} {name}"), dim));
+        }
+    }
+    if let Some(other) = folded {
+        if in_primary {
+            left.push(dot.clone());
+            left.extend(other);
+        } else {
+            // The primary row comes first on the bar, folded or not.
+            let mut front = other;
+            front.push(dot.clone());
+            let tail: Vec<Span<'static>> = left.drain(2..).collect();
+            left.extend(front);
+            left.extend(tail);
         }
     }
     let left_w: usize = left.iter().map(|s| wrap::width(&s.content)).sum();
@@ -1103,6 +1155,15 @@ pub fn hints(view: &View) -> Vec<(String, String)> {
         .collect()
 }
 
+/// What `Shift+Tab` leads to, as the hints say it: the specialists from
+/// the primary row, `plan · build` from the specialists.
+pub fn other_row_label(view: &View) -> String {
+    match view.mode.row() {
+        ryter_core::role::Row::Primary => crate::rail::SEPARATOR_LABEL.to_string(),
+        ryter_core::role::Row::Specialist => "plan · build".to_string(),
+    }
+}
+
 fn hints_static(view: &View) -> Vec<(&'static str, String)> {
     if let Some(until) = view.quit_armed_until {
         if view.now_ms <= until {
@@ -1128,8 +1189,10 @@ fn hints_static(view: &View) -> Vec<(&'static str, String)> {
         return vec![("enter", "save key".into()), ("esc", "cancel".into())];
     }
     let mut v = vec![("enter", "send".to_string())];
-    // The one key that isn't discoverable any other way.
-    v.push(("tab", view.mode.next_hat().as_str().to_string()));
+    // The two keys that aren't discoverable any other way: the next hat in
+    // this row, and the other row.
+    v.push(("tab", view.mode.next_in_row().as_str().to_string()));
+    v.push(("⇧tab", other_row_label(view)));
     v.push(("⇧enter", "newline".into()));
     v.push(("/", "commands".into()));
     if !view.ui.classic() {

@@ -217,26 +217,15 @@ pub fn test_history(home: &Path, model: &str) -> Vec<f64> {
 }
 
 impl Agent {
-    /// `/audit`: the review hat reviews the uncommitted work now, after the
-    /// user agrees to what it should cost. Returns the review, or an empty
-    /// string when none ran.
+    /// `/audit`: the audit hat audits the uncommitted work now, after the
+    /// user agrees to what it should cost. Returns the audit's last words,
+    /// or an empty string when none ran.
     pub async fn review_now(&mut self) -> Result<String> {
-        Ok(self.review(false).await?.0)
-    }
-
-    /// At the end of a build turn that changed files: offer a review, with
-    /// what it would cost, unless the user turned offers off. Saying yes
-    /// runs it; there is no second question. Nothing when there is nothing
-    /// uncommitted to review.
-    pub async fn offer_review(&mut self) -> Result<String> {
-        if !self.offers_reviews() || self.role != Role::SoloBuild {
-            return Ok(String::new());
-        }
-        Ok(self.review(true).await?.0)
-    }
-
-    fn offers_reviews(&self) -> bool {
-        self.cfg.as_ref().is_some_and(|c| c.ui.offer_audit) && self.ctx.user_io.is_some()
+        Ok(self
+            .review_once(false)
+            .await?
+            .map(|(text, _)| text)
+            .unwrap_or_default())
     }
 
     fn say(&mut self, message: impl Into<String>) -> Result<String> {
@@ -260,7 +249,7 @@ impl Agent {
     fn review_job_scoped(&self) -> Result<std::result::Result<Job, String>> {
         let Ok(root) = crate::review::root(&self.ctx.workspace) else {
             return Ok(Err(
-                "a review reads what changed, which needs a git repository".into(),
+                "an audit reads what changed, which needs a git repository".into(),
             ));
         };
         let base = crate::review::head_base(&root);
@@ -268,7 +257,7 @@ impl Agent {
         // decisions are what the review is held against, not part of it.
         let changes = crate::review::changes(&root, &base)?.work();
         if changes.files.is_empty() {
-            return Ok(Err("nothing uncommitted to review".into()));
+            return Ok(Err("nothing uncommitted to audit".into()));
         }
         let paths: Vec<String> = changes.files.iter().map(|f| f.path.clone()).collect();
         let diff = crate::review::diff_within(&root, &changes, &paths, DIFF_CHARS, FILE_CHARS);
@@ -304,9 +293,11 @@ impl Agent {
                 .to_string(),
         };
         format!(
-            "[Ryter] Review the uncommitted changes before they are committed: {} file{}, \
-             +{} −{}. {plan} Start from `git status --short` and `git diff HEAD`. End with \
-             your findings and your verdict.",
+            "[Ryter] Audit the uncommitted changes before they are committed: {} file{}, \
+             +{} −{}. {plan} Start from `git status --short` and `git diff HEAD`. Run \
+             everything the project has: its tests through run_project, its end-to-end \
+             checks, and use the product at its address when there is one. Change nothing; \
+             file your findings with file_audit as your last call.",
             job.files,
             if job.files == 1 { "" } else { "s" },
             job.added,
@@ -314,31 +305,9 @@ impl Agent {
         )
     }
 
-    /// Ask, then run, and offer again for as long as a review ends with the
-    /// build hat changing files (its fixes are new work). `offered`: Ryter
-    /// is offering at the end of a build turn, so a "no" says nothing, and
-    /// the prompt can stop the offers.
-    ///
-    /// Returns the last review, and whether the work stands reviewed: that
-    /// review passed, and nothing was changed after it.
-    async fn review(&mut self, offered: bool) -> Result<(String, bool)> {
-        let mut offered = offered;
-        let mut last = String::new();
-        loop {
-            let before = self.session.changed_turns;
-            let Some((text, verdict)) = self.review_once(offered).await? else {
-                return Ok((last, false));
-            };
-            last = text;
-            let fixed = self.session.changed_turns > before;
-            if !fixed || !self.offers_reviews() || self.role != Role::SoloBuild {
-                return Ok((last, verdict == Some(true) && !fixed));
-            }
-            offered = true;
-        }
-    }
-
-    /// One review, and its verdict: `None` when none ran.
+    /// One audit, and its verdict: `None` when none ran. `offered` is
+    /// always false now that no audit is offered after a build turn; the
+    /// parameter stays for the day one is again.
     async fn review_once(&mut self, offered: bool) -> Result<Option<(String, Option<bool>)>> {
         let job = match self.review_job()? {
             Ok(job) => job,
@@ -346,20 +315,20 @@ impl Agent {
             Err(why) => return self.say(why).map(|_| None),
         };
         let cfg = self.cfg.clone().unwrap_or_default();
-        let (_, model, connection) = self.stack_for(Role::SoloReview);
+        let (_, model, connection) = self.stack_for(Role::SoloAudit);
         let (_, builder, _) = self.stack_for(Role::SoloBuild);
         let local = cfg
             .connections
             .get(&connection)
             .is_some_and(|c| c.is_local());
-        let limit = cfg.spend.review_usd;
+        let limit = cfg.spend.audit_usd;
         let rates = self.book.rates(&model);
         // A limit can't hold a model with no price.
         if !local && limit > 0.0 && rates.is_none() {
             return self
                 .say(format!(
-                    "no review: no price is known for {model}, so your ${limit:.2} review \
-                     limit can't be held to. Give the review hat another model in /models, \
+                    "no audit: no price is known for {model}, so your ${limit:.2} review \
+                     limit can't be held to. Give the audit hat another model in /models, \
                      set its price ([pricing] in config.toml), or turn the limit off in \
                      /settings."
                 ))
@@ -389,7 +358,7 @@ impl Agent {
                 let lo = past.iter().copied().fold(f64::MAX, f64::min);
                 let hi = past.iter().copied().fold(0.0, f64::max);
                 s.push_str(&format!(
-                    "\nyour last {} reviews with it cost {}",
+                    "\nyour last {} audits with it cost {}",
                     past.len(),
                     format_range((lo, hi))
                 ));
@@ -401,15 +370,15 @@ impl Agent {
         let who = if same_model(&model, &builder) {
             format!(
                 "{model} on {connection}, the model that built it\n\
-                 (give the review hat its own in /models for a second opinion)"
+                 (give the audit hat its own in /models for a second opinion)"
             )
         } else {
-            format!("{model} on {connection} (the review hat's model)")
+            format!("{model} on {connection} (the audit hat's model)")
         };
         let summary = format!(
-            "{}{who}\nreviews {} file{}, +{} −{}, read-only\n{cost}",
+            "{}{who}\naudits {} file{}, +{} −{}, read-only\n{cost}",
             if offered {
-                "Review this work before you commit?\n"
+                "Audit this work before you commit?\n"
             } else {
                 ""
             },
@@ -419,7 +388,7 @@ impl Agent {
             job.removed,
         );
         if let Some(io) = self.ctx.user_io.clone() {
-            let tool = if offered { "review offer" } else { "review" };
+            let tool = if offered { "audit offer" } else { "audit" };
             let answer = io.permission(tool, &summary, &self.ctx.cancel);
             if self.ctx.cancel.is_cancelled() {
                 return Ok(None);
@@ -428,7 +397,7 @@ impl Agent {
                 crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {}
                 crate::user_io::Permission::Deny if offered => return Ok(None),
                 crate::user_io::Permission::Deny => {
-                    return self.say("review not run").map(|_| None);
+                    return self.say("audit not run").map(|_| None);
                 }
             }
         }
@@ -437,14 +406,14 @@ impl Agent {
         // comes back when it ends, unless the reviewer asked for another
         // (its fixes, in the build hat) and the user said yes.
         let prior = self.role;
-        if prior != Role::SoloReview {
-            self.wear(Role::SoloReview)?;
+        if prior != Role::SoloAudit {
+            self.wear(Role::SoloAudit)?;
         }
         let from = self.session.transcript.len();
         let spent_from = self.session.spend_log().map_or(0, |l| l.len());
         let brief = self.review_brief(&job);
         let out = self.turn(&brief).await;
-        if self.role == Role::SoloReview && prior != Role::SoloReview {
+        if self.role == Role::SoloAudit && prior != Role::SoloAudit {
             self.wear(prior)?;
         }
         // A turn that failed has said why.
@@ -454,23 +423,25 @@ impl Agent {
         if turn.reason == StopReason::Cancelled {
             return Ok(None);
         }
-        // The verdict is the reviewer's last one: after a FAIL the build
-        // hat may have gone on in the same turn, and its words end it.
-        let said = self
-            .session
-            .transcript
-            .iter()
-            .skip(from)
-            .filter(|m| m.role == "assistant")
-            .filter_map(|m| verdict(&m.content))
-            .next_back();
+        // The verdict: the audit's, filed with `file_audit` or read from its
+        // last words when the turn ended. After a FAIL the build hat may
+        // have gone on in the same turn, and its words end it.
+        let said = self.last_audit_verdict.or_else(|| {
+            self.session
+                .transcript
+                .iter()
+                .skip(from)
+                .filter(|m| m.role == "assistant")
+                .filter_map(|m| verdict(&m.content))
+                .next_back()
+        });
         let reviews: Vec<_> = self
             .session
             .spend_log()
             .unwrap_or_default()
             .into_iter()
             .skip(spent_from)
-            .filter(|r| r.role == Role::SoloReview)
+            .filter(|r| r.role == Role::SoloAudit)
             .collect();
         let total_usd = reviews
             .iter()
@@ -507,7 +478,7 @@ impl Agent {
         let Some(cfg) = &self.cfg else {
             return Fit::Yes;
         };
-        let limit = cfg.spend.review_usd;
+        let limit = cfg.spend.audit_usd;
         let local = cfg
             .connections
             .get(connection)
@@ -529,7 +500,7 @@ impl Agent {
             .unwrap_or(0.0);
         if spent + step > limit {
             return Fit::No(format!(
-                "review stopped at your ${limit:.2} limit: ${spent:.2} spent, and the next \
+                "audit stopped at your ${limit:.2} limit: ${spent:.2} spent, and the next \
                  step is about ${step:.2}. /settings changes the limit."
             ));
         }

@@ -104,8 +104,19 @@ impl Pulse {
 /// Everything the draw path needs.
 #[derive(Debug, Clone)]
 pub struct View {
-    /// The hat the next message goes out in: build, plan, or review.
+    /// The hat the next message goes out in: plan, build, or audit.
     pub mode: ryter_core::Role,
+    /// The primary hat last worn this session: where `Shift+Tab` comes
+    /// back to from the specialists (`docs/specialists-design.md` §3).
+    pub last_primary: ryter_core::Role,
+    /// The specialist last worn this session: where `Shift+Tab` goes.
+    pub last_specialist: ryter_core::Role,
+    /// `.ryter/plan.md` as the guard card says it: its heading, or `None`.
+    pub plan_file: Option<String>,
+    /// `.ryter/audit.md`, the same way.
+    pub audit_file: Option<String>,
+    /// An audit turn is running: the guard card's `audit.md` row says so.
+    pub audit_writing: bool,
     /// Connection name.
     pub connection: String,
     /// Model id.
@@ -258,8 +269,8 @@ pub struct View {
     pub budget_usd: f64,
     /// The cap to restore when the budget is switched back on.
     pub budget_last: f64,
-    /// `[spend] review_usd`: the most one review may spend (0 = no limit).
-    pub review_usd: f64,
+    /// `[spend] audit_usd`: the most one review may spend (0 = no limit).
+    pub audit_usd: f64,
     /// Warn threshold.
     pub warn_usd: f64,
     /// Sandbox profile name.
@@ -439,7 +450,7 @@ impl View {
             unpriced_calls: 0,
             budget_usd: 0.0,
             budget_last: 5.0,
-            review_usd: 0.0,
+            audit_usd: 0.0,
             warn_usd: 1.0,
             sandbox_profile: "off".into(),
             update_mode: ryter_core::config::UpdateMode::default(),
@@ -465,6 +476,11 @@ impl View {
             rack: ryter_core::rack::Rack::default(),
             uncommitted: None,
             workspace: None,
+            last_primary: ryter_core::Role::SoloBuild,
+            last_specialist: ryter_core::Role::SoloAudit,
+            plan_file: None,
+            audit_file: None,
+            audit_writing: false,
             screen: std::cell::Cell::new((0, 0)),
             pulse: Pulse::default(),
         }
@@ -621,6 +637,27 @@ impl View {
     pub fn refresh_uncommitted(&mut self) {
         if let Some(root) = &self.workspace {
             self.uncommitted = ryter_core::review::uncommitted(root).ok();
+            self.plan_file = file_label(&root.join(".ryter/plan.md"));
+            self.audit_file = file_label(&root.join(".ryter/audit.md"));
+        }
+    }
+
+    /// Put on `role`, remembering it as the last hat worn in its row, so
+    /// `Shift+Tab` comes back to it.
+    pub fn set_mode(&mut self, role: ryter_core::Role) {
+        self.mode = role;
+        match role.row() {
+            ryter_core::role::Row::Primary => self.last_primary = role.hat(),
+            ryter_core::role::Row::Specialist => self.last_specialist = role,
+        }
+    }
+
+    /// The hat `Shift+Tab` puts on: the last worn in the other row, or that
+    /// row's default when none was.
+    pub fn other_row_hat(&self) -> ryter_core::Role {
+        match self.mode.row() {
+            ryter_core::role::Row::Primary => self.last_specialist,
+            ryter_core::role::Row::Specialist => self.last_primary,
         }
     }
 
@@ -715,7 +752,42 @@ pub fn role_label(role: &str) -> &str {
 }
 
 /// The hats that can have a model of their own, in the order the work goes.
-pub const HAT_ROLES: &[&str] = &["plan", "build", "review"];
+pub const HAT_ROLES: &[&str] = &["plan", "build", "audit", "scribe"];
+
+/// What the guard card says of a file under `.ryter/`: the day it was
+/// written and its first heading, cut to fit; `None` when it isn't there.
+pub fn file_label(path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let heading = text
+        .lines()
+        .find_map(|l| l.strip_prefix("# "))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let day = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| {
+            ryter_core::clock::stamp_at(d.as_secs(), ryter_core::clock::local_offset())
+                .chars()
+                .take(10)
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+    let slug: String = heading
+        .split_whitespace()
+        .take(3)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    Some(match (day.is_empty(), slug.is_empty()) {
+        (false, false) => format!("{day} {slug}"),
+        (false, true) => day,
+        (true, false) => slug,
+        (true, true) => "there".to_string(),
+    })
+}
 
 /// Shipped model list when `GET /models` is unavailable.
 pub fn fallback_models(kind: &str, default_model: &str) -> Vec<ryter_core::ModelInfo> {
