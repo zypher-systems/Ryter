@@ -39,10 +39,21 @@ class Scoring(unittest.TestCase):
     def test_passing_hidden_tests_does_not_mean_all_hats_succeeded(self):
         row = {'acceptance':[{'exit':0}], 'phases':{
             'plan':{'exit':0}, 'build':{'exit':0},
-            'review':{'exit':0, 'verdict':'PASS'}, 'test':{'exit':0, 'test_pass':False}}}
+            'review':{'exit':1, 'verdict':'PASS'}}}
         score(row)
         self.assertTrue(row['completed'])
         self.assertFalse(row['flow_completed'])
+        row = {'acceptance':[{'exit':0}], 'phases':{
+            'plan':{'exit':0}, 'build':{'exit':0},
+            'review':{'exit':0, 'verdict':'FAIL'}}}
+        score(row)
+        self.assertFalse(row['flow_completed'])
+        row = {'acceptance':[{'exit':0}], 'phases':{
+            'plan':{'exit':0}, 'build':{'exit':0},
+            'review':{'exit':0, 'verdict':'PASS'}}}
+        score(row)
+        self.assertTrue(row['flow_completed'])
+        self.assertFalse(row['false_review_pass'])
 
 
 if __name__ == '__main__':

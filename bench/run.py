@@ -31,15 +31,19 @@ def review_verdict(text):
     return result
 
 
+PHASES = ['plan', 'build', 'review']
+
+
 def score(row):
+    """`completed` is hidden acceptance; `flow_completed` also needs every hat
+    to have finished and the review to have passed. A review that passed work
+    the hidden tests fail is a false pass: how far a review can be trusted."""
     row['completed'] = passed(row['acceptance'])
     review = row['phases'].get('review', {})
-    test = row['phases'].get('test', {})
     row['false_review_pass'] = review.get('verdict') == 'PASS' and not row['completed']
-    row['false_test_pass'] = test.get('test_pass') is True and not row['completed']
-    row['flow_completed'] = (row['completed'] and len(row['phases']) == 4
+    row['flow_completed'] = (row['completed'] and len(row['phases']) == len(PHASES)
                              and all(p['exit'] == 0 for p in row['phases'].values())
-                             and review.get('verdict') == 'PASS' and test.get('test_pass') is True)
+                             and review.get('verdict') == 'PASS')
 
 
 def rescore(report_path, output=None):
@@ -55,7 +59,7 @@ def rescore(report_path, output=None):
             text = ''.join(e['text'] for e in events if e['kind'] == 'token')
             values['verdict'] = review_verdict(text)
         score(row)
-    report['scoring_version'] = 2
+    report['scoring_version'] = 3
     report['rescored_from'] = report_path.name
     output = output or report_path.with_name('report-rescored.json')
     with output.open('x') as stream:
@@ -130,13 +134,10 @@ def simulate_responses(phase, task, spec, broken=False):
         writes = [('write', {'path': str(file.relative_to(task / 'solution')), 'content': file.read_text()})
                   for file in sorted((task / 'solution').rglob('*')) if file.is_file()]
         return [reply('', writes), reply('Reference implementation written by simulated builder.')]
-    if phase == 'review':
-        return [reply('', [('bash', {'command': ' && '.join(spec['checks'])})]),
-                reply('Simulated reviewer verdict; compare against hidden tests.\nVERDICT: PASS')]
+    # The review hat runs the project's checks through the run file the
+    # harness provided, as the design says it may.
     return [reply('', [('run_project', {'action': 'test'})]),
-            reply('', [('report_test', {'title':'Simulated visible checks', 'scenarios':[
-                {'name':'visible checks', 'result':'pass', 'note':'scripted verdict; use tool results as evidence'}]})]),
-            reply('Simulated test complete.')]
+            reply('Simulated reviewer verdict; compare against hidden tests.\nVERDICT: PASS')]
 
 
 def phase_prompt(phase, spec):
@@ -147,11 +148,10 @@ def phase_prompt(phase, spec):
     return scope + {
         'plan': 'Plan this task briefly in your reply; do not call present_plan (this run is headless).\n' + brief,
         'build': 'The user approves the fixture task and its edits. Implement it now, inspect the files and run its checks.\n' + brief,
-        'review': 'Review the changes and run the visible checks. Do not change project files. '
-                  'State what you actually checked, then finish with exactly VERDICT: PASS or VERDICT: FAIL.\n' + brief,
-        'test': 'Use run_project action=test with the fixture run file already provided by the harness. '
-                'Inspect its real result, then file report_test with pass/fail/not_reached honestly. '
-                'Do not propose another run file or use hidden tests.\n' + brief,
+        'review': 'Review the changes and run the visible checks with run_project action=test, '
+                  'using the fixture run file already provided by the harness; do not propose another. '
+                  'Do not change project files. State what you actually checked, then finish with '
+                  'exactly VERDICT: PASS or VERDICT: FAIL.\n' + brief,
     }[phase]
 
 
@@ -199,7 +199,7 @@ mode = "off"
         if trust.returncode:
             return {'error':'fixture trust failed', 'details':trust.stderr, 'usd':0}
     row = {'phases':{}, 'usd':0.0, 'accounting_complete':True, 'mode':args.mode}
-    for index, phase in enumerate(['plan', 'build', 'review', 'test']):
+    for index, phase in enumerate(PHASES):
         if provider:
             provider.responses.extend(simulate_responses(phase, task, spec, args.simulate_broken_build))
         command = [str(args.binary), '--json', '--hat', phase, '--always-approve',
@@ -224,11 +224,15 @@ mode = "off"
             row['accounting_complete'] = False
         tool_results = [event for event in events if event['kind'] == 'tool_result']
         text = ''.join(event['text'] for event in events if event['kind'] == 'token')
-        tested = [event['passed'] for event in events if event['kind'] == 'tested']
+        # Whether the project's own checks were run through the run file
+        # and passed: the evidence a review's verdict should rest on.
+        calls = {event['id']: event for event in events if event['kind'] == 'tool_call'}
+        checks = [not event['is_error'] for event in tool_results
+                  if calls.get(event.get('id'), {}).get('name') == 'run_project']
         row['phases'][phase] = {'exit':result.returncode, 'calls':len(spend),
                                 'tool_errors':sum(event['is_error'] for event in tool_results),
                                 'verdict':review_verdict(text),
-                                'test_pass':tested[-1] if tested else None,
+                                'checks_pass':checks[-1] if checks else None,
                                 'text':text[-4000:]}
         if result.returncode or not row['accounting_complete']:
             row['error'] = f'{phase} stopped; see captured events'
@@ -251,7 +255,7 @@ def main():
     parser.add_argument('--connection', default='openrouter')
     parser.add_argument('--budget', type=float)
     parser.add_argument('--simulate-broken-build', action='store_true',
-                        help='negative control: simulated reviewers/testers pass an unchanged fixture')
+                        help='negative control: the simulated reviewer passes an unchanged fixture')
     args = parser.parse_args()
     if args.rescore:
         return rescore(args.rescore.resolve(), args.output)
@@ -266,7 +270,7 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     report = {'mode':args.mode, 'model':args.model if args.mode == 'live' else None,
               'budget_usd':args.budget, 'negative_control':args.simulate_broken_build, 'total_usd':0.0, 'tasks':{},
-              'scoring_version':2, 'cost_kind':'recorded provider usage' if args.mode == 'live' else 'synthetic fixture accounting; no charge'}
+              'scoring_version':3, 'cost_kind':'recorded provider usage' if args.mode == 'live' else 'synthetic fixture accounting; no charge'}
     tasks = [(p.parent, tomllib.loads(p.read_text())) for p in sorted((ROOT / 'bench').glob('*/task.toml'))
              if not args.task or p.parent.name in args.task]
     if not tasks:
@@ -307,7 +311,7 @@ def main():
     if args.mode == 'simulated':
         runs = [task.get('run', {}) for task in report['tasks'].values()]
         if args.simulate_broken_build:
-            return int(not all(row.get('false_review_pass') and row.get('false_test_pass') for row in runs))
+            return int(not all(row.get('false_review_pass') for row in runs))
         return int(not all(row.get('completed') and not row.get('error') for row in runs))
     return int('stopped' in report)
 

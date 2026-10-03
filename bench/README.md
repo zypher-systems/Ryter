@@ -14,13 +14,14 @@ python3 bench/run.py --mode simulated
 python3 bench/run.py --mode simulated --simulate-broken-build --task pager-off-by-one
 ```
 
-The simulated provider scripts plan/build/review/test turns through the real CLI,
+The simulated provider scripts plan/build/review turns through the real CLI,
 permission gate, filesystem tools, session persistence and spending code. Its
 builder writes reference answers; its verdicts and charges are synthetic. Those
-scores validate the harness, not a model's ability. The broken-builder control
-leaves the fixture unchanged while simulated reviewers/testers claim it passed;
-the hidden checks must identify those false passes. The `runner-script` review
-command is refused by the review hat; its approved Test-hat command does run.
+scores validate the harness, not a model's ability. The simulated reviewer runs
+the project's checks through the run file the harness provides (`run_project`,
+action `test`), as the review hat may. The broken-builder control leaves the
+fixture unchanged while the simulated reviewer claims it passed; the hidden
+checks must identify that false pass.
 
 Live runs are opt-in and use the app's existing configured connection and key.
 The runner never copies credentials. It explicitly selects the model for every
@@ -43,13 +44,13 @@ costs take precedence. No CI job runs live mode.
 
 Plan replies are headless proposals, followed by the harness's explicit build
 instruction. Headless `--always-approve` covers the fixture's run file within the
-Test hat's policy. The complete interactive approval protocol is separately
+review hat's policy. The complete interactive approval protocol is separately
 covered by `agent::tests::acceptance`, including plan approval, review, approved
 run commands, resume, undo/redo, later user edits and commit receipts.
 
 `--task NAME` selects tasks; `--output PATH` chooses a new report directory.
 `report.json` records source hashes, prerequisites, baseline/reference results,
-per-hat outcomes, hidden acceptance, false review/test passes and recorded cost.
+per-hat outcomes, hidden acceptance, false review passes and recorded cost.
 Hidden tests are copied into the live project only after all hats finish. Inspect
 saved phase events to distinguish expected negative checks from harness errors.
 
@@ -84,13 +85,16 @@ number that says how far a review can be trusted.
 
 ## Recorded live result
 
-See [the October 2 acceptance report](../docs/acceptance-2026-10-02.md): six of ten
-implementations passed hidden checks, five completed with both verification hats
-passing, and three incorrect implementations received false passes from each hat.
-The authorized $5 run recorded $0.418755831. No live calls run in CI.
+See [the October 2 acceptance report](../docs/acceptance-2026-10-02.md), made on
+0.12.0 with four hats: six of ten implementations passed hidden checks, five
+completed with both verification hats passing, and three incorrect
+implementations received false passes from each hat. The authorized $5 run
+recorded $0.418755831. Since 0.15.0 there are three hats and the review runs the
+checks; `flow_completed` and the false-pass count are the review's alone. No live
+calls run in CI.
 
 `completed` measures hidden acceptance; `flow_completed` additionally requires all
-four phases to exit successfully and both verification hats to pass. Explicit
+three phases to exit successfully and the review to pass. Explicit
 Markdown verdicts are parsed like the application. Recalculate an existing report
 without executing commands or calling a provider with
 `python3 bench/run.py --rescore PATH/report.json --output NEW_REPORT.json`.
