@@ -24,7 +24,7 @@ x_title = "Ryter"
 connection = "spacexai"
 model = "grok-4.6"
 
-# A hat can have a model of its own: plan, build, review, test. Set them in the TUI
+# A hat can have a model of its own: plan, build, review. Set them in the TUI
 # (/models), or uncomment:
 # [specialists.review]
 # connection = "openrouter"
@@ -55,10 +55,9 @@ timestamps = true          # HH:MM on speaker headers (the ledger: beside each q
 line_numbers = true        # gutter in code blocks
 receipts = true            # /commit adds a `Ryter:` trailer: model, cost, tests
 offer_audit = true         # after a build turn that changed files, offer a review (asks first, shows the cost)
-offer_test = true          # after a review that passed, offer a test of the running product (asks first, shows the cost)
 open_pages = true          # open a page the model shows (show_page) in your browser; off, you get the link only
 
-# What the build and test hats ask about, as your own rules. Shipped, the work
+# What the build hat asks about, as your own rules. Shipped, the work
 # runs (edits, toolchains, scripts, containers, git commit) and a question is
 # kept for deleting, discarding work in git, publishing, and writing outside the
 # project, scratch space and your home folder. A rule moves any of those, either

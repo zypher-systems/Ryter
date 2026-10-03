@@ -183,8 +183,6 @@ pub struct UiConfig {
     pub receipts: bool,
     /// After a build turn that changed files, offer an audit (`/audit`).
     pub offer_audit: bool,
-    /// After a review that passed, offer a test (`/test`).
-    pub offer_test: bool,
     /// `ledger` (one reading column on a timeline, status in the bottom
     /// bar) | `classic` (chat beside the info cards, as before 0.6.0).
     pub layout: String,
@@ -218,7 +216,6 @@ impl Default for UiConfig {
             line_numbers: true,
             receipts: true,
             offer_audit: true,
-            offer_test: true,
             layout: "ledger".into(),
             open_pages: true,
             start_hat: "plan".into(),
@@ -239,6 +236,7 @@ pub const UI_KEYS: &[&str] = &[
     "line_numbers",
     "receipts",
     "offer_audit",
+    // Retired with the test hat; a settings file that still has it loads.
     "offer_test",
     "layout",
     "open_pages",
@@ -766,7 +764,7 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
 }
 
 /// The hats that can have a model of their own, as `specialists` names them.
-pub const HAT_ROLES: &[&str] = &["plan", "build", "review", "test"];
+pub const HAT_ROLES: &[&str] = &["plan", "build", "review"];
 
 /// `~/.ryter/hats.toml`: the model each hat runs on, where it has its own.
 pub fn hats_path(home: &Path) -> PathBuf {
@@ -1211,8 +1209,6 @@ struct UiFile {
     #[serde(skip_serializing_if = "Option::is_none")]
     offer_audit: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    offer_test: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     layout: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     open_pages: Option<bool>,
@@ -1235,7 +1231,6 @@ impl From<&UiConfig> for UiFile {
             line_numbers: Some(ui.line_numbers),
             receipts: Some(ui.receipts),
             offer_audit: Some(ui.offer_audit),
-            offer_test: Some(ui.offer_test),
             layout: Some(ui.layout.clone()),
             open_pages: Some(ui.open_pages),
             start_hat: Some(ui.start_hat.clone()),
@@ -1278,9 +1273,6 @@ impl UiFile {
         }
         if let Some(v) = self.offer_audit {
             ui.offer_audit = v;
-        }
-        if let Some(v) = self.offer_test {
-            ui.offer_test = v;
         }
         if let Some(v) = self.layout {
             ui.layout = v;
@@ -1953,7 +1945,7 @@ mod tests {
             assert!(!cfg.ui.watermark);
             assert!(cfg.warnings.is_empty(), "{hat}: {:?}", cfg.warnings);
         }
-        // The test hat needs something to test; a typo is not a hat.
+        // Test is no hat any more; a typo is not a hat.
         for bad in ["test", "bulid"] {
             let cfg = load(&format!("[ui]\nstart_hat = \"{bad}\"\n"));
             assert_eq!(cfg.ui.start_hat, "plan", "{bad}");

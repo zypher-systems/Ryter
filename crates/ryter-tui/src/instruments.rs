@@ -40,7 +40,6 @@ fn short_count(n: u64) -> String {
 pub fn hat_may(hat: Role, condensed: bool) -> &'static str {
     match hat {
         Role::SoloPlan | Role::SoloReview => "read only",
-        Role::SoloTest => "changes nothing",
         Role::SoloBuild | Role::Crew if condensed => "asks first",
         Role::SoloBuild | Role::Crew => "edits ask first",
     }
@@ -153,14 +152,8 @@ fn context(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>>
     let pct = format!(" {}%", (frac * 100.0).round() as u32);
     let cells = w.saturating_sub(wrap::width(&pct));
     let filled = ((frac * cells as f64).round() as usize).min(cells);
-    // The tester's conversation fills on its own.
-    let own = if view.mode == Role::SoloTest && w >= 30 {
-        vec![Span::styled("its own conversation", dim)]
-    } else {
-        Vec::new()
-    };
     vec![
-        ends(vec![heading("CONTEXT", theme, bg)], own, w, bg),
+        ends(vec![heading("CONTEXT", theme, bg)], Vec::new(), w, bg),
         Line::from(vec![
             Span::styled(
                 "━".repeat(filled),

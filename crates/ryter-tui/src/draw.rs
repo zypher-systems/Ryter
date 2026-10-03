@@ -322,31 +322,21 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         width: col_w,
         ..r
     };
-    // Whose conversation this is, when it is the tester's.
-    let thread = thread_line(view, theme, usize::from(col_w));
-    let thread_h = u16::from(thread.is_some());
-    let below = main.height.saturating_sub(thread_h + comp_h);
+    let below = main.height.saturating_sub(comp_h);
     let activity_h = activity::height(view, below).min(below.saturating_sub(6));
     let parts = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(thread_h),
             Constraint::Min(4),
             Constraint::Length(activity_h),
             Constraint::Length(comp_h),
         ])
         .split(main);
-    let comp = parts[3];
-    if let Some(line) = thread {
-        frame.render_widget(
-            Paragraph::new(line).style(Style::default().bg(theme.bg)),
-            column(parts[0]),
-        );
-    }
-    let chat = column(parts[1]);
+    let comp = parts[2];
+    let chat = column(parts[0]);
     let cf = draw_chat(frame, chat, view, theme);
     if view.ui.watermark {
-        crate::watermark::draw(frame, parts[1], view.mode, theme);
+        crate::watermark::draw(frame, parts[0], view.mode, theme);
     }
     if view.panels.is_empty() {
         let gutter = Rect {
@@ -621,33 +611,6 @@ fn draw_status_line(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     );
 }
 
-/// The line over the tester's conversation: `TEST THREAD · tab: main chat`.
-/// `None` for the conversation the other hats share, which needs no name.
-fn thread_line(view: &View, theme: Theme, width: usize) -> Option<Line<'static>> {
-    if view.shown != ryter_core::Thread::Test {
-        return None;
-    }
-    let dim = Style::default().fg(theme.dim).bg(theme.bg);
-    let name = "TEST THREAD";
-    let rest = match view.test_runs {
-        0 => " · its own conversation · tab: main chat".to_string(),
-        1 => " · 1 run this session · tab: main chat".to_string(),
-        n => format!(" · {n} runs this session · tab: main chat"),
-    };
-    let rest = rest.as_str();
-    let rest = wrap::truncate(rest, width.saturating_sub(wrap::width(name)));
-    Some(Line::from(vec![
-        Span::styled(
-            name,
-            Style::default()
-                .fg(theme.mode(ryter_core::Role::SoloTest))
-                .bg(theme.bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(rest, dim),
-    ]))
-}
-
 /// Which view the ledger is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LedgerView {
@@ -691,12 +654,7 @@ fn draw_view_strip(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     };
     let mut spans = vec![Span::styled(" ", dim)];
     spans.extend(tab(
-        // The tester's conversation is named; the shared one is "chat".
-        if view.shown == ryter_core::Thread::Test {
-            "test thread"
-        } else {
-            "chat"
-        },
+        "chat",
         if now == LedgerView::Changes {
             "esc"
         } else {

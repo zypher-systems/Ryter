@@ -68,12 +68,8 @@ fn placeholder(view: &View) -> String {
                 "what should we plan? · Tab: build · / for commands".into()
             }
             ryter_core::Role::SoloReview => {
-                "ask about the review · Tab: test · / for commands".into()
+                "ask about the review · Tab: plan · / for commands".into()
             }
-            ryter_core::Role::SoloTest => match view.retest {
-                Some(n) => format!("what should be tried? or: retest {n} · Tab: plan"),
-                None => "what should be tried? · Tab: plan · / for commands".into(),
-            },
         },
         Mode::Secret { connection } => format!("paste the API key for {connection}"),
         Mode::Field { label } => format!("type {label}…"),

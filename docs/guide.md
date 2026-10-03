@@ -1,6 +1,6 @@
 # Ryter user guide
 
-Ryter is a Bring-Your-Own-Key terminal coding harness. One model works in your project, with you. It wears one of four hats at a time (**plan**, **build**, **review**, **test**), and each hat can run on a model of its own.
+Ryter is a Bring-Your-Own-Key terminal coding harness. One model works in your project, with you. It wears one of three hats at a time (**plan**, **build**, **review**), and each hat can run on a model of its own.
 
 Linux is the first platform. Release binaries also support macOS; Landlock requires Linux. Windows is not currently supported.
 
@@ -97,10 +97,10 @@ ryter models [connection]
 
 `ryter` on a tty opens the TUI in the **ledger** layout (`[ui] layout = "ledger"`, the default since 0.6.0).
 
-The hat that is on sets the screen's one accent color: plan is cyan, build green, review amber, test violet. Everything else stays the same under every hat. A fedora in that color sits faintly behind the conversation (`[ui] watermark = false`, or *watermark* in `/settings`, turns it off; it is left out on 16-color and no-color terminals).
+The hat that is on sets the screen's one accent color: plan is cyan, build green, review amber. Everything else stays the same under every hat. A fedora in that color sits faintly behind the conversation (`[ui] watermark = false`, or *watermark* in `/settings`, turns it off; it is left out on 16-color and no-color terminals).
 
-- **The bar across the top** names the four hats in the order `Tab` goes round them. The hat that is on is a filled chip marked `◆`; a hat that has had a turn this session is marked `●` in its own color, and one that hasn't is `○`. The bar says which hats have been worn, not an order to wear them in. Then the session's title, the folder and the branch.
-- **The hat rack** runs down the left (screens 132 columns and wider). It has one block a hat, always the same four in the same place: the hat's model, how many turns it has had this session and what it has cost, and the figures that are its own. Plan: plans approved and rejected. Build: files and lines it changed in the session, and the latest run of the project's tests as three rows, `success`, `warning` (skipped or ignored) and `failure`. Review: verdicts, passed and failed. Test: the tester's checks, as the same three rows (a scenario not reached is a warning). A hat with no turns yet says `not worn yet`. The block of the hat that is on is tinted.
+- **The bar across the top** names the three hats in the order `Tab` goes round them. The hat that is on is a filled chip marked `◆`; a hat that has had a turn this session is marked `●` in its own color, and one that hasn't is `○`. The bar says which hats have been worn, not an order to wear them in. Then the session's title, the folder and the branch.
+- **The hat rack** runs down the left (screens 132 columns and wider). It has one block a hat, always the same three in the same place: the hat's model, how many turns it has had this session and what it has cost, and the figures that are its own. Plan: plans approved and rejected. Build: files and lines it changed in the session, and the latest run of the project's tests as three rows, `success`, `warning` (skipped or ignored) and `failure`. Review: verdicts, passed and failed. Test: the tester's checks, as the same three rows (a scenario not reached is a warning). A hat with no turns yet says `not worn yet`. The block of the hat that is on is tinted.
 - **The instruments** run down the right (100 columns and wider): the model your next message goes to, its connection and reasoning level; the context gauge with tokens used of the window; the **pulse**, how many tokens a second the model is writing, with the last eight seconds as bars, `idle` between turns; **spend** for the session and for the project, and the budget; the sandbox and what this hat may do; and what is **uncommitted**, a file a line.
 - **The prompt** sits under a rule in the hat's color, after the hat's name as a chip, the width of the conversation's column. The keys that matter now are on the last row.
 
@@ -197,58 +197,23 @@ ryter -c -p "continue"               # continue the latest session
 
 ## Hats
 
-One model works in your project, in the plan hat to start with. `Tab` switches its hat in the order the work goes (plan → build → review → test, then round to plan), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. The bar across the top, the hat rack, the prompt's chip and its rule all show the hat in its own color.
+One model works in your project, in the plan hat to start with. `Tab` switches its hat in the order the work goes (plan → build → review, then round to plan), `Shift+Tab` goes back, and `/build`, `/plan`, `/review` jump to one. The bar across the top, the hat rack, the prompt's chip and its rule all show the hat in its own color.
 
-**The hat a session starts in** is `[ui] start_hat`, also *start in* at the top of `/settings`: `plan` (the default: read and propose first), `build` (straight to work), `review` (open on a critique), or `last` (the hat this project's most recent session ended in; plan when there is none, or when that was the test hat, which needs something to test). A resumed session opens in the hat it was left in. `ryter --hat build` opens in that hat for one run, whatever the setting. `/new` keeps the hat you are in. Headless runs (`ryter -p`) are not affected: they are in the build hat unless `--hat` says otherwise. A switch applies to your next message. The model can also offer a switch itself: after a review ("fix these?") it asks with a yes/no prompt, and on `y` it carries on in the new hat in the same turn. A plan has its own panel, below.
+**The hat a session starts in** is `[ui] start_hat`, also *start in* at the top of `/settings`: `plan` (the default: read and propose first), `build` (straight to work), `review` (open on a critique), or `last` (the hat this project's most recent session ended in; plan when there is none). A resumed session opens in the hat it was left in. `ryter --hat build` opens in that hat for one run, whatever the setting. `/new` keeps the hat you are in. Headless runs (`ryter -p`) are not affected: they are in the build hat unless `--hat` says otherwise. A switch applies to your next message. The model can also offer a switch itself: after a review ("fix these?") it asks with a yes/no prompt, and on `y` it carries on in the new hat in the same turn. A plan has its own panel, below.
 
 | Hat | May | May not |
 | --- | --- | --- |
 | **build** | edit files and run commands. Edits, your toolchains, scripts, inline code, the project's containers and ordinary git run without asking; what deletes, throws work away in git, publishes or leaves the machine asks (see "What asks") | read secrets, run a shell handed a command as text, gain privilege |
 | **plan** | read, search, run read-only commands, and show you a plan to approve | edit source, run anything that changes the project |
-| **review** | read, run the tests and linters, read-only git | write anything, not even by redirect; install, format, or fix |
-| **test** | start the product, run its tests and use it: everything the build hat runs without asking, and requests to the project's own address (`curl localhost:8000/…`); scratch space and your home folder are its to write | edit, write, download into, delete or move anything in the project |
+| **review** | read, run the tests and linters, read-only git, and start and use the product through the run file | write anything, not even by redirect; install, format, or fix |
 
-**A model for each hat.** Every hat runs on one model until you give a hat its own. `/models` lists the seats on the left: *All hats*, then *Plan*, *Build*, *Review* and *Test*, each showing its model or "follows all hats". Pick a seat, pick a model, `⏎`, and the cursor moves to the next seat, so one visit sets them all. To put a hat back, choose `default` at the top of its list. The choice is kept in `~/.ryter/hats.toml`.
+**A model for each hat.** Every hat runs on one model until you give a hat its own. `/models` lists the seats on the left: *All hats*, then *Plan*, *Build* and *Review*, each showing its model or "follows all hats". Pick a seat, pick a model, `⏎`, and the cursor moves to the next seat, so one visit sets them all. To put a hat back, choose `default` at the top of its list. The choice is kept in `~/.ryter/hats.toml`.
 
 - **Where it shows:** the hat rack names each hat's model, and the instruments (or the status line on a narrow screen) name the one your next message goes to, which is the current hat's.
 - **What a switch costs:** the hats share one conversation. A model that hasn't read it yet reads all of it at the full price the first time, and Ryter says so in the chat as it happens: "review hat · grok-4.7 re-reads 42k tokens, about $0.13". Nothing stops; the line is there so the cost isn't a surprise. Going back to a model that has read the conversation costs the same again if its provider's cache has lapsed.
 - **A use for it:** a strong model for the plan, a cheaper one to build it, and a different one to review, so the review isn't the model that built it marking its own work.
 
-**The test hat has a conversation of its own.** The plan, build and review hats share one conversation. The tester doesn't read it: it judges the product from the plan, the decisions and from using it, not from the builder's account of the work.
-
-- **`Tab` to Test** and the chat shows the tester's thread, under a line that names it ("TEST THREAD"). `Tab` away and the shared conversation is back as you left it. Each keeps its own scroll position and its own context gauge.
-- **It continues through the session.** The tester remembers what it tried before, so "retest the health check" works. Both conversations are saved, and both come back when you resume the session.
-- **A turn stays in its own conversation.** You can look at the main chat while a test runs, or at the tester's thread while a build does: what a running turn says goes to the conversation it is part of. The model can't switch into or out of the test hat in the middle of a turn; that is yours to do with `Tab`.
-- **It makes nothing in the project either:** `touch`, `mkdir` and `cp` into the project are refused, as edits are.
-- **What it may run:** what the build hat runs without asking (your toolchains, the project's programs, its containers), plus requests to the project's own address: `curl` to `localhost`, `127.0.0.1` or a `.localhost` name, saving only to `/tmp` or your home folder. What the build hat asks about, it asks about. It can't edit, delete or move the project's files, and a redirect into the project is refused.
-- **Its own model:** the *Test* seat in `/models`. Starting a test thread on a different model costs nothing extra, since there is no conversation for it to re-read.
-
-**A test, and its report.** A test is the test hat using the product: it starts it, runs its tests, tries each scenario the plan says to verify, and files a report.
-
-- **Offered after a review that passed.** `⏎` runs it, `n` passes, `s` stops the offers (`/settings` → *test offers*, or `[ui] offer_test`, turns them back on). **`/test`** asks for one at any time.
-- **Every test asks first,** naming the model, what it will do, and a cost range; after a few tests, also what your last ones with that model cost. A test is longer than a review, so its range is wider. There is no separate limit for a test: your session budget holds it.
-- **What the tester starts from:** the plan you approved and its entries in `.ryter/decisions.md`, the files that changed, the run file, and its own last report. Not the conversation.
-- **The report comes back as a card** in the main conversation. A pass is one line; a failure is opened out with what was expected, what happened, and how to see it again:
-
-  ```
-  ▣  test · kimi-k3 · ✗ 2 of 5 failed · 1:40 · $0.21
-  │  ✓ 1  the stack starts and is healthy
-  │  ✗ 3  /manage/ after login
-  │       expected the page list
-  │       got 500: NoReverseMatch 'pages:list'
-  │       to see it: start the stack, log in, open /manage/
-  │  ✗ 4  publish a page · not reached (needs 3)
-  │  full report  .ryter/tests/2026-10-01-cms-2.md
-  ```
-
-  The model you build with is given the same report, so "fix 3" works. The tester's working (its commands, logs and dead ends) stays in its own thread.
-- **The full report is a file** in `.ryter/tests/`, named for the day and the plan. An earlier report is never written over: a second one that day is `-2`.
-- **A failed test offers its fixes** in the build hat. Say yes and the builder works from the report. The fixes are new work, so a review of them is offered, and a test after that.
-- **You can ask the tester yourself.** In the test hat, "retest 3" or "try the upload with a large file" is a message like any other; a report it files lands in the main conversation the same way.
-- **The commit says whether the work was tested:** the receipt ends with "test ✓ kimi-k3", "test ✗ kimi-k3", "not tested", or "not tested after the last change".
-- **Ryter's own files are not the work.** Plans, decisions, the run file and test reports are in the project, but a review doesn't read them as changes, and writing one doesn't make a review or a test out of date.
-
-**How a project runs: `.ryter/run.toml`.** The tester needs four things from a project: the command that starts it, an address that answers once it is up, its test commands, and the command that stops it.
+**How a project runs: `.ryter/run.toml`.** The build and review hats can start the product, run its tests and stop it through one file, with commands you approved once: the command that starts it, an address that answers once it is up, its test commands, and the command that stops it. The model asks for it with `run_project`; the plan hat starts nothing.
 
 ```toml
 start = "docker compose up -d --wait"
@@ -260,20 +225,20 @@ test  = [
 stop  = "docker compose down"
 ```
 
-- **The model drafts it, you approve it.** The first time the tester needs it, it reads the project and proposes the commands in a panel: `y` approves and saves the file, `e` says what to change, `n` rejects. Leave out what the project doesn't have.
+- **The model drafts it, you approve it.** The first time a hat needs it, it reads the project and proposes the commands in a panel: `y` approves and saves the file, `e` says what to change, `n` rejects. Leave out what the project doesn't have.
 - **You are shown every word.** A command longer than the panel wraps under itself, and `y` is taken only once the last row has been on screen: what you approve here runs without another question. A command that deletes or discards something is pointed out above the list.
 - **Ryter runs what you approved, itself.** Starting waits for HTTP 200–399 from `ready`, for up to five minutes. HTTPS performs normal TLS certificate verification. A TCP connection or a 401/404 is not ready. If the address is already occupied, stop that service or choose another address before starting. A start command that stays in the foreground (`npm run dev`, `cargo run`) is kept running by Ryter; through the shell tool it would be cut off when the command didn't return.
 - **Approval is of what you were shown.** Quoted spaces and line breaks in commands survive saving and reloading unchanged. Approval is kept in `~/.ryter/run-approved.toml`, not in the project. A run file that came with a clone, or that anyone changed since (you, the model, a `git pull`), is shown to you again before anything in it runs, and a file rewritten while you were reading is not the one you approved.
 - **It is the project's own file, or it is not read.** Ryter writes the run file, and its plans, decisions and reports, into the project and never through a link: a project that arrives with a link where one of those files goes has the link replaced, not followed, and a link there is not read either.
-- **Limits:** a command Ryter runs for nobody (`sudo`, inline code) can't be in it, and `ready` has to be an address on this machine. Only the test hat runs these commands.
-- **Headless** (`ryter -p --hat test`), nobody can approve anything, so the model can't save a run file. One you wrote yourself runs with `--always-approve`, as far as that flag reaches in the test hat: nothing outside the project, nothing that deletes or rewrites the project's files. It is not recorded as approved, so the TUI still asks.
+- **Limits:** a command Ryter runs for nobody (`sudo`, inline code) can't be in it, and `ready` has to be an address on this machine. A `stop` of `pkill -f name` written out is refused with the fix: the pattern matches the shell that runs it.
+- **Headless** (`ryter -p`), nobody can approve anything, so the model can't save a run file. One you wrote yourself runs with `--always-approve`, as far as that flag reaches in the build hat: nothing outside the project, scratch space and your home folder. It is not recorded as approved, so the TUI still asks.
 - **A start that doesn't come up is taken down again.** If startup exits with an error, `ready` never answers, or you press `esc`, Ryter runs the approved stop command and ends its owned process group. If cleanup or `/stop` fails, the record stays available for retry, including after resume. Retry `/stop` before starting it again.
 
-**The product is left running.** After a test the product stays up, so you can look at what the tester saw. The chat says where it is.
+**The product is left running.** After `run_project` starts it, the product stays up, so you can look at it yourself. The chat says where it is.
 
-- **`/stop`** stops it: the `stop` command, or, when the file has none, ending the start command Ryter is holding. A `stop` of `pkill -f name` matches the shell that runs it and ends that too; Ryter counts that as the stop working, and the tester is told to write the pattern as `[n]ame` when it proposes one. A `stop` corrected in the run file after a failed cleanup is the one the retry uses.
+- **`/stop`** stops it: the `stop` command, or, when the file has none, ending the start command Ryter is holding. A `stop` of `pkill -f name` matches the shell that runs it and ends that too; Ryter counts that as the stop working, and the model is told to write the pattern as `[n]ame` when it proposes one. A `stop` corrected in the run file after a failed cleanup is the one the retry uses.
 - **Quitting asks.** With the product still up, `^c` shows "stop the project?": `⏎` stops it and leaves, `n` leaves it running, `esc` stays.
-- **A later session knows.** Left running, it is remembered: the next session in that project says so, the tester doesn't start it a second time, and `/stop` there runs the `stop` command. A start command left running with no `stop` command is yours to end; Ryter gives you its process number and doesn't end a process it can't be sure is the one it started.
+- **A later session knows.** Left running, it is remembered: the next session in that project says so, `run_project` doesn't start it a second time, and `/stop` there runs the `stop` command. A start command left running with no `stop` command is yours to end; Ryter gives you its process number and doesn't end a process it can't be sure is the one it started.
 - **Only what Ryter started.** It never stops containers or processes it didn't start, and never removes volumes unless your `stop` command says to.
 
 **Approving a plan.** When the model has a plan, it shows it in a panel instead of writing it into the chat: the goal, the steps, the files, the risks, and how to verify it. `↑`/`↓` and `PgUp`/`PgDn` scroll a long one. You answer:
@@ -319,7 +284,7 @@ stop  = "docker compose down"
 
 **What the chat shows.** The model narrates as it works: what it's doing next and why, each choice between approaches with its reason, and what it thinks went wrong when something fails. Each tool step shows what came of it, measured by Ryter: `new · 48 lines`, `rewrote · 76 lines (was 89)`, an edit's changed lines, `✓ 13 passed`, or `✗ exit 1` with the cause. Reads fold into one line, and a divider closes each turn that did work (`6 files (3 new, 3 changed, +153 −15) · 9 commands (9 ok) · 2:41`).
 
-**What asks, in the build and test hats.** The work runs: edits, your toolchains, scripts wherever they are, inline code (`python3 -c`, a heredoc to `node`), system programs (`mkdir`, `cp`, `mv`, `chmod`, `sed -i`), the project's containers, `git commit`, and a command Ryter has never heard of. A checkpoint before each build turn is what `/undo` comes back to. A question is kept for what no checkpoint undoes:
+**What asks, in the build hat.** The work runs: edits, your toolchains, scripts wherever they are, inline code (`python3 -c`, a heredoc to `node`), system programs (`mkdir`, `cp`, `mv`, `chmod`, `sed -i`), the project's containers, `git commit`, and a command Ryter has never heard of. A checkpoint before each build turn is what `/undo` comes back to. A question is kept for what no checkpoint undoes:
 
 - **Deleting:** `rm`, `rmdir`, `truncate`, `find -delete`, `find -exec`, and the volumes of a stack (`docker compose down -v`, `docker volume rm`, any `prune`).
 - **Throwing work away in git:** `git reset --hard`, `git clean`, `git checkout -- <path>`, `git restore`, `git stash drop`, `git branch -D`.
@@ -328,7 +293,7 @@ stop  = "docker compose down"
 - **The project's `.env`:** the build hat may write or copy one into being, asked every time (see "Safety").
 - **A path only the shell can read:** `cat "$FILE"`, files handed over by `xargs`, a `cd "$DIR"` and everything after it. The gate can't see where it leads. `$PWD`, `$(pwd)` and `$HOME` it reads.
 
-Refused in every hat, whatever is answered: reading a secret or a credential folder, `sudo` and its kind, a shell handed a command as text (`bash -c`, `sh <<<`, a pipe into `sh`), and rewiring the shell (`alias`, `HOME=`, `IFS=`, a coprocess). A variable that gives a program something else to load (`LD_PRELOAD`, `PATH=/tmp:$PATH`, `NODE_OPTIONS='--require …'`, `RUSTC_WRAPPER`, `DOCKER_HOST`) asks in the build and test hats and is refused in the others. Ordinary variables run: `NODE_ENV=test`, `DATABASE_URL=…`, `RUST_BACKTRACE=1`, `PATH="$HOME/.cargo/bin:$PATH"`.
+Refused in every hat, whatever is answered: reading a secret or a credential folder, `sudo` and its kind, a shell handed a command as text (`bash -c`, `sh <<<`, a pipe into `sh`), and rewiring the shell (`alias`, `HOME=`, `IFS=`, a coprocess). A variable that gives a program something else to load (`LD_PRELOAD`, `PATH=/tmp:$PATH`, `NODE_OPTIONS='--require …'`, `RUSTC_WRAPPER`, `DOCKER_HOST`) asks in the build hat and is refused in the others. Ordinary variables run: `NODE_ENV=test`, `DATABASE_URL=…`, `RUST_BACKTRACE=1`, `PATH="$HOME/.cargo/bin:$PATH"`.
 
 **Your own rules.** `[permissions]` in `~/.ryter/config.toml` moves any of the asks above, either way, short of a refusal. It is read from your own file only: a project's `.ryter/config.toml` can set its models and its budget, not what the gate asks about, so a repository can't widen the gate for itself.
 
@@ -373,7 +338,7 @@ A toolchain runs the project's code: `cargo build` runs its build script and `np
 
 What the shell is told to read another way, the gate can't read at all, and refuses in every hat: setting `HOME`, `IFS`, `CDPATH`, `GLOBIGNORE` or `BASH_ENV`; `shopt`, `alias`, `hash`, `trap` and `enable`; a named coprocess; and `env -C`, which runs a command in another folder.
 
-What the gate can read but not see through (a path in a variable, files handed over by `xargs`) is a question in the build and test hats and refused in plan and review. "Allow all", `--always-approve` and `--yolo` answer that question yes in advance, as they do any other.
+What the gate can read but not see through (a path in a variable, files handed over by `xargs`) is a question in the build hat and refused in plan and review. "Allow all", `--always-approve` and `--yolo` answer that question yes in advance, as they do any other.
 
 **Outside the project.** Scratch space (`/tmp`, `/var/tmp` and your system's temporary folder) is open to every hat, to read and to write, without a question. Your home folder, where tools keep their caches, configuration and builds, is open to every hat to read, and to the build and test hats to write.
 
@@ -713,10 +678,9 @@ If an interrupted append leaves a torn final record, resume keeps the valid hist
 ~/.ryter/sessions/<cwd-slug>/<id>/
   meta.json
   events.jsonl
-  transcript.jsonl # the conversation the plan, build and review hats share
-  test.jsonl       # the test hat's own conversation, once it has one
+  transcript.jsonl # the conversation
   spend.jsonl
-  notes/           # the plan hat's notes, and project.log: the output of a product the tester started
+  notes/           # the plan hat's notes, and project.log: the output of a product run_project started
 ```
 
 A session saved in crew mode, before it was removed, still opens: its conversation and its spend are there, and it carries on in the build hat.
@@ -734,7 +698,7 @@ No SQLite. `ryter spend` uses the latest session for this directory.
 ## Repeatable acceptance checks
 
 From a source checkout, `cargo test --workspace` includes a complete simulated
-plan → build → review → test flow with approval, resume, undo/redo and commit
+plan → build → review flow with approval, resume, undo/redo and commit
 receipts. After building the CLI, `python3 scripts/acceptance.py` checks real CLI
 processes against an isolated loopback provider, including spending, interrupted
 streams, recovery and permission refusals. These checks spend no provider credit.

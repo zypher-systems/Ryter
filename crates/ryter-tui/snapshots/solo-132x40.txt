@@ -1,4 +1,4 @@
- RYTER │ ● PLAN    ◆ BUILD    ● REVIEW   ○ TEST                   empty-query fix                   ~/workspace/shop · search-patch
+ RYTER │ ● PLAN    ◆ BUILD    ● REVIEW                       empty-query fix                        ~/workspace/shop · search-patch
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                              │         ●  search returns e… ···· ✓ answered · 1.2s · $0.004  ▸    │
  HAT RACK                    │         ●  build the plan ······· ✓ answered · 2 files (1 n…  ▸    │ MODEL
@@ -22,9 +22,9 @@
    1 turn             $0.040 │         │     9 +   assert.deepEqual(await search(), [])           │ sandbox               workspace
    verdicts         ✗ 1 fail │         │    10 + })                                               │ this hat        edits ask first
                              │         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0…    │
- ○ TEST                      │  ▄▄                                                            ▄▄  │ CHANGES             uncommitted
-   grok-4.6                  │  ▀                                                              ▀  │ app/server.js             +2 −1
-   not worn yet              │      ▀▀▀▀▀▀                                            ▀▀▀▀▀▀      │ test/search.test.js         new
+                             │  ▄▄                                                            ▄▄  │ CHANGES             uncommitted
+                             │  ▀                                                              ▀  │ app/server.js             +2 −1
+                             │      ▀▀▀▀▀▀                                            ▀▀▀▀▀▀      │ test/search.test.js         new
                              │                    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                    │
                              │                                                                    │
                              │                                                                    │

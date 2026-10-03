@@ -22,12 +22,7 @@ pub const BOTH_MIN: u16 = 132;
 /// Narrowest screen that shows the instruments.
 pub const INSTRUMENTS_MIN: u16 = 100;
 /// The hats, in the order `Tab` goes round them.
-pub const HATS: [Role; 4] = [
-    Role::SoloPlan,
-    Role::SoloBuild,
-    Role::SoloReview,
-    Role::SoloTest,
-];
+pub const HATS: [Role; 3] = [Role::SoloPlan, Role::SoloBuild, Role::SoloReview];
 
 /// What a screen of some width has room for beside the conversation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,7 +51,6 @@ pub fn hat_name(hat: Role) -> &'static str {
     match hat {
         Role::SoloPlan => "PLAN",
         Role::SoloReview => "REVIEW",
-        Role::SoloTest => "TEST",
         Role::SoloBuild | Role::Crew => "BUILD",
     }
 }
@@ -358,21 +352,6 @@ fn block(view: &View, theme: Theme, hat: Role, w: usize, figures: bool) -> Vec<L
             );
             if !v.is_empty() {
                 lines.push(row("verdicts", v, dim));
-            }
-        }
-        Role::SoloTest => {
-            // The tester's own checks, across its reports.
-            if totals.checks_passed + totals.checks_skipped + totals.checks_failed > 0 {
-                lines.extend(check_rows(
-                    (
-                        totals.checks_passed,
-                        totals.checks_skipped,
-                        totals.checks_failed,
-                    ),
-                    theme,
-                    bg,
-                    w,
-                ));
             }
         }
     }

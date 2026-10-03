@@ -31,7 +31,6 @@ async fn approved_plan_build_review_test_resume_undo_and_commit_receipt() {
     agent.ctx.notes_dir = agent.session.notes_dir();
     agent.budget_usd = 1.0;
     let mut cfg = crate::Config::default();
-    cfg.ui.offer_test = false;
     cfg.ui.offer_audit = false;
     agent.cfg = Some(cfg);
     agent.put_on(Role::SoloPlan).unwrap();
@@ -98,7 +97,7 @@ async fn approved_plan_build_review_test_resume_undo_and_commit_receipt() {
         )),
     ]));
     assert!(agent.review_now().await.unwrap().contains("VERDICT: PASS"));
-    agent.put_on(Role::SoloTest).unwrap();
+    agent.put_on(Role::SoloBuild).unwrap();
     agent.provider = Arc::new(ReplayProvider::scripted(vec![
         billed(call(
             "propose_run",
@@ -107,10 +106,7 @@ async fn approved_plan_build_review_test_resume_undo_and_commit_receipt() {
             }),
         )),
         billed(run_project("test")),
-        billed(report(
-            r#"{"title":"Greeting", "scenarios":[{"name":"greeting contents", "result":"pass", "note":"approved command exited 0"}]}"#,
-        )),
-        billed(say("Testing complete.")),
+        billed(say("Testing complete: greeting contents as approved.")),
     ]));
     agent
         .turn("Check the greeting through the approved run file and report.")
@@ -123,19 +119,19 @@ async fn approved_plan_build_review_test_resume_undo_and_commit_receipt() {
     assert!(
         agent
             .session
-            .messages_of(crate::role::Thread::Main)
+            .transcript
             .iter()
             .any(|m| m.content.contains("greeting contents"))
     );
     let spend = agent.session.spend_log().unwrap();
-    assert_eq!(spend.len(), 9);
+    assert_eq!(spend.len(), 8);
     assert!(
         spend
             .iter()
             .all(|row| !row.incomplete && row.total_usd == Some(0.001))
     );
     let total = agent.session.meta.spend_usd_total.unwrap();
-    assert!((total - 0.009).abs() < 1e-10);
+    assert!((total - 0.008).abs() < 1e-10);
 
     // Resume both conversations, then undo/redo while preserving a later user edit.
     agent.ctx.user_io = None;
@@ -172,11 +168,6 @@ async fn approved_plan_build_review_test_resume_undo_and_commit_receipt() {
         }
     )));
     assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, AgentEvent::Tested { passed: true, .. }))
-    );
-    assert!(
         !events
             .iter()
             .any(|e| matches!(e, AgentEvent::ToolResult { is_error: true, .. }))
@@ -193,24 +184,13 @@ async fn approved_plan_build_review_test_resume_undo_and_commit_receipt() {
         } => Some((tree.clone(), model.clone(), *verdict)),
         _ => None,
     });
-    let test_mark = events.iter().find_map(|e| match e {
-        AgentEvent::Tested {
-            tree,
-            model,
-            passed,
-            ..
-        } => Some((tree.clone(), model.clone(), *passed)),
-        _ => None,
-    });
     let receipt = crate::review::Receipt {
         models: vec![agent.model.clone()],
         usd: total,
         review: crate::review::Reviewed::of(review_mark.as_ref(), now.as_deref()),
-        test: crate::review::Tested::of(test_mark.as_ref(), now.as_deref()),
         ..Default::default()
     };
     assert_eq!(receipt.review, crate::review::Reviewed::Stale);
-    assert_eq!(receipt.test, crate::review::Tested::Stale);
     let message = crate::review::with_receipt("Add greeting", &receipt);
     crate::review::commit(&app, &["app/greeting.txt".into()], &message).unwrap();
     let committed = crate::git::git(root, &["log", "-1", "--format=%B"]).unwrap();

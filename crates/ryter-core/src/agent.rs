@@ -79,11 +79,8 @@ pub struct Agent {
     /// worked out once, where the agent is made, so the prompt doesn't change
     /// from one message to the next.
     pub machine: String,
-    /// The product a test started, while Ryter holds it.
+    /// The product run_project started, while Ryter holds it.
     pub product: Option<crate::run::Started>,
-    /// The tester's report: filed in the running turn, then given to the
-    /// conversation the other hats share when the turn ends.
-    pub filed: crate::testing::Desk,
 }
 
 /// Output ceiling per round of the conversation.
@@ -167,30 +164,14 @@ impl Agent {
         if !self.role.is_solo() {
             self.put_on(self.role.hat())?;
         }
-        // And in that hat's conversation: the tester has its own.
-        self.session.use_thread(self.role.thread());
         let turn = next_turn();
         let started = std::time::Instant::now();
         let mut tools = 0u32;
-        let spent_from = self.session.meta.spend_usd_total;
         self.emit(AgentEvent::TurnStarted {
             turn,
             role: self.role,
         })?;
         let out = self.turn_inner(user, &mut tools).await;
-        // A report filed in this turn goes to the conversation the other
-        // hats share, however the turn ended: what the tester found is
-        // found.
-        if let Some(filed) = self.filed.pending.take() {
-            let usd = match (spent_from, self.session.meta.spend_usd_total) {
-                (from, Some(now)) => Some((now - from.unwrap_or(0.0)).max(0.0)),
-                _ => None,
-            };
-            let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-            if let Err(e) = self.deliver_report(filed, usd, ms) {
-                crate::trace::log(&self.home, &format!("test report: {e}"));
-            }
-        }
         // However the turn ended (done, cancelled, failed), record what it
         // left for `/undo`.
         if let Err(e) = self.finish_turn_record() {
@@ -545,7 +526,6 @@ impl Agent {
                                 | "record_decision"
                                 | "propose_run"
                                 | "run_project"
-                                | "report_test"
                                 | "load_skill"
                                 | "show_page"
                                 | "update_rules"
@@ -559,7 +539,6 @@ impl Agent {
                                 "record_decision" => self.record_decision(&args),
                                 "propose_run" => self.propose_run(&args),
                                 "run_project" => self.run_project(&args),
-                                "report_test" => self.report_test(&args),
                                 "load_skill" => Ok(self.load_skill(&args)),
                                 "update_rules" => self.update_rules(&args),
                                 _ => self.show_page(&args),
@@ -900,20 +879,6 @@ impl Agent {
                 "unknown hat {hat:?}: build, plan, or review"
             )));
         };
-        // A turn can't carry on in another conversation: the call being
-        // answered here would be left behind in this one.
-        if to.thread() != self.role.thread() {
-            return Ok(ToolOutput::err(if self.role == Role::SoloTest {
-                "the test hat works in its own thread, so this turn can't carry on in \
-                 another hat. Say what you found; the user switches hats with Tab."
-                    .to_string()
-            } else {
-                format!(
-                    "the {to} hat works in its own thread, so this turn can't carry on in \
-                     it. Tell the user to press Tab to the {to} hat."
-                )
-            }));
-        }
         if to == self.role {
             return Ok(ToolOutput {
                 text: format!("already in the {to} hat"),
@@ -983,9 +948,7 @@ impl Agent {
                 "present_plan needs `title` (a few words) and `plan` (the plan, in Markdown)",
             ));
         };
-        // Approving a plan starts the build in this turn, which a turn in
-        // the tester's own thread can't do.
-        if !self.role.is_solo() || self.role.thread() != crate::role::Thread::Main {
+        if !self.role.is_solo() {
             return Ok(ToolOutput::err(
                 "plans are presented from the plan and build hats",
             ));
@@ -1248,14 +1211,13 @@ impl Agent {
         })
     }
 
-    /// The project's own commands are the test hat's to run: the tools are
-    /// offered to no other hat, and a call from one is refused.
+    /// The project's own commands are the build and review hats' to run:
+    /// the plan hat changes and starts nothing.
     fn only_the_tester(&self, tool: &str) -> Option<crate::tools::ToolOutput> {
-        (self.role != Role::SoloTest).then(|| {
+        (self.role == Role::SoloPlan).then(|| {
             crate::tools::ToolOutput::err(format!(
-                "{tool} is the test hat's, not the {} hat's. Tell the user to press Tab to \
-                 the test hat, or to type /test.",
-                self.role
+                "{tool} is the build and review hats': the plan hat changes and starts \
+                 nothing. Tell the user to press Tab to the build hat."
             ))
         })
     }
@@ -1701,107 +1663,11 @@ impl Agent {
         }
     }
 
-    /// `report_test`: the tester's report. It is written to its file now,
-    /// and given to the conversation the other hats share when the turn
-    /// ends.
-    fn report_test(&mut self, args: &Value) -> Result<crate::tools::ToolOutput> {
-        use crate::tools::ToolOutput;
-        if self.role != Role::SoloTest {
-            return Ok(ToolOutput::err(format!(
-                "a test report is filed from the test hat, not the {} hat",
-                self.role
-            )));
-        }
-        let report = match crate::testing::Report::from_args(args) {
-            Ok(r) => r,
-            Err(why) => return Ok(ToolOutput::err(why)),
-        };
-        let root = self.root();
-        let plan = self.session.meta.plan_file.clone();
-        // The model the test hat runs on, which may be its own.
-        let (_, model, _) = self.hat_stack();
-        let tester = model.rsplit('/').next().unwrap_or(&model);
-        let text = report.document(plan.as_deref(), tester, &crate::clock::stamp());
-        let subject = crate::testing::subject(plan.as_deref(), &report.title);
-        let path = match crate::testing::save_on(&root, &crate::clock::today(), &subject, &text) {
-            Ok(p) => p,
-            Err(e) => {
-                return Ok(ToolOutput::err(format!(
-                    "the report could not be saved ({e}). Give it as your answer instead."
-                )));
-            }
-        };
-        let file = path
-            .strip_prefix(&root)
-            .unwrap_or(&path)
-            .display()
-            .to_string();
-        let headline = report.headline();
-        // A second report in one turn takes the first one's place: the
-        // file of each is kept.
-        self.filed.pending = Some(crate::testing::Filed {
-            report,
-            file: file.clone(),
-        });
-        Ok(ToolOutput::ok(format!(
-            "Filed: {headline}. It is saved as `{file}` and goes to the user and the builder \
-             when your turn ends. End your turn now, in a line or two: say where the product \
-             is running."
-        )))
-    }
-
-    /// Give a filed report to the conversation the other hats share, and
-    /// tell the screen.
-    fn deliver_report(
-        &mut self,
-        filed: crate::testing::Filed,
-        total_usd: Option<f64>,
-        duration_ms: u64,
-    ) -> Result<()> {
-        // The model the test hat runs on, which may be its own.
-        let (_, model, _) = self.stack_for(Role::SoloTest);
-        let tester = model.rsplit('/').next().unwrap_or(&model).to_string();
-        self.session.push_to(
-            crate::role::Thread::Main,
-            Message {
-                role: "user".into(),
-                content: filed.report.message(&tester, &filed.file),
-                tool_call_id: None,
-                tool_calls: None,
-            },
-        )?;
-        self.filed.delivered = Some(filed.report.passed());
-        // What was tested, as the files stood: a change after this is not
-        // covered by the report.
-        let tree = self
-            .ctx
-            .sandboxed(|| {
-                Ok(crate::review::root(&self.ctx.workspace).ok().and_then(|r| {
-                    let base = crate::review::head_base(&r);
-                    let changes = crate::review::changes(&r, &base).ok()?;
-                    crate::review::tree_of(&r, &changes.now)
-                }))
-            })
-            .unwrap_or_default();
-        self.emit(AgentEvent::Tested {
-            model,
-            headline: filed.report.headline(),
-            passed: filed.report.passed(),
-            rows: filed.report.rows(),
-            file: filed.file,
-            first_failed: filed.report.first_failed(),
-            tree,
-            total_usd,
-            duration_ms,
-        })
-    }
-
     /// Put on `role`: the hat, what its tools may do, where the session was
     /// left, and the conversation it works in.
     pub fn put_on(&mut self, role: Role) -> Result<()> {
         self.role = role;
         self.ctx.role = role;
-        self.session.use_thread(role.thread());
         self.session.set_mode(role)
     }
 
@@ -2272,9 +2138,7 @@ impl Agent {
     /// hat notes, keeping the latest `max` characters.
     pub(crate) fn conversation_digest(&self, max: usize) -> String {
         let mut parts: Vec<String> = Vec::new();
-        // The conversation that made the change is the one the build hat
-        // works in, whichever hat `/commit` is typed in.
-        for m in self.session.messages_of(crate::role::Thread::Main) {
+        for m in &self.session.transcript {
             let body = m.content.trim();
             if body.is_empty() {
                 continue;
@@ -2412,7 +2276,7 @@ impl Agent {
         let window = self.model_window(model, connection);
         crate::compact::request_report(
             system,
-            self.session.messages_of(self.role.thread()),
+            &self.session.transcript,
             &crate::tools::specs_for_opts(self.role, self.ctx.web),
             window,
             Self::output_allowance(window),
@@ -2428,7 +2292,6 @@ impl Agent {
 
     /// Emit a [`AgentEvent::Context`] for the TUI / `--json`.
     pub fn emit_context(&mut self) -> Result<()> {
-        self.session.use_thread(self.role.thread());
         let r = self.context_report()?;
         let sys = self.system_prompt()?;
         let mut breakdown = crate::compact::breakdown(&sys, &self.session.transcript);
@@ -2445,13 +2308,11 @@ impl Agent {
             pct: r.pct,
             messages: r.messages,
             breakdown,
-            thread: self.role.thread(),
         })
     }
 
     /// Deterministic compact. Emits [`AgentEvent::Compacted`] with measured size.
     pub fn compact_now(&mut self) -> Result<crate::compact::ContextReport> {
-        self.session.use_thread(self.role.thread());
         let sys = self.system_prompt()?;
         let (_, model, connection) = self.hat_stack();
         let before = self.report_for(&sys, &model, &connection);
@@ -2533,16 +2394,14 @@ impl Agent {
     }
 
     /// The model that last read this conversation, from the spend log: a
-    /// different one now reads all of it again, at the full price. The
-    /// tester's thread has its own readers.
+    /// different one now reads all of it again, at the full price.
     fn last_reader(&self) -> Option<String> {
-        let thread = self.role.thread();
         self.session
             .spend_log()
             .ok()?
             .into_iter()
             .rev()
-            .find(|r| r.role.is_solo() && r.role.thread() == thread)
+            .find(|r| r.role.is_solo())
             .map(|r| r.model)
     }
 
@@ -2913,7 +2772,6 @@ mod tests {
             cfg: None,
             machine: String::new(),
             product: None,
-            filed: Default::default(),
         };
         (home, cwd, agent)
     }
@@ -3133,159 +2991,10 @@ mod tests {
         }
     }
 
-    /// The tester works in a conversation of its own. It is not sent what
-    /// the builder and the user said, and the builder is not sent the
-    /// tester's working. Each carries on where it left off, and both are
-    /// there when the session is opened again.
-    #[tokio::test]
-    async fn the_tester_has_a_conversation_of_its_own() {
-        let (_home, _cwd, mut agent) = setup(ReplayProvider::new(vec![StreamDelta::Done]));
-        let asked = Arc::new(Asked::default());
-        agent.provider = asked.clone();
-        let (tx, events) = std::sync::mpsc::channel();
-        agent.sink = Some(tx);
-        agent.turn("build the page list").await.unwrap();
-        agent.put_on(Role::SoloTest).unwrap();
-        agent.turn("test the page list").await.unwrap();
-        agent.turn("retest scenario 3").await.unwrap();
-        agent.put_on(Role::SoloBuild).unwrap();
-        agent.turn("fix what failed").await.unwrap();
-        let said = asked.said.lock().unwrap().clone();
-        let shape: Vec<Vec<&str>> = said
-            .iter()
-            .map(|call| {
-                call.iter()
-                    .map(|m| m.rsplit("\n\n").next().unwrap_or(m))
-                    .collect()
-            })
-            .collect();
-        assert_eq!(
-            shape,
-            [
-                vec!["build the page list"],
-                vec!["test the page list"],
-                vec!["test the page list", "ok", "retest scenario 3"],
-                vec!["build the page list", "ok", "fix what failed"],
-            ]
-        );
-        assert!(said[1][0].starts_with("[hat: test"), "{:?}", said[1]);
-        assert!(said[3][2].starts_with("[hat: build"), "{:?}", said[3]);
-        // The tester is offered its own, shorter list of tools.
-        let tools = asked.tools.lock().unwrap().clone();
-        assert!(
-            tools[1] < tools[0] && tools[1] == tools[2] && tools[0] == tools[3],
-            "{tools:?}"
-        );
-        // Each turn says which hat, so the screen knows whose it is.
-        let hats: Vec<Role> = events
-            .try_iter()
-            .filter_map(|e| match e {
-                AgentEvent::TurnStarted { role, .. } => Some(role),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            hats,
-            [
-                Role::SoloBuild,
-                Role::SoloTest,
-                Role::SoloTest,
-                Role::SoloBuild
-            ]
-        );
-        // On disk, and after the session is opened again.
-        use crate::role::Thread;
-        assert_eq!(agent.session.messages_of(Thread::Main).len(), 4);
-        assert_eq!(agent.session.messages_of(Thread::Test).len(), 4);
-        let again = crate::session::Session::open(&agent.session.dir).unwrap();
-        assert_eq!(again.messages_of(Thread::Main).len(), 4);
-        assert_eq!(again.messages_of(Thread::Test).len(), 4);
-        assert_eq!(again.meta.mode, Some(Role::SoloBuild));
-        // The spend is one session's, with the tester's part named.
-        let spent: Vec<Role> = again.spend_log().unwrap().iter().map(|r| r.role).collect();
-        assert_eq!(
-            spent,
-            [
-                Role::SoloBuild,
-                Role::SoloTest,
-                Role::SoloTest,
-                Role::SoloBuild
-            ]
-        );
-    }
-
-    /// A turn can't carry on in another conversation: the hat is the
-    /// user's to change with Tab, into the test hat and out of it. And the
-    /// tester presents no plan and records no decision.
-    #[tokio::test]
-    async fn a_turn_does_not_cross_into_another_conversation() {
-        async fn result_of(hat: Role, call_: Vec<StreamDelta>) -> (String, Role) {
-            let p = ReplayProvider::scripted(vec![call_, say("done")]);
-            let (_home, _cwd, mut agent) = repo_setup(p);
-            agent.put_on(hat).unwrap();
-            agent.ctx.always_approve = true;
-            let (io, rx) = crate::user_io::UserIo::pair();
-            agent.ctx.user_io = Some(io);
-            let answers = std::thread::spawn(move || {
-                let mut n = 0;
-                while let Ok(req) = rx.recv() {
-                    n += 1;
-                    match req {
-                        crate::user_io::UserRequest::Permission { reply, .. } => {
-                            let _ = reply.send(crate::user_io::Permission::Allow);
-                        }
-                        crate::user_io::UserRequest::Plan { reply, .. } => {
-                            let _ = reply.send(crate::user_io::PlanAnswer::Approve);
-                        }
-                        _ => {}
-                    }
-                }
-                n
-            });
-            agent.turn("go").await.unwrap();
-            agent.ctx.user_io = None;
-            let asked = answers.join().unwrap();
-            assert_eq!(asked, 0, "the user was asked");
-            let result = agent
-                .session
-                .transcript
-                .iter()
-                .find(|m| m.role == "tool")
-                .map(|m| m.content.clone())
-                .unwrap_or_default();
-            (result, agent.role)
-        }
-        let hat = |to: &str| {
-            call(
-                "request_hat",
-                serde_json::json!({"hat": to, "reason": "carry on"}),
-            )
-        };
-        let (result, role) = result_of(Role::SoloTest, hat("build")).await;
-        assert!(
-            result.contains("the test hat works in its own thread"),
-            "{result}"
-        );
-        assert_eq!(role, Role::SoloTest);
-        let (result, role) = result_of(Role::SoloBuild, hat("test")).await;
-        assert!(result.contains("press Tab to the test hat"), "{result}");
-        assert_eq!(role, Role::SoloBuild);
-        let plan = call(
-            "present_plan",
-            serde_json::json!({"title": "A plan", "plan": A_PLAN}),
-        );
-        let (result, role) = result_of(Role::SoloTest, plan).await;
-        assert!(
-            result.contains("plans are presented from the plan and build hats"),
-            "{result}"
-        );
-        assert_eq!(role, Role::SoloTest);
-    }
-
     /// One turn in the test hat that makes `calls` in order. The user
     /// answers each question about how the project runs with the next of
     /// `answers`. What they were shown, each tool's result, and the events.
-    async fn tester_turn(
+    async fn build_turn(
         agent: &mut Agent,
         calls: Vec<Vec<StreamDelta>>,
         answers: Vec<crate::user_io::PlanAnswer>,
@@ -3297,7 +3006,7 @@ mod tests {
         let mut script = calls;
         script.push(say("done"));
         agent.provider = Arc::new(ReplayProvider::scripted(script));
-        agent.put_on(Role::SoloTest).unwrap();
+        agent.put_on(Role::SoloBuild).unwrap();
         let (io, rx) = crate::user_io::UserIo::pair();
         agent.ctx.user_io = Some(io);
         let shown = std::thread::spawn(move || {
@@ -3350,8 +3059,8 @@ mod tests {
     fn failed_cleanup_is_remembered_and_can_be_retried_after_resume() {
         for failed_start in [false, true] {
             let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![]));
-            agent.role = Role::SoloTest;
-            agent.ctx.role = Role::SoloTest;
+            agent.role = Role::SoloBuild;
+            agent.ctx.role = Role::SoloBuild;
             let run = crate::run::RunFile {
                 start: Some(if failed_start { "exit 7" } else { "true" }.into()),
                 stop: Some("test -f allow-stop".into()),
@@ -3386,8 +3095,8 @@ mod tests {
     #[test]
     fn an_unowned_ready_address_does_not_start_or_claim_a_service() {
         let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![]));
-        agent.role = Role::SoloTest;
-        agent.ctx.role = Role::SoloTest;
+        agent.role = Role::SoloBuild;
+        agent.ctx.role = Role::SoloBuild;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let run = crate::run::RunFile {
             start: Some("echo started > state".into()),
@@ -3421,7 +3130,7 @@ mod tests {
                 "stop": "echo down > state",
             }),
         );
-        let (shown, results, events) = tester_turn(
+        let (shown, results, events) = build_turn(
             &mut agent,
             vec![propose, run_project("start"), run_project("test")],
             vec![PlanAnswer::Approve],
@@ -3472,7 +3181,7 @@ mod tests {
         assert_eq!(summaries, ["echo up > state", "echo 2 passed (+1 more)"]);
         // Starting it again is not a second start.
         let (shown, results, _) =
-            tester_turn(&mut agent, vec![run_project("start")], Vec::new()).await;
+            build_turn(&mut agent, vec![run_project("start")], Vec::new()).await;
         assert!(shown.is_empty(), "asked again: {shown:?}");
         assert!(
             results[0].starts_with("It is already running"),
@@ -3513,7 +3222,7 @@ mod tests {
         )
         .unwrap();
         // No.
-        let (shown, results, events) = tester_turn(
+        let (shown, results, events) = build_turn(
             &mut agent,
             vec![run_project("start")],
             vec![PlanAnswer::Reject],
@@ -3531,7 +3240,7 @@ mod tests {
         assert!(!cwd.path().join("state").exists(), "it ran");
         assert!(product_events(&events).is_empty());
         // "Change this first" goes back to the model, and still nothing ran.
-        let (_, results, _) = tester_turn(
+        let (_, results, _) = build_turn(
             &mut agent,
             vec![run_project("test")],
             vec![PlanAnswer::Adjust("use make test".into())],
@@ -3542,7 +3251,7 @@ mod tests {
             "{results:?}"
         );
         // Yes: it runs, and is not asked about again.
-        let (shown, results, _) = tester_turn(
+        let (shown, results, _) = build_turn(
             &mut agent,
             vec![run_project("test"), run_project("test")],
             vec![PlanAnswer::Approve],
@@ -3556,7 +3265,7 @@ mod tests {
             "test = \"echo changed\"\n",
         )
         .unwrap();
-        let (shown, _, _) = tester_turn(
+        let (shown, _, _) = build_turn(
             &mut agent,
             vec![run_project("test")],
             vec![PlanAnswer::Reject],
@@ -3566,7 +3275,7 @@ mod tests {
         // With no file at all, the model is told to propose one.
         std::fs::remove_file(cwd.path().join(crate::run::FILE)).unwrap();
         let (shown, results, _) =
-            tester_turn(&mut agent, vec![run_project("start")], Vec::new()).await;
+            build_turn(&mut agent, vec![run_project("start")], Vec::new()).await;
         assert!(shown.is_empty());
         assert!(
             results[0].contains("propose it with propose_run"),
@@ -3593,7 +3302,7 @@ mod tests {
             ),
             (serde_json::json!({"ready": " "}), "needs at least one"),
         ] {
-            let (shown, results, _) = tester_turn(
+            let (shown, results, _) = build_turn(
                 &mut agent,
                 vec![call("propose_run", args.clone())],
                 vec![PlanAnswer::Approve],
@@ -3611,7 +3320,7 @@ mod tests {
             "start = \"sudo systemctl start cms\"\n",
         )
         .unwrap();
-        let (shown, results, _) = tester_turn(
+        let (shown, results, _) = build_turn(
             &mut agent,
             vec![run_project("start")],
             vec![PlanAnswer::Approve],
@@ -3622,7 +3331,7 @@ mod tests {
             "{results:?}"
         );
         // Tests that fail are a failed step.
-        let (_, results, _) = tester_turn(
+        let (_, results, _) = build_turn(
             &mut agent,
             vec![
                 call(
@@ -3671,7 +3380,7 @@ mod tests {
             run_project("test"),
             say("done"),
         ]));
-        agent.put_on(Role::SoloTest).unwrap();
+        agent.put_on(Role::SoloBuild).unwrap();
         let (io, rx) = crate::user_io::UserIo::pair();
         agent.ctx.user_io = Some(io);
         let swapped = file.clone();
@@ -3741,7 +3450,7 @@ mod tests {
             },
         )
         .unwrap();
-        let (_, results, _) = tester_turn(&mut agent, vec![run_project("start")], Vec::new()).await;
+        let (_, results, _) = build_turn(&mut agent, vec![run_project("start")], Vec::new()).await;
         serving.join().unwrap();
         assert!(
             results[0].starts_with("It is already running: an earlier session started it"),
@@ -3754,7 +3463,7 @@ mod tests {
             ..Default::default()
         };
         crate::run::save_approved(cwd.path(), &agent.home, &run).unwrap();
-        let (_, results, _) = tester_turn(&mut agent, vec![run_project("start")], Vec::new()).await;
+        let (_, results, _) = build_turn(&mut agent, vec![run_project("start")], Vec::new()).await;
         assert!(results[0].starts_with("Started in"), "{results:?}");
         assert!(cwd.path().join("state").exists());
         let _ = agent.stop_product();
@@ -3789,39 +3498,39 @@ mod tests {
         };
         std::fs::write(&file, "test = \"echo ok\"\n").unwrap();
         // Without the flag, nothing in it runs.
-        let out = headless(&mut agent, Role::SoloTest, false).await;
+        let out = headless(&mut agent, Role::SoloBuild, false).await;
         assert!(out.contains("nobody can approve"), "{out}");
         // With it, a file within the hat's reach runs, and stays unapproved.
-        let out = headless(&mut agent, Role::SoloTest, true).await;
+        let out = headless(&mut agent, Role::SoloBuild, true).await;
         assert_eq!(out, "$ echo ok\nok\n");
         assert!(matches!(
             crate::run::find(cwd.path(), &agent.home),
             crate::run::Found::Unapproved(..)
         ));
-        // What the hat's own gate refuses, or asks about every time, the
-        // flag doesn't cover: deleting a project file, writing elsewhere.
+        // What the hat's own gate asks about every time, the flag doesn't
+        // cover: writing elsewhere on the machine. A deletion in the
+        // project is a question the flag answers.
         std::fs::write(cwd.path().join("hello.txt"), "hi\n").unwrap();
-        for cmd in ["rm hello.txt", "echo x > /opt/ryter-not-here.txt"] {
-            std::fs::write(&file, format!("test = \"{cmd}\"\n")).unwrap();
-            let out = headless(&mut agent, Role::SoloTest, true).await;
-            assert!(
-                out.contains("more than --always-approve covers in the test hat"),
-                "{cmd}: {out}"
-            );
-        }
+        std::fs::write(&file, "test = \"echo x > /opt/ryter-not-here.txt\"\n").unwrap();
+        let out = headless(&mut agent, Role::SoloBuild, true).await;
         assert!(
-            cwd.path().join("hello.txt").exists(),
-            "the run file deleted it"
+            out.contains("more than --always-approve covers in the build hat"),
+            "{out}"
         );
-        // No other hat runs the project's commands, with the flag or not.
+        std::fs::write(&file, "test = \"rm hello.txt\"\n").unwrap();
+        let out = headless(&mut agent, Role::SoloBuild, true).await;
+        assert!(!out.contains("more than --always-approve"), "{out}");
+        assert!(!cwd.path().join("hello.txt").exists());
+        // The review hat runs them too; the plan hat starts nothing, with
+        // the flag or not.
         std::fs::write(&file, "test = \"echo ok\"\n").unwrap();
-        for hat in [Role::SoloPlan, Role::SoloBuild, Role::SoloReview] {
-            let out = headless(&mut agent, hat, true).await;
-            assert!(
-                out.contains("run_project is the test hat's"),
-                "{hat}: {out}"
-            );
-        }
+        let out = headless(&mut agent, Role::SoloReview, true).await;
+        assert_eq!(out, "$ echo ok\nok\n");
+        let out = headless(&mut agent, Role::SoloPlan, true).await;
+        assert!(
+            out.contains("run_project is the build and review hats'"),
+            "{out}"
+        );
     }
 
     /// A hat with a model of its own is run on it; the others follow the
@@ -4719,543 +4428,6 @@ mod tests {
         assert!(tool.content.contains("not valid JSON"), "{}", tool.content);
     }
 
-    const FAILING: &str = r#"{
-        "title": "greeting",
-        "scenarios": [
-            {"name": "the greeting is printed", "result": "pass", "note": "2 passed"},
-            {"name": "the greeting names the user", "result": "fail",
-             "expected": "hi there, ann", "got": "hi there",
-             "to_see_it": "run ./hello ann"},
-            {"name": "the farewell", "result": "not_reached", "note": "needs 2"}
-        ]
-    }"#;
-
-    fn report(json: &str) -> Vec<StreamDelta> {
-        call("report_test", serde_json::from_str(json).unwrap())
-    }
-
-    /// An uncommitted change in a git workspace, with the user answering
-    /// each prompt with the next of `answers` (no, once they run out).
-    /// Returns the events and every prompt the user was shown.
-    async fn checked(
-        script: Vec<Vec<StreamDelta>>,
-        answers: Vec<crate::user_io::Permission>,
-        run: impl AsyncFnOnce(&mut Agent),
-    ) -> (TempDir, TempDir, Agent, Vec<AgentEvent>, Vec<String>) {
-        let (home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(script));
-        agent.put_on(Role::SoloBuild).unwrap();
-        agent.ctx.always_approve = true;
-        std::fs::write(cwd.path().join("hello.txt"), "hi there\nand more\n").unwrap();
-        let (io, rx) = crate::user_io::UserIo::pair();
-        agent.ctx.user_io = Some(io);
-        let asked = std::thread::spawn(move || {
-            let mut asked = Vec::new();
-            let mut answers = answers.into_iter();
-            while let Ok(req) = rx.recv() {
-                if let crate::user_io::UserRequest::Permission {
-                    tool,
-                    summary,
-                    reply,
-                    ..
-                } = req
-                {
-                    asked.push(format!("{tool}: {summary}"));
-                    let _ = reply.send(answers.next().unwrap_or(crate::user_io::Permission::Deny));
-                }
-            }
-            asked
-        });
-        let (tx, events) = std::sync::mpsc::channel();
-        agent.sink = Some(tx);
-        run(&mut agent).await;
-        agent.ctx.user_io = None;
-        agent.sink = None;
-        let asked = asked.join().unwrap();
-        (home, cwd, agent, events.try_iter().collect(), asked)
-    }
-
-    fn kinds(asked: &[String]) -> Vec<&str> {
-        asked
-            .iter()
-            .map(|a| a.split(':').next().unwrap_or(""))
-            .collect()
-    }
-
-    /// `/test`: the user sees who tests, what it will do and what it should
-    /// cost, and says yes. The test is a turn in the tester's own
-    /// conversation. Its report comes back into the conversation the other
-    /// hats share, as one message the builder can fix from, and into a
-    /// file; the hat the user was in comes back.
-    #[tokio::test]
-    async fn a_tests_report_comes_back_to_the_conversation() {
-        use crate::role::Thread;
-        use crate::user_io::Permission;
-        let (_home, cwd, agent, events, asked) = checked(
-            vec![report(FAILING), say("It fails. The product is up.")],
-            vec![Permission::Allow],
-            async |a| a.test_now().await.unwrap(),
-        )
-        .await;
-        assert_eq!(kinds(&asked), ["test", "fix offer"]);
-        assert!(
-            asked[0].contains("grok-4.6 on spacexai (the test hat's model)")
-                && asked[0]
-                    .contains("starts the project and tests what changed, leaves it running")
-                && asked[0].contains("about $"),
-            "{asked:?}"
-        );
-        // The tester's conversation opens with what Ryter asked of it.
-        assert!(events.iter().any(|e| matches!(
-            e,
-            AgentEvent::Notice { message } if message == "Ryter · test what changed"
-        )));
-        // The tester was told where to start, in its own conversation.
-        let test = agent.session.messages_of(Thread::Test);
-        assert!(
-            test[0].content.starts_with("[hat: test"),
-            "{}",
-            test[0].content
-        );
-        for want in [
-            "[Ryter] Test the work as its user would.",
-            "No plan was approved for this work",
-            "1 file changed (+2 −1): hello.txt.",
-            "It has no run file yet",
-            "File your report with report_test",
-        ] {
-            assert!(
-                test[0].content.contains(want),
-                "missing {want:?}: {}",
-                test[0].content
-            );
-        }
-        // The report is the shared conversation's, and nothing else of the
-        // tester's is.
-        let main = agent.session.messages_of(Thread::Main);
-        assert_eq!(main.len(), 1, "{main:?}");
-        assert_eq!(main[0].role, "user");
-        assert_eq!(
-            main[0].content,
-            "[Ryter] The test hat (grok-4.6) used the product and filed this report: ✗ 2 of 3 \
-             failed.\n\
-             ✓ 1  the greeting is printed · 2 passed\n\
-             ✗ 2  the greeting names the user\n     \
-             expected hi there, ann\n     \
-             got hi there\n     \
-             to see it: run ./hello ann\n\
-             ✗ 3  the farewell · not reached (needs 2)\n\
-             The full report is in `.ryter/tests/"
-                .to_string()
-                + &crate::clock::today()
-                + "-greeting.md`. The tester worked in a conversation of its own and changed \
-                   nothing."
-        );
-        // The file, and the screen.
-        let file = format!(".ryter/tests/{}-greeting.md", crate::clock::today());
-        let doc = std::fs::read_to_string(cwd.path().join(&file)).unwrap();
-        assert!(doc.contains("- Result: ✗ 2 of 3 failed") && doc.contains("- Plan: none approved"));
-        let tested: Vec<&AgentEvent> = events
-            .iter()
-            .filter(|e| matches!(e, AgentEvent::Tested { .. }))
-            .collect();
-        assert_eq!(tested.len(), 1);
-        let AgentEvent::Tested {
-            model,
-            headline,
-            passed,
-            rows,
-            file: said,
-            first_failed,
-            tree,
-            ..
-        } = tested[0]
-        else {
-            unreachable!()
-        };
-        assert_eq!(
-            (model.as_str(), headline.as_str(), *passed, *first_failed),
-            ("grok-4.6", "✗ 2 of 3 failed", false, Some(2))
-        );
-        assert_eq!(rows.len(), 6);
-        assert_eq!(said, &file);
-        assert!(tree.is_some(), "what was tested is not recorded");
-        // The hat went to test and came back.
-        let hats: Vec<Role> = events
-            .iter()
-            .filter_map(|e| match e {
-                AgentEvent::ModeChanged { role } => Some(*role),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(hats, [Role::SoloTest, Role::SoloBuild]);
-        assert_eq!(agent.role, Role::SoloBuild);
-    }
-
-    /// A hat on a model of its own signs its work with that model: the
-    /// report says who tested, and a decision says who decided.
-    #[tokio::test]
-    async fn a_hats_own_model_is_named_as_the_one_that_did_it() {
-        use crate::role::Thread;
-        use crate::user_io::Permission;
-        let own = |a: &mut Agent, hat: &str, model: &str| {
-            let cfg = a.cfg.get_or_insert_with(Default::default);
-            cfg.specialists.insert(
-                hat.into(),
-                crate::config::RoleModel {
-                    connection: Some("spacexai".into()),
-                    model: Some(model.into()),
-                },
-            );
-        };
-        let passing =
-            r#"{"title": "greeting", "scenarios": [{"name": "it greets", "result": "pass"}]}"#;
-        let (_home, cwd, agent, events, _) = checked(
-            vec![report(passing), say("All good.")],
-            vec![Permission::Allow],
-            async |a| {
-                own(a, "test", "moonshot/kimi-k3");
-                a.test_now().await.unwrap();
-            },
-        )
-        .await;
-        assert!(events.iter().any(|e| matches!(
-            e,
-            AgentEvent::Tested { model, .. } if model == "moonshot/kimi-k3"
-        )));
-        assert!(
-            agent.session.messages_of(Thread::Main)[0]
-                .content
-                .starts_with("[Ryter] The test hat (kimi-k3) used the product"),
-        );
-        let file = format!(".ryter/tests/{}-greeting.md", crate::clock::today());
-        let doc = std::fs::read_to_string(cwd.path().join(file)).unwrap();
-        assert!(doc.contains("- Tested by: kimi-k3 · "), "{doc}");
-        // And a decision the build hat's own model made.
-        let (_home, cwd, _agent, _events, _) = checked(
-            vec![decision("model"), say("done")],
-            Vec::new(),
-            async |a| {
-                own(a, "build", "vendor/builder-b");
-                a.session.set_plan_file(Some(CMS_PLAN.into())).unwrap();
-                a.turn("go on").await.unwrap();
-            },
-        )
-        .await;
-        let decisions = std::fs::read_to_string(cwd.path().join(crate::decisions::FILE)).unwrap();
-        assert!(
-            decisions.contains("- Decided by: build hat (builder-b) · "),
-            "{decisions}"
-        );
-    }
-
-    /// `/audit` typed in the test hat: the review reads the shared
-    /// conversation and its verdict is its own. It took the verdict from
-    /// the tester's thread, so a tester that had written "VERDICT: FAIL"
-    /// turned a passing review into a failed one on the receipt.
-    #[tokio::test]
-    async fn a_review_asked_for_in_the_test_hat_reads_its_own_verdict() {
-        use crate::role::Thread;
-        use crate::user_io::Permission;
-        let (_home, _cwd, agent, events, asked) = checked(
-            vec![say("VERDICT: PASS")],
-            vec![Permission::Allow, Permission::Deny],
-            async |a| {
-                // What the tester said earlier, in its own conversation.
-                for (role, content) in [
-                    ("user", "test it"),
-                    ("assistant", "It is broken.\n\nVERDICT: FAIL"),
-                ] {
-                    a.session
-                        .push_to(
-                            Thread::Test,
-                            Message {
-                                role: role.into(),
-                                content: content.into(),
-                                tool_call_id: None,
-                                tool_calls: None,
-                            },
-                        )
-                        .unwrap();
-                }
-                a.put_on(Role::SoloTest).unwrap();
-                a.review_now().await.unwrap();
-            },
-        )
-        .await;
-        assert_eq!(kinds(&asked), ["review"]);
-        assert_eq!(reviewed(&events), [Some(true)]);
-        // Back in the test hat, with each conversation its own.
-        assert_eq!(agent.role, Role::SoloTest);
-        assert_eq!(agent.session.messages_of(Thread::Test).len(), 2);
-        assert_eq!(agent.session.messages_of(Thread::Main).len(), 2);
-    }
-
-    /// Past fifty checkpoints a session keeps only the last fifty, and
-    /// "did that turn change anything?" was asked of how many there were:
-    /// from then on a fix was not seen, and no review of it was offered.
-    #[tokio::test]
-    async fn a_fix_is_seen_as_a_change_in_a_long_session() {
-        use crate::user_io::Permission;
-        let (_home, _cwd, _agent, _events, asked) = checked(
-            vec![
-                report(FAILING),
-                say("It fails."),
-                write("hello.txt", "hi there, ann\n"),
-                say("Fixed."),
-                say("VERDICT: FAIL"),
-            ],
-            vec![Permission::Allow, Permission::Allow, Permission::Allow],
-            async |a| {
-                for i in 0..60 {
-                    a.session.push_checkpoint(format!("sha{i}")).unwrap();
-                }
-                assert_eq!(a.session.meta.checkpoints.len(), 50);
-                a.test_now().await.unwrap();
-            },
-        )
-        .await;
-        assert_eq!(kinds(&asked), ["test", "fix offer", "review offer"]);
-    }
-
-    /// A review that passes is followed by the offer of a test, with its
-    /// cost. No is no: nothing runs.
-    #[tokio::test]
-    async fn a_review_that_passes_offers_a_test() {
-        use crate::user_io::Permission;
-        let (_home, _cwd, agent, events, asked) = checked(
-            vec![say("VERDICT: PASS")],
-            vec![Permission::Allow, Permission::Deny],
-            async |a| {
-                a.review_now().await.unwrap();
-            },
-        )
-        .await;
-        assert_eq!(kinds(&asked), ["review", "test offer"]);
-        assert!(
-            asked[1].starts_with("test offer: Test this work?\n"),
-            "{asked:?}"
-        );
-        assert!(
-            !events
-                .iter()
-                .any(|e| matches!(e, AgentEvent::Tested { .. }))
-        );
-        assert!(
-            agent
-                .session
-                .messages_of(crate::role::Thread::Test)
-                .is_empty()
-        );
-        // One that fails, or gives no verdict, offers no test.
-        for review in [
-            "- hello.txt:1 wrong (blocking)\n\nVERDICT: FAIL",
-            "looks fine",
-        ] {
-            let (_home, _cwd, _agent, _events, asked) = checked(
-                vec![say(review)],
-                vec![Permission::Allow, Permission::Allow],
-                async |a| {
-                    a.review_now().await.unwrap();
-                },
-            )
-            .await;
-            assert_eq!(kinds(&asked), ["review"], "{review}");
-        }
-        // With test offers off, a passing review ends there.
-        let (_home, _cwd, _agent, _events, asked) = checked(
-            vec![say("VERDICT: PASS")],
-            vec![Permission::Allow, Permission::Allow],
-            async |a| {
-                if let Some(c) = a.cfg.as_mut() {
-                    c.ui.offer_test = false;
-                }
-                a.review_now().await.unwrap();
-            },
-        )
-        .await;
-        assert_eq!(kinds(&asked), ["review"]);
-    }
-
-    /// A failed test offers its fixes in the build hat, in the conversation
-    /// the report is part of. The fixes are new work: a review of them is
-    /// offered, and a test after that.
-    #[tokio::test]
-    async fn a_failed_tests_fixes_are_offered_then_reviewed() {
-        use crate::role::Thread;
-        use crate::user_io::Permission;
-        let (_home, cwd, agent, events, asked) = checked(
-            vec![
-                // The test.
-                report(FAILING),
-                say("It fails."),
-                // The fix, in the build hat.
-                write("hello.txt", "hi there, ann\n"),
-                say("Fixed the greeting."),
-                // The review of the fix.
-                say("VERDICT: PASS"),
-            ],
-            vec![
-                Permission::Allow,
-                Permission::Allow,
-                Permission::Allow,
-                Permission::Deny,
-            ],
-            async |a| a.test_now().await.unwrap(),
-        )
-        .await;
-        assert_eq!(
-            kinds(&asked),
-            ["test", "fix offer", "review offer", "test offer"]
-        );
-        assert_eq!(
-            std::fs::read_to_string(cwd.path().join("hello.txt")).unwrap(),
-            "hi there, ann\n"
-        );
-        // The builder was sent the report, then asked to fix it.
-        let main: Vec<&str> = agent
-            .session
-            .messages_of(Thread::Main)
-            .iter()
-            .filter(|m| m.role == "user")
-            .map(|m| m.content.as_str())
-            .collect();
-        assert!(main[0].starts_with("[Ryter] The test hat"), "{main:?}");
-        assert!(
-            main[1].contains("[Ryter] The test report above has failures. Fix what it found"),
-            "{main:?}"
-        );
-        assert_eq!(reviewed(&events), [Some(true)]);
-        assert_eq!(agent.role, Role::SoloBuild);
-    }
-
-    /// A tester that files no report is said to have filed none; one that
-    /// passes offers nothing more; and a report can be filed in any turn
-    /// in the test hat, not only one Ryter started.
-    #[tokio::test]
-    async fn a_report_is_what_comes_back_and_only_a_report() {
-        use crate::role::Thread;
-        use crate::user_io::Permission;
-        let (_home, _cwd, agent, events, asked) = checked(
-            vec![say("It looks fine to me.")],
-            vec![Permission::Allow],
-            async |a| a.test_now().await.unwrap(),
-        )
-        .await;
-        assert_eq!(kinds(&asked), ["test"]);
-        assert!(events.iter().any(|e| matches!(
-            e,
-            AgentEvent::Notice { message } if message.starts_with("the tester filed no report")
-        )));
-        assert!(agent.session.messages_of(Thread::Main).is_empty());
-        // All passing: no fixes to offer.
-        let passing =
-            r#"{"title": "greeting", "scenarios": [{"name": "it greets", "result": "pass"}]}"#;
-        let (_home, _cwd, _agent, events, asked) = checked(
-            vec![report(passing), say("All good.")],
-            vec![Permission::Allow, Permission::Allow],
-            async |a| a.test_now().await.unwrap(),
-        )
-        .await;
-        assert_eq!(kinds(&asked), ["test"]);
-        assert!(events.iter().any(|e| matches!(
-            e,
-            AgentEvent::Tested { passed: true, headline, .. } if headline == "✓ 1 of 1 passed"
-        )));
-        // The user in the test hat, asking for a retest themselves.
-        let (_home, _cwd, agent, events, asked) = checked(
-            vec![report(passing), say("Scenario 1 passes now.")],
-            Vec::new(),
-            async |a| {
-                a.put_on(Role::SoloTest).unwrap();
-                a.turn("retest 1").await.unwrap();
-            },
-        )
-        .await;
-        assert!(asked.is_empty());
-        assert_eq!(
-            events
-                .iter()
-                .filter(|e| matches!(e, AgentEvent::Tested { .. }))
-                .count(),
-            1
-        );
-        assert_eq!(agent.session.messages_of(Thread::Main).len(), 1);
-        // And a report is the tester's to file.
-        let (_home, cwd, _agent, events, _) =
-            checked(vec![report(passing), say("done")], Vec::new(), async |a| {
-                a.turn("report it").await.unwrap();
-            })
-            .await;
-        assert!(
-            !events
-                .iter()
-                .any(|e| matches!(e, AgentEvent::Tested { .. }))
-        );
-        assert!(!cwd.path().join(".ryter/tests").exists());
-    }
-
-    /// The tester is pointed at the plan, the decisions made since, the run
-    /// file, and its last report: everything it starts from, since it has
-    /// not read the conversation.
-    #[tokio::test]
-    async fn the_tester_is_told_where_to_start() {
-        use crate::role::Thread;
-        use crate::user_io::Permission;
-        let (_home, _cwd, agent, _events, asked) = checked(
-            vec![say("nothing to test yet")],
-            vec![Permission::Allow],
-            async |a| {
-                let root = a.root();
-                let plan = crate::plan::save_on(
-                    &root,
-                    "2026-10-01",
-                    "cms",
-                    "## Goal\nx\n\n## How to verify\n- log in\n- open /manage/\n- publish a page\n",
-                )
-                .unwrap();
-                let rel = plan.strip_prefix(&root).unwrap().display().to_string();
-                a.session.set_plan_file(Some(rel.clone())).unwrap();
-                crate::decisions::record(
-                    &root,
-                    &rel,
-                    &crate::decisions::Entry {
-                        title: "No export".into(),
-                        plan_said: "step 4".into(),
-                        built_instead: "none".into(),
-                        why: "the user said so".into(),
-                        by: "you".into(),
-                    },
-                )
-                .unwrap();
-                crate::run::save_approved(
-                    &root,
-                    &a.home,
-                    &crate::run::RunFile {
-                        test: vec!["echo ok".into()],
-                        ..Default::default()
-                    },
-                )
-                .unwrap();
-                crate::testing::save_on(&root, "2026-10-01", "cms", "an earlier report").unwrap();
-                a.test_now().await.unwrap();
-            },
-        )
-        .await;
-        assert!(
-            asked[0].contains("starts the project, runs 3 scenarios from the plan"),
-            "{asked:?}"
-        );
-        let brief = &agent.session.messages_of(Thread::Test)[0].content;
-        for want in [
-            "The plan the user approved is in `.ryter/plans/2026-10-01-cms.md`.",
-            "is recorded in `.ryter/decisions.md`, under `## plan: 2026-10-01-cms.md` (1 entry)",
-            "How it runs is in `.ryter/run.toml`, which the user approved",
-            "The last report filed here is `.ryter/tests/2026-10-01-cms.md`: retest what failed",
-        ] {
-            assert!(brief.contains(want), "missing {want:?}: {brief}");
-        }
-    }
-
     /// How a review is asked for in these tests.
     struct ReviewRun {
         /// The user's answer to every prompt.
@@ -5303,7 +4475,6 @@ mod tests {
         cfg.ui.offer_audit = run.offers_on;
         // These are about the review; what follows one that passes has
         // tests of its own.
-        cfg.ui.offer_test = false;
         cfg.spend.review_usd = run.limit;
         if run.own_model {
             cfg.specialists.insert(

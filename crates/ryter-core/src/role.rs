@@ -22,47 +22,21 @@ pub enum Role {
     /// nothing.
     #[serde(rename = "review")]
     SoloReview,
-    /// Test hat: using the product as its user would. Starts it, runs its
-    /// tests, tries it, and reports; edits nothing. It works in a thread of
-    /// its own, not the conversation the other hats share.
-    #[serde(rename = "test")]
-    SoloTest,
-    /// A role from crew mode, which was removed. Nothing runs as it: it is
-    /// what a session saved before then names in its spend and its mode, so
-    /// those still load.
+    /// A role from crew mode, which was removed, or the test hat, which
+    /// was removed after it. Nothing runs as it: it is what a session saved
+    /// before then names in its spend and its mode, so those still load.
     #[serde(
         alias = "orchestrator",
         alias = "architect",
         alias = "planner",
         alias = "builder",
-        alias = "auditor"
+        alias = "auditor",
+        alias = "test"
     )]
     Crew,
 }
 
-/// Which conversation a turn is part of.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Thread {
-    /// The one the plan, build and review hats share.
-    #[default]
-    Main,
-    /// The test hat's own.
-    Test,
-}
-
 impl Role {
-    /// The conversation this hat works in. The tester judges the product
-    /// from the plan and from using it, not from the builder's account of
-    /// it, so it doesn't read the conversation the work was done in.
-    pub fn thread(self) -> Thread {
-        if self == Self::SoloTest {
-            Thread::Test
-        } else {
-            Thread::Main
-        }
-    }
-
     /// Whether this hat may change the project's files.
     pub fn writes_source(self) -> bool {
         self == Self::SoloBuild
@@ -84,13 +58,12 @@ impl Role {
     }
 
     /// The hat `Tab` moves to, in the order the work goes: plan → build →
-    /// review → test, and round to plan. A session still opens in build.
+    /// review, and round to plan.
     pub fn next_hat(self) -> Self {
         match self {
             Self::SoloPlan => Self::SoloBuild,
             Self::SoloBuild => Self::SoloReview,
-            Self::SoloReview => Self::SoloTest,
-            Self::SoloTest => Self::SoloPlan,
+            Self::SoloReview => Self::SoloPlan,
             Self::Crew => Self::SoloBuild,
         }
     }
@@ -98,8 +71,7 @@ impl Role {
     /// The hat `Shift+Tab` moves to: the same round, backwards.
     pub fn prev_hat(self) -> Self {
         match self {
-            Self::SoloPlan => Self::SoloTest,
-            Self::SoloTest => Self::SoloReview,
+            Self::SoloPlan => Self::SoloReview,
             Self::SoloReview => Self::SoloBuild,
             Self::SoloBuild => Self::SoloPlan,
             Self::Crew => Self::SoloBuild,
@@ -124,10 +96,6 @@ impl Role {
                 "[hat: review — nothing may change; read and run tests. When asked for a review, \
                  end with findings, blocking ones first, then your verdict]",
             ),
-            Self::SoloTest => Some(
-                "[hat: test — use the product as its user would: start it, run its tests, try \
-                 it, and report what works and what doesn't. Change nothing in the project]",
-            ),
             Self::Crew => None,
         }
     }
@@ -139,7 +107,6 @@ impl Role {
             Self::SoloPlan => "plan",
             Self::SoloBuild => "build",
             Self::SoloReview => "review",
-            Self::SoloTest => "test",
         }
     }
 }
@@ -154,17 +121,13 @@ impl fmt::Display for Role {
 pub const START_HATS: &[&str] = &["plan", "build", "review", "last"];
 
 /// The hat a new session opens in, from `[ui] start_hat` and the hat this
-/// project's latest session ended in. `last` with no earlier session, or
-/// one that ended in the test hat (a test needs something to test), is
+/// project's latest session ended in. `last` with no earlier session is
 /// plan; so is a value that isn't one of [`START_HATS`].
 pub fn start_hat(setting: &str, last: Option<Role>) -> Role {
     match setting.trim().to_ascii_lowercase().as_str() {
         "build" => Role::SoloBuild,
         "review" => Role::SoloReview,
-        "last" => match last.map(Role::hat) {
-            Some(Role::SoloTest) | None => Role::SoloPlan,
-            Some(hat) => hat,
-        },
+        "last" => last.map_or(Role::SoloPlan, Role::hat),
         _ => Role::SoloPlan,
     }
 }
@@ -177,9 +140,8 @@ impl FromStr for Role {
             "plan" => Ok(Self::SoloPlan),
             "build" => Ok(Self::SoloBuild),
             "review" => Ok(Self::SoloReview),
-            "test" => Ok(Self::SoloTest),
             other => Err(Error::Config(format!(
-                "unknown hat {other:?}: build, plan, review, or test"
+                "unknown hat {other:?}: build, plan, or review"
             ))),
         }
     }
@@ -199,11 +161,10 @@ mod tests {
             ("last", None, Role::SoloPlan),
             ("last", Some(Role::SoloBuild), Role::SoloBuild),
             ("last", Some(Role::SoloReview), Role::SoloReview),
-            // A test needs something to test.
-            ("last", Some(Role::SoloTest), Role::SoloPlan),
-            // A session from crew mode opens in build.
+            // A session from crew mode, or one left in the test hat that
+            // was, opens in build.
             ("last", Some(Role::Crew), Role::SoloBuild),
-            // Test is not a hat to start in, and neither is a typo.
+            // Test is no hat, and neither is a typo.
             ("test", Some(Role::SoloBuild), Role::SoloPlan),
             ("bulid", None, Role::SoloPlan),
             ("", None, Role::SoloPlan),
@@ -216,28 +177,12 @@ mod tests {
     fn only_the_build_hat_writes_source() {
         assert!(Role::SoloBuild.writes_source());
         assert!(!Role::SoloPlan.writes_source() && !Role::SoloReview.writes_source());
-        assert!(!Role::SoloTest.writes_source());
         assert!(!Role::Crew.writes_source());
     }
 
-    /// The tester has a conversation of its own; every other hat shares
-    /// one. A session from crew mode is part of the shared one.
-    #[test]
-    fn only_the_test_hat_has_its_own_thread() {
-        assert_eq!(Role::SoloTest.thread(), Thread::Test);
-        for hat in [
-            Role::SoloPlan,
-            Role::SoloBuild,
-            Role::SoloReview,
-            Role::Crew,
-        ] {
-            assert_eq!(hat.thread(), Thread::Main, "{hat}");
-        }
-        assert!(Role::SoloTest.is_solo() && Role::SoloTest.hat_note().is_some());
-    }
-
-    /// A session saved in crew mode names roles that are gone. Its spend
-    /// and its mode still load, and it opens in the build hat.
+    /// A session saved in crew mode, or in the test hat, names roles that
+    /// are gone. Its spend and its mode still load, and it opens in the
+    /// build hat.
     #[test]
     fn roles_from_crew_mode_still_load() {
         for old in [
@@ -247,6 +192,7 @@ mod tests {
             "builder",
             "auditor",
             "crew",
+            "test",
         ] {
             let role: Role = serde_json::from_str(&format!("\"{old}\"")).unwrap();
             assert_eq!(role, Role::Crew, "{old}");
@@ -257,20 +203,21 @@ mod tests {
         // Nobody can ask for one.
         assert!("builder".parse::<Role>().is_err());
         assert!("crew".parse::<Role>().is_err());
+        assert!("test".parse::<Role>().is_err());
     }
 
     #[test]
     fn tab_goes_round_in_the_order_the_work_does() {
         let mut h = Role::SoloPlan;
         let mut seen = Vec::new();
-        for _ in 0..4 {
+        for _ in 0..3 {
             seen.push(h.as_str());
             h = h.next_hat();
         }
-        assert_eq!(seen, ["plan", "build", "review", "test"]);
+        assert_eq!(seen, ["plan", "build", "review"]);
         assert_eq!(h, Role::SoloPlan);
         // And back the other way.
-        for back in ["test", "review", "build", "plan"] {
+        for back in ["review", "build", "plan"] {
             h = h.prev_hat();
             assert_eq!(h.as_str(), back);
         }
@@ -279,7 +226,6 @@ mod tests {
         assert_eq!(Role::SoloBuild.prev_hat(), Role::SoloPlan);
         // A role from crew mode has no place in the round.
         assert_eq!(Role::Crew.next_hat(), Role::SoloBuild);
-        assert_eq!("test".parse::<Role>().unwrap(), Role::SoloTest);
         // Round-trips as the hat name, in logs and sessions.
         assert_eq!(
             serde_json::to_string(&Role::SoloReview).unwrap(),

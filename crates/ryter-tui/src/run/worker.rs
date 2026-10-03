@@ -84,10 +84,6 @@ pub enum Work {
     ReviewNow,
     /// Offer a review after build turns, or not.
     SetOfferAudit(bool),
-    /// Offer a test after a review that passed, or not.
-    SetOfferTest(bool),
-    /// `/test`: the test hat tests the work now.
-    TestNow,
     /// `/changes`: put one file back as `base` had it.
     Revert {
         /// Commit to restore from.
@@ -548,23 +544,6 @@ pub fn run(init: WorkerInit) {
                     c.ui.offer_audit = on;
                 }
             }
-            Ok(Work::SetOfferTest(on)) => {
-                cfg.ui.offer_test = on;
-                if let Some(c) = agent.as_mut().and_then(|a| a.cfg.as_mut()) {
-                    c.ui.offer_test = on;
-                }
-            }
-            Ok(Work::TestNow) => {
-                if let Some(a) = &mut agent {
-                    a.ctx.cancel.reset();
-                    if let Err(e) = rt.block_on(a.test_now()) {
-                        send_err(&ev_tx, e.to_string());
-                    }
-                    refresh_live(a, &live_status, &live_spend, &live_transcript);
-                } else {
-                    send_err(&ev_tx, "no API key — /provider set-key".into());
-                }
-            }
             Ok(Work::ReviewNow) => {
                 if let Some(a) = &mut agent {
                     a.ctx.cancel.reset();
@@ -960,6 +939,5 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         cfg: Some(b.cfg.clone()),
         machine: ryter_core::prompt::machine_for(b.profile),
         product: None,
-        filed: Default::default(),
     }
 }

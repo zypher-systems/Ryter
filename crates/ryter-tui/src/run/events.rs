@@ -15,18 +15,6 @@ const TOOL_ERROR_CHARS: usize = 600;
 /// −1) · 1 command (1 ok) · 12s · $0.004`. Measured by Ryter, not reported by
 /// the model.
 fn receipt(view: &mut View, verb: &Verb, tools: u32, duration_ms: u64) -> String {
-    // A turn in which the tester filed its report closes on the report:
-    // `✗ 2 of 5 failed · 1:40 · $0.21`.
-    let report = view.turn_report.take();
-    if let (Some(headline), Verb::Done) = (report, verb) {
-        let mut parts = vec![headline, crate::chat::fmt_duration(duration_ms)];
-        if let Some(now) = view.spend {
-            parts.push(crate::chat::turn_usd(
-                now - view.turn_spend_from.unwrap_or(0.0),
-            ));
-        }
-        return parts.join(" · ");
-    }
     let mut parts = vec![match verb {
         Verb::Stopped => "⊘ stopped".to_string(),
         Verb::Failed => "✕ failed".to_string(),
@@ -50,15 +38,8 @@ fn receipt(view: &mut View, verb: &Verb, tools: u32, duration_ms: u64) -> String
     parts.join(" · ")
 }
 
-/// Apply an agent event to the chat it belongs to.
-///
-/// What a turn says goes into the conversation that turn is part of, which
-/// may not be the one on screen: the user can Tab to the main chat while a
-/// test runs, or to the tester's while a build does. A hat change the
-/// agent makes itself (a review, a test run) is said in the main
-/// conversation, and the screen follows it.
+/// Apply an agent event to the chat.
 pub fn apply(view: &mut View, ev: AgentEvent) {
-    use ryter_core::Thread;
     view.rack.apply(&ev);
     // The agent saying which hat it put on at the user's Tab. Once it has
     // caught up with every Tab, its word stands: a Tab pressed while it was
@@ -69,55 +50,22 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
         view.hats_pending = view.hats_pending.saturating_sub(1);
         if view.hats_pending == 0 && view.mode != *role {
             view.mode = *role;
-            view.show(role.thread());
         }
         return;
     }
-    let shown = view.shown;
-    let target = match &ev {
+    match &ev {
         AgentEvent::TurnStarted { role, .. } => {
-            view.turn_thread = role.thread();
             view.turn_open = true;
             view.agent_hat = *role;
-            view.turn_thread
         }
-        // A hat change the agent makes, and a report the tester files, are
-        // said in the conversation the other hats share.
-        AgentEvent::ModeChanged { .. } | AgentEvent::Tested { .. } => Thread::Main,
-        // How full a conversation is belongs to that conversation's gauge,
-        // whenever it is measured.
-        AgentEvent::Context { thread, .. } => *thread,
-        // Until a turn closes, what arrives is that turn's: a stop or an
-        // error ends the busy state first, and the turn's closing line
-        // used to land in whichever conversation was on screen.
-        _ if view.turn_open => view.turn_thread,
-        _ => shown,
-    };
-    view.show(target);
-    // The screen follows the agent into the tester's conversation and
-    // back out of it. A change of hat within one conversation leaves the
-    // screen where the user put it.
-    let follow = match &ev {
-        AgentEvent::ModeChanged { role } if role.thread() != view.agent_hat.thread() => {
-            Some(role.thread())
-        }
-        _ => None,
-    };
-    if let AgentEvent::ModeChanged { role } = &ev {
-        view.agent_hat = *role;
+        AgentEvent::ModeChanged { role } => view.agent_hat = *role,
+        _ => {}
     }
     let closes = matches!(ev, AgentEvent::TurnFinished { .. });
     apply_to_shown(view, ev);
     if closes {
         view.turn_open = false;
         view.starting_product = None;
-    }
-    match follow {
-        Some(thread) => {
-            view.turn_thread = thread;
-            view.show(thread);
-        }
-        None => view.show(shown),
     }
 }
 
@@ -280,54 +228,6 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             ));
             view.last_review = Some((tree.clone(), model.clone(), *verdict));
         }
-        AgentEvent::Tested {
-            model,
-            headline,
-            passed,
-            rows,
-            file,
-            first_failed,
-            tree,
-            total_usd,
-            duration_ms,
-        } => {
-            let mut head = format!(
-                "test · {} · {headline} · {}",
-                crate::chat::short_model(model),
-                crate::chat::fmt_duration(*duration_ms)
-            );
-            if let Some(usd) = total_usd {
-                head.push_str(&format!(" · {}", crate::chat::turn_usd(*usd)));
-            }
-            let mut body = head;
-            for row in rows {
-                body.push('\n');
-                body.push_str(row);
-            }
-            body.push_str(&format!("\nfull report  {file}"));
-            view.report(body, !passed);
-            // Left running, so the user can look at what the tester saw.
-            if let Some(p) = &view.product {
-                let at = p
-                    .address
-                    .as_ref()
-                    .map(|a| format!(" at {a}"))
-                    .unwrap_or_default();
-                let how = p
-                    .stop
-                    .as_ref()
-                    .map(|s| format!(" ({s})"))
-                    .unwrap_or_default();
-                view.system(format!(
-                    "the project is still running{at}\n/stop stops it{how}"
-                ));
-            }
-            view.last_test = Some((tree.clone(), model.clone(), *passed));
-            view.test_runs += 1;
-            view.retest = *first_failed;
-            // The tester's own turn closes on what it reported.
-            view.turn_report = Some(headline.clone());
-        }
         AgentEvent::Session { id, title } => {
             view.session_id = id.clone();
             view.session_title = title.clone();
@@ -389,7 +289,6 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 view.last_tests = None;
                 view.tests_stale = false;
                 view.last_review = None;
-                view.last_test = None;
                 view.panels
                     .stack
                     .retain(|p| !matches!(p.kind(), "commit" | "changes"));

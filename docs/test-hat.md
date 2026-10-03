@@ -1,3 +1,5 @@
+> **Removed on 2026-10-03.** The test hat was taken out of Ryter after its first real session on 0.14.0; `DECISIONS.md` has the reasoning. This document is kept as history. `run_project` and the run file live on, for the build and review hats.
+
 # The Test hat: approved design
 
 Designed with the user on 2026-10-01, a mockup for each choice. This page is what the build is held to; where the build has to differ, it says so here.

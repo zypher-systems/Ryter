@@ -282,7 +282,6 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     if let Some(hat) = start {
         view.mode = hat;
         view.agent_hat = hat;
-        view.show(hat.thread());
     }
     if !resumed {
         view.system(format!(

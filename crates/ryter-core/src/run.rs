@@ -1445,7 +1445,6 @@ mod tests {
                 };
                 crate::decisions::record(&root, ".ryter/plans/2026-10-02-a-plan.md", &entry)
                     .unwrap();
-                crate::testing::save_on(&root, "2026-10-02", "a-plan", "report").unwrap();
                 // A thread this one starts is in the sandbox as well, and
                 // its records are kept the same way.
                 let (h, r) = (home.clone(), root.clone());

@@ -28,7 +28,7 @@ This redesign keeps the ledger's reading column and timeline and changes what su
 | The hat is a word in the rail and a chip on the message box | The hat sets the accent color of the whole screen, and a fedora watermark sits behind the transcript in that color |
 | Spend is one session figure | Each hat tracks its own spend in the rack; the right column shows session and project |
 | A new session starts in the build hat | A new session starts in the **plan** hat, with a setting to choose |
-| A views strip across the top (`chat`, `changes ^t`) | A top bar that names the four hats and shows which have been worn |
+| A views strip across the top (`chat`, `changes ^t`) | A top bar that names the hats and shows which have been worn |
 
 Hats are the product's callsign. The screen should say which hat is on without the user
 reading a word.
@@ -40,7 +40,7 @@ reading a word.
 1. **The transcript is the product.** It gets the width. Side columns give way first.
 2. **The hat is the color.** One accent, set by the active hat. Everything else is neutral
    and does not change on `Tab`.
-3. **Nothing in a side column grows with the session.** The hat rack is four fixed blocks.
+3. **Nothing in a side column grows with the session.** The hat rack is one fixed block per hat.
    The list of turns is the transcript.
 4. **Each fact appears once.** Per-hat figures are in the rack. Session and project
    figures are in the instruments. The top bar does not repeat either.
@@ -55,7 +55,7 @@ reading a word.
 
 | Region | Size | Content |
 | --- | --- | --- |
-| Top bar | 1 row + 1 hairline | name, the four hats, working folder and branch |
+| Top bar | 1 row + 1 hairline | name, the hats, working folder and branch |
 | Hat rack | 30 columns, left | one block per hat (§5) |
 | Transcript | the rest | the ledger's reading column, with the watermark behind it (§7) |
 | Instruments | 34 columns, right (30 at mid width) | model, context, spend, guard, changes (§6) |
@@ -209,8 +209,8 @@ At this size the top bar has no hairline under it, and offers are one line, not 
  RYTER │ ● PLAN   ◆ BUILD   ● REVIEW   ○ TEST                    ~/workspace/shop · search-patch
 ```
 
-- **R-TOP-01** Left: `RYTER` in bold, a divider, then the four hats in `Tab` order: plan,
-  build, review, test.
+- **R-TOP-01** Left: `RYTER` in bold, a divider, then the hats in `Tab` order: plan,
+  build, review. (Four until 2026-10-03, when the test hat was removed; §18.)
 - **R-TOP-02** The active hat is a filled chip in its color with dark text, marked `◆`.
 - **R-TOP-03** A hat that has had at least one turn this session shows `●` in its own
   color and its name in the body color. A hat with no turns shows `○` and its name dim.
@@ -231,7 +231,7 @@ At this size the top bar has no hairline under it, and offers are one line, not 
 
 ## 5. Hat rack (left column)
 
-The rack is four blocks, one per hat, always in the same order and always the same height.
+The rack is one block per hat (three since 2026-10-03), always in the same order and always the same height.
 It never lists turns.
 
 ### 5.1 A block
@@ -251,7 +251,7 @@ It never lists turns.
 - **R-RACK-03** The active block has a faint background tint of its hat's color across
   the column's full width, and its name is in that color. Other blocks have no tint.
 - **R-RACK-04** The model line is the model that hat would run on now: its own if one is
-  set in `/models`, otherwise the one every hat shares. That holds for the test hat too.
+  set in `/models`, otherwise the one every hat shares.
 - **R-RACK-05** A hat with no turns shows its model and the line `not worn yet`, and no
   figures.
 - **R-RACK-06** All figures cover the current session only, including turns restored by
@@ -272,9 +272,8 @@ No rules between blocks. The tint on the active block is the only background.
 | plan | `plans  N approved` (and `· N rejected` when any) | plan panel outcomes |
 | build | `files  N`, `lines  +A −D`, then `success N` / `warning N` / `failure N` for the latest run of the project's tests (skipped and ignored tests are warnings) | checkpoints, the last test run's summary line |
 | review | `verdicts  ✓ N pass` or `✗ N fail`; `✓ N  ✗ N` when both occurred | review verdicts |
-| test | `success N` / `warning N` / `failure N` across the tester's reports (a scenario not reached is a warning) | test reports |
 
-The three check rows are the same three words in both blocks, in the same order. A count of
+A count of
 zero is dim. A test run whose summary line has no counts to read (`Ran 5 tests`) shows one
 row, `checks`, with the line as the tool printed it.
 
@@ -308,10 +307,9 @@ row, `checks`, with the line as the tool printed it.
   across sessions for this repository, the figure `ryter spend --project` reports,
   prefixed `≥` when it includes unpriced calls. `budget` is the cap, or `off`.
 - **R-INST-03** There is no per-hat spend in this column. That is the rack's.
-- **R-INST-04** `this hat` reads `read only` for plan and review, `edits ask first` for
-  build, and `changes nothing` for test, in the hat color.
-- **R-INST-05** The test hat has a conversation of its own. In the test hat, `CONTEXT`
-  shows that conversation's gauge and its heading carries `its own conversation`.
+- **R-INST-04** `this hat` reads `read only` for plan and review and `edits ask first` for
+  build, in the hat color.
+- **R-INST-05** Retired with the test hat (2026-10-03): there is one conversation.
 - **R-INST-06** `CHANGES` lists at most six files, then `+N more`. With nothing changed
   since the last commit it reads `nothing uncommitted`, and outside a git repository `no
   repository here`. The list is read from git without writing to the repository, at
@@ -664,3 +662,9 @@ After a first real session on the released screen (2026-10-02), the user asked f
 | Checks are three rows, `success` / `warning` / `failure`, with the same words in the build and test blocks (§5.3) | One number with a mark in front took a second look; three named rows don't, and "tests" and "checks" meant the same thing in two places. |
 | The tests row is gone from the instruments (§6.1) | The same number was on screen twice. |
 | A `PULSE` card: tokens a second with eight seconds of history (R-INST-10) | How fast the model is writing was nowhere on screen. |
+
+On 2026-10-03 the user removed the test hat:
+
+| Change | Why |
+| --- | --- |
+| Three hats: plan, build, review. The top bar, the rack and `Tab` lose the test hat (R-TOP-01, §5, R-INST-04, R-INST-05) | The test hat's one distinction, never writing the project, was what made it fail in use, and it fit only a product with an address. `run_project` moved to the build and review hats. See `DECISIONS.md`, 2026-10-03. |

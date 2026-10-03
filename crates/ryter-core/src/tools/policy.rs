@@ -71,8 +71,6 @@ pub fn decide(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
         // The run file is the user's to approve, and Ryter runs only what
         // they approved.
         "propose_run" | "run_project" => Decision::Allow,
-        // A report is written by Ryter, in its own folder.
-        "report_test" => Decision::Allow,
         "web_fetch" | "web_search" => {
             if ctx.web {
                 Decision::Allow
@@ -135,7 +133,7 @@ fn decide_write(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
     if crate::memory::is_memory_file(&real_path(&ctx.workspace), &resolved) {
         return match ctx.role {
             // Review and test change nothing, memory included.
-            Role::SoloReview | Role::SoloTest | Role::Crew => Decision::Deny,
+            Role::SoloReview | Role::Crew => Decision::Deny,
             Role::SoloPlan | Role::SoloBuild => Decision::Allow,
         };
     }
@@ -1715,222 +1713,6 @@ fn uploads_elsewhere(prog: &str, args: &[String]) -> bool {
     false
 }
 
-/// What a command rewrites where it stands, by its arguments.
-enum Rewrite {
-    /// Nothing, or nothing the arguments show.
-    No,
-    /// The files it names: `sed -i`, `sponge f`, `sort -o f`.
-    Paths,
-    /// The files it names, or the tree it stands in when it names none:
-    /// `cargo fmt`, `black src/`, `prettier --write .`.
-    Tree,
-}
-
-/// The tool a runner runs, with the runner taken off: `npx prettier …`,
-/// `bunx`, `uvx`, `pipx run`, `pnpm dlx`/`exec`, `yarn dlx`/`exec`, `uv`/
-/// `poetry`/`pdm`/`hatch`/`rye run`, and `python -m module` (the module
-/// as the tool). The tool's name is its base name, without a version
-/// (`prettier@3`, `/usr/bin/sed`).
-fn tool_behind_runner(words: &[String]) -> Vec<String> {
-    fn base(w: &str) -> String {
-        let w = w.rsplit('/').next().unwrap_or(w);
-        w.split('@')
-            .find(|p| !p.is_empty())
-            .unwrap_or(w)
-            .to_string()
-    }
-    let mut i = 0;
-    while let Some(prog) = words.get(i) {
-        let prog = base(prog);
-        let next = words.get(i + 1).map(String::as_str);
-        match prog.as_str() {
-            "npx" | "bunx" | "uvx" => i += 1,
-            "pipx" if next == Some("run") => i += 2,
-            "pnpm" | "yarn" if matches!(next, Some("dlx" | "exec")) => i += 2,
-            "uv" | "poetry" | "pdm" | "hatch" | "rye" if next == Some("run") => i += 2,
-            "python" | "python3" | "python2" | "py" => {
-                // `python [-X …] -m module args`: the module is the tool.
-                let mut j = i + 1;
-                while let Some(w) = words.get(j) {
-                    if matches!(w.as_str(), "-X" | "-W" | "-Q") {
-                        j += 2;
-                    } else if w.starts_with('-') && w != "-m" {
-                        j += 1;
-                    } else {
-                        break;
-                    }
-                }
-                if words.get(j).map(String::as_str) == Some("-m") && words.get(j + 1).is_some() {
-                    i = j + 1;
-                }
-                break;
-            }
-            _ => break,
-        }
-        // The runner's own options: `npx -y`, `npx -p pkg`, `uv run -q`.
-        while let Some(w) = words.get(i) {
-            if matches!(w.as_str(), "-p" | "--package" | "--with" | "--from") {
-                i += 2;
-            } else if w.starts_with('-') {
-                i += 1;
-            } else {
-                break;
-            }
-        }
-    }
-    let mut out: Vec<String> = words.get(i..).unwrap_or_default().to_vec();
-    if let Some(first) = out.first_mut() {
-        *first = base(first);
-    }
-    out
-}
-
-/// An in-place editor, a formatter or a fixer, read from its flags, the
-/// runner in front of it taken off.
-fn rewrites_in_place(words: &[String]) -> Rewrite {
-    let words = &tool_behind_runner(words);
-    let prog = words.first().map(String::as_str).unwrap_or("");
-    let rest = words.get(1..).unwrap_or_default();
-    let has = |fs: &[&str]| {
-        rest.iter().any(|w| {
-            fs.iter()
-                .any(|f| w == f || (f.starts_with("--") && w.starts_with(&format!("{f}="))))
-        })
-    };
-    let sub = rest.first().map(String::as_str).unwrap_or("");
-    let checks = has(&[
-        "--check",
-        "--check-only",
-        "--diff",
-        "--dry-run",
-        "-check",
-        "--verify-no-changes",
-    ]);
-    match prog {
-        "sed" => {
-            if rest
-                .iter()
-                .any(|w| w.starts_with("-i") || w.starts_with("--in-place"))
-            {
-                Rewrite::Paths
-            } else {
-                Rewrite::No
-            }
-        }
-        "perl" => {
-            // `-i`, `-pi`, `-pi.bak`: a cluster with `i` before a flag that
-            // takes the rest of the word (`-Mmodule`, `-Idir`, `-e code`).
-            let inplace = rest.iter().any(|w| {
-                w.starts_with('-')
-                    && !w.starts_with("--")
-                    && w[1..]
-                        .chars()
-                        .take_while(|c| {
-                            !matches!(
-                                c,
-                                'M' | 'm'
-                                    | 'I'
-                                    | 'e'
-                                    | 'E'
-                                    | 'F'
-                                    | 'l'
-                                    | '0'
-                                    | 'x'
-                                    | 'C'
-                                    | 'D'
-                                    | 'V'
-                            )
-                        })
-                        .any(|c| c == 'i')
-            });
-            if inplace { Rewrite::Paths } else { Rewrite::No }
-        }
-        "awk" | "gawk" | "mawk" | "nawk" => {
-            let inplace = rest
-                .windows(2)
-                .any(|p| (p[0] == "-i" || p[0] == "--include") && p[1].starts_with("inplace"))
-                || rest
-                    .iter()
-                    .any(|w| w.starts_with("-iinplace") || w.starts_with("--include=inplace"));
-            if inplace { Rewrite::Paths } else { Rewrite::No }
-        }
-        "sponge" | "ed" | "ex" => Rewrite::Paths,
-        // The files are named in the diff, under the folder it stands in.
-        "patch" => Rewrite::Tree,
-        "sort" | "uniq" | "xxd" => {
-            if writes_output_file(prog, words) {
-                Rewrite::Paths
-            } else {
-                Rewrite::No
-            }
-        }
-        "yq" if has(&["-i", "--inplace", "--in-place"]) => Rewrite::Paths,
-        "clang-format" if has(&["-i", "--in-place"]) => Rewrite::Paths,
-        "autopep8" | "yapf" if has(&["-i", "--in-place"]) => Rewrite::Paths,
-        // `-l` lists; with `-w` beside it, every file listed is written.
-        "shfmt" | "gofmt" if has(&["-w"]) => Rewrite::Tree,
-        "prettier" if has(&["-w", "--write"]) => Rewrite::Tree,
-        "eslint" | "stylelint" if has(&["--fix"]) => Rewrite::Tree,
-        "ruff" if sub == "format" && !checks || has(&["--fix", "--fix-only", "--unsafe-fixes"]) => {
-            Rewrite::Tree
-        }
-        "black" | "isort" | "rustfmt" | "swiftformat" if !checks => Rewrite::Tree,
-        "cargo" if matches!(sub, "fmt" | "fix") && !checks => Rewrite::Tree,
-        "cargo" if sub == "clippy" && has(&["--fix"]) => Rewrite::Tree,
-        "go" if sub == "fmt"
-            || (sub == "mod"
-                && matches!(
-                    rest.get(1).map(String::as_str),
-                    Some("tidy" | "edit" | "vendor")
-                )) =>
-        {
-            Rewrite::Tree
-        }
-        "npm" | "pnpm"
-            if sub == "pkg"
-                && matches!(
-                    rest.get(1).map(String::as_str),
-                    Some("set" | "delete" | "fix")
-                ) =>
-        {
-            Rewrite::Tree
-        }
-        "dotnet" if sub == "format" && !checks => Rewrite::Tree,
-        // `.yarnrc.yml` in the project.
-        "yarn" if sub == "config" && rest.get(1).map(String::as_str) == Some("set") => {
-            Rewrite::Tree
-        }
-        "terraform" | "tofu" if sub == "fmt" && !checks => Rewrite::Tree,
-        _ => Rewrite::No,
-    }
-}
-
-/// A command whose arguments show it rewriting a file of the project's.
-fn rewrites_project(from_prog: &[String], ctx: &ToolContext) -> bool {
-    let how = rewrites_in_place(from_prog);
-    if matches!(how, Rewrite::No) {
-        return false;
-    }
-    let plain = plain_args(from_prog);
-    let notes = real_path(&ctx.notes_dir);
-    let in_project_file =
-        |w: &str| resolve(ctx, w).is_some_and(|p| p.exists() && !is_under(&p, &notes));
-    if plain.iter().any(|w| in_project_file(w)) {
-        return true;
-    }
-    match how {
-        Rewrite::Tree => {
-            // Nothing of the project's named: it works where it stands,
-            // unless it was pointed somewhere else that is there.
-            let elsewhere = plain
-                .iter()
-                .any(|w| resolve_outside(ctx, w).is_some_and(|p| p.exists()));
-            !elsewhere && !cwd_outside(ctx)
-        }
-        _ => false,
-    }
-}
-
 /// `git` subcommands that mutate refs or the remote. Denied for every hat:
 /// pushing and rewriting history are the user's to do.
 const GIT_NEVER: &[&str] = &[
@@ -2267,7 +2049,7 @@ fn decide_segment_in(seg: &str, ctx: &ToolContext, in_container: bool) -> Decisi
             return Decision::Deny;
         }
         if first == "function" {
-            return if matches!(ctx.role, Role::SoloBuild | Role::SoloTest) {
+            return if ctx.role == Role::SoloBuild {
                 Decision::Allow
             } else {
                 Decision::Deny
@@ -2308,7 +2090,7 @@ fn decide_segment_in(seg: &str, ctx: &ToolContext, in_container: bool) -> Decisi
     // In the hats that do the work, the user's own answer for this command
     // has the last word, short of a refusal: a refusal is the gate's, and
     // no rule opens it.
-    if !matches!(ctx.role, Role::SoloBuild | Role::SoloTest) || judged == Decision::Deny {
+    if ctx.role != Role::SoloBuild || judged == Decision::Deny {
         return judged;
     }
     match ctx.permissions.for_command(seg) {
@@ -2540,7 +2322,7 @@ fn assignment(name: &str, value: &str, ctx: &ToolContext) -> Decision {
         || name.starts_with("LC_")
         || quiet_pager(name, value);
     match ctx.role {
-        Role::SoloBuild | Role::SoloTest => {
+        Role::SoloBuild => {
             if redirects_a_program(name, value, ctx) {
                 Decision::Ask
             } else {
@@ -2610,7 +2392,7 @@ fn judge(
     if NEVER.contains(&prog) || prog.starts_with("mkfs") || REWIRES_THE_SHELL.contains(&prog) {
         return Decision::Deny;
     }
-    let works = matches!(ctx.role, Role::SoloBuild | Role::SoloTest);
+    let works = ctx.role == Role::SoloBuild;
     // Files the gate can't see, handed to a command that prints them: a
     // secret could be among them. A person can be asked; where nobody is,
     // it is refused.
@@ -2656,7 +2438,7 @@ fn judge(
     }
     // The plan and review hats work in the user's own tree, where a
     // redirect is a write nothing undoes.
-    if matches!(ctx.role, Role::SoloPlan | Role::SoloReview | Role::SoloTest)
+    if matches!(ctx.role, Role::SoloPlan | Role::SoloReview)
         && writes_project_via_redirect(words, ctx)
     {
         return Decision::Deny;
@@ -2839,68 +2621,6 @@ fn judge(
             Tree::Clear => {}
         }
     }
-    // Nor by an editor, a formatter or a fixer that rewrites files where
-    // they are.
-    if ctx.role == Role::SoloTest && !in_container && rewrites_project(from_prog, ctx) {
-        return Decision::Deny;
-    }
-    // The tester changes nothing in the project: not by making a file
-    // there either.
-    if ctx.role == Role::SoloTest {
-        let plain = plain_args(from_prog);
-        let made = match prog {
-            // Made, moved, linked, written to, or changed in mode: the
-            // project's files are not the tester's to touch.
-            "touch" | "mkdir" | "mv" | "ln" | "install" | "tee" | "chmod" | "chgrp" => {
-                plain.iter().any(|w| in_project(w, ctx))
-            }
-            "cp" => plain.last().is_some_and(|w| in_project(w, ctx)),
-            // A download lands somewhere: in the project unless it says.
-            "curl" => {
-                let mut it = words.iter().map(String::as_str);
-                let mut lands = false;
-                while let Some(w) = it.next() {
-                    match w {
-                        "-O" | "--remote-name" | "-J" | "--remote-header-name" => lands = true,
-                        "-o" | "--output" => {
-                            if let Some(t) = it.next() {
-                                lands |= t != "/dev/null" && t != "-" && in_project(t, ctx);
-                            }
-                        }
-                        _ if w.starts_with("-o") && w.len() > 2 => {
-                            lands |= in_project(&w[2..], ctx);
-                        }
-                        _ if w.starts_with("--output=") => {
-                            lands |= in_project(&w[9..], ctx);
-                        }
-                        _ => {}
-                    }
-                }
-                lands
-            }
-            "wget" => {
-                let to = words
-                    .iter()
-                    .position(|w| w == "-O" || w == "--output-document")
-                    .and_then(|i| words.get(i + 1))
-                    .or_else(|| {
-                        words
-                            .iter()
-                            .find_map(|w| w.strip_prefix("--output-document=").map(|_| w))
-                    });
-                match to {
-                    Some(t) => {
-                        t != "-" && in_project(t.trim_start_matches("--output-document="), ctx)
-                    }
-                    None => true,
-                }
-            }
-            _ => false,
-        };
-        if made {
-            return Decision::Deny;
-        }
-    }
     // A secret is not a script: `php .env` prints it.
     if RUN_FILES.contains(&prog) && names_a_secret(from_prog, ctx) {
         return Decision::Deny;
@@ -2925,10 +2645,8 @@ fn judge(
     let base = match ctx.role {
         // A normal agent in the user's tree: what it runs, runs. What asks
         // was decided above (destruction) or here (publishing, the rest of
-        // the machine), and the user's own rules have the last word. The
-        // tester is the same, except that it never edits the project,
-        // which is refused before this.
-        Role::SoloBuild | Role::SoloTest => {
+        // the machine), and the user's own rules have the last word.
+        Role::SoloBuild => {
             let base = if is_container_tool(prog) {
                 let d = container_decision(prog, args, ctx);
                 // The project's containers run freely in the project. After
@@ -3082,8 +2800,8 @@ fn url_host(url: &str) -> Option<&str> {
 }
 
 /// A `curl` to the project's own address, in a form that changes nothing in
-/// the project: the tester tries the product the way its user's browser
-/// would. Every URL is on this machine; anything it saves goes to scratch
+/// the project: a hat trying the product the way its user's browser would.
+/// Every URL is on this machine; anything it saves goes to scratch
 /// space, the home folder or the notes folder; any file it sends is one it
 /// may read, and not a secret. Whatever the gate doesn't recognise makes it
 /// ask instead.
@@ -3490,7 +3208,7 @@ pub fn bash_hint(args: &Value, ctx: &ToolContext) -> Option<&'static str> {
              folder where keys are kept, which no hat reads. Leave that path out.",
         );
     }
-    if escapes && !matches!(ctx.role, Role::SoloBuild | Role::SoloTest) {
+    if escapes && ctx.role != Role::SoloBuild {
         return Some(
             "This command reads a file outside this project, which this hat doesn't do. It \
              reads the project, scratch space (`/tmp`) and the user's home folder; a `.ryter` \
@@ -3540,11 +3258,11 @@ pub fn bash_hint(args: &Value, ctx: &ToolContext) -> Option<&'static str> {
                     || runs_a_string(prog, args)
             })
         })
-        .then_some(if matches!(ctx.role, Role::SoloBuild | Role::SoloTest) {
+        .then_some(if ctx.role == Role::SoloBuild {
             "A shell handed a command as text (`bash -c`, `sh <<<`, a pipe into `sh`) is \
              refused in every hat: the gate can't read it. Write the command out instead."
         } else {
-            "Inline code (`-c`, `-e`, heredocs, stdin) runs in the build and test hats. This \
+            "Inline code (`-c`, `-e`, heredocs, stdin) runs in the build hat. This \
              hat runs only what the gate can read: a file in the project (`python3 \
              probe.py`, `python3 -m unittest tests.test_probe`)."
         })
@@ -5973,7 +5691,7 @@ pub(crate) fn on_this_machine(url: &str) -> bool {
 /// `node` all read those (`.cargo/config.toml`, `conftest.py`,
 /// `.eslintrc.js`), and for a project in `/tmp` that folder is `/tmp`.
 pub(crate) fn free_place(path: &Path, ctx: &ToolContext, writing: bool) -> bool {
-    let works = matches!(ctx.role, Role::SoloBuild | Role::SoloTest);
+    let works = ctx.role == Role::SoloBuild;
     let home = home_dir()
         .map(|h| real_path(&h))
         .filter(|_| works || !writing);
@@ -6486,12 +6204,7 @@ mod tests {
         ] {
             std::fs::write(root.join(file), "PUBLIC_SENTINEL").unwrap();
         }
-        for role in [
-            Role::SoloPlan,
-            Role::SoloBuild,
-            Role::SoloReview,
-            Role::SoloTest,
-        ] {
+        for role in [Role::SoloPlan, Role::SoloBuild, Role::SoloReview] {
             let c = ctx_for(role, &root);
             for path in [
                 ".env",
@@ -6573,12 +6286,7 @@ mod tests {
                 std::fs::write(root.join(file), body).unwrap();
             }
         }
-        for role in [
-            Role::SoloPlan,
-            Role::SoloBuild,
-            Role::SoloReview,
-            Role::SoloTest,
-        ] {
+        for role in [Role::SoloPlan, Role::SoloBuild, Role::SoloReview] {
             let c = ctx_for(role, &root);
             for path in work {
                 let read =
@@ -6847,96 +6555,6 @@ mod tests {
         );
     }
 
-    /// The tester uses the product: it runs what the build hat runs
-    /// without asking, and requests to the project's own address. It asks
-    /// where the build hat would. It never changes the project's files.
-    #[test]
-    fn the_tester_uses_the_product_and_changes_nothing() {
-        let dir = TempDir::new().unwrap();
-        let d = dir.path();
-        std::fs::write(d.join("form.json"), "{}").unwrap();
-        std::fs::write(d.join(".env"), "K=1").unwrap();
-        std::fs::create_dir(d.join("app")).unwrap();
-        let sh = |cmd: &str| bash(cmd, Role::SoloTest, d);
-        for cmd in [
-            "cargo test",
-            "docker compose up -d --wait",
-            "docker compose run --rm web pytest -q",
-            "docker compose exec web python manage.py shell",
-            "docker compose down",
-            "./bin/cms-admin create-user ann",
-            "cd app && npm test",
-            "cat README.md",
-            "git status --short",
-            "pytest -q > /tmp/ryter-test-out.txt 2>&1",
-            // Its own address, the way a browser would use it.
-            "curl -s http://localhost:8000/healthz",
-            "curl -sS -i http://127.0.0.1:8000/manage/",
-            "curl -sI localhost:8000/",
-            "curl -s -X POST -d 'user=ann&pw=x' -c /tmp/ryter-jar http://localhost:8000/login",
-            "curl -s -b /tmp/ryter-jar -L http://localhost:8000/manage/",
-            "curl -s -H 'Content-Type: application/json' --data-binary @form.json http://[::1]:8000/api/pages",
-            "curl -s -o /tmp/ryter-page.html -w '%{http_code}' http://cms.localhost:8000/",
-            "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/",
-            "grep -c passed /dev/null",
-            "curl -s http://localhost:8000/a http://localhost:8000/b",
-        ] {
-            assert_eq!(sh(cmd), Decision::Allow, "{cmd}");
-        }
-        for cmd in [
-            // The host's own socket is the host.
-            "curl -s --unix-socket /var/run/docker.sock http://localhost/containers/json",
-            // What the build hat asks about.
-            "docker compose down -v",
-            "docker stop cms-web-1",
-            "npm publish",
-        ] {
-            assert!(
-                matches!(sh(cmd), Decision::Ask | Decision::AskOutside),
-                "{cmd}: {:?}",
-                sh(cmd)
-            );
-        }
-        // Nothing in the project changes, and the lines that hold for
-        // every hat hold here.
-        for cmd in [
-            "rm -rf target",
-            "mv a.rs b.rs",
-            "echo x > src/a.rs",
-            "pytest > out.txt",
-            "git commit -m x",
-            "git checkout -- .",
-            "sudo ls",
-            "cat ~/.ssh/id_rsa",
-        ] {
-            assert_eq!(sh(cmd), Decision::Deny, "{cmd}");
-        }
-        let write = |path: &str| {
-            decide(
-                "write",
-                &json!({"path": path, "content": "x"}),
-                &ctx_for(Role::SoloTest, d),
-            )
-        };
-        assert_eq!(write("src/a.rs"), Decision::Deny);
-        assert_eq!(write("ROADMAP.md"), Decision::Deny);
-        assert_eq!(write("notes/findings.md"), Decision::Allow);
-        assert_eq!(write("/tmp/ryter-test/findings.md"), Decision::Allow);
-        // It has no tool for editing in place, planning, or changing hats.
-        for tool in [
-            "search_replace",
-            "present_plan",
-            "request_hat",
-            "record_decision",
-        ] {
-            assert_eq!(
-                decide(tool, &json!({}), &ctx_for(Role::SoloTest, d)),
-                Decision::Deny,
-                "{tool}"
-            );
-        }
-    }
-
     #[test]
     fn a_request_is_to_this_machine_or_it_is_not() {
         for own in [
@@ -6974,12 +6592,7 @@ mod tests {
         let d = dir.path();
         std::fs::write(d.join(".env"), "KEY=1\n").unwrap();
         std::fs::write(d.join("server.pem"), "x").unwrap();
-        for role in [
-            Role::SoloBuild,
-            Role::SoloPlan,
-            Role::SoloReview,
-            Role::SoloTest,
-        ] {
+        for role in [Role::SoloBuild, Role::SoloPlan, Role::SoloReview] {
             for cmd in [
                 "hexdump .env",
                 "hexdump -C .env",
@@ -7062,7 +6675,8 @@ mod tests {
             for role in [Role::SoloPlan, Role::SoloReview] {
                 assert_eq!(bash(cmd, role, d), Decision::Deny, "{role:?}: {cmd}");
             }
-            for role in [Role::SoloBuild, Role::SoloTest] {
+            {
+                let role = Role::SoloBuild;
                 assert_eq!(bash(cmd, role, d), Decision::Ask, "{role:?}: {cmd}");
             }
         }
@@ -7072,7 +6686,7 @@ mod tests {
             "find . -name .env -exec cat {} +",
             "find . -type f -exec grep -l KEY {} \\;",
         ] {
-            for role in [Role::SoloPlan, Role::SoloReview, Role::SoloTest] {
+            for role in [Role::SoloPlan, Role::SoloReview] {
                 assert_eq!(bash(cmd, role, d), Decision::Deny, "{role:?}: {cmd}");
             }
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Ask, "{cmd}");
@@ -7103,7 +6717,7 @@ mod tests {
         // Code on stdin: the hats that do the work run it, as they run a
         // script; the review hat runs only what the gate can read. A shell
         // fed on stdin is refused for everyone.
-        for role in [Role::SoloBuild, Role::SoloReview, Role::SoloTest] {
+        for role in [Role::SoloBuild, Role::SoloReview] {
             for cmd in [
                 "echo 'import os' | python3 /dev/stdin",
                 "echo 'x' | node /dev/stdin",
@@ -7146,7 +6760,8 @@ mod tests {
         }
         // In the hats that do the work, a script runs wherever it is:
         // scratch space and the notes are theirs to use.
-        for role in [Role::SoloBuild, Role::SoloTest] {
+        {
+            let role = Role::SoloBuild;
             for cmd in [
                 "python3 /tmp/ryter-probe.py",
                 "node /tmp/ryter-probe.js",
@@ -7180,7 +6795,8 @@ mod tests {
         let dir = tempfile::Builder::new().tempdir_in(&base).unwrap();
         let d = dir.path();
         std::fs::write(d.join(".env"), "KEY=1\n").unwrap();
-        for role in [Role::SoloBuild, Role::SoloTest] {
+        {
+            let role = Role::SoloBuild;
             for cmd in [
                 "docker cp web:/x src/main.rs",
                 "docker cp .env web:/tmp/",
@@ -7688,7 +7304,7 @@ mod tests {
                 Decision::Deny,
                 "{path}"
             );
-            for role in [Role::SoloPlan, Role::SoloReview, Role::SoloTest] {
+            for role in [Role::SoloPlan, Role::SoloReview] {
                 assert_eq!(write(role, path), Decision::Deny, "{role:?} {path}");
             }
         }
@@ -8371,10 +7987,6 @@ mod tests {
             Decision::Deny
         );
         assert_eq!(
-            bash("cd /tmp; cd -; touch x", Role::SoloTest, d),
-            Decision::Deny
-        );
-        assert_eq!(
             bash("pushd app; popd; cat app/x.py", Role::SoloReview, d),
             Decision::Allow
         );
@@ -8392,7 +8004,8 @@ mod tests {
     fn a_function_is_its_body_in_the_working_hats() {
         let dir = TempDir::new().unwrap();
         let d = dir.path();
-        for role in [Role::SoloBuild, Role::SoloTest] {
+        {
+            let role = Role::SoloBuild;
             assert_eq!(
                 bash(
                     "B=localhost:8000\nadd(){ curl -s -o /dev/null -F name=\"$1\" $B/items/new; }\nadd a; add b",
@@ -8416,10 +8029,6 @@ mod tests {
         assert_eq!(
             bash("ls() { rm -rf src; }; ls", Role::SoloBuild, d),
             Decision::Ask
-        );
-        assert_eq!(
-            bash("ls() { rm -rf src; }; ls", Role::SoloTest, d),
-            Decision::Deny
         );
         for role in [Role::SoloPlan, Role::SoloReview] {
             assert_eq!(bash("f() { ls; }; f", role, d), Decision::Deny, "{role:?}");
@@ -8575,7 +8184,6 @@ mod tests {
             "git switch --force main",
         ] {
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Ask, "{cmd}");
-            assert_eq!(bash(cmd, Role::SoloTest, d), Decision::Deny, "{cmd}");
         }
         for cmd in [
             "git checkout main",
@@ -8607,138 +8215,6 @@ mod tests {
         ] {
             assert!(!destructive_command(cmd), "{cmd}");
         }
-    }
-
-    /// The test hat rewrites nothing of the project's by an editor, a
-    /// formatter or a fixer either; the build hat does.
-    #[test]
-    fn the_tester_may_not_rewrite_the_project_in_place() {
-        let dir = TempDir::new().unwrap();
-        let d = dir.path();
-        std::fs::create_dir(d.join("src")).unwrap();
-        for f in [
-            "src/main.rs",
-            "src/main.py",
-            "src/main.go",
-            "package.json",
-            "Cargo.toml",
-        ] {
-            std::fs::write(d.join(f), "").unwrap();
-        }
-        for cmd in [
-            "sed -i s/a/b/ src/main.rs",
-            "sed --in-place=.bak s/a/b/ src/main.rs",
-            "patch -p1 < fix.diff",
-            "ed src/main.rs",
-            "awk -i inplace '{print}' src/main.rs",
-            "gawk --include=inplace '{print}' src/main.rs",
-            "sponge src/main.rs",
-            "sort -o src/main.rs src/main.rs",
-            "sort --output=src/main.rs src/main.rs",
-            "perl -i -pe s/x/y/ src/main.rs",
-            "perl -pi -e s/x/y/ src/main.rs",
-            "perl -pi.bak -e s/x/y/ src/main.rs",
-            "gofmt -w src/main.go",
-            "prettier --write src/",
-            "prettier -w .",
-            "eslint --fix src/",
-            "ruff check --fix src/",
-            "ruff format",
-            "ruff format src/",
-            "black src/main.py",
-            "black .",
-            "isort src/",
-            "rustfmt src/main.rs",
-            "cargo fmt",
-            "cargo fmt --all",
-            "cargo fix --allow-dirty",
-            "cargo clippy --fix --allow-dirty",
-            "go fmt ./...",
-            "go mod tidy",
-            "npm pkg set name=x",
-            "yq -i .a=1 Cargo.toml",
-            "yq --in-place .a=1 Cargo.toml",
-            "clang-format -i src/main.rs",
-            "autopep8 --in-place src/main.py",
-            // Sibling spellings.
-            "ruff check --fix-only src/main.py",
-            "gofmt -l -w src/main.go",
-            "gofmt -w -l src/main.go",
-            "yarn config set save-prefix ^1.0",
-            "/usr/bin/sed -i s/a/b/ src/main.rs",
-            // The same tools behind a runner.
-            "npx prettier --write src/",
-            "npx -y prettier@3 --write src/",
-            "npx -p prettier prettier --write src/",
-            "npx eslint --fix src/main.js",
-            "npx ruff check --fix src/",
-            "bunx prettier --write src/",
-            "uvx ruff check --fix src/",
-            "uvx --from ruff ruff format",
-            "pipx run black src/",
-            "pnpm dlx prettier --write src/",
-            "pnpm exec prettier -w .",
-            "yarn dlx prettier --write src/",
-            "python3 -m black src/main.py",
-            "python3 -m isort src/main.py",
-            "python3 -m ruff check --fix src/",
-            "python3 -m ruff format src/main.py",
-            "python3 -m autopep8 --in-place src/main.py",
-            "python -X dev -m black src/",
-            "uv run black src/",
-            "uv run python -m black src/",
-            "poetry run isort src/",
-            "pdm run ruff format",
-        ] {
-            assert_eq!(bash(cmd, Role::SoloTest, d), Decision::Deny, "{cmd}");
-            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
-        }
-        // Reading, checking and diffing are the tester's.
-        for cmd in [
-            "sed -n 1,20p src/main.rs",
-            "sed s/a/b/ src/main.rs",
-            "sort src/main.rs",
-            "sort -u src/main.rs | head",
-            "perl -ne 'print if /x/' src/main.rs",
-            "awk '{print $1}' src/main.rs",
-            "cargo fmt --check",
-            "cargo fmt --all -- --check",
-            "black --check src/",
-            "black --diff src/main.py",
-            "isort --check-only src/",
-            "prettier --check src/",
-            "eslint src/",
-            "ruff check src/",
-            "ruff format --check",
-            "gofmt -d src/main.go",
-            "gofmt -l .",
-            "yq .a Cargo.toml",
-            "npm pkg get name",
-            "terraform fmt -check",
-            "yarn config get save-prefix",
-            "npx prettier --check src/",
-            "npx eslint src/",
-            "uvx ruff check src/",
-            "python3 -m black --check src/",
-            "python3 -m isort --check-only src/",
-            "uv run pytest -q",
-            "poetry run black --diff src/",
-        ] {
-            assert_eq!(bash(cmd, Role::SoloTest, d), Decision::Allow, "{cmd}");
-        }
-        // Scratch is the tester's to rewrite; so is a tree it is pointed
-        // at outside the project.
-        std::fs::create_dir_all("/tmp/ryter-rewrite-test/src").unwrap();
-        std::fs::write("/tmp/ryter-rewrite-test/x.txt", "").unwrap();
-        for cmd in [
-            "sed -i s/a/b/ /tmp/ryter-rewrite-test/x.txt",
-            "sponge /tmp/ryter-rewrite-test/x.txt",
-            "black /tmp/ryter-rewrite-test/src",
-            "cd /tmp/ryter-rewrite-test && cargo fmt",
-        ] {
-            assert_eq!(bash(cmd, Role::SoloTest, d), Decision::Allow, "{cmd}");
-        }
-        let _ = std::fs::remove_dir_all("/tmp/ryter-rewrite-test");
     }
 
     /// `curl` sends its body to every URL it is given: one address of this
@@ -8790,7 +8266,8 @@ mod tests {
             format!("cd /tmp && timeout 10 {abs}/.venv/bin/python /tmp/x.py > /tmp/x.log 2>&1"),
             "timeout 5 /usr/bin/python3 smoke.py".to_string(),
         ] {
-            for role in [Role::SoloBuild, Role::SoloTest] {
+            {
+                let role = Role::SoloBuild;
                 assert_eq!(bash(&cmd, role, d), Decision::Allow, "{role:?}: {cmd}");
             }
         }
@@ -8997,7 +8474,8 @@ mod tests {
         std::fs::write(d.join(".env.example"), "DB_PASSWORD=\n").unwrap();
         let other = TempDir::new().unwrap();
         let elsewhere = other.path().display().to_string();
-        for role in [Role::SoloBuild, Role::SoloTest] {
+        {
+            let role = Role::SoloBuild;
             assert_eq!(
                 bash("docker compose up -d --build", role, d),
                 Decision::Allow
@@ -9038,7 +8516,7 @@ mod tests {
             bash("cp .env .env.local", Role::SoloBuild, d),
             Decision::Deny
         );
-        for role in [Role::SoloPlan, Role::SoloReview, Role::SoloTest] {
+        for role in [Role::SoloPlan, Role::SoloReview] {
             assert_eq!(
                 bash("cp .env.example .env", role, d),
                 Decision::Deny,
@@ -9079,7 +8557,7 @@ mod tests {
             bash("git remote set-url origin x", Role::SoloBuild, dir.path()),
             Decision::Ask
         );
-        for role in [Role::SoloPlan, Role::SoloReview, Role::SoloTest] {
+        for role in [Role::SoloPlan, Role::SoloReview] {
             assert_eq!(
                 bash("git push", role, dir.path()),
                 Decision::Deny,
@@ -9326,12 +8804,7 @@ mod tests {
         }
     }
 
-    const HATS: [Role; 4] = [
-        Role::SoloBuild,
-        Role::SoloTest,
-        Role::SoloReview,
-        Role::SoloPlan,
-    ];
+    const HATS: [Role; 3] = [Role::SoloBuild, Role::SoloReview, Role::SoloPlan];
 
     #[cfg(unix)]
     impl Machine {
@@ -9362,7 +8835,7 @@ mod tests {
         fn asks(&self, cmds: &[&str]) {
             for cmd in cmds {
                 for role in HATS {
-                    let want = if matches!(role, Role::SoloBuild | Role::SoloTest) {
+                    let want = if role == Role::SoloBuild {
                         Decision::Ask
                     } else {
                         Decision::Deny
@@ -9482,7 +8955,8 @@ mod tests {
             assert_eq!(m.decide("cat < ~/notes.txt", role), Decision::Allow);
         }
         // A system folder named by an option is not being written.
-        for role in [Role::SoloBuild, Role::SoloTest] {
+        {
+            let role = Role::SoloBuild;
             assert_eq!(
                 m.decide("./script.sh --prefix=/usr/local", role),
                 Decision::Allow,
@@ -9558,7 +9032,6 @@ mod tests {
         m.refused(&["function f { sudo id; }; f"]);
         for cmd in ["function ls { rm -rf src; }\nls", "ls() ( rm -rf src ); ls"] {
             assert_eq!(m.decide(cmd, Role::SoloBuild), Decision::Ask, "{cmd}");
-            assert_eq!(m.decide(cmd, Role::SoloTest), Decision::Deny, "{cmd}");
         }
         m.refused(&[
             // The shell's word behind `time` or `!` is still the shell's.
@@ -9595,7 +9068,7 @@ mod tests {
             ],
         );
         m.runs(
-            &[Role::SoloBuild, Role::SoloTest, Role::SoloReview],
+            &[Role::SoloBuild, Role::SoloReview],
             &[
                 "if cargo test; then echo ok; fi",
                 "set -e; cargo build; cargo test",
@@ -9606,7 +9079,7 @@ mod tests {
             ],
         );
         m.runs(
-            &[Role::SoloBuild, Role::SoloTest],
+            &[Role::SoloBuild],
             &[
                 "export FOO=bar",
                 "export PATH=\"$HOME/.cargo/bin:$PATH\" && cargo build",
@@ -9690,7 +9163,7 @@ mod tests {
             ],
         );
         m.runs(
-            &[Role::SoloBuild, Role::SoloTest],
+            &[Role::SoloBuild],
             &["cd src && python3 main.py", "cd sub && docker build .."],
         );
         // A folder made on the way is one the gate follows: the usual way
@@ -9699,7 +9172,8 @@ mod tests {
             m.decide("mkdir -p build && cd build && cmake ..", Role::SoloBuild),
             Decision::Allow
         );
-        for role in [Role::SoloBuild, Role::SoloTest] {
+        {
+            let role = Role::SoloBuild;
             // Out of the project from where it really is.
             assert_eq!(
                 m.decide("cd sub && docker build ../..", role),
@@ -9790,15 +9264,10 @@ mod tests {
                 .iter()
                 .any(|s| cmd.starts_with(s) || cmd.contains(&format!("| {s}")));
             for role in HATS {
-                let works = matches!(role, Role::SoloBuild | Role::SoloTest);
+                let works = role == Role::SoloBuild;
                 let want = if works && cmd.starts_with("find ") {
-                    // `find -exec` is judged as deletion is: the build hat
-                    // asks, the tester may not.
-                    if role == Role::SoloBuild {
-                        Decision::Ask
-                    } else {
-                        Decision::Deny
-                    }
+                    // `find -exec` is judged as deletion is: it asks.
+                    Decision::Ask
                 } else if works && !shell {
                     Decision::Allow
                 } else {
@@ -9887,7 +9356,8 @@ mod tests {
             "python3 /tmp/x.py",
             "deno run https://example.com/x.ts",
         ] {
-            for role in [Role::SoloBuild, Role::SoloTest] {
+            {
+                let role = Role::SoloBuild;
                 assert_eq!(m.decide(cmd, role), Decision::Allow, "{role:?}: {cmd}");
             }
         }
@@ -9996,7 +9466,7 @@ mod tests {
             ],
         );
         m.runs(
-            &[Role::SoloBuild, Role::SoloTest],
+            &[Role::SoloBuild],
             &[
                 "docker compose --env-file .env up -d",
                 "node --env-file=.env src/x.js",
@@ -10009,8 +9479,8 @@ mod tests {
         ] {
             assert_eq!(m.decide(cmd, Role::SoloBuild), Decision::Allow, "{cmd}");
         }
-        // The tester makes nothing in the project, by any road; the build
-        // hat does, without a question.
+        // Making a file in the project is the build hat's, without a
+        // question.
         for cmd in [
             "touch newfile",
             "mkdir newdir",
@@ -10018,22 +9488,8 @@ mod tests {
             "curl -s -o page.html http://localhost:8000/",
             "wget http://localhost:8000/x.tgz",
         ] {
-            assert_eq!(m.decide(cmd, Role::SoloTest), Decision::Deny, "{cmd}");
             assert_eq!(m.decide(cmd, Role::SoloBuild), Decision::Allow, "{cmd}");
         }
-        // A download to scratch, or to the pipe, is nowhere in the project.
-        for cmd in [
-            "curl -s -o /tmp/page.html http://localhost:8000/",
-            "wget -O /tmp/x.tgz http://localhost:8000/x.tgz",
-            "wget -O - http://localhost:8000/ | head",
-            "curl -s -T form.json http://localhost:8000/upload",
-        ] {
-            assert_eq!(m.decide(cmd, Role::SoloTest), Decision::Allow, "{cmd}");
-        }
-        assert_eq!(
-            m.decide("cp script.sh /tmp/ryter-scratch/copy.sh", Role::SoloTest),
-            Decision::Allow
-        );
         // The linters a reviewer runs.
         m.runs(
             &[Role::SoloReview],
@@ -10075,7 +9531,8 @@ mod tests {
             "sed -n '1p;$p' README.md",
         ] {
             let cmd = full(cmd);
-            for role in [Role::SoloBuild, Role::SoloTest] {
+            {
+                let role = Role::SoloBuild;
                 assert_eq!(m.decide(&cmd, role), Decision::Allow, "{role:?}: {cmd}");
             }
         }
@@ -10352,7 +9809,8 @@ mod tests {
     #[test]
     fn a_container_is_handed_only_what_the_gate_can_see() {
         let m = machine();
-        for role in [Role::SoloBuild, Role::SoloTest] {
+        {
+            let role = Role::SoloBuild;
             for cmd in [
                 // The folder above the project, as a build's context.
                 "docker build ../..",
@@ -10400,7 +9858,7 @@ mod tests {
             }
         }
         m.runs(
-            &[Role::SoloBuild, Role::SoloTest],
+            &[Role::SoloBuild],
             &[
                 "docker build .",
                 "docker build sub",
@@ -10452,7 +9910,8 @@ mod tests {
             assert_eq!(write(role, "/tmp/ryter-scratch/out.txt"), Decision::Allow);
             assert_eq!(m.decide("cat ~/notes.txt", role), Decision::Allow);
         }
-        for role in [Role::SoloBuild, Role::SoloTest] {
+        {
+            let role = Role::SoloBuild;
             assert_eq!(write(role, "~/notes-2.txt"), Decision::Allow, "{role:?}");
             assert_eq!(
                 m.decide("echo x > ~/notes-2.txt", role),
@@ -10477,7 +9936,6 @@ mod tests {
                 Decision::AskOutside,
                 "{path}"
             );
-            assert_eq!(write(Role::SoloTest, path), Decision::Deny, "{path}");
         }
         // Above a project, in a folder a hat may otherwise write: where
         // tools look for their configuration on the way up.

@@ -31,41 +31,6 @@ pub struct ConnRow {
     pub has_key: bool,
 }
 
-/// A conversation's chat while the other one is on screen: its messages,
-/// where it was scrolled to, and what was drawn of it.
-#[derive(Debug, Clone)]
-pub struct ParkedChat {
-    messages: Vec<Message>,
-    turn: u64,
-    scroll: ChatScroll,
-    reasoning: BTreeMap<u64, String>,
-    lookups: Option<(u64, crate::chat::toolview::Lookups)>,
-    cache: RefCell<RenderCache>,
-    /// How full its context is: each conversation fills on its own.
-    ctx_pct: Option<u8>,
-    ctx_tokens: Option<u64>,
-    ctx_messages: Option<usize>,
-    ctx_breakdown: Vec<(String, u64)>,
-}
-
-impl Default for ParkedChat {
-    fn default() -> Self {
-        Self {
-            messages: Vec::new(),
-            turn: 0,
-            scroll: ChatScroll::new(),
-            reasoning: BTreeMap::new(),
-            lookups: None,
-            cache: RefCell::new(RenderCache::new()),
-            // Nothing said yet: empty, not unknown.
-            ctx_pct: Some(0),
-            ctx_tokens: Some(0),
-            ctx_messages: None,
-            ctx_breakdown: Vec::new(),
-        }
-    }
-}
-
 /// The product a test started, while it is up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductUp {
@@ -139,7 +104,7 @@ impl Pulse {
 /// Everything the draw path needs.
 #[derive(Debug, Clone)]
 pub struct View {
-    /// The hat the next message goes out in: build, plan, review, or test.
+    /// The hat the next message goes out in: build, plan, or review.
     pub mode: ryter_core::Role,
     /// Connection name.
     pub connection: String,
@@ -319,39 +284,19 @@ pub struct View {
     pub cache: RefCell<RenderCache>,
     /// Startup warnings not yet shown.
     pub pending_warnings: Vec<String>,
-    /// The conversation on screen: the one the plan, build and review hats
-    /// share, or the tester's own.
-    pub shown: ryter_core::Thread,
-    /// The conversation the running turn is part of. What the turn says
-    /// goes there, whichever is on screen.
-    pub turn_thread: ryter_core::Thread,
     /// The product is being started right now (the id of the step doing
     /// it): quitting waits for that to be undone.
     pub starting_product: Option<String>,
     /// A turn's events are still arriving: from its start to its close,
     /// whatever ended it. What arrives then is that turn's.
     pub turn_open: bool,
-    /// The hat the agent is in, as it last said. The screen follows the
-    /// agent into the tester's conversation and out of it by this, not by
-    /// where the user's last message went.
+    /// The hat the agent is in, as it last said.
     pub agent_hat: ryter_core::Role,
     /// Hats chosen with Tab that the agent has not yet said it put on.
     pub hats_pending: u32,
-    /// The conversation that isn't on screen.
-    pub parked: ParkedChat,
-    /// The product Ryter started for a test, while it is up: `/stop` stops
-    /// it, and quitting asks about it.
+    /// The product Ryter started with `run_project`, while it is up:
+    /// `/stop` stops it, and quitting asks about it.
     pub product: Option<ProductUp>,
-    /// The test hat's last report: the files it tested (as a git tree), its
-    /// model, and whether everything passed. For a commit receipt.
-    pub last_test: Option<(Option<String>, String, bool)>,
-    /// Reports the tester has filed this session.
-    pub test_runs: usize,
-    /// The first scenario that failed in the last report: what "retest 3"
-    /// would name.
-    pub retest: Option<usize>,
-    /// The report filed in the running turn, for that turn's closing line.
-    pub turn_report: Option<String>,
     /// What each hat has done this session: the hat rack.
     pub rack: ryter_core::rack::Rack,
     /// What differs from the last commit, for the instruments: `None`
@@ -512,64 +457,16 @@ impl View {
             quit_armed_until: None,
             cache: RefCell::new(RenderCache::new()),
             pending_warnings: Vec::new(),
-            shown: ryter_core::Thread::Main,
-            turn_thread: ryter_core::Thread::Main,
             starting_product: None,
             turn_open: false,
             agent_hat: ryter_core::Role::SoloBuild,
             hats_pending: 0,
-            parked: ParkedChat::default(),
             product: None,
-            last_test: None,
-            test_runs: 0,
-            retest: None,
-            turn_report: None,
             rack: ryter_core::rack::Rack::default(),
             uncommitted: None,
             workspace: None,
             screen: std::cell::Cell::new((0, 0)),
             pulse: Pulse::default(),
-        }
-    }
-
-    // -- the two conversations --------------------------------------------------
-
-    /// Put `thread`'s chat on screen. The other keeps its messages and its
-    /// place, and comes back as it was left.
-    pub fn show(&mut self, thread: ryter_core::Thread) {
-        if thread == self.shown {
-            return;
-        }
-        std::mem::swap(&mut self.messages, &mut self.parked.messages);
-        std::mem::swap(&mut self.turn, &mut self.parked.turn);
-        std::mem::swap(&mut self.scroll, &mut self.parked.scroll);
-        std::mem::swap(&mut self.reasoning, &mut self.parked.reasoning);
-        std::mem::swap(&mut self.lookups, &mut self.parked.lookups);
-        std::mem::swap(&mut self.cache, &mut self.parked.cache);
-        std::mem::swap(&mut self.ctx_pct, &mut self.parked.ctx_pct);
-        std::mem::swap(&mut self.ctx_tokens, &mut self.parked.ctx_tokens);
-        std::mem::swap(&mut self.ctx_messages, &mut self.parked.ctx_messages);
-        std::mem::swap(&mut self.ctx_breakdown, &mut self.parked.ctx_breakdown);
-        self.shown = thread;
-    }
-
-    /// Every message of the session, in both conversations: the shared one
-    /// first.
-    pub fn session_messages(&self) -> impl Iterator<Item = &Message> {
-        let (main, test) = if self.shown == ryter_core::Thread::Main {
-            (&self.messages, &self.parked.messages)
-        } else {
-            (&self.parked.messages, &self.messages)
-        };
-        main.iter().chain(test.iter())
-    }
-
-    /// Whether the tester's own conversation has anything in it.
-    pub fn test_thread_started(&self) -> bool {
-        if self.shown == ryter_core::Thread::Test {
-            !self.messages.is_empty()
-        } else {
-            !self.parked.messages.is_empty()
         }
     }
 
@@ -616,17 +513,6 @@ impl View {
         self.push(
             MessageKind::System {
                 level: SystemLevel::Info,
-            },
-            text,
-        );
-    }
-
-    /// A report handed in to this conversation, as a card: its headline,
-    /// then its rows.
-    pub fn report(&mut self, text: impl Into<String>, failed: bool) {
-        self.push(
-            MessageKind::System {
-                level: SystemLevel::Report { failed },
             },
             text,
         );
@@ -679,9 +565,6 @@ impl View {
         }
         self.turn += 1;
         let turn = self.turn;
-        // The message is typed into the conversation on screen, and the
-        // turn it starts is part of that one.
-        self.turn_thread = self.shown;
         self.history.push(&shown);
         self.push(MessageKind::User, shown);
         self.scroll.on_submit(turn);
@@ -713,21 +596,13 @@ impl View {
 
     /// Anything in the transcript worth confirming before `/new`.
     pub fn has_content(&self) -> bool {
-        // In either conversation: `/new` ends both.
-        self.session_messages()
+        self.messages
+            .iter()
             .any(|m| matches!(m.kind, MessageKind::User | MessageKind::Assistant { .. }))
     }
 
     /// Reset transcript state for `/new` / `/resume` (`R-CHAT-04`).
     pub fn reset_transcript(&mut self) {
-        // Both conversations: a new session has neither.
-        self.show(ryter_core::Thread::Main);
-        self.parked = ParkedChat::default();
-        self.turn_thread = ryter_core::Thread::Main;
-        self.test_runs = 0;
-        self.retest = None;
-        self.turn_report = None;
-        self.last_test = None;
         self.rack = ryter_core::rack::Rack::default();
         self.messages.clear();
         self.reasoning.clear();
@@ -840,7 +715,7 @@ pub fn role_label(role: &str) -> &str {
 }
 
 /// The hats that can have a model of their own, in the order the work goes.
-pub const HAT_ROLES: &[&str] = &["plan", "build", "review", "test"];
+pub const HAT_ROLES: &[&str] = &["plan", "build", "review"];
 
 /// Shipped model list when `GET /models` is unavailable.
 pub fn fallback_models(kind: &str, default_model: &str) -> Vec<ryter_core::ModelInfo> {

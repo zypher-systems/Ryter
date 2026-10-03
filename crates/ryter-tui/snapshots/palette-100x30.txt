@@ -17,7 +17,7 @@
                                                                 ╭─ budget ─────────────────── off ─╮
                                                                 │ cap                          off │
                                                                 ╰──────────────────────────────────╯
-╭─ commands ──────────────────────────────────────── 4 of 31 ─╮
+╭─ commands ──────────────────────────────────────── 4 of 30 ─╮
 │ mo                                                          │
 │›/models         Choose models: one for every hat, or on… ▸  │
 │ /tools          Tool permission mode                     ▸  │

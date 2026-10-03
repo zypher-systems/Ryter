@@ -216,34 +216,12 @@ pub fn test_history(home: &Path, model: &str) -> Vec<f64> {
     all[all.len().saturating_sub(10)..].to_vec()
 }
 
-/// A step of the checks that follow a build: each can lead to the next.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Step {
-    Review,
-    Test,
-}
-
-/// How a test came out, for what follows it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TestRun {
-    /// None ran, or it filed no report.
-    NotRun,
-    /// Every scenario passed.
-    Passed,
-    /// Something failed, and the build hat has not changed anything since.
-    Failed,
-    /// Something failed, and the build hat changed files to fix it: new
-    /// work, to review.
-    Fixed,
-}
-
 impl Agent {
     /// `/audit`: the review hat reviews the uncommitted work now, after the
-    /// user agrees to what it should cost. A review that passes is followed
-    /// by the offer of a test. Returns the review, or an empty string when
-    /// none ran.
+    /// user agrees to what it should cost. Returns the review, or an empty
+    /// string when none ran.
     pub async fn review_now(&mut self) -> Result<String> {
-        self.checks(Step::Review, false).await
+        Ok(self.review(false).await?.0)
     }
 
     /// At the end of a build turn that changed files: offer a review, with
@@ -254,320 +232,7 @@ impl Agent {
         if !self.offers_reviews() || self.role != Role::SoloBuild {
             return Ok(String::new());
         }
-        self.checks(Step::Review, true).await
-    }
-
-    /// `/test`: the test hat uses the product now, after the user agrees to
-    /// what it should cost.
-    pub async fn test_now(&mut self) -> Result<()> {
-        self.checks(Step::Test, false).await.map(|_| ())
-    }
-
-    fn offers_tests(&self) -> bool {
-        self.cfg.as_ref().is_some_and(|c| c.ui.offer_test) && self.ctx.user_io.is_some()
-    }
-
-    /// Review, then test, then the fixes, for as long as each leads to the
-    /// next: a review that passes is followed by the offer of a test, and a
-    /// test whose failures the build hat fixed is followed by the offer of
-    /// a review of the fixes. Returns the last review.
-    async fn checks(&mut self, start: Step, offered: bool) -> Result<String> {
-        let mut step = start;
-        let mut offered = offered;
-        let mut last = String::new();
-        loop {
-            match step {
-                Step::Review => {
-                    let (text, passed) = self.review(offered).await?;
-                    last = text;
-                    if !passed || !self.offers_tests() || self.role == Role::SoloTest {
-                        return Ok(last);
-                    }
-                    step = Step::Test;
-                }
-                Step::Test => {
-                    let run = self.test_once(offered).await?;
-                    if run != TestRun::Fixed
-                        || !self.offers_reviews()
-                        || self.role != Role::SoloBuild
-                    {
-                        return Ok(last);
-                    }
-                    step = Step::Review;
-                }
-            }
-            offered = true;
-        }
-    }
-
-    /// What the tester is asked: where to start from, since it has not read
-    /// the conversation the work was done in.
-    fn test_brief(&self) -> String {
-        self.ctx
-            .sandboxed(|| Ok(self.test_brief_scoped()))
-            .unwrap_or_else(|error| format!("Could not inspect the project: {error}"))
-    }
-
-    fn test_brief_scoped(&self) -> String {
-        let root = self.root();
-        let mut s = String::from("[Ryter] Test the work as its user would.");
-        match self.session.meta.plan_file.as_deref() {
-            Some(file) => {
-                s.push_str(&format!(
-                    " The plan the user approved is in `{file}`. Read it: its \"How to verify\" \
-                     section, and each step a user would notice, is a scenario to try."
-                ));
-                if let Some(p) = crate::decisions::pointer(&root, file) {
-                    s.push(' ');
-                    s.push_str(&p);
-                }
-            }
-            None => s.push_str(
-                " No plan was approved for this work: test what changed, from the project's \
-                 README and the changes named below.",
-            ),
-        }
-        if let Ok(r) = crate::review::root(&self.ctx.workspace) {
-            let base = crate::review::head_base(&r);
-            if let Ok(changes) = crate::review::changes(&r, &base).map(|c| c.work()) {
-                if !changes.files.is_empty() {
-                    let (added, removed) = changes.totals();
-                    let names: Vec<&str> = changes
-                        .files
-                        .iter()
-                        .take(12)
-                        .map(|f| f.path.as_str())
-                        .collect();
-                    let more = changes.files.len().saturating_sub(names.len());
-                    s.push_str(&format!(
-                        " Since the last commit {} file{} changed (+{added} −{removed}): {}{}.",
-                        changes.files.len(),
-                        if changes.files.len() == 1 { "" } else { "s" },
-                        names.join(", "),
-                        if more > 0 {
-                            format!(", and {more} more")
-                        } else {
-                            String::new()
-                        }
-                    ));
-                }
-            }
-        }
-        s.push_str(match crate::run::find(&root, &self.home) {
-            crate::run::Found::Approved(_) => {
-                " How it runs is in `.ryter/run.toml`, which the user approved: start it with \
-                 run_project."
-            }
-            crate::run::Found::Unapproved(..) => {
-                " It has a `.ryter/run.toml` the user has not approved as it stands: \
-                 run_project will ask them."
-            }
-            _ => {
-                " It has no run file yet: read how it starts and tests itself, and propose \
-                 one with propose_run."
-            }
-        });
-        let running = self.product.is_some() || crate::run::remembered(&self.home, &root).is_some();
-        if let Some(last) = crate::testing::latest(&root) {
-            s.push_str(&format!(
-                " The last report filed here is `{last}`: retest what failed in it first."
-            ));
-        }
-        s.push_str(if running {
-            " Ryter started the product earlier and it should still be up: run_project \
-             (action `start`) says whether it is, and starts it only if it has gone. Run \
-             its tests, then try each scenario. File your report with report_test, and \
-             leave the product running."
-        } else {
-            " Start it, run its tests, then try each scenario. File your report with \
-             report_test, and leave the product running."
-        });
-        s
-    }
-
-    /// One test: ask, run it in the test hat, and, if it failed, offer its
-    /// fixes in the build hat.
-    async fn test_once(&mut self, offered: bool) -> Result<TestRun> {
-        use crate::role::Thread;
-        let cfg = self.cfg.clone().unwrap_or_default();
-        let (_, model, connection) = self.stack_for(Role::SoloTest);
-        let local = cfg
-            .connections
-            .get(&connection)
-            .is_some_and(|c| c.is_local());
-        let rates = self.book.rates(&model);
-        let brief = self.test_brief();
-        // What the tester reads to begin with: its instructions, its own
-        // conversation so far, and the brief.
-        let system = self.system_prompt()?;
-        let thread: usize = self
-            .session
-            .messages_of(Thread::Test)
-            .iter()
-            .map(|m| m.content.len())
-            .sum();
-        let context_tokens = ((system.len() + thread + brief.len()) / 4) as u64 + 3_000;
-        let past = test_history(&self.home, &model);
-        let cost = if local {
-            "runs on this machine, $0".to_string()
-        } else {
-            let range = rates.map(|r| {
-                let (low, high) = estimate_test(context_tokens);
-                format_range((r.cost(low), r.cost(high)))
-            });
-            let mut s = match range {
-                Some(range) => format!("about {range}"),
-                None => "no price is known for it".to_string(),
-            };
-            if past.len() >= HISTORY_MIN {
-                let lo = past.iter().copied().fold(f64::MAX, f64::min);
-                let hi = past.iter().copied().fold(0.0, f64::max);
-                s.push_str(&format!(
-                    "\nyour last {} tests with it cost {}",
-                    past.len(),
-                    format_range((lo, hi))
-                ));
-            }
-            s
-        };
-        let root = self.root();
-        let scenarios = self
-            .session
-            .meta
-            .plan_file
-            .as_deref()
-            .and_then(|f| crate::plan::read_own(&root, f).ok())
-            .map(|plan| crate::testing::scenarios_in_plan(&plan));
-        let what = match scenarios {
-            Some(Some(1)) => "starts the project, runs 1 scenario from the plan".to_string(),
-            Some(Some(n)) => format!("starts the project, runs {n} scenarios from the plan"),
-            Some(None) => "starts the project and tests it against the plan".to_string(),
-            None => "starts the project and tests what changed".to_string(),
-        };
-        let summary = format!(
-            "{}{model} on {connection} (the test hat's model)\n{what}, leaves it running\n{cost}",
-            if offered { "Test this work?\n" } else { "" },
-        );
-        if let Some(io) = self.ctx.user_io.clone() {
-            let tool = if offered { "test offer" } else { "test" };
-            let answer = io.permission(tool, &summary, &self.ctx.cancel);
-            if self.ctx.cancel.is_cancelled() {
-                return Ok(TestRun::NotRun);
-            }
-            match answer {
-                crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {}
-                crate::user_io::Permission::Deny if offered => return Ok(TestRun::NotRun),
-                crate::user_io::Permission::Deny => {
-                    return self.say("test not run").map(|_| TestRun::NotRun);
-                }
-            }
-        }
-
-        // The test is a turn in the test hat, in the tester's own
-        // conversation. The hat the user was in comes back when it ends.
-        let prior = self.role;
-        if prior != Role::SoloTest {
-            self.wear(Role::SoloTest)?;
-        }
-        // In the tester's conversation, what it was asked: the brief itself
-        // is for the model.
-        let asked = match self.session.meta.plan_file.as_deref() {
-            Some(plan) => format!(
-                "Ryter · test the work against the plan\n{}",
-                plan.trim_start_matches(".ryter/")
-            ),
-            None => "Ryter · test what changed".to_string(),
-        };
-        self.emit(AgentEvent::Notice { message: asked })?;
-        self.filed.delivered = None;
-        let spent_from = self.session.spend_log().map_or(0, |l| l.len());
-        let out = self.turn(&brief).await;
-        if self.role == Role::SoloTest && prior != Role::SoloTest {
-            self.wear(prior)?;
-        }
-        // A turn that failed has said why.
-        let Ok(turn) = out else {
-            return Ok(TestRun::NotRun);
-        };
-        let spent: Vec<_> = self
-            .session
-            .spend_log()
-            .unwrap_or_default()
-            .into_iter()
-            .skip(spent_from)
-            .filter(|r| r.role == Role::SoloTest)
-            .collect();
-        if !spent.is_empty() {
-            remember_at(
-                &test_history_path(&self.home),
-                &Past {
-                    model: model.clone(),
-                    context_tokens,
-                    usd: spent
-                        .iter()
-                        .map(|r| if r.incomplete { None } else { r.total_usd })
-                        .sum::<Option<f64>>(),
-                },
-            );
-        }
-        if turn.reason == StopReason::Cancelled {
-            return Ok(TestRun::NotRun);
-        }
-        match self.filed.delivered {
-            None => self
-                .say(
-                    "the tester filed no report · what it found is in its own conversation \
-                     (Tab to the test hat)",
-                )
-                .map(|_| TestRun::NotRun),
-            Some(true) => Ok(TestRun::Passed),
-            Some(false) => self.offer_fixes().await,
-        }
-    }
-
-    /// After a test that failed: offer its fixes in the build hat, in the
-    /// conversation the report is now part of.
-    async fn offer_fixes(&mut self) -> Result<TestRun> {
-        let Some(io) = self.ctx.user_io.clone() else {
-            return Ok(TestRun::Failed);
-        };
-        // The fixes are the build hat's, in the shared conversation.
-        if self.role == Role::SoloTest {
-            return Ok(TestRun::Failed);
-        }
-        let answer = io.permission(
-            "fix offer",
-            "switch to the build hat and fix what the test found\nthe report is in the \
-             conversation: the builder works from it",
-            &self.ctx.cancel,
-        );
-        if self.ctx.cancel.is_cancelled()
-            || !matches!(
-                answer,
-                crate::user_io::Permission::Allow | crate::user_io::Permission::Always
-            )
-        {
-            return Ok(TestRun::Failed);
-        }
-        if self.role != Role::SoloBuild {
-            self.wear(Role::SoloBuild)?;
-        }
-        let before = self.session.changed_turns;
-        let out = self
-            .turn(
-                "[Ryter] The test report above has failures. Fix what it found, one failure \
-                 at a time, and run the project's own tests for each fix. Don't change a \
-                 test to make it pass. Say what you fixed and what you could not.",
-            )
-            .await;
-        if out.is_err() {
-            return Ok(TestRun::Failed);
-        }
-        Ok(if self.session.changed_turns > before {
-            TestRun::Fixed
-        } else {
-            TestRun::Failed
-        })
+        Ok(self.review(true).await?.0)
     }
 
     fn offers_reviews(&self) -> bool {
@@ -702,19 +367,12 @@ impl Agent {
         }
 
         let system = self.system_prompt()?;
-        // A review reads the conversation the work was done in. Asked for
-        // from the test hat, the session has the tester's thread in use:
-        // what the review will read, and so what it costs, is the shared
-        // one's.
-        let was = self.session.thread();
-        self.session.use_thread(crate::role::Thread::Main);
         // A limit its first step would pass: say so, rather than ask for a
         // yes to a review that stops before it starts.
         let spent = self.session.meta.spend_usd_total.unwrap_or(0.0);
         let fit = self.review_fit(&model, &connection, &system, spent);
         // What the user agrees to before anything is spent.
         let context_tokens = self.conversation_tokens(&system) + job.diff_tokens;
-        self.session.use_thread(was);
         if let Fit::No(why) = fit {
             return self.say(why).map(|_| None);
         }
@@ -782,7 +440,7 @@ impl Agent {
         if prior != Role::SoloReview {
             self.wear(Role::SoloReview)?;
         }
-        let from = self.session.messages_of(crate::role::Thread::Main).len();
+        let from = self.session.transcript.len();
         let spent_from = self.session.spend_log().map_or(0, |l| l.len());
         let brief = self.review_brief(&job);
         let out = self.turn(&brief).await;
@@ -798,13 +456,9 @@ impl Agent {
         }
         // The verdict is the reviewer's last one: after a FAIL the build
         // hat may have gone on in the same turn, and its words end it.
-        // Read from the shared conversation by name: the hat the user was
-        // in is back by now, and it may be the tester's. Read from the
-        // thread in use, a review asked for in the test hat took its
-        // verdict from the tester's last words.
         let said = self
             .session
-            .messages_of(crate::role::Thread::Main)
+            .transcript
             .iter()
             .skip(from)
             .filter(|m| m.role == "assistant")

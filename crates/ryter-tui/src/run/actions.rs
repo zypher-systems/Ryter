@@ -228,24 +228,6 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             view.warn("a review reads the finished work: wait for this turn to end");
         }
         Action::ReviewNow => cx.send(Work::ReviewNow),
-        Action::TestNow if view.busy => {
-            view.warn("a test uses the finished work: wait for this turn to end");
-        }
-        Action::TestNow => cx.send(Work::TestNow),
-        Action::StopTestOffers => {
-            if let Some(tx) = cx.perm_reply.take() {
-                let _ = tx.send(Permission::Deny);
-            }
-            view.ui.offer_test = false;
-            cx.cfg.ui.offer_test = false;
-            if let Err(e) = config::save_settings(&cx.home, &cx.cfg) {
-                view.error(e.to_string());
-            }
-            cx.send(Work::SetOfferTest(false));
-            view.system(
-                "no more test offers · /test still runs one · /settings turns them back on",
-            );
-        }
         Action::StopReviewOffers => {
             if let Some(tx) = cx.perm_reply.take() {
                 let _ = tx.send(Permission::Deny);
@@ -516,10 +498,6 @@ fn new_session(view: &mut View, cx: &mut Ctx) {
     view.panels.clear();
     panel::sync_composer(view);
     view.reset_transcript();
-    // The hat stays, and with it whose conversation is on screen: `/new`
-    // in the test hat showed the shared conversation while the next
-    // message went to the tester.
-    view.show(view.mode.thread());
     view.spend = None;
     view.spend_unknown = false;
     view.unpriced_calls = 0;
@@ -618,27 +596,12 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
     view.spend_unknown = session.meta.spend_unknown;
     view.connection = session.meta.connection.clone();
     view.model = session.meta.model.clone();
-    // Both conversations: the one the hats share, then the tester's.
-    use ryter_core::Thread;
-    for thread in [Thread::Main, Thread::Test] {
-        view.show(thread);
-        // The tester's answers are named for the test hat's model. In the
-        // shared conversation the saved messages don't say which hat's
-        // model wrote each, so they carry the one every hat uses.
-        let model = match thread {
-            Thread::Test => view
-                .specialists
-                .get("test")
-                .filter(|r| r.is_override())
-                .and_then(|r| r.model.clone())
-                .unwrap_or_else(|| view.model.clone()),
-            Thread::Main => view.model.clone(),
-        };
-        fill_chat(view, session.messages_of(thread), &model);
-        view.turn = view.turn.max(1);
-        view.scroll.to_bottom();
-    }
-    view.show(view.mode.thread());
+    // The saved messages don't say which hat's model wrote each, so they
+    // carry the one every hat uses.
+    let model = view.model.clone();
+    fill_chat(view, &session.transcript, &model);
+    view.turn = view.turn.max(1);
+    view.scroll.to_bottom();
     view.agent_hat = view.mode;
     // The chat was rebuilt through the live path, which counted its tool
     // calls again without their hats: the log has what really happened.
@@ -680,67 +643,12 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
     }
 }
 
-/// How the tester's report starts, in the conversation it was handed to.
-const REPORT_PREFIX: &str = "[Ryter] The test hat (";
-
-/// A saved report message as the card it was shown as: its text, whether
-/// anything in it failed, and the first failed scenario's number.
-fn report_card(content: &str) -> (String, bool, Option<usize>) {
-    let mut lines = content.lines();
-    let first = lines.next().unwrap_or("");
-    let tester = first
-        .strip_prefix(REPORT_PREFIX)
-        .and_then(|r| r.split(')').next())
-        .unwrap_or("");
-    let headline = first
-        .rsplit("filed this report: ")
-        .next()
-        .unwrap_or("")
-        .trim_end_matches('.');
-    let mut body = format!("test · {tester} · {headline}");
-    let mut retest = None;
-    for l in lines {
-        match l.strip_prefix("The full report is in `") {
-            Some(rest) => {
-                body.push_str(&format!(
-                    "\nfull report  {}",
-                    rest.split('`').next().unwrap_or("")
-                ));
-            }
-            // What could not be tested is in the file; the card is the
-            // scenarios.
-            None if l.starts_with("Also: ") => {}
-            None => {
-                body.push('\n');
-                body.push_str(l);
-                // `✗ 3  /manage/ after login`, and not a scenario that was
-                // only not reached.
-                if retest.is_none() && !l.contains("· not reached") {
-                    retest = l
-                        .strip_prefix("✗ ")
-                        .and_then(|r| r.split_whitespace().next())
-                        .and_then(|n| n.parse().ok());
-                }
-            }
-        }
-    }
-    (body, headline.starts_with('✗'), retest)
-}
-
 /// Rebuild one conversation's chat from its saved messages, through the
 /// same path a live turn takes, so a resumed session reads as it did.
 fn fill_chat(view: &mut View, messages: &[ryter_core::Message], model: &str) {
     for m in messages {
         match m.role.as_str() {
-            // The tester's report, as it was handed in: a card, not
-            // something the user typed.
-            "user" if m.content.starts_with(REPORT_PREFIX) => {
-                let (body, failed, retest) = report_card(&m.content);
-                view.report(body, failed);
-                view.test_runs += 1;
-                view.retest = retest;
-            }
-            // What Ryter asked of the model (a review, a test, the fixes):
+            // What Ryter asked of the model (a review, the fixes):
             // said in a line, as it was when it happened. The brief itself
             // is for the model, and the user didn't type it.
             "user" if strip_hat_note(&m.content).starts_with("[Ryter] ") => {
@@ -935,9 +843,6 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
 /// Switch hats. A switch while a turn runs applies to the next message.
 fn set_mode(view: &mut View, cx: &mut Ctx, role: ryter_core::Role) {
     view.mode = role;
-    // The tester has a conversation of its own: its hat shows that one,
-    // and any other hat shows the one they share.
-    view.show(role.thread());
     view.hats_pending += 1;
     cx.send(Work::SetRole(role));
 }
@@ -1083,7 +988,6 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
         open_pages: view.ui.open_pages,
     });
     cx.send(Work::SetOfferAudit(view.ui.offer_audit));
-    cx.send(Work::SetOfferTest(view.ui.offer_test));
 }
 
 fn set_budget(view: &mut View, cx: &mut Ctx, usd: f64) {

@@ -35,7 +35,7 @@ struct Cli {
     #[arg(short = 'c', long = "continue")]
     resume: bool,
 
-    /// build | plan | review | test. With `-p` the default is build, or the
+    /// build | plan | review. With `-p` the default is build, or the
     /// hat a continued session was left in; the TUI opens in `[ui] start_hat`.
     #[arg(long)]
     hat: Option<String>,
@@ -180,7 +180,7 @@ fn headless_hat(asked: Option<Role>, left_in: Option<Role>) -> Role {
 fn tui_hat(hat: Option<&str>) -> Result<Option<Role>, Error> {
     match hat {
         Some("crew" | "lead") => Err(Error::Config(
-            "crew mode was removed: --hat takes build, plan, review, or test".into(),
+            "crew mode was removed: --hat takes build, plan, or review".into(),
         )),
         Some(h) => Ok(Some(h.parse::<Role>()?)),
         None => Ok(None),
@@ -403,7 +403,7 @@ async fn run_prompt(
     let hat = match cli.hat.as_deref() {
         Some("crew" | "lead") => {
             return Err(Error::Config(
-                "crew mode was removed: --hat takes build, plan, review, or test".into(),
+                "crew mode was removed: --hat takes build, plan, or review".into(),
             ));
         }
         Some(h) => Some(h.parse::<Role>()?),
@@ -487,7 +487,6 @@ async fn run_prompt(
         cfg: Some(cfg.clone()),
         machine: ryter_core::prompt::machine_for(profile),
         product: None,
-        filed: Default::default(),
     };
     agent.fire_session_start()?;
     let result = agent.turn(&prompt).await;
@@ -857,7 +856,6 @@ fn mcp_serve() -> ryter_core::Result<()> {
         cfg: Some(cfg.clone()),
         machine: ryter_core::prompt::machine_for(profile),
         product: None,
-        filed: Default::default(),
     };
     if let Err(e) = agent.fire_session_start() {
         eprintln!("{e}");
@@ -980,7 +978,6 @@ fn serve_host_from_config(
         cfg: Some(cfg.clone()),
         machine: ryter_core::prompt::machine_for(profile),
         product: None,
-        filed: Default::default(),
     };
     agent.fire_session_start()?;
     Ok(ServeHost::new(agent, rt))
@@ -1124,7 +1121,7 @@ mod tests {
     fn the_hat_flag_names_a_hat_or_is_refused() {
         assert_eq!(tui_hat(None).unwrap(), None);
         assert_eq!(tui_hat(Some("plan")).unwrap(), Some(Role::SoloPlan));
-        assert_eq!(tui_hat(Some("test")).unwrap(), Some(Role::SoloTest));
+        assert!(tui_hat(Some("test")).is_err());
         assert!(tui_hat(Some("crew")).is_err());
         assert!(tui_hat(Some("bulid")).is_err());
     }
