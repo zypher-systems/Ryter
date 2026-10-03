@@ -725,7 +725,19 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
         if let Some(root) = project_root {
             let project = root.join(".ryter").join("config.toml");
             if project.is_file() {
+                // The gate's rules are the user's alone: a project's file
+                // may set its models and its budget, not what the gate
+                // asks about, or a repository could widen the gate for
+                // itself.
+                let own_rules = cfg.permissions.clone();
                 merge_file(&mut cfg, &project)?;
+                if cfg.permissions != own_rules {
+                    cfg.warnings.push(format!(
+                        "{}: [permissions] ignored; the gate's rules come from ~/.ryter/config.toml only",
+                        project.display()
+                    ));
+                    cfg.permissions = own_rules;
+                }
                 check_key_file_mode(&project, &cfg)?;
             }
         }
@@ -1814,6 +1826,52 @@ mod tests {
         fs::remove_dir_all(p.join(".ryter/skills")).unwrap();
         fs::write(p.join(".ryter/config.toml"), "").unwrap();
         assert!(asks_for_trust(p), "project configuration");
+    }
+
+    /// A trusted project's config sets its models and budget, never the
+    /// gate's rules: those are the user's, from their own file.
+    #[test]
+    fn a_projects_config_cannot_set_the_gates_rules() {
+        use crate::permissions::Answer;
+        let home = TempDir::new().unwrap();
+        let root = TempDir::new().unwrap();
+        fs::write(
+            home.path().join("config.toml"),
+            "[permissions.bash]\n\"git push*\" = \"ask\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.path().join(".ryter")).unwrap();
+        fs::write(
+            root.path().join(".ryter/config.toml"),
+            "[permissions]\nedit = \"ask\"\n[permissions.bash]\n\"git push*\" = \"allow\"\n\"rm -rf *\" = \"allow\"\n",
+        )
+        .unwrap();
+        let cfg = load_at(home.path(), Some(root.path()), true).unwrap();
+        assert_eq!(cfg.permissions.edit, None);
+        assert_eq!(
+            cfg.permissions.for_command("git push origin"),
+            Some(Answer::Ask)
+        );
+        assert_eq!(cfg.permissions.for_command("rm -rf x"), None);
+        assert!(
+            cfg.warnings
+                .iter()
+                .any(|w| w.contains("[permissions] ignored")),
+            "{:?}",
+            cfg.warnings
+        );
+        // A project file without rules changes nothing and says nothing.
+        fs::write(
+            root.path().join(".ryter/config.toml"),
+            "[spend]\nbudget_usd = 1.0\n",
+        )
+        .unwrap();
+        let cfg = load_at(home.path(), Some(root.path()), true).unwrap();
+        assert_eq!(
+            cfg.permissions.for_command("git push origin"),
+            Some(Answer::Ask)
+        );
+        assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
     }
 
     #[test]

@@ -330,7 +330,7 @@ stop  = "docker compose down"
 
 Refused in every hat, whatever is answered: reading a secret or a credential folder, `sudo` and its kind, a shell handed a command as text (`bash -c`, `sh <<<`, a pipe into `sh`), rewiring the shell (`alias`, `HOME=`, `IFS=`, a coprocess), and what gives a program something else to load (`LD_PRELOAD`, `PATH=/tmp:$PATH`, `NODE_OPTIONS='--require …'`, `RUSTC_WRAPPER`, `DOCKER_HOST`). Ordinary variables run: `NODE_ENV=test`, `DATABASE_URL=…`, `RUST_BACKTRACE=1`, `PATH="$HOME/.cargo/bin:$PATH"`.
 
-**Your own rules.** `[permissions]` in `~/.ryter/config.toml` (or the project's `.ryter/config.toml`, once trusted) moves any of the asks above, either way, short of a refusal:
+**Your own rules.** `[permissions]` in `~/.ryter/config.toml` moves any of the asks above, either way, short of a refusal. It is read from your own file only: a project's `.ryter/config.toml` can set its models and its budget, not what the gate asks about, so a repository can't widen the gate for itself.
 
 ```toml
 [permissions]
