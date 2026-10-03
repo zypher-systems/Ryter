@@ -49,11 +49,12 @@ pub struct ProjectSpend {
 }
 
 impl ProjectSpend {
-    /// The hats' share (build, plan, and review).
+    /// The hats' share: plan, build, audit (review, as older records say
+    /// it) and scribe.
     pub fn solo_usd(&self) -> f64 {
         self.by_role
             .iter()
-            .filter(|(r, _)| matches!(r.as_str(), "build" | "plan" | "review"))
+            .filter(|(r, _)| matches!(r.as_str(), "build" | "plan" | "review" | "audit" | "scribe"))
             .map(|(_, v)| v)
             .sum()
     }
@@ -327,6 +328,22 @@ mod tests {
         assert_eq!(t.sessions, 2);
         assert!((t.solo_usd() - 0.25).abs() < 1e-9);
         assert!((t.crew_usd() - 1.0).abs() < 1e-9);
+        // The specialists are hats, not crew: audit (review, in an older
+        // record) and scribe count as the hats' share.
+        let mut hats = t.clone();
+        hats.by_role.clear();
+        for (role, usd) in [
+            ("plan", 0.1),
+            ("build", 0.2),
+            ("audit", 0.3),
+            ("review", 0.05),
+            ("scribe", 0.15),
+        ] {
+            hats.by_role.insert(role.into(), usd);
+        }
+        hats.total_usd = 0.8;
+        assert!((hats.solo_usd() - 0.8).abs() < 1e-9, "{hats:?}");
+        assert!(hats.crew_usd().abs() < 1e-9);
         assert!((t.by_model["cheap"] - 0.25).abs() < 1e-9);
         assert!((t.this_month() - 1.25).abs() < 1e-9);
     }

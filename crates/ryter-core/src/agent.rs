@@ -43,6 +43,21 @@ pub struct TurnResult {
 }
 
 /// Agent loop over a session + provider.
+/// An audit turn in progress ([`Agent::audit_live`]).
+#[derive(Debug)]
+pub struct AuditLive {
+    /// The checkpoint taken before the turn; `None` outside a repository.
+    pub checkpoint: Option<String>,
+    /// Where the turn began in the transcript.
+    pub from: usize,
+    /// Where it began in the spend log.
+    pub spent_from: usize,
+    /// Whether `/audit` asked for it.
+    pub asked: bool,
+    /// When it began.
+    pub started: std::time::Instant,
+}
+
 pub struct Agent {
     /// Inference.
     pub provider: Arc<dyn Provider>,
@@ -84,6 +99,11 @@ pub struct Agent {
     /// An audit filed in the running turn (`file_audit`), delivered when
     /// the turn ends and the tree has been compared with the checkpoint.
     pub audit_pending: Option<crate::audit::Audit>,
+    /// The audit turn in progress: its checkpoint and where it began.
+    /// Closed when the turn ends, or earlier when the user's yes puts
+    /// another hat on in the same turn, so the hat that follows is not
+    /// undone by the audit's rollback.
+    pub audit_live: Option<AuditLive>,
     /// The verdict of the last audit turn that ended: filed, or read from
     /// its last words. What `/audit` reports.
     pub last_audit_verdict: Option<bool>,
@@ -192,26 +212,22 @@ impl Agent {
         // An audit changes nothing: a checkpoint before, the tree put back
         // after. Without a repository there is no checkpoint, and the hat
         // is held to looking for the turn.
-        let audit_from = (self.role == Role::SoloAudit).then(|| {
-            (
-                self.audit_checkpoint(),
-                self.session.transcript.len(),
-                self.session.spend_log().map_or(0, |l| l.len()),
-            )
-        });
+        if self.role == Role::SoloAudit {
+            self.audit_live = Some(AuditLive {
+                checkpoint: self.audit_checkpoint(),
+                from: self.session.transcript.len(),
+                spent_from: self.session.spend_log().map_or(0, |l| l.len()),
+                asked: user.starts_with("[Ryter] Audit"),
+                started,
+            });
+        }
         let out = self.turn_inner(user, &mut tools).await;
         // However the turn ended (done, cancelled, failed), record what it
         // left for `/undo`.
         if let Err(e) = self.finish_turn_record() {
             crate::trace::log(&self.home, &format!("undo record: {e}"));
         }
-        if let Some((checkpoint, from, spent_from)) = audit_from {
-            self.ctx.read_only = false;
-            let asked = user.starts_with("[Ryter] Audit");
-            if let Err(e) = self.audit_done(checkpoint, from, spent_from, asked, &started) {
-                crate::trace::log(&self.home, &format!("audit: {e}"));
-            }
-        }
+        self.close_audit();
         // The screen marks a turn failed only if it hears of the failure
         // before the turn closes. The caller used to report it after, so
         // every failed turn closed "✓ answered".
@@ -917,7 +933,7 @@ impl Agent {
             .trim();
         let Ok(to) = hat.parse::<Role>() else {
             return Ok(ToolOutput::err(format!(
-                "unknown hat {hat:?}: build, plan, or audit"
+                "unknown hat {hat:?}: build, plan, audit, or scribe"
             )));
         };
         if to == self.role {
@@ -944,6 +960,12 @@ impl Agent {
         match answer {
             crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
                 let from = self.role;
+                // Out of the audit hat by the user's yes: the audit closes
+                // here, tree put back and findings filed, so what the next
+                // hat does in this turn is not undone at its end.
+                if from == Role::SoloAudit {
+                    self.close_audit();
+                }
                 self.put_on(to)?;
                 self.emit(AgentEvent::ModeChanged { role: to })?;
                 let now = match to {
@@ -1284,63 +1306,124 @@ impl Agent {
     fn audit_checkpoint(&mut self) -> Option<String> {
         let dir = self.ctx.workspace.clone();
         let name = format!("audit-{}-{}", self.session.meta.id, next_turn());
-        let taken = self
-            .ctx
-            .sandboxed(|| crate::git::checkpoint(&dir, &name))
-            .ok()
-            .flatten();
+        let taken = self.ctx.sandboxed(|| crate::git::checkpoint(&dir, &name));
+        let message = match &taken {
+            Ok(Some(_)) => None,
+            Ok(None) => Some(
+                "no git repository here, so the audit has no checkpoint to put the tree back \
+                 from: it runs read-only commands only this turn"
+                    .to_string(),
+            ),
+            Err(e) => Some(format!(
+                "the audit's checkpoint could not be taken ({e}), so there is nothing to put \
+                 the tree back from: it runs read-only commands only this turn"
+            )),
+        };
+        let taken = taken.ok().flatten();
         self.ctx.read_only = taken.is_none();
-        if taken.is_none() {
-            let _ = self.emit(AgentEvent::Notice {
-                message: "no git repository here, so the audit has no checkpoint to put the \
-                          tree back from: it runs read-only commands only this turn"
-                    .into(),
-            });
+        if let Some(message) = message {
+            let _ = self.emit(AgentEvent::Notice { message });
         }
         taken
+    }
+
+    /// Close the audit turn in progress, if there is one: the tree put
+    /// back, the audit filed, the screen told. Called when the turn ends,
+    /// and when the user's yes puts another hat on in the same turn.
+    fn close_audit(&mut self) {
+        let Some(live) = self.audit_live.take() else {
+            return;
+        };
+        self.ctx.read_only = false;
+        if let Err(e) = self.audit_done(live) {
+            crate::trace::log(&self.home, &format!("audit: {e}"));
+            let _ = self.emit(AgentEvent::Notice {
+                message: format!("the audit could not be closed: {e}"),
+            });
+        }
+    }
+
+    /// Put back what an audit turn changed outside Ryter's own folder:
+    /// the paths that differ between the checkpoint and the tree now,
+    /// mapped from the repository's top to this session's folder, less
+    /// everything under `.ryter/` (the audit's own files, and what the
+    /// user approved during the turn: a run file, a plan). Returns the
+    /// paths put back, as git names them.
+    fn audit_restore(&self, dir: &std::path::Path, before: &str) -> Result<Vec<String>> {
+        let Some(after) = self
+            .ctx
+            .sandboxed(|| crate::git::checkpoint(dir, "audit-after"))?
+        else {
+            return Err(Error::Config("no checkpoint after the audit".into()));
+        };
+        let moved = self
+            .ctx
+            .sandboxed(|| crate::git::checkpoint_tree(dir, before))?
+            != self
+                .ctx
+                .sandboxed(|| crate::git::checkpoint_tree(dir, &after))?;
+        if !moved {
+            return Ok(Vec::new());
+        }
+        let top = self.ctx.sandboxed(|| crate::git::toplevel(dir))?;
+        let here = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+        let prefix = here
+            .strip_prefix(&top)
+            .unwrap_or(std::path::Path::new(""))
+            .to_path_buf();
+        let paths: Vec<String> = self
+            .ctx
+            .sandboxed(|| crate::git::paths_between(dir, before, &after))?
+            .into_iter()
+            .filter(|p| !crate::audit::kept_from_restore(&prefix, std::path::Path::new(p)))
+            .collect();
+        if !paths.is_empty() {
+            self.ctx
+                .sandboxed(|| crate::git::restore_paths(dir, before, &paths))?;
+        }
+        Ok(paths)
     }
 
     /// An audit turn ended: put back whatever it changed, write the audit
     /// it filed, and tell the screen. A turn that filed nothing, was not
     /// asked for an audit and gave no verdict is a chat in the audit hat,
     /// and passes in silence.
-    fn audit_done(
-        &mut self,
-        checkpoint: Option<String>,
-        from: usize,
-        spent_from: usize,
-        asked: bool,
-        started: &std::time::Instant,
-    ) -> Result<()> {
+    fn audit_done(&mut self, live: AuditLive) -> Result<()> {
+        let AuditLive {
+            checkpoint,
+            from,
+            spent_from,
+            asked,
+            started,
+        } = live;
+        let started = &started;
         let dir = self.ctx.workspace.clone();
-        let root = self.root();
         let mut restored: Vec<String> = Vec::new();
         if let Some(before) = &checkpoint {
-            let after = self
-                .ctx
-                .sandboxed(|| crate::git::checkpoint(&dir, "audit-after"))?;
-            if let Some(after) = after {
-                let moved = self
-                    .ctx
-                    .sandboxed(|| crate::git::checkpoint_tree(&dir, before))?
-                    != self
+            match self.audit_restore(&dir, before) {
+                Ok(paths) => restored = paths,
+                // The tree can't be compared: put it back whole, and say
+                // so, rather than leave the audit's changes in place.
+                Err(e) => {
+                    let whole = self
                         .ctx
-                        .sandboxed(|| crate::git::checkpoint_tree(&dir, &after))?;
-                if moved {
-                    let paths: Vec<String> = self
-                        .ctx
-                        .sandboxed(|| crate::git::paths_between(&dir, before, &after))?
-                        .into_iter()
-                        .filter(|p| !crate::audit::is_audit_file(&root, std::path::Path::new(p)))
-                        .collect();
-                    if !paths.is_empty() {
-                        self.ctx
-                            .sandboxed(|| crate::git::restore_paths(&dir, before, &paths))?;
-                        restored = paths;
-                    }
+                        .sandboxed(|| crate::git::restore_checkpoint(&dir, before));
+                    let message = match whole {
+                        Ok(_) => format!(
+                            "the audit's tree could not be compared with its checkpoint ({e}); \
+                             the whole tree was put back from the checkpoint"
+                        ),
+                        Err(e2) => format!(
+                            "the audit's tree could not be compared with its checkpoint ({e}), \
+                             and could not be put back ({e2}): check `git status`"
+                        ),
+                    };
+                    self.emit(AgentEvent::Notice { message })?;
+                    restored = vec!["the whole tree, after a failed comparison".to_string()];
                 }
             }
         }
+        let root = self.root();
         let filed = self.audit_pending.take();
         // What the audit's last words said, where it filed nothing.
         let said = self
@@ -3016,6 +3099,7 @@ mod tests {
             machine: String::new(),
             product: None,
             audit_pending: None,
+            audit_live: None,
             last_audit_verdict: None,
         };
         (home, cwd, agent)
@@ -4949,6 +5033,72 @@ mod tests {
         );
         assert!(dated[0].exists());
         assert_eq!(agent.last_audit_verdict, Some(true));
+    }
+
+    /// The user's yes to another hat in an audit turn closes the audit
+    /// there: the tree is put back and the audit filed before the next hat
+    /// works, so what that hat does is not undone when the turn ends.
+    #[tokio::test]
+    async fn a_yes_to_another_hat_closes_the_audit_first() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
+            call(
+                "bash",
+                serde_json::json!({"command": "printf x > probe.txt"}),
+            ),
+            file_audit_call("fail"),
+            call(
+                "request_hat",
+                serde_json::json!({"hat": "build", "reason": "repair what the audit found"}),
+            ),
+            call(
+                "write",
+                serde_json::json!({"path": "built.txt", "content": "fixed\n"}),
+            ),
+            say("done"),
+        ]));
+        agent.put_on(Role::SoloAudit).unwrap();
+        agent.ctx.always_approve = true;
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        let answering = std::thread::spawn(move || {
+            while let Ok(req) = rx.recv() {
+                if let crate::user_io::UserRequest::Permission { reply, .. } = req {
+                    let _ = reply.send(crate::user_io::Permission::Allow);
+                }
+            }
+        });
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("audit it").await.unwrap();
+        agent.ctx.user_io = None;
+        answering.join().unwrap();
+        assert!(
+            !cwd.path().join("probe.txt").exists(),
+            "the audit's file is gone"
+        );
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("built.txt")).unwrap(),
+            "fixed\n",
+            "the build's file stays"
+        );
+        assert!(cwd.path().join(".ryter/audit.md").exists());
+        assert_eq!(agent.role, Role::SoloBuild);
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        assert_eq!(audited(&evs).len(), 1, "{evs:?}");
+        let at = |f: &dyn Fn(&AgentEvent) -> bool| evs.iter().position(f).unwrap();
+        let filed = at(&|e| matches!(e, AgentEvent::Audited { .. }));
+        let switched = at(&|e| {
+            matches!(
+                e,
+                AgentEvent::ModeChanged {
+                    role: Role::SoloBuild
+                }
+            )
+        });
+        assert!(
+            filed < switched,
+            "the audit closes before the hat changes: {evs:?}"
+        );
     }
 
     /// Whatever an audit changes is put back from the checkpoint taken

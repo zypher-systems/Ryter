@@ -302,9 +302,48 @@ pub fn is_audit_file(root: &Path, path: &Path) -> bool {
     rel == Path::new(FILE) || rel.starts_with(DIR)
 }
 
+/// Whether a path git names from the repository's top is one the audit's
+/// rollback leaves alone: everything under this session's `.ryter/`, where
+/// `prefix` is the session folder's path below the repository's top. The
+/// audit's own files are there, and so is what the user approved during
+/// the turn: a run file, a plan. A path outside the session's folder is
+/// put back like any other.
+pub fn kept_from_restore(prefix: &Path, from_top: &Path) -> bool {
+    from_top
+        .strip_prefix(prefix)
+        .is_ok_and(|rel| rel.starts_with(".ryter"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rollback leaves this session's `.ryter/` alone, wherever the
+    /// session sits in the repository; another folder's `.ryter/` and
+    /// everything else go back.
+    #[test]
+    fn ryters_own_folder_is_kept_from_the_rollback() {
+        let top = Path::new("");
+        for kept in [
+            ".ryter/audit.md",
+            ".ryter/audits/2026-10-03-x.md",
+            ".ryter/run.toml",
+            ".ryter/plan.md",
+        ] {
+            assert!(kept_from_restore(top, Path::new(kept)), "{kept}");
+        }
+        for back in ["src/main.rs", "probe.txt", "app/.ryter/run.toml"] {
+            assert!(!kept_from_restore(top, Path::new(back)), "{back}");
+        }
+        let sub = Path::new("app");
+        assert!(kept_from_restore(sub, Path::new("app/.ryter/audits/x.md")));
+        assert!(kept_from_restore(sub, Path::new("app/.ryter/run.toml")));
+        assert!(!kept_from_restore(sub, Path::new("app/src/x.py")));
+        assert!(
+            !kept_from_restore(sub, Path::new(".ryter/run.toml")),
+            "the top's, not this session's"
+        );
+    }
 
     fn filed() -> Audit {
         Audit::from_args(&serde_json::json!({

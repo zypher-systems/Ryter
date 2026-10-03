@@ -127,6 +127,12 @@ Patch 3 (the plan file), 2026-10-03:
 - **Automatic hat changes:** the only ones found are a plan's approval (kept), `request_hat` after the user's yes, the audit turn putting the audit hat on for `/audit` and the user's hat back after it (a round trip, R-AUD-06), and a saved crew-mode or test-hat session opening in build. None was removed.
 - **R-PLAN-03** The audit card takes the wheel as the plan panel does; a test covers it.
 
+After the release PR's review (2026-10-03):
+
+- **R-AUD-02** The rollback leaves everything under this session's `.ryter/` alone, not only the audit's files: a run file or a plan the user approved during the turn stays (`audit::kept_from_restore`). Git names paths from the repository's top; they are mapped to the session's folder before the test, so a session below the top keeps its own `.ryter/` and puts back the rest. When the user's yes to `request_hat` takes the turn out of the audit hat, the audit closes at that moment (`Agent::close_audit`): tree put back, audit filed, card opened, and the hat that follows is not undone at the turn's end. A tree that cannot be compared with its checkpoint is put back whole, with a notice; a checkpoint that cannot be taken says why and holds the audit to read-only commands.
+- **R-AUD-04** A chord (`Ctrl`/`Alt` with `y`, `n`, `o`) does nothing on the card; its `y` is ignored for the first half second, as every card's confirm key is.
+- The project spend's hats' share counts audit, review and scribe.
+
 Patch 4 (the scribe hat), 2026-10-03:
 
 - **R-SCR-01** The documentation rule is by name alone: the extensions `md`, `mdx`, `txt`, `rst`, `adoc` in any case, and the bare names `README`, `CHANGELOG`, `LICENSE`, `CONTRIBUTING`, `NOTICE`, `AUTHORS`. The secret rule runs first, so `.env`, `*.pem` and the dotenv family are refused whatever they end in: `.env.md` is refused, as a secret, not written as a document. Everything under `.ryter/` is refused except the session's notes, which every hat may write. `ROADMAP.md` and `DECISIONS.md` are documentation, so the scribe writes them as the plan and build hats do.

@@ -7,7 +7,7 @@
 
 use std::cell::{Cell, RefCell};
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ryter_core::event::AgentEvent;
@@ -272,6 +272,13 @@ impl Panel for AuditModal {
         let max = self.max_top.get();
         let top = self.top.min(max);
         let page = self.page.get().saturating_sub(1).max(1);
+        // A chord is not one of the card's keys.
+        if key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            return Outcome::Stay;
+        }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => self.top = top.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => self.top = (top + 1).min(max),
@@ -342,6 +349,20 @@ mod tests {
 
     fn press(p: &mut AuditModal, v: &mut View, code: KeyCode) -> Outcome {
         p.key(KeyEvent::new(code, KeyModifiers::NONE), v)
+    }
+
+    /// `Ctrl+Y` is not `y`: a chord does nothing on the card.
+    #[test]
+    fn a_chord_is_not_one_of_the_cards_keys() {
+        let mut v = View::new("c".into(), "m".into(), "p".into());
+        v.now_ms = 10_000;
+        let mut p = AuditModal::from_event(&event(), 0).unwrap();
+        for code in [KeyCode::Char('y'), KeyCode::Char('n'), KeyCode::Char('o')] {
+            assert!(matches!(
+                p.key(KeyEvent::new(code, KeyModifiers::CONTROL), &mut v),
+                Outcome::Stay
+            ));
+        }
     }
 
     fn text(p: &AuditModal, v: &View, width: u16, height: u16) -> Vec<String> {

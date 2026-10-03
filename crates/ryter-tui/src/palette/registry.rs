@@ -165,7 +165,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "models",
         &["model"],
         Category::Model,
-        "Choose models: one for every hat, or one each for plan, build and review",
+        "Choose models: one for every hat, or one each for plan, build, audit and scribe",
         Some("[id]"),
         true,
         None,

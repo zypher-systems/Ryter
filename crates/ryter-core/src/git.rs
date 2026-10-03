@@ -134,6 +134,12 @@ pub fn paths_between(dir: &Path, from: &str, to: &str) -> Result<Vec<String>> {
 
 /// Put `paths` back as snapshot `sha` has them: restore the ones it has,
 /// delete the ones it doesn't. Nothing else is touched. Returns how many.
+/// The repository's top folder, canonical.
+pub fn toplevel(dir: &Path) -> Result<PathBuf> {
+    let top = PathBuf::from(git(dir, &["rev-parse", "--show-toplevel"])?.trim());
+    Ok(top.canonicalize().unwrap_or(top))
+}
+
 pub fn restore_paths(dir: &Path, sha: &str, paths: &[String]) -> Result<usize> {
     // Diff paths are repository-relative, even when the session started
     // inside a subdirectory. Both git and filesystem operations must use

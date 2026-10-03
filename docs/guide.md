@@ -1,6 +1,6 @@
 # Ryter user guide
 
-Ryter is a Bring-Your-Own-Key terminal coding harness. One model works in your project, with you. It wears one of three hats at a time (**plan**, **build**, **review**), and each hat can run on a model of its own.
+Ryter is a Bring-Your-Own-Key terminal coding harness. One model works in your project, with you. It wears one of four hats at a time (**plan** and **build**, then the specialists **audit** and **scribe**), and each hat can run on a model of its own.
 
 Linux is the first platform. Release binaries also support macOS; Landlock requires Linux. Windows is not currently supported.
 
@@ -99,7 +99,7 @@ ryter models [connection]
 
 The hat that is on sets the screen's one accent color: plan is cyan, build green, audit amber. Everything else stays the same under every hat. A fedora in that color sits faintly behind the conversation (`[ui] watermark = false`, or *watermark* in `/settings`, turns it off; it is left out on 16-color and no-color terminals).
 
-- **The bar across the top** names the three hats in the order `Tab` goes round them. The hat that is on is a filled chip marked `◆`; a hat that has had a turn this session is marked `●` in its own color, and one that hasn't is `○`. The bar says which hats have been worn, not an order to wear them in. Then the session's title, the folder and the branch.
+- **The bar across the top** names the hats in their two rows, plan and build, then a dot, then audit and scribe. The hat that is on is a filled chip marked `◆`; a hat that has had a turn this session is marked `●` in its own color, and one that hasn't is `○`. The bar says which hats have been worn, not an order to wear them in. Then the session's title, the folder and the branch.
 - **The hat rack** runs down the left (screens 132 columns and wider). It has one block a hat, always in the same place: plan and build, a hairline marked `specialists`, then the specialists below it. Each block: the hat's model, how many turns it has had this session and what it has cost, and the figures that are its own. Plan: plans approved and rejected. Build: files and lines it changed in the session, and the latest run of the project's tests as three rows, `success`, `warning` (skipped or ignored) and `failure`. Audit: audits failed and passed. A hat with no turns yet says `not worn yet`. The block of the hat that is on is tinted.
 - **The instruments** run down the right (100 columns and wider): the model your next message goes to, its connection and reasoning level; the context gauge with tokens used of the window; the **pulse**, how many tokens a second the model is writing, with the last eight seconds as bars, `idle` between turns; **spend** for the session and for the project, and the budget; the sandbox and what this hat may do; and what is **uncommitted**, a file a line. The `GUARD` card also names `plan.md` and `audit.md` under `.ryter/`, the approved plan and the latest audit, or `none`.
 - **The prompt** sits under a rule in the hat's color, after the hat's name as a chip, the width of the conversation's column. The keys that matter now are on the last row.
@@ -339,7 +339,7 @@ A toolchain runs the project's code: `cargo build` runs its build script and `np
 
 What the shell is told to read another way, the gate can't read at all, and refuses in every hat: setting `HOME`, `IFS`, `CDPATH`, `GLOBIGNORE` or `BASH_ENV`; `shopt`, `alias`, `hash`, `trap` and `enable`; a named coprocess; and `env -C`, which runs a command in another folder.
 
-What the gate can read but not see through (a path in a variable, files handed over by `xargs`) is a question in the build hat and refused in plan and review. "Allow all", `--always-approve` and `--yolo` answer that question yes in advance, as they do any other.
+What the gate can read but not see through (a path in a variable, files handed over by `xargs`) is a question in the build hat (and the audit hat behind its checkpoint) and refused in plan and scribe. "Allow all", `--always-approve` and `--yolo` answer that question yes in advance, as they do any other.
 
 **Outside the project.** Scratch space (`/tmp`, `/var/tmp` and your system's temporary folder) is open to every hat, to read and to write, without a question. Your home folder, where tools keep their caches, configuration and builds, is open to every hat to read, and to the build hat to write.
 

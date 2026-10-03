@@ -489,6 +489,7 @@ async fn run_prompt(
         machine: ryter_core::prompt::machine_for(profile),
         product: None,
         audit_pending: None,
+        audit_live: None,
         last_audit_verdict: None,
     };
     agent.fire_session_start()?;
@@ -861,6 +862,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
         machine: ryter_core::prompt::machine_for(profile),
         product: None,
         audit_pending: None,
+        audit_live: None,
         last_audit_verdict: None,
     };
     if let Err(e) = agent.fire_session_start() {
@@ -986,6 +988,7 @@ fn serve_host_from_config(
         machine: ryter_core::prompt::machine_for(profile),
         product: None,
         audit_pending: None,
+        audit_live: None,
         last_audit_verdict: None,
     };
     agent.fire_session_start()?;

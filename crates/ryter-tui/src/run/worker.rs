@@ -918,6 +918,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         machine: ryter_core::prompt::machine_for(b.profile),
         product: None,
         audit_pending: None,
+        audit_live: None,
         last_audit_verdict: None,
     }
 }

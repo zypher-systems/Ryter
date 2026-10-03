@@ -225,7 +225,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         Action::Undo { force } => cx.send(Work::Undo { force }),
         Action::Redo { force } => cx.send(Work::Redo { force }),
         Action::ReviewNow if view.busy => {
-            view.warn("a review reads the finished work: wait for this turn to end");
+            view.warn("an audit reads the finished work: wait for this turn to end");
         }
         Action::ReviewNow => cx.send(Work::ReviewNow),
         Action::RepairFromAudit { file } => {
