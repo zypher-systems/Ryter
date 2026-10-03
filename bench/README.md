@@ -21,7 +21,11 @@ scores validate the harness, not a model's ability. The simulated reviewer runs
 the project's checks through the run file the harness provides (`run_project`,
 action `test`), as the review hat may. The broken-builder control leaves the
 fixture unchanged while the simulated reviewer claims it passed; the hidden
-checks must identify that false pass.
+checks must identify that false pass. One task shows the review hat's limit:
+`runner-script`'s checks are a script of the project's own (`sh dev lint`), and
+headless `--always-approve` goes only as far as the review hat's gate, which
+refuses that; its `checks_pass` is false while the scripted verdict still says
+PASS. In the TUI the user's approval of the run file goes further.
 
 Live runs are opt-in and use the app's existing configured connection and key.
 The runner never copies credentials. It explicitly selects the model for every
