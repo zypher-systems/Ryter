@@ -148,6 +148,9 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
         AgentEvent::Token { text } => view.on_token(text),
         AgentEvent::Reasoning { text } => {
             let turn = view.turn;
+            // Thought is output too: the pulse counts it.
+            view.pulse
+                .push(view.now_ms, (text.len() as u64).div_ceil(4));
             activity::push_reasoning(view, turn, text);
             if view.activity.busy() {
                 view.activity.verb = Verb::Thinking;

@@ -2,6 +2,16 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-02 — The build hat may write the project's `.env`, asked every time
+- **Decision:** A `write` of the project's own `.env` (`.env`, `.env.local`, `config/.env.production`, `local.env`; never an example of one, never under `.ryter/`, never a key or a credential folder) in the build hat is a new gate decision, `AskSecret`: a person is asked every time, as for a write outside the project. An approved plan, "allow all" and `--always-approve` don't cover it; headless refuses it; no other hat may; `search_replace` on one stays refused.
+- **Why:** In the first real session on 0.13.0 the project's compose stack needed a `.env`, the gate refused to create it in every hat, and the build hat worked round it with a password on each command line. The stack then ran with one password and the tests with another, every test round failed on that, and three reviews passed the code anyway, because the review hat could neither set the variable nor curl. Three rounds of a tester at $0.40 each went to a file the user would have said yes to in a second.
+- **Why only `write`:** `write` reports the file's name and length. `search_replace` reports around its change, which would hand the model lines of a secret file. The card the user answers shows the content; the model never sees the file again.
+- **Limits:** The secret rules are otherwise unchanged. This is the first time the gate lets the model touch a file it may not read, and it is the one file of that kind a project cannot do without.
+
+### 2026-10-02 — A compose stack that is already up is the project running
+- **Decision:** When the test hat's `run_project start` finds the ready address answering and the run file's start command is a `docker compose` or `podman compose` command, Ryter looks at `compose ps -q --status running` in the project. Containers running means the project's own stack is up, and the tests go on against it. It is not claimed: `/stop` stops only what Ryter started.
+- **Why:** In the same session the build hat brought the stack up to run its own checks, so the test hat's start was refused three times as "already listening, but this session did not start it", and the tester went on to probe a second copy on another port. A stranger's process on the port is still refused: only the project's own compose project counts.
+
 ### 2026-10-02 — The solo screen is a hat rack, and a session starts in plan
 - **Decision:** Replace the ledger's rail with two side columns: a hat rack on the left (four fixed blocks, one a hat) and instruments on the right (model, context, session and project spend, guard, uncommitted changes). The hat that is on sets the screen's one accent color, and a fedora in that color sits behind the conversation as a background tint. A bar across the top names the four hats and which have been worn. A new session opens in the plan hat; `[ui] start_hat` picks build, review or the last hat used. The contract, with every requirement and its test, is `docs/hat-rack-design.md`.
 - **Why one fedora, colored by the hat:** hats are the product's callsign. Four different hats were drawn and read as clutter at a terminal's resolution; one shape that changes color is a stronger mark. A second copy of it in a side card showed the same thing twice and cost five rows.

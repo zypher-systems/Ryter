@@ -126,6 +126,9 @@ impl std::fmt::Debug for LiveOutput {
 /// Marks a permission prompt for a write outside the project. The TUI shows
 /// such prompts with a warning and no "allow all".
 pub const OUTSIDE: &str = "· outside the project";
+/// Appended to a tool name in a permission prompt for a write to the
+/// project's own `.env`: a person answers every time.
+pub const SECRET: &str = "· a secret file";
 
 /// Result of `execute`.
 #[derive(Debug, Clone)]
@@ -621,6 +624,36 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                  project only. Work inside the project instead"
             ))),
         },
+        // The project's own `.env`: a person answers every time, and what
+        // is written is shown to them, never to the model.
+        Decision::AskSecret => match &ctx.user_io {
+            Some(io) => {
+                let summary = crate::user_io::summary_args(name, args);
+                match io.permission_with(
+                    &format!("{name} {SECRET}"),
+                    &summary,
+                    fs::preview(name, args, ctx),
+                    &ctx.cancel,
+                ) {
+                    crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
+                        run_with_hooks(name, args, ctx)
+                    }
+                    crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
+                        Err(crate::error::Error::Cancelled)
+                    }
+                    crate::user_io::Permission::Deny => Ok(ToolOutput::err(format!(
+                        "denied by user: {name} {summary} (a secret file). Don't retry it: \
+                         tell the user what the file needs and let them write it"
+                    ))),
+                }
+            }
+            None => Ok(ToolOutput::err(format!(
+                "denied: {name} {} is a secret file, which needs a person's yes each time, \
+                 and nobody can be asked here (headless). --always-approve doesn't cover it. \
+                 Tell the user what the file needs",
+                crate::user_io::summary_args(name, args)
+            ))),
+        },
         Decision::Ask
             if ctx.always_approve
                 || allow_scope(name, args)
@@ -1105,6 +1138,48 @@ mod tests {
             assert!(!out.is_error, "{role:?}: {out:?}");
             assert_eq!(std::fs::read_to_string(&target).unwrap(), "hi");
         }
+    }
+
+    /// The project's own `.env` is written with a yes every time: an
+    /// approved plan, "allow all" and --always-approve don't cover it,
+    /// headless says so, and what was written is never read back.
+    #[test]
+    fn the_projects_env_is_written_with_a_yes_every_time() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join(".env.example"), "DB_PASSWORD=\n").unwrap();
+        let args = json!({"path": ".env", "content": "DB_PASSWORD=localdev\n"});
+        let mut c = ctx(Role::SoloBuild, dir.path());
+        c.always_approve = true;
+        c.allowed.lock().unwrap().insert("edit".into());
+        let out = gated_execute("write", &args, &c).unwrap();
+        assert!(out.is_error && out.text.contains("secret file"), "{out:?}");
+        assert!(!dir.path().join(".env").exists());
+        let (io, rx) = crate::user_io::UserIo::pair();
+        c.user_io = Some(io);
+        let asked = std::thread::spawn(move || match rx.recv().unwrap() {
+            crate::user_io::UserRequest::Permission { tool, reply, .. } => {
+                let _ = reply.send(crate::user_io::Permission::Allow);
+                tool
+            }
+            _ => String::new(),
+        });
+        let out = gated_execute("write", &args, &c).unwrap();
+        assert!(!out.is_error, "{out:?}");
+        assert!(
+            asked.join().unwrap().ends_with(SECRET),
+            "the prompt says what"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".env")).unwrap(),
+            "DB_PASSWORD=localdev\n"
+        );
+        // Written, not read: the result names the file and its length only.
+        assert!(!out.text.contains("localdev"), "{out:?}");
+        let read = gated_execute("read_file", &json!({"path": ".env"}), &c).unwrap();
+        assert!(read.is_error, "{read:?}");
+        // No other hat is asked: it is refused.
+        let out = gated_execute("write", &args, &ctx(Role::SoloPlan, dir.path())).unwrap();
+        assert!(out.is_error, "{out:?}");
     }
 
     /// "Allow all" and --always-approve don't reach the rest of the

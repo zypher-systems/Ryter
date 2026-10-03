@@ -889,6 +889,8 @@ fn racked() -> View {
     let mut p = ryter_core::project::ProjectSpend::default();
     p.total_usd = 4.82;
     v.project_spend = Some(p);
+    // A minute on from the turns above: the model is not writing now.
+    v.now_ms = 60_000;
     v
 }
 
@@ -921,7 +923,7 @@ fn the_rack_shows_each_hats_own_figures() {
     for want in [
         "HAT RACK",
         "● PLAN grok-4.6 1 turn $0.004 plans 1 approved",
-        "◆ BUILD deepseek-pro-latest 2 turns $0.021 files 2 lines +13 −2 tests ✓ 14 passed",
+        "◆ BUILD deepseek-pro-latest 2 turns $0.021 files 2 lines +13 −2 success 14 warning 0 failure 0",
         "● REVIEW claude-opus-5.5 1 turn $0.040 verdicts ✗ 1 fail",
         "○ TEST grok-4.6 not worn yet",
     ] {
@@ -968,7 +970,9 @@ fn the_rack_shows_each_hats_own_figures() {
             "2 turns $0.021",
             "files 2",
             "lines +13 −2",
-            "tests ✓ 14 passed",
+            "success 14",
+            "warning 0",
+            "failure 0",
             "",
             "● REVIEW",
             "claude-opus-5.5",
@@ -1004,21 +1008,82 @@ fn the_rack_shows_each_hats_own_figures() {
     ] {
         crate::run_events_apply(&mut v, ev);
     }
-    v.last_tests = Some("✗ 2 failed".into());
+    v.last_tests = Some("✗ 2 failed, 11 passed, 1 skipped".into());
     let got = rows(&v);
     for want in [
         "plans 1 approved",
         "1 rejected",
-        "tests ✗ 2 failed",
+        "success 11",
+        "warning 1",
+        "failure 2",
         "2 turns $0.040",
         "verdicts ✓ 1 ✗ 1",
         // Unknown is not free.
         "1 turn $?.??",
-        "checks ✓ 3 ✗ 2",
+        // The tester's report: three passed, one failed, one not reached.
+        "success 3",
+        "failure 1",
     ] {
         assert!(got.iter().any(|r| r == want), "missing {want:?}: {got:#?}");
     }
     assert!(!got.iter().any(|r| r == "not worn yet"), "{got:#?}");
+    // Both blocks have a warning row: the test run's skip, the report's
+    // scenario that was not reached.
+    assert_eq!(
+        got.iter().filter(|r| *r == "warning 1").count(),
+        2,
+        "{got:#?}"
+    );
+    // A test run whose summary has no counts keeps its words.
+    v.last_tests = Some("✓ Ran 5 tests".into());
+    let got = rows(&v);
+    assert!(got.iter().any(|r| r == "checks ✓ Ran 5 tests"), "{got:#?}");
+}
+
+/// The counts a test run's summary line gives, in the shapes the tools
+/// print them.
+#[test]
+fn a_test_runs_summary_is_read_as_counts() {
+    use crate::rail::check_counts;
+    for (line, want) in [
+        ("✓ 13 passed", Some((13, 0, 0))),
+        ("✗ 2 failed, 11 passed, 1 skipped", Some((11, 1, 2))),
+        (
+            "✓ 13 passed, 2 skipped, 1 warning in 2.1s",
+            Some((13, 3, 0)),
+        ),
+        (
+            "test result: ok. 446 passed; 0 failed; 3 ignored",
+            Some((446, 3, 0)),
+        ),
+        ("Tests: 1 failed, 5 passed, 6 total", Some((5, 0, 1))),
+        ("✓ 12 passed, 1 failed", Some((12, 0, 1))),
+        ("4 passing (2s) 1 pending 2 failing", Some((4, 1, 2))),
+        ("✓ Ran 5 tests", None),
+        ("", None),
+    ] {
+        assert_eq!(check_counts(line), want, "{line:?}");
+    }
+}
+
+/// Tokens a second over the last two seconds, idle after three without
+/// any, and eight seconds of history.
+#[test]
+fn the_pulse_counts_recent_tokens() {
+    let mut p = crate::view::Pulse::default();
+    assert_eq!(p.rate(5_000), None);
+    p.push(1_000, 50);
+    p.push(1_900, 50);
+    assert_eq!(p.rate(2_000), Some(50), "100 tokens over two seconds");
+    assert_eq!(p.rate(3_500), Some(25), "only the second batch is recent");
+    assert_eq!(p.rate(4_950), None, "three seconds of nothing is idle");
+    let h = p.history(3_000);
+    assert_eq!(h[7], 0);
+    assert_eq!(h[6], 50, "the batch at 1.9s, one second ago");
+    assert_eq!(h[5], 50, "the batch at 1.0s, two seconds ago");
+    // Old arrivals are let go.
+    p.push(20_000, 10);
+    assert_eq!(p.history(20_000).iter().sum::<u64>(), 10);
 }
 
 /// `R-RACK-08`, `R-TEST-03`: the rack is four blocks, however long the
@@ -1040,7 +1105,7 @@ fn the_rack_is_the_same_height_whatever_the_turns() {
     assert_eq!(many.rack.of(Role::SoloBuild).turns, 38);
     let height = |v: &View| crate::rail::lines(v, theme, 27, 100).unwrap().len();
     assert_eq!(height(&few), height(&many));
-    assert_eq!(height(&few), 23);
+    assert_eq!(height(&few), 25);
     let text = squash(&render_to_string(&many, 160, 50));
     assert!(text.contains("38 turns"), "{text}");
 }
@@ -1173,6 +1238,9 @@ fn the_instruments_say_what_is_true_of_the_whole_session() {
             "━━━━━━━━━━───────────────── 38%",
             "97k / 256k tokens",
             "",
+            "PULSE",
+            "▁▁▁▁▁▁▁▁ idle",
+            "",
             "SPEND",
             "session $0.065",
             "project $4.82",
@@ -1185,7 +1253,6 @@ fn the_instruments_say_what_is_true_of_the_whole_session() {
             "CHANGES uncommitted",
             "app/server.js +2 −1",
             "test/search.test.js new",
-            "tests ✓ 14 passed",
         ]
     );
     assert_eq!(
@@ -1199,6 +1266,9 @@ fn the_instruments_say_what_is_true_of_the_whole_session() {
             "━━━━━━━━━────────────── 38%",
             "97k / 256k tokens",
             "",
+            "PULSE",
+            "▁▁▁▁▁▁▁▁ idle",
+            "",
             "SPEND",
             "session $0.065",
             "project $4.82",
@@ -1210,9 +1280,25 @@ fn the_instruments_say_what_is_true_of_the_whole_session() {
             "",
             "CHANGES",
             "2 files +12 −1",
-            "tests ✓ 14 passed",
         ]
     );
+    // The pulse: tokens a second over the last two seconds, and eight
+    // seconds of bars, in the hat's color while the model writes.
+    v.mode = Role::SoloBuild;
+    v.now_ms = 80_000;
+    for (t, n) in [
+        (72_000, 60),
+        (73_500, 90),
+        (75_000, 40),
+        (78_200, 80),
+        (79_100, 70),
+    ] {
+        v.pulse.push(t, n);
+    }
+    let got = rows(&v, false);
+    assert!(got.iter().any(|r| r == "▁█▅▁▁▁█▇ 75 tok/s"), "{got:#?}");
+    v.now_ms = 83_000;
+    assert!(rows(&v, false).iter().any(|r| r == "▁▁▁██▁▁▁ idle"));
     // A project total that leaves unpriced calls out says so; a budget is
     // named; nothing uncommitted is said, and so is no repository.
     if let Some(p) = &mut v.project_spend {
@@ -1275,12 +1361,28 @@ fn the_hat_colors_the_screen() {
             .find(|&(x, y)| y == 0 && buf[(x, y)].symbol() == "◆")
             .map(|at| buf[at].bg);
         assert_eq!(chip, Some(color), "{hat}: the bar's chip");
+        // The prompt's rule runs the conversation's column, between the
+        // side columns' hairlines, not under them.
         let rule_row = (0..50u16)
             .rev()
-            .find(|&y| (0..160).all(|x| buf[(x, y)].symbol() == "─"))
+            .find(|&y| buf[(31, y)].symbol() == "─" && buf[(29, y)].symbol() == "│")
             .unwrap();
-        assert_eq!(buf[(0, rule_row)].fg, color, "{hat}: the prompt's rule");
-        assert_eq!(buf[(2, rule_row + 1)].bg, color, "{hat}: the prompt's chip");
+        assert_eq!(buf[(31, rule_row)].fg, color, "{hat}: the prompt's rule");
+        assert_eq!(
+            buf[(31, rule_row + 1)].bg,
+            color,
+            "{hat}: the prompt's chip"
+        );
+        assert_eq!(
+            buf[(126, rule_row)].symbol(),
+            "│",
+            "{hat}: the instruments go on"
+        );
+        assert_eq!(
+            buf[(29, rule_row + 1)].symbol(),
+            "│",
+            "{hat}: the rack goes on"
+        );
         // The active block's tint in the rack, and the watermark.
         assert!(
             cells().any(|at| at.0 < 29 && buf[at].bg == theme.rack_tint(hat)),

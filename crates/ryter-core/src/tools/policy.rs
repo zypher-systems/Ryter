@@ -22,6 +22,9 @@ pub enum Decision {
     /// Prompt the user (headless: fail closed).
     Ask,
     /// Prompt the user even under "allow all" or `--always-approve`: the
+    /// build hat writing the project's own `.env`, which is never read.
+    AskSecret,
+    /// Prompt the user even under "allow all" or `--always-approve`: the
     /// build hat writing outside the project.
     AskOutside,
     /// Do not run.
@@ -34,8 +37,9 @@ impl Decision {
         match self {
             Self::Allow => 0,
             Self::Ask => 1,
-            Self::AskOutside => 2,
-            Self::Deny => 3,
+            Self::AskSecret => 2,
+            Self::AskOutside => 3,
+            Self::Deny => 4,
         }
     }
 
@@ -110,7 +114,15 @@ fn decide_write(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
         };
     };
     if is_secret(&resolved, ctx) {
-        return Decision::Deny;
+        // The project's own `.env` is settings for this machine, and a
+        // project that needs one can't run without it. The build hat may
+        // write it whole, with a person's yes each time; nothing reads it
+        // back, and an edit, which reports around its change, stays refused.
+        return if name == "write" && ctx.role == Role::SoloBuild && is_dotenv(&resolved, ctx) {
+            Decision::AskSecret
+        } else {
+            Decision::Deny
+        };
     }
     // `resolved` has its symlinks resolved; compare it with real paths too.
     // On macOS a temp folder lives behind /var -> /private/var, and the raw
@@ -5736,12 +5748,22 @@ fn is_under(path: &Path, root: &Path) -> bool {
 }
 
 pub(crate) fn is_secret(path: &Path, ctx: &ToolContext) -> bool {
+    super::secret::is_secret(project_rel(path, ctx))
+}
+
+/// Whether `path` is the project's own `.env` (or one of its kind), inside
+/// the project.
+fn is_dotenv(path: &Path, ctx: &ToolContext) -> bool {
+    let rel = project_rel(path, ctx);
+    rel.is_relative() && super::secret::is_dotenv(rel)
+}
+
+/// `path` relative to the project, or as given when it is outside it.
+fn project_rel<'a>(path: &'a Path, ctx: &ToolContext) -> &'a Path {
     let workspace = real_path(&ctx.workspace);
-    let rel = path
-        .strip_prefix(&workspace)
+    path.strip_prefix(&workspace)
         .or_else(|_| path.strip_prefix(&ctx.workspace))
-        .unwrap_or(path);
-    super::secret::is_secret(rel)
+        .unwrap_or(path)
 }
 
 #[cfg(test)]
@@ -6000,6 +6022,11 @@ mod tests {
         let b = ctx_for(Role::SoloBuild, &link);
         assert_eq!(
             decide("write", &json!({"path": ".env", "content": "x"}), &b),
+            Decision::AskSecret,
+            "the project's own .env is still known for what it is"
+        );
+        assert_eq!(
+            decide("write", &json!({"path": "id.key", "content": "x"}), &b),
             Decision::Deny,
             "secrets stay secret"
         );
@@ -7012,11 +7039,36 @@ mod tests {
         // build: edits ask, and so do commands that change files by hand;
         // looking runs, and so do the project's toolchains.
         assert_eq!(write(Role::SoloBuild, "a.rs"), Decision::Ask);
-        assert_eq!(
-            write(Role::SoloBuild, ".env"),
-            Decision::Deny,
-            "secrets never"
-        );
+        // The project's own `.env`: written whole with a yes each time,
+        // never edited in place, never by another hat. Everything else
+        // that is secret: never.
+        for path in [".env", ".env.local", "config/.env.production", "local.env"] {
+            assert_eq!(write(Role::SoloBuild, path), Decision::AskSecret, "{path}");
+            assert_eq!(
+                decide(
+                    "search_replace",
+                    &json!({"path": path, "old_string": "K=1", "new_string": "K=2"}),
+                    &ctx_for(Role::SoloBuild, d),
+                ),
+                Decision::Deny,
+                "{path}"
+            );
+            for role in [Role::SoloPlan, Role::SoloReview, Role::SoloTest] {
+                assert_eq!(write(role, path), Decision::Deny, "{role:?} {path}");
+            }
+        }
+        for path in [
+            "key.pem",
+            "id.key",
+            ".ssh/config",
+            "creds/credentials.json",
+            ".ryter/x.env",
+            "../.env",
+        ] {
+            assert_eq!(write(Role::SoloBuild, path), Decision::Deny, "{path}");
+        }
+        // An example of one is an ordinary file.
+        assert_eq!(write(Role::SoloBuild, ".env.example"), Decision::Ask);
         assert_eq!(bash("ls -la", Role::SoloBuild, d), Decision::Allow);
         assert_eq!(bash("git status", Role::SoloBuild, d), Decision::Allow);
         for cmd in ["cargo test", "npm install", "cargo build --release"] {

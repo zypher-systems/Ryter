@@ -30,6 +30,8 @@ pub struct HatTotals {
     pub verdicts_failed: u32,
     /// Test scenarios that passed, across reports.
     pub checks_passed: u32,
+    /// Test scenarios not reached, because an earlier one failed.
+    pub checks_skipped: u32,
     /// Test scenarios that failed, across reports.
     pub checks_failed: u32,
 }
@@ -136,11 +138,23 @@ impl Rack {
                 None => {}
             },
             AgentEvent::Tested {
-                headline, passed, ..
+                headline,
+                passed,
+                rows,
+                ..
             } => {
+                // A scenario not reached, because an earlier one failed, is
+                // counted among the failures in the headline; here it is a
+                // warning, not a failure of its own.
                 let (ok, bad) = checks(headline, *passed);
+                let unreached = rows
+                    .iter()
+                    .filter(|r| r.starts_with('✗') && r.contains("· not reached"))
+                    .count();
+                let unreached = u32::try_from(unreached).unwrap_or(u32::MAX).min(bad);
                 self.test.checks_passed += ok;
-                self.test.checks_failed += bad;
+                self.test.checks_skipped += unreached;
+                self.test.checks_failed += bad - unreached;
             }
             _ => {}
         }
@@ -197,11 +211,15 @@ mod tests {
     }
 
     fn tested(headline: &str, passed: bool) -> AgentEvent {
+        tested_rows(headline, passed, Vec::new())
+    }
+
+    fn tested_rows(headline: &str, passed: bool, rows: Vec<String>) -> AgentEvent {
         AgentEvent::Tested {
             model: "m".into(),
             headline: headline.into(),
             passed,
-            rows: Vec::new(),
+            rows,
             file: String::new(),
             first_failed: None,
             tree: None,
@@ -239,6 +257,15 @@ mod tests {
             started(Role::SoloTest),
             tested("✗ 2 of 5 failed", false),
             tested("✓ 3 of 3 passed", true),
+            tested_rows(
+                "✗ 2 of 3 failed",
+                false,
+                vec![
+                    "✓ 1  starts".into(),
+                    "✗ 2  login".into(),
+                    "✗ 3  publish · not reached (needs 2)".into(),
+                ],
+            ),
         ] {
             r.apply(&ev);
         }
@@ -249,7 +276,10 @@ mod tests {
         let v = r.of(Role::SoloReview);
         assert_eq!((v.turns, v.verdicts_passed, v.verdicts_failed), (2, 1, 1));
         let t = r.of(Role::SoloTest);
-        assert_eq!((t.turns, t.checks_passed, t.checks_failed), (1, 6, 2));
+        assert_eq!(
+            (t.turns, t.checks_passed, t.checks_skipped, t.checks_failed),
+            (1, 7, 1, 3)
+        );
         assert!(r.worn(Role::SoloTest));
     }
 

@@ -59,13 +59,15 @@ reading a word.
 | Hat rack | 30 columns, left | one block per hat (§5) |
 | Transcript | the rest | the ledger's reading column, with the watermark behind it (§7) |
 | Instruments | 34 columns, right (30 at mid width) | model, context, spend, guard, changes (§6) |
-| Composer | 1 hairline + 1 to 8 text rows + 1 blank | hat chip and the message box |
+| Composer | 1 hairline + 1 to 8 text rows + 1 blank | hat chip and the message box, the width of the transcript column |
 | Hint bar | 1 row | context-sensitive keys; the status line at narrow width |
 
 - **R-LAYOUT-01** The composer and the hint bar are always on screen. No column, panel or
   overlay reduces them.
 - **R-LAYOUT-02** Side columns are separated from the transcript by a one-cell vertical
-  hairline. They have no outer box.
+  hairline. They have no outer box. They run from under the top bar to the blank row
+  above the hint bar: the composer is the transcript column's, the same width as it, and
+  the side columns continue beside it.
 - **R-LAYOUT-03** The hat rack and instruments have a panel background one step lighter
   than the screen background. The transcript uses the screen background.
 
@@ -268,16 +270,20 @@ No rules between blocks. The tint on the active block is the only background.
 | Hat | Rows | Source |
 | --- | --- | --- |
 | plan | `plans  N approved` (and `· N rejected` when any) | plan panel outcomes |
-| build | `files  N`, `lines  +A −D`, `tests  ✓ N passed` or `✗ N failed` | checkpoints, the last test run |
+| build | `files  N`, `lines  +A −D`, then `success N` / `warning N` / `failure N` for the latest run of the project's tests (skipped and ignored tests are warnings) | checkpoints, the last test run's summary line |
 | review | `verdicts  ✓ N pass` or `✗ N fail`; `✓ N  ✗ N` when both occurred | review verdicts |
-| test | `checks  ✓ N passed` or `✗ N failed`; `✓ N  ✗ N` when both occurred | test reports |
+| test | `success N` / `warning N` / `failure N` across the tester's reports (a scenario not reached is a warning) | test reports |
+
+The three check rows are the same three words in both blocks, in the same order. A count of
+zero is dim. A test run whose summary line has no counts to read (`Ran 5 tests`) shows one
+row, `checks`, with the line as the tool printed it.
 
 - **R-RACK-09** `files` and `lines` in the build block are gross for the session: every
   file the build hat changed and every line it added or removed, whether or not the
   change is still uncommitted. The net, uncommitted state is the instruments' `CHANGES`
   card (§6.1).
-- **R-RACK-10** `tests` is the most recent test run by any hat. It is omitted until one
-  has run.
+- **R-RACK-10** The build block's check rows are the most recent test run by any hat.
+  They are omitted until one has run.
 - **R-RACK-11** When the body is short (R-LAYOUT-07) the hat-specific rows are dropped
   from every block at once, leaving name, model, and turns with spend.
 
@@ -291,9 +297,10 @@ No rules between blocks. The tint on the active block is the only background.
 | --- | --- |
 | `MODEL` | the active hat's model in the hat color; `connection  <name> ●` (green `●` when the connection has a key, a red `○` when it has none); `reasoning  <effort>` |
 | `CONTEXT` | a one-row gauge in the hat color with the percentage; `<used> / <window> tokens` |
+| `PULSE` | eight bars, one a second, oldest first, and the rate: `▁▂▃▅▇▆▃▁  42 tok/s` while the model writes, `idle` three seconds after its last token |
 | `SPEND` | `session`, `project`, `budget` |
 | `GUARD` | `sandbox  <profile>`; `this hat  <what it may do>` |
-| `CHANGES` | header right-aligned `uncommitted`; one row per changed file with `+A −D` or `new`; `tests  <last result>` |
+| `CHANGES` | header right-aligned `uncommitted`; one row per changed file with `+A −D` or `new` |
 
 - **R-INST-01** Cards are a dim, letter-spaced heading followed by rows, with one blank
   row between cards. No boxes.
@@ -311,12 +318,16 @@ No rules between blocks. The tint on the active block is the only background.
   startup and when a turn ends, a file is reverted or a commit is made.
 - **R-INST-07** The context gauge turns to the warning color at the threshold the current
   gauge uses.
+- **R-INST-10** The pulse counts the model's streamed text and reasoning, four characters
+  to a token, as the activity strip does. The rate is tokens over the last two seconds.
+  The bars are in the hat color while the model writes and dim when idle. The last test
+  run is not in this column: it is the build block's.
 
 ### 6.2 Condensed (100 to 131 columns)
 
 - **R-INST-08** At 30 columns: `MODEL` is one row (`<hat>  <model>`, the model name
-  truncated from the right); `CHANGES` is `N files  +A −D` and the tests row. `CONTEXT`,
-  `SPEND` and `GUARD` keep their rows.
+  truncated from the right); `CHANGES` is `N files  +A −D`. `CONTEXT`, `PULSE`, `SPEND`
+  and `GUARD` keep their rows.
 
 ### 6.3 Status line (below 100 columns)
 
@@ -644,3 +655,12 @@ built; this is the list, with the reason.
 | One new event, `planned` (R-CORE-01) | The log recorded a plan's approval only as a notice in words. |
 | The scrollbar is a thumb with no track on this screen | Found in use: a track beside the instruments' hairline is two lines where one separates. |
 | The dark theme's `error` is set, not derived | The red derived from the new amber warning color was harsher than the mockups' `#FF8A80`. |
+
+After a first real session on the released screen (2026-10-02), the user asked for these:
+
+| Change | Why |
+| --- | --- |
+| The composer is the transcript column's width; the side columns run to the foot (R-LAYOUT-02) | A prompt that ran under the side columns read as overlapping them. |
+| Checks are three rows, `success` / `warning` / `failure`, with the same words in the build and test blocks (§5.3) | One number with a mark in front took a second look; three named rows don't, and "tests" and "checks" meant the same thing in two places. |
+| The tests row is gone from the instruments (§6.1) | The same number was on screen twice. |
+| A `PULSE` card: tokens a second with eight seconds of history (R-INST-10) | How fast the model is writing was nowhere on screen. |

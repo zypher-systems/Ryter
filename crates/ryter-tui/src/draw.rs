@@ -242,8 +242,6 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     let full = frame.area();
     let tier = crate::rail::tier(full.width);
     let narrow = tier == crate::rail::Tier::Narrow;
-    let comp_h =
-        composer::draw::solo_height(view, full.width).min(full.height.saturating_sub(8).max(2));
     // A blank row between the prompt and the keys, where there is height
     // for it.
     let gap = u16::from(full.height >= 24);
@@ -254,12 +252,13 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
             Constraint::Length(1),
             Constraint::Length(rule_h),
             Constraint::Min(4),
-            Constraint::Length(comp_h),
             Constraint::Length(gap),
             Constraint::Length(1),
         ])
         .split(full);
-    let (top, rule, body, comp, foot) = (rows[0], rows[1], rows[2], rows[3], rows[5]);
+    let (top, rule, body, foot) = (rows[0], rows[1], rows[2], rows[4]);
+    // The side columns run the body's height, the prompt included: the
+    // prompt is the conversation's, the width of its column.
     let (rack_w, inst_w) = side_columns(view, theme, full.width, body.height);
     draw_top_bar(frame, top, view, theme, rack_w == 0);
     if rule_h > 0 {
@@ -314,6 +313,8 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
             tier != crate::rail::Tier::Wide,
         );
     }
+    let comp_h =
+        composer::draw::solo_height(view, main.width).min(main.height.saturating_sub(6).max(2));
     let col_w = main.width.saturating_sub(4).min(LEDGER_COLUMN);
     let col_x = main.x + (main.width.saturating_sub(col_w + 1)) / 2;
     let column = |r: Rect| Rect {
@@ -324,7 +325,7 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     // Whose conversation this is, when it is the tester's.
     let thread = thread_line(view, theme, usize::from(col_w));
     let thread_h = u16::from(thread.is_some());
-    let below = main.height.saturating_sub(thread_h);
+    let below = main.height.saturating_sub(thread_h + comp_h);
     let activity_h = activity::height(view, below).min(below.saturating_sub(6));
     let parts = Layout::default()
         .direction(Direction::Vertical)
@@ -332,8 +333,10 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
             Constraint::Length(thread_h),
             Constraint::Min(4),
             Constraint::Length(activity_h),
+            Constraint::Length(comp_h),
         ])
         .split(main);
+    let comp = parts[3];
     if let Some(line) = thread {
         frame.render_widget(
             Paragraph::new(line).style(Style::default().bg(theme.bg)),

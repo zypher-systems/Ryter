@@ -735,6 +735,33 @@ pub fn stop(
     }
 }
 
+/// The compose tool a start command uses, where it is one: `docker compose
+/// up -d --build` → `docker`, `podman compose up` → `podman`.
+fn compose_tool(start: &str) -> Option<&'static str> {
+    let mut words = start.split_whitespace();
+    let tool = match words.next()? {
+        "docker" => "docker",
+        "podman" => "podman",
+        _ => return None,
+    };
+    (words.next()? == "compose").then_some(tool)
+}
+
+/// Whether the project's own compose stack has a container running: what
+/// `start` would bring up is already up, brought up by whoever (the build
+/// hat, or the user at a shell). Only for a start command that is a
+/// compose command, and a glance only: nothing is started or changed.
+pub fn compose_up(run: &RunFile, root: &Path, cancel: &crate::cancel::Cancel) -> bool {
+    let Some(tool) = run.start.as_deref().and_then(compose_tool) else {
+        return false;
+    };
+    let cmd = format!("{tool} compose ps -q --status running");
+    match crate::tools::shell::run_command_live(&cmd, root, Duration::from_secs(20), cancel, None) {
+        Ok(crate::tools::shell::Run::Ok(out)) => out.lines().any(|l| !l.trim().is_empty()),
+        _ => false,
+    }
+}
+
 /// The last `n` lines of `text`.
 pub fn last_lines(text: &str, n: usize) -> String {
     let all: Vec<&str> = text.lines().collect();
@@ -743,6 +770,29 @@ pub fn last_lines(text: &str, n: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_a_compose_start_names_its_tool() {
+        assert_eq!(
+            super::compose_tool("docker compose up -d --build"),
+            Some("docker")
+        );
+        assert_eq!(super::compose_tool("  podman compose up"), Some("podman"));
+        assert_eq!(super::compose_tool("docker run -d app"), None);
+        assert_eq!(super::compose_tool("npm run dev"), None);
+        assert_eq!(super::compose_tool(""), None);
+        // Not a compose project at all: no stack, no glance.
+        let run = super::RunFile {
+            start: Some("npm run dev".into()),
+            ..Default::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!super::compose_up(
+            &run,
+            dir.path(),
+            &crate::cancel::Cancel::new()
+        ));
+    }
+
     use super::*;
     use tempfile::TempDir;
 

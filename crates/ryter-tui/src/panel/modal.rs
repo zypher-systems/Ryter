@@ -165,9 +165,14 @@ impl PermissionModal {
         self.tool.ends_with(ryter_core::tools::OUTSIDE)
     }
 
+    /// A write to the project's own `.env`: asked every time, so no `a`.
+    fn is_secret(&self) -> bool {
+        self.tool.ends_with(ryter_core::tools::SECRET)
+    }
+
     /// Only `y` answers yes.
     fn y_only(&self) -> bool {
-        self.strict || self.is_outside()
+        self.strict || self.is_outside() || self.is_secret()
     }
 
     fn can_allow_session(&self) -> bool {
@@ -177,6 +182,7 @@ impl PermissionModal {
     fn base_tool(&self) -> &str {
         self.tool
             .strip_suffix(ryter_core::tools::OUTSIDE)
+            .or_else(|| self.tool.strip_suffix(ryter_core::tools::SECRET))
             .map_or(self.tool.as_str(), str::trim)
     }
 
@@ -198,6 +204,13 @@ impl PermissionModal {
     fn risk(&self) -> (String, bool) {
         if self.is_outside() {
             return ("writes outside the project · asked every time".into(), true);
+        }
+        if self.is_secret() {
+            return (
+                "writes a secret file: shown to you here, never read by the model · asked every time"
+                    .into(),
+                true,
+            );
         }
         match self.base_tool() {
             // A stack's data is in its volumes, and nothing brings it back.
@@ -1022,6 +1035,15 @@ mod tests {
         assert!(!o.legend(&v).contains("allow all"));
         assert!(matches!(press(&mut o, 'a'), Outcome::Stay));
         assert!(matches!(press(&mut o, 'a'), Outcome::Stay));
+        // The project's own `.env`: the same, and the card says what it is.
+        let mut e = PermissionModal::new(
+            format!("write {}", ryter_core::tools::SECRET),
+            ".env".into(),
+        );
+        assert!(!e.legend(&v).contains("allow all"));
+        assert!(matches!(press(&mut e, 'a'), Outcome::Stay));
+        assert!(e.risk().0.contains("secret file"), "{}", e.risk().0);
+        assert!(e.what().starts_with("rewrite  .env"), "{}", e.what());
         // An ordinary command: `a` allows that kind of command for the
         // session, in one press, and the card says which.
         let mut t = PermissionModal::new("bash".into(), "cargo test".into())
