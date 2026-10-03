@@ -170,6 +170,18 @@ impl Agent {
         if !self.role.is_solo() {
             self.put_on(self.role.hat())?;
         }
+        // A plan approved in an earlier session, or put there by hand:
+        // `.ryter/plan.md` is the plan when this session has none on record
+        // (`docs/specialists-design.md` R-PLAN-02).
+        if self.session.meta.plan_file.is_none() {
+            let root = self
+                .project_root
+                .clone()
+                .unwrap_or_else(|| self.ctx.workspace.clone());
+            if let Some(file) = crate::plan::on_record(&root) {
+                self.session.set_plan_file(Some(file))?;
+            }
+        }
         let turn = next_turn();
         let started = std::time::Instant::now();
         let mut tools = 0u32;
@@ -1030,8 +1042,9 @@ impl Agent {
                 }
                 self.emit(AgentEvent::Notice {
                     message: format!(
-                        "plan · approved and saved to {shown} · edits to the project's files \
-                         won't ask for the rest of this session"
+                        "plan · approved and saved to {shown} and {} · edits to the project's \
+                         files won't ask for the rest of this session",
+                        crate::plan::FILE
                     ),
                 })?;
                 let from = self.role;
@@ -3952,6 +3965,86 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(cwd.path().join("README.md")).unwrap(),
             "built\n"
+        );
+    }
+
+    /// An approved plan is also at `.ryter/plan.md`, the fixed path every
+    /// hat knows; the next approval replaces it and the dated copies stay.
+    #[tokio::test]
+    async fn an_approved_plan_is_at_the_fixed_path_too() {
+        use crate::user_io::PlanAnswer;
+        let (cwd, agent, _, _, _) = plan_presented(Some(PlanAnswer::Approve)).await;
+        let fixed = cwd.path().join(crate::plan::FILE);
+        let dated = plans_in(&cwd);
+        assert_eq!(dated.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(&fixed).unwrap(),
+            std::fs::read_to_string(&dated[0]).unwrap()
+        );
+        assert_eq!(
+            agent
+                .session
+                .meta
+                .plan_file
+                .as_deref()
+                .map(|f| f.starts_with(crate::plan::DIR)),
+            Some(true)
+        );
+        drop(agent);
+        // Approved again, in another session: replaced, and the first kept.
+        let (cwd2, _agent2, _, _, _) = plan_presented(Some(PlanAnswer::Approve)).await;
+        let _ = cwd2;
+        assert!(dated[0].exists());
+        assert!(fixed.exists());
+    }
+
+    /// A session with no plan on record picks up `.ryter/plan.md` at its
+    /// first turn: the dated copy with the same text when there is one.
+    #[tokio::test]
+    async fn a_session_without_a_plan_picks_up_the_plan_file() {
+        let (_home, cwd, mut agent) =
+            repo_setup(ReplayProvider::scripted(vec![say("ok"), say("ok again")]));
+        agent.put_on(Role::SoloBuild).unwrap();
+        assert_eq!(agent.session.meta.plan_file, None);
+        let dated = crate::plan::save_on(cwd.path(), "2026-10-02", "Readme", "write it").unwrap();
+        agent.turn("hi").await.unwrap();
+        let rel = dated
+            .strip_prefix(cwd.path())
+            .unwrap()
+            .display()
+            .to_string();
+        assert_eq!(agent.session.meta.plan_file.as_deref(), Some(rel.as_str()));
+        // `plan.md` on its own, with no dated copy to match: it is the plan.
+        agent.session.set_plan_file(None).unwrap();
+        std::fs::write(cwd.path().join(crate::plan::FILE), "# By hand\n\nnothing\n").unwrap();
+        agent.turn("hi").await.unwrap();
+        assert_eq!(
+            agent.session.meta.plan_file.as_deref(),
+            Some(crate::plan::FILE)
+        );
+    }
+
+    /// Nothing but a plan's approval changes the hat on its own: a build
+    /// turn that reads, or ends on a verdict-shaped line, is still build.
+    #[tokio::test]
+    async fn only_an_approved_plan_changes_the_hat_by_itself() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
+            call("read_file", serde_json::json!({"path": "hello.txt"})),
+            say("looked\nVERDICT: PASS"),
+            say("VERDICT: FAIL"),
+        ]));
+        std::fs::write(cwd.path().join("hello.txt"), "hi\n").unwrap();
+        agent.put_on(Role::SoloBuild).unwrap();
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("read it").await.unwrap();
+        agent.turn("and again").await.unwrap();
+        assert_eq!(agent.role, Role::SoloBuild);
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e, AgentEvent::ModeChanged { .. })),
+            "{evs:?}"
         );
     }
 

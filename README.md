@@ -46,7 +46,7 @@ One model works in your files. `Tab` cycles its hat, and the message box shows t
 | **build** | changes your files; your toolchains and the project's containers run, and edits, deletions and publishing ask first |
 | **audit** | runs everything the project has against the plan you approved, the product included, and files its findings on a card you can hand to the builder; a checkpoint puts back anything it changed |
 
-- **A plan is approved in its own panel.** `y` saves it under `.ryter/plans/` and the build starts from that file. Where the work later differs from it, the difference and the reason are recorded in `.ryter/decisions.md`, which an audit reads.
+- **A plan is approved in its own panel.** `y` saves it as `.ryter/plan.md` (and a dated copy under `.ryter/plans/`) and the build starts from that file; that is the one hat change Ryter makes on its own. Where the work later differs from it, the difference and the reason are recorded in `.ryter/decisions.md`, which an audit reads.
 - **Each hat can have its own model** (`/models`). The hats share one conversation, and Ryter says what it costs when a different model takes over.
 - **`/audit` asks for an audit**, with its cost up front. It ends on a card: the verdict and the findings, written to `.ryter/audit.md`; `y` hands it to the build hat to repair.
 - **Before each build turn Ryter checkpoints your files**, and `/undo` puts them back. `/changes` shows what changed, file by file with diffs, and can undo a single file.

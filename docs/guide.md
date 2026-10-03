@@ -243,7 +243,7 @@ stop  = "docker compose down"
 
 **Approving a plan.** When the model has a plan, it shows it in a panel instead of writing it into the chat: the goal, the steps, the files, the risks, and how to verify it. `↑`/`↓` and `PgUp`/`PgDn` scroll a long one. You answer:
 
-- **`y` approves.** The plan is saved in the project as `.ryter/plans/<date>-<title>.md`, Ryter switches to the build hat, and the model builds from that file in the same turn. Earlier plans are kept beside it, and whether to commit them is yours to decide.
+- **`y` approves.** The plan is saved in the project as `.ryter/plan.md`, the fixed path every hat reads, and as `.ryter/plans/<date>-<title>.md`, the dated copy that stays when the next plan replaces it; Ryter switches to the build hat, and the model builds from that file in the same turn. Earlier plans are kept beside it, and whether to commit them is yours to decide.
 - **`e` adjusts.** Type what should change. The model revises the plan and shows it again. Nothing is saved yet.
 - **`n` (or `Esc`) rejects.** Nothing is saved, and the hat stays as it was.
 

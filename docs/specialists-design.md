@@ -120,3 +120,10 @@ Patch 2 (the audit hat), 2026-10-03:
 - **R-INST-02** `this hat` reads `checkpoint, restored` for the audit hat (`checkpoint` when condensed).
 - **R-RACK-03** The fourth row is `tree   changed nothing` or `tree   restored N files`, from the last `Audited` event.
 
+Patch 3 (the plan file), 2026-10-03:
+
+- **R-PLAN-01** `plan::save_on` writes the dated copy and `.ryter/plan.md` with the same text; the approval notice names both. Headless, a plan can't be approved at all (there is nobody to show it to), so the headless path has nothing to write.
+- **R-PLAN-02** The pickup happens at the first turn of a session with no plan on record: `plan::on_record` prefers the dated copy whose text matches `plan.md` (so the decisions recorded under it are found) and falls back to `plan.md` itself. The prompt's "Ryter's files in the project" section is one for every hat; the build hat's audit.md bullet moved into it.
+- **Automatic hat changes:** the only ones found are a plan's approval (kept), `request_hat` after the user's yes, the audit turn putting the audit hat on for `/audit` and the user's hat back after it (a round trip, R-AUD-06), and a saved crew-mode or test-hat session opening in build. None was removed.
+- **R-PLAN-03** The audit card takes the wheel as the plan panel does; a test covers it.
+

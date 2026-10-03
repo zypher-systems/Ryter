@@ -2643,6 +2643,60 @@ fn the_guard_card_names_the_plan_and_audit_files() {
 
 /// The wheel scrolls a panel that is open, three rows a notch, as `↑` and
 /// `↓` do (`R-PLAN-03`).
+/// The audit card, like the plan panel, takes the wheel (R-PLAN-03).
+#[test]
+fn the_wheel_scrolls_the_audit_card() {
+    use crossterm::event::{MouseEvent, MouseEventKind};
+    let mut v = idle();
+    let rows: Vec<String> = (1..=60)
+        .map(|i| format!("✗ {i}\tfinding number {i}\tsrc/f{i}.rs"))
+        .collect();
+    let ev = AgentEvent::Audited {
+        model: "m".into(),
+        verdict: Some(false),
+        headline: "✗ 60 of 60 failed".into(),
+        summary: "long".into(),
+        rows,
+        ran: vec!["cargo test".into()],
+        file: Some(".ryter/audit.md".into()),
+        restored: Vec::new(),
+        checkpointed: true,
+        filed: true,
+        total_usd: Some(0.01),
+        duration_ms: 1000,
+    };
+    v.panels.push(Box::new(
+        crate::panel::audit::AuditModal::from_event(&ev, 0).unwrap(),
+    ));
+    let shown = |v: &View| render_to_string(v, 140, 30);
+    assert!(shown(&v).contains("finding number 1"), "{}", shown(&v));
+    let wheel = |v: &mut View, kind: MouseEventKind| {
+        crate::run_mouse_handle(
+            v,
+            MouseEvent {
+                kind,
+                column: 20,
+                row: 10,
+                modifiers: KeyModifiers::NONE,
+            },
+        )
+    };
+    for _ in 0..8 {
+        let _ = wheel(&mut v, MouseEventKind::ScrollDown);
+    }
+    let after = shown(&v);
+    assert!(
+        !after.contains("finding number 1\t") && !after.contains("✗ 1 "),
+        "{after}"
+    );
+    assert!(after.contains("finding number 2"), "{after}");
+    for _ in 0..8 {
+        let _ = wheel(&mut v, MouseEventKind::ScrollUp);
+    }
+    assert!(shown(&v).contains("finding number 1"));
+    assert!(!v.panels.is_empty());
+}
+
 #[test]
 fn the_wheel_scrolls_an_open_panel() {
     use crossterm::event::{MouseEvent, MouseEventKind};
