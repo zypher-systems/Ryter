@@ -1,4 +1,4 @@
- RYTER │ ● PLAN    ◆ BUILD    ● REVIEW                       empty-query fix                        ~/workspace/shop · search-patch
+ RYTER │ ● PLAN    ◆ BUILD    ·   ● AUDIT                      empty-query fix                      ~/workspace/shop · search-patch
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                              │         ●  search returns e… ···· ✓ answered · 1.2s · $0.004  ▸    │
  HAT RACK                    │         ●  build the plan ······· ✓ answered · 2 files (1 n…  ▸    │ MODEL
@@ -17,16 +17,16 @@
    warning                 0 │         │     5     assert.deepEqual(await search(''), [])         │ session                  $0.065
    failure                 0 │         │     6   })                                               │ project                   $4.82
                              │         │     7 +                                                  │ budget                      off
- ● REVIEW                    │         │     8 + test('a missing query finds nothing', async (    │
-   claude-opus-5.5           │         │         ) => {                                           │ GUARD
-   1 turn             $0.040 │         │     9 +   assert.deepEqual(await search(), [])           │ sandbox               workspace
-   verdicts         ✗ 1 fail │         │    10 + })                                               │ this hat        edits ask first
-                             │         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0…    │
-                             │  ▄▄                                                            ▄▄  │ CHANGES             uncommitted
-                             │  ▀                                                              ▀  │ app/server.js             +2 −1
-                             │      ▀▀▀▀▀▀                                            ▀▀▀▀▀▀      │ test/search.test.js         new
-                             │                    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                    │
-                             │                                                                    │
+ ─────────────── specialists │         │     8 + test('a missing query finds nothing', async (    │
+                             │         │         ) => {                                           │ GUARD
+ ● AUDIT                     │         │     9 +   assert.deepEqual(await search(), [])           │ sandbox               workspace
+   claude-opus-5.5           │         │    10 + })                                               │ this hat        edits ask first
+   1 turn             $0.040 │         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0…    │ plan.md                    none
+   audits           ✗ 1 fail │  ▄▄                                                            ▄▄  │ audit.md                   none
+                             │  ▀                                                              ▀  │
+                             │      ▀▀▀▀▀▀                                            ▀▀▀▀▀▀      │ CHANGES             uncommitted
+                             │                    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                    │ app/server.js             +2 −1
+                             │                                                                    │ test/search.test.js         new
                              │                                                                    │
                              │                                                                    │
                              │                                                                    │
@@ -35,6 +35,6 @@
                              │                                                                    │
                              │                                                                    │
                              │────────────────────────────────────────────────────────────────────│
-                             │  BUILD  › what should change? · Tab: review · / for commands       │
+                             │  BUILD  › what should change? · Tab: plan · ⇧Tab: specialists · …  │
 
- $ spend    enter send    tab review    ⇧enter newline    / commands    ^t changes    ^o expand    ^b panels    ^c quit
+ $ spend    enter send    tab plan    ⇧tab specialists    / commands    ^t changes    ^o expand    ^b panels    ^c quit

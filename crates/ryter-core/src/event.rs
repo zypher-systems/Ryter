@@ -233,11 +233,11 @@ mod tests {
     #[test]
     fn json_tag_is_snake_case() {
         let ev = AgentEvent::ModeChanged {
-            role: Role::SoloReview,
+            role: Role::SoloAudit,
         };
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["kind"], "mode_changed");
-        assert_eq!(v["role"], "review");
+        assert_eq!(v["role"], "audit");
     }
 
     #[test]

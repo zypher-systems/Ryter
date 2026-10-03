@@ -46,8 +46,8 @@ async fn approved_plan_build_review_test_resume_undo_and_commit_receipt() {
                     reply.send(PlanAnswer::Approve).unwrap();
                 }
                 UserRequest::Permission { tool, reply, .. } => {
-                    assert_eq!(tool, "review");
-                    seen.push("review");
+                    assert_eq!(tool, "audit");
+                    seen.push("audit");
                     reply.send(Permission::Allow).unwrap();
                 }
                 UserRequest::Run { rows, reply, .. } => {
@@ -135,7 +135,7 @@ async fn approved_plan_build_review_test_resume_undo_and_commit_receipt() {
 
     // Resume both conversations, then undo/redo while preserving a later user edit.
     agent.ctx.user_io = None;
-    assert_eq!(approvals.join().unwrap(), ["plan", "review", "run"]);
+    assert_eq!(approvals.join().unwrap(), ["plan", "audit", "run"]);
     agent.session = Session::open(&agent.session.dir).unwrap();
     assert_eq!(agent.session.spend_log().unwrap().len(), spend.len());
     agent.put_on(Role::SoloBuild).unwrap();

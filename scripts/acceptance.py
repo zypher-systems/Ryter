@@ -38,12 +38,12 @@ class Acceptance(unittest.TestCase):
         hats = self.fixture.config.parent / 'hats.toml'
         hats.write_text('[review]\nconnection="fixture"\nmodel="wrong-expensive-model"\n')
         self.provider.responses.append(reply())
-        self.successful('--hat', 'review', '--connection', 'fixture', '--model', 'fixture-model', '-p', 'review')
+        self.successful('--hat', 'audit', '--connection', 'fixture', '--model', 'fixture-model', '-p', 'audit')
         self.assertEqual(self.provider.requests[-1]['model'], 'fixture-model')
         self.assertIn('wrong-expensive-model', hats.read_text(), 'do not rewrite user defaults')
 
     def test_each_hat_is_sent_and_read_only_hats_refuse_writes(self):
-        for hat in ['plan', 'review']:
+        for hat in ['plan', 'audit']:
             self.provider.responses.extend([reply('', [('write', {'path':'source.txt', 'content':'bad'})]), reply()])
             events = self.successful('--hat', hat, '--always-approve', '-p', 'try fixture edit')
             result = next(e for e in events if e['kind'] == 'tool_result')

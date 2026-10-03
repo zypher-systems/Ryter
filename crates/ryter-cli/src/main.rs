@@ -35,7 +35,7 @@ struct Cli {
     #[arg(short = 'c', long = "continue")]
     resume: bool,
 
-    /// build | plan | review. With `-p` the default is build, or the
+    /// build | plan | audit. With `-p` the default is build, or the
     /// hat a continued session was left in; the TUI opens in `[ui] start_hat`.
     #[arg(long)]
     hat: Option<String>,
@@ -180,7 +180,7 @@ fn headless_hat(asked: Option<Role>, left_in: Option<Role>) -> Role {
 fn tui_hat(hat: Option<&str>) -> Result<Option<Role>, Error> {
     match hat {
         Some("crew" | "lead") => Err(Error::Config(
-            "crew mode was removed: --hat takes build, plan, or review".into(),
+            "crew mode was removed: --hat takes build, plan, or audit".into(),
         )),
         Some(h) => Ok(Some(h.parse::<Role>()?)),
         None => Ok(None),
@@ -403,7 +403,7 @@ async fn run_prompt(
     let hat = match cli.hat.as_deref() {
         Some("crew" | "lead") => {
             return Err(Error::Config(
-                "crew mode was removed: --hat takes build, plan, or review".into(),
+                "crew mode was removed: --hat takes build, plan, or audit".into(),
             ));
         }
         Some(h) => Some(h.parse::<Role>()?),
@@ -1104,11 +1104,7 @@ mod tests {
         for (asked, left_in, want) in [
             (None, None, Role::SoloBuild),
             (None, Some(Role::SoloPlan), Role::SoloPlan),
-            (
-                Some(Role::SoloReview),
-                Some(Role::SoloPlan),
-                Role::SoloReview,
-            ),
+            (Some(Role::SoloAudit), Some(Role::SoloPlan), Role::SoloAudit),
             (Some(Role::SoloPlan), None, Role::SoloPlan),
             // A session from crew mode continues in build.
             (None, Some(Role::Crew), Role::SoloBuild),

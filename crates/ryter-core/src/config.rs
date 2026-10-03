@@ -110,11 +110,11 @@ fn apply_old_review_file(cfg: &mut Config, home: &Path) {
         && cfg.connections.contains_key(&old.connection)
         && !cfg
             .specialists
-            .get("review")
+            .get("audit")
             .is_some_and(RoleModel::is_override)
     {
         cfg.specialists.insert(
-            "review".into(),
+            "audit".into(),
             RoleModel {
                 connection: Some(old.connection),
                 model: Some(old.model),
@@ -764,7 +764,15 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
 }
 
 /// The hats that can have a model of their own, as `specialists` names them.
-pub const HAT_ROLES: &[&str] = &["plan", "build", "review"];
+pub const HAT_ROLES: &[&str] = &["plan", "build", "audit"];
+
+/// A hat's seat under the name it had before: `review` is `audit`.
+pub fn hat_seat_name(name: &str) -> &str {
+    match name {
+        "review" => "audit",
+        other => other,
+    }
+}
 
 /// `~/.ryter/hats.toml`: the model each hat runs on, where it has its own.
 pub fn hats_path(home: &Path) -> PathBuf {
@@ -779,6 +787,7 @@ fn apply_hats_file(cfg: &mut Config, path: &Path) {
         return;
     };
     for (k, v) in map {
+        let k = hat_seat_name(&k).to_string();
         if HAT_ROLES.contains(&k.as_str()) {
             cfg.specialists.insert(k, v);
         }
@@ -1132,9 +1141,16 @@ fn merge_file(cfg: &mut Config, path: &Path) -> Result<()> {
     }
     overlay.apply(cfg);
     let start = cfg.ui.start_hat.trim().to_ascii_lowercase();
+    // The audit hat's old name still names it.
+    let start = if start == "review" {
+        cfg.ui.start_hat = "audit".into();
+        "audit".to_string()
+    } else {
+        start
+    };
     if !crate::role::START_HATS.contains(&start.as_str()) {
         cfg.warnings.push(format!(
-            "{}: [ui] start_hat = {:?} is not plan, build, review or last; starting in plan",
+            "{}: [ui] start_hat = {:?} is not plan, build, audit or last; starting in plan",
             path.display(),
             cfg.ui.start_hat
         ));
@@ -1300,12 +1316,14 @@ impl ConfigFile {
         // Only the hats: a row for a crew role (`[specialists.builder]`,
         // from before crew mode was removed) is left behind.
         for (k, v) in self.specialists {
+            let k = hat_seat_name(&k).to_string();
             if HAT_ROLES.contains(&k.as_str()) {
                 cfg.specialists.insert(k, v);
             }
         }
         for (k, v) in self.reasoning_effort {
-            cfg.reasoning_effort.insert(k, v);
+            cfg.reasoning_effort
+                .insert(hat_seat_name(&k).to_string(), v);
         }
         for (k, v) in self.model_reasoning {
             cfg.model_reasoning.insert(k, v);
@@ -1939,9 +1957,11 @@ mod tests {
         assert_eq!(cfg.ui.start_hat, "plan");
         assert!(cfg.ui.watermark);
         assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
-        for hat in ["build", "review", "last", "plan"] {
+        for hat in ["build", "audit", "review", "last", "plan"] {
             let cfg = load(&format!("[ui]\nstart_hat = \"{hat}\"\nwatermark = false\n"));
-            assert_eq!(cfg.ui.start_hat, hat);
+            // The audit hat's old name loads as its new one.
+            let want = if hat == "review" { "audit" } else { hat };
+            assert_eq!(cfg.ui.start_hat, want);
             assert!(!cfg.ui.watermark);
             assert!(cfg.warnings.is_empty(), "{hat}: {:?}", cfg.warnings);
         }
@@ -2019,12 +2039,12 @@ mod tests {
         assert!(cfg.follows_orchestrator(Role::SoloPlan));
         // A hat's row is kept; the crew's rows are not.
         assert_eq!(
-            cfg.route_for(Role::SoloReview),
+            cfg.route_for(Role::SoloAudit),
             ("openrouter".into(), "x-ai/grok-4.7".into())
         );
         assert_eq!(
             cfg.specialists.keys().collect::<Vec<_>>(),
-            ["review"],
+            ["audit"],
             "only the hats"
         );
         assert_eq!(cfg.spend.session_budget_usd, 4.0);
@@ -2037,7 +2057,7 @@ mod tests {
         use crate::role::Role;
         let mut cfg = Config::default();
         let all: (String, String) = ("spacexai".into(), "grok-4.6".into());
-        for hat in [Role::SoloPlan, Role::SoloBuild, Role::SoloReview] {
+        for hat in [Role::SoloPlan, Role::SoloBuild, Role::SoloAudit] {
             assert_eq!(cfg.route_for(hat), all);
         }
         cfg.specialists.insert(
@@ -2373,7 +2393,7 @@ mod tests {
         .unwrap();
         let mut cfg = load_at(dir.path(), None, false).unwrap();
         assert_eq!(
-            cfg.route_for(Role::SoloReview),
+            cfg.route_for(Role::SoloAudit),
             ("openrouter".into(), "z-ai/glm-5.3".into())
         );
         assert!(cfg.follows_orchestrator(Role::SoloBuild));
@@ -2387,10 +2407,10 @@ mod tests {
             0.0
         );
         // The hat put back to following the others stays there.
-        cfg.specialists.remove("review");
+        cfg.specialists.remove("audit");
         save_hats(dir.path(), &cfg.specialists).unwrap();
         let again = load_at(dir.path(), None, false).unwrap();
-        assert!(again.follows_orchestrator(Role::SoloReview));
+        assert!(again.follows_orchestrator(Role::SoloAudit));
         // A connection that is gone carries no model over.
         let dir = TempDir::new().unwrap();
         fs::write(
@@ -2399,11 +2419,11 @@ mod tests {
         )
         .unwrap();
         let cfg = load_at(dir.path(), None, false).unwrap();
-        assert!(cfg.follows_orchestrator(Role::SoloReview));
+        assert!(cfg.follows_orchestrator(Role::SoloAudit));
         assert_eq!(cfg.spend.review_usd, 1.5);
         // No file: no model of its own, and no limit.
         let cfg = load_at(TempDir::new().unwrap().path(), None, false).unwrap();
-        assert!(cfg.follows_orchestrator(Role::SoloReview));
+        assert!(cfg.follows_orchestrator(Role::SoloAudit));
         assert_eq!(cfg.spend.review_usd, 0.0);
     }
 
@@ -2415,20 +2435,20 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut cfg = load_at(dir.path(), None, false).unwrap();
         let all: (String, String) = ("spacexai".into(), "grok-4.6".into());
-        for hat in [Role::SoloPlan, Role::SoloBuild, Role::SoloReview] {
+        for hat in [Role::SoloPlan, Role::SoloBuild, Role::SoloAudit] {
             assert!(cfg.follows_orchestrator(hat));
             assert_eq!(cfg.route_for(hat), all);
         }
         cfg.specialists.insert(
-            "review".into(),
+            "audit".into(),
             RoleModel {
                 connection: Some("openrouter".into()),
                 model: Some("x-ai/grok-4.7".into()),
             },
         );
-        assert!(!cfg.follows_orchestrator(Role::SoloReview));
+        assert!(!cfg.follows_orchestrator(Role::SoloAudit));
         assert_eq!(
-            cfg.route_for(Role::SoloReview),
+            cfg.route_for(Role::SoloAudit),
             ("openrouter".into(), "x-ai/grok-4.7".into())
         );
         assert_eq!(cfg.route_for(Role::SoloPlan), all);
@@ -2436,10 +2456,26 @@ mod tests {
         // Saved and read back.
         save_hats(dir.path(), &cfg.specialists).unwrap();
         let hats = fs::read_to_string(hats_path(dir.path())).unwrap();
-        assert!(hats.contains("[review]"), "{hats}");
+        assert!(hats.contains("[audit]"), "{hats}");
+        // The seat's old name in a hats.toml from before 0.16 is the
+        // audit hat's seat.
+        fs::write(
+            hats_path(dir.path()),
+            "[review]\nconnection = \"openrouter\"\nmodel = \"old/reviewer\"\n",
+        )
+        .unwrap();
+        let aliased = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(
+            aliased.route_for(Role::SoloAudit),
+            ("openrouter".into(), "old/reviewer".into())
+        );
+        assert!(aliased.specialists.contains_key("audit"));
+        assert!(!aliased.specialists.contains_key("review"));
+        // Back to the seat as saved, for the rest of the test.
+        save_hats(dir.path(), &cfg.specialists).unwrap();
         let again = load_at(dir.path(), None, false).unwrap();
         assert_eq!(
-            again.route_for(Role::SoloReview),
+            again.route_for(Role::SoloAudit),
             ("openrouter".into(), "x-ai/grok-4.7".into())
         );
     }
@@ -2532,20 +2568,20 @@ mod tests {
             Some("high")
         );
         assert_eq!(
-            effort_for(None, None, Role::SoloReview, "m").as_deref(),
+            effort_for(None, None, Role::SoloAudit, "m").as_deref(),
             Some("medium")
         );
         let mut m = BTreeMap::new();
         m.insert("build".to_string(), "Low".to_string());
         m.insert("plan".to_string(), "default".to_string());
-        m.insert("review".to_string(), "bogus".to_string());
+        m.insert("audit".to_string(), "bogus".to_string());
         assert_eq!(
             effort_for(Some(&m), None, Role::SoloBuild, "m").as_deref(),
             Some("low")
         );
         assert_eq!(effort_for(Some(&m), None, Role::SoloPlan, "m"), None);
         assert_eq!(
-            effort_for(Some(&m), None, Role::SoloReview, "m").as_deref(),
+            effort_for(Some(&m), None, Role::SoloAudit, "m").as_deref(),
             Some("medium"),
             "an unknown value falls back to the default"
         );

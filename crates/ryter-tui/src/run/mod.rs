@@ -280,7 +280,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         actions::fill_view_from_session(&mut view, &session);
     }
     if let Some(hat) = start {
-        view.mode = hat;
+        view.set_mode(hat);
         view.agent_hat = hat;
     }
     if !resumed {
@@ -725,6 +725,19 @@ fn on_paste(view: &mut View, text: &str) {
     crate::palette::refresh(view);
 }
 
+/// A mouse event with nothing under it but the screen: for tests of the
+/// wheel on a panel.
+#[cfg(test)]
+pub(crate) fn mouse_handle(view: &mut View, m: MouseEvent) -> Action {
+    let hit = Hit {
+        chat: Rect::default(),
+        cards: Vec::new(),
+        activity: Rect::default(),
+        composer: Rect::default(),
+    };
+    on_mouse(view, m, &hit)
+}
+
 /// Wheel scrolls the chat; clicks open info cards or toggle the activity strip
 /// (`R-SCROLL-11`). Nothing else is captured.
 fn on_mouse(view: &mut View, m: MouseEvent, hit: &Hit) -> Action {
@@ -739,6 +752,28 @@ fn on_mouse(view: &mut View, m: MouseEvent, hit: &Hit) -> Action {
             && m.row < hit.chat.y + hit.chat.height
             && m.column < hit.chat.x + hit.chat.width + 1);
     let over_composer = inside(hit.composer);
+    // A panel that is open owns the wheel: three rows a notch, as `↑`/`↓`
+    // (`docs/specialists-design.md` R-PLAN-03).
+    if !view.panels.is_empty() {
+        let code = match m.kind {
+            MouseEventKind::ScrollUp => Some(crossterm::event::KeyCode::Up),
+            MouseEventKind::ScrollDown => Some(crossterm::event::KeyCode::Down),
+            _ => None,
+        };
+        if let Some(code) = code {
+            let mut last = Action::None;
+            for _ in 0..3 {
+                last = crate::panel::handle_key(
+                    view,
+                    crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE),
+                );
+                if !matches!(last, Action::None) {
+                    break;
+                }
+            }
+            return last;
+        }
+    }
     match m.kind {
         MouseEventKind::ScrollUp => {
             if view.panels.is_empty() && over_chat && !over_composer {

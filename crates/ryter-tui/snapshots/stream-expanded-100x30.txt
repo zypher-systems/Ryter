@@ -27,4 +27,4 @@
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
 │› type to queue the next message, / for commands                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- enter send    tab review    ⇧enter newline    / commands    ^b panel    esc cancel    ^c quit
+ enter send    tab plan    ⇧tab specialists    / commands    ^b panel    esc cancel    ^c quit

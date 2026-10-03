@@ -21,8 +21,15 @@ pub const RACK_W: u16 = 30;
 pub const BOTH_MIN: u16 = 132;
 /// Narrowest screen that shows the instruments.
 pub const INSTRUMENTS_MIN: u16 = 100;
-/// The hats, in the order `Tab` goes round them.
-pub const HATS: [Role; 3] = [Role::SoloPlan, Role::SoloBuild, Role::SoloReview];
+/// The hats, in the order the rack shows them: the primary row, then the
+/// specialists (`docs/specialists-design.md` §5).
+pub const HATS: [Role; 3] = [Role::SoloPlan, Role::SoloBuild, Role::SoloAudit];
+/// The primary row: the hats the work is done in.
+pub const PRIMARY: [Role; 2] = [Role::SoloPlan, Role::SoloBuild];
+/// The specialists, below the separator.
+pub const SPECIALISTS: [Role; 1] = [Role::SoloAudit];
+/// The word on the separator between the rows.
+pub const SEPARATOR_LABEL: &str = "specialists";
 
 /// What a screen of some width has room for beside the conversation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,7 +57,7 @@ pub fn tier(width: u16) -> Tier {
 pub fn hat_name(hat: Role) -> &'static str {
     match hat {
         Role::SoloPlan => "PLAN",
-        Role::SoloReview => "REVIEW",
+        Role::SoloAudit => "AUDIT",
         Role::SoloBuild | Role::Crew => "BUILD",
     }
 }
@@ -343,19 +350,56 @@ fn block(view: &View, theme: Theme, hat: Role, w: usize, figures: bool) -> Vec<L
                 }
             }
         }
-        Role::SoloReview => {
-            let v = tally(
-                totals.verdicts_passed,
-                totals.verdicts_failed,
-                "pass",
-                "fail",
-            );
+        Role::SoloAudit => {
+            // `✗ 1 fail  ✓ 2 pass`: what failed first, where the eye goes.
+            let both = totals.verdicts_failed > 0 && totals.verdicts_passed > 0;
+            let mut v = Vec::new();
+            // Both at once: the counts alone, which is what fits.
+            if totals.verdicts_failed > 0 {
+                let n = totals.verdicts_failed;
+                v.push(Span::styled(
+                    if both {
+                        format!("✗ {n}")
+                    } else {
+                        format!("✗ {n} fail")
+                    },
+                    bad,
+                ));
+            }
+            if both {
+                v.push(Span::styled("  ", dim));
+            }
+            if totals.verdicts_passed > 0 {
+                let n = totals.verdicts_passed;
+                v.push(Span::styled(
+                    if both {
+                        format!("✓ {n}")
+                    } else {
+                        format!("✓ {n} pass")
+                    },
+                    good,
+                ));
+            }
+            // The tally helper is the other hats' shape.
+            let _ = tally;
             if !v.is_empty() {
-                lines.push(row("verdicts", v, dim));
+                lines.push(row("audits", v, dim));
             }
         }
     }
     lines
+}
+
+/// The row between the primary hats and the specialists: a hairline
+/// across the column, with the word at its right end.
+fn separator(theme: Theme, w: usize) -> Line<'static> {
+    let bg = theme.sidebar_bg;
+    let label = format!(" {SEPARATOR_LABEL}");
+    let rule = w.saturating_sub(wrap::width(&label));
+    Line::from(vec![
+        Span::styled("─".repeat(rule), Style::default().fg(theme.faint).bg(bg)),
+        Span::styled(label, Style::default().fg(theme.dim).bg(bg)),
+    ])
 }
 
 /// The rack's rows for a column `w` wide with `room` rows: every hat's
@@ -365,7 +409,13 @@ pub fn lines(view: &View, theme: Theme, w: usize, room: usize) -> Option<Vec<Lin
     let bg = theme.sidebar_bg;
     let build = |figures: bool| {
         let mut v = vec![Line::from(""), Line::from(heading("HAT RACK", theme, bg))];
-        for hat in HATS {
+        for hat in PRIMARY {
+            v.push(Line::from(""));
+            v.extend(block(view, theme, hat, w, figures));
+        }
+        v.push(Line::from(""));
+        v.push(separator(theme, w));
+        for hat in SPECIALISTS {
             v.push(Line::from(""));
             v.extend(block(view, theme, hat, w, figures));
         }

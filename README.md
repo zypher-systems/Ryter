@@ -2,7 +2,7 @@
 
 Ryter is Zypher Systems’ terminal AI coding harness.
 
-One model works in your project, with you, and `Tab` switches its hat between **plan**, **build**, and **review**. Each hat can run on a model of its own: a strong one to plan, a cheaper one to build, a different one to review. Bring your own keys: **SpaceXAI** and **OpenRouter** are built in, and local model servers (Ollama, LM Studio, llama.cpp) work without one.
+One model works in your project, with you, and `Tab` switches between its two working hats, **plan** and **build**; `Shift+Tab` reaches the specialists, today **audit**. Each hat can run on a model of its own: a strong one to plan, a cheaper one to build, a different one to audit. Bring your own keys: **SpaceXAI** and **OpenRouter** are built in, and local model servers (Ollama, LM Studio, llama.cpp) work without one.
 
 Linux first. Apache-2.0.
 
@@ -44,11 +44,11 @@ One model works in your files. `Tab` cycles its hat, and the message box shows t
 | --- | --- |
 | **plan** | reads and proposes; shows you a plan to approve, adjust or reject; changes nothing |
 | **build** | changes your files; your toolchains and the project's containers run, and edits, deletions and publishing ask first |
-| **review** | runs the tests and critiques what changed, against the plan you approved; can start and use the product; changes nothing |
+| **audit** | runs the tests and critiques what changed, against the plan you approved; can start and use the product; changes nothing |
 
-- **A plan is approved in its own panel.** `y` saves it under `.ryter/plans/` and the build starts from that file. Where the work later differs from it, the difference and the reason are recorded in `.ryter/decisions.md`, which a review reads.
+- **A plan is approved in its own panel.** `y` saves it under `.ryter/plans/` and the build starts from that file. Where the work later differs from it, the difference and the reason are recorded in `.ryter/decisions.md`, which an audit reads.
 - **Each hat can have its own model** (`/models`). The hats share one conversation, and Ryter says what it costs when a different model takes over.
-- **A review is offered after a build turn that changed files**, with its cost up front, and `/audit` asks for one. It ends with a verdict.
+- **An audit is offered after a build turn that changed files**, with its cost up front, and `/audit` asks for one. It ends with a verdict.
 - **Before each build turn Ryter checkpoints your files**, and `/undo` puts them back. `/changes` shows what changed, file by file with diffs, and can undo a single file.
 - **`/commit`** drafts the message from the diff and from what the model said about why, and commits the files you choose. Its receipt trailer records the model, the cost, the test result and the review (`Ryter: deepseek-pro-latest · $0.34 · tests ✓ 13 passed · review ✓ grok-4.7`).
 
@@ -60,7 +60,7 @@ Nothing is committed unless you commit it.
 ryter                         TUI
 ryter -p TEXT [--json]        one headless turn
 ryter -c -p TEXT              continue the latest session headless
-ryter --hat build|plan|review -p TEXT   (default build)
+ryter --hat build|plan|audit -p TEXT    (default build)
 ryter --hat build             the TUI in that hat, for this run
 ryter --connection spacexai|openrouter
 ryter --sandbox off|workspace|read-only

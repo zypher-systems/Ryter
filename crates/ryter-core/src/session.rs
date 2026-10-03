@@ -946,10 +946,10 @@ mod tests {
             crate::role::start_hat("last", Session::latest_hat(home.path(), cwd.path())),
             Role::SoloBuild
         );
-        first.set_mode(Role::SoloReview).unwrap();
+        first.set_mode(Role::SoloAudit).unwrap();
         assert_eq!(
             Session::latest_hat(home.path(), cwd.path()),
-            Some(Role::SoloReview)
+            Some(Role::SoloAudit)
         );
         let mut second = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
         second.set_mode(Role::SoloBuild).unwrap();

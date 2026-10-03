@@ -424,7 +424,7 @@ fn spec(name: &str) -> Option<ToolSpec> {
              `test` runs the project's test commands and returns their output. `stop` \
              stops what was started (the user usually does this, with /stop: leave the \
              product running when you finish). `status` says whether it is up. With no \
-             run file yet, propose one with propose_run. The build and review hats run \
+             run file yet, propose one with propose_run. The build and audit hats run \
              these; the plan hat starts nothing.",
             json!({"type":"object","properties":{
                 "action":{"type":"string","enum":["start","test","stop","status"]}
@@ -436,7 +436,7 @@ fn spec(name: &str) -> Option<ToolSpec> {
              new hat in this same turn. Never ask in plain text whether to switch: the user \
              can't answer that from here.",
             json!({"type":"object","properties":{
-                "hat":{"type":"string","enum":["build","plan","review"]},
+                "hat":{"type":"string","enum":["build","plan","audit"]},
                 "reason":{"type":"string","description":"one line the user sees, e.g. 'carry out the plan'"}
             },"required":["hat","reason"]}),
         ),
@@ -467,7 +467,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
         // One list for every hat, so switching hats never changes the tool
         // definitions (and never throws away the prompt cache). The gate
         // decides what each hat may run.
-        Role::SoloPlan | Role::SoloBuild | Role::SoloReview => &[
+        Role::SoloPlan | Role::SoloBuild | Role::SoloAudit => &[
             "read_file",
             "list_dir",
             "grep",
@@ -689,7 +689,7 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
         // A hat that can't do this: say which one can, so the model tells the
         // user instead of hunting for a way round.
         Decision::Deny
-            if matches!(ctx.role, Role::SoloPlan | Role::SoloReview)
+            if matches!(ctx.role, Role::SoloPlan | Role::SoloAudit)
                 && matches!(name, "write" | "search_replace" | "bash")
                 && !(name == "bash" && policy::bash_hint(args, ctx).is_some()) =>
         {
@@ -702,8 +702,7 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                 } else {
                     "edit files"
                 },
-                if name == "bash" && ctx.role == Role::SoloReview && policy::names_containers(args)
-                {
+                if name == "bash" && ctx.role == Role::SoloAudit && policy::names_containers(args) {
                     CONTAINER_CHECKS
                 } else {
                     ""
@@ -1157,7 +1156,7 @@ mod tests {
             .prefix("ryter-scratch-")
             .tempdir()
             .unwrap();
-        for role in [Role::SoloBuild, Role::SoloPlan, Role::SoloReview] {
+        for role in [Role::SoloBuild, Role::SoloPlan, Role::SoloAudit] {
             let target = outside.path().join(format!("{role}.txt"));
             let args = json!({"path": target.to_string_lossy(), "content": "hi"});
             let out = gated_execute("write", &args, &ctx(role, dir.path())).unwrap();
@@ -1261,7 +1260,7 @@ mod tests {
             out.is_error && out.text.contains("shell handed a command"),
             "{out:?}"
         );
-        let r = ctx(Role::SoloReview, dir.path());
+        let r = ctx(Role::SoloAudit, dir.path());
         let out =
             gated_execute("bash", &json!({ "command": "python3 -c 'print(1)'" }), &r).unwrap();
         assert!(out.is_error && out.text.contains("build hat"), "{out:?}");
@@ -1305,7 +1304,7 @@ mod tests {
     #[test]
     fn a_refused_container_command_says_what_does_run() {
         let dir = TempDir::new().unwrap();
-        let reviewer = ctx(Role::SoloReview, dir.path());
+        let reviewer = ctx(Role::SoloAudit, dir.path());
         for (cmd, containers) in [
             ("docker compose up -d --wait", true),
             ("cd app && podman-compose build", true),
@@ -1314,7 +1313,7 @@ mod tests {
             let out = gated_execute("bash", &json!({ "command": cmd }), &reviewer).unwrap();
             assert!(out.is_error, "{cmd}: {out:?}");
             assert!(
-                out.text.contains("the review hat can't run commands"),
+                out.text.contains("the audit hat can't run commands"),
                 "{out:?}"
             );
             assert_eq!(

@@ -39,7 +39,7 @@ fn short_count(n: u64) -> String {
 /// What the hat on may do, in two or three words.
 pub fn hat_may(hat: Role, condensed: bool) -> &'static str {
     match hat {
-        Role::SoloPlan | Role::SoloReview => "read only",
+        Role::SoloPlan | Role::SoloAudit => "read only",
         Role::SoloBuild | Role::Crew if condensed => "asks first",
         Role::SoloBuild | Role::Crew => "edits ask first",
     }
@@ -286,7 +286,42 @@ fn guard(view: &View, theme: Theme, bg: Color, w: usize, condensed: bool) -> Vec
             w,
             bg,
         ),
+        file_row("plan.md", view.plan_file.as_deref(), theme, bg, w),
+        file_row("audit.md", view.audit_file.as_deref(), theme, bg, w),
     ]
+}
+
+/// A row of the guard card for a file every hat reads (`.ryter/plan.md`,
+/// `.ryter/audit.md`): what it is, or `none`.
+fn file_row(name: &str, label: Option<&str>, theme: Theme, bg: Color, w: usize) -> Line<'static> {
+    let body = Style::default().fg(theme.fg).bg(bg);
+    let dim = Style::default().fg(theme.dim).bg(bg);
+    let room = w.saturating_sub(name.len() + 1);
+    // Short of room, what the file is matters more than its day.
+    let fit = |l: &str| -> String {
+        if crate::chat::wrap::width(l) > room {
+            if let Some((day, rest)) = l.split_once(' ') {
+                if day.len() == 10 && day.chars().filter(|c| *c == '-').count() == 2 {
+                    return crate::chat::wrap::truncate(rest, room);
+                }
+            }
+        }
+        crate::chat::wrap::truncate(l, room)
+    };
+    match label {
+        Some(l) => ends(
+            vec![Span::styled(name.to_string(), body)],
+            vec![Span::styled(fit(l), body)],
+            w,
+            bg,
+        ),
+        None => ends(
+            vec![Span::styled(name.to_string(), body)],
+            vec![Span::styled("none", dim)],
+            w,
+            bg,
+        ),
+    }
 }
 
 fn changes(view: &View, theme: Theme, bg: Color, w: usize, condensed: bool) -> Vec<Line<'static>> {

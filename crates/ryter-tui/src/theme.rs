@@ -470,7 +470,7 @@ impl Theme {
         match mode {
             ryter_core::Role::SoloBuild => self.build,
             ryter_core::Role::SoloPlan => self.plan,
-            ryter_core::Role::SoloReview => self.audit,
+            ryter_core::Role::SoloAudit => self.audit,
             ryter_core::Role::Crew => self.build,
         }
     }
@@ -480,7 +480,7 @@ impl Theme {
         match hat {
             ryter_core::Role::SoloPlan => 0,
             ryter_core::Role::SoloBuild | ryter_core::Role::Crew => 1,
-            ryter_core::Role::SoloReview => 2,
+            ryter_core::Role::SoloAudit => 2,
         }
     }
 
@@ -1002,7 +1002,7 @@ mod tests {
             // The watermark sits under the conversation and the rack's
             // tint under a hat's figures: both stay readable through them.
             for (what, tints) in [("mark", t.mark), ("band", t.mark_band), ("rack", t.rack)] {
-                for (hat, bg) in ["plan", "build", "review", "test"].iter().zip(tints) {
+                for (hat, bg) in ["plan", "build", "audit", "scribe"].iter().zip(tints) {
                     for (label, fg) in [("fg", t.fg), ("dim", t.dim)] {
                         let ratio = contrast_ratio(fg, bg).unwrap();
                         assert!(

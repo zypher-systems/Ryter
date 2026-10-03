@@ -1,4 +1,4 @@
- RYTER │ ● PLAN   ● BUILD    ◆ REVIEW                                      empty-query fix                                      ~/workspace/shop · search-patch
+ RYTER │ ● PLAN   ● BUILD   ·    ◆ AUDIT                                     empty-query fix                                    ~/workspace/shop · search-patch
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                              │         ●  search returns everything for an empty query ····· ✓ answered · 1.2s · $0.004  ▸    │
  HAT RACK                    │         ●  build the plan ····················· ✓ answered · 2 files (1 new, 1 changed,…  ▸    │ MODEL
@@ -17,16 +17,16 @@
    warning                 0 │         │     5     assert.deepEqual(await search(''), [])                                     │ session                  $0.065
    failure                 0 │         │     6   })                                                                           │ project                   $4.82
                              │         │     7 +                                                                              │ budget                      off
- ◆ REVIEW                    │         │     8 + test('a missing query finds nothing', async () => {                          │
-   claude-opus-5.5           │         │     9 +   assert.deepEqual(await search(), [])                                       │ GUARD
-   1 turn             $0.040 │         │    10 + })                                                                           │ sandbox               workspace
-   verdicts         ✗ 1 fail │         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009                             │ this hat              read only
+ ─────────────── specialists │         │     8 + test('a missing query finds nothing', async () => {                          │
+                             │         │     9 +   assert.deepEqual(await search(), [])                                       │ GUARD
+ ◆ AUDIT                     │         │    10 + })                                                                           │ sandbox               workspace
+   claude-opus-5.5           │         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009                             │ this hat              read only
+   1 turn             $0.040 │                                                                                                │ plan.md                    none
+   audits           ✗ 1 fail │                                                                                                │ audit.md                   none
                              │                                                                                                │
-                             │                                                                                                │ CHANGES             uncommitted
-                             │                                                                                                │ app/server.js             +2 −1
-                             │                      ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄                      │ test/search.test.js         new
-                             │                ▄▄                                                            ▄▄                │
-                             │                ▀                                                              ▀                │
+                             │                      ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄                      │ CHANGES             uncommitted
+                             │                ▄▄                                                            ▄▄                │ app/server.js             +2 −1
+                             │                ▀                                                              ▀                │ test/search.test.js         new
                              │                    ▀▀▀▀▀▀                                            ▀▀▀▀▀▀                    │
                              │                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                  │
                              │                                                                                                │
@@ -45,6 +45,6 @@
                              │                                                                                                │
                              │                                                                                                │
                              │────────────────────────────────────────────────────────────────────────────────────────────────│
-                             │  REVIEW  › ask about the review · Tab: plan · / for commands                                   │
+                             │  AUDIT  › ask about the audit · ⇧Tab: plan · build · / for commands                            │
 
- $ spend    enter send    tab plan    ⇧enter newline    / commands    ^t changes    ^o expand    ^r reasoning    ^b panels    ^c quit
+ $ spend    enter send    tab audit    ⇧tab plan · build    ⇧enter newline    / commands    ^t changes    ^o expand    ^r reasoning    ^b panels    ^c quit

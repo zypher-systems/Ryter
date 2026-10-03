@@ -97,4 +97,12 @@ Why: the first real sessions on three hats showed that a hat earns its place by 
 
 ## 15. What changed in the building
 
-(filled in per patch)
+Patch 1 (rows, keys, review → audit, wheel scrolling), 2026-10-03:
+
+- **R-KEY-01** With one specialist, `Tab` in the specialist row stays on audit; it goes round once the scribe exists.
+- **R-KEY-03** There is no command that merely puts the audit hat on: `/audit` runs an audit (its behavior before this patch), `/review` is hidden and runs the same with a notice, and the hat is reached by `Shift+Tab`. `/plan` and `/build` jump as before.
+- **R-PLAN-03** A panel that is open takes the wheel wherever the pointer is, not only over the panel: the panel owns the screen while it is open, and the chat under it never scrolled by the wheel then either.
+- **R-RACK-03** The audit block's row is `audits ✗ N fail  ✓ N pass`, counts alone when both happened, as the other blocks do; the fourth row (`changed nothing` / `restored N files`) comes with patch 2.
+- **R-INST-01** The guard card's `plan.md` and `audit.md` rows show the file's day and its first heading's first words, or `none`. The files themselves are written from patch 2 and 3; today the rows read `none` unless the user has made them.
+- **R-TOP-02** Between 100 and 131 columns the row not in use folds to its name and the count of its hats worn (`specialists ·1`, `plan · build ·2`); under 100 only the current row is on the bar.
+- `review_usd` keeps its name in the config file; the settings row is labelled *audit usd* (R-AUD-08 is patch 2).

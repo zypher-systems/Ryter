@@ -49,7 +49,7 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
         view.agent_hat = *role;
         view.hats_pending = view.hats_pending.saturating_sub(1);
         if view.hats_pending == 0 && view.mode != *role {
-            view.mode = *role;
+            view.set_mode(*role);
         }
         return;
     }
@@ -265,7 +265,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
         // Taken in `apply`, before anything is routed.
         AgentEvent::HatSet { .. } => {}
         AgentEvent::ModeChanged { role } => {
-            view.mode = *role;
+            view.set_mode(*role);
             // A hat on a model of its own says which: the next message
             // goes to it.
             let own = if view.hat_model() == view.model {

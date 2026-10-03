@@ -587,10 +587,12 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
     view.session_id = session.meta.id.to_string();
     view.session_title = session.meta.title.clone();
     // A session left in crew mode, before it was removed, opens in build.
-    view.mode = session
-        .meta
-        .mode
-        .map_or(ryter_core::Role::SoloBuild, ryter_core::Role::hat);
+    view.set_mode(
+        session
+            .meta
+            .mode
+            .map_or(ryter_core::Role::SoloBuild, ryter_core::Role::hat),
+    );
     view.agent_hat = view.mode;
     view.spend = session.meta.spend_usd_total;
     view.spend_unknown = session.meta.spend_unknown;
@@ -842,7 +844,7 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
 
 /// Switch hats. A switch while a turn runs applies to the next message.
 fn set_mode(view: &mut View, cx: &mut Ctx, role: ryter_core::Role) {
-    view.mode = role;
+    view.set_mode(role);
     view.hats_pending += 1;
     cx.send(Work::SetRole(role));
 }

@@ -262,7 +262,7 @@ impl Agent {
                 }
                 reader = Some(model.clone());
             }
-            if self.role == Role::SoloReview {
+            if self.role == Role::SoloAudit {
                 let spent = self.session.meta.spend_usd_total.unwrap_or(0.0);
                 let (from, told) = *reviewing.get_or_insert((spent, false));
                 match self.review_fit(&model, &connection, &system, from) {
@@ -876,7 +876,7 @@ impl Agent {
             .trim();
         let Ok(to) = hat.parse::<Role>() else {
             return Ok(ToolOutput::err(format!(
-                "unknown hat {hat:?}: build, plan, or review"
+                "unknown hat {hat:?}: build, plan, or audit"
             )));
         };
         if to == self.role {
@@ -908,7 +908,7 @@ impl Agent {
                 let now = match to {
                     Role::SoloBuild => "you may now change files and run commands",
                     Role::SoloPlan => "nothing may change now; read and plan",
-                    _ => "nothing may change now; review",
+                    _ => "nothing may change now; audit",
                 };
                 Ok(ToolOutput {
                     text: format!(
@@ -1126,7 +1126,7 @@ impl Agent {
             ),
         })?;
         Ok(ToolOutput::ok(format!(
-            "Recorded in `{}`, under the plan `{plan_file}`. A review will read it.",
+            "Recorded in `{}`, under the plan `{plan_file}`. An audit will read it.",
             crate::decisions::FILE
         )))
     }
@@ -1216,7 +1216,7 @@ impl Agent {
     fn not_the_plan_hat(&self, tool: &str) -> Option<crate::tools::ToolOutput> {
         (self.role == Role::SoloPlan).then(|| {
             crate::tools::ToolOutput::err(format!(
-                "{tool} is the build and review hats': the plan hat changes and starts \
+                "{tool} is the build and audit hats': the plan hat changes and starts \
                  nothing. Tell the user to press Tab to the build hat."
             ))
         })
@@ -3524,11 +3524,11 @@ mod tests {
         // The review hat runs them too; the plan hat starts nothing, with
         // the flag or not.
         std::fs::write(&file, "test = \"echo ok\"\n").unwrap();
-        let out = headless(&mut agent, Role::SoloReview, true).await;
+        let out = headless(&mut agent, Role::SoloAudit, true).await;
         assert_eq!(out, "$ echo ok\nok\n");
         let out = headless(&mut agent, Role::SoloPlan, true).await;
         assert!(
-            out.contains("run_project is the build and review hats'"),
+            out.contains("run_project is the build and audit hats'"),
             "{out}"
         );
     }
@@ -3544,7 +3544,7 @@ mod tests {
         agent.provider = asked.clone();
         let mut cfg = agent.cfg.clone().unwrap_or_default();
         cfg.specialists.insert(
-            "review".into(),
+            "audit".into(),
             crate::config::RoleModel {
                 connection: Some(agent.connection.clone()),
                 model: Some("vendor/reviewer-model".into()),
@@ -3563,7 +3563,7 @@ mod tests {
         agent.turn(&"a long request. ".repeat(800)).await.unwrap();
         hat(&mut agent, Role::SoloPlan);
         agent.turn("plan it").await.unwrap();
-        hat(&mut agent, Role::SoloReview);
+        hat(&mut agent, Role::SoloAudit);
         agent.turn("review it").await.unwrap();
         hat(&mut agent, Role::SoloBuild);
         agent.turn("fix it").await.unwrap();
@@ -3586,7 +3586,7 @@ mod tests {
             [
                 ("build".to_string(), main.as_str()),
                 ("plan".to_string(), main.as_str()),
-                ("review".to_string(), "vendor/reviewer-model"),
+                ("audit".to_string(), "vendor/reviewer-model"),
                 ("build".to_string(), main.as_str()),
             ]
         );
@@ -3601,7 +3601,7 @@ mod tests {
             .collect();
         assert_eq!(said.len(), 2, "{said:?}");
         assert!(
-            said[0].starts_with("review hat · reviewer-model re-reads ")
+            said[0].starts_with("audit hat · reviewer-model re-reads ")
                 && said[0].contains("k tokens"),
             "{said:?}"
         );
@@ -3862,10 +3862,10 @@ mod tests {
         assert!(result.contains("no plan has been approved"), "{result}");
         assert!(notices.is_empty(), "{notices:?}");
         let (file, result, notices) =
-            decision_recorded(Role::SoloReview, Some(CMS_PLAN), "user").await;
+            decision_recorded(Role::SoloAudit, Some(CMS_PLAN), "user").await;
         assert_eq!(file, None);
         assert!(
-            result.contains("recorded from the plan and build hats, not the review hat"),
+            result.contains("recorded from the plan and build hats, not the audit hat"),
             "{result}"
         );
         assert!(notices.is_empty(), "{notices:?}");
@@ -4478,7 +4478,7 @@ mod tests {
         cfg.spend.review_usd = run.limit;
         if run.own_model {
             cfg.specialists.insert(
-                "review".into(),
+                "audit".into(),
                 crate::config::RoleModel {
                     connection: Some("spacexai".into()),
                     model: Some("claude-reviewer".into()),
@@ -4583,9 +4583,9 @@ mod tests {
         assert_eq!(asked.len(), 1, "{asked:?}");
         assert!(
             asked[0].starts_with(
-                "review offer: Review this work before you commit?\n\
-                 claude-reviewer on spacexai (the review hat's model)\n\
-                 reviews 1 file, +2 −1, read-only\nabout $"
+                "audit offer: Audit this work before you commit?\n\
+                 claude-reviewer on spacexai (the audit hat's model)\n\
+                 audits 1 file, +2 −1, read-only\nabout $"
             ),
             "{asked:?}"
         );
@@ -4605,13 +4605,13 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(hats, [Role::SoloReview, Role::SoloBuild]);
+        assert_eq!(hats, [Role::SoloAudit, Role::SoloBuild]);
         assert_eq!(agent.role, Role::SoloBuild);
         let log = agent.session.spend_log().unwrap();
         assert_eq!(log.len(), 1);
         assert_eq!(
             (log[0].role, log[0].model.as_str()),
-            (Role::SoloReview, "claude-reviewer")
+            (Role::SoloAudit, "claude-reviewer")
         );
     }
 
@@ -4628,7 +4628,7 @@ mod tests {
             vec![say("VERDICT: PASS")],
         )
         .await;
-        assert!(asked[0].starts_with("review offer:"), "{asked:?}");
+        assert!(asked[0].starts_with("audit offer:"), "{asked:?}");
         assert!(events.is_empty(), "{events:?}");
         assert!(agent.session.spend_log().unwrap().is_empty());
         assert_eq!(agent.role, Role::SoloBuild);
@@ -4667,7 +4667,7 @@ mod tests {
         agent.review_now().await.unwrap();
         assert!(rx.try_recv().is_err(), "nothing asked");
         let events: Vec<_> = events.try_iter().collect();
-        assert!(noticed(&events, "nothing uncommitted to review"));
+        assert!(noticed(&events, "nothing uncommitted to audit"));
     }
 
     /// `/audit`: the user sees who reviews, what it will read, and a cost
@@ -4686,7 +4686,7 @@ mod tests {
         )
         .await;
         assert!(
-            asked[0].starts_with("review: claude-reviewer on spacexai"),
+            asked[0].starts_with("audit: claude-reviewer on spacexai"),
             "{asked:?}"
         );
         let said: Vec<(&str, &str)> = agent
@@ -4697,10 +4697,10 @@ mod tests {
             .collect();
         assert_eq!(said.len(), 2, "{said:?}");
         assert_eq!(said[0].0, "user");
-        assert!(said[0].1.starts_with("[hat: review"), "{said:?}");
+        assert!(said[0].1.starts_with("[hat: audit"), "{said:?}");
         assert!(
             said[0].1.contains(
-                "[Ryter] Review the uncommitted changes before they are committed: 1 file, +2 −1."
+                "[Ryter] Audit the uncommitted changes before they are committed: 1 file, +2 −1."
             ),
             "{said:?}"
         );
@@ -4782,7 +4782,7 @@ mod tests {
         )
         .await;
         assert!(
-            asked[0].starts_with("review: grok-4.6 on spacexai, the model that built it\n"),
+            asked[0].starts_with("audit: grok-4.6 on spacexai, the model that built it\n"),
             "{asked:?}"
         );
         assert!(asked[0].contains("/models"), "{asked:?}");
@@ -4806,7 +4806,7 @@ mod tests {
         assert!(
             noticed(
                 &events,
-                "no review: no price is known for claude-reviewer, so your $5.00 review limit"
+                "no audit: no price is known for claude-reviewer, so your $5.00 review limit"
             ),
             "{events:?}"
         );
@@ -4889,7 +4889,7 @@ mod tests {
         assert!(asked.is_empty(), "{asked:?}");
         assert!(reviewed(&events).is_empty(), "{events:?}");
         assert!(
-            noticed(&events, "review stopped at your $0.01 limit: $0.00 spent"),
+            noticed(&events, "audit stopped at your $0.01 limit: $0.00 spent"),
             "{events:?}"
         );
         assert!(
@@ -4936,7 +4936,7 @@ mod tests {
         .await;
         assert_eq!(reviewed(&events), [None]);
         assert!(
-            noticed(&events, "review stopped at your $1.00 limit"),
+            noticed(&events, "audit stopped at your $1.00 limit"),
             "{events:?}"
         );
         assert_eq!(agent.session.spend_log().unwrap().len(), 2);
@@ -4954,7 +4954,7 @@ mod tests {
         )
         .await;
         assert!(reviewed(&events).is_empty());
-        assert!(noticed(&events, "review not run"));
+        assert!(noticed(&events, "audit not run"));
         assert!(agent.session.spend_log().unwrap().is_empty());
     }
 
@@ -5008,7 +5008,7 @@ mod tests {
             .iter()
             .map(|a| a.split(':').next().unwrap_or(""))
             .collect();
-        assert_eq!(tools, ["review", "switch hat", "review offer"], "{asked:?}");
+        assert_eq!(tools, ["audit", "switch hat", "audit offer"], "{asked:?}");
         assert_eq!(reviewed(&events), [Some(false), Some(true)]);
         assert_eq!(
             std::fs::read_to_string(cwd.path().join("hello.txt")).unwrap(),
@@ -6023,7 +6023,7 @@ mod tests {
         agent.context_window = 500_000;
         let mut cfg = crate::config::Config::default();
         cfg.specialists.insert(
-            "review".into(),
+            "audit".into(),
             crate::config::RoleModel {
                 connection: Some(agent.connection.clone()),
                 model: Some("small-reviewer".into()),
@@ -6035,8 +6035,8 @@ mod tests {
             &agent.connection,
             &[crate::llm::ModelInfo::named("small-reviewer", Some(24_000))],
         );
-        agent.role = Role::SoloReview;
-        agent.ctx.role = Role::SoloReview;
+        agent.role = Role::SoloAudit;
+        agent.ctx.role = Role::SoloAudit;
         let report = agent.context_report().unwrap();
         assert_eq!(report.window, 24_000);
         assert!(

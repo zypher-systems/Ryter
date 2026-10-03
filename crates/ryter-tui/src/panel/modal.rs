@@ -141,15 +141,15 @@ impl PermissionModal {
     fn question(&self) -> Option<(&'static str, &'static str, &'static str)> {
         match self.tool.as_str() {
             "switch hat" => Some(("switch hat?", "switch", "stay")),
-            "review" => Some(("review?", "review", "not now")),
-            "review offer" => Some(("review this work?", "review", "not now")),
+            "audit" => Some(("audit?", "audit", "not now")),
+            "audit offer" => Some(("audit this work?", "audit", "not now")),
             _ => None,
         }
     }
 
     /// Ryter offering a review after a build turn: `s` stops the offers.
     fn is_offer(&self) -> bool {
-        self.tool == "review offer"
+        self.tool == "audit offer"
     }
 
     fn is_hat(&self) -> bool {
@@ -297,7 +297,7 @@ impl Panel for PermissionModal {
 
     fn offers(&self) -> Option<ryter_core::Role> {
         match self.tool.as_str() {
-            "review" | "review offer" => Some(ryter_core::Role::SoloReview),
+            "audit" | "audit offer" => Some(ryter_core::Role::SoloAudit),
             _ => None,
         }
     }
@@ -957,7 +957,7 @@ mod tests {
     fn an_audit_offer_can_stop_the_offers_and_has_no_allow_all() {
         use crossterm::event::{KeyEvent, KeyModifiers};
         let mut v = crate::view::View::new("openrouter".into(), "m".into(), "/tmp".into());
-        let mut m = PermissionModal::new("review offer".into(), "Review this work?".into());
+        let mut m = PermissionModal::new("audit offer".into(), "Audit this work?".into());
         assert!(m.legend(&v).contains("s stop offering"));
         let press = |m: &mut PermissionModal, v: &mut crate::view::View, c: char| {
             m.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE), v)
@@ -968,8 +968,8 @@ mod tests {
             Outcome::CloseAct(Action::StopReviewOffers)
         ));
         // Asked for with /audit: yes or no, no `s`.
-        let m = PermissionModal::new("review".into(), "x".into());
-        assert_eq!(m.title(&v), "review?");
+        let m = PermissionModal::new("audit".into(), "x".into());
+        assert_eq!(m.title(&v), "audit?");
         assert!(!m.legend(&v).contains("stop offering"));
         let mut asked = PermissionModal::new("audit".into(), "x".into());
         assert!(!asked.legend(&v).contains("stop offering"));

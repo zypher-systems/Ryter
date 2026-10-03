@@ -68,7 +68,7 @@ fn select(id: &'static str, label: &str, options: &[&str], cur: &str, default: &
 fn start_hat_note(value: &str) -> &'static str {
     match value {
         "build" => "straight to work",
-        "review" => "open on a critique",
+        "audit" | "review" => "open on an audit",
         "last" => "the hat this project closed in",
         _ => "read and propose first",
     }
@@ -114,7 +114,7 @@ impl Settings {
             ),
             num(
                 "review",
-                "review usd (0 = off)",
+                "audit usd (0 = off)",
                 view.review_usd,
                 0.0,
                 1_000.0,
@@ -656,7 +656,7 @@ mod tests {
         v.review_usd = 2.0;
         let mut s = Settings::new(&v);
         let field = s.form.get("review").unwrap();
-        assert_eq!(field.label, "review usd (0 = off)");
+        assert_eq!(field.label, "audit usd (0 = off)");
         assert!(field.label.chars().count() <= 25);
         assert_eq!(field.value_text(), "2.00");
         s.apply(&mut v);

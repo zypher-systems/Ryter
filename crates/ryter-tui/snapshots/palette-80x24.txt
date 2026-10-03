@@ -11,11 +11,11 @@
                                                     │ price unknown            │
                                                     │ reasoning  auto · medium │
                                                     ╰──────────────────────────╯
-╭─ commands ──────────────────────────── 4 of 30 ─╮ ╭─ spend ──────────────────╮
-│ mo                                              │ │ session            $?.?? │
-│›/models         Choose models: one for ever… ▸  │ ╰──────────────────────────╯
-│ /tools          Tool permission mode         ▸  │ ╭─ budget ─────────── off ─╮
-│ /review         Review hat: critique what ch…   │ │ cap                  off │
+                                                    ╭─ spend ──────────────────╮
+╭─ commands ──────────────────────────── 3 of 29 ─╮ │ session            $?.?? │
+│ mo                                              │ ╰──────────────────────────╯
+│›/models         Choose models: one for ever… ▸  │ ╭─ budget ─────────── off ─╮
+│ /tools          Tool permission mode         ▸  │ │ cap                  off │
 │ /skills         Browse, run, create, and re… ▸  │ ╰──────────────────────────╯
 ╰─ enter run · tab complete · esc close ──────────╯
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮

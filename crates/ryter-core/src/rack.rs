@@ -49,7 +49,7 @@ impl Rack {
     pub fn of(&self, role: Role) -> &HatTotals {
         match role {
             Role::SoloPlan => &self.plan,
-            Role::SoloReview => &self.review,
+            Role::SoloAudit => &self.review,
             Role::SoloBuild | Role::Crew => &self.build,
         }
     }
@@ -57,7 +57,7 @@ impl Rack {
     fn of_mut(&mut self, role: Role) -> &mut HatTotals {
         match role {
             Role::SoloPlan => &mut self.plan,
-            Role::SoloReview => &mut self.review,
+            Role::SoloAudit => &mut self.review,
             Role::SoloBuild | Role::Crew => &mut self.build,
         }
     }
@@ -186,12 +186,12 @@ mod tests {
             AgentEvent::Planned { approved: true },
             started(Role::SoloBuild),
             edit("a.rs", 8, 1),
-            started(Role::SoloReview),
+            started(Role::SoloAudit),
             reviewed(Some(false)),
             started(Role::SoloBuild),
             edit("a.rs", 5, 1),
             edit("b.rs", 2, 0),
-            started(Role::SoloReview),
+            started(Role::SoloAudit),
             reviewed(Some(true)),
             reviewed(None),
         ] {
@@ -201,9 +201,9 @@ mod tests {
         assert_eq!(r.of(Role::SoloPlan).plans_approved, 1);
         let b = r.of(Role::SoloBuild);
         assert_eq!((b.turns, b.files.len(), b.added, b.removed), (2, 2, 15, 2));
-        let v = r.of(Role::SoloReview);
+        let v = r.of(Role::SoloAudit);
         assert_eq!((v.turns, v.verdicts_passed, v.verdicts_failed), (2, 1, 1));
-        assert!(r.worn(Role::SoloReview));
+        assert!(r.worn(Role::SoloAudit));
         // A session from before: a turn in the test hat counts as build's.
         r.apply(&AgentEvent::TurnStarted {
             turn: 9,
@@ -247,11 +247,11 @@ mod tests {
         assert_eq!(r.of(Role::SoloBuild).turns, 1);
         // A hat change that a turn of its own follows is counted once.
         r.apply(&AgentEvent::ModeChanged {
-            role: Role::SoloReview,
+            role: Role::SoloAudit,
         });
-        r.apply(&started(Role::SoloReview));
+        r.apply(&started(Role::SoloAudit));
         r.apply(&edit("c.rs", 1, 0));
-        assert_eq!(r.of(Role::SoloReview).turns, 1);
+        assert_eq!(r.of(Role::SoloAudit).turns, 1);
     }
 
     #[test]
@@ -262,7 +262,7 @@ mod tests {
             started(Role::SoloBuild),
             AgentEvent::Token { text: "hi".into() },
             edit("a.rs", 2, 1),
-            started(Role::SoloReview),
+            started(Role::SoloAudit),
             reviewed(Some(true)),
         ];
         let mut live = Rack::default();
@@ -276,7 +276,15 @@ mod tests {
         std::fs::write(&path, text).unwrap();
         let read = Rack::from_log(&path);
         assert_eq!(read.of(Role::SoloBuild), live.of(Role::SoloBuild));
-        assert_eq!(read.of(Role::SoloReview), live.of(Role::SoloReview));
+        assert_eq!(read.of(Role::SoloAudit), live.of(Role::SoloAudit));
         assert_eq!(Rack::from_log(&dir.path().join("none")), Rack::default());
+        // A log from before the rename names the audit hat `review`.
+        let old = dir.path().join("old.jsonl");
+        std::fs::write(
+            &old,
+            "{\"kind\":\"turn_started\",\"turn\":1,\"role\":\"review\"}\n",
+        )
+        .unwrap();
+        assert_eq!(Rack::from_log(&old).of(Role::SoloAudit).turns, 1);
     }
 }
