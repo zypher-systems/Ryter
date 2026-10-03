@@ -5855,11 +5855,15 @@ fn outside_segment(
             || READ_ONLY.contains(&prog)
             || READERS.contains(&prog)
             || matches!(prog, "cd" | "pushd"));
-    // The program's own word is not one of its files, nor are a wrapper's
-    // words before it: `timeout 60 .venv/bin/python x.py` runs the
-    // interpreter the link points at, it doesn't write it.
-    let skip = if prog.is_empty() { 0 } else { args_at };
-    for (i, w) in words.iter().enumerate().skip(skip) {
+    // The program's own word is not one of its files, nor is a wrapper's
+    // name before it: `timeout 60 .venv/bin/python x.py` runs the
+    // interpreter the link points at, it doesn't write it. What a wrapper
+    // is given (`strace -o file`, `flock file`) is a file like any other.
+    let program = args_at.saturating_sub(1);
+    for (i, w) in words.iter().enumerate().skip(usize::from(!prog.is_empty())) {
+        if i == program && i > 0 {
+            continue;
+        }
         if expect_redirect {
             expect_redirect = false;
             if w == "/dev/null" {
@@ -5915,7 +5919,9 @@ fn outside_segment(
         if !pathish || nowhere(w) || resolve(ctx, w).is_some() {
             continue;
         }
-        let read_only = reads;
+        // A file a wrapper is given before the program (`strace -o f`,
+        // `time -o f`) is written, whatever the program then only reads.
+        let read_only = reads && i > program;
         // The value of an option, not a file handed to the command.
         let named_only = i >= own;
         match resolve_outside(ctx, w) {
@@ -8272,11 +8278,15 @@ mod tests {
             }
         }
         // A wrapper hides nothing: the files after the program are still
-        // judged.
+        // judged, and so are the files the wrapper itself is given.
         for cmd in [
             "timeout 5 cat ~/.ssh/id_rsa",
             "nice tee ~/.bashrc",
             "timeout 5 cat .env",
+            "strace -o ~/.ssh/id_rsa echo hi",
+            "time -o ~/.bashrc echo hi",
+            "xargs -a ~/.ssh/id_rsa echo",
+            "flock ~/.ssh/config echo hi",
         ] {
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Deny, "{cmd}");
         }

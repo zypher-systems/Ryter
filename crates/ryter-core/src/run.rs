@@ -1,6 +1,6 @@
 //! How a project runs: `.ryter/run.toml`, and the product a test started.
 //!
-//! The tester has to start the product, know when it is up, run its tests,
+//! The build hat has to start the product, know when it is up, run its tests,
 //! and stop it. Those commands are the project's own, so they are kept in
 //! the project, drafted by the model and approved by the user. Ryter runs
 //! what was approved itself: a server that stays in the foreground can't be
@@ -127,9 +127,9 @@ impl RunFile {
     /// The file's text.
     pub fn text(&self) -> String {
         let mut s = String::from(
-            "# How this project runs. Ryter's test hat starts it, waits for `ready` to\n\
-             # answer, runs `test`, and stops it with `stop`. Change it here or ask the\n\
-             # tester to propose a new one; Ryter asks you to approve it again.\n",
+            "# How this project runs. Ryter starts it, waits for `ready` to answer,\n\
+             # runs `test`, and stops it with `stop`. Change it here or ask the build\n\
+             # hat to propose a new one; Ryter asks you to approve it again.\n",
         );
         if let Some(v) = &self.start {
             s.push_str(&format!("start = {}\n", quoted(v)));
@@ -759,7 +759,26 @@ fn kills_by_name(cmd: &str) -> bool {
 /// runs it: the pattern matches that shell's own command line, so the
 /// shell dies with the product. `[d]riftwing` doesn't match itself.
 pub fn pkill_matches_itself(cmd: &str) -> Option<String> {
-    let words: Vec<&str> = cmd.split_whitespace().collect();
+    // The words, a quoted one kept whole: `pkill -f 'python -m x'`.
+    let mut words: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for c in cmd.chars() {
+        match (quote, c) {
+            (Some(q), _) if c == q => quote = None,
+            (Some(_), _) => cur.push(c),
+            (None, '\'' | '"') => quote = Some(c),
+            (None, _) if c.is_whitespace() => {
+                if !cur.is_empty() {
+                    words.push(std::mem::take(&mut cur));
+                }
+            }
+            (None, _) => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        words.push(cur);
+    }
     for (i, w) in words.iter().enumerate() {
         if !matches!(w.rsplit('/').next().unwrap_or(w), "pkill" | "pgrep") {
             continue;
@@ -774,10 +793,9 @@ pub fn pkill_matches_itself(cmd: &str) -> Option<String> {
             }
             j += 1;
         }
-        let Some(pattern) = words.get(j) else {
+        let Some(pattern) = words.get(j).map(String::as_str) else {
             continue;
         };
-        let pattern = pattern.trim_matches(['"', '\'']);
         // A literal pattern (no class, no alternation) is in its own line.
         if full && !pattern.contains(['[', '(', '|', '\\', '^', '$']) && !pattern.is_empty() {
             return Some(pattern.to_string());
@@ -1341,7 +1359,11 @@ mod tests {
         );
         assert_eq!(
             pkill_matches_itself("pkill -9 -f 'python -m driftwing'"),
-            Some("python -m driftwing".into()).map(|_: String| "python".to_string())
+            Some("python -m driftwing".into())
+        );
+        assert_eq!(
+            pkill_matches_itself("pkill -f \"python -m driftwing\" || true"),
+            Some("python -m driftwing".into())
         );
         for ok in [
             "pkill -f 'driftwing[.]main' || true",

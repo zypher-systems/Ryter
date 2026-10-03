@@ -1213,7 +1213,7 @@ impl Agent {
 
     /// The project's own commands are the build and review hats' to run:
     /// the plan hat changes and starts nothing.
-    fn only_the_tester(&self, tool: &str) -> Option<crate::tools::ToolOutput> {
+    fn not_the_plan_hat(&self, tool: &str) -> Option<crate::tools::ToolOutput> {
         (self.role == Role::SoloPlan).then(|| {
             crate::tools::ToolOutput::err(format!(
                 "{tool} is the build and review hats': the plan hat changes and starts \
@@ -1246,7 +1246,7 @@ impl Agent {
     /// `.ryter/run.toml`, and Ryter runs those commands itself.
     fn propose_run(&mut self, args: &Value) -> Result<crate::tools::ToolOutput> {
         use crate::tools::ToolOutput;
-        if let Some(refused) = self.only_the_tester("propose_run") {
+        if let Some(refused) = self.not_the_plan_hat("propose_run") {
             return Ok(refused);
         }
         let text = |key: &str| args.get(key).and_then(Value::as_str).map(str::to_string);
@@ -1482,7 +1482,7 @@ impl Agent {
         use crate::run::{COMMAND_TIMEOUT, START_TIMEOUT, Start};
         use crate::tools::ToolOutput;
         use crate::tools::shell::Run;
-        if let Some(refused) = self.only_the_tester("run_project") {
+        if let Some(refused) = self.not_the_plan_hat("run_project") {
             return Ok(refused);
         }
         let action = args.get("action").and_then(Value::as_str).unwrap_or("");

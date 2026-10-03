@@ -20,6 +20,9 @@ pub struct Score {
     pub score: u32,
     /// Char indices in `name` that matched (for highlighting, `R-PAL-10`).
     pub name_hits: Vec<usize>,
+    /// The query reached this command through its description alone: not
+    /// its name, not an alias.
+    pub description_only: bool,
 }
 
 /// Subsequence match of `q` in `hay` (both lowercase); returns matched indices.
@@ -61,18 +64,21 @@ pub fn score(
         return Some(Score {
             score: boost,
             name_hits: Vec::new(),
+            description_only: false,
         });
     }
     if name_l == q {
         return Some(Score {
             score: EXACT + boost,
             name_hits: (0..name.chars().count()).collect(),
+            description_only: false,
         });
     }
     if name_l.starts_with(&q) {
         return Some(Score {
             score: PREFIX + boost + (q.len() as u32).min(50),
             name_hits: (0..q.chars().count()).collect(),
+            description_only: false,
         });
     }
     if let Some(hits) = subsequence(&q, &name_l) {
@@ -82,6 +88,7 @@ pub fn score(
         return Some(Score {
             score: SUBSEQ + boost + run_bonus(&hits) - penalty,
             name_hits: hits,
+            description_only: false,
         });
     }
     for a in aliases {
@@ -90,12 +97,14 @@ pub fn score(
             return Some(Score {
                 score: ALIAS + boost + if al == q { 20 } else { 0 },
                 name_hits: Vec::new(),
+                description_only: false,
             });
         }
         if subsequence(&q, &al).is_some() {
             return Some(Score {
                 score: ALIAS + boost - 20,
                 name_hits: Vec::new(),
+                description_only: false,
             });
         }
     }
@@ -104,12 +113,14 @@ pub fn score(
         return Some(Score {
             score: DESC + boost + 20,
             name_hits: Vec::new(),
+            description_only: true,
         });
     }
     if q.split_whitespace().all(|w| d.contains(w)) {
         return Some(Score {
             score: DESC + boost,
             name_hits: Vec::new(),
+            description_only: true,
         });
     }
     None

@@ -57,6 +57,8 @@ pub struct Match {
     pub score: u32,
     /// Matched char indices in the name.
     pub hits: Vec<usize>,
+    /// Found through its description alone, not its name or an alias.
+    pub description_only: bool,
 }
 
 /// Palette state. The filter lives in the composer (`R-PAL-02`).
@@ -64,6 +66,11 @@ pub struct Match {
 pub struct Palette {
     /// Highlighted match index.
     pub selected: usize,
+    /// The user moved the highlight since the filter last changed: what
+    /// is highlighted is their pick.
+    pub moved: bool,
+    /// The filter the highlight belongs to.
+    pub filter: String,
 }
 
 /// Built-ins plus skills and user commands (`R-PAL-17`).
@@ -142,6 +149,7 @@ pub fn matches(view: &View) -> Vec<Match> {
                 entry: e,
                 score: s.score,
                 hits: s.name_hits,
+                description_only: s.description_only,
             })
         })
         .collect();
@@ -173,7 +181,14 @@ pub fn refresh(view: &mut View) {
         && view.panels.is_empty();
     if open {
         let n = matches(view).len();
+        let q = filter(view);
         let p = view.palette.get_or_insert_with(Palette::default);
+        // A new filter is a new list: the highlight starts over.
+        if p.filter != q {
+            p.filter = q;
+            p.selected = 0;
+            p.moved = false;
+        }
         p.selected = p.selected.min(n.saturating_sub(1));
     } else {
         view.palette = None;
@@ -197,6 +212,7 @@ pub fn step(view: &mut View, delta: i32) {
     }
     if let Some(p) = &mut view.palette {
         p.selected = (p.selected as i32 + delta).rem_euclid(n as i32) as usize;
+        p.moved = true;
     }
 }
 
@@ -221,9 +237,9 @@ pub fn complete(view: &mut View) {
 /// of running something else or going to the model. With no match at all,
 /// a slash line is likewise a command by name; anything else is a message.
 pub fn run(view: &mut View) -> Action {
-    let picked = view.palette.as_ref().is_some_and(|p| p.selected > 0);
+    let picked = view.palette.as_ref().is_some_and(|p| p.moved);
     match current(view) {
-        Some(m) if !(m.hits.is_empty() && !picked && !filter(view).is_empty()) => {
+        Some(m) if !m.description_only || picked => {
             view.palette = None;
             let text = view.composer.take();
             let rest = text
@@ -520,24 +536,37 @@ mod tests {
     #[test]
     fn a_description_match_does_not_run_on_enter() {
         let mut v = view();
-        v.composer.set_text("/test");
+        // A word that reaches commands only through their descriptions.
+        v.composer.set_text("/project");
         refresh(&mut v);
+        let ms = matches(&v);
+        assert!(
+            !ms.is_empty() && ms.iter().all(|m| m.description_only),
+            "{ms:?}"
+        );
         let a = run(&mut v);
         assert!(matches!(a, Action::None), "{a:?}");
         assert!(v.palette.is_none());
-        // Picked by hand, the highlighted command runs.
-        v.composer.set_text("/tes");
+        // Picked by hand, the highlighted command runs, in a list of one too.
+        v.composer.set_text("/project");
         refresh(&mut v);
-        if matches(&v).len() > 1 {
-            step(&mut v, 1);
-            let picked = current(&v).unwrap().entry.name.clone();
-            let a = run(&mut v);
-            assert!(!matches!(a, Action::None), "{picked}: {a:?}");
-        }
-        // A name typed in part still runs.
-        v.composer.set_text("/sto");
+        step(&mut v, 1);
+        let a = run(&mut v);
+        assert!(!matches!(a, Action::None), "{a:?}");
+        // An alias is a name: `/perm` is `/tools`.
+        v.composer.set_text("/perm");
         refresh(&mut v);
-        assert_eq!(current(&v).unwrap().entry.name, "stop");
+        assert_eq!(current(&v).unwrap().entry.name, "tools");
+        let a = run(&mut v);
+        assert!(!matches!(a, Action::None), "{a:?}");
+        // A new filter starts the highlight over.
+        v.composer.set_text("/pro");
+        refresh(&mut v);
+        step(&mut v, 1);
+        v.composer.set_text("/prov");
+        refresh(&mut v);
+        assert_eq!(v.palette.as_ref().unwrap().selected, 0);
+        assert!(!v.palette.as_ref().unwrap().moved);
     }
 
     #[test]
