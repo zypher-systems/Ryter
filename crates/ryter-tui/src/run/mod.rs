@@ -470,7 +470,7 @@ fn populate_view(
     if view.budget_usd > 0.0 {
         view.budget_last = view.budget_usd;
     }
-    view.review_usd = cfg.spend.review_usd;
+    view.audit_usd = cfg.spend.audit_usd;
     view.model_reasoning = cfg.model_reasoning.clone();
     view.warn_usd = cfg.spend.warn_usd;
     view.sandbox_profile = cfg.sandbox.profile.clone();

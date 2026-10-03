@@ -106,3 +106,17 @@ Patch 1 (rows, keys, review → audit, wheel scrolling), 2026-10-03:
 - **R-INST-01** The guard card's `plan.md` and `audit.md` rows show the file's day and its first heading's first words, or `none`. The files themselves are written from patch 2 and 3; today the rows read `none` unless the user has made them.
 - **R-TOP-02** Between 100 and 131 columns the row not in use folds to its name and the count of its hats worn (`specialists ·1`, `plan · build ·2`); under 100 only the current row is on the bar.
 - `review_usd` keeps its name in the config file; the settings row is labelled *audit usd* (R-AUD-08 is patch 2).
+
+Patch 2 (the audit hat), 2026-10-03:
+
+- **R-AUD-01** Git is the exception to "the build hat's rule": a commit, a branch change or a push is not undone by putting files back, so git stays read-only for the audit hat (`status`, `diff`, `log`, `stash list`/`show`). Destruction (`rm`, `find -delete`, a stack's volumes) asks as it does for the build hat, since the checkpoint doesn't reach what git ignores.
+- **R-AUD-02** The gate's tests keep the review hat's old answers for the audit hat *without* a checkpoint (`ctx.read_only`, the no-repository case), and one test asserts the build hat's answers behind a checkpoint. Checkpoints are compared by tree; what moved is restored path by path (`git::restore_paths`), the audit's own files excepted.
+- **R-AUD-03** The event is `Audited { model, verdict, headline, summary, rows, ran, file, restored, checkpointed, filed, total_usd, duration_ms }`; `rows` are `mark n\ttitle\tright` with indented detail rows, which the panel lays out. An audit turn that neither filed, was asked for (`[Ryter] Audit …`) nor gave a `VERDICT:` line is a chat in the audit hat: no notice, no event, and a changed tree is still put back with a notice. An unfiled audit emits `Audited { filed: false }` with the verdict of its last words, and `/audit` still emits `Reviewed` after it, with the tree, for the commit receipt; the rack counts a turn's verdict once.
+- **R-AUD-04** `o` opens the file with the system opener (`page::open`); the legend drops it when no file was written. The popout's width is 100 columns.
+- **R-AUD-05** The repair brief is the audit file's text under "Repair what this audit found; run the checks it ran."; with no file, a line saying the audit was in the chat.
+- **R-AUD-06** `/audit`'s cost confirmation card is kept; its `s stop offering` key went with the offers.
+- **R-AUD-07** `offer_audit`/`offer_review` stay in `UI_KEYS` so old files load without a warning.
+- **R-AUD-08** `[spend] review_usd` is read as `audit_usd` in the config file (the key is renamed before the table merge) and in `settings.toml`.
+- **R-INST-02** `this hat` reads `checkpoint, restored` for the audit hat (`checkpoint` when condensed).
+- **R-RACK-03** The fourth row is `tree   changed nothing` or `tree   restored N files`, from the last `Audited` event.
+

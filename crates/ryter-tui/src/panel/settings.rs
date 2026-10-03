@@ -115,7 +115,7 @@ impl Settings {
             num(
                 "review",
                 "audit usd (0 = off)",
-                view.review_usd,
+                view.audit_usd,
                 0.0,
                 1_000.0,
                 0.5,
@@ -194,12 +194,6 @@ impl Settings {
             )
             .origin(origin(&view.ui.line_numbers, &d.line_numbers)),
             Field::new(
-                "offer_audit",
-                "review offers",
-                Kind::Toggle(view.ui.offer_audit),
-            )
-            .origin(origin(&view.ui.offer_audit, &d.offer_audit)),
-            Field::new(
                 "open_pages",
                 "pages in browser",
                 Kind::Toggle(view.ui.open_pages),
@@ -242,7 +236,7 @@ impl Settings {
             view.warn_usd = v;
         }
         if let Some(v) = number("review") {
-            view.review_usd = v;
+            view.audit_usd = v;
         }
         if let Some(v) = sel("perm") {
             view.perm_mode = v;
@@ -291,9 +285,6 @@ impl Settings {
         }
         if let Some(v) = toggle("line_numbers") {
             view.ui.line_numbers = v;
-        }
-        if let Some(v) = toggle("offer_audit") {
-            view.ui.offer_audit = v;
         }
         if let Some(v) = toggle("open_pages") {
             view.ui.open_pages = v;
@@ -653,17 +644,17 @@ mod tests {
     #[test]
     fn the_review_limit_is_set_here() {
         let mut v = view();
-        v.review_usd = 2.0;
+        v.audit_usd = 2.0;
         let mut s = Settings::new(&v);
         let field = s.form.get("review").unwrap();
         assert_eq!(field.label, "audit usd (0 = off)");
         assert!(field.label.chars().count() <= 25);
         assert_eq!(field.value_text(), "2.00");
         s.apply(&mut v);
-        assert_eq!(v.review_usd, 2.0);
+        assert_eq!(v.audit_usd, 2.0);
         set(&mut s, "review", 0.0);
         s.apply(&mut v);
-        assert_eq!(v.review_usd, 0.0);
+        assert_eq!(v.audit_usd, 0.0);
     }
 
     fn rows(s: &Settings, v: &View, width: u16, height: u16) -> Vec<String> {

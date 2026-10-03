@@ -124,9 +124,9 @@ fn apply_old_review_file(cfg: &mut Config, home: &Path) {
     let saved = fs::read_to_string(home.join("settings.toml"))
         .ok()
         .and_then(|t| toml::from_str::<SettingsFile>(&t).ok())
-        .is_some_and(|f| f.review_usd.is_some());
-    if !saved && cfg.spend.review_usd == 0.0 && old.limit_usd > 0.0 {
-        cfg.spend.review_usd = old.limit_usd;
+        .is_some_and(|f| f.audit_usd.is_some());
+    if !saved && cfg.spend.audit_usd == 0.0 && old.limit_usd > 0.0 {
+        cfg.spend.audit_usd = old.limit_usd;
     }
 }
 
@@ -181,8 +181,6 @@ pub struct UiConfig {
     pub line_numbers: bool,
     /// `/commit` adds a `Ryter:` trailer: model, cost, tests.
     pub receipts: bool,
-    /// After a build turn that changed files, offer an audit (`/audit`).
-    pub offer_audit: bool,
     /// `ledger` (one reading column on a timeline, status in the bottom
     /// bar) | `classic` (chat beside the info cards, as before 0.6.0).
     pub layout: String,
@@ -215,7 +213,6 @@ impl Default for UiConfig {
             timestamps: true,
             line_numbers: true,
             receipts: true,
-            offer_audit: true,
             layout: "ledger".into(),
             open_pages: true,
             start_hat: "plan".into(),
@@ -235,8 +232,9 @@ pub const UI_KEYS: &[&str] = &[
     "timestamps",
     "line_numbers",
     "receipts",
+    // Retired: the audit offer after a build turn (0.15), the test hat's
+    // offer; a settings file that still has either loads.
     "offer_audit",
-    // Retired with the test hat; a settings file that still has it loads.
     "offer_test",
     "layout",
     "open_pages",
@@ -356,10 +354,11 @@ pub struct SpendConfig {
     /// Status-line warning threshold.
     #[serde(default)]
     pub warn_usd: f64,
-    /// Most one turn in the review hat may spend, in USD (`0` = no limit).
-    /// Near it the reviewer is told to write up; at it the turn stops.
-    #[serde(default)]
-    pub review_usd: f64,
+    /// Most one turn in the audit hat may spend, in USD (`0` = no limit).
+    /// Near it the auditor is told to write up; at it the turn stops.
+    /// `audit_usd` is the name it had until 0.15.
+    #[serde(default, alias = "review_usd")]
+    pub audit_usd: f64,
 }
 
 fn usd() -> String {
@@ -531,7 +530,7 @@ impl Default for SpendConfig {
             // Off: a budget is the user's choice (`/budget`).
             session_budget_usd: 0.0,
             warn_usd: 1.0,
-            review_usd: 0.0,
+            audit_usd: 0.0,
         }
     }
 }
@@ -1052,8 +1051,8 @@ struct SettingsFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tools: Option<String>,
     warn_usd: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    review_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "review_usd")]
+    audit_usd: Option<f64>,
     sandbox: Option<String>,
     inbound: Option<bool>,
     web: Option<bool>,
@@ -1079,8 +1078,8 @@ fn apply_settings_file(cfg: &mut Config, path: &Path) {
     if let Some(v) = file.warn_usd {
         cfg.spend.warn_usd = v;
     }
-    if let Some(v) = file.review_usd {
-        cfg.spend.review_usd = v.max(0.0);
+    if let Some(v) = file.audit_usd {
+        cfg.spend.audit_usd = v.max(0.0);
     }
     if let Some(v) = file.sandbox {
         cfg.sandbox.profile = v;
@@ -1107,7 +1106,7 @@ pub fn save_settings(home: &Path, cfg: &Config) -> Result<()> {
     let file = SettingsFile {
         session_budget_usd: Some(cfg.spend.session_budget_usd),
         warn_usd: Some(cfg.spend.warn_usd),
-        review_usd: Some(cfg.spend.review_usd),
+        audit_usd: Some(cfg.spend.audit_usd),
         sandbox: Some(cfg.sandbox.profile.clone()),
         tools: Some(cfg.tools_mode.clone()),
         inbound: Some(cfg.mcp.inbound),
@@ -1223,8 +1222,6 @@ struct UiFile {
     #[serde(skip_serializing_if = "Option::is_none")]
     receipts: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    offer_audit: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     layout: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     open_pages: Option<bool>,
@@ -1246,7 +1243,6 @@ impl From<&UiConfig> for UiFile {
             timestamps: Some(ui.timestamps),
             line_numbers: Some(ui.line_numbers),
             receipts: Some(ui.receipts),
-            offer_audit: Some(ui.offer_audit),
             layout: Some(ui.layout.clone()),
             open_pages: Some(ui.open_pages),
             start_hat: Some(ui.start_hat.clone()),
@@ -1287,9 +1283,6 @@ impl UiFile {
         if let Some(v) = self.open_pages {
             ui.open_pages = v;
         }
-        if let Some(v) = self.offer_audit {
-            ui.offer_audit = v;
-        }
         if let Some(v) = self.layout {
             ui.layout = v;
         }
@@ -1328,7 +1321,14 @@ impl ConfigFile {
         for (k, v) in self.model_reasoning {
             cfg.model_reasoning.insert(k, v);
         }
-        if let Some(s) = self.spend {
+        if let Some(mut s) = self.spend {
+            // `review_usd` was the limit's name until 0.15: read as
+            // `audit_usd`, which the merged table otherwise holds twice.
+            if let Some(t) = s.as_table_mut() {
+                if let Some(v) = t.remove("review_usd") {
+                    t.entry("audit_usd").or_insert(v);
+                }
+            }
             match merge_table(&cfg.spend, s) {
                 Ok(v) => cfg.spend = v,
                 Err(e) => cfg.warnings.push(format!("[spend] ignored: {e}")),
@@ -1855,6 +1855,40 @@ mod tests {
         fs::remove_dir_all(p.join(".ryter/skills")).unwrap();
         fs::write(p.join(".ryter/config.toml"), "").unwrap();
         assert!(asks_for_trust(p), "project configuration");
+    }
+
+    /// `audit_usd` was `review_usd` until 0.15: both names load, in the
+    /// config file and the settings file. The retired `offer_audit` key
+    /// loads without a word.
+    #[test]
+    fn the_audit_limit_answers_to_its_old_name() {
+        let home = TempDir::new().unwrap();
+        fs::write(
+            home.path().join("config.toml"),
+            "[spend]\nreview_usd = 0.25\n[ui]\noffer_audit = false\n",
+        )
+        .unwrap();
+        let cfg = load_at(home.path(), None, false).unwrap();
+        assert_eq!(cfg.spend.audit_usd, 0.25);
+        assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+        fs::write(
+            home.path().join("settings.toml"),
+            "review_usd = 1.5\n[ui]\noffer_audit = true\n",
+        )
+        .unwrap();
+        let cfg = load_at(home.path(), None, false).unwrap();
+        assert_eq!(cfg.spend.audit_usd, 1.5);
+        assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+        fs::write(
+            home.path().join("config.toml"),
+            "[spend]\naudit_usd = 2.0\n",
+        )
+        .unwrap();
+        fs::remove_file(home.path().join("settings.toml")).unwrap();
+        assert_eq!(
+            load_at(home.path(), None, false).unwrap().spend.audit_usd,
+            2.0
+        );
     }
 
     /// A trusted project's config sets its models and budget, never the
@@ -2397,13 +2431,13 @@ mod tests {
             ("openrouter".into(), "z-ai/glm-5.3".into())
         );
         assert!(cfg.follows_orchestrator(Role::SoloBuild));
-        assert_eq!(cfg.spend.review_usd, 2.0);
+        assert_eq!(cfg.spend.audit_usd, 2.0);
         // The limit, changed in the settings, is the settings' from then on:
         // even changed to none.
-        cfg.spend.review_usd = 0.0;
+        cfg.spend.audit_usd = 0.0;
         save_settings(dir.path(), &cfg).unwrap();
         assert_eq!(
-            load_at(dir.path(), None, false).unwrap().spend.review_usd,
+            load_at(dir.path(), None, false).unwrap().spend.audit_usd,
             0.0
         );
         // The hat put back to following the others stays there.
@@ -2420,11 +2454,11 @@ mod tests {
         .unwrap();
         let cfg = load_at(dir.path(), None, false).unwrap();
         assert!(cfg.follows_orchestrator(Role::SoloAudit));
-        assert_eq!(cfg.spend.review_usd, 1.5);
+        assert_eq!(cfg.spend.audit_usd, 1.5);
         // No file: no model of its own, and no limit.
         let cfg = load_at(TempDir::new().unwrap().path(), None, false).unwrap();
         assert!(cfg.follows_orchestrator(Role::SoloAudit));
-        assert_eq!(cfg.spend.review_usd, 0.0);
+        assert_eq!(cfg.spend.audit_usd, 0.0);
     }
 
     /// A hat runs on its own model when it has one, and on the one every hat
@@ -2524,11 +2558,11 @@ mod tests {
         fs::create_dir_all(proj.path().join(".ryter")).unwrap();
         fs::write(
             proj.path().join(".ryter/config.toml"),
-            "[spend]\nreview_usd = 0.25\n",
+            "[spend]\naudit_usd = 0.25\n",
         )
         .unwrap();
         let cfg = load_at(home.path(), Some(proj.path()), true).expect("a sparse table must load");
-        assert_eq!(cfg.spend.review_usd, 0.25);
+        assert_eq!(cfg.spend.audit_usd, 0.25);
         assert_eq!(cfg.spend.session_budget_usd, 9.0, "user budget survives");
         assert_eq!(cfg.spend.warn_usd, 2.0);
     }

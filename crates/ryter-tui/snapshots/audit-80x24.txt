@@ -10,12 +10,12 @@
    VERDICT: FAIL                                   ││ price unknown            │
                                                    ││ reasoning  auto · medium │
  · system                                          │╰──────────────────────────╯
-   switched to the build hat · Tab to change it    │╭─ spend ──────────────────╮
-   again                                           ┃│ session            $?.?? │
+   audit · claude-opus-5.5 · ✗ failed, unfiled ·   │╭─ spend ──────────────────╮
+   $0.040                                          ┃│ session            $?.?? │
                                                    ┃╰──────────────────────────╯
  · system                                          ┃╭─ budget ─────────── off ─╮
-   review · claude-opus-5.5 · ✗ blocking problems  ┃│ cap                  off │
-   · $0.040                                        ┃╰──────────────────────────╯
+   switched to the build hat · Tab to change it    ┃│ cap                  off │
+   again                                           ┃╰──────────────────────────╯
  · ✓ done · 0 tools · 0:03                                     ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮

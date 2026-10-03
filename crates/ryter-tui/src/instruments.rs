@@ -39,7 +39,10 @@ fn short_count(n: u64) -> String {
 /// What the hat on may do, in two or three words.
 pub fn hat_may(hat: Role, condensed: bool) -> &'static str {
     match hat {
-        Role::SoloPlan | Role::SoloAudit => "read only",
+        Role::SoloPlan => "read only",
+        // What the audit changes, a checkpoint puts back.
+        Role::SoloAudit if condensed => "checkpoint",
+        Role::SoloAudit => "checkpoint, restored",
         Role::SoloBuild | Role::Crew if condensed => "asks first",
         Role::SoloBuild | Role::Crew => "edits ask first",
     }
@@ -287,7 +290,17 @@ fn guard(view: &View, theme: Theme, bg: Color, w: usize, condensed: bool) -> Vec
             bg,
         ),
         file_row("plan.md", view.plan_file.as_deref(), theme, bg, w),
-        file_row("audit.md", view.audit_file.as_deref(), theme, bg, w),
+        file_row(
+            "audit.md",
+            if view.audit_writing {
+                Some("writing…")
+            } else {
+                view.audit_file.as_deref()
+            },
+            theme,
+            bg,
+            w,
+        ),
     ]
 }
 

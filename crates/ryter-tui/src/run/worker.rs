@@ -82,8 +82,6 @@ pub enum Work {
     },
     /// `/audit`: the review hat reviews the uncommitted work.
     ReviewNow,
-    /// Offer a review after build turns, or not.
-    SetOfferAudit(bool),
     /// `/changes`: put one file back as `base` had it.
     Revert {
         /// Commit to restore from.
@@ -114,7 +112,7 @@ pub enum Work {
         /// Budget cap.
         budget_usd: f64,
         /// Most one review may spend.
-        review_usd: f64,
+        audit_usd: f64,
         /// Web tools.
         web: bool,
         /// Open pages the model shows in the browser.
@@ -390,23 +388,8 @@ pub fn run(init: WorkerInit) {
                     } else {
                         a.ctx.cancel.reset();
                     }
-                    let before = a.session.changed_turns;
                     let out = match rt.block_on(a.turn(&text)) {
-                        Ok(r) => {
-                            // A build turn that finished and changed files:
-                            // offer a review. Not for a turn another program
-                            // asked for over MCP.
-                            let changed = a.session.changed_turns > before;
-                            if changed
-                                && reply.is_none()
-                                && r.reason == ryter_core::StopReason::Completed
-                            {
-                                if let Err(e) = rt.block_on(a.offer_review()) {
-                                    send_err(&ev_tx, e.to_string());
-                                }
-                            }
-                            r.text
-                        }
+                        Ok(r) => r.text,
                         // The agent reported it, before closing the turn.
                         Err(_) => String::new(),
                     };
@@ -538,12 +521,6 @@ pub fn run(init: WorkerInit) {
                 }
                 let _ = ev_tx.send(AgentEvent::HatSet { role });
             }
-            Ok(Work::SetOfferAudit(on)) => {
-                cfg.ui.offer_audit = on;
-                if let Some(c) = agent.as_mut().and_then(|a| a.cfg.as_mut()) {
-                    c.ui.offer_audit = on;
-                }
-            }
             Ok(Work::ReviewNow) => {
                 if let Some(a) = &mut agent {
                     a.ctx.cancel.reset();
@@ -650,7 +627,7 @@ pub fn run(init: WorkerInit) {
             }
             Ok(Work::SetSettings {
                 budget_usd,
-                review_usd,
+                audit_usd,
                 web,
                 open_pages,
             }) => {
@@ -658,7 +635,7 @@ pub fn run(init: WorkerInit) {
                 // switch) starts from it, and used to lose live changes.
                 let apply = |c: &mut Config| {
                     c.spend.session_budget_usd = budget_usd;
-                    c.spend.review_usd = review_usd;
+                    c.spend.audit_usd = audit_usd;
                     c.features.web = web;
                     c.ui.open_pages = open_pages;
                 };
@@ -925,6 +902,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
             web: b.cfg.features.web,
             cwd: Default::default(),
             vars: Default::default(),
+            read_only: false,
         },
         connection: b.conn_name,
         model: b.model,
@@ -939,5 +917,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         cfg: Some(b.cfg.clone()),
         machine: ryter_core::prompt::machine_for(b.profile),
         product: None,
+        audit_pending: None,
+        last_audit_verdict: None,
     }
 }

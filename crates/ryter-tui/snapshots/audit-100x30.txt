@@ -18,10 +18,10 @@
    VERDICT: FAIL                                               ┃│ cap                          off │
                                                                ┃╰──────────────────────────────────╯
  · system                                                      ┃
-   switched to the build hat · Tab to change it again          ┃
+   audit · claude-opus-5.5 · ✗ failed, unfiled · $0.040        ┃
                                                                ┃
  · system                                                      ┃
-   review · claude-opus-5.5 · ✗ blocking problems · $0.040     ┃
+   switched to the build hat · Tab to change it again          ┃
  · ✓ done · 0 tools · 0:03                                                         ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮

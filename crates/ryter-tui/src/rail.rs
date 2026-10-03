@@ -385,6 +385,18 @@ fn block(view: &View, theme: Theme, hat: Role, w: usize, figures: bool) -> Vec<L
             if !v.is_empty() {
                 lines.push(row("audits", v, dim));
             }
+            // What the last audit left in the tree, and what was put back.
+            if let Some(n) = totals.last_restored {
+                let (text, style) = if n == 0 {
+                    ("changed nothing".to_string(), good)
+                } else {
+                    (
+                        format!("restored {n} file{}", if n == 1 { "" } else { "s" }),
+                        bad,
+                    )
+                };
+                lines.push(row("tree", vec![Span::styled(text, style)], dim));
+            }
         }
     }
     lines

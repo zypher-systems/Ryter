@@ -30,9 +30,7 @@ async fn approved_plan_build_review_test_resume_undo_and_commit_receipt() {
     agent.session = Session::create(home.path(), &app, "fixture".into(), "fixture".into()).unwrap();
     agent.ctx.notes_dir = agent.session.notes_dir();
     agent.budget_usd = 1.0;
-    let mut cfg = crate::Config::default();
-    cfg.ui.offer_audit = false;
-    agent.cfg = Some(cfg);
+    agent.cfg = Some(crate::Config::default());
     agent.put_on(Role::SoloPlan).unwrap();
     let (io, requests) = crate::user_io::UserIo::pair();
     agent.ctx.user_io = Some(io);

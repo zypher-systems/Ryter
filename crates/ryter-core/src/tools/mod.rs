@@ -140,6 +140,9 @@ pub struct ToolContext {
     /// Variables an earlier part of the same shell command set to a plain
     /// value (`B=http://localhost:8001`), so `$B` later can be read.
     pub vars: Vec<(String, String)>,
+    /// The audit hat with no checkpoint to fall back on (a folder that is
+    /// not a git repository): held to read-only commands for the turn.
+    pub read_only: bool,
 }
 
 impl ToolContext {
@@ -372,6 +375,27 @@ fn spec(name: &str) -> Option<ToolSpec> {
                 "rules":{"type":"string","description":"the whole rules file, in Markdown, as it should be after the change"}
             },"required":["rules"]}),
         ),
+        "file_audit" => (
+            "File the audit, once, as your last call in the audit hat. `verdict` is pass or \
+             fail. `summary` is one line. `findings` are what you checked, worst first, each \
+             with `result` (pass, fail, not_reached), `title`, and for a failure `where` \
+             (path:line), `detail` (what is wrong) and `saw` (what you ran and what came back). \
+             `ran` lists the commands and tools you used. Ryter writes .ryter/audit.md and a \
+             dated copy, shows the user the audit, and hands it to the build hat if they say \
+             so. Don't write the audit into the chat instead.",
+            json!({"type":"object","properties":{
+                "verdict":{"type":"string","enum":["pass","fail"]},
+                "summary":{"type":"string","description":"one line: what was found"},
+                "findings":{"type":"array","items":{"type":"object","properties":{
+                    "result":{"type":"string","enum":["pass","fail","not_reached"]},
+                    "title":{"type":"string"},
+                    "where":{"type":"string","description":"path:line, or where it was seen"},
+                    "detail":{"type":"string","description":"what is wrong and why it matters"},
+                    "saw":{"type":"string","description":"what you ran and what came back"}
+                },"required":["result","title"]}},
+                "ran":{"type":"array","items":{"type":"string"},"description":"the commands and tools you used"}
+            },"required":["verdict","summary","findings"]}),
+        ),
         "present_plan" => (
             "Show the user a plan to approve before any work on it starts. Use it whenever \
              the user asks for a plan, and before work that is more than a small change. \
@@ -484,6 +508,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "update_rules",
             "propose_run",
             "run_project",
+            "file_audit",
             "search_tool",
             "use_tool",
             "web_fetch",
@@ -513,9 +538,9 @@ fn execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutp
         "ask_user" => ask_user(args, ctx),
         // The agent loop answers this itself: it changes who the agent is.
         "request_hat" | "present_plan" | "record_decision" | "load_skill" | "show_page"
-        | "update_rules" | "propose_run" | "run_project" => Ok(ToolOutput::err(format!(
-            "{name} is handled by the agent loop"
-        ))),
+        | "update_rules" | "propose_run" | "run_project" | "file_audit" => Ok(ToolOutput::err(
+            format!("{name} is handled by the agent loop"),
+        )),
         "web_fetch" => web::web_fetch(args, ctx),
         "web_search" => web::web_search(args, ctx),
         other => Ok(ToolOutput::err(format!("unknown tool {other}"))),
@@ -693,14 +718,25 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                 && matches!(name, "write" | "search_replace" | "bash")
                 && !(name == "bash" && policy::bash_hint(args, ctx).is_some()) =>
         {
+            if ctx.role == Role::SoloAudit && name != "bash" {
+                return Ok(ToolOutput::err(
+                    "denied: the audit changes nothing; its findings go in audit.md \
+                     (file_audit). Tell the user: Shift+Tab to the build hat changes code.",
+                ));
+            }
             Ok(ToolOutput::err(format!(
-                "denied: the {} hat can't {} — tell the user; they can press Tab to switch to \
+                "denied: the {} hat can't {} — tell the user; they can press {} to switch to \
                  build.{}",
                 ctx.role,
                 if name == "bash" {
                     "run commands that change things"
                 } else {
                     "edit files"
+                },
+                if ctx.role == Role::SoloAudit {
+                    "Shift+Tab"
+                } else {
+                    "Tab"
                 },
                 if name == "bash" && ctx.role == Role::SoloAudit && policy::names_containers(args) {
                     CONTAINER_CHECKS
@@ -835,6 +871,9 @@ mod tests {
             web: false,
             cwd: Default::default(),
             vars: Default::default(),
+            // The audit hat with no checkpoint behind it (see policy's
+            // `ctx_for`).
+            read_only: role == Role::SoloAudit,
         }
     }
 
@@ -1267,6 +1306,29 @@ mod tests {
         // Other refusals keep the general wording.
         let out = gated_execute("bash", &json!({ "command": "sudo ls" }), &c).unwrap();
         assert!(out.text.contains("outside policy"), "{out:?}");
+    }
+
+    /// The audit hat's write outside its own files is refused with where
+    /// its findings go, and the key that changes code.
+    #[test]
+    fn an_audit_write_is_pointed_at_its_file() {
+        let dir = TempDir::new().unwrap();
+        let mut c = ctx(Role::SoloAudit, dir.path());
+        c.read_only = false;
+        let out = gated_execute("write", &json!({"path": "src/a.rs", "content": "x"}), &c).unwrap();
+        assert!(
+            out.is_error && out.text.contains("findings go in audit.md"),
+            "{out:?}"
+        );
+        assert!(out.text.contains("Shift+Tab"), "{out:?}");
+        let out = gated_execute(
+            "write",
+            &json!({"path": ".ryter/audit.md", "content": "# Audit"}),
+            &c,
+        )
+        .unwrap();
+        assert!(!out.is_error, "{out:?}");
+        assert!(dir.path().join(".ryter/audit.md").exists());
     }
 
     /// Yolo: every question is a yes, the rest of the machine and the

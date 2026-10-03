@@ -37,7 +37,7 @@ currency = "USD"
 session_budget_usd = 0
 warn_usd = 1.00
 # The most one turn in the audit hat may spend. Off (0) by default: set it in /settings.
-review_usd = 0
+audit_usd = 0
 
 # TUI presentation. Every key is optional; defaults shown. Unknown keys warn once at
 # startup instead of failing. `/theme` persists its pick to ~/.ryter/settings.toml [ui].
@@ -54,7 +54,6 @@ colors = "auto"            # auto | truecolor | 256 | 16 ; NO_COLOR always wins
 timestamps = true          # HH:MM on speaker headers (the ledger: beside each question)
 line_numbers = true        # gutter in code blocks
 receipts = true            # /commit adds a `Ryter:` trailer: model, cost, tests
-offer_audit = true         # after a build turn that changed files, offer an audit (asks first, shows the cost)
 open_pages = true          # open a page the model shows (show_page) in your browser; off, you get the link only
 
 # What the build hat asks about, as your own rules. Shipped, the work

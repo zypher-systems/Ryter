@@ -217,26 +217,15 @@ pub fn test_history(home: &Path, model: &str) -> Vec<f64> {
 }
 
 impl Agent {
-    /// `/audit`: the review hat reviews the uncommitted work now, after the
-    /// user agrees to what it should cost. Returns the review, or an empty
-    /// string when none ran.
+    /// `/audit`: the audit hat audits the uncommitted work now, after the
+    /// user agrees to what it should cost. Returns the audit's last words,
+    /// or an empty string when none ran.
     pub async fn review_now(&mut self) -> Result<String> {
-        Ok(self.review(false).await?.0)
-    }
-
-    /// At the end of a build turn that changed files: offer a review, with
-    /// what it would cost, unless the user turned offers off. Saying yes
-    /// runs it; there is no second question. Nothing when there is nothing
-    /// uncommitted to review.
-    pub async fn offer_review(&mut self) -> Result<String> {
-        if !self.offers_reviews() || self.role != Role::SoloBuild {
-            return Ok(String::new());
-        }
-        Ok(self.review(true).await?.0)
-    }
-
-    fn offers_reviews(&self) -> bool {
-        self.cfg.as_ref().is_some_and(|c| c.ui.offer_audit) && self.ctx.user_io.is_some()
+        Ok(self
+            .review_once(false)
+            .await?
+            .map(|(text, _)| text)
+            .unwrap_or_default())
     }
 
     fn say(&mut self, message: impl Into<String>) -> Result<String> {
@@ -305,8 +294,10 @@ impl Agent {
         };
         format!(
             "[Ryter] Audit the uncommitted changes before they are committed: {} file{}, \
-             +{} −{}. {plan} Start from `git status --short` and `git diff HEAD`. End with \
-             your findings and your verdict.",
+             +{} −{}. {plan} Start from `git status --short` and `git diff HEAD`. Run \
+             everything the project has: its tests through run_project, its end-to-end \
+             checks, and use the product at its address when there is one. Change nothing; \
+             file your findings with file_audit as your last call.",
             job.files,
             if job.files == 1 { "" } else { "s" },
             job.added,
@@ -314,31 +305,9 @@ impl Agent {
         )
     }
 
-    /// Ask, then run, and offer again for as long as a review ends with the
-    /// build hat changing files (its fixes are new work). `offered`: Ryter
-    /// is offering at the end of a build turn, so a "no" says nothing, and
-    /// the prompt can stop the offers.
-    ///
-    /// Returns the last review, and whether the work stands reviewed: that
-    /// review passed, and nothing was changed after it.
-    async fn review(&mut self, offered: bool) -> Result<(String, bool)> {
-        let mut offered = offered;
-        let mut last = String::new();
-        loop {
-            let before = self.session.changed_turns;
-            let Some((text, verdict)) = self.review_once(offered).await? else {
-                return Ok((last, false));
-            };
-            last = text;
-            let fixed = self.session.changed_turns > before;
-            if !fixed || !self.offers_reviews() || self.role != Role::SoloBuild {
-                return Ok((last, verdict == Some(true) && !fixed));
-            }
-            offered = true;
-        }
-    }
-
-    /// One review, and its verdict: `None` when none ran.
+    /// One audit, and its verdict: `None` when none ran. `offered` is
+    /// always false now that no audit is offered after a build turn; the
+    /// parameter stays for the day one is again.
     async fn review_once(&mut self, offered: bool) -> Result<Option<(String, Option<bool>)>> {
         let job = match self.review_job()? {
             Ok(job) => job,
@@ -352,7 +321,7 @@ impl Agent {
             .connections
             .get(&connection)
             .is_some_and(|c| c.is_local());
-        let limit = cfg.spend.review_usd;
+        let limit = cfg.spend.audit_usd;
         let rates = self.book.rates(&model);
         // A limit can't hold a model with no price.
         if !local && limit > 0.0 && rates.is_none() {
@@ -454,16 +423,18 @@ impl Agent {
         if turn.reason == StopReason::Cancelled {
             return Ok(None);
         }
-        // The verdict is the reviewer's last one: after a FAIL the build
-        // hat may have gone on in the same turn, and its words end it.
-        let said = self
-            .session
-            .transcript
-            .iter()
-            .skip(from)
-            .filter(|m| m.role == "assistant")
-            .filter_map(|m| verdict(&m.content))
-            .next_back();
+        // The verdict: the audit's, filed with `file_audit` or read from its
+        // last words when the turn ended. After a FAIL the build hat may
+        // have gone on in the same turn, and its words end it.
+        let said = self.last_audit_verdict.or_else(|| {
+            self.session
+                .transcript
+                .iter()
+                .skip(from)
+                .filter(|m| m.role == "assistant")
+                .filter_map(|m| verdict(&m.content))
+                .next_back()
+        });
         let reviews: Vec<_> = self
             .session
             .spend_log()
@@ -507,7 +478,7 @@ impl Agent {
         let Some(cfg) = &self.cfg else {
             return Fit::Yes;
         };
-        let limit = cfg.spend.review_usd;
+        let limit = cfg.spend.audit_usd;
         let local = cfg
             .connections
             .get(connection)

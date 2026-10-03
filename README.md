@@ -44,11 +44,11 @@ One model works in your files. `Tab` cycles its hat, and the message box shows t
 | --- | --- |
 | **plan** | reads and proposes; shows you a plan to approve, adjust or reject; changes nothing |
 | **build** | changes your files; your toolchains and the project's containers run, and edits, deletions and publishing ask first |
-| **audit** | runs the tests and critiques what changed, against the plan you approved; can start and use the product; changes nothing |
+| **audit** | runs everything the project has against the plan you approved, the product included, and files its findings on a card you can hand to the builder; a checkpoint puts back anything it changed |
 
 - **A plan is approved in its own panel.** `y` saves it under `.ryter/plans/` and the build starts from that file. Where the work later differs from it, the difference and the reason are recorded in `.ryter/decisions.md`, which an audit reads.
 - **Each hat can have its own model** (`/models`). The hats share one conversation, and Ryter says what it costs when a different model takes over.
-- **An audit is offered after a build turn that changed files**, with its cost up front, and `/audit` asks for one. It ends with a verdict.
+- **`/audit` asks for an audit**, with its cost up front. It ends on a card: the verdict and the findings, written to `.ryter/audit.md`; `y` hands it to the build hat to repair.
 - **Before each build turn Ryter checkpoints your files**, and `/undo` puts them back. `/changes` shows what changed, file by file with diffs, and can undo a single file.
 - **`/commit`** drafts the message from the diff and from what the model said about why, and commits the files you choose. Its receipt trailer records the model, the cost, the test result and the review (`Ryter: deepseek-pro-latest · $0.34 · tests ✓ 13 passed · review ✓ grok-4.7`).
 

@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod agent;
+pub mod audit;
 pub mod cancel;
 pub mod clock;
 pub mod compact;

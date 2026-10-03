@@ -128,6 +128,12 @@ fn decide_write(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
     if is_under(&resolved, &real_path(&ctx.notes_dir)) {
         return Decision::Allow;
     }
+    // The audit's own files: the one place the audit hat writes.
+    if ctx.role == Role::SoloAudit
+        && crate::audit::is_audit_file(&real_path(&ctx.workspace), &resolved)
+    {
+        return Decision::Allow;
+    }
     // Project memory (`ROADMAP.md`, `DECISIONS.md`, `notes/`) is the plan
     // hat's to write as well as the build hat's.
     if crate::memory::is_memory_file(&real_path(&ctx.workspace), &resolved) {
@@ -2322,7 +2328,7 @@ fn assignment(name: &str, value: &str, ctx: &ToolContext) -> Decision {
         || name.starts_with("LC_")
         || quiet_pager(name, value);
     match ctx.role {
-        Role::SoloBuild => {
+        Role::SoloBuild | Role::SoloAudit if works(ctx) => {
             if redirects_a_program(name, value, ctx) {
                 Decision::Ask
             } else {
@@ -2392,7 +2398,10 @@ fn judge(
     if NEVER.contains(&prog) || prog.starts_with("mkfs") || REWIRES_THE_SHELL.contains(&prog) {
         return Decision::Deny;
     }
-    let works = ctx.role == Role::SoloBuild;
+    // The hats that do the work: build, and the audit hat, whose turn runs
+    // behind a checkpoint that puts the tree back; without one (no
+    // repository) the audit is held to looking.
+    let works = works(ctx);
     // Files the gate can't see, handed to a command that prints them: a
     // secret could be among them. A person can be asked; where nobody is,
     // it is refused.
@@ -2432,15 +2441,13 @@ fn judge(
     // the build hat's outside redirects were judged just above. A secret
     // inside the workspace is refused for everyone.
     if let Some(bad) = redirect_escapes(words, ctx) {
-        if ctx.role != Role::SoloBuild || resolve(ctx, &bad).is_some() {
+        if !works || resolve(ctx, &bad).is_some() {
             return Decision::Deny;
         }
     }
-    // The plan and review hats work in the user's own tree, where a
+    // The hats that only look work in the user's own tree, where a
     // redirect is a write nothing undoes.
-    if matches!(ctx.role, Role::SoloPlan | Role::SoloAudit)
-        && writes_project_via_redirect(words, ctx)
-    {
+    if !works && writes_project_via_redirect(words, ctx) {
         return Decision::Deny;
     }
     // Nothing to run: punctuation, a variable set, or a redirect on its
@@ -2629,8 +2636,10 @@ fn judge(
     // whether the role may modify the tree at all.
     if DESTRUCTIVE.contains(&prog) || deleting_find(prog, words) {
         // A role that may not change the tree may never destroy, and there is
-        // no version of it a human would approve.
-        if !ctx.role.writes_source() {
+        // no version of it a human would approve. The audit hat's checkpoint
+        // doesn't reach what git ignores (`target/`, `node_modules/`), so it
+        // asks, as the build hat does.
+        if !works {
             return Decision::Deny;
         }
         // In the user's own tree, destruction always asks.
@@ -2645,8 +2654,9 @@ fn judge(
     let base = match ctx.role {
         // A normal agent in the user's tree: what it runs, runs. What asks
         // was decided above (destruction) or here (publishing, the rest of
-        // the machine), and the user's own rules have the last word.
-        Role::SoloBuild => {
+        // the machine), and the user's own rules have the last word. The
+        // audit hat runs the same way; the checkpoint puts the tree back.
+        Role::SoloBuild | Role::SoloAudit if works => {
             let base = if is_container_tool(prog) {
                 let d = container_decision(prog, args, ctx);
                 // The project's containers run freely in the project. After
@@ -2680,7 +2690,9 @@ fn judge(
             };
             base.and(outside)
         }
-        Role::SoloAudit => {
+        // The audit hat with no checkpoint behind it (`read_only`): a check
+        // or a look, as the review hat was. (Build never gets here.)
+        Role::SoloAudit | Role::SoloBuild => {
             // A check or a look, at the project or one of the open places.
             // With no rule about where, `cat ~/.ssh/id_rsa` ran here
             // without a question: reading is all it does.
@@ -5690,8 +5702,15 @@ pub(crate) fn on_this_machine(url: &str) -> bool {
 /// hidden folder or `node_modules` there. `cargo`, `pytest`, `eslint` and
 /// `node` all read those (`.cargo/config.toml`, `conftest.py`,
 /// `.eslintrc.js`), and for a project in `/tmp` that folder is `/tmp`.
+/// The hats that do the work: build, and the audit hat behind a
+/// checkpoint that puts the tree back. Without one (no repository) the
+/// audit is held to looking.
+pub(crate) fn works(ctx: &ToolContext) -> bool {
+    ctx.role == Role::SoloBuild || (ctx.role == Role::SoloAudit && !ctx.read_only)
+}
+
 pub(crate) fn free_place(path: &Path, ctx: &ToolContext, writing: bool) -> bool {
-    let works = ctx.role == Role::SoloBuild;
+    let works = works(ctx);
     let home = home_dir()
         .map(|h| real_path(&h))
         .filter(|_| works || !writing);
@@ -6165,6 +6184,11 @@ mod tests {
             web: false,
             cwd: Default::default(),
             vars: Default::default(),
+            // The audit hat here is the one with no checkpoint behind it
+            // (a folder that is not a repository), held to looking: the
+            // review hat's old answers. With a checkpoint it answers as
+            // the build hat does; `the_audit_hat_runs_as_build_behind_a_checkpoint`.
+            read_only: role == Role::SoloAudit,
         }
     }
 
@@ -8287,6 +8311,78 @@ mod tests {
         ] {
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Deny, "{cmd}");
         }
+    }
+
+    /// Behind a checkpoint the audit hat runs what the build hat runs:
+    /// the tests, the toolchains, the containers, inline code. What it may
+    /// never do holds, and its only writes are its own files.
+    #[test]
+    fn the_audit_hat_runs_as_build_behind_a_checkpoint() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::write(d.join("src/main.rs"), "").unwrap();
+        let mut c = ctx_for(Role::SoloAudit, d);
+        c.read_only = false;
+        let sh = |cmd: &str| decide("bash", &json!({"command": cmd}), &c);
+        for cmd in [
+            "cargo test",
+            "cargo fmt",
+            "npm install",
+            "docker compose up -d --wait",
+            "docker compose run --rm app pytest -q",
+            "python3 -c 'print(1)'",
+            "bash scripts/e2e.sh",
+            "python3 /tmp/probe.py",
+            "curl -s -X POST -d a=1 http://localhost:8001/items",
+            "printf x > out.txt",
+            "mkdir -p build && cd build && cmake ..",
+        ] {
+            assert_eq!(sh(cmd), Decision::Allow, "{cmd}");
+        }
+        for cmd in ["rm -rf target", "docker compose down -v"] {
+            assert_ne!(sh(cmd), Decision::Allow, "{cmd}");
+            assert_ne!(sh(cmd), Decision::Deny, "{cmd}");
+        }
+        // Git stays read-only: a commit or a push is not undone by putting
+        // the files back.
+        for cmd in [
+            "sudo ls",
+            "cat .env",
+            "bash -c 'id'",
+            "cat ~/.ssh/id_rsa",
+            "git push",
+            "git commit -am x",
+            "git checkout -- .",
+        ] {
+            assert_eq!(sh(cmd), Decision::Deny, "{cmd}");
+        }
+        assert_eq!(sh("git diff"), Decision::Allow);
+        assert_eq!(sh("git stash list"), Decision::Allow);
+        // Its writes: the audit's own files and scratch, nothing else.
+        let write = |path: &str| decide("write", &json!({"path": path, "content": "x"}), &c);
+        assert_eq!(write(".ryter/audit.md"), Decision::Allow);
+        assert_eq!(write(".ryter/audits/2026-10-03-x.md"), Decision::Allow);
+        assert_eq!(write("/tmp/ryter-audit-scratch.txt"), Decision::Allow);
+        assert_eq!(write("src/main.rs"), Decision::Deny);
+        assert_eq!(write("README.md"), Decision::Deny);
+        assert_eq!(write("DECISIONS.md"), Decision::Deny);
+        assert_eq!(
+            decide(
+                "search_replace",
+                &json!({"path": "src/main.rs", "search": "", "replace": "x"}),
+                &c
+            ),
+            Decision::Deny
+        );
+        // Without the checkpoint (`read_only`), it looks and runs checks
+        // only, as the review hat did.
+        c.read_only = true;
+        let sh = |cmd: &str| decide("bash", &json!({"command": cmd}), &c);
+        assert_eq!(sh("cargo test"), Decision::Allow);
+        assert_eq!(sh("cargo fmt"), Decision::Deny);
+        assert_eq!(sh("printf x > out.txt"), Decision::Deny);
+        assert_eq!(sh("python3 -c 'print(1)'"), Decision::Deny);
     }
 
     /// Inside the project, the build hat's deletions are a question for

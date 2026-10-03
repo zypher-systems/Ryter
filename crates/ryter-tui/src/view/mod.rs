@@ -115,6 +115,8 @@ pub struct View {
     pub plan_file: Option<String>,
     /// `.ryter/audit.md`, the same way.
     pub audit_file: Option<String>,
+    /// An audit turn is running: the guard card's `audit.md` row says so.
+    pub audit_writing: bool,
     /// Connection name.
     pub connection: String,
     /// Model id.
@@ -267,8 +269,8 @@ pub struct View {
     pub budget_usd: f64,
     /// The cap to restore when the budget is switched back on.
     pub budget_last: f64,
-    /// `[spend] review_usd`: the most one review may spend (0 = no limit).
-    pub review_usd: f64,
+    /// `[spend] audit_usd`: the most one review may spend (0 = no limit).
+    pub audit_usd: f64,
     /// Warn threshold.
     pub warn_usd: f64,
     /// Sandbox profile name.
@@ -448,7 +450,7 @@ impl View {
             unpriced_calls: 0,
             budget_usd: 0.0,
             budget_last: 5.0,
-            review_usd: 0.0,
+            audit_usd: 0.0,
             warn_usd: 1.0,
             sandbox_profile: "off".into(),
             update_mode: ryter_core::config::UpdateMode::default(),
@@ -478,6 +480,7 @@ impl View {
             last_specialist: ryter_core::Role::SoloAudit,
             plan_file: None,
             audit_file: None,
+            audit_writing: false,
             screen: std::cell::Cell::new((0, 0)),
             pulse: Pulse::default(),
         }

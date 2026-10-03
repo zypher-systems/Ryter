@@ -7,7 +7,7 @@
               │                                                                      ┃
               │ SPEND                                                                ┃
               │  budget usd (0 = off)  ‹ 0.00 ›                              default ┃
-              │  warn usd              ‹ 1.00 ›                              default │
+              │  warn usd              ‹ 1.00 ›                              default ┃
               │  audit usd (0 = off)   ‹ 0.00 ›                              default │
               │                                                                      │
               │ TOOLS                                                                │

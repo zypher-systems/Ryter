@@ -28,6 +28,9 @@ pub struct HatTotals {
     pub verdicts_passed: u32,
     /// Reviews that ended `VERDICT: FAIL`.
     pub verdicts_failed: u32,
+    /// What the latest audit left in the tree: `Some(0)` changed nothing,
+    /// `Some(n)` had n files put back; `None` before any audit.
+    pub last_restored: Option<u32>,
 }
 
 /// The three hats' totals.
@@ -42,6 +45,9 @@ pub struct Rack {
     /// yet. Its first step counts as a turn of its own: a plan approved in
     /// the plan hat is built in the build hat, in the same turn.
     switched: Option<Role>,
+    /// This turn's audit was counted from its `Audited` event; the
+    /// `Reviewed` that `/audit` adds after it is the same verdict.
+    audited: bool,
 }
 
 impl Rack {
@@ -80,6 +86,7 @@ impl Rack {
             AgentEvent::TurnStarted { role, .. } => {
                 self.hat = Some(*role);
                 self.switched = None;
+                self.audited = false;
                 self.of_mut(*role).turns += 1;
             }
             AgentEvent::ModeChanged { role } => {
@@ -109,11 +116,23 @@ impl Rack {
                     self.plan.plans_rejected += 1;
                 }
             }
-            AgentEvent::Reviewed { verdict, .. } => match verdict {
+            // An old log's reviews; a new audit is counted from `Audited`.
+            AgentEvent::Reviewed { verdict, .. } if !self.audited => match verdict {
                 Some(true) => self.review.verdicts_passed += 1,
                 Some(false) => self.review.verdicts_failed += 1,
                 None => {}
             },
+            AgentEvent::Audited {
+                verdict, restored, ..
+            } => {
+                self.audited = true;
+                match verdict {
+                    Some(true) => self.review.verdicts_passed += 1,
+                    Some(false) => self.review.verdicts_failed += 1,
+                    None => {}
+                }
+                self.review.last_restored = Some(restored.len() as u32);
+            }
             _ => {}
         }
     }

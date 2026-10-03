@@ -473,6 +473,7 @@ async fn run_prompt(
             web: cfg.features.web,
             cwd: Default::default(),
             vars: Default::default(),
+            read_only: false,
         },
         connection: conn_name,
         model,
@@ -487,6 +488,8 @@ async fn run_prompt(
         cfg: Some(cfg.clone()),
         machine: ryter_core::prompt::machine_for(profile),
         product: None,
+        audit_pending: None,
+        last_audit_verdict: None,
     };
     agent.fire_session_start()?;
     let result = agent.turn(&prompt).await;
@@ -842,6 +845,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
             web: cfg.features.web,
             cwd: Default::default(),
             vars: Default::default(),
+            read_only: false,
         },
         connection: conn_name,
         model,
@@ -856,6 +860,8 @@ fn mcp_serve() -> ryter_core::Result<()> {
         cfg: Some(cfg.clone()),
         machine: ryter_core::prompt::machine_for(profile),
         product: None,
+        audit_pending: None,
+        last_audit_verdict: None,
     };
     if let Err(e) = agent.fire_session_start() {
         eprintln!("{e}");
@@ -964,6 +970,7 @@ fn serve_host_from_config(
             web: cfg.features.web,
             cwd: Default::default(),
             vars: Default::default(),
+            read_only: false,
         },
         connection: conn_name,
         model,
@@ -978,6 +985,8 @@ fn serve_host_from_config(
         cfg: Some(cfg.clone()),
         machine: ryter_core::prompt::machine_for(profile),
         product: None,
+        audit_pending: None,
+        last_audit_verdict: None,
     };
     agent.fire_session_start()?;
     Ok(ServeHost::new(agent, rt))

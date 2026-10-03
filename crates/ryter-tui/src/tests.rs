@@ -1317,7 +1317,7 @@ fn the_instruments_say_what_is_true_of_the_whole_session() {
     // What the hat may do follows the hat.
     for (hat, may) in [
         (Role::SoloPlan, "this hat read only"),
-        (Role::SoloAudit, "this hat read only"),
+        (Role::SoloAudit, "this hat checkpoint, restored"),
     ] {
         v.mode = hat;
         let got = rows(&v, false);
@@ -2002,6 +2002,26 @@ fn reviewed(verdict: Option<bool>) -> View {
             role: Role::SoloBuild,
         },
         AgentEvent::Token { text: body.into() },
+        // An audit that gave its verdict in words and filed no report.
+        AgentEvent::Audited {
+            model: "anthropic/claude-opus-5.5".into(),
+            verdict,
+            headline: match verdict {
+                Some(true) => "✓ passed, unfiled",
+                Some(false) => "✗ failed, unfiled",
+                None => "no verdict",
+            }
+            .into(),
+            summary: String::new(),
+            rows: Vec::new(),
+            ran: Vec::new(),
+            file: None,
+            restored: Vec::new(),
+            checkpointed: true,
+            filed: false,
+            total_usd: Some(0.04),
+            duration_ms: 3000,
+        },
         AgentEvent::TurnFinished {
             turn: 2,
             tools: 0,
@@ -2027,8 +2047,8 @@ fn reviewed(verdict: Option<bool>) -> View {
 fn snapshot_review() {
     let mut v = edited();
     v.panels.push(Box::new(PermissionModal::new(
-        "review offer".into(),
-        "Review this work before you commit?\nx-ai/grok-4.7 on openrouter (the review hat's model)\nreviews 2 files, +8 −1, read-only\nabout $0.02–$0.31 of your $5.00 limit\nyour last 4 reviews with it cost $0.03–$0.19".into(),
+        "audit".into(),
+        "x-ai/grok-4.7 on openrouter (the audit hat's model)\naudits 2 files, +8 −1, read-only\nabout $0.02–$0.31 of your $5.00 limit\nyour last 4 audits with it cost $0.03–$0.19".into(),
     )));
     all_sizes("modal-review", &v);
     all_sizes("audit", &reviewed(Some(false)));
@@ -2109,19 +2129,114 @@ fn a_model_is_named_again_after_another_has_spoken() {
     );
 }
 
+/// A filed audit opens its popout over the body, says its line in the
+/// chat, counts in the rack, and the guard card's `audit.md` row reads
+/// `writing…` while the audit turn runs.
+#[test]
+fn a_filed_audit_opens_its_popout_and_counts_in_the_rack() {
+    let mut v = edited();
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::ModeChanged {
+            role: ryter_core::Role::SoloAudit,
+        },
+    );
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnStarted {
+            turn: 2,
+            role: ryter_core::Role::SoloAudit,
+        },
+    );
+    assert!(v.audit_writing);
+    let guard: Vec<String> = crate::instruments::lines(&v, Theme::truecolor_dark(), 31, 100, false)
+        .iter()
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
+        })
+        .collect();
+    assert!(
+        guard
+            .iter()
+            .any(|r| r.contains("audit.md") && r.contains("writing…")),
+        "{guard:?}"
+    );
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::Audited {
+            model: "kimi-k3".into(),
+            verdict: Some(false),
+            headline: "✗ 1 of 2 failed".into(),
+            summary: "one thing".into(),
+            rows: vec![
+                "✗ 1\tA\tapp/a.py:1".into(),
+                "    detail".into(),
+                "✓ 2\tB\t".into(),
+            ],
+            ran: vec!["run_project test".into()],
+            file: Some(".ryter/audit.md".into()),
+            restored: vec!["app/a.py".into()],
+            checkpointed: true,
+            filed: true,
+            total_usd: Some(0.07),
+            duration_ms: 58_000,
+        },
+    );
+    assert!(!v.audit_writing);
+    assert_eq!(v.panels.top().map(|p| p.kind()), Some("audit"));
+    let screen = render_to_string(&v, 150, 42);
+    assert!(
+        screen.contains("audit · kimi-k3 · ✗ 1 of 2 failed · $0.070 · restored 1 file"),
+        "{screen}"
+    );
+    let totals = v.rack.of(ryter_core::Role::SoloAudit);
+    assert_eq!((totals.verdicts_failed, totals.last_restored), (1, Some(1)));
+    // The popout: verdict, the finding with its place at the edge, the tree.
+    assert!(screen.contains("VERDICT: FAIL"));
+    assert!(screen.contains("app/a.py:1"));
+    assert!(screen.contains("restored 1 file the audit had changed"));
+    // An unfiled audit says its line and opens nothing.
+    v.panels.clear();
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::Audited {
+            model: "kimi-k3".into(),
+            verdict: Some(true),
+            headline: "✓ passed, unfiled".into(),
+            summary: String::new(),
+            rows: Vec::new(),
+            ran: Vec::new(),
+            file: None,
+            restored: Vec::new(),
+            checkpointed: true,
+            filed: false,
+            total_usd: None,
+            duration_ms: 1000,
+        },
+    );
+    assert!(v.panels.is_empty());
+    assert_eq!(
+        v.rack.of(ryter_core::Role::SoloAudit).last_restored,
+        Some(0)
+    );
+}
+
 /// The verdict is said under the review, and kept for the commit's receipt
 /// until a commit is made.
 #[test]
 fn a_reviews_verdict_is_said_and_kept_for_the_commit() {
     for (verdict, said) in [
-        (Some(true), "✓ no blocking problems"),
-        (Some(false), "✗ blocking problems"),
+        (Some(true), "✓ passed, unfiled"),
+        (Some(false), "✗ failed, unfiled"),
         (None, "no verdict"),
     ] {
         let mut v = reviewed(verdict);
         let screen = render_to_string(&v, 120, 40);
         assert!(
-            screen.contains(&format!("review · claude-opus-5.5 · {said} · $0.04")),
+            screen.contains(&format!("audit · claude-opus-5.5 · {said} · $0.04")),
             "{screen}"
         );
         // The review is headed by the model that wrote it, not the one
