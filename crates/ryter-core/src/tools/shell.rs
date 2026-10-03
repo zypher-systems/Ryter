@@ -452,6 +452,8 @@ mod tests {
             notes_dir: dir.path().to_path_buf(),
             role: Role::SoloBuild,
             always_approve: true,
+            yolo: false,
+            permissions: Default::default(),
             mcp: None,
             hooks: None,
             cancel: cancel.clone(),

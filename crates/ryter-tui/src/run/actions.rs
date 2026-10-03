@@ -280,9 +280,15 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 view.error(e.to_string());
             }
         }
-        Action::SetTools { always } => {
-            view.perm_mode = if always { "always" } else { "ask" }.into();
-            cx.send(Work::SetTools { always });
+        Action::SetTools { mode } => {
+            view.perm_mode = mode.as_str().into();
+            if mode == ryter_core::ToolsMode::Yolo {
+                view.system(
+                    "yolo · every question is a yes, outside the project and the project's \
+                     .env included · what is refused stays refused · /tools ask turns it off",
+                );
+            }
+            cx.send(Work::SetTools { mode });
         }
         Action::SetTheme(name) => {
             if apply_theme(view, cx, &name) {

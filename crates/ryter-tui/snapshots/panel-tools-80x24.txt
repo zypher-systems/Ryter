@@ -1,20 +1,20 @@
  ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  · system
-   welcome · /help for keys
-       ╭─ tool permissions ─────────────────────────────────────────────╮
+   welc╭─ tool permissions ─────────────────────────────────────────────╮
        │›● ask     current                                              │
-       │    shell, write, and delete calls pause for a y/n before they  │
-       │    run.                                                        │
+       │    what the gate asks about (deleting, publishing, writing     │
+       │    outside the project, the project's .env) pauses for a y/n.  │
        │                                                                │
        │ ○ always                                                       │
-       │    tools run without asking, including destructive ones.       │
+       │    a yes to everything inside the project; writes outside it   │
+       │    and to the project's .env still ask.                        │
        │                                                                │
+       │ ○ yolo                                                         │
+       │    a yes to every question, outside the project too. What is   │
+       │    refused (secrets, sudo, the disk) stays refused.            │
        │ ↑↓ move   enter apply   esc   changes apply immediately        │
        ╰────────────────────────────────────────────────────────────────╯
-
-
-
 
 
 

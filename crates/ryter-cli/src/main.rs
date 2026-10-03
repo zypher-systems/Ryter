@@ -44,6 +44,11 @@ struct Cli {
     #[arg(long)]
     always_approve: bool,
 
+    /// A yes to every question, writes outside the project and to the
+    /// project's .env included. What is refused stays refused.
+    #[arg(long)]
+    yolo: bool,
+
     /// Connection name.
     #[arg(long)]
     connection: Option<String>,
@@ -210,6 +215,7 @@ fn main() -> ExitCode {
             };
             match ryter_tui::run(ryter_tui::TuiOpts {
                 always_approve: cli.always_approve,
+                yolo: cli.yolo,
                 connection: cli.connection,
                 model: cli.model,
                 sandbox: cli.sandbox,
@@ -291,6 +297,7 @@ fn main() -> ExitCode {
             };
             match ryter_tui::run(ryter_tui::TuiOpts {
                 always_approve: cli.always_approve,
+                yolo: cli.yolo,
                 connection: cli.connection,
                 model: cli.model,
                 sandbox: cli.sandbox,
@@ -451,7 +458,9 @@ async fn run_prompt(
             workspace: cwd.clone(),
             notes_dir: notes,
             role,
-            always_approve: cli.always_approve,
+            always_approve: cli.always_approve || cli.yolo,
+            yolo: cli.yolo,
+            permissions: Arc::new(cfg.permissions.clone()),
             mcp: None,
             hooks: if cfg.hooks.is_empty() {
                 None
@@ -820,6 +829,8 @@ fn mcp_serve() -> ryter_core::Result<()> {
             // is allowed. Outside the project still needs a person.
             role: Role::SoloBuild,
             always_approve: true,
+            yolo: false,
+            permissions: Arc::new(cfg.permissions.clone()),
             mcp: hub,
             hooks: if cfg.hooks.is_empty() {
                 None
@@ -941,6 +952,8 @@ fn serve_host_from_config(
             // is allowed. Outside the project still needs a person.
             role: Role::SoloBuild,
             always_approve: true,
+            yolo: false,
+            permissions: Arc::new(cfg.permissions.clone()),
             mcp: hub,
             hooks: if cfg.hooks.is_empty() {
                 None

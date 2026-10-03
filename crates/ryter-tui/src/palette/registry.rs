@@ -381,7 +381,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         &["permissions"],
         Category::Config,
         "Tool permission mode",
-        Some("[ask|always]"),
+        Some("[ask|always|yolo]"),
         true,
         None,
         false,
@@ -396,7 +396,9 @@ pub const COMMANDS: &[CommandSpec] = &[
         false,
         None,
         true,
-        |_, _| Action::SetTools { always: false },
+        |_, _| Action::SetTools {
+            mode: ryter_core::ToolsMode::Ask,
+        },
     ),
     spec(
         "auto",
@@ -407,7 +409,9 @@ pub const COMMANDS: &[CommandSpec] = &[
         false,
         None,
         true,
-        |_, _| Action::SetTools { always: true },
+        |_, _| Action::SetTools {
+            mode: ryter_core::ToolsMode::Always,
+        },
     ),
     spec(
         "always",
@@ -418,7 +422,22 @@ pub const COMMANDS: &[CommandSpec] = &[
         false,
         None,
         true,
-        |_, _| Action::SetTools { always: true },
+        |_, _| Action::SetTools {
+            mode: ryter_core::ToolsMode::Always,
+        },
+    ),
+    spec(
+        "yolo",
+        &[],
+        Category::Config,
+        "Tools: a yes to every question, outside the project too",
+        None,
+        false,
+        None,
+        true,
+        |_, _| Action::SetTools {
+            mode: ryter_core::ToolsMode::Yolo,
+        },
     ),
     // Extensions
     spec(
@@ -662,10 +681,9 @@ fn run_theme(_view: &mut View, rest: &str) -> Action {
 }
 
 fn run_tools(_view: &mut View, rest: &str) -> Action {
-    match rest {
-        "ask" => Action::SetTools { always: false },
-        "always" | "auto" | "on" => Action::SetTools { always: true },
-        _ => Action::OpenPanel(PanelId::Tools),
+    match ryter_core::ToolsMode::parse(rest) {
+        Some(mode) => Action::SetTools { mode },
+        None => Action::OpenPanel(PanelId::Tools),
     }
 }
 

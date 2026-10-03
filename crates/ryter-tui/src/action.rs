@@ -103,10 +103,10 @@ pub enum Action {
     RemoveConnection(String),
     /// Switch model id on the current connection.
     SetModel(String),
-    /// Tool permission: `true` = always approve Ask.
+    /// Tool permission mode: ask, always, or yolo.
     SetTools {
-        /// Always.
-        always: bool,
+        /// The mode.
+        mode: ryter_core::ToolsMode,
     },
     /// Give a hat its own model (and persist).
     SetHatModel {

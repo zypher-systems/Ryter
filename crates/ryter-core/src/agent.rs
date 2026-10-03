@@ -2864,6 +2864,8 @@ mod tests {
             notes_dir: notes,
             role: Role::SoloBuild,
             always_approve: true,
+            yolo: false,
+            permissions: Default::default(),
             mcp: None,
             hooks: None,
             cancel: crate::cancel::Cancel::new(),

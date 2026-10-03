@@ -49,6 +49,10 @@ pub struct Config {
     /// Optional tools (web fetch/search).
     #[serde(default)]
     pub features: FeaturesConfig,
+    /// What the build and test hats ask about, beyond the gate's fixed
+    /// rules: the user's own answers, by pattern.
+    #[serde(default)]
+    pub permissions: crate::permissions::Permissions,
     /// TUI presentation knobs (`[ui]`).
     #[serde(default)]
     pub ui: UiConfig,
@@ -139,6 +143,7 @@ impl Default for Config {
             hooks: Vec::new(),
             sandbox: SandboxConfig::default(),
             features: FeaturesConfig::default(),
+            permissions: crate::permissions::Permissions::default(),
             ui: UiConfig::default(),
             update: UpdateConfig::default(),
             reasoning_effort: BTreeMap::new(),
@@ -1143,6 +1148,7 @@ struct ConfigFile {
     hooks: Vec<HookConfig>,
     sandbox: Option<SandboxConfig>,
     features: Option<FeaturesConfig>,
+    permissions: Option<crate::permissions::Permissions>,
     ui: Option<UiFile>,
     update: Option<UpdateConfig>,
     reasoning_effort: BTreeMap<String, String>,
@@ -1306,6 +1312,14 @@ impl ConfigFile {
         }
         if let Some(f) = self.features {
             cfg.features = f;
+        }
+        // Rules add up across files; a later file's answer for the same
+        // pattern replaces an earlier one's.
+        if let Some(p) = self.permissions {
+            if p.edit.is_some() {
+                cfg.permissions.edit = p.edit;
+            }
+            cfg.permissions.bash.extend(p.bash);
         }
         if let Some(u) = self.ui {
             u.apply(&mut cfg.ui);

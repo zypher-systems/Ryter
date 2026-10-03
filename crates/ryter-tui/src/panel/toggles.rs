@@ -16,15 +16,20 @@ struct Opt {
     warn: bool,
 }
 
-const TOOLS: [Opt; 2] = [
+const TOOLS: [Opt; 3] = [
     Opt {
         value: "ask",
-        prose: "shell, write, and delete calls pause for a y/n before they run.",
+        prose: "what the gate asks about (deleting, publishing, writing outside the project, the project's .env) pauses for a y/n.",
         warn: false,
     },
     Opt {
         value: "always",
-        prose: "tools run without asking, including destructive ones.",
+        prose: "a yes to everything inside the project; writes outside it and to the project's .env still ask.",
+        warn: true,
+    },
+    Opt {
+        value: "yolo",
+        prose: "a yes to every question, outside the project too. What is refused (secrets, sudo, the disk) stays refused.",
         warn: true,
     },
 ];
@@ -39,12 +44,19 @@ impl Toggles {
     /// `/tools`.
     pub fn tools(view: &View) -> Self {
         Self {
-            selected: usize::from(view.perm_mode == "always"),
+            selected: Self::index(view),
         }
     }
 
+    fn index(view: &View) -> usize {
+        TOOLS
+            .iter()
+            .position(|o| o.value == view.perm_mode)
+            .unwrap_or(0)
+    }
+
     fn current(&self, view: &View) -> usize {
-        usize::from(view.perm_mode == "always")
+        Self::index(view)
     }
 }
 
@@ -62,7 +74,7 @@ impl Panel for Toggles {
     }
 
     fn size(&self, _view: &View) -> (u16, u16) {
-        (66, 7)
+        (66, 11)
     }
 
     fn render(&self, view: &View, width: u16, _height: u16, theme: Theme) -> Body {
@@ -119,11 +131,14 @@ impl Panel for Toggles {
             | KeyCode::Right
             | KeyCode::Tab
             | KeyCode::Char(' ') => {
-                self.selected = 1 - self.selected;
+                self.selected = match key.code {
+                    KeyCode::Up | KeyCode::Left => (self.selected + TOOLS.len() - 1) % TOOLS.len(),
+                    _ => (self.selected + 1) % TOOLS.len(),
+                };
                 Outcome::Stay
             }
             KeyCode::Enter => Outcome::CloseAct(Action::SetTools {
-                always: self.selected == 1,
+                mode: ryter_core::ToolsMode::parse(TOOLS[self.selected].value).unwrap_or_default(),
             }),
             _ => Outcome::Stay,
         }
