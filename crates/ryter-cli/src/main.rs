@@ -35,7 +35,7 @@ struct Cli {
     #[arg(short = 'c', long = "continue")]
     resume: bool,
 
-    /// build | plan | audit. With `-p` the default is build, or the
+    /// build | plan | audit | scribe. With `-p` the default is build, or the
     /// hat a continued session was left in; the TUI opens in `[ui] start_hat`.
     #[arg(long)]
     hat: Option<String>,
@@ -180,7 +180,7 @@ fn headless_hat(asked: Option<Role>, left_in: Option<Role>) -> Role {
 fn tui_hat(hat: Option<&str>) -> Result<Option<Role>, Error> {
     match hat {
         Some("crew" | "lead") => Err(Error::Config(
-            "crew mode was removed: --hat takes build, plan, or audit".into(),
+            "crew mode was removed: --hat takes build, plan, audit, or scribe".into(),
         )),
         Some(h) => Ok(Some(h.parse::<Role>()?)),
         None => Ok(None),
@@ -403,7 +403,7 @@ async fn run_prompt(
     let hat = match cli.hat.as_deref() {
         Some("crew" | "lead") => {
             return Err(Error::Config(
-                "crew mode was removed: --hat takes build, plan, or audit".into(),
+                "crew mode was removed: --hat takes build, plan, audit, or scribe".into(),
             ));
         }
         Some(h) => Some(h.parse::<Role>()?),
@@ -1126,6 +1126,7 @@ mod tests {
     fn the_hat_flag_names_a_hat_or_is_refused() {
         assert_eq!(tui_hat(None).unwrap(), None);
         assert_eq!(tui_hat(Some("plan")).unwrap(), Some(Role::SoloPlan));
+        assert_eq!(tui_hat(Some("scribe")).unwrap(), Some(Role::SoloScribe));
         assert!(tui_hat(Some("test")).is_err());
         assert!(tui_hat(Some("crew")).is_err());
         assert!(tui_hat(Some("bulid")).is_err());

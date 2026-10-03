@@ -44,6 +44,7 @@ One model works in your files. `Tab` cycles its hat, and the message box shows t
 | --- | --- |
 | **plan** | reads and proposes; shows you a plan to approve, adjust or reject; changes nothing |
 | **build** | changes your files; your toolchains and the project's containers run, and edits, deletions and publishing ask first |
+| **scribe** | writes the documentation and nothing else: `.md`, `.txt` and their kind; give it a cheap model |
 | **audit** | runs everything the project has against the plan you approved, the product included, and files its findings on a card you can hand to the builder; a checkpoint puts back anything it changed |
 
 - **A plan is approved in its own panel.** `y` saves it as `.ryter/plan.md` (and a dated copy under `.ryter/plans/`) and the build starts from that file; that is the one hat change Ryter makes on its own. Where the work later differs from it, the difference and the reason are recorded in `.ryter/decisions.md`, which an audit reads.

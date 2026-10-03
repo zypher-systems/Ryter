@@ -471,6 +471,8 @@ impl Theme {
             ryter_core::Role::SoloBuild => self.build,
             ryter_core::Role::SoloPlan => self.plan,
             ryter_core::Role::SoloAudit => self.audit,
+            // The scribe's violet: the slot the test hat left.
+            ryter_core::Role::SoloScribe => self.architect,
             ryter_core::Role::Crew => self.build,
         }
     }
@@ -481,6 +483,7 @@ impl Theme {
             ryter_core::Role::SoloPlan => 0,
             ryter_core::Role::SoloBuild | ryter_core::Role::Crew => 1,
             ryter_core::Role::SoloAudit => 2,
+            ryter_core::Role::SoloScribe => 3,
         }
     }
 
@@ -521,8 +524,9 @@ impl Theme {
         match role {
             "plan" | "planner" => self.plan,
             "review" | "auditor" | "audit" => self.audit,
-            // A project's total from crew mode names its roles.
-            "architect" => self.architect,
+            // The scribe's slot; a project's total from crew mode names
+            // its roles.
+            "scribe" | "architect" => self.architect,
             _ => self.build,
         }
     }

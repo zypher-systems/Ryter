@@ -33,12 +33,13 @@ pub struct HatTotals {
     pub last_restored: Option<u32>,
 }
 
-/// The three hats' totals.
+/// The four hats' totals.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Rack {
     plan: HatTotals,
     build: HatTotals,
     review: HatTotals,
+    scribe: HatTotals,
     /// The hat the turn in progress is in.
     hat: Option<Role>,
     /// A hat put on in the middle of a turn that has not done anything
@@ -56,6 +57,7 @@ impl Rack {
         match role {
             Role::SoloPlan => &self.plan,
             Role::SoloAudit => &self.review,
+            Role::SoloScribe => &self.scribe,
             Role::SoloBuild | Role::Crew => &self.build,
         }
     }
@@ -64,6 +66,7 @@ impl Rack {
         match role {
             Role::SoloPlan => &mut self.plan,
             Role::SoloAudit => &mut self.review,
+            Role::SoloScribe => &mut self.scribe,
             Role::SoloBuild | Role::Crew => &mut self.build,
         }
     }
@@ -98,11 +101,17 @@ impl Rack {
             AgentEvent::ToolCall { .. } => self.step(),
             AgentEvent::ToolResult { is_error, diff, .. } => {
                 self.step();
-                // Only the build hat changes the project's files; a plan's
-                // notes are not the work.
+                // The build hat changes the project's files and the scribe
+                // its documentation; a plan's notes are not the work.
                 if let (false, Some(d)) = (*is_error, diff) {
-                    if self.hat.is_none_or(Role::writes_source) {
-                        let t = &mut self.build;
+                    let t = if self.hat.is_none_or(Role::writes_source) {
+                        Some(&mut self.build)
+                    } else if self.hat == Some(Role::SoloScribe) {
+                        Some(&mut self.scribe)
+                    } else {
+                        None
+                    };
+                    if let Some(t) = t {
                         t.files.insert(d.path.clone());
                         t.added += d.added as u64;
                         t.removed += d.removed as u64;

@@ -1,0 +1,40 @@
+ RYTER │ plan · build ·2   ·   ● AUDIT 1    ◆ SCRIBE 1                empty-query fix               shop · search-patch
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+         ●  search returns everything for an empty… ···· ✓ answered · 1.2s · $0.004  ▸    │
+         ●  build the plan ·················· ✓ answered · 2 files (1 new, 1 chang…  ▸    │ MODEL
+         ●  review it ·································· ✓ answered · 1.2s · $0.040  ▸    │ scribe             grok-4.6
+                                                                                          │
+         ●  dusty                                                                         │ CONTEXT
+         │  fix the blocking finding                                                      │ ━━━━━━━━━────────────── 38%
+         │                                                                                │ 97k / 256k tokens
+         ├─ write  app/server.js ········································· +1 −1  0.0s    │
+         │    1   app.get('/search', (req, res) => {                                      │ PULSE
+         │    2 -   const q = (req.query.q || '').trim()                                  │ ▁▁▁▁▁▁▁▁               idle
+         │    2 +   const q = String(req.query.q ?? '').trim()                            │
+         │    3     if (!q) return res.json([])                                           │ SPEND
+         │    4     res.json(find(q))                                                     │ session              $0.065
+         ├─ write  test/search.test.js ··································· +4 −0  0.0s    │ project               $4.82
+         │     5     assert.deepEqual(await search(''), [])                               │ budget                  off
+         │     6   })                                                                     │
+         │     7 +                                                                        │ GUARD
+         │     8 + test('a missing query finds nothing', async () => {                    │ sandbox           workspace
+         │     9 +   assert.deepEqual(await search(), [])                                 │ this hat          docs only
+         │    10 + })                                                                     │ plan.md                none
+         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009                       │ audit.md               none
+         │         ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄                   │
+         ├─ write  docs/install.md ······························ new · 20 lines  0.0s    │ CHANGES
+         │    too large to show here · /changes has the diff                              │ 2 files              +12 −1
+         ├─ edit   README.md ············································· +3 −1  0.0s    │
+         │    too large to show here · /changes has the diff                              │
+         └─ ✓ 2 tools · 2 files (1 new, 1 changed, +23 −1) · 0.9s · $0                    │
+                                                                                          │
+                                                                                          │
+                                                                                          │
+                                                                                          │
+                                                                                          │
+                                                                                          │
+                                                                                          │
+──────────────────────────────────────────────────────────────────────────────────────────│
+  SCRIBE  › what should be documented? · Tab: audit · ⇧Tab: plan · build · / for comman…  │
+
+ $ spend    enter send    tab audit    ⇧tab plan · build    / commands    ^t changes    ^b hat rack    ^c quit

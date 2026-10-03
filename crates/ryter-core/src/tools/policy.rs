@@ -138,9 +138,21 @@ fn decide_write(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
     // hat's to write as well as the build hat's.
     if crate::memory::is_memory_file(&real_path(&ctx.workspace), &resolved) {
         return match ctx.role {
-            // Review and test change nothing, memory included.
+            // The audit changes nothing, memory included.
             Role::SoloAudit | Role::Crew => Decision::Deny,
-            Role::SoloPlan | Role::SoloBuild => Decision::Allow,
+            // The memory files are documentation: the scribe's too.
+            Role::SoloPlan | Role::SoloBuild | Role::SoloScribe => Decision::Allow,
+        };
+    }
+    // The scribe writes documentation, anywhere in the project but under
+    // `.ryter/` (its notes were allowed above), and nothing else
+    // (`docs/specialists-design.md` R-SCR-01).
+    if ctx.role == Role::SoloScribe {
+        let own = real_path(&ctx.workspace).join(".ryter");
+        return if is_documentation(&resolved) && !is_under(&resolved, &own) {
+            Decision::Allow
+        } else {
+            Decision::Deny
         };
     }
     let _ = name;
@@ -2727,7 +2739,9 @@ fn judge(
                 }
             }
         }
-        Role::SoloPlan => {
+        // The scribe runs what the plan hat runs: it looks, and writes only
+        // documentation, by the write tools.
+        Role::SoloPlan | Role::SoloScribe => {
             if read_only(prog, words) && !path_escapes(&seen, ctx) {
                 Decision::Allow
             } else {
@@ -2737,6 +2751,26 @@ fn judge(
         Role::Crew => Decision::Deny,
     };
     base.and(nested)
+}
+
+/// A documentation file, by its name: the extensions people write prose
+/// in, and the bare names at a project's top.
+pub(crate) fn is_documentation(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match path.extension().and_then(|e| e.to_str()) {
+        Some(ext) => matches!(
+            ext.to_ascii_lowercase().as_str(),
+            "md" | "mdx" | "txt" | "rst" | "adoc"
+        ),
+        None => matches!(
+            name.as_str(),
+            "license" | "changelog" | "readme" | "contributing" | "notice" | "authors"
+        ),
+    }
 }
 
 /// Whether the command runs somewhere other than in the project: after a
@@ -8385,6 +8419,96 @@ mod tests {
         assert_eq!(sh("python3 -c 'print(1)'"), Decision::Deny);
     }
 
+    /// The scribe writes documentation and nothing else, anywhere in the
+    /// project but Ryter's own folder; it looks as the plan hat does.
+    #[test]
+    fn the_scribe_writes_documentation_only() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::create_dir_all(d.join("docs/guide")).unwrap();
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::create_dir_all(d.join(".ryter/notes")).unwrap();
+        std::fs::write(d.join("src/main.rs"), "fn main() {}").unwrap();
+        let write = |path: &str| {
+            decide(
+                "write",
+                &json!({"path": path, "content": "x"}),
+                &ctx_for(Role::SoloScribe, d),
+            )
+        };
+        let edit = |path: &str| {
+            decide(
+                "search_replace",
+                &json!({"path": path, "search": "a", "replace": "b"}),
+                &ctx_for(Role::SoloScribe, d),
+            )
+        };
+        for doc in [
+            "README.md",
+            "docs/guide/install.md",
+            "docs/guide/page.mdx",
+            "notes.txt",
+            "docs/index.rst",
+            "manual.adoc",
+            "LICENSE",
+            "CHANGELOG",
+            "README",
+            "CONTRIBUTING",
+            "NOTICE",
+            "AUTHORS",
+            "ROADMAP.md",
+            "DECISIONS.md",
+            "Docs/UPPER.MD",
+        ] {
+            assert_eq!(write(doc), Decision::Allow, "{doc}");
+            assert_eq!(edit(doc), Decision::Allow, "{doc}");
+        }
+        for code in [
+            "src/main.rs",
+            "app.py",
+            "package.json",
+            "Makefile",
+            "docs/build.sh",
+            "index.html",
+            "config.toml",
+            ".gitignore",
+            // Ryter's own files are nobody's to write but Ryter's.
+            ".ryter/run.toml",
+            ".ryter/plan.md",
+            ".ryter/audit.md",
+            ".ryter/audits/2026-10-03-x.md",
+        ] {
+            assert_eq!(write(code), Decision::Deny, "{code}");
+            assert_eq!(edit(code), Decision::Deny, "{code}");
+        }
+        // Its notes, as every hat's (the test context keeps them at `notes/`).
+        assert_eq!(write("notes/scratch.md"), Decision::Allow);
+        // A secret is refused before the name is read as documentation:
+        // `.env.md` is of the dotenv family to the secret rule, whatever
+        // it ends in.
+        assert_eq!(write(".env"), Decision::Deny);
+        assert_eq!(write("certs/server.pem"), Decision::Deny);
+        assert_eq!(write(".env.md"), Decision::Deny);
+        // Commands: the plan hat's rule.
+        for cmd in [
+            "ls docs",
+            "git status",
+            "git log -3",
+            "grep -rn TODO src",
+            "cat README.md",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloScribe, d), Decision::Allow, "{cmd}");
+        }
+        for cmd in [
+            "cargo build",
+            "touch x.md",
+            "sed -i s/a/b/ README.md",
+            "echo x > notes.txt",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloScribe, d), Decision::Deny, "{cmd}");
+        }
+    }
+
     /// Inside the project, the build hat's deletions are a question for
     /// the user, not a refusal; moving, changing a mode, and a command the
     /// gate has never heard of are the work, and run.
@@ -8907,7 +9031,12 @@ mod tests {
         }
     }
 
-    const HATS: [Role; 3] = [Role::SoloBuild, Role::SoloAudit, Role::SoloPlan];
+    const HATS: [Role; 4] = [
+        Role::SoloBuild,
+        Role::SoloAudit,
+        Role::SoloPlan,
+        Role::SoloScribe,
+    ];
 
     #[cfg(unix)]
     impl Machine {

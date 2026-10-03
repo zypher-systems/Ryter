@@ -752,7 +752,7 @@ pub fn role_label(role: &str) -> &str {
 }
 
 /// The hats that can have a model of their own, in the order the work goes.
-pub const HAT_ROLES: &[&str] = &["plan", "build", "audit"];
+pub const HAT_ROLES: &[&str] = &["plan", "build", "audit", "scribe"];
 
 /// What the guard card says of a file under `.ryter/`: the day it was
 /// written and its first heading, cut to fit; `None` when it isn't there.

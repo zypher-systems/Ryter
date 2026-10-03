@@ -23,11 +23,16 @@ pub const BOTH_MIN: u16 = 132;
 pub const INSTRUMENTS_MIN: u16 = 100;
 /// The hats, in the order the rack shows them: the primary row, then the
 /// specialists (`docs/specialists-design.md` §5).
-pub const HATS: [Role; 3] = [Role::SoloPlan, Role::SoloBuild, Role::SoloAudit];
+pub const HATS: [Role; 4] = [
+    Role::SoloPlan,
+    Role::SoloBuild,
+    Role::SoloAudit,
+    Role::SoloScribe,
+];
 /// The primary row: the hats the work is done in.
 pub const PRIMARY: [Role; 2] = [Role::SoloPlan, Role::SoloBuild];
 /// The specialists, below the separator.
-pub const SPECIALISTS: [Role; 1] = [Role::SoloAudit];
+pub const SPECIALISTS: [Role; 2] = [Role::SoloAudit, Role::SoloScribe];
 /// The word on the separator between the rows.
 pub const SEPARATOR_LABEL: &str = "specialists";
 
@@ -58,6 +63,7 @@ pub fn hat_name(hat: Role) -> &'static str {
     match hat {
         Role::SoloPlan => "PLAN",
         Role::SoloAudit => "AUDIT",
+        Role::SoloScribe => "SCRIBE",
         Role::SoloBuild | Role::Crew => "BUILD",
     }
 }
@@ -396,6 +402,17 @@ fn block(view: &View, theme: Theme, hat: Role, w: usize, figures: bool) -> Vec<L
                     )
                 };
                 lines.push(row("tree", vec![Span::styled(text, style)], dim));
+            }
+        }
+        Role::SoloScribe => {
+            // The documentation it wrote this session, each file once.
+            if !totals.files.is_empty() {
+                let n = totals.files.len();
+                lines.push(row(
+                    "docs",
+                    vec![Span::styled(format!("{n} written"), body)],
+                    dim,
+                ));
             }
         }
     }

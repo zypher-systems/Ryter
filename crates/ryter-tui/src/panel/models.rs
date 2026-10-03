@@ -1001,12 +1001,20 @@ mod tests {
             Outcome::Act(Action::SetHatModel { role, model, .. })
                 if role == "audit" && model == "qwen/qwen3.7-max"
         ));
-        // The reviewer is the last seat: the cursor stays on it after a set.
-        assert_eq!((p.focus, p.seat()), (Focus::Seats, 3));
+        // On to the scribe, the last seat; set, the cursor stays on it.
+        assert_eq!((p.focus, p.seat()), (Focus::Seats, 4));
+        key(&mut p, &mut v, KeyCode::Right);
+        v.composer.set_text("minimax");
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetHatModel { role, model, .. })
+                if role == "scribe" && model == "minimax/minimax-m2.7"
+        ));
+        assert_eq!((p.focus, p.seat()), (Focus::Seats, 4));
 
         // Each seat set is ticked; esc closes, keeping them.
         let t = text(&p, &v);
-        for seat in ["✓ All hats", "✓ Plan", "✓ Build", "✓ Audit"] {
+        for seat in ["✓ All hats", "✓ Plan", "✓ Build", "✓ Audit", "✓ Scribe"] {
             assert!(t.contains(seat), "{seat}: {t}");
         }
         assert!(matches!(key(&mut p, &mut v, KeyCode::Esc), Outcome::Close));
@@ -1038,9 +1046,11 @@ mod tests {
             on, "qwen/qwen3.7-max",
             "the reviewer's list opens on its model"
         );
-        // The reviewer is the last seat: ↓ stops there.
+        // The scribe is the last seat: ↓ reaches it and stops there.
         assert!(matches!(key(&mut p, &mut v, KeyCode::Down), Outcome::Stay));
-        assert_eq!(p.seat(), 3);
+        assert_eq!(p.seat(), 4);
+        assert!(matches!(key(&mut p, &mut v, KeyCode::Down), Outcome::Stay));
+        assert_eq!(p.seat(), 4);
 
         let p = Models::new(&mut v, Some("build".into()));
         assert_eq!((p.focus, p.seat()), (Focus::Models, 2));
@@ -1091,20 +1101,20 @@ mod tests {
     #[test]
     fn the_last_seat_opens_on_the_model_just_set() {
         let mut v = hats_view();
-        let mut p = Models::new(&mut v, Some("audit".into()));
+        let mut p = Models::new(&mut v, Some("scribe".into()));
         p.set_models(&v, &catalog());
         assert_eq!(
             p.filtered(&v)[p.selected].id,
-            "qwen/qwen3.7-max",
-            "its model now"
+            "",
+            "no model of its own yet: the list opens on the row that follows all hats"
         );
         v.composer.set_text("minimax");
         assert!(matches!(
             key(&mut p, &mut v, KeyCode::Enter),
             Outcome::Act(Action::SetHatModel { role, model, .. })
-                if role == "audit" && model == "minimax/minimax-m2.7"
+                if role == "scribe" && model == "minimax/minimax-m2.7"
         ));
-        assert_eq!((p.focus, p.seat()), (Focus::Seats, 3));
+        assert_eq!((p.focus, p.seat()), (Focus::Seats, 4));
         assert_eq!(p.filtered(&v)[p.selected].id, "minimax/minimax-m2.7");
         key(&mut p, &mut v, KeyCode::Right);
         assert!(matches!(
@@ -1160,7 +1170,7 @@ mod tests {
         let mut models = catalog();
         models.push(row("shared-model", "openrouter", Some((1.0, 2.0))));
         models.push(row("shared-model", "spacexai", Some((1.0, 2.0))));
-        let mut p = Models::new(&mut v, Some("audit".into()));
+        let mut p = Models::new(&mut v, Some("scribe".into()));
         p.set_models(&v, &models);
         for c in "shared".chars() {
             key(&mut p, &mut v, KeyCode::Char(c));

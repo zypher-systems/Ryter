@@ -460,7 +460,7 @@ fn spec(name: &str) -> Option<ToolSpec> {
              new hat in this same turn. Never ask in plain text whether to switch: the user \
              can't answer that from here.",
             json!({"type":"object","properties":{
-                "hat":{"type":"string","enum":["build","plan","audit"]},
+                "hat":{"type":"string","enum":["build","plan","audit","scribe"]},
                 "reason":{"type":"string","description":"one line the user sees, e.g. 'carry out the plan'"}
             },"required":["hat","reason"]}),
         ),
@@ -491,7 +491,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
         // One list for every hat, so switching hats never changes the tool
         // definitions (and never throws away the prompt cache). The gate
         // decides what each hat may run.
-        Role::SoloPlan | Role::SoloBuild | Role::SoloAudit => &[
+        Role::SoloPlan | Role::SoloBuild | Role::SoloAudit | Role::SoloScribe => &[
             "read_file",
             "list_dir",
             "grep",
@@ -714,14 +714,22 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
         // A hat that can't do this: say which one can, so the model tells the
         // user instead of hunting for a way round.
         Decision::Deny
-            if matches!(ctx.role, Role::SoloPlan | Role::SoloAudit)
-                && matches!(name, "write" | "search_replace" | "bash")
+            if matches!(
+                ctx.role,
+                Role::SoloPlan | Role::SoloAudit | Role::SoloScribe
+            ) && matches!(name, "write" | "search_replace" | "bash")
                 && !(name == "bash" && policy::bash_hint(args, ctx).is_some()) =>
         {
             if ctx.role == Role::SoloAudit && name != "bash" {
                 return Ok(ToolOutput::err(
                     "denied: the audit changes nothing; its findings go in audit.md \
                      (file_audit). Tell the user: Shift+Tab to the build hat changes code.",
+                ));
+            }
+            if ctx.role == Role::SoloScribe && name != "bash" {
+                return Ok(ToolOutput::err(
+                    "denied: the scribe writes documentation (.md, .txt and their kind), \
+                     not this file. Tell the user: Shift+Tab to the build hat for code.",
                 ));
             }
             Ok(ToolOutput::err(format!(
@@ -733,7 +741,7 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                 } else {
                     "edit files"
                 },
-                if ctx.role == Role::SoloAudit {
+                if matches!(ctx.role, Role::SoloAudit | Role::SoloScribe) {
                     "Shift+Tab"
                 } else {
                     "Tab"
@@ -1032,6 +1040,35 @@ mod tests {
         let out = gated_execute("read_file", &json!({"path": "README.md"}), &c).unwrap();
         assert!(!out.is_error);
         assert!(out.text.contains("hello"));
+    }
+
+    /// The scribe is told what it writes, and where code is written.
+    #[test]
+    fn a_scribe_write_of_code_says_where_code_goes() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        let c = ctx(Role::SoloScribe, dir.path());
+        let out = gated_execute(
+            "write",
+            &json!({"path": "src/main.rs", "content": "fn main() {}"}),
+            &c,
+        )
+        .unwrap();
+        assert!(
+            out.is_error && out.text.contains("the scribe writes documentation"),
+            "{out:?}"
+        );
+        assert!(!dir.path().join("src/main.rs").exists());
+        let out = gated_execute(
+            "write",
+            &json!({"path": "docs/notes.md", "content": "# Notes\n"}),
+            &c,
+        )
+        .unwrap();
+        assert!(!out.is_error, "{out:?}");
+        assert!(dir.path().join("docs/notes.md").exists());
+        let out = gated_execute("bash", &json!({"command": "cargo build"}), &c).unwrap();
+        assert!(out.is_error && out.text.contains("Shift+Tab"), "{out:?}");
     }
 
     #[test]

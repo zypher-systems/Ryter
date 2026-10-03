@@ -127,3 +127,11 @@ Patch 3 (the plan file), 2026-10-03:
 - **Automatic hat changes:** the only ones found are a plan's approval (kept), `request_hat` after the user's yes, the audit turn putting the audit hat on for `/audit` and the user's hat back after it (a round trip, R-AUD-06), and a saved crew-mode or test-hat session opening in build. None was removed.
 - **R-PLAN-03** The audit card takes the wheel as the plan panel does; a test covers it.
 
+Patch 4 (the scribe hat), 2026-10-03:
+
+- **R-SCR-01** The documentation rule is by name alone: the extensions `md`, `mdx`, `txt`, `rst`, `adoc` in any case, and the bare names `README`, `CHANGELOG`, `LICENSE`, `CONTRIBUTING`, `NOTICE`, `AUTHORS`. The secret rule runs first, so `.env`, `*.pem` and the dotenv family are refused whatever they end in: `.env.md` is refused, as a secret, not written as a document. Everything under `.ryter/` is refused except the session's notes, which every hat may write. `ROADMAP.md` and `DECISIONS.md` are documentation, so the scribe writes them as the plan and build hats do.
+- **R-SCR-03** The scribe is the last seat in `/models`; `start_hat` does not take `scribe` (a session starts in a primary hat or an audit), but `last` may open in it.
+- **R-RACK-04** `docs   N written` counts the files the scribe's edits touched, each once, from the same tool results the build block counts; the block has no lines row.
+- **R-KEY-03** `/scribe` (alias `/docs`) puts the hat on, as `/plan` and `/build` do; the composer's hint in the audit hat now names `Tab: scribe`.
+- The models panel's "last seat" tests moved from audit to scribe; the rack without figures is twenty rows with four blocks, so the height at which it drops its figures moved up by four rows.
+

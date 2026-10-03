@@ -1,0 +1,24 @@
+ RYTER │ ● AUDIT 1   ◆ SCRIBE 1                                    search-patch
+         ●  dusty  fix the blocking finding                             ↑ 8
+  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
+         │    2 +   const q = String(req.query.q ?? '').trim()
+         │    3     if (!q) return res.json([])
+         │    4     res.json(find(q))
+         ├─ write  test/search.test.js ························· +4 −0  0.0s
+         │     5     assert.deepEqual(await search(''), [])
+         │     6   })
+         │     7 +
+         │     8 + test('a missing query finds nothing', async () => {
+         │     9 +   assert.deepEqual(await search(), [])
+         │    10 + })
+         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009
+         │
+         ├─ write  docs/install.md ···················· new · 20 lines  0.0s
+         │    too large to show here · /changes has the diff
+         ├─ edit   README.md ··································· +3 −1  0.0s
+         │    too large to show here · /changes has the diff
+         └─ ✓ 2 tools · 2 files (1 new, 1 changed, +23 −1) · 0.9s · $0
+────────────────────────────────────────────────────────────────────────────────
+  SCRIBE  › what should be documented? · Tab: audit · ⇧Tab: plan · build · / …
+
+ grok-4.6  ctx ━━━───── 38% │ $0.065 · budget off          ^b hat rack  ^c quit

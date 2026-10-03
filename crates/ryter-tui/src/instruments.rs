@@ -43,6 +43,7 @@ pub fn hat_may(hat: Role, condensed: bool) -> &'static str {
         // What the audit changes, a checkpoint puts back.
         Role::SoloAudit if condensed => "checkpoint",
         Role::SoloAudit => "checkpoint, restored",
+        Role::SoloScribe => "docs only",
         Role::SoloBuild | Role::Crew if condensed => "asks first",
         Role::SoloBuild | Role::Crew => "edits ask first",
     }

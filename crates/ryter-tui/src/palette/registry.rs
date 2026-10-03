@@ -206,6 +206,17 @@ pub const COMMANDS: &[CommandSpec] = &[
         |_, _| Action::SetMode(ryter_core::Role::SoloPlan),
     ),
     spec(
+        "scribe",
+        &["docs"],
+        Category::Model,
+        "Scribe hat: write documentation only, change no code",
+        None,
+        false,
+        None,
+        false,
+        |_, _| Action::SetMode(ryter_core::Role::SoloScribe),
+    ),
+    spec(
         "review",
         &[],
         Category::Session,

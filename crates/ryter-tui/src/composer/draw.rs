@@ -68,7 +68,11 @@ fn placeholder(view: &View) -> String {
                 "what should we plan? · Tab: build · ⇧Tab: specialists · / for commands".into()
             }
             ryter_core::Role::SoloAudit => {
-                "ask about the audit · ⇧Tab: plan · build · / for commands".into()
+                "ask about the audit · Tab: scribe · ⇧Tab: plan · build · / for commands".into()
+            }
+            ryter_core::Role::SoloScribe => {
+                "what should be documented? · Tab: audit · ⇧Tab: plan · build · / for commands"
+                    .into()
             }
         },
         Mode::Secret { connection } => format!("paste the API key for {connection}"),

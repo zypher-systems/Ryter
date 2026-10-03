@@ -22,6 +22,10 @@ pub enum Role {
     /// nothing. It was the review hat until 0.16, and loads under that name.
     #[serde(rename = "audit", alias = "review")]
     SoloAudit,
+    /// Scribe hat: documentation only. Reads everything, writes `.md`,
+    /// `.txt` and their kind, runs read-only commands; changes no code.
+    #[serde(rename = "scribe")]
+    SoloScribe,
     /// A role from crew mode, which was removed, or the test hat, which
     /// was removed after it. Nothing runs as it: it is what a session saved
     /// before then names in its spend and its mode, so those still load.
@@ -70,7 +74,7 @@ impl Role {
     pub fn row(self) -> Row {
         match self {
             Self::SoloPlan | Self::SoloBuild | Self::Crew => Row::Primary,
-            Self::SoloAudit => Row::Specialist,
+            Self::SoloAudit | Self::SoloScribe => Row::Specialist,
         }
     }
 
@@ -80,7 +84,8 @@ impl Role {
         match self {
             Self::SoloPlan => Self::SoloBuild,
             Self::SoloBuild | Self::Crew => Self::SoloPlan,
-            Self::SoloAudit => Self::SoloAudit,
+            Self::SoloAudit => Self::SoloScribe,
+            Self::SoloScribe => Self::SoloAudit,
         }
     }
 
@@ -127,6 +132,10 @@ impl Role {
                 "[hat: audit — nothing may change; read, run the tests and the product. When \
                  asked for an audit, end with findings, blocking ones first, then your verdict]",
             ),
+            Self::SoloScribe => Some(
+                "[hat: scribe — write documentation only: .md, .txt and their kind. Read \
+                 anything; change no code. Say what you read]",
+            ),
             Self::Crew => None,
         }
     }
@@ -138,6 +147,7 @@ impl Role {
             Self::SoloPlan => "plan",
             Self::SoloBuild => "build",
             Self::SoloAudit => "audit",
+            Self::SoloScribe => "scribe",
         }
     }
 }
@@ -171,8 +181,9 @@ impl FromStr for Role {
             "plan" => Ok(Self::SoloPlan),
             "build" => Ok(Self::SoloBuild),
             "audit" | "review" => Ok(Self::SoloAudit),
+            "scribe" => Ok(Self::SoloScribe),
             other => Err(Error::Config(format!(
-                "unknown hat {other:?}: build, plan, or audit"
+                "unknown hat {other:?}: build, plan, audit, or scribe"
             ))),
         }
     }
@@ -194,6 +205,9 @@ mod tests {
             ("last", None, Role::SoloPlan),
             ("last", Some(Role::SoloBuild), Role::SoloBuild),
             ("last", Some(Role::SoloAudit), Role::SoloAudit),
+            ("last", Some(Role::SoloScribe), Role::SoloScribe),
+            // The scribe is not a hat to start in; `last` may say it.
+            ("scribe", None, Role::SoloPlan),
             // A session from crew mode, or one left in the test hat that
             // was, opens in build.
             ("last", Some(Role::Crew), Role::SoloBuild),
@@ -210,6 +224,7 @@ mod tests {
     fn only_the_build_hat_writes_source() {
         assert!(Role::SoloBuild.writes_source());
         assert!(!Role::SoloPlan.writes_source() && !Role::SoloAudit.writes_source());
+        assert!(!Role::SoloScribe.writes_source());
         assert!(!Role::Crew.writes_source());
     }
 
@@ -246,12 +261,20 @@ mod tests {
         assert_eq!(Role::SoloPlan.row(), Row::Primary);
         assert_eq!(Role::SoloBuild.row(), Row::Primary);
         assert_eq!(Role::SoloAudit.row(), Row::Specialist);
+        assert_eq!(Role::SoloScribe.row(), Row::Specialist);
         assert_eq!(Role::Crew.row(), Row::Primary);
         // Plan and build trade places.
         assert_eq!(Role::SoloPlan.next_in_row(), Role::SoloBuild);
         assert_eq!(Role::SoloBuild.next_in_row(), Role::SoloPlan);
-        // The specialists go round their own row: one alone stays.
-        assert_eq!(Role::SoloAudit.next_in_row(), Role::SoloAudit);
+        // The specialists go round their own row.
+        assert_eq!(Role::SoloAudit.next_in_row(), Role::SoloScribe);
+        assert_eq!(Role::SoloScribe.next_in_row(), Role::SoloAudit);
+        assert_eq!(Role::SoloScribe.other_row_default(), Role::SoloBuild);
+        assert_eq!("scribe".parse::<Role>().unwrap(), Role::SoloScribe);
+        assert_eq!(
+            serde_json::to_string(&Role::SoloScribe).unwrap(),
+            "\"scribe\""
+        );
         // A role from crew mode is build.
         assert_eq!(Role::Crew.next_in_row(), Role::SoloPlan);
         // The other row opens on build, or on audit.

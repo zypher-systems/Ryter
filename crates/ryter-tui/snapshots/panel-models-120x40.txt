@@ -13,8 +13,8 @@
     │   follows all hats          │                                                                                │
     │   Audit                     │                                                                                │
     │   follows all hats          │                                                                                │
-    │                             │                                                                                │
-    │                             │                                                                                │
+    │   Scribe                    │                                                                                │
+    │   follows all hats          │                                                                                │
     │                             │                                                                                │
     │                             │                                                                                │
     │                             │                                                                                │

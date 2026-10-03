@@ -12,7 +12,7 @@
                                                     │ reasoning  auto · medium │
                                                     ╰──────────────────────────╯
                                                     ╭─ spend ──────────────────╮
-╭─ commands ──────────────────────────── 3 of 29 ─╮ │ session            $?.?? │
+╭─ commands ──────────────────────────── 3 of 30 ─╮ │ session            $?.?? │
 │ mo                                              │ ╰──────────────────────────╯
 │›/models         Choose models: one for ever… ▸  │ ╭─ budget ─────────── off ─╮
 │ /tools          Tool permission mode         ▸  │ │ cap                  off │

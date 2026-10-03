@@ -949,6 +949,7 @@ impl Agent {
                 let now = match to {
                     Role::SoloBuild => "you may now change files and run commands",
                     Role::SoloPlan => "nothing may change now; read and plan",
+                    Role::SoloScribe => "write documentation only; change no code",
                     _ => "nothing may change now; audit",
                 };
                 Ok(ToolOutput {
@@ -1449,10 +1450,16 @@ impl Agent {
     /// The project's own commands are the build and audit hats' to run:
     /// the plan hat changes and starts nothing.
     fn not_the_plan_hat(&self, tool: &str) -> Option<crate::tools::ToolOutput> {
-        (self.role == Role::SoloPlan).then(|| {
+        matches!(self.role, Role::SoloPlan | Role::SoloScribe).then(|| {
             crate::tools::ToolOutput::err(format!(
-                "{tool} is the build and audit hats': the plan hat changes and starts \
-                 nothing. Tell the user to press Tab to the build hat."
+                "{tool} is the build and audit hats': the {} hat changes and starts \
+                 nothing. Tell the user to press {} to the build hat.",
+                self.role,
+                if self.role == Role::SoloPlan {
+                    "Tab"
+                } else {
+                    "Shift+Tab"
+                }
             ))
         })
     }

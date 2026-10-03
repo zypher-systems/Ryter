@@ -979,6 +979,10 @@ fn the_rack_shows_each_hats_own_figures() {
             "claude-opus-5.5",
             "1 turn $0.040",
             "audits ✗ 1 fail",
+            "",
+            "○ SCRIBE",
+            "grok-4.6",
+            "not worn yet",
         ]
     );
     // A second review that passed, and a rejected plan.
@@ -1012,7 +1016,12 @@ fn the_rack_shows_each_hats_own_figures() {
     ] {
         assert!(got.iter().any(|r| r == want), "missing {want:?}: {got:#?}");
     }
-    assert!(!got.iter().any(|r| r == "not worn yet"), "{got:#?}");
+    // Only the scribe, which had no turn here, is not worn yet.
+    assert_eq!(
+        got.iter().filter(|r| *r == "not worn yet").count(),
+        1,
+        "{got:#?}"
+    );
     // The build block's warning row is the test run's skip.
     assert_eq!(
         got.iter().filter(|r| *r == "warning 1").count(),
@@ -1090,7 +1099,7 @@ fn the_rack_is_the_same_height_whatever_the_turns() {
     assert_eq!(many.rack.of(Role::SoloBuild).turns, 38);
     let height = |v: &View| crate::rail::lines(v, theme, 27, 100).unwrap().len();
     assert_eq!(height(&few), height(&many));
-    assert_eq!(height(&few), 23);
+    assert_eq!(height(&few), 27);
     let text = squash(&render_to_string(&many, 160, 50));
     assert!(text.contains("38 turns"), "{text}");
 }
@@ -1130,7 +1139,8 @@ fn the_side_columns_give_way_to_the_conversation() {
     }
     // A wide screen too short for every figure drops the hats' own rows
     // from every block at once; shorter still, the rack folds away.
-    let text = render_to_string(&racked(), 160, 22);
+    // Four blocks without their figures take twenty rows.
+    let text = render_to_string(&racked(), 160, 28);
     assert!(
         text.contains("HAT RACK") && text.contains("2 turns"),
         "{text}"
@@ -2043,6 +2053,76 @@ fn reviewed(verdict: Option<bool>) -> View {
     v
 }
 
+/// The scribe hat on, with documentation written: its block and color.
+#[test]
+fn snapshot_scribe() {
+    let v = scribed();
+    all_sizes("scribe", &v);
+    let shown = render_to_string(&v, 160, 50);
+    assert!(shown.contains("SCRIBE"), "{shown}");
+    assert!(shown.contains("docs"), "{shown}");
+    assert!(shown.contains("2 written"), "{shown}");
+    assert!(shown.contains("docs only"), "{shown}");
+}
+
+/// A session where the scribe wrote two documents, in its hat.
+fn scribed() -> View {
+    let mut v = racked();
+    let diff = |path: &str, added: usize, removed: usize| {
+        Some(Box::new(ryter_core::diff::FileDiff {
+            path: path.into(),
+            created: removed == 0,
+            added,
+            removed,
+            hunks: Vec::new(),
+            elided: 0,
+        }))
+    };
+    for ev in [
+        AgentEvent::TurnStarted {
+            turn: 7,
+            role: Role::SoloScribe,
+        },
+        AgentEvent::ToolCall {
+            id: "s1".into(),
+            name: "write".into(),
+            args: serde_json::json!({"path": "docs/install.md"}),
+            role: Role::SoloScribe,
+            summary: None,
+        },
+        AgentEvent::ToolResult {
+            id: "s1".into(),
+            output: "created docs/install.md · 20 lines".into(),
+            is_error: false,
+            duration_ms: Some(5),
+            diff: diff("docs/install.md", 20, 0),
+        },
+        AgentEvent::ToolCall {
+            id: "s2".into(),
+            name: "search_replace".into(),
+            args: serde_json::json!({"path": "README.md"}),
+            role: Role::SoloScribe,
+            summary: None,
+        },
+        AgentEvent::ToolResult {
+            id: "s2".into(),
+            output: "edited README.md · +3 −1".into(),
+            is_error: false,
+            duration_ms: Some(5),
+            diff: diff("README.md", 3, 1),
+        },
+        AgentEvent::TurnFinished {
+            turn: 7,
+            tools: 2,
+            duration_ms: 900,
+        },
+    ] {
+        crate::run_events_apply(&mut v, ev);
+    }
+    v.set_mode(Role::SoloScribe);
+    v
+}
+
 #[test]
 fn snapshot_review() {
     let mut v = edited();
@@ -2543,12 +2623,17 @@ fn tab_moves_within_a_row_and_shift_tab_between_rows() {
         Action::SetMode(Role::SoloAudit)
     ));
     v.set_mode(Role::SoloAudit);
-    // One specialist today: Tab stays on it.
+    // The specialists go round: audit, scribe, audit.
+    assert!(matches!(
+        press(&mut v, false),
+        Action::SetMode(Role::SoloScribe)
+    ));
+    v.set_mode(Role::SoloScribe);
     assert!(matches!(
         press(&mut v, false),
         Action::SetMode(Role::SoloAudit)
     ));
-    // Back to the primary hat last worn.
+    // Back to the primary hat last worn, from either specialist.
     assert!(matches!(
         press(&mut v, true),
         Action::SetMode(Role::SoloBuild)
@@ -2558,6 +2643,13 @@ fn tab_moves_within_a_row_and_shift_tab_between_rows() {
     assert!(matches!(
         press(&mut v, true),
         Action::SetMode(Role::SoloPlan)
+    ));
+    // The specialist last worn is remembered: scribe, then back to it.
+    v.set_mode(Role::SoloScribe);
+    v.set_mode(Role::SoloBuild);
+    assert!(matches!(
+        press(&mut v, true),
+        Action::SetMode(Role::SoloScribe)
     ));
     // The hints say where each key goes.
     v.set_mode(Role::SoloBuild);
@@ -2570,7 +2662,17 @@ fn tab_moves_within_a_row_and_shift_tab_between_rows() {
     v.set_mode(Role::SoloAudit);
     let foot = render_to_string(&v, 160, 50);
     let foot = foot.lines().last().unwrap();
-    assert!(foot.contains("⇧tab plan · build"), "{foot}");
+    assert!(
+        foot.contains("tab scribe") && foot.contains("⇧tab plan · build"),
+        "{foot}"
+    );
+    v.set_mode(Role::SoloScribe);
+    let foot = render_to_string(&v, 160, 50);
+    let foot = foot.lines().last().unwrap();
+    assert!(
+        foot.contains("tab audit") && foot.contains("⇧tab plan · build"),
+        "{foot}"
+    );
     // A panel that is open keeps Tab for itself.
     v.panels
         .push(Box::new(PermissionModal::new("bash".into(), "ls".into())));

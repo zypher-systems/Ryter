@@ -24,11 +24,15 @@ x_title = "Ryter"
 connection = "spacexai"
 model = "grok-4.6"
 
-# A hat can have a model of its own: plan, build, audit. Set them in the TUI
-# (/models), or uncomment (`[specialists.review]` still reads as audit):
+# A hat can have a model of its own: plan, build, audit, scribe. Set them in the
+# TUI (/models), or uncomment (`[specialists.review]` still reads as audit). The
+# scribe writes documentation only: a small, cheap model does.
 # [specialists.audit]
 # connection = "openrouter"
 # model = "anthropic/claude-sonnet-4.6"
+# [specialists.scribe]
+# connection = "openrouter"
+# model = "anthropic/claude-haiku-4.5"
 
 [spend]
 enabled = true

@@ -10,8 +10,8 @@
     │   follows all hats   │                                               │
     │   Audit              │                                               │
     │   follows all hats   │                                               │
-    │                      │                                               │
-    │                      │                                               │
+    │   Scribe             │                                               │
+    │   follows all hats   │                                               │
     │                      │                                               │
     │                      │ spacexai · grok-4.6 · reasoning auto (medium… │
     │ ↑↓ seat   → models   │ enter set   ← seats   esc done   tab reasoning│

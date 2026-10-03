@@ -763,7 +763,7 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
 }
 
 /// The hats that can have a model of their own, as `specialists` names them.
-pub const HAT_ROLES: &[&str] = &["plan", "build", "audit"];
+pub const HAT_ROLES: &[&str] = &["plan", "build", "audit", "scribe"];
 
 /// A hat's seat under the name it had before: `review` is `audit`.
 pub fn hat_seat_name(name: &str) -> &str {
@@ -2505,6 +2505,18 @@ mod tests {
         );
         assert!(aliased.specialists.contains_key("audit"));
         assert!(!aliased.specialists.contains_key("review"));
+        // The scribe's seat loads from the same file.
+        fs::write(
+            hats_path(dir.path()),
+            "[scribe]\nconnection = \"openrouter\"\nmodel = \"small/writer\"\n",
+        )
+        .unwrap();
+        let with_scribe = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(
+            with_scribe.route_for(Role::SoloScribe),
+            ("openrouter".into(), "small/writer".into())
+        );
+        assert!(with_scribe.follows_orchestrator(Role::SoloAudit));
         // Back to the seat as saved, for the rest of the test.
         save_hats(dir.path(), &cfg.specialists).unwrap();
         let again = load_at(dir.path(), None, false).unwrap();
