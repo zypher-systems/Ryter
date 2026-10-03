@@ -2483,6 +2483,21 @@ fn judge(
     let only_looks = read_only(prog, words)
         || matches!(prog, "test" | "[" | "rm" | "unlink" | "chmod" | "chgrp")
         || is_container_tool(prog);
+    // `cp .env.example .env`: the project's own `.env` made from its
+    // example, which the build hat may do with a person's yes each time,
+    // as it may write the file. The source must not be a secret itself.
+    if ctx.role == Role::SoloBuild && prog == "cp" && !in_container {
+        let plain = plain_args(from_prog);
+        if let Some((last, sources)) = plain.split_last() {
+            let to_dotenv = resolve(ctx, last).is_some_and(|p| is_dotenv(&p, ctx));
+            let from_secret = sources
+                .iter()
+                .any(|s| names_a_secret(&[String::new(), (*s).to_string()], ctx));
+            if to_dotenv && !sources.is_empty() && !from_secret {
+                return Decision::AskSecret.and(nested);
+            }
+        }
+    }
     if !only_looks
         && !in_container
         && (names_a_secret(from_prog, ctx)
@@ -2554,7 +2569,18 @@ fn judge(
                 .get(parsed.args.wrapping_sub(1))
                 .map_or(prog, String::as_str);
             let base = if is_container_tool(prog) {
-                container_decision(prog, args, ctx)
+                let d = container_decision(prog, args, ctx);
+                // The project's containers run freely in the project. After
+                // a `cd` out of it, the same words start somebody else's
+                // stack: that asks, as a compose file named outside does.
+                if d == Decision::Allow
+                    && cwd_outside(ctx)
+                    && container_command(prog, args) != InContainer::Looks
+                {
+                    Decision::AskOutside
+                } else {
+                    d
+                }
             } else if (read_only(prog, words) && !path_escapes(&seen, ctx))
                 || (runs_freely(prog, raw, args, ctx)
                     && !runs_a_foreign_script(prog, seen_from_prog, ctx)
@@ -2580,6 +2606,10 @@ fn judge(
                 } else {
                     Decision::Allow
                 }
+            } else if own_request(prog, args, ctx) && looks_only_request(args) {
+                // A GET of the project's own address: a look at the running
+                // product, which a review may take as it reads its logs.
+                Decision::Allow
             } else if checks_only(prog, args, ctx) {
                 // What it runs is the project's, and nothing else's; and a
                 // secret is not something to hand a tool.
@@ -2610,6 +2640,43 @@ fn judge(
         Role::Crew => Decision::Deny,
     };
     base.and(nested)
+}
+
+/// Whether the command runs somewhere other than in the project: after a
+/// `cd` out of it, or to a place the gate couldn't read.
+fn cwd_outside(ctx: &ToolContext) -> bool {
+    match &ctx.cwd {
+        Cwd::Project => false,
+        Cwd::At(dir) => !is_under(&real_path(dir), &real_path(&ctx.workspace)),
+        Cwd::Unknown => true,
+    }
+}
+
+/// A `curl` that only asks: no method but GET or HEAD, nothing sent.
+fn looks_only_request(args: &[String]) -> bool {
+    let mut it = args.iter().map(String::as_str);
+    while let Some(a) = it.next() {
+        match a {
+            "-X" | "--request" => {
+                if !matches!(it.next(), Some("GET" | "HEAD")) {
+                    return false;
+                }
+            }
+            "-d" | "--data" | "--data-raw" | "--data-binary" | "--data-urlencode" | "-F"
+            | "--form" | "-T" | "--upload-file" | "--json" => return false,
+            _ if a.starts_with("-X") && a.len() > 2 && !matches!(&a[2..], "GET" | "HEAD") => {
+                return false;
+            }
+            _ if a.starts_with("--request=") && !matches!(&a[10..], "GET" | "HEAD") => {
+                return false;
+            }
+            _ if a.starts_with("-d") || a.starts_with("--data") || a.starts_with("-F") => {
+                return false;
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 /// Whether `host` is this machine: where a project under test is served.
@@ -3019,6 +3086,30 @@ pub fn bash_hint(args: &Value, ctx: &ToolContext) -> Option<&'static str> {
     if searches_a_secret {
         return Some(
             "This search would read a secret file (`.env`, a key) in the folders it covers,              so it is refused. Name the folders to search (`grep -rn PATTERN src/`), say              which files (`--include='*.rs'`), or use `rg`, which leaves hidden and ignored              files out.",
+        );
+    }
+    // A refusal that is about a file named, not about what the command
+    // does: said, so the model doesn't take it for a rule about `grep`.
+    let (mut secret, mut escapes) = (false, false);
+    for s in segments(cmd) {
+        let w = read(&s, ctx, false);
+        let p = parse(&w);
+        let (seen, _) = with_values(&w, p.args.saturating_sub(1));
+        secret |= names_a_secret(&seen, ctx) || names_a_place_of_keys(&seen, ctx);
+        escapes |= p.prog.is_some_and(|prog| READERS.contains(&prog)) && path_escapes(&seen, ctx);
+    }
+    if secret {
+        return Some(
+            "This command names a secret file (`.env`, a key, a credentials file) or a \
+             folder where keys are kept, which no hat reads. Leave that path out.",
+        );
+    }
+    if escapes && !matches!(ctx.role, Role::SoloBuild | Role::SoloTest) {
+        return Some(
+            "This command reads a file outside this project, which this hat doesn't do. It \
+             reads the project, scratch space (`/tmp`) and the user's home folder; a `.ryter` \
+             folder outside the project is Ryter's own, not the project's. This project's \
+             record is in its own `.ryter/`, which can be read.",
         );
     }
     let hidden = segments(cmd).iter().any(|s| {
@@ -3445,17 +3536,22 @@ fn decide_git(words: &[String], ctx: &ToolContext) -> Decision {
     if sub == "config" && words.iter().any(|w| w == "--global" || w == "--system") {
         return Decision::Deny;
     }
+    // `git stash list` and `git stash show` look at the stash; the rest of
+    // `stash` moves work.
+    let reads = (GIT_READ.contains(&sub)
+        || (sub == "stash" && matches!(rest.get(1).map(String::as_str), Some("list" | "show"))))
+        && !moves_a_ref;
     match ctx.role {
         // Reads run; anything that changes the repository asks.
         Role::SoloBuild => {
-            if GIT_READ.contains(&sub) && !moves_a_ref {
+            if reads {
                 Decision::Allow
             } else {
                 Decision::Ask
             }
         }
         _ => {
-            if GIT_READ.contains(&sub) && !moves_a_ref {
+            if reads {
                 Decision::Allow
             } else {
                 Decision::Deny
@@ -7754,6 +7850,92 @@ mod tests {
             ),
             Decision::Deny
         );
+    }
+
+    /// Two findings from a real session: `cd -` left the project through
+    /// `OLDPWD` (fixed where commands are run), and after a `cd` out of the
+    /// project a compose command was allowed to start whatever stack was
+    /// there. The build hat may also make the project's `.env` from its
+    /// example, asked each time; the review hat may look at the running
+    /// product and the stash.
+    #[test]
+    fn a_compose_command_outside_the_project_asks_like_an_outside_write() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("docker-compose.yml"), "services: {}\n").unwrap();
+        std::fs::write(d.join(".env.example"), "DB_PASSWORD=\n").unwrap();
+        let other = TempDir::new().unwrap();
+        let elsewhere = other.path().display().to_string();
+        for role in [Role::SoloBuild, Role::SoloTest] {
+            assert_eq!(
+                bash("docker compose up -d --build", role, d),
+                Decision::Allow
+            );
+            for cmd in [
+                format!("cd {elsewhere} && docker compose up -d"),
+                format!("cd {elsewhere} && docker compose up -d --build --wait"),
+                format!("cd {elsewhere}; docker compose build"),
+                format!("cd {elsewhere} && podman compose up -d"),
+                format!("cd {elsewhere} && docker run --rm -v ./x:/x alpine true"),
+            ] {
+                assert_eq!(bash(&cmd, role, d), Decision::AskOutside, "{role:?}: {cmd}");
+            }
+            // Looking from there is still looking.
+            for cmd in [
+                format!("cd {elsewhere} && docker compose ps"),
+                format!("cd {elsewhere} && docker compose logs app"),
+                format!("cd {elsewhere} && docker ps"),
+            ] {
+                assert_eq!(bash(&cmd, role, d), Decision::Allow, "{role:?}: {cmd}");
+            }
+        }
+        // `cp .env.example .env`: the build hat, asked every time; a secret
+        // as the source, or any other hat, never.
+        assert_eq!(
+            bash("cp .env.example .env", Role::SoloBuild, d),
+            Decision::AskSecret
+        );
+        assert_eq!(
+            bash("test -f .env || cp .env.example .env", Role::SoloBuild, d),
+            Decision::AskSecret
+        );
+        assert_eq!(
+            bash("cp ~/.ssh/id_rsa .env", Role::SoloBuild, d),
+            Decision::Deny
+        );
+        assert_eq!(
+            bash("cp .env .env.local", Role::SoloBuild, d),
+            Decision::Deny
+        );
+        for role in [Role::SoloPlan, Role::SoloReview, Role::SoloTest] {
+            assert_eq!(
+                bash("cp .env.example .env", role, d),
+                Decision::Deny,
+                "{role:?}"
+            );
+        }
+        // The review hat: a GET of the project's own address, and the stash
+        // listed, are looks; a POST, or a stash moved, are not.
+        for cmd in [
+            "curl -s http://localhost:8001/health",
+            "curl -s -o /dev/null -w '%{http_code}' localhost:8001/",
+            "curl -sI http://127.0.0.1:8000/",
+            "git stash list",
+            "git stash show -p stash@{0}",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloReview, d), Decision::Allow, "{cmd}");
+        }
+        for cmd in [
+            "curl -s -X POST -d a=1 http://localhost:8001/items",
+            "curl -s -F name=x localhost:8001/items/new",
+            "curl -s --json '{}' localhost:8001/x",
+            "curl -s https://example.com/",
+            "git stash",
+            "git stash pop",
+            "git stash drop",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloReview, d), Decision::Deny, "{cmd}");
+        }
     }
 
     #[test]
