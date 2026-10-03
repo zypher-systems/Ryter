@@ -51,6 +51,54 @@ pub fn strict_prompt(name: &str, args: &Value) -> bool {
 }
 pub use policy::{Decision, decide, removes_stack_data};
 
+/// How the build and test hats answer their own questions: `ask` a
+/// person; `always`, a yes to everything inside the project; `yolo`, a
+/// yes to everything that asks at all. What is refused is refused in all
+/// three.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToolsMode {
+    /// A person answers.
+    #[default]
+    Ask,
+    /// Yes inside the project; outside it, and the project's `.env`,
+    /// still ask.
+    Always,
+    /// Yes to every question.
+    Yolo,
+}
+
+impl ToolsMode {
+    /// `ask`, `always`, `yolo`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Always => "always",
+            Self::Yolo => "yolo",
+        }
+    }
+
+    /// The mode a word names, with the words people use for it.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "ask" | "off" => Some(Self::Ask),
+            "always" | "auto" | "on" => Some(Self::Always),
+            "yolo" | "full" => Some(Self::Yolo),
+            _ => None,
+        }
+    }
+
+    /// From the two flags a context carries.
+    pub fn of(always_approve: bool, yolo: bool) -> Self {
+        if yolo {
+            Self::Yolo
+        } else if always_approve {
+            Self::Always
+        } else {
+            Self::Ask
+        }
+    }
+}
+
 /// Runtime context for a tool call.
 #[derive(Debug, Clone)]
 pub struct ToolContext {
@@ -62,8 +110,14 @@ pub struct ToolContext {
     pub notes_dir: std::path::PathBuf,
     /// Who is calling.
     pub role: Role,
-    /// Treat Ask as Allow (deny still wins).
+    /// Treat Ask as Allow (deny still wins). Writes outside the project
+    /// and to the project's `.env` still ask.
     pub always_approve: bool,
+    /// Yolo: every question is a yes, those two included. What is refused
+    /// stays refused.
+    pub yolo: bool,
+    /// The user's own rules for what asks.
+    pub permissions: Arc<crate::permissions::Permissions>,
     /// Outbound MCP hub.
     pub mcp: Option<Arc<Mutex<crate::mcp::McpHub>>>,
     /// Optional lifecycle hooks.
@@ -126,6 +180,9 @@ impl std::fmt::Debug for LiveOutput {
 /// Marks a permission prompt for a write outside the project. The TUI shows
 /// such prompts with a warning and no "allow all".
 pub const OUTSIDE: &str = "· outside the project";
+/// Appended to a tool name in a permission prompt for a write to the
+/// project's own `.env`: a person answers every time.
+pub const SECRET: &str = "· a secret file";
 
 /// Result of `execute`.
 #[derive(Debug, Clone)]
@@ -592,6 +649,11 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
     }
     match decide(name, args, ctx) {
         Decision::Allow => run_with_hooks(name, args, ctx),
+        // Yolo: every question is a yes, the rest of the machine and the
+        // project's `.env` included. A refusal is still a refusal.
+        Decision::Ask | Decision::AskOutside | Decision::AskSecret if ctx.yolo => {
+            run_with_hooks(name, args, ctx)
+        }
         // Outside the project: a person answers every time. "Allow all" and
         // --always-approve cover the project, not the rest of the machine.
         Decision::AskOutside => match &ctx.user_io {
@@ -619,6 +681,36 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                 "denied: {name} writes outside the project, which needs a person's yes each \
                  time, and nobody can be asked here (headless). --always-approve covers the \
                  project only. Work inside the project instead"
+            ))),
+        },
+        // The project's own `.env`: a person answers every time, and what
+        // is written is shown to them, never to the model.
+        Decision::AskSecret => match &ctx.user_io {
+            Some(io) => {
+                let summary = crate::user_io::summary_args(name, args);
+                match io.permission_with(
+                    &format!("{name} {SECRET}"),
+                    &summary,
+                    fs::preview(name, args, ctx),
+                    &ctx.cancel,
+                ) {
+                    crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
+                        run_with_hooks(name, args, ctx)
+                    }
+                    crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
+                        Err(crate::error::Error::Cancelled)
+                    }
+                    crate::user_io::Permission::Deny => Ok(ToolOutput::err(format!(
+                        "denied by user: {name} {summary} (a secret file). Don't retry it: \
+                         tell the user what the file needs and let them write it"
+                    ))),
+                }
+            }
+            None => Ok(ToolOutput::err(format!(
+                "denied: {name} {} is a secret file, which needs a person's yes each time, \
+                 and nobody can be asked here (headless). --always-approve doesn't cover it. \
+                 Tell the user what the file needs",
+                crate::user_io::summary_args(name, args)
             ))),
         },
         Decision::Ask
@@ -775,6 +867,8 @@ mod tests {
             notes_dir: notes,
             role,
             always_approve: false,
+            yolo: false,
+            permissions: Default::default(),
             mcp: None,
             hooks: None,
             cancel: crate::cancel::Cancel::new(),
@@ -870,6 +964,12 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
         let mut c = ctx(Role::SoloBuild, dir.path());
         let args = json!({"path": "src/lib.rs", "content": "fn x() {}"});
+        // Edits run; `[permissions] edit = "ask"` makes them a question.
+        assert_eq!(decide("write", &args, &c), Decision::Allow);
+        c.permissions = Arc::new(crate::permissions::Permissions {
+            edit: Some(crate::permissions::Answer::Ask),
+            ..Default::default()
+        });
         assert_eq!(decide("write", &args, &c), Decision::Ask);
         c.always_approve = true;
         let out = gated_execute("write", &args, &c).unwrap();
@@ -1107,6 +1207,48 @@ mod tests {
         }
     }
 
+    /// The project's own `.env` is written with a yes every time: an
+    /// approved plan, "allow all" and --always-approve don't cover it,
+    /// headless says so, and what was written is never read back.
+    #[test]
+    fn the_projects_env_is_written_with_a_yes_every_time() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join(".env.example"), "DB_PASSWORD=\n").unwrap();
+        let args = json!({"path": ".env", "content": "DB_PASSWORD=localdev\n"});
+        let mut c = ctx(Role::SoloBuild, dir.path());
+        c.always_approve = true;
+        c.allowed.lock().unwrap().insert("edit".into());
+        let out = gated_execute("write", &args, &c).unwrap();
+        assert!(out.is_error && out.text.contains("secret file"), "{out:?}");
+        assert!(!dir.path().join(".env").exists());
+        let (io, rx) = crate::user_io::UserIo::pair();
+        c.user_io = Some(io);
+        let asked = std::thread::spawn(move || match rx.recv().unwrap() {
+            crate::user_io::UserRequest::Permission { tool, reply, .. } => {
+                let _ = reply.send(crate::user_io::Permission::Allow);
+                tool
+            }
+            _ => String::new(),
+        });
+        let out = gated_execute("write", &args, &c).unwrap();
+        assert!(!out.is_error, "{out:?}");
+        assert!(
+            asked.join().unwrap().ends_with(SECRET),
+            "the prompt says what"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".env")).unwrap(),
+            "DB_PASSWORD=localdev\n"
+        );
+        // Written, not read: the result names the file and its length only.
+        assert!(!out.text.contains("localdev"), "{out:?}");
+        let read = gated_execute("read_file", &json!({"path": ".env"}), &c).unwrap();
+        assert!(read.is_error, "{read:?}");
+        // No other hat is asked: it is refused.
+        let out = gated_execute("write", &args, &ctx(Role::SoloPlan, dir.path())).unwrap();
+        assert!(out.is_error, "{out:?}");
+    }
+
     /// "Allow all" and --always-approve don't reach the rest of the
     /// machine: headless says so, and a person is asked each time, told
     /// where.
@@ -1145,26 +1287,60 @@ mod tests {
         assert!(out.is_error, "{out:?}");
     }
 
-    /// Refused inline code names the route that works; the route really works.
+    /// Inline code runs in the build hat. The review hat, refused it, is
+    /// told which hats run it and what it may run itself; a shell handed a
+    /// command as text is refused in both, and told why.
     #[test]
-    fn refused_inline_code_points_at_a_probe_file() {
+    fn inline_code_runs_in_the_build_hat_and_the_refusals_say_why() {
         let dir = TempDir::new().unwrap();
-        let mut c = ctx(Role::SoloBuild, dir.path());
-        c.always_approve = true;
-        for cmd in ["python3 -c 'print(1)'", "python3 - <<'EOF'"] {
-            let out = gated_execute("bash", &json!({ "command": cmd }), &c).unwrap();
-            assert!(out.is_error && out.text.contains("probe.py"), "{out:?}");
-        }
-        let out = gated_execute(
-            "bash",
-            &json!({ "command": "printf 'print(6*7)\\n' > probe.py && python3 probe.py" }),
-            &c,
-        )
-        .unwrap();
+        let c = ctx(Role::SoloBuild, dir.path());
+        let out =
+            gated_execute("bash", &json!({ "command": "python3 -c 'print(6*7)'" }), &c).unwrap();
         assert!(!out.is_error && out.text.contains("42"), "{out:?}");
+        let out = gated_execute("bash", &json!({ "command": "bash -c 'echo hi'" }), &c).unwrap();
+        assert!(
+            out.is_error && out.text.contains("shell handed a command"),
+            "{out:?}"
+        );
+        let r = ctx(Role::SoloReview, dir.path());
+        let out =
+            gated_execute("bash", &json!({ "command": "python3 -c 'print(1)'" }), &r).unwrap();
+        assert!(
+            out.is_error && out.text.contains("build and test hats"),
+            "{out:?}"
+        );
         // Other refusals keep the general wording.
         let out = gated_execute("bash", &json!({ "command": "sudo ls" }), &c).unwrap();
         assert!(out.text.contains("outside policy"), "{out:?}");
+    }
+
+    /// Yolo: every question is a yes, the rest of the machine and the
+    /// project's `.env` included; a refusal is still a refusal.
+    #[test]
+    fn yolo_answers_every_question_and_refuses_what_is_refused() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("gone.txt"), "x").unwrap();
+        let outside = TempDir::new().unwrap();
+        let mut c = ctx(Role::SoloBuild, dir.path());
+        c.yolo = true;
+        for (name, args) in [
+            ("bash", json!({"command": "rm gone.txt"})),
+            ("write", json!({"path": ".env", "content": "A=1\n"})),
+            (
+                "write",
+                json!({"path": outside.path().join("x.txt").to_string_lossy(), "content": "hi"}),
+            ),
+        ] {
+            let out = gated_execute(name, &args, &c).unwrap();
+            assert!(!out.is_error, "{name}: {out:?}");
+        }
+        assert!(!dir.path().join("gone.txt").exists());
+        assert!(dir.path().join(".env").exists());
+        assert!(outside.path().join("x.txt").exists());
+        for cmd in ["sudo ls", "cat .env", "cat ~/.ssh/id_rsa"] {
+            let out = gated_execute("bash", &json!({"command": cmd}), &c).unwrap();
+            assert!(out.is_error, "{cmd}: {out:?}");
+        }
     }
 
     /// A reviewer refused a container command is told what does run in
@@ -1306,6 +1482,10 @@ mod edit_tests {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join("f.txt"), "keep\nold\n").unwrap();
         let mut c = tests::ctx(Role::SoloBuild, dir.path());
+        c.permissions = Arc::new(crate::permissions::Permissions {
+            edit: Some(crate::permissions::Answer::Ask),
+            ..Default::default()
+        });
         let (io, rx) = crate::user_io::UserIo::pair();
         c.user_io = Some(io);
         let long: String = (0..40)
@@ -1371,6 +1551,12 @@ mod allow_tests {
     fn allow_for_the_session_covers_only_what_it_named() {
         let dir = tempfile::TempDir::new().unwrap();
         let mut c = tests::ctx(Role::SoloBuild, dir.path());
+        // `mkdir` runs by default; a rule of the user's makes it a question.
+        let mut rules = crate::permissions::Permissions::default();
+        rules
+            .bash
+            .insert("mkdir *".into(), crate::permissions::Answer::Ask);
+        c.permissions = Arc::new(rules);
         let (io, rx) = crate::user_io::UserIo::pair();
         c.user_io = Some(io);
         let answers = std::thread::spawn(move || {

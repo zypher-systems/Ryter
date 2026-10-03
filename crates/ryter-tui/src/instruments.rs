@@ -183,6 +183,44 @@ fn context(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>>
     ]
 }
 
+/// The bars of a history, tallest for the busiest second.
+fn sparkline(history: &[u64]) -> String {
+    const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let top = history.iter().copied().max().unwrap_or(0).max(1);
+    history
+        .iter()
+        .map(|&n| {
+            if n == 0 {
+                BARS[0]
+            } else {
+                BARS[((n * 7).div_ceil(top) as usize).clamp(1, 7)]
+            }
+        })
+        .collect()
+}
+
+/// How fast the model is writing: tokens a second now, and the last
+/// eight seconds as bars. Idle between turns.
+fn pulse(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>> {
+    let dim = Style::default().fg(theme.dim).bg(bg);
+    let now = view.now_ms;
+    let bars = sparkline(&view.pulse.history(now));
+    let (bars_style, right) = match view.pulse.rate(now) {
+        Some(rate) => (
+            Style::default().fg(theme.mode(view.mode)).bg(bg),
+            vec![
+                Span::styled(rate.to_string(), Style::default().fg(theme.fg).bg(bg)),
+                Span::styled(" tok/s", dim),
+            ],
+        ),
+        None => (dim, vec![Span::styled("idle", dim)]),
+    };
+    vec![
+        Line::from(heading("PULSE", theme, bg)),
+        ends(vec![Span::styled(bars, bars_style)], right, w, bg),
+    ]
+}
+
 fn spend(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>> {
     let dim = Style::default().fg(theme.dim).bg(bg);
     let body = Style::default().fg(theme.fg).bg(bg);
@@ -258,25 +296,6 @@ fn guard(view: &View, theme: Theme, bg: Color, w: usize, condensed: bool) -> Vec
     ]
 }
 
-/// The latest test run, where one has run.
-fn tests_row(view: &View, theme: Theme, bg: Color, w: usize) -> Option<Line<'static>> {
-    let t = view.last_tests.as_ref()?;
-    let color = if t.starts_with('✗') {
-        theme.error
-    } else {
-        theme.success
-    };
-    Some(ends(
-        vec![Span::styled("tests", Style::default().fg(theme.fg).bg(bg))],
-        vec![Span::styled(
-            wrap::truncate(t, w.saturating_sub(7)),
-            Style::default().fg(color).bg(bg),
-        )],
-        w,
-        bg,
-    ))
-}
-
 fn changes(view: &View, theme: Theme, bg: Color, w: usize, condensed: bool) -> Vec<Line<'static>> {
     let dim = Style::default().fg(theme.dim).bg(bg);
     let body = Style::default().fg(theme.fg).bg(bg);
@@ -349,7 +368,6 @@ fn changes(view: &View, theme: Theme, bg: Color, w: usize, condensed: bool) -> V
             }
         }
     }
-    lines.extend(tests_row(view, theme, bg, w));
     lines
 }
 
@@ -366,6 +384,7 @@ pub fn lines(
     let mut cards = vec![
         model(view, theme, bg, w, condensed),
         context(view, theme, bg, w),
+        pulse(view, theme, bg, w),
         spend(view, theme, bg, w),
         guard(view, theme, bg, w, condensed),
         changes(view, theme, bg, w, condensed),

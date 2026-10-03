@@ -119,6 +119,9 @@ pub(crate) fn command(cmd: &str, cwd: &std::path::Path) -> Command {
         // The gate reads a command as the shell would with nothing set
         // that changes how it reads: where `cd sub` goes, which names a
         // pattern leaves out, what a new shell runs first.
+        // `cd -` would go back to wherever the user's shell was before
+        // Ryter started: out of the project, unseen.
+        .env_remove("OLDPWD")
         .env_remove("CDPATH")
         .env_remove("GLOBIGNORE")
         .env_remove("BASH_ENV")
@@ -412,6 +415,25 @@ pub(crate) fn group_alive(pgid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `cd -` goes to `OLDPWD`, which was the folder the user's shell was
+    /// in before Ryter started: outside the project, where the gate had
+    /// not looked. A command starts with no `OLDPWD`.
+    #[test]
+    fn a_command_has_no_folder_to_go_back_to() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = command("cd -", dir.path());
+        let removed: Vec<_> = c
+            .get_envs()
+            .filter(|(_, v)| v.is_none())
+            .map(|(k, _)| k.to_string_lossy().into_owned())
+            .collect();
+        assert!(removed.iter().any(|k| k == "OLDPWD"), "{removed:?}");
+        // And so `cd -` has nowhere to go.
+        let out = command("cd - 2>&1; pwd", dir.path()).output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("OLDPWD not set"), "{text}");
+    }
     use crate::cancel::Cancel;
     use crate::role::Role;
     use crate::tools::ToolContext;
@@ -430,6 +452,8 @@ mod tests {
             notes_dir: dir.path().to_path_buf(),
             role: Role::SoloBuild,
             always_approve: true,
+            yolo: false,
+            permissions: Default::default(),
             mcp: None,
             hooks: None,
             cancel: cancel.clone(),

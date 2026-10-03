@@ -1578,6 +1578,22 @@ impl Agent {
                 if run.ready.as_deref().is_some_and(|url| {
                     crate::run::listening(url, std::time::Duration::from_millis(800))
                 }) {
+                    // The project's own compose stack, up already: the build
+                    // hat brought it up, or the user did. It is the project
+                    // running, so the tests can go on; it is not claimed, so
+                    // `/stop` stops only what Ryter started.
+                    if crate::run::compose_up(&run, &root, &self.ctx.cancel) {
+                        return Ok(ToolOutput::ok(format!(
+                            "It is already running: the project's compose stack is up{}, \
+                             started earlier in this project (by the build hat, or by the \
+                             user), and this session won't start it a second time. Go on to \
+                             its tests, against the running stack.",
+                            run.ready
+                                .as_deref()
+                                .map(|a| format!(" at {a}"))
+                                .unwrap_or_default()
+                        )));
+                    }
                     return Ok(ToolOutput::err(
                         "The ready address is already listening, but this session did not start it. Stop the existing service or choose another address before starting this project.",
                     ));
@@ -2848,6 +2864,8 @@ mod tests {
             notes_dir: notes,
             role: Role::SoloBuild,
             always_approve: true,
+            yolo: false,
+            permissions: Default::default(),
             mcp: None,
             hooks: None,
             cancel: crate::cancel::Cancel::new(),

@@ -131,6 +131,70 @@ pub(crate) fn tail(s: &str, max: usize) -> String {
     format!("…{}", s.chars().skip(n - keep).collect::<String>())
 }
 
+/// `(success, warning, failure)` from a test run's summary line, as the
+/// tools report one: `13 passed, 2 skipped`, `test result: ok. 446 passed;
+/// 0 failed; 3 ignored`, `Tests: 1 failed, 5 passed, 6 total`. `None`
+/// when the line has no counts to read.
+pub fn check_counts(summary: &str) -> Option<(u32, u32, u32)> {
+    let (mut ok, mut warn, mut bad) = (0u32, 0u32, 0u32);
+    let mut any = false;
+    let words: Vec<&str> = summary.split_whitespace().collect();
+    for pair in words.windows(2) {
+        let digits: String = pair[0].chars().filter(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() || pair[0].chars().any(|c| !c.is_ascii_digit() && c != ',') {
+            continue;
+        }
+        let Ok(n) = digits.parse::<u32>() else {
+            continue;
+        };
+        let word = pair[1]
+            .trim_matches(|c: char| !c.is_ascii_alphabetic())
+            .to_ascii_lowercase();
+        let slot = match word.as_str() {
+            "passed" | "passing" | "pass" | "ok" | "succeeded" => &mut ok,
+            "failed" | "failing" | "fail" | "error" | "errors" | "broken" => &mut bad,
+            "skipped" | "ignored" | "warning" | "warnings" | "xfailed" | "pending" | "todo"
+            | "flaky" => &mut warn,
+            _ => continue,
+        };
+        *slot += n;
+        any = true;
+    }
+    any.then_some((ok, warn, bad))
+}
+
+/// The three rows a block's checks take: how many went well, how many are
+/// a warning (skipped, not reached), how many failed. A count of nothing
+/// is dim, so the eye lands on the one that isn't.
+fn check_rows(
+    (ok, warn, bad): (u32, u32, u32),
+    theme: Theme,
+    bg: Color,
+    w: usize,
+) -> Vec<Line<'static>> {
+    let dim = Style::default().fg(theme.dim).bg(bg);
+    [
+        ("success", ok, theme.success),
+        ("warning", warn, theme.warn),
+        ("failure", bad, theme.error),
+    ]
+    .into_iter()
+    .map(|(label, n, color)| {
+        let style = if n == 0 {
+            dim
+        } else {
+            Style::default().fg(color).bg(bg)
+        };
+        ends(
+            vec![Span::styled(format!("  {label}"), style)],
+            vec![Span::styled(n.to_string(), style)],
+            w,
+            bg,
+        )
+    })
+    .collect()
+}
+
 /// One hat's block. `figures` adds the rows that are that hat's own; a
 /// short screen leaves them off every block at once.
 fn block(view: &View, theme: Theme, hat: Role, w: usize, figures: bool) -> Vec<Line<'static>> {
@@ -269,14 +333,20 @@ fn block(view: &View, theme: Theme, hat: Role, w: usize, figures: bool) -> Vec<L
                     dim,
                 ));
             }
-            // The latest run of the tests, whichever hat ran them.
+            // The latest run of the project's tests, whichever hat ran
+            // them: its counts, or its words where it gave none.
             if let Some(t) = &view.last_tests {
-                let style = if t.starts_with('✗') { bad } else { good };
-                lines.push(row(
-                    "tests",
-                    vec![Span::styled(wrap::truncate(t, w.saturating_sub(9)), style)],
-                    dim,
-                ));
+                match check_counts(t) {
+                    Some(counts) => lines.extend(check_rows(counts, theme, bg, w)),
+                    None => {
+                        let style = if t.starts_with('✗') { bad } else { good };
+                        lines.push(row(
+                            "checks",
+                            vec![Span::styled(wrap::truncate(t, w.saturating_sub(10)), style)],
+                            dim,
+                        ));
+                    }
+                }
             }
         }
         Role::SoloReview => {
@@ -291,14 +361,18 @@ fn block(view: &View, theme: Theme, hat: Role, w: usize, figures: bool) -> Vec<L
             }
         }
         Role::SoloTest => {
-            let v = tally(
-                totals.checks_passed,
-                totals.checks_failed,
-                "passed",
-                "failed",
-            );
-            if !v.is_empty() {
-                lines.push(row("checks", v, dim));
+            // The tester's own checks, across its reports.
+            if totals.checks_passed + totals.checks_skipped + totals.checks_failed > 0 {
+                lines.extend(check_rows(
+                    (
+                        totals.checks_passed,
+                        totals.checks_skipped,
+                        totals.checks_failed,
+                    ),
+                    theme,
+                    bg,
+                    w,
+                ));
             }
         }
     }

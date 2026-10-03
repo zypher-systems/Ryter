@@ -8,20 +8,20 @@
          │  fix the blocking finding                                                      │ ━━━━━━━━━────────────── 38%
          │                                                                                │ 97k / 256k tokens
          ├─ write  app/server.js ········································· +1 −1  0.0s    │
-         │    1   app.get('/search', (req, res) => {                                      │ SPEND
-         │    2 -   const q = (req.query.q || '').trim()                                  │ session              $0.065
-         │    2 +   const q = String(req.query.q ?? '').trim()                            │ project               $4.82
-         │    3     if (!q) return res.json([])                                           │ budget                  off
-         │    4     res.json(find(q))                                                     │
-         ├─ write  test/search.test.js ··································· +4 −0  0.0s    │ GUARD
-         │     5     assert.deepEqual(await search(''), [])                               │ sandbox           workspace
-         │     6   })                                                                     │ this hat         asks first
-         │     7 +                                                                        │
-         │     8 + test('a missing query finds nothing', async () => {                    │ CHANGES
-         │     9 +   assert.deepEqual(await search(), [])                                 │ 2 files              +12 −1
-         │    10 + })                                                                     │ tests           ✓ 14 passed
-         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009                       │
-                   ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄                   │
+         │    1   app.get('/search', (req, res) => {                                      │ PULSE
+         │    2 -   const q = (req.query.q || '').trim()                                  │ ▁▁▁▁▁▁▁▁               idle
+         │    2 +   const q = String(req.query.q ?? '').trim()                            │
+         │    3     if (!q) return res.json([])                                           │ SPEND
+         │    4     res.json(find(q))                                                     │ session              $0.065
+         ├─ write  test/search.test.js ··································· +4 −0  0.0s    │ project               $4.82
+         │     5     assert.deepEqual(await search(''), [])                               │ budget                  off
+         │     6   })                                                                     │
+         │     7 +                                                                        │ GUARD
+         │     8 + test('a missing query finds nothing', async () => {                    │ sandbox           workspace
+         │     9 +   assert.deepEqual(await search(), [])                                 │ this hat         asks first
+         │    10 + })                                                                     │
+         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009                       │ CHANGES
+                   ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄                   │ 2 files              +12 −1
              ▄▄                                                            ▄▄             │
              ▀                                                              ▀             │
                  ▀▀▀▀▀▀                                            ▀▀▀▀▀▀                 │
@@ -34,7 +34,7 @@
                                                                                           │
                                                                                           │
                                                                                           │
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  BUILD  › what should change? · Tab: review · / for commands
+──────────────────────────────────────────────────────────────────────────────────────────│
+  BUILD  › what should change? · Tab: review · / for commands                             │
 
  $ spend    enter send    tab review    / commands    ^t changes    ^o expand    ^b hat rack    ^c quit

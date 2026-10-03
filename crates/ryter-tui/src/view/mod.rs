@@ -77,6 +77,65 @@ pub struct ProductUp {
     pub stop: Option<String>,
 }
 
+/// Output tokens as they stream, for the pulse meter: how fast the model
+/// is writing now, and over the last few seconds.
+#[derive(Debug, Clone, Default)]
+pub struct Pulse {
+    /// `(when, tokens)`, oldest first, for the last [`Pulse::KEEP_MS`].
+    arrivals: std::collections::VecDeque<(u64, u64)>,
+}
+
+impl Pulse {
+    /// How long arrivals are kept.
+    const KEEP_MS: u64 = 10_000;
+    /// The rate is tokens over this long.
+    const RATE_MS: u64 = 2_000;
+    /// Nothing for this long is idle.
+    const IDLE_MS: u64 = 3_000;
+    /// Seconds of history the meter shows.
+    pub const HISTORY: usize = 8;
+
+    /// `tokens` arrived at `now_ms`.
+    pub fn push(&mut self, now_ms: u64, tokens: u64) {
+        self.arrivals.push_back((now_ms, tokens));
+        while self
+            .arrivals
+            .front()
+            .is_some_and(|(t, _)| now_ms.saturating_sub(*t) > Self::KEEP_MS)
+        {
+            self.arrivals.pop_front();
+        }
+    }
+
+    /// Tokens a second, over the last two seconds; `None` when nothing has
+    /// arrived for three.
+    pub fn rate(&self, now_ms: u64) -> Option<u64> {
+        let last = self.arrivals.back()?.0;
+        if now_ms.saturating_sub(last) > Self::IDLE_MS {
+            return None;
+        }
+        let tokens: u64 = self
+            .arrivals
+            .iter()
+            .filter(|(t, _)| now_ms.saturating_sub(*t) < Self::RATE_MS)
+            .map(|(_, n)| n)
+            .sum();
+        Some(tokens * 1000 / Self::RATE_MS)
+    }
+
+    /// Tokens in each of the last [`Pulse::HISTORY`] seconds, oldest first.
+    pub fn history(&self, now_ms: u64) -> [u64; Self::HISTORY] {
+        let mut out = [0; Self::HISTORY];
+        for (t, n) in &self.arrivals {
+            let ago = usize::try_from(now_ms.saturating_sub(*t) / 1000).unwrap_or(usize::MAX);
+            if ago < Self::HISTORY {
+                out[Self::HISTORY - 1 - ago] += n;
+            }
+        }
+        out
+    }
+}
+
 /// Everything the draw path needs.
 #[derive(Debug, Clone)]
 pub struct View {
@@ -303,6 +362,8 @@ pub struct View {
     /// The screen's size at the last frame: a key that depends on what is
     /// on screen (`^b`) reads it.
     pub screen: std::cell::Cell<(u16, u16)>,
+    /// How fast the model is writing.
+    pub pulse: Pulse,
 }
 
 /// Aggregated spend row for `/spend`.
@@ -467,6 +528,7 @@ impl View {
             uncommitted: None,
             workspace: None,
             screen: std::cell::Cell::new((0, 0)),
+            pulse: Pulse::default(),
         }
     }
 
@@ -600,9 +662,11 @@ impl View {
                 self.push(MessageKind::Assistant { model }, text);
             }
         }
+        let tokens = (text.len() as u64).div_ceil(4);
+        self.pulse.push(self.now_ms, tokens);
         if self.activity.busy() {
             self.activity.verb = crate::activity::Verb::Writing;
-            self.activity.tokens += (text.len() as u64).div_ceil(4);
+            self.activity.tokens += tokens;
         }
     }
 

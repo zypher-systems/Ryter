@@ -239,6 +239,14 @@ pub fn run(view: &mut View) -> Action {
             if trimmed.is_empty() {
                 return Action::None;
             }
+            // A built-in the list doesn't show (`/yolo`, `/always`) is a
+            // command all the same when it is typed in full.
+            if let Some(name) = trimmed.strip_prefix('/') {
+                let name = name.split_whitespace().next().unwrap_or("");
+                if registry::find(name).is_some() {
+                    return registry::run_command(view, &trimmed);
+                }
+            }
             view.submit_user(trimmed.clone(), trimmed)
         }
     }
@@ -475,6 +483,32 @@ mod tests {
         // Hidden aliases are runnable but not listed.
         assert!(!all.iter().any(|m| m.entry.name == "auto"));
         assert!(registry::find("auto").is_some());
+    }
+
+    /// `/yolo` is not listed, so the palette has nothing to highlight;
+    /// typed in full, it is still the command, not a message.
+    #[test]
+    fn a_hidden_built_in_typed_in_full_runs() {
+        let mut v = view();
+        v.composer.set_text("/yolo");
+        refresh(&mut v);
+        assert!(matches(&v).is_empty());
+        let a = run(&mut v);
+        assert!(
+            matches!(
+                a,
+                Action::SetTools {
+                    mode: ryter_core::ToolsMode::Yolo
+                }
+            ),
+            "{a:?}"
+        );
+        assert_eq!(v.composer.text(), "");
+        // Something that is no command at all is a message.
+        v.composer.set_text("/yolotastic plan");
+        refresh(&mut v);
+        let a = run(&mut v);
+        assert!(!matches!(a, Action::SetTools { .. }), "{a:?}");
     }
 
     #[test]

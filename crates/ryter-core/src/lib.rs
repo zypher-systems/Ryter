@@ -21,6 +21,7 @@ pub mod mcp;
 pub mod memory;
 mod outside;
 pub mod page;
+pub mod permissions;
 pub mod plan;
 pub mod project;
 mod project_file;
@@ -78,7 +79,8 @@ pub use skill::{
 };
 pub use spend::{PriceBook, Rates, Usage, format_rates, format_rates_short, format_usd};
 pub use tools::{
-    Decision, ToolContext, ToolOutput, decide, gated_execute, specs_for, specs_for_opts, tools_for,
+    Decision, ToolContext, ToolOutput, ToolsMode, decide, gated_execute, specs_for, specs_for_opts,
+    tools_for,
 };
 pub use user_io::{Permission, UserIo, UserRequest};
 

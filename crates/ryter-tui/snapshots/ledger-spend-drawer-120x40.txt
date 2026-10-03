@@ -20,6 +20,8 @@
            │    3 +
            │    4 + test('an empty query finds nothing', async () => {
            │    5 +   assert.deepEqual(await search(''), [])
+           │    6 + })
+           └─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s · $0.004
 ╭─ spend ──────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ this turn                             session                               project · muzak                          │
 │ $0.004                                $0.018                                $2.29                                    │
@@ -34,7 +36,5 @@
 │ budget off   warn at $1.00                                                                                           │
 │ b set a budget   ⏎ full table   esc close                                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  BUILD  › what should change? · Tab: review · / for commands
 
  b set a budget    ⏎ full table    esc close

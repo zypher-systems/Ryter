@@ -126,7 +126,7 @@ impl Settings {
             select(
                 "perm",
                 "permission mode",
-                &["ask", "always"],
+                &["ask", "always", "yolo"],
                 &view.perm_mode,
                 "ask",
             ),

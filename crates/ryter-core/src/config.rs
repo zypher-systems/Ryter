@@ -49,6 +49,15 @@ pub struct Config {
     /// Optional tools (web fetch/search).
     #[serde(default)]
     pub features: FeaturesConfig,
+    /// What the build and test hats ask about, beyond the gate's fixed
+    /// rules: the user's own answers, by pattern.
+    #[serde(default)]
+    pub permissions: crate::permissions::Permissions,
+    /// The tools mode a TUI session starts in, from `/settings`: `ask`,
+    /// `always` or `yolo` (`settings.toml`). `--always-approve` and
+    /// `--yolo` win over it; headless takes its mode from the flags only.
+    #[serde(default = "default_tools_mode")]
+    pub tools_mode: String,
     /// TUI presentation knobs (`[ui]`).
     #[serde(default)]
     pub ui: UiConfig,
@@ -139,6 +148,8 @@ impl Default for Config {
             hooks: Vec::new(),
             sandbox: SandboxConfig::default(),
             features: FeaturesConfig::default(),
+            permissions: crate::permissions::Permissions::default(),
+            tools_mode: default_tools_mode(),
             ui: UiConfig::default(),
             update: UpdateConfig::default(),
             reasoning_effort: BTreeMap::new(),
@@ -720,7 +731,19 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
         if let Some(root) = project_root {
             let project = root.join(".ryter").join("config.toml");
             if project.is_file() {
+                // The gate's rules are the user's alone: a project's file
+                // may set its models and its budget, not what the gate
+                // asks about, or a repository could widen the gate for
+                // itself.
+                let own_rules = cfg.permissions.clone();
                 merge_file(&mut cfg, &project)?;
+                if cfg.permissions != own_rules {
+                    cfg.warnings.push(format!(
+                        "{}: [permissions] ignored; the gate's rules come from ~/.ryter/config.toml only",
+                        project.display()
+                    ));
+                    cfg.permissions = own_rules;
+                }
                 check_key_file_mode(&project, &cfg)?;
             }
         }
@@ -1011,9 +1034,16 @@ pub fn user_connection_names(home: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn default_tools_mode() -> String {
+    "ask".to_string()
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct SettingsFile {
     session_budget_usd: Option<f64>,
+    /// `ask`, `always` or `yolo`: the tools mode a session starts in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tools: Option<String>,
     warn_usd: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     review_usd: Option<f64>,
@@ -1048,6 +1078,11 @@ fn apply_settings_file(cfg: &mut Config, path: &Path) {
     if let Some(v) = file.sandbox {
         cfg.sandbox.profile = v;
     }
+    if let Some(v) = file.tools {
+        if crate::tools::ToolsMode::parse(&v).is_some() {
+            cfg.tools_mode = v;
+        }
+    }
     if let Some(v) = file.inbound {
         cfg.mcp.inbound = v;
     }
@@ -1067,6 +1102,7 @@ pub fn save_settings(home: &Path, cfg: &Config) -> Result<()> {
         warn_usd: Some(cfg.spend.warn_usd),
         review_usd: Some(cfg.spend.review_usd),
         sandbox: Some(cfg.sandbox.profile.clone()),
+        tools: Some(cfg.tools_mode.clone()),
         inbound: Some(cfg.mcp.inbound),
         web: Some(cfg.features.web),
         ui: Some(UiFile::from(&cfg.ui)),
@@ -1143,6 +1179,7 @@ struct ConfigFile {
     hooks: Vec<HookConfig>,
     sandbox: Option<SandboxConfig>,
     features: Option<FeaturesConfig>,
+    permissions: Option<crate::permissions::Permissions>,
     ui: Option<UiFile>,
     update: Option<UpdateConfig>,
     reasoning_effort: BTreeMap<String, String>,
@@ -1306,6 +1343,14 @@ impl ConfigFile {
         }
         if let Some(f) = self.features {
             cfg.features = f;
+        }
+        // Rules add up across files; a later file's answer for the same
+        // pattern replaces an earlier one's.
+        if let Some(p) = self.permissions {
+            if p.edit.is_some() {
+                cfg.permissions.edit = p.edit;
+            }
+            cfg.permissions.bash.extend(p.bash);
         }
         if let Some(u) = self.ui {
             u.apply(&mut cfg.ui);
@@ -1800,6 +1845,69 @@ mod tests {
         fs::remove_dir_all(p.join(".ryter/skills")).unwrap();
         fs::write(p.join(".ryter/config.toml"), "").unwrap();
         assert!(asks_for_trust(p), "project configuration");
+    }
+
+    /// A trusted project's config sets its models and budget, never the
+    /// gate's rules: those are the user's, from their own file.
+    #[test]
+    fn a_projects_config_cannot_set_the_gates_rules() {
+        use crate::permissions::Answer;
+        let home = TempDir::new().unwrap();
+        let root = TempDir::new().unwrap();
+        fs::write(
+            home.path().join("config.toml"),
+            "[permissions.bash]\n\"git push*\" = \"ask\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.path().join(".ryter")).unwrap();
+        fs::write(
+            root.path().join(".ryter/config.toml"),
+            "[permissions]\nedit = \"ask\"\n[permissions.bash]\n\"git push*\" = \"allow\"\n\"rm -rf *\" = \"allow\"\n",
+        )
+        .unwrap();
+        let cfg = load_at(home.path(), Some(root.path()), true).unwrap();
+        assert_eq!(cfg.permissions.edit, None);
+        assert_eq!(
+            cfg.permissions.for_command("git push origin"),
+            Some(Answer::Ask)
+        );
+        assert_eq!(cfg.permissions.for_command("rm -rf x"), None);
+        assert!(
+            cfg.warnings
+                .iter()
+                .any(|w| w.contains("[permissions] ignored")),
+            "{:?}",
+            cfg.warnings
+        );
+        // A project file without rules changes nothing and says nothing.
+        fs::write(
+            root.path().join(".ryter/config.toml"),
+            "[spend]\nbudget_usd = 1.0\n",
+        )
+        .unwrap();
+        let cfg = load_at(home.path(), Some(root.path()), true).unwrap();
+        assert_eq!(
+            cfg.permissions.for_command("git push origin"),
+            Some(Answer::Ask)
+        );
+        assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+    }
+
+    /// The tools mode chosen in `/settings` is saved, and is the mode the
+    /// next session starts in. A word that isn't a mode is left alone.
+    #[test]
+    fn the_tools_mode_is_saved_and_read_back() {
+        let home = TempDir::new().unwrap();
+        let cfg = load_at(home.path(), None, false).unwrap();
+        assert_eq!(cfg.tools_mode, "ask");
+        let mut cfg = cfg;
+        cfg.tools_mode = "yolo".into();
+        save_settings(home.path(), &cfg).unwrap();
+        let again = load_at(home.path(), None, false).unwrap();
+        assert_eq!(again.tools_mode, "yolo");
+        fs::write(home.path().join("settings.toml"), "tools = \"sometimes\"\n").unwrap();
+        let again = load_at(home.path(), None, false).unwrap();
+        assert_eq!(again.tools_mode, "ask");
     }
 
     #[test]

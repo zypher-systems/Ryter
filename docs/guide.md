@@ -100,9 +100,9 @@ ryter models [connection]
 The hat that is on sets the screen's one accent color: plan is cyan, build green, review amber, test violet. Everything else stays the same under every hat. A fedora in that color sits faintly behind the conversation (`[ui] watermark = false`, or *watermark* in `/settings`, turns it off; it is left out on 16-color and no-color terminals).
 
 - **The bar across the top** names the four hats in the order `Tab` goes round them. The hat that is on is a filled chip marked `◆`; a hat that has had a turn this session is marked `●` in its own color, and one that hasn't is `○`. The bar says which hats have been worn, not an order to wear them in. Then the session's title, the folder and the branch.
-- **The hat rack** runs down the left (screens 132 columns and wider). It has one block a hat, always the same four in the same place: the hat's model, how many turns it has had this session and what it has cost, and the figures that are its own. Plan: plans approved and rejected. Build: files and lines it changed in the session, and the latest test run. Review: verdicts, passed and failed. Test: checks passed and failed. A hat with no turns yet says `not worn yet`. The block of the hat that is on is tinted.
-- **The instruments** run down the right (100 columns and wider): the model your next message goes to, its connection and reasoning level; the context gauge with tokens used of the window; **spend** for the session and for the project, and the budget; the sandbox and what this hat may do; and what is **uncommitted**, a file a line, with the latest test run.
-- **The prompt** sits under a rule in the hat's color, after the hat's name as a chip. The keys that matter now are on the last row.
+- **The hat rack** runs down the left (screens 132 columns and wider). It has one block a hat, always the same four in the same place: the hat's model, how many turns it has had this session and what it has cost, and the figures that are its own. Plan: plans approved and rejected. Build: files and lines it changed in the session, and the latest run of the project's tests as three rows, `success`, `warning` (skipped or ignored) and `failure`. Review: verdicts, passed and failed. Test: the tester's checks, as the same three rows (a scenario not reached is a warning). A hat with no turns yet says `not worn yet`. The block of the hat that is on is tinted.
+- **The instruments** run down the right (100 columns and wider): the model your next message goes to, its connection and reasoning level; the context gauge with tokens used of the window; the **pulse**, how many tokens a second the model is writing, with the last eight seconds as bars, `idle` between turns; **spend** for the session and for the project, and the budget; the sandbox and what this hat may do; and what is **uncommitted**, a file a line.
+- **The prompt** sits under a rule in the hat's color, after the hat's name as a chip, the width of the conversation's column. The keys that matter now are on the last row.
 
 The side columns give way to the conversation. Under 132 columns the hat rack folds away, and the bar counts each hat's turns instead. Under 100 the instruments fold away too, and the last row becomes a status line: the model, the context gauge, the session's cost and the budget. `^b` hides and shows the columns on a wide screen; on a narrower one it opens the hat rack and the instruments as a panel (`↑↓` scroll, `esc` or `^b` closes). `[ui] panel = false` starts with them hidden. A panel too wide to fit beside the columns, such as `/models`, takes the whole screen while it is open.
 
@@ -193,7 +193,7 @@ ryter -p "…" --json                  # NDJSON AgentEvent stream
 ryter -c -p "continue"               # continue the latest session
 ```
 
-`--always-approve` treats Ask as Allow. Deny still wins.
+`--always-approve` treats Ask as Allow, except a write outside the project, scratch space and your home folder, which headless refuses. `--yolo` says yes to those too. Deny still wins, in both.
 
 ## Hats
 
@@ -203,10 +203,10 @@ One model works in your project, in the plan hat to start with. `Tab` switches i
 
 | Hat | May | May not |
 | --- | --- | --- |
-| **build** (default) | edit files and run commands. Your toolchains, the project's own programs and its containers run without asking; edits ask (or run with `a` for the session / `--always-approve`); so do commands that delete, publish, or that Ryter doesn't know (see "What runs without asking") | read secrets, push, run inline interpreter code |
+| **build** | edit files and run commands. Edits, your toolchains, scripts, inline code, the project's containers and ordinary git run without asking; what deletes, throws work away in git, publishes or leaves the machine asks (see "What asks") | read secrets, run a shell handed a command as text, gain privilege |
 | **plan** | read, search, run read-only commands, and show you a plan to approve | edit source, run anything that changes the project |
 | **review** | read, run the tests and linters, read-only git | write anything, not even by redirect; install, format, or fix |
-| **test** | start the product, run its tests and use it: everything the build hat runs without asking, and requests to the project's own address (`curl localhost:8000/…`) | edit or write the project's files, delete or move anything in it |
+| **test** | start the product, run its tests and use it: everything the build hat runs without asking, and requests to the project's own address (`curl localhost:8000/…`); scratch space and your home folder are its to write | edit, write, download into, delete or move anything in the project |
 
 **A model for each hat.** Every hat runs on one model until you give a hat its own. `/models` lists the seats on the left: *All hats*, then *Plan*, *Build*, *Review* and *Test*, each showing its model or "follows all hats". Pick a seat, pick a model, `⏎`, and the cursor moves to the next seat, so one visit sets them all. To put a hat back, choose `default` at the top of its list. The choice is kept in `~/.ryter/hats.toml`.
 
@@ -319,30 +319,41 @@ stop  = "docker compose down"
 
 **What the chat shows.** The model narrates as it works: what it's doing next and why, each choice between approaches with its reason, and what it thinks went wrong when something fails. Each tool step shows what came of it, measured by Ryter: `new · 48 lines`, `rewrote · 76 lines (was 89)`, an edit's changed lines, `✓ 13 passed`, or `✗ exit 1` with the cause. Reads fold into one line, and a divider closes each turn that did work (`6 files (3 new, 3 changed, +153 −15) · 9 commands (9 ok) · 2:41`).
 
-**What runs without asking** in the build hat. A question for every `cargo build` and `docker compose up` was answered yes every time, so these run:
+**What asks, in the build and test hats.** The work runs: edits, your toolchains, scripts wherever they are, inline code (`python3 -c`, a heredoc to `node`), system programs (`mkdir`, `cp`, `mv`, `chmod`, `sed -i`), the project's containers, `git commit`, and a command Ryter has never heard of. A checkpoint before each build turn is what `/undo` comes back to. A question is kept for what no checkpoint undoes:
 
-- **Looking:** `ls`, `cat`, `grep`, `git status`, `git diff` and the like, `sed -n` used to pick lines out (`sed -n '1,40p' file`), and `sleep`.
-- **Requests to the project's own address:** `curl` to `localhost`, `127.0.0.1` or a `.localhost` name, as the test hat makes them. A URL kept in a variable earlier in the same command is read: `B=http://localhost:8000; curl $B/health`.
-- **Your toolchains,** whatever the subcommand: `cargo`, `npm`, `pnpm`, `yarn`, `bun`, `node`, `python`, `pip`, `uv`, `pytest`, `go`, `make`, `mvn`, `gradle`, `dotnet`, and the rest of their kind. `cargo install`, `npm install` and `pip install` included.
-- **The project's own programs:** `./scripts/setup.sh`, `bin/cms-admin`, `./manage.py`, and `bash` given a script file of the project's.
-- **Programs you installed under your home folder:** whatever `PATH` finds in `~/.cargo/bin`, `~/.local/bin`, a node or python manager's folder.
-- **The project's containers,** with `docker` or `podman`: `build`, `compose build`, `up`, `down`, `run`, `exec`, `restart`, `logs`, `ps`, `pull`, and `docker run` with folders of the project's (or of `/tmp`) mounted. Paths inside the container, such as `-w /app` or `ls /app`, are the container's and are not judged.
-- **`cd`** into a folder of the project, `/tmp` or your home folder.
+- **Deleting:** `rm`, `rmdir`, `truncate`, `find -delete`, `find -exec`, and the volumes of a stack (`docker compose down -v`, `docker volume rm`, any `prune`).
+- **Throwing work away in git:** `git reset --hard`, `git clean`, `git checkout -- <path>`, `git restore`, `git stash drop`, `git branch -D`.
+- **Leaving the machine:** `git push`, `cargo publish`, `npm publish`, `docker push`, a login; `curl` or `wget` sending a file or data to a host that isn't this machine; and a tool that works on a service somewhere else (`gh pr create`, `aws s3 sync`, `kubectl apply`, `terraform apply`, `fly deploy`, and their kind). Their looks run: `gh pr view`, `kubectl get`, `terraform plan`, and a download.
+- **Writing anywhere but the project, scratch space or your home folder:** `/opt`, `/srv`, another disk, and a `cd` there followed by work. Those prompts say "outside the project" and offer only `y` (allow once) or `n`.
+- **The project's `.env`:** the build hat may write or copy one into being, asked every time (see "Safety").
+- **A path only the shell can read:** `cat "$FILE"`, files handed over by `xargs`, a `cd "$DIR"` and everything after it. The gate can't see where it leads. `$PWD`, `$(pwd)` and `$HOME` it reads.
 
-These still ask:
+Refused in every hat, whatever is answered: reading a secret or a credential folder, `sudo` and its kind, a shell handed a command as text (`bash -c`, `sh <<<`, a pipe into `sh`), and rewiring the shell (`alias`, `HOME=`, `IFS=`, a coprocess). A variable that gives a program something else to load (`LD_PRELOAD`, `PATH=/tmp:$PATH`, `NODE_OPTIONS='--require …'`, `RUSTC_WRAPPER`, `DOCKER_HOST`) asks in the build and test hats and is refused in the others. Ordinary variables run: `NODE_ENV=test`, `DATABASE_URL=…`, `RUST_BACKTRACE=1`, `PATH="$HOME/.cargo/bin:$PATH"`.
 
-- **Edits** to the project's files, until you press `a` on one or approve a plan: a plan says which files it will make and change, so once you approve it the edits stop asking for the rest of the session.
-- **Changing files by hand:** `mkdir`, `cp`, `sed -i` and other system programs that aren't a toolchain. `a` on the prompt allows that command for the session.
-- **Deleting and moving:** `rm`, `mv`, `chmod`, `git reset --hard`, and removing a stack's volumes (`docker compose down -v`, `docker volume rm`, any `prune`). `y` only, with no "allow for this session".
-- **Publishing and signing in:** `cargo publish`, `npm publish`, `npm login`, `docker push`, `docker login`.
-- **Tools that work on a service somewhere else:** `gh`, `aws`, `gcloud`, `kubectl`, `terraform`, `curl`, `wget`.
-- **A script that isn't the project's:** `python3 /tmp/probe.py`, `node ~/x.js`. The project's own scripts run. The same goes for a build tool pointed at a file or folder outside the project: `make -f /tmp/x.mk`, `npm --prefix /tmp/x test`, `cargo build --manifest-path=/tmp/x/Cargo.toml`.
-- **A command that prints files it is handed out of sight:** `… | xargs cat`, `find … -exec grep …`.
-- **A path only the shell can read:** `cat "$FILE"`, a `cd "$DIR"` and everything after it, a pattern with thousands of matches. The gate can't see where it leads.
-- **A variable that makes a program load or run something else:** `LD_PRELOAD=…`, `PATH=/tmp:$PATH`, `NODE_OPTIONS='--require …'`, `PYTHONPATH` or `NODE_PATH` outside the project, `RUSTC_WRAPPER`, most `GIT_…` variables, `DOCKER_HOST`. Ordinary ones run: `NODE_ENV=test`, `DATABASE_URL=…`, `RUST_BACKTRACE=1`, `PATH="$HOME/.cargo/bin:$PATH"`.
-- **In Docker:** copying files in or out of a container (`docker cp`); a mount or a build context that is your home folder or the folder above the project, however the path is written (`../..`, `src/../..`); build output written anywhere but the project, `/tmp` or your home folder (`-o`, `--output`); a build from an address (`docker build https://…`); a `docker build` option Ryter doesn't know; stopping or removing a container by name (`docker stop`, `docker rm`), since it may not be this project's; another machine (`-H`, `--context`, `DOCKER_HOST`); a compose file outside the project; and giving a container the host (`--privileged`, a mount of `/`, the Docker socket). A folder where keys are kept is refused, as a mount, a context, a `--secret` or a place to write.
+**Your own rules.** `[permissions]` in `~/.ryter/config.toml` moves any of the asks above, either way, short of a refusal. It is read from your own file only: a project's `.ryter/config.toml` can set its models and its budget, not what the gate asks about, so a repository can't widen the gate for itself.
 
-A toolchain runs the project's code: `cargo build` runs its build script and `npm install` its install scripts. If you don't want that unasked, a sandbox profile limits what any command can touch (see "Sandbox profiles").
+```toml
+[permissions]
+edit = "allow"                      # or "ask": every edit of the project's files
+
+[permissions.bash]
+"rm -rf target" = "allow"           # a pattern over one command, as it runs
+"rm -rf node_modules" = "allow"
+"git push*" = "allow"
+"docker compose down -v" = "allow"
+"cargo publish*" = "deny"
+"mv *" = "ask"
+```
+
+`*` is any run of characters and `?` one. A rule is matched against each command of a line (`cd src && mv a b` meets `"mv *"`), and the most specific pattern wins, the stricter answer at a tie. A rule can't open what the gate refuses: `"*" = "allow"` leaves `sudo` and `.env` where they were.
+
+**Three answers for the whole session.** `/tools` shows them. The *tools* row of `/settings` sets the running session's answer too, and is the one the next TUI session starts with; `--always-approve` and `--yolo` win over it, and headless takes its answer from the flags only:
+
+- **ask** (the default): the questions above are asked.
+- **always** (`/tools always`, `--always-approve`): every question is answered yes in advance, except a write outside the project, scratch space and your home folder, and the project's `.env`, which still ask. Headless, those are refused.
+- **yolo** (`/yolo`, `/tools yolo`, `--yolo`): every question is yes, those two included: the model writes anywhere it can reach, deletes, pushes, and makes a `.env`, without a word. What is refused stays refused: it still can't read your keys or run `sudo`. Choose this on a machine you'd be fine wiping, with a sandbox profile that fits.
+
+A toolchain runs the project's code: `cargo build` runs its build script and `npm install` its install scripts. Inline code and a script in `/tmp` can say anything a script of the project's can. If you don't want that unasked, a sandbox profile limits what any command can touch (see "Sandbox profiles"): with the questions this few, the profile is the boundary, not the prompt.
 
 **Docker or Podman.** When both are installed the model is told to use Docker, unless you ask for Podman. With one installed it is told which.
 
@@ -355,9 +366,14 @@ A toolchain runs the project's code: `cargo build` runs its build script and `np
 - **A redirect is read wherever it is written** (`echo x>file`), and a backslash at the end of a line joins it to the next.
 - **A link is judged by what it points at,** whatever the link is called.
 
-What the shell is told to read another way, the gate can't read at all, and refuses in every hat: setting `HOME`, `IFS`, `CDPATH`, `GLOBIGNORE` or `BASH_ENV`; `shopt`, `alias`, `hash`, `trap` and `enable`; a shell function (`function name { … }`, `name() { … }`) or a named coprocess, which make a name mean other commands; and `env -C`, which runs a command in another folder.
+- **A here-document is what the command reads,** not commands: the lines between `<<EOF` and `EOF` are skipped. `python3 - <<EOF` is inline code, judged as that.
+- **A process substitution is a pipe:** in `diff <(git show HEAD:f) f` the inner command is judged on its own, and the pipe is nowhere on disk.
+- **A shell function is the commands in it:** `add() { curl …; }; add a; add b` is judged by the `curl`. In the plan and review hats a function is refused, since it makes a name mean other commands.
+- **`cd -` goes back** to where the last `cd` of the same command left, and stays put when there was none: commands start without an `OLDPWD`.
 
-What the gate can read but not see through (a path in a variable, files handed over by `xargs`) is a question in the build and test hats and refused in plan and review. "Allow all" and `--always-approve` answer that question yes in advance, as they do any other.
+What the shell is told to read another way, the gate can't read at all, and refuses in every hat: setting `HOME`, `IFS`, `CDPATH`, `GLOBIGNORE` or `BASH_ENV`; `shopt`, `alias`, `hash`, `trap` and `enable`; a named coprocess; and `env -C`, which runs a command in another folder.
+
+What the gate can read but not see through (a path in a variable, files handed over by `xargs`) is a question in the build and test hats and refused in plan and review. "Allow all", `--always-approve` and `--yolo` answer that question yes in advance, as they do any other.
 
 **Outside the project.** Scratch space (`/tmp`, `/var/tmp` and your system's temporary folder) is open to every hat, to read and to write, without a question. Your home folder, where tools keep their caches, configuration and builds, is open to every hat to read, and to the build and test hats to write.
 
@@ -369,7 +385,7 @@ With these exceptions:
 - **Another project:** a folder under your home that is a git repository other than this one can be read, but writing there asks each time in the build hat and is refused in the others.
 - **Deleting or moving** anything outside the project asks each time, scratch space and your home folder included.
 
-Anywhere else (`/opt`, `/srv`, another disk), the build hat asks each time and no other hat writes. Those prompts say "outside the project" and offer only `y` (allow once) or `n`. "Allow all" and `--always-approve` don't cover them, so headless refuses them.
+Anywhere else (`/opt`, `/srv`, another disk), the build hat asks each time and no other hat writes. Those prompts say "outside the project" and offer only `y` (allow once) or `n`. "Allow all" and `--always-approve` don't cover them, so headless refuses them; `--yolo` does.
 
 The plan and review hats change nothing in the project and write nothing in your home folder. What they may write is scratch space: a place to keep a test's output. Not a file a tool would read as configuration on its way up from the project: for a project kept in `/tmp`, that rules out a `conftest.py` or a `.cargo/config.toml` beside it, while `/tmp/out.txt` is fine.
 
@@ -625,7 +641,7 @@ A sandbox limits which files the model's commands can reach. It is enforced by t
 
 **When to use each:**
 
-- **`off`:** you are watching each step. Ryter's own rules still apply: file edits and destructive commands ask; supported toolchains and project commands can run without asking. The gate refuses direct reads of protected credentials. Nothing stops a command you approved from reaching the rest of your machine.
+- **`off`:** you are watching each step. Ryter's own rules still apply: destructive commands ask; supported toolchains and project commands can run without asking. The gate refuses direct reads of protected credentials. Nothing stops a command you approved from reaching the rest of your machine.
 - **`workspace`:** tools run without asking (`/tools always`, `--always-approve`, `ryter serve`), or you are working on code you don't trust. Commands can write the project, scratch directories, allowed tool caches, and the active session’s notes and pages.
 - **`read-only`:** you only want a review. Nothing in the project can be changed either, which also means nothing can be built into it.
 
@@ -666,10 +682,10 @@ Plans, decisions and test reports stored in the project follow the workspace’s
 ## Safety
 
 - One gate: `decide(hat, tool, args)` → Allow / Ask / Deny. Every hat is offered the same tools; the gate decides what each may do with them.
-- **Build:** reading and supported toolchains/project commands run without asking; file edits, publishing and unclassified commands ask; destruction always asks.
+- **Build:** edits, toolchains, scripts, inline code, the project's containers and ordinary git run without asking; deleting, discarding work in git, publishing and leaving the machine ask; `[permissions]` moves any of those, short of a refusal. `/yolo` answers every question yes.
 - **Plan:** reading and read-only commands; it may write the project's memory files and its own notes, nothing else.
-- **Review:** reading, tests, linters and read-only git; no writes at all.
-- Denied in every hat: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files. An example file (`.env.example`, `.env.sample`) is not a secret.
+- **Review:** reading, tests, linters and read-only git (`git stash list` and `show` included), and a `GET` of the project's own address (`curl localhost:8001/health`) to look at the running product; no writes at all.
+- Denied in every hat: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files. An example file (`.env.example`, `.env.sample`) is not a secret. One exception: the build hat may **write** the project's own `.env` (or `.env.local`, `config/.env.production`, `local.env`) whole, or copy it from its example (`cp .env.example .env`), with your `y` each time, since a project that needs one can't run without it. The card shows what would be written; nothing reads it back, and an edit in place stays refused, as does every other hat. An approved plan, `a` and `--always-approve` don't cover it; headless refuses it.
 - Shell commands are judged per segment (`a && b` is two commands). Privilege escalation, disk writes, `git push`, and piping into a shell are denied. In the TUI a permission modal shows the tool and its arguments: `⏎` or `y` allow this call, `n` deny, `a` allow that kind of action for the rest of the session; destructive commands and writes outside the project take only `y` (see [Approving](#talking-to-ryter)). Headless (no TUI) fail-closes.
 - `ask_user` lets the model ask a question; the TUI shows it as a modal (number keys pick a choice, or type free text).
 - `[features] web = true` offers `web_fetch` / `web_search`. Localhost and private IPs are blocked.

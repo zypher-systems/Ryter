@@ -40,8 +40,8 @@ pub enum Work {
     New,
     /// Tool permission mode.
     SetTools {
-        /// Always approve `Ask`.
-        always: bool,
+        /// The mode.
+        mode: ryter_core::ToolsMode,
     },
     /// Emit a `Context` event.
     Context,
@@ -163,6 +163,8 @@ pub struct WorkerInit {
     pub model: String,
     /// Treat `Ask` as `Allow`.
     pub always_approve: bool,
+    /// A yes to every question.
+    pub yolo: bool,
     /// Landlock profile.
     pub profile: SandboxProfile,
     /// Request channel.
@@ -257,6 +259,7 @@ pub fn run(init: WorkerInit) {
         conn_name,
         model,
         mut always_approve,
+        mut yolo,
         profile,
         work_rx,
         ev_tx,
@@ -298,6 +301,7 @@ pub fn run(init: WorkerInit) {
             conn_name: conn_name.clone(),
             model: model.clone(),
             always_approve,
+            yolo,
             ev_tx: ev_tx.clone(),
             cancel: cancel.clone(),
             user_io: user_io.clone(),
@@ -424,10 +428,12 @@ pub fn run(init: WorkerInit) {
                     }
                 }
             }
-            Ok(Work::SetTools { always }) => {
-                always_approve = always;
+            Ok(Work::SetTools { mode }) => {
+                always_approve = mode != ryter_core::ToolsMode::Ask;
+                yolo = mode == ryter_core::ToolsMode::Yolo;
                 if let Some(a) = &mut agent {
-                    a.ctx.always_approve = always;
+                    a.ctx.always_approve = always_approve;
+                    a.ctx.yolo = yolo;
                 }
             }
             Ok(Work::New) => {
@@ -786,6 +792,7 @@ pub fn run(init: WorkerInit) {
                         conn_name: name,
                         model: new_model,
                         always_approve,
+                        yolo,
                         ev_tx: ev_tx.clone(),
                         cancel: cancel.clone(),
                         user_io: user_io.clone(),
@@ -900,6 +907,7 @@ struct BuildAgent<'a> {
     conn_name: String,
     model: String,
     always_approve: bool,
+    yolo: bool,
     ev_tx: mpsc::Sender<AgentEvent>,
     cancel: Arc<Cancel>,
     user_io: UserIo,
@@ -922,6 +930,8 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
             notes_dir: notes,
             role,
             always_approve: b.always_approve,
+            yolo: b.yolo,
+            permissions: Arc::new(b.cfg.permissions.clone()),
             mcp: ryter_core::McpHub::connect(&b.cfg.mcp_servers)
                 .ok()
                 .map(|h| Arc::new(Mutex::new(h))),
