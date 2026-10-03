@@ -1726,8 +1726,69 @@ enum Rewrite {
     Tree,
 }
 
-/// An in-place editor, a formatter or a fixer, read from its flags.
+/// The tool a runner runs, with the runner taken off: `npx prettier …`,
+/// `bunx`, `uvx`, `pipx run`, `pnpm dlx`/`exec`, `yarn dlx`/`exec`, `uv`/
+/// `poetry`/`pdm`/`hatch`/`rye run`, and `python -m module` (the module
+/// as the tool). The tool's name is its base name, without a version
+/// (`prettier@3`, `/usr/bin/sed`).
+fn tool_behind_runner(words: &[String]) -> Vec<String> {
+    fn base(w: &str) -> String {
+        let w = w.rsplit('/').next().unwrap_or(w);
+        w.split('@')
+            .find(|p| !p.is_empty())
+            .unwrap_or(w)
+            .to_string()
+    }
+    let mut i = 0;
+    while let Some(prog) = words.get(i) {
+        let prog = base(prog);
+        let next = words.get(i + 1).map(String::as_str);
+        match prog.as_str() {
+            "npx" | "bunx" | "uvx" => i += 1,
+            "pipx" if next == Some("run") => i += 2,
+            "pnpm" | "yarn" if matches!(next, Some("dlx" | "exec")) => i += 2,
+            "uv" | "poetry" | "pdm" | "hatch" | "rye" if next == Some("run") => i += 2,
+            "python" | "python3" | "python2" | "py" => {
+                // `python [-X …] -m module args`: the module is the tool.
+                let mut j = i + 1;
+                while let Some(w) = words.get(j) {
+                    if matches!(w.as_str(), "-X" | "-W" | "-Q") {
+                        j += 2;
+                    } else if w.starts_with('-') && w != "-m" {
+                        j += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if words.get(j).map(String::as_str) == Some("-m") && words.get(j + 1).is_some() {
+                    i = j + 1;
+                }
+                break;
+            }
+            _ => break,
+        }
+        // The runner's own options: `npx -y`, `npx -p pkg`, `uv run -q`.
+        while let Some(w) = words.get(i) {
+            if matches!(w.as_str(), "-p" | "--package" | "--with" | "--from") {
+                i += 2;
+            } else if w.starts_with('-') {
+                i += 1;
+            } else {
+                break;
+            }
+        }
+    }
+    let mut out: Vec<String> = words.get(i..).unwrap_or_default().to_vec();
+    if let Some(first) = out.first_mut() {
+        *first = base(first);
+    }
+    out
+}
+
+/// An in-place editor, a formatter or a fixer, read from its flags, the
+/// runner in front of it taken off.
 fn rewrites_in_place(words: &[String]) -> Rewrite {
+    let words = &tool_behind_runner(words);
     let prog = words.first().map(String::as_str).unwrap_or("");
     let rest = words.get(1..).unwrap_or_default();
     let has = |fs: &[&str]| {
@@ -1803,13 +1864,16 @@ fn rewrites_in_place(words: &[String]) -> Rewrite {
                 Rewrite::No
             }
         }
-        "yq" if has(&["-i", "--inplace"]) => Rewrite::Paths,
+        "yq" if has(&["-i", "--inplace", "--in-place"]) => Rewrite::Paths,
         "clang-format" if has(&["-i", "--in-place"]) => Rewrite::Paths,
         "autopep8" | "yapf" if has(&["-i", "--in-place"]) => Rewrite::Paths,
-        "shfmt" | "gofmt" if has(&["-w"]) && !has(&["-d", "-l"]) => Rewrite::Tree,
+        // `-l` lists; with `-w` beside it, every file listed is written.
+        "shfmt" | "gofmt" if has(&["-w"]) => Rewrite::Tree,
         "prettier" if has(&["-w", "--write"]) => Rewrite::Tree,
         "eslint" | "stylelint" if has(&["--fix"]) => Rewrite::Tree,
-        "ruff" if sub == "format" && !checks || has(&["--fix", "--unsafe-fixes"]) => Rewrite::Tree,
+        "ruff" if sub == "format" && !checks || has(&["--fix", "--fix-only", "--unsafe-fixes"]) => {
+            Rewrite::Tree
+        }
         "black" | "isort" | "rustfmt" | "swiftformat" if !checks => Rewrite::Tree,
         "cargo" if matches!(sub, "fmt" | "fix") && !checks => Rewrite::Tree,
         "cargo" if sub == "clippy" && has(&["--fix"]) => Rewrite::Tree,
@@ -1832,6 +1896,10 @@ fn rewrites_in_place(words: &[String]) -> Rewrite {
             Rewrite::Tree
         }
         "dotnet" if sub == "format" && !checks => Rewrite::Tree,
+        // `.yarnrc.yml` in the project.
+        "yarn" if sub == "config" && rest.get(1).map(String::as_str) == Some("set") => {
+            Rewrite::Tree
+        }
         "terraform" | "tofu" if sub == "fmt" && !checks => Rewrite::Tree,
         _ => Rewrite::No,
     }
@@ -3308,7 +3376,26 @@ pub(crate) fn destructive_command(cmd: &str) -> bool {
             return match sub {
                 Some("reset") => has("--hard") || has("--merge") || has("--keep"),
                 Some("clean") | Some("restore") => true,
-                Some("checkout") => has("--") || has(".") || has("-f") || has("--force"),
+                Some("checkout") => {
+                    let makes_branch = has("-b") || has("-B") || has("--orphan");
+                    let plain: Vec<&String> = args
+                        .iter()
+                        .skip_while(|a| a.as_str() != "checkout")
+                        .skip(1)
+                        .filter(|a| !a.starts_with('-'))
+                        .collect();
+                    has("--")
+                        || has(".")
+                        || has("-f")
+                        || has("--force")
+                        || has("-p")
+                        || has("--patch")
+                        || (!makes_branch
+                            && (plain.len() > 1
+                                // One word that reads as a path, not a branch.
+                                || plain.first().is_some_and(|p| p.contains(['/', '.']))))
+                }
+                Some("switch") => has("-f") || has("--force") || has("--discard-changes"),
                 Some("stash") => has("drop") || has("clear"),
                 Some("branch") | Some("tag") => has("-d") || has("-D") || has("--delete"),
                 Some("push") => has("--force") || has("-f") || has("--delete"),
@@ -8492,6 +8579,24 @@ mod tests {
         ] {
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
         }
+        // And each asks strictly: `y` only, no allowance for the session.
+        for cmd in [
+            "git checkout HEAD src/main.rs",
+            "git checkout src/main.rs",
+            "git checkout main src",
+            "git checkout -p",
+            "git switch -f main",
+            "git switch --discard-changes main",
+        ] {
+            assert!(destructive_command(cmd), "{cmd}");
+        }
+        for cmd in [
+            "git checkout main",
+            "git checkout -b x main",
+            "git switch main",
+        ] {
+            assert!(!destructive_command(cmd), "{cmd}");
+        }
     }
 
     /// The test hat rewrites nothing of the project's by an editor, a
@@ -8542,8 +8647,38 @@ mod tests {
             "go mod tidy",
             "npm pkg set name=x",
             "yq -i .a=1 Cargo.toml",
+            "yq --in-place .a=1 Cargo.toml",
             "clang-format -i src/main.rs",
             "autopep8 --in-place src/main.py",
+            // Sibling spellings.
+            "ruff check --fix-only src/main.py",
+            "gofmt -l -w src/main.go",
+            "gofmt -w -l src/main.go",
+            "yarn config set save-prefix ^1.0",
+            "/usr/bin/sed -i s/a/b/ src/main.rs",
+            // The same tools behind a runner.
+            "npx prettier --write src/",
+            "npx -y prettier@3 --write src/",
+            "npx -p prettier prettier --write src/",
+            "npx eslint --fix src/main.js",
+            "npx ruff check --fix src/",
+            "bunx prettier --write src/",
+            "uvx ruff check --fix src/",
+            "uvx --from ruff ruff format",
+            "pipx run black src/",
+            "pnpm dlx prettier --write src/",
+            "pnpm exec prettier -w .",
+            "yarn dlx prettier --write src/",
+            "python3 -m black src/main.py",
+            "python3 -m isort src/main.py",
+            "python3 -m ruff check --fix src/",
+            "python3 -m ruff format src/main.py",
+            "python3 -m autopep8 --in-place src/main.py",
+            "python -X dev -m black src/",
+            "uv run black src/",
+            "uv run python -m black src/",
+            "poetry run isort src/",
+            "pdm run ruff format",
         ] {
             assert_eq!(bash(cmd, Role::SoloTest, d), Decision::Deny, "{cmd}");
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
@@ -8570,6 +8705,14 @@ mod tests {
             "yq .a Cargo.toml",
             "npm pkg get name",
             "terraform fmt -check",
+            "yarn config get save-prefix",
+            "npx prettier --check src/",
+            "npx eslint src/",
+            "uvx ruff check src/",
+            "python3 -m black --check src/",
+            "python3 -m isort --check-only src/",
+            "uv run pytest -q",
+            "poetry run black --diff src/",
         ] {
             assert_eq!(bash(cmd, Role::SoloTest, d), Decision::Allow, "{cmd}");
         }
