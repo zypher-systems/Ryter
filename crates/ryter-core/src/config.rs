@@ -53,6 +53,11 @@ pub struct Config {
     /// rules: the user's own answers, by pattern.
     #[serde(default)]
     pub permissions: crate::permissions::Permissions,
+    /// The tools mode a TUI session starts in, from `/settings`: `ask`,
+    /// `always` or `yolo` (`settings.toml`). `--always-approve` and
+    /// `--yolo` win over it; headless takes its mode from the flags only.
+    #[serde(default = "default_tools_mode")]
+    pub tools_mode: String,
     /// TUI presentation knobs (`[ui]`).
     #[serde(default)]
     pub ui: UiConfig,
@@ -144,6 +149,7 @@ impl Default for Config {
             sandbox: SandboxConfig::default(),
             features: FeaturesConfig::default(),
             permissions: crate::permissions::Permissions::default(),
+            tools_mode: default_tools_mode(),
             ui: UiConfig::default(),
             update: UpdateConfig::default(),
             reasoning_effort: BTreeMap::new(),
@@ -1028,9 +1034,16 @@ pub fn user_connection_names(home: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn default_tools_mode() -> String {
+    "ask".to_string()
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct SettingsFile {
     session_budget_usd: Option<f64>,
+    /// `ask`, `always` or `yolo`: the tools mode a session starts in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tools: Option<String>,
     warn_usd: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     review_usd: Option<f64>,
@@ -1065,6 +1078,11 @@ fn apply_settings_file(cfg: &mut Config, path: &Path) {
     if let Some(v) = file.sandbox {
         cfg.sandbox.profile = v;
     }
+    if let Some(v) = file.tools {
+        if crate::tools::ToolsMode::parse(&v).is_some() {
+            cfg.tools_mode = v;
+        }
+    }
     if let Some(v) = file.inbound {
         cfg.mcp.inbound = v;
     }
@@ -1084,6 +1102,7 @@ pub fn save_settings(home: &Path, cfg: &Config) -> Result<()> {
         warn_usd: Some(cfg.spend.warn_usd),
         review_usd: Some(cfg.spend.review_usd),
         sandbox: Some(cfg.sandbox.profile.clone()),
+        tools: Some(cfg.tools_mode.clone()),
         inbound: Some(cfg.mcp.inbound),
         web: Some(cfg.features.web),
         ui: Some(UiFile::from(&cfg.ui)),
@@ -1872,6 +1891,23 @@ mod tests {
             Some(Answer::Ask)
         );
         assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+    }
+
+    /// The tools mode chosen in `/settings` is saved, and is the mode the
+    /// next session starts in. A word that isn't a mode is left alone.
+    #[test]
+    fn the_tools_mode_is_saved_and_read_back() {
+        let home = TempDir::new().unwrap();
+        let cfg = load_at(home.path(), None, false).unwrap();
+        assert_eq!(cfg.tools_mode, "ask");
+        let mut cfg = cfg;
+        cfg.tools_mode = "yolo".into();
+        save_settings(home.path(), &cfg).unwrap();
+        let again = load_at(home.path(), None, false).unwrap();
+        assert_eq!(again.tools_mode, "yolo");
+        fs::write(home.path().join("settings.toml"), "tools = \"sometimes\"\n").unwrap();
+        let again = load_at(home.path(), None, false).unwrap();
+        assert_eq!(again.tools_mode, "ask");
     }
 
     #[test]

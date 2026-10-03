@@ -328,7 +328,7 @@ stop  = "docker compose down"
 - **The project's `.env`:** the build hat may write or copy one into being, asked every time (see "Safety").
 - **A path only the shell can read:** `cat "$FILE"`, files handed over by `xargs`, a `cd "$DIR"` and everything after it. The gate can't see where it leads. `$PWD`, `$(pwd)` and `$HOME` it reads.
 
-Refused in every hat, whatever is answered: reading a secret or a credential folder, `sudo` and its kind, a shell handed a command as text (`bash -c`, `sh <<<`, a pipe into `sh`), rewiring the shell (`alias`, `HOME=`, `IFS=`, a coprocess), and what gives a program something else to load (`LD_PRELOAD`, `PATH=/tmp:$PATH`, `NODE_OPTIONS='--require …'`, `RUSTC_WRAPPER`, `DOCKER_HOST`). Ordinary variables run: `NODE_ENV=test`, `DATABASE_URL=…`, `RUST_BACKTRACE=1`, `PATH="$HOME/.cargo/bin:$PATH"`.
+Refused in every hat, whatever is answered: reading a secret or a credential folder, `sudo` and its kind, a shell handed a command as text (`bash -c`, `sh <<<`, a pipe into `sh`), and rewiring the shell (`alias`, `HOME=`, `IFS=`, a coprocess). A variable that gives a program something else to load (`LD_PRELOAD`, `PATH=/tmp:$PATH`, `NODE_OPTIONS='--require …'`, `RUSTC_WRAPPER`, `DOCKER_HOST`) asks in the build and test hats and is refused in the others. Ordinary variables run: `NODE_ENV=test`, `DATABASE_URL=…`, `RUST_BACKTRACE=1`, `PATH="$HOME/.cargo/bin:$PATH"`.
 
 **Your own rules.** `[permissions]` in `~/.ryter/config.toml` moves any of the asks above, either way, short of a refusal. It is read from your own file only: a project's `.ryter/config.toml` can set its models and its budget, not what the gate asks about, so a repository can't widen the gate for itself.
 
@@ -347,7 +347,7 @@ edit = "allow"                      # or "ask": every edit of the project's file
 
 `*` is any run of characters and `?` one. A rule is matched against each command of a line (`cd src && mv a b` meets `"mv *"`), and the most specific pattern wins, the stricter answer at a tie. A rule can't open what the gate refuses: `"*" = "allow"` leaves `sudo` and `.env` where they were.
 
-**Three answers for the whole session.** `/tools` shows them, and the *tools* row of `/settings` sets the one a session starts with:
+**Three answers for the whole session.** `/tools` shows them. The *tools* row of `/settings` sets the running session's answer too, and is the one the next TUI session starts with; `--always-approve` and `--yolo` win over it, and headless takes its answer from the flags only:
 
 - **ask** (the default): the questions above are asked.
 - **always** (`/tools always`, `--always-approve`): every question is answered yes in advance, except a write outside the project, scratch space and your home folder, and the project's `.env`, which still ask. Headless, those are refused.

@@ -1047,9 +1047,21 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
     cx.cfg.features.web = view.web;
     cx.cfg.ui = view.ui.clone();
     cx.cfg.update.mode = view.update_mode;
+    cx.cfg.tools_mode = view.perm_mode.clone();
     match config::save_settings(&cx.home, &cx.cfg) {
         Ok(()) => view.system("settings saved"),
         Err(e) => view.error(e.to_string()),
+    }
+    // The tools row sets the live gate as `/tools` does, and is what the
+    // next session starts with.
+    if let Some(mode) = ryter_core::ToolsMode::parse(&view.perm_mode) {
+        if mode == ryter_core::ToolsMode::Yolo {
+            view.system(
+                "yolo · every question is a yes, outside the project and the project's \
+                 .env included · what is refused stays refused · /tools ask turns it off",
+            );
+        }
+        cx.send(Work::SetTools { mode });
     }
     // Live `[ui]` knobs that do not need a restart.
     view.panel_visible = view.ui.panel;

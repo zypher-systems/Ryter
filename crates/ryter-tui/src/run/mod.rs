@@ -346,6 +346,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         });
     }
 
+    let start_mode = start_tools_mode(&opts, &cfg);
     let init = WorkerInit {
         cfg: cfg.clone(),
         conn,
@@ -356,8 +357,8 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         trusted,
         conn_name: conn_name.clone(),
         model: model.clone(),
-        always_approve: opts.always_approve || opts.yolo,
-        yolo: opts.yolo,
+        always_approve: start_mode != ryter_core::ToolsMode::Ask,
+        yolo: start_mode == ryter_core::ToolsMode::Yolo,
         profile,
         work_rx,
         ev_tx,
@@ -460,9 +461,7 @@ fn populate_view(
     );
     view.tz_offset = ryter_core::clock::local_offset();
     view.git_branch = ryter_core::git::branch(cwd).ok();
-    view.perm_mode = ryter_core::ToolsMode::of(opts.always_approve, opts.yolo)
-        .as_str()
-        .into();
+    view.perm_mode = start_tools_mode(opts, cfg).as_str().into();
     view.catalog = load_catalog(home, Some(cwd), trusted);
     view.hooks = cfg.hooks.clone();
     view.theme_names = Theme::list(home);
@@ -868,6 +867,18 @@ fn edit_with_editor(
         Ok(s) if s.success() => view.system(format!("edited {}", path.display())),
         Ok(s) => view.warn(format!("{editor} exited with {s}")),
         Err(e) => view.error(format!("{editor}: {e}")),
+    }
+}
+
+/// The tools mode a session starts in: the flags win; otherwise the mode
+/// `/settings` saved.
+fn start_tools_mode(opts: &TuiOpts, cfg: &ryter_core::config::Config) -> ryter_core::ToolsMode {
+    if opts.yolo {
+        ryter_core::ToolsMode::Yolo
+    } else if opts.always_approve {
+        ryter_core::ToolsMode::Always
+    } else {
+        ryter_core::ToolsMode::parse(&cfg.tools_mode).unwrap_or(ryter_core::ToolsMode::Ask)
     }
 }
 
