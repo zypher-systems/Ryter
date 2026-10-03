@@ -1356,6 +1356,19 @@ impl Agent {
                 ));
             }
         }
+        if let Some(pattern) = run
+            .stop
+            .as_deref()
+            .and_then(crate::run::pkill_matches_itself)
+        {
+            return Some(format!(
+                "the stop command's `pkill -f {pattern}` matches the shell that runs it, so \
+                 the shell dies with the product and the stop reads as failed. Write the \
+                 pattern so it doesn't match its own line, `[{}]{}`, or stop by a pid file.",
+                &pattern[..pattern.chars().next().map_or(0, char::len_utf8)],
+                &pattern[pattern.chars().next().map_or(0, char::len_utf8)..]
+            ));
+        }
         match run.ready.as_deref() {
             Some(url) if !crate::tools::on_this_machine(url) => Some(format!(
                 "`ready` has to be an http address on this machine (http://localhost:8000/…), \
@@ -1479,6 +1492,13 @@ impl Agent {
                 None => return Ok(Err("Ryter has not started this project".to_string())),
             },
         };
+        // A run file corrected since the start (a stop command that
+        // failed, rewritten) is the one to stop with now.
+        if let crate::run::Found::Approved(run) = crate::run::find(&root, &self.home) {
+            if run.stop.is_some() && run.stop != started.stop {
+                started.stop = run.stop.clone();
+            }
+        }
         let out = self
             .ctx
             .sandboxed(|| Ok(crate::run::stop(&mut started, &root, &self.ctx.cancel)))

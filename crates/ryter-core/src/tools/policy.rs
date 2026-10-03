@@ -2638,7 +2638,7 @@ fn judge(
         "export" | "declare" | "typeset" | "local" | "readonly"
     );
     let outside = if works && !in_container && !exports {
-        let d = outside_segment(prog, &seen, own, ctx);
+        let d = outside_segment(prog, parsed.args, &seen, own, ctx);
         if d == Decision::Deny {
             return Decision::Deny;
         }
@@ -6114,7 +6114,13 @@ fn outside_decision(ctx: &ToolContext, raw: &str) -> Decision {
 ///
 /// `words` are the command's words and then the values its options carry
 /// ([`with_values`]); the first `own` are the words themselves.
-fn outside_segment(prog: &str, words: &[String], own: usize, ctx: &ToolContext) -> Decision {
+fn outside_segment(
+    prog: &str,
+    args_at: usize,
+    words: &[String],
+    own: usize,
+    ctx: &ToolContext,
+) -> Decision {
     // Destruction outside the project is a question every time, scratch
     // space and the user's folder included: "allow all" covers the project,
     // and `rm -rf ~/x` is not something it should cover.
@@ -6131,7 +6137,11 @@ fn outside_segment(prog: &str, words: &[String], own: usize, ctx: &ToolContext) 
             || READ_ONLY.contains(&prog)
             || READERS.contains(&prog)
             || matches!(prog, "cd" | "pushd"));
-    for (i, w) in words.iter().enumerate().skip(usize::from(!prog.is_empty())) {
+    // The program's own word is not one of its files, nor are a wrapper's
+    // words before it: `timeout 60 .venv/bin/python x.py` runs the
+    // interpreter the link points at, it doesn't write it.
+    let skip = if prog.is_empty() { 0 } else { args_at };
+    for (i, w) in words.iter().enumerate().skip(skip) {
         if expect_redirect {
             expect_redirect = false;
             if w == "/dev/null" {
@@ -8752,6 +8762,46 @@ mod tests {
             "curl -s https://example.com/ http://localhost:8000/",
         ] {
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+        }
+    }
+
+    /// Behind a wrapper, the program's own word is the program, not one of
+    /// its files: `timeout 60 .venv/bin/python x.py` runs the interpreter
+    /// the link points at, in the hats that do the work.
+    #[test]
+    fn a_wrapped_program_named_by_a_path_runs() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::create_dir_all(d.join(".venv/bin")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/usr/bin/python3", d.join(".venv/bin/python")).unwrap();
+        #[cfg(not(unix))]
+        std::fs::write(d.join(".venv/bin/python"), "").unwrap();
+        std::fs::create_dir_all(d.join("driftwing")).unwrap();
+        std::fs::write(d.join("smoke.py"), "print(1)").unwrap();
+        std::fs::write(d.join("driftwing/main.py"), "print(1)").unwrap();
+        let abs = d.display().to_string();
+        for cmd in [
+            "timeout 60 .venv/bin/python smoke.py; echo exit=$?".to_string(),
+            "timeout 10 .venv/bin/python -m driftwing.main".to_string(),
+            "nice -n 10 ./.venv/bin/python smoke.py".to_string(),
+            "env SDL_VIDEODRIVER=dummy .venv/bin/python smoke.py".to_string(),
+            format!("timeout 10 {abs}/.venv/bin/python /tmp/x.py"),
+            format!("cd /tmp && timeout 10 {abs}/.venv/bin/python /tmp/x.py > /tmp/x.log 2>&1"),
+            "timeout 5 /usr/bin/python3 smoke.py".to_string(),
+        ] {
+            for role in [Role::SoloBuild, Role::SoloTest] {
+                assert_eq!(bash(&cmd, role, d), Decision::Allow, "{role:?}: {cmd}");
+            }
+        }
+        // A wrapper hides nothing: the files after the program are still
+        // judged.
+        for cmd in [
+            "timeout 5 cat ~/.ssh/id_rsa",
+            "nice tee ~/.bashrc",
+            "timeout 5 cat .env",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Deny, "{cmd}");
         }
     }
 

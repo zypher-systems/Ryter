@@ -135,14 +135,17 @@ impl Report {
                     ));
                 }
             };
-            let got = some_line(item.get("got"));
-            // A failure the builder can't see again is not a finding yet.
-            if result == Outcome::Fail && got.is_none() {
-                return Err(format!(
-                    "scenario {n} failed: say what happened in `got` (the status, the error \
-                     line), and how to see it again in `to_see_it`"
-                ));
-            }
+            // A failure with nothing said about it: the report still goes
+            // through, with what was said where `got` would be, so the
+            // finding isn't lost to a form. A report with a gap beats
+            // none.
+            let got = some_line(item.get("got")).or_else(|| {
+                (result == Outcome::Fail).then(|| {
+                    some_line(item.get("note"))
+                        .or_else(|| some_line(item.get("to_see_it")))
+                        .unwrap_or_else(|| "the tester did not say what happened".to_string())
+                })
+            });
             scenarios.push(Scenario {
                 name,
                 result,
@@ -383,6 +386,27 @@ pub fn scenarios_in_plan(plan: &str) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A failure the tester said nothing about still reaches the builder,
+    /// with what was said in its place: a report with a gap beats none.
+    #[test]
+    fn a_failure_without_detail_is_reported_with_what_was_said() {
+        let r = Report::from_args(&serde_json::json!({
+            "title": "entry point",
+            "scenarios": [
+                {"name": "python -m driftwing", "result": "fail", "to_see_it": "run it"},
+                {"name": "smoke", "result": "fail", "note": "exit 1"},
+                {"name": "bare", "result": "fail"},
+            ]
+        }))
+        .unwrap();
+        assert_eq!(r.scenarios[0].got.as_deref(), Some("run it"));
+        assert_eq!(r.scenarios[1].got.as_deref(), Some("exit 1"));
+        assert_eq!(
+            r.scenarios[2].got.as_deref(),
+            Some("the tester did not say what happened")
+        );
+    }
     use tempfile::TempDir;
 
     fn cms() -> serde_json::Value {
@@ -489,11 +513,6 @@ mod tests {
             (
                 serde_json::json!({"title": "x", "scenarios": [{"name": "a", "result": "ok"}]}),
                 "scenario 1 needs `result`",
-            ),
-            (
-                serde_json::json!({"title": "x", "scenarios": [
-                    {"name": "a", "result": "pass"}, {"name": "b", "result": "fail"}]}),
-                "scenario 2 failed: say what happened",
             ),
         ] {
             let err = Report::from_args(&args).unwrap_err();

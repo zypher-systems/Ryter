@@ -737,7 +737,8 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                  build.{}",
                 ctx.role,
                 if name == "bash" && ctx.role == Role::SoloTest {
-                    "delete, move or rewrite the project's files"
+                    "run this: it would change the project's files, or it is a command \
+                     the gate reads as one that does"
                 } else if name == "bash" {
                     "run commands that change things"
                 } else {

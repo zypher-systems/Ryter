@@ -271,7 +271,7 @@ stop  = "docker compose down"
 
 **The product is left running.** After a test the product stays up, so you can look at what the tester saw. The chat says where it is.
 
-- **`/stop`** stops it: the `stop` command, or, when the file has none, ending the start command Ryter is holding.
+- **`/stop`** stops it: the `stop` command, or, when the file has none, ending the start command Ryter is holding. A `stop` of `pkill -f name` matches the shell that runs it and ends that too; Ryter counts that as the stop working, and the tester is told to write the pattern as `[n]ame` when it proposes one. A `stop` corrected in the run file after a failed cleanup is the one the retry uses.
 - **Quitting asks.** With the product still up, `^c` shows "stop the project?": `⏎` stops it and leaves, `n` leaves it running, `esc` stays.
 - **A later session knows.** Left running, it is remembered: the next session in that project says so, the tester doesn't start it a second time, and `/stop` there runs the `stop` command. A start command left running with no `stop` command is yours to end; Ryter gives you its process number and doesn't end a process it can't be sure is the one it started.
 - **Only what Ryter started.** It never stops containers or processes it didn't start, and never removes volumes unless your `stop` command says to.
