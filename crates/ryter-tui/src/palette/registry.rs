@@ -246,7 +246,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "stop",
         &[],
         Category::Session,
-        "Stop the project Ryter started for a test, with the project's own stop command",
+        "Stop the product Ryter started, with the project's own stop command",
         None,
         false,
         None,
@@ -529,6 +529,14 @@ pub fn run_command(view: &mut View, raw: &str) -> Action {
             format!("/{cmd} {rest}")
         };
         return view.submit_user(shown, expanded);
+    }
+    // The test hat's command, for someone who had it in their hands.
+    if cmd == "test" {
+        view.warn(
+            "/test went with the test hat · the build hat starts and tests the product \
+             (run_project), /review checks the work",
+        );
+        return Action::None;
     }
     // Crew mode's commands, for someone who had them in their hands.
     if matches!(cmd, "crew" | "crews" | "solo" | "agents" | "auditor") {

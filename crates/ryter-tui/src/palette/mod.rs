@@ -214,10 +214,16 @@ pub fn complete(view: &mut View) {
     }
 }
 
-/// `Enter`: run the highlighted command; with zero matches, send as a message.
+/// `Enter`: run the highlighted command. A match the typed word reached
+/// only through a description (`/test` finding `/stop`) is not what was
+/// typed, unless the user moved the highlight onto it: what was typed is
+/// then run by name, which says so when there is no such command, instead
+/// of running something else or going to the model. With no match at all,
+/// a slash line is likewise a command by name; anything else is a message.
 pub fn run(view: &mut View) -> Action {
+    let picked = view.palette.as_ref().is_some_and(|p| p.selected > 0);
     match current(view) {
-        Some(m) => {
+        Some(m) if !(m.hits.is_empty() && !picked && !filter(view).is_empty()) => {
             view.palette = None;
             let text = view.composer.take();
             let rest = text
@@ -232,20 +238,15 @@ pub fn run(view: &mut View) -> Action {
             };
             registry::run_command(view, &line)
         }
-        None => {
+        _ => {
             view.palette = None;
             let text = view.composer.take();
             let trimmed = text.trim().to_string();
             if trimmed.is_empty() {
                 return Action::None;
             }
-            // A built-in the list doesn't show (`/yolo`, `/always`) is a
-            // command all the same when it is typed in full.
-            if let Some(name) = trimmed.strip_prefix('/') {
-                let name = name.split_whitespace().next().unwrap_or("");
-                if registry::find(name).is_some() {
-                    return registry::run_command(view, &trimmed);
-                }
+            if trimmed.starts_with('/') {
+                return registry::run_command(view, &trimmed);
             }
             view.submit_user(trimmed.clone(), trimmed)
         }
@@ -504,11 +505,39 @@ mod tests {
             "{a:?}"
         );
         assert_eq!(v.composer.text(), "");
-        // Something that is no command at all is a message.
+        // Something that is no command at all is said so, not sent to the
+        // model and not run as whatever its letters happened to find.
         v.composer.set_text("/yolotastic plan");
         refresh(&mut v);
         let a = run(&mut v);
-        assert!(!matches!(a, Action::SetTools { .. }), "{a:?}");
+        assert!(matches!(a, Action::None), "{a:?}");
+        assert_eq!(v.composer.text(), "");
+    }
+
+    /// `/test` found `/stop` through its description and Enter stopped the
+    /// product. A word that reaches a command only by its description
+    /// runs nothing; moving the highlight onto that command does.
+    #[test]
+    fn a_description_match_does_not_run_on_enter() {
+        let mut v = view();
+        v.composer.set_text("/test");
+        refresh(&mut v);
+        let a = run(&mut v);
+        assert!(matches!(a, Action::None), "{a:?}");
+        assert!(v.palette.is_none());
+        // Picked by hand, the highlighted command runs.
+        v.composer.set_text("/tes");
+        refresh(&mut v);
+        if matches(&v).len() > 1 {
+            step(&mut v, 1);
+            let picked = current(&v).unwrap().entry.name.clone();
+            let a = run(&mut v);
+            assert!(!matches!(a, Action::None), "{picked}: {a:?}");
+        }
+        // A name typed in part still runs.
+        v.composer.set_text("/sto");
+        refresh(&mut v);
+        assert_eq!(current(&v).unwrap().entry.name, "stop");
     }
 
     #[test]
@@ -526,7 +555,7 @@ mod tests {
     }
 
     #[test]
-    fn enter_runs_highlighted_and_zero_matches_sends_message() {
+    fn enter_runs_highlighted_and_zero_matches_runs_nothing() {
         let mut v = view();
         v.composer.set_text("/");
         open(&mut v);
@@ -544,7 +573,8 @@ mod tests {
         open(&mut v);
         assert!(matches(&v).is_empty());
         let act = run(&mut v);
-        assert!(matches!(act, Action::Submit(s) if s == "/zzzq"));
+        // A slash word that is no command is said so, and goes nowhere.
+        assert!(matches!(act, Action::None), "{act:?}");
     }
 
     #[test]

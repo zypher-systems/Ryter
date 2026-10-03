@@ -100,7 +100,7 @@ ryter models [connection]
 The hat that is on sets the screen's one accent color: plan is cyan, build green, review amber. Everything else stays the same under every hat. A fedora in that color sits faintly behind the conversation (`[ui] watermark = false`, or *watermark* in `/settings`, turns it off; it is left out on 16-color and no-color terminals).
 
 - **The bar across the top** names the three hats in the order `Tab` goes round them. The hat that is on is a filled chip marked `◆`; a hat that has had a turn this session is marked `●` in its own color, and one that hasn't is `○`. The bar says which hats have been worn, not an order to wear them in. Then the session's title, the folder and the branch.
-- **The hat rack** runs down the left (screens 132 columns and wider). It has one block a hat, always the same three in the same place: the hat's model, how many turns it has had this session and what it has cost, and the figures that are its own. Plan: plans approved and rejected. Build: files and lines it changed in the session, and the latest run of the project's tests as three rows, `success`, `warning` (skipped or ignored) and `failure`. Review: verdicts, passed and failed. Test: the tester's checks, as the same three rows (a scenario not reached is a warning). A hat with no turns yet says `not worn yet`. The block of the hat that is on is tinted.
+- **The hat rack** runs down the left (screens 132 columns and wider). It has one block a hat, always the same three in the same place: the hat's model, how many turns it has had this session and what it has cost, and the figures that are its own. Plan: plans approved and rejected. Build: files and lines it changed in the session, and the latest run of the project's tests as three rows, `success`, `warning` (skipped or ignored) and `failure`. Review: verdicts, passed and failed. A hat with no turns yet says `not worn yet`. The block of the hat that is on is tinted.
 - **The instruments** run down the right (100 columns and wider): the model your next message goes to, its connection and reasoning level; the context gauge with tokens used of the window; the **pulse**, how many tokens a second the model is writing, with the last eight seconds as bars, `idle` between turns; **spend** for the session and for the project, and the budget; the sandbox and what this hat may do; and what is **uncommitted**, a file a line.
 - **The prompt** sits under a rule in the hat's color, after the hat's name as a chip, the width of the conversation's column. The keys that matter now are on the last row.
 
@@ -340,7 +340,7 @@ What the shell is told to read another way, the gate can't read at all, and refu
 
 What the gate can read but not see through (a path in a variable, files handed over by `xargs`) is a question in the build hat and refused in plan and review. "Allow all", `--always-approve` and `--yolo` answer that question yes in advance, as they do any other.
 
-**Outside the project.** Scratch space (`/tmp`, `/var/tmp` and your system's temporary folder) is open to every hat, to read and to write, without a question. Your home folder, where tools keep their caches, configuration and builds, is open to every hat to read, and to the build and test hats to write.
+**Outside the project.** Scratch space (`/tmp`, `/var/tmp` and your system's temporary folder) is open to every hat, to read and to write, without a question. Your home folder, where tools keep their caches, configuration and builds, is open to every hat to read, and to the build hat to write.
 
 With these exceptions:
 
