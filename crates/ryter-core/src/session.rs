@@ -10,7 +10,7 @@ use crate::error::{Error, Result};
 use crate::event::AgentEvent;
 use crate::ids::SessionId;
 use crate::llm::Message;
-use crate::role::{Role, Thread};
+use crate::role::Role;
 use crate::spend::Usage;
 
 /// What a build turn left, for an undo of only its files.
@@ -162,12 +162,8 @@ pub struct Session {
     pub dir: PathBuf,
     /// Index.
     pub meta: Meta,
-    /// Messages sent to the model: the thread in use.
+    /// Messages sent to the model.
     pub transcript: Vec<Message>,
-    /// Which thread that is.
-    thread: Thread,
-    /// The other thread, while it isn't in use.
-    parked: Vec<Message>,
     /// How many build turns in this process have gone on to change files.
     /// "Did that turn change anything?" was asked of the list of
     /// checkpoints, which stops growing at fifty: past that, no fix was
@@ -177,13 +173,8 @@ pub struct Session {
     pub recovery_notices: Vec<String>,
 }
 
-/// The file a thread's messages are kept in.
-fn thread_file(thread: Thread) -> &'static str {
-    match thread {
-        Thread::Main => "transcript.jsonl",
-        Thread::Test => "test.jsonl",
-    }
-}
+/// The file the conversation is kept in.
+const TRANSCRIPT_FILE: &str = "transcript.jsonl";
 
 impl Session {
     /// Create a new session under `home/sessions/<slug>/<id>/`.
@@ -216,8 +207,6 @@ impl Session {
             dir,
             meta,
             transcript: Vec::new(),
-            thread: Thread::Main,
-            parked: Vec::new(),
             changed_turns: 0,
             recovery_notices: Vec::new(),
         };
@@ -241,23 +230,15 @@ impl Session {
         let old_meta = serde_json::to_vec(&meta).map_err(|e| Error::Io(e.to_string()))?;
         // Inspect every log before changing any of them. Only a final,
         // unterminated EOF record is eligible for automatic recovery.
-        let main_path = dir.join(thread_file(Thread::Main));
-        let test_path = dir.join(thread_file(Thread::Test));
+        let main_path = dir.join(TRANSCRIPT_FILE);
         let spend_path = dir.join("spend.jsonl");
         let main = inspect_jsonl::<Message>(&main_path, true)?;
-        let test = inspect_jsonl::<Message>(&test_path, true)?;
         let spend = inspect_jsonl::<SpendRecord>(&spend_path, true)?;
-        let repairs = [
-            (&main_path, main.torn_at),
-            (&test_path, test.torn_at),
-            (&spend_path, spend.torn_at),
-        ];
+        let repairs = [(&main_path, main.torn_at), (&spend_path, spend.torn_at)];
         let mut session = Self {
             dir: dir.to_path_buf(),
             meta,
             transcript: main.rows,
-            thread: Thread::Main,
-            parked: test.rows,
             changed_turns: 0,
             recovery_notices: Vec::new(),
         };
@@ -446,44 +427,10 @@ impl Session {
         Ok(())
     }
 
-    /// The thread `transcript` is.
-    pub fn thread(&self) -> Thread {
-        self.thread
-    }
-
-    /// Make `thread` the one in use: `transcript` is its messages from here
-    /// on, and new messages are added to it. The other thread is kept as it
-    /// is.
-    pub fn use_thread(&mut self, thread: Thread) {
-        if thread != self.thread {
-            std::mem::swap(&mut self.transcript, &mut self.parked);
-            self.thread = thread;
-        }
-    }
-
-    /// The messages of `thread`, whichever is in use.
-    pub fn messages_of(&self, thread: Thread) -> &[Message] {
-        if thread == self.thread {
-            &self.transcript
-        } else {
-            &self.parked
-        }
-    }
-
-    /// Append a message to the thread in use.
+    /// Append a message to the conversation.
     pub fn push_message(&mut self, msg: Message) -> Result<()> {
-        self.push_to(self.thread, msg)
-    }
-
-    /// Append a message to `thread`, whichever is in use: how the tester's
-    /// report reaches the conversation the other hats share.
-    pub fn push_to(&mut self, thread: Thread, msg: Message) -> Result<()> {
-        append_jsonl(&self.dir.join(thread_file(thread)), &msg)?;
-        if thread == self.thread {
-            self.transcript.push(msg);
-        } else {
-            self.parked.push(msg);
-        }
+        append_jsonl(&self.dir.join(TRANSCRIPT_FILE), &msg)?;
+        self.transcript.push(msg);
         self.touch()?;
         Ok(())
     }
@@ -501,12 +448,11 @@ impl Session {
         Ok(n)
     }
 
-    /// Rewrite the file of the thread in use, after compaction. Events log
-    /// is unchanged.
+    /// Rewrite the transcript file, after compaction. Events log is
+    /// unchanged.
     pub fn replace_transcript(&mut self, messages: Vec<Message>) -> Result<()> {
         let _lock = lock_logs(&self.dir)?;
-        let name = thread_file(self.thread);
-        let path = self.dir.join(name);
+        let path = self.dir.join(TRANSCRIPT_FILE);
         atomic_write(&path, |f| {
             for m in &messages {
                 let mut line = serde_json::to_string(m).map_err(|e| Error::Io(e.to_string()))?;
@@ -1087,8 +1033,8 @@ mod tests {
     }
 
     #[test]
-    fn torn_thread_tails_keep_history_backup_and_allow_future_appends() {
-        for thread in [Thread::Main, Thread::Test] {
+    fn torn_transcript_tails_keep_history_backup_and_allow_future_appends() {
+        {
             for tail in [
                 b"{\"role\":\"assistant\",\"content\":\"unfinished".as_slice(),
                 b"{\"role\":\"assistant\",\"content\":\"\xe2\x82".as_slice(),
@@ -1097,9 +1043,9 @@ mod tests {
                 let mut session =
                     Session::create(home.path(), home.path(), "c".into(), "m".into()).unwrap();
                 session
-                    .push_to(thread, msg("user", "keep this constraint"))
+                    .push_message(msg("user", "keep this constraint"))
                     .unwrap();
-                let path = session.dir.join(thread_file(thread));
+                let path = session.dir.join(TRANSCRIPT_FILE);
                 let prefix = fs::read(&path).unwrap();
                 OpenOptions::new()
                     .append(true)
@@ -1109,7 +1055,7 @@ mod tests {
                     .unwrap();
                 let original = fs::read(&path).unwrap();
                 let mut resumed = Session::open(&session.dir).unwrap();
-                assert_eq!(said(resumed.messages_of(thread)), ["keep this constraint"]);
+                assert_eq!(said(&resumed.transcript), ["keep this constraint"]);
                 assert_eq!(fs::read(&path).unwrap(), prefix);
                 assert_eq!(resumed.recovery_notices.len(), 1);
                 assert!(resumed.meta.spend_incomplete);
@@ -1120,12 +1066,10 @@ mod tests {
                     .find(|p| p.extension().is_some_and(|ext| ext == "bak"))
                     .unwrap();
                 assert_eq!(fs::read(backup).unwrap(), original);
-                resumed
-                    .push_to(thread, msg("assistant", "continue"))
-                    .unwrap();
+                resumed.push_message(msg("assistant", "continue")).unwrap();
                 let again = Session::open(&session.dir).unwrap();
                 assert_eq!(
-                    said(again.messages_of(thread)),
+                    said(&again.transcript),
                     ["keep this constraint", "continue"]
                 );
                 assert!(again.recovery_notices.is_empty());
@@ -1324,52 +1268,6 @@ mod tests {
 
     fn said(messages: &[Message]) -> Vec<&str> {
         messages.iter().map(|m| m.content.as_str()).collect()
-    }
-
-    /// The tester's thread is kept apart from the conversation the other
-    /// hats share: each has its own messages and its own file, a message
-    /// can be put in either from the other, and both come back when the
-    /// session is opened again.
-    #[test]
-    fn the_test_thread_is_kept_apart_from_the_main_one() {
-        let home = TempDir::new().unwrap();
-        let cwd = TempDir::new().unwrap();
-        let mut s = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
-        assert_eq!(s.thread(), Thread::Main);
-        s.push_message(msg("user", "build the list")).unwrap();
-        s.use_thread(Thread::Test);
-        assert!(s.transcript.is_empty());
-        s.push_message(msg("user", "test the list")).unwrap();
-        s.push_message(msg("assistant", "it fails")).unwrap();
-        // The report, put in the main thread while the test one is in use.
-        s.push_to(Thread::Main, msg("user", "the test's report"))
-            .unwrap();
-        assert_eq!(said(&s.transcript), ["test the list", "it fails"]);
-        assert_eq!(
-            said(s.messages_of(Thread::Main)),
-            ["build the list", "the test's report"]
-        );
-        // Compacting one thread leaves the other alone.
-        s.replace_transcript(vec![msg("user", "test, compacted")])
-            .unwrap();
-        s.use_thread(Thread::Main);
-        s.use_thread(Thread::Main);
-        assert_eq!(said(&s.transcript), ["build the list", "the test's report"]);
-        assert_eq!(said(s.messages_of(Thread::Test)), ["test, compacted"]);
-        let dir = s.dir.clone();
-        drop(s);
-        let again = Session::open(&dir).unwrap();
-        assert_eq!(again.thread(), Thread::Main);
-        assert_eq!(
-            said(&again.transcript),
-            ["build the list", "the test's report"]
-        );
-        assert_eq!(said(again.messages_of(Thread::Test)), ["test, compacted"]);
-        // A session from before the test hat has no file for it.
-        std::fs::remove_file(dir.join("test.jsonl")).unwrap();
-        let old = Session::open(&dir).unwrap();
-        assert!(old.messages_of(Thread::Test).is_empty());
-        assert_eq!(old.transcript.len(), 2);
     }
 
     #[test]

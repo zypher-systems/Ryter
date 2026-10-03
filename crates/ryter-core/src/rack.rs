@@ -28,21 +28,14 @@ pub struct HatTotals {
     pub verdicts_passed: u32,
     /// Reviews that ended `VERDICT: FAIL`.
     pub verdicts_failed: u32,
-    /// Test scenarios that passed, across reports.
-    pub checks_passed: u32,
-    /// Test scenarios not reached, because an earlier one failed.
-    pub checks_skipped: u32,
-    /// Test scenarios that failed, across reports.
-    pub checks_failed: u32,
 }
 
-/// The four hats' totals.
+/// The three hats' totals.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Rack {
     plan: HatTotals,
     build: HatTotals,
     review: HatTotals,
-    test: HatTotals,
     /// The hat the turn in progress is in.
     hat: Option<Role>,
     /// A hat put on in the middle of a turn that has not done anything
@@ -51,27 +44,12 @@ pub struct Rack {
     switched: Option<Role>,
 }
 
-/// `✗ 2 of 5 failed` or `✓ 5 of 5 passed` as `(passed, failed)`.
-fn checks(headline: &str, passed: bool) -> (u32, u32) {
-    let mut nums = headline
-        .split_whitespace()
-        .filter_map(|w| w.parse::<u32>().ok());
-    match (nums.next(), nums.next()) {
-        (Some(n), Some(total)) if passed => (total.max(n), 0),
-        (Some(n), Some(total)) => (total.saturating_sub(n), n),
-        // A headline in another shape: the report still passed or failed.
-        _ if passed => (1, 0),
-        _ => (0, 1),
-    }
-}
-
 impl Rack {
     /// A hat's totals. A role from crew mode has none of its own: build's.
     pub fn of(&self, role: Role) -> &HatTotals {
         match role {
             Role::SoloPlan => &self.plan,
             Role::SoloReview => &self.review,
-            Role::SoloTest => &self.test,
             Role::SoloBuild | Role::Crew => &self.build,
         }
     }
@@ -80,7 +58,6 @@ impl Rack {
         match role {
             Role::SoloPlan => &mut self.plan,
             Role::SoloReview => &mut self.review,
-            Role::SoloTest => &mut self.test,
             Role::SoloBuild | Role::Crew => &mut self.build,
         }
     }
@@ -137,25 +114,6 @@ impl Rack {
                 Some(false) => self.review.verdicts_failed += 1,
                 None => {}
             },
-            AgentEvent::Tested {
-                headline,
-                passed,
-                rows,
-                ..
-            } => {
-                // A scenario not reached, because an earlier one failed, is
-                // counted among the failures in the headline; here it is a
-                // warning, not a failure of its own.
-                let (ok, bad) = checks(headline, *passed);
-                let unreached = rows
-                    .iter()
-                    .filter(|r| r.starts_with('✗') && r.contains("· not reached"))
-                    .count();
-                let unreached = u32::try_from(unreached).unwrap_or(u32::MAX).min(bad);
-                self.test.checks_passed += ok;
-                self.test.checks_skipped += unreached;
-                self.test.checks_failed += bad - unreached;
-            }
             _ => {}
         }
     }
@@ -210,24 +168,6 @@ mod tests {
         }
     }
 
-    fn tested(headline: &str, passed: bool) -> AgentEvent {
-        tested_rows(headline, passed, Vec::new())
-    }
-
-    fn tested_rows(headline: &str, passed: bool, rows: Vec<String>) -> AgentEvent {
-        AgentEvent::Tested {
-            model: "m".into(),
-            headline: headline.into(),
-            passed,
-            rows,
-            file: String::new(),
-            first_failed: None,
-            tree: None,
-            total_usd: None,
-            duration_ms: 0,
-        }
-    }
-
     fn reviewed(verdict: Option<bool>) -> AgentEvent {
         AgentEvent::Reviewed {
             model: "m".into(),
@@ -254,18 +194,6 @@ mod tests {
             started(Role::SoloReview),
             reviewed(Some(true)),
             reviewed(None),
-            started(Role::SoloTest),
-            tested("✗ 2 of 5 failed", false),
-            tested("✓ 3 of 3 passed", true),
-            tested_rows(
-                "✗ 2 of 3 failed",
-                false,
-                vec![
-                    "✓ 1  starts".into(),
-                    "✗ 2  login".into(),
-                    "✗ 3  publish · not reached (needs 2)".into(),
-                ],
-            ),
         ] {
             r.apply(&ev);
         }
@@ -275,12 +203,13 @@ mod tests {
         assert_eq!((b.turns, b.files.len(), b.added, b.removed), (2, 2, 15, 2));
         let v = r.of(Role::SoloReview);
         assert_eq!((v.turns, v.verdicts_passed, v.verdicts_failed), (2, 1, 1));
-        let t = r.of(Role::SoloTest);
-        assert_eq!(
-            (t.turns, t.checks_passed, t.checks_skipped, t.checks_failed),
-            (1, 7, 1, 3)
-        );
-        assert!(r.worn(Role::SoloTest));
+        assert!(r.worn(Role::SoloReview));
+        // A session from before: a turn in the test hat counts as build's.
+        r.apply(&AgentEvent::TurnStarted {
+            turn: 9,
+            role: Role::Crew,
+        });
+        assert_eq!(r.of(Role::SoloBuild).turns, 3);
     }
 
     #[test]
@@ -349,13 +278,5 @@ mod tests {
         assert_eq!(read.of(Role::SoloBuild), live.of(Role::SoloBuild));
         assert_eq!(read.of(Role::SoloReview), live.of(Role::SoloReview));
         assert_eq!(Rack::from_log(&dir.path().join("none")), Rack::default());
-    }
-
-    #[test]
-    fn a_headline_in_another_shape_still_counts_once() {
-        assert_eq!(checks("✓ 5 of 5 passed", true), (5, 0));
-        assert_eq!(checks("✗ 2 of 5 failed", false), (3, 2));
-        assert_eq!(checks("done", true), (1, 0));
-        assert_eq!(checks("broken", false), (0, 1));
     }
 }

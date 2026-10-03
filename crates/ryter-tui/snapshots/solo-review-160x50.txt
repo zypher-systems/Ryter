@@ -1,4 +1,4 @@
- RYTER │ ● PLAN   ● BUILD    ◆ REVIEW    ○ TEST                                 empty-query fix                                 ~/workspace/shop · search-patch
+ RYTER │ ● PLAN   ● BUILD    ◆ REVIEW                                      empty-query fix                                      ~/workspace/shop · search-patch
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                              │         ●  search returns everything for an empty query ····· ✓ answered · 1.2s · $0.004  ▸    │
  HAT RACK                    │         ●  build the plan ····················· ✓ answered · 2 files (1 new, 1 changed,…  ▸    │ MODEL
@@ -22,9 +22,9 @@
    1 turn             $0.040 │         │    10 + })                                                                           │ sandbox               workspace
    verdicts         ✗ 1 fail │         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009                             │ this hat              read only
                              │                                                                                                │
- ○ TEST                      │                                                                                                │ CHANGES             uncommitted
-   grok-4.6                  │                                                                                                │ app/server.js             +2 −1
-   not worn yet              │                      ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄                      │ test/search.test.js         new
+                             │                                                                                                │ CHANGES             uncommitted
+                             │                                                                                                │ app/server.js             +2 −1
+                             │                      ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄                      │ test/search.test.js         new
                              │                ▄▄                                                            ▄▄                │
                              │                ▀                                                              ▀                │
                              │                    ▀▀▀▀▀▀                                            ▀▀▀▀▀▀                    │
@@ -45,6 +45,6 @@
                              │                                                                                                │
                              │                                                                                                │
                              │────────────────────────────────────────────────────────────────────────────────────────────────│
-                             │  REVIEW  › ask about the review · Tab: test · / for commands                                   │
+                             │  REVIEW  › ask about the review · Tab: plan · / for commands                                   │
 
- $ spend    enter send    tab test    ⇧enter newline    / commands    ^t changes    ^o expand    ^r reasoning    ^b panels    ^c quit
+ $ spend    enter send    tab plan    ⇧enter newline    / commands    ^t changes    ^o expand    ^r reasoning    ^b panels    ^c quit

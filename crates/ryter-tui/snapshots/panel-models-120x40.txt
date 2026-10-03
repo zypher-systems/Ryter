@@ -13,8 +13,8 @@
     │   follows all hats          │                                                                                │
     │   Review                    │                                                                                │
     │   follows all hats          │                                                                                │
-    │   Test                      │                                                                                │
-    │   follows all hats          │                                                                                │
+    │                             │                                                                                │
+    │                             │                                                                                │
     │                             │                                                                                │
     │                             │                                                                                │
     │                             │                                                                                │

@@ -35,7 +35,6 @@ pub mod sandbox;
 pub mod session;
 pub mod skill;
 pub mod spend;
-pub mod testing;
 pub mod tools;
 pub mod trace;
 pub mod update;
@@ -70,7 +69,7 @@ pub use mcp::{
 pub use mcp::{bind_unix, serve_unix};
 pub use memory::load_project_memory;
 pub use prompt::load_project_instructions;
-pub use role::{Role, Thread};
+pub use role::Role;
 pub use sandbox::SandboxProfile;
 pub use session::{Session, SessionInfo, SpendRecord};
 pub use skill::{

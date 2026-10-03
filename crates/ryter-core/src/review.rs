@@ -489,39 +489,6 @@ pub struct Receipt {
     pub tests_stale: bool,
     /// The review hat's last verdict on this work.
     pub review: Reviewed,
-    /// The test hat's last report on this work.
-    pub test: Tested,
-}
-
-/// What the test hat reported of the work being committed.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum Tested {
-    /// No test ran.
-    #[default]
-    No,
-    /// One ran, and the files changed after.
-    Stale,
-    /// Every scenario passed, by this model.
-    Pass(String),
-    /// Something failed, by this model.
-    Fail(String),
-}
-
-impl Tested {
-    /// The report a test gave on `tree`, for a commit of `now`.
-    pub fn of(mark: Option<&(Option<String>, String, bool)>, now: Option<&str>) -> Self {
-        let Some((tree, model, passed)) = mark else {
-            return Self::No;
-        };
-        if tree.is_none() || tree.as_deref() != now {
-            return Self::Stale;
-        }
-        if *passed {
-            Self::Pass(model.clone())
-        } else {
-            Self::Fail(model.clone())
-        }
-    }
 }
 
 /// What the review hat said of the work being committed.
@@ -591,13 +558,7 @@ impl Receipt {
             Reviewed::Fail(m) => format!("review ✗ {}", short_model(m)),
             Reviewed::NoVerdict(m) => format!("review by {} gave no verdict", short_model(m)),
         };
-        let test = match &self.test {
-            Tested::No => "not tested".to_string(),
-            Tested::Stale => "not tested after the last change".into(),
-            Tested::Pass(m) => format!("test ✓ {}", short_model(m)),
-            Tested::Fail(m) => format!("test ✗ {}", short_model(m)),
-        };
-        format!("{models} · {cost} · {tests} · {review} · {test}")
+        format!("{models} · {cost} · {tests} · {review}")
     }
 }
 
@@ -905,7 +866,7 @@ mod tests {
         };
         assert_eq!(
             r.line(),
-            "deepseek-pro-latest · $0.34 · tests ✓ 13 passed · not reviewed · not tested"
+            "deepseek-pro-latest · $0.34 · tests ✓ 13 passed · not reviewed"
         );
         r.tests_stale = true;
         assert!(
@@ -925,36 +886,13 @@ mod tests {
             Some(true),
         );
         r.review = Reviewed::of(Some(&mark), Some("t1"));
-        assert!(
-            r.line().ends_with("review ✓ grok-4.7 · not tested"),
-            "{}",
-            r.line()
-        );
+        assert!(r.line().ends_with("· review ✓ grok-4.7"), "{}", r.line());
         r.review = Reviewed::of(Some(&mark), Some("t2"));
         assert!(
-            r.line()
-                .ends_with("not reviewed after the last change · not tested"),
+            r.line().ends_with("· not reviewed after the last change"),
             "{}",
             r.line()
         );
-        // The test's report is about the files as they stood, too.
-        let tested = (
-            Some("t1".to_string()),
-            "moonshot/kimi-k3".to_string(),
-            false,
-        );
-        r.test = Tested::of(Some(&tested), Some("t1"));
-        assert!(r.line().ends_with("· test ✗ kimi-k3"), "{}", r.line());
-        r.test = Tested::of(Some(&tested), Some("t2"));
-        assert!(
-            r.line().ends_with("· not tested after the last change"),
-            "{}",
-            r.line()
-        );
-        let passed = (Some("t1".to_string()), "kimi-k3".to_string(), true);
-        r.test = Tested::of(Some(&passed), Some("t1"));
-        assert!(r.line().ends_with("· test ✓ kimi-k3"), "{}", r.line());
-        assert_eq!(Tested::of(None, Some("t1")), Tested::No);
         let failed = (Some("t1".to_string()), "m".to_string(), Some(false));
         assert_eq!(
             Reviewed::of(Some(&failed), Some("t1")),

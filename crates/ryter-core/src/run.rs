@@ -1,6 +1,6 @@
 //! How a project runs: `.ryter/run.toml`, and the product a test started.
 //!
-//! The tester has to start the product, know when it is up, run its tests,
+//! The build hat has to start the product, know when it is up, run its tests,
 //! and stop it. Those commands are the project's own, so they are kept in
 //! the project, drafted by the model and approved by the user. Ryter runs
 //! what was approved itself: a server that stays in the foreground can't be
@@ -127,9 +127,9 @@ impl RunFile {
     /// The file's text.
     pub fn text(&self) -> String {
         let mut s = String::from(
-            "# How this project runs. Ryter's test hat starts it, waits for `ready` to\n\
-             # answer, runs `test`, and stops it with `stop`. Change it here or ask the\n\
-             # tester to propose a new one; Ryter asks you to approve it again.\n",
+            "# How this project runs. Ryter starts it, waits for `ready` to answer,\n\
+             # runs `test`, and stops it with `stop`. Change it here or ask the build\n\
+             # hat to propose a new one; Ryter asks you to approve it again.\n",
         );
         if let Some(v) = &self.start {
             s.push_str(&format!("start = {}\n", quoted(v)));
@@ -697,6 +697,14 @@ pub fn stop(
             None,
         ) {
             Ok(crate::tools::shell::Run::Ok(_)) => did.push(cmd),
+            // `pkill -f name` matches the shell running it, and ends it
+            // with the product: the kill found its target, the shell
+            // included. That is the stop working, not failing.
+            Ok(crate::tools::shell::Run::Failed(out))
+                if out.contains("[killed by a signal]") && kills_by_name(&cmd) =>
+            {
+                did.push(format!("{cmd} (it ended its own shell too)"));
+            }
             Ok(crate::tools::shell::Run::Failed(out)) => {
                 failed = Some(format!("`{cmd}` failed:\n{}", last_lines(&out, 20)));
             }
@@ -733,6 +741,67 @@ pub fn stop(
             Ok(did.join(", then "))
         }
     }
+}
+
+/// A stop command that kills processes by name or by command line
+/// (`pkill`, `killall`), which can take the shell running it with them.
+fn kills_by_name(cmd: &str) -> bool {
+    cmd.split(|c: char| c.is_whitespace() || c == ';' || c == '|' || c == '&')
+        .any(|w| {
+            matches!(
+                w.rsplit('/').next().unwrap_or(w),
+                "pkill" | "killall" | "pgrep"
+            )
+        })
+}
+
+/// A `pkill -f PATTERN` whose pattern is written out in the command that
+/// runs it: the pattern matches that shell's own command line, so the
+/// shell dies with the product. `[d]riftwing` doesn't match itself.
+pub fn pkill_matches_itself(cmd: &str) -> Option<String> {
+    // The words, a quoted one kept whole: `pkill -f 'python -m x'`.
+    let mut words: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for c in cmd.chars() {
+        match (quote, c) {
+            (Some(q), _) if c == q => quote = None,
+            (Some(_), _) => cur.push(c),
+            (None, '\'' | '"') => quote = Some(c),
+            (None, _) if c.is_whitespace() => {
+                if !cur.is_empty() {
+                    words.push(std::mem::take(&mut cur));
+                }
+            }
+            (None, _) => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        words.push(cur);
+    }
+    for (i, w) in words.iter().enumerate() {
+        if !matches!(w.rsplit('/').next().unwrap_or(w), "pkill" | "pgrep") {
+            continue;
+        }
+        let mut j = i + 1;
+        let mut full = false;
+        while let Some(a) = words.get(j) {
+            if *a == "-f" || (a.starts_with('-') && !a.starts_with("--") && a.contains('f')) {
+                full = true;
+            } else if !a.starts_with('-') {
+                break;
+            }
+            j += 1;
+        }
+        let Some(pattern) = words.get(j).map(String::as_str) else {
+            continue;
+        };
+        // A literal pattern (no class, no alternation) is in its own line.
+        if full && !pattern.contains(['[', '(', '|', '\\', '^', '$']) && !pattern.is_empty() {
+            return Some(pattern.to_string());
+        }
+    }
+    None
 }
 
 /// The compose tool a start command uses, where it is one: `docker compose
@@ -1249,6 +1318,64 @@ mod tests {
         );
     }
 
+    /// `pkill -f name` matches the shell running it and ends it with the
+    /// product: the stop worked. A stop that fails for another reason is
+    /// still a failure.
+    #[cfg(unix)]
+    #[test]
+    fn a_stop_that_ends_its_own_shell_has_stopped_the_product() {
+        let root = TempDir::new().unwrap();
+        let log = root.path().join("log");
+        let mut started = Started {
+            cleanup_pending: true,
+            at: "now".into(),
+            address: None,
+            stop: Some("true pkill; kill -TERM $$".into()),
+            child: None,
+            group: None,
+            log: log.clone(),
+        };
+        let did = stop(&mut started, root.path(), &crate::Cancel::new()).unwrap();
+        assert!(did.contains("ended its own shell"), "{did}");
+        assert!(!started.cleanup_pending);
+        let mut started = Started {
+            cleanup_pending: true,
+            at: "now".into(),
+            address: None,
+            stop: Some("false".into()),
+            child: None,
+            group: None,
+            log,
+        };
+        assert!(stop(&mut started, root.path(), &crate::Cancel::new()).is_err());
+        assert!(started.cleanup_pending);
+    }
+
+    #[test]
+    fn a_pkill_pattern_written_out_matches_its_own_line() {
+        assert_eq!(
+            pkill_matches_itself("pkill -f driftwing.main || true"),
+            Some("driftwing.main".into())
+        );
+        assert_eq!(
+            pkill_matches_itself("pkill -9 -f 'python -m driftwing'"),
+            Some("python -m driftwing".into())
+        );
+        assert_eq!(
+            pkill_matches_itself("pkill -f \"python -m driftwing\" || true"),
+            Some("python -m driftwing".into())
+        );
+        for ok in [
+            "pkill -f 'driftwing[.]main' || true",
+            "pkill -f '[p]ython -m driftwing'",
+            "pkill driftwing",
+            "kill $(cat .pid)",
+            "docker compose down",
+        ] {
+            assert_eq!(pkill_matches_itself(ok), None, "{ok}");
+        }
+    }
+
     #[test]
     fn a_product_left_running_is_remembered_until_it_is_stopped() {
         let home = TempDir::new().unwrap();
@@ -1340,7 +1467,6 @@ mod tests {
                 };
                 crate::decisions::record(&root, ".ryter/plans/2026-10-02-a-plan.md", &entry)
                     .unwrap();
-                crate::testing::save_on(&root, "2026-10-02", "a-plan", "report").unwrap();
                 // A thread this one starts is in the sandbox as well, and
                 // its records are kept the same way.
                 let (h, r) = (home.clone(), root.clone());

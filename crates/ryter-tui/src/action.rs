@@ -164,10 +164,6 @@ pub enum Action {
         /// Stop it first.
         stop: bool,
     },
-    /// `/test`: the test hat tests the work now.
-    TestNow,
-    /// `s` on a test offer: no more offers after reviews that pass.
-    StopTestOffers,
     /// `/audit`: the review hat reviews the uncommitted work now.
     ReviewNow,
     /// `s` on a review offer: no more offers after build turns (the offer

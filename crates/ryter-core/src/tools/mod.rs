@@ -418,35 +418,14 @@ fn spec(name: &str) -> Option<ToolSpec> {
                 "stop":{"type":"string","description":"stops what start started"}
             }}),
         ),
-        "report_test" => (
-            "File your test report. Call it once, when you have finished testing, as your \
-             last tool call. List every scenario you tried, in order, each with how it \
-             went: `pass`, `fail`, or `not_reached` (it depended on one that failed). For \
-             a failure say what you expected, what happened (the status, the error line), \
-             and the exact steps to see it again: the builder fixes from this without \
-             having seen what you saw. The report goes to the user and the builder, and \
-             into a file under `.ryter/tests/`. Don't soften a failure, and don't report \
-             a pass you didn't see.",
-            json!({"type":"object","properties":{
-                "title":{"type":"string","description":"what was tested, in a few words"},
-                "scenarios":{"type":"array","items":{"type":"object","properties":{
-                    "name":{"type":"string","description":"what you tried, in a few words"},
-                    "result":{"type":"string","enum":["pass","fail","not_reached"]},
-                    "expected":{"type":"string","description":"for a failure: what should have happened"},
-                    "got":{"type":"string","description":"for a failure: what happened, with the status or the error line"},
-                    "to_see_it":{"type":"string","description":"for a failure: the exact steps to see it again"},
-                    "note":{"type":"string","description":"a word more: `21 passed`, or for not_reached what it needs (`needs 3`)"}
-                },"required":["name","result"]}},
-                "summary":{"type":"string","description":"what you could not test, and why"}
-            },"required":["title","scenarios"]}),
-        ),
         "run_project" => (
             "Run the project's own approved commands from `.ryter/run.toml`. `start` \
              starts the product and waits until it is up; it stays up after your turn. \
              `test` runs the project's test commands and returns their output. `stop` \
              stops what was started (the user usually does this, with /stop: leave the \
              product running when you finish). `status` says whether it is up. With no \
-             run file yet, propose one with propose_run.",
+             run file yet, propose one with propose_run. The build and review hats run \
+             these; the plan hat starts nothing.",
             json!({"type":"object","properties":{
                 "action":{"type":"string","enum":["start","test","stop","status"]}
             },"required":["action"]}),
@@ -488,26 +467,6 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
         // One list for every hat, so switching hats never changes the tool
         // definitions (and never throws away the prompt cache). The gate
         // decides what each hat may run.
-        // The tester works in a thread of its own, so its list is its own
-        // too: nothing for planning or for changing the project's rules.
-        Role::SoloTest => &[
-            "read_file",
-            "list_dir",
-            "grep",
-            "glob",
-            "write",
-            "bash",
-            "propose_run",
-            "run_project",
-            "report_test",
-            "ask_user",
-            "load_skill",
-            "show_page",
-            "search_tool",
-            "use_tool",
-            "web_fetch",
-            "web_search",
-        ],
         Role::SoloPlan | Role::SoloBuild | Role::SoloReview => &[
             "read_file",
             "list_dir",
@@ -523,6 +482,8 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "load_skill",
             "show_page",
             "update_rules",
+            "propose_run",
+            "run_project",
             "search_tool",
             "use_tool",
             "web_fetch",
@@ -552,9 +513,9 @@ fn execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutp
         "ask_user" => ask_user(args, ctx),
         // The agent loop answers this itself: it changes who the agent is.
         "request_hat" | "present_plan" | "record_decision" | "load_skill" | "show_page"
-        | "update_rules" | "propose_run" | "run_project" | "report_test" => Ok(ToolOutput::err(
-            format!("{name} is handled by the agent loop"),
-        )),
+        | "update_rules" | "propose_run" | "run_project" => Ok(ToolOutput::err(format!(
+            "{name} is handled by the agent loop"
+        ))),
         "web_fetch" => web::web_fetch(args, ctx),
         "web_search" => web::web_search(args, ctx),
         other => Ok(ToolOutput::err(format!("unknown tool {other}"))),
@@ -728,7 +689,7 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
         // A hat that can't do this: say which one can, so the model tells the
         // user instead of hunting for a way round.
         Decision::Deny
-            if matches!(ctx.role, Role::SoloPlan | Role::SoloReview | Role::SoloTest)
+            if matches!(ctx.role, Role::SoloPlan | Role::SoloReview)
                 && matches!(name, "write" | "search_replace" | "bash")
                 && !(name == "bash" && policy::bash_hint(args, ctx).is_some()) =>
         {
@@ -736,9 +697,7 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                 "denied: the {} hat can't {} — tell the user; they can press Tab to switch to \
                  build.{}",
                 ctx.role,
-                if name == "bash" && ctx.role == Role::SoloTest {
-                    "delete, move or rewrite the project's files"
-                } else if name == "bash" {
+                if name == "bash" {
                     "run commands that change things"
                 } else {
                     "edit files"
@@ -1305,10 +1264,7 @@ mod tests {
         let r = ctx(Role::SoloReview, dir.path());
         let out =
             gated_execute("bash", &json!({ "command": "python3 -c 'print(1)'" }), &r).unwrap();
-        assert!(
-            out.is_error && out.text.contains("build and test hats"),
-            "{out:?}"
-        );
+        assert!(out.is_error && out.text.contains("build hat"), "{out:?}");
         // Other refusals keep the general wording.
         let out = gated_execute("bash", &json!({ "command": "sudo ls" }), &c).unwrap();
         assert!(out.text.contains("outside policy"), "{out:?}");

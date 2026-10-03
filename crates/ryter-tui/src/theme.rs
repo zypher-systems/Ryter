@@ -471,7 +471,6 @@ impl Theme {
             ryter_core::Role::SoloBuild => self.build,
             ryter_core::Role::SoloPlan => self.plan,
             ryter_core::Role::SoloReview => self.audit,
-            ryter_core::Role::SoloTest => self.architect,
             ryter_core::Role::Crew => self.build,
         }
     }
@@ -482,7 +481,6 @@ impl Theme {
             ryter_core::Role::SoloPlan => 0,
             ryter_core::Role::SoloBuild | ryter_core::Role::Crew => 1,
             ryter_core::Role::SoloReview => 2,
-            ryter_core::Role::SoloTest => 3,
         }
     }
 

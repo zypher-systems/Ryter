@@ -143,17 +143,13 @@ impl PermissionModal {
             "switch hat" => Some(("switch hat?", "switch", "stay")),
             "review" => Some(("review?", "review", "not now")),
             "review offer" => Some(("review this work?", "review", "not now")),
-            "test" => Some(("test?", "test", "not now")),
-            "test offer" => Some(("test this work?", "test", "not now")),
-            "fix offer" => Some(("fix what the test found?", "fix", "not now")),
             _ => None,
         }
     }
 
-    /// Ryter offering a review after a build turn, or a test after a
-    /// review that passed: `s` stops the offers.
+    /// Ryter offering a review after a build turn: `s` stops the offers.
     fn is_offer(&self) -> bool {
-        matches!(self.tool.as_str(), "review offer" | "test offer")
+        self.tool == "review offer"
     }
 
     fn is_hat(&self) -> bool {
@@ -302,8 +298,6 @@ impl Panel for PermissionModal {
     fn offers(&self) -> Option<ryter_core::Role> {
         match self.tool.as_str() {
             "review" | "review offer" => Some(ryter_core::Role::SoloReview),
-            "test" | "test offer" => Some(ryter_core::Role::SoloTest),
-            "fix offer" => Some(ryter_core::Role::SoloBuild),
             _ => None,
         }
     }
@@ -555,9 +549,6 @@ impl Panel for PermissionModal {
             }
             KeyCode::Enter | KeyCode::Char('y' | 'Y') => reply(Permission::Allow),
             KeyCode::Char('n' | 'N') | KeyCode::Esc => reply(Permission::Deny),
-            KeyCode::Char('s' | 'S') if self.tool == "test offer" => {
-                Outcome::CloseAct(Action::StopTestOffers)
-            }
             KeyCode::Char('s' | 'S') if self.is_offer() => {
                 Outcome::CloseAct(Action::StopReviewOffers)
             }
@@ -976,20 +967,10 @@ mod tests {
             press(&mut m, &mut v, 's'),
             Outcome::CloseAct(Action::StopReviewOffers)
         ));
-        // A test offer is the same card, and `s` stops test offers.
-        let mut t = PermissionModal::new("test offer".into(), "Test this work?".into());
-        assert_eq!(t.title(&v), "test this work?");
-        assert!(t.legend(&v).contains("s stop offering"));
-        assert!(matches!(
-            press(&mut t, &mut v, 's'),
-            Outcome::CloseAct(Action::StopTestOffers)
-        ));
-        // Asked for with /test, or offering fixes: yes or no, no `s`.
-        for (tool, title) in [("test", "test?"), ("fix offer", "fix what the test found?")] {
-            let m = PermissionModal::new(tool.into(), "x".into());
-            assert_eq!(m.title(&v), title);
-            assert!(!m.legend(&v).contains("stop offering"), "{tool}");
-        }
+        // Asked for with /audit: yes or no, no `s`.
+        let m = PermissionModal::new("review".into(), "x".into());
+        assert_eq!(m.title(&v), "review?");
+        assert!(!m.legend(&v).contains("stop offering"));
         let mut asked = PermissionModal::new("audit".into(), "x".into());
         assert!(!asked.legend(&v).contains("stop offering"));
         assert!(matches!(press(&mut asked, &mut v, 's'), Outcome::Stay));
