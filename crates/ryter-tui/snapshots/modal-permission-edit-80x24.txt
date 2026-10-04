@@ -13,8 +13,8 @@
   ┏━ allow? · edit  app/server.js ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ build ━┓
   │ what    edit  app/server.js                                             │
   │ risk    changes a file in your project · /undo puts it back             │
-  │ /changes shows it whole once it's made                                  │
-  │ ⏎ allow   n deny   ↑↓ wheel more of the change                          │
+  │ change  app/server.js  +2 −1                                            │
+  │ ⏎ allow   n deny                                                        │
   ╰─────────────────────────────────────────────────────────────────────────╯
  ⠼ writing  ·  Reading the loop now. The event loop dr…  ·  0… ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────

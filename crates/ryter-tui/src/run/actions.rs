@@ -414,7 +414,8 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 let _ = tx.send(p);
             }
             if view.activity.busy() {
-                view.activity.verb = Verb::Thinking;
+                let now = view.now_ms;
+                view.activity.note_reply(now);
             }
         }
         Action::PlanReply(answer) => {
@@ -422,7 +423,8 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 let _ = tx.send(answer);
             }
             if view.activity.busy() {
-                view.activity.verb = Verb::Thinking;
+                let now = view.now_ms;
+                view.activity.note_reply(now);
             }
         }
         Action::AskUserReply(s) => {
@@ -430,7 +432,8 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 let _ = tx.send(s);
             }
             if view.activity.busy() {
-                view.activity.verb = Verb::Thinking;
+                let now = view.now_ms;
+                view.activity.note_reply(now);
             }
         }
         Action::TrustProject(yes) => {

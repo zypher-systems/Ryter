@@ -125,6 +125,9 @@ pub struct Activity {
     pub turn: u64,
     /// Whether any turn has ever run (height 0 otherwise, `R-ACT-01`).
     pub has_history: bool,
+    /// The tool call being run, from its call to its result: a reply to a
+    /// card during it goes back to `running <tool>`, not to thinking.
+    pub tool_in_flight: Option<String>,
     /// `now_ms` of the last delta of any kind: a token, a thought, a tool
     /// call or its result. Nothing for [`WAIT_AFTER_MS`] is waiting.
     pub last_delta_ms: Option<u64>,
@@ -161,6 +164,7 @@ impl Activity {
             last_delta_ms: None,
             tail: String::new(),
             ask: None,
+            tool_in_flight: None,
         }
     }
 
@@ -180,6 +184,7 @@ impl Activity {
         self.scroll = None;
         self.turn = turn;
         self.has_history = true;
+        self.tool_in_flight = None;
     }
 
     /// Turn ended (`R-ACT-08`).
@@ -227,6 +232,18 @@ impl Activity {
     pub fn note_ask(&mut self, ask: &str) {
         self.verb = Verb::Waiting;
         self.ask = Some(ask.to_string());
+    }
+
+    /// The user answered a card. The quiet clock starts again from here,
+    /// and the verb is the tool still running, when there is one, or
+    /// thinking while the model takes the answer in.
+    pub fn note_reply(&mut self, now_ms: u64) {
+        self.last_delta_ms = Some(now_ms);
+        self.ask = None;
+        self.verb = match &self.tool_in_flight {
+            Some(t) => Verb::Tool(t.clone()),
+            None => Verb::Thinking,
+        };
     }
 
     /// The latest text, for the ticker: its tail, single-spaced.
@@ -523,6 +540,53 @@ mod tests {
         assert_eq!(a.current, "read src/run.rs");
         a.note_text("Now the tests.");
         assert_eq!(a.current, "Now the tests.");
+    }
+
+    /// A card answered while a tool runs goes back to `running <tool>`,
+    /// and the quiet clock starts from the answer, so a long command after
+    /// a yes is never called waiting for the model.
+    #[test]
+    fn a_reply_keeps_the_running_tool_and_restarts_the_quiet_clock() {
+        let mut a = Activity::new(Mode::Collapsed);
+        a.start(1, 0);
+        a.note_delta(0);
+        a.verb = Verb::Tool("bash".into());
+        a.tool_in_flight = Some("bash".into());
+        // The card opens at 1 s and is answered at 5 s: four quiet seconds.
+        a.note_ask("allow?");
+        assert_eq!(a.status(80), "waiting for you · allow? · 0:00");
+        a.tick(5_000);
+        a.note_reply(5_000);
+        assert!(
+            matches!(a.verb, Verb::Tool(ref t) if t == "bash"),
+            "{:?}",
+            a.verb
+        );
+        a.tick(7_900);
+        assert!(
+            matches!(a.verb, Verb::Tool(_)),
+            "a running tool is never waiting"
+        );
+        // Its result: thinking, and the wait is judged from the answer.
+        a.tool_in_flight = None;
+        a.verb = Verb::Thinking;
+        a.note_delta(8_000);
+        a.tick(10_900);
+        assert_eq!(a.verb, Verb::Thinking);
+        a.tick(11_000);
+        assert_eq!(a.verb, Verb::WaitingModel);
+        // With no tool in flight, a reply means thinking, clock restarted.
+        let mut b = Activity::new(Mode::Collapsed);
+        b.start(1, 0);
+        b.note_delta(0);
+        b.note_ask("plan?");
+        b.tick(9_000);
+        b.note_reply(9_000);
+        assert_eq!(b.verb, Verb::Thinking);
+        b.tick(11_900);
+        assert_eq!(b.verb, Verb::Thinking);
+        b.tick(12_000);
+        assert_eq!(b.verb, Verb::WaitingModel);
     }
 
     #[test]

@@ -356,6 +356,7 @@ impl Panel for PermissionModal {
         // On a short card, a change that must be read whole gets the row
         // the model's reason would take.
         let short = self.whole && usize::from(height) < 6;
+        let why_at = (self.why.is_some() && !short).then(|| lines.len());
         if let Some(why) = self.why.as_ref().filter(|_| !short) {
             lines.push(Self::row(
                 "why",
@@ -443,13 +444,15 @@ impl Panel for PermissionModal {
                         theme,
                     ));
                 } else if avail == 0 {
-                    // A short card for an edit in the project: the path
-                    // and the figures are enough, `/changes` has the rest.
-                    lines.truncate(usize::from(height).saturating_sub(1));
-                    lines.push(widgets::note(
-                        "/changes shows it whole once it's made",
-                        theme,
-                    ));
+                    // No row of the change fits: what, risk and the
+                    // change's summary stay, and the model's words go
+                    // first when something must. Nothing scrolls.
+                    if lines.len() > usize::from(height) {
+                        if let Some(i) = why_at.filter(|i| *i < lines.len()) {
+                            lines.remove(i);
+                        }
+                    }
+                    lines.truncate(usize::from(height));
                 }
                 let shown = if total <= avail {
                     total
@@ -459,7 +462,13 @@ impl Panel for PermissionModal {
                 } else {
                     avail
                 };
-                let max_top = total.saturating_sub(shown.max(1));
+                // With no row of the change on the card there is nothing to
+                // scroll, and the legend must not offer it.
+                let max_top = if avail == 0 {
+                    0
+                } else {
+                    total.saturating_sub(shown.max(1))
+                };
                 // The window starts no further down than what has been
                 // drawn, however many keys were pressed since the last
                 // frame: nothing is passed over unseen.
@@ -1258,6 +1267,47 @@ mod tests {
         assert!(m.legend(&v).contains("wheel more of the change"));
         assert!(is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
     }
+    /// A card too short for any row of the change keeps what, risk and the
+    /// change's summary (the model's words go first), and offers no scroll;
+    /// one with two spare rows shows the change and scrolls it.
+    #[test]
+    fn a_short_card_keeps_the_risk_and_offers_no_scroll() {
+        let theme = Theme::truecolor_dark();
+        let mut v = view();
+        v.now_ms = 10_000;
+        let new: String = (0..40).map(|i| format!("line {i}\n")).collect();
+        let diff = ryter_core::diff::FileDiff::new("src/a.rs", Some(""), &new);
+        let m = PermissionModal::new("write".into(), "src/a.rs".into())
+            .with_preview(Some(Box::new(diff)))
+            .with_answers(false, Some("edits to files in the project".into()))
+            .with_context(Some("because the plan says so".into()), 0);
+        // Three body rows: what, risk, change; the why is dropped.
+        let rows = text(&m.render(&v, 90, 3, theme));
+        let joined = rows.join("\n");
+        assert!(joined.contains("what"), "{rows:?}");
+        assert!(joined.contains("risk"), "{rows:?}");
+        assert!(joined.contains("change"), "{rows:?}");
+        assert!(!joined.contains("why"), "{rows:?}");
+        assert!(!joined.contains("line 0"), "{rows:?}");
+        assert!(
+            !m.legend(&v).contains("more of the change"),
+            "{}",
+            m.legend(&v)
+        );
+        // Four rows: the why is back, still no change row, still no scroll.
+        let rows = text(&m.render(&v, 90, 4, theme));
+        assert!(rows.join("\n").contains("why"), "{rows:?}");
+        assert!(!m.legend(&v).contains("more of the change"));
+        // Six rows: two for the change, and it scrolls.
+        let rows = text(&m.render(&v, 90, 6, theme));
+        assert!(rows.join("\n").contains("line 0"), "{rows:?}");
+        assert!(
+            m.legend(&v).contains("more of the change"),
+            "{}",
+            m.legend(&v)
+        );
+    }
+
     fn hundred_rules() -> String {
         (0..100).map(|i| format!("- rule number {i};\n")).collect()
     }

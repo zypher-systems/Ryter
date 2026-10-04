@@ -20,11 +20,11 @@
    │ what    edit  app/server.js                                │     │ this hat         asks first
    │ why     Next the form text                                 │     │ plan.md                none
    │ risk    changes a file in your project · /undo puts it back│     │ audit.md               none
-   │ /changes shows it whole once it's made                     │     │
-   │ ⏎ allow   a allow edits this session   n deny              │     │ CHANGES
+   │ change  app/server.js  +1 −1                               │     │
+   │ ⏎ allow                                                    │     │ CHANGES
    ╰────────────────────────────────────────────────────────────╯     │ no repository here
   ⠼ waiting for you  ·  …ly line 4 reply line 5 … ^r  reasoning  ▾    │
 ──────────────────────────────────────────────────────────────────────│
   BUILD  › type to queue the next message, / for commands             │
 
- ⏎ allow    a allow edits this session    n deny    ↑↓ wheel more of the change    ^c stop the turn
+ ⏎ allow    a allow edits to files in the project this session    n deny    ^c stop the turn

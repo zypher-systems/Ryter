@@ -13,9 +13,9 @@
          │  ⠼ waiting for you · allow? · 0:12 · 85 tokens
    ┏━ allow? · edit  app/server.js ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ build ━┓
    │ what    edit  app/server.js                                          │
-   │ why     Next the form text                                           │
-   │ /changes shows it whole once it's made                               │
-   │ ⏎ allow   a allow edits this session   n deny                        │
+   │ risk    changes a file in your project · /undo puts it back          │
+   │ change  app/server.js  +1 −1                                         │
+   │ ⏎ allow   a allow edits to files in the project this session   n deny│
    ╰──────────────────────────────────────────────────────────────────────╯
   ⠼ waiting for you  ·  …ly line 4 reply line 5 reply line… ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────

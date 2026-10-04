@@ -133,6 +133,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             diff,
         } => {
             on_tool_result(view, id, output, *is_error, *duration_ms, diff.as_deref());
+            view.activity.tool_in_flight = None;
             if view.activity.busy() {
                 view.activity.verb = Verb::Thinking;
                 view.activity.current.clear();
@@ -497,6 +498,7 @@ fn on_tool_call(
     }
     if view.activity.busy() && role.is_solo() {
         view.activity.verb = Verb::Tool(name.to_string());
+        view.activity.tool_in_flight = Some(name.to_string());
         view.activity.note_tool(&label);
         view.activity.tools += 1;
         let now = view.now_ms;

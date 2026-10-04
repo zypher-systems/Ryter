@@ -137,6 +137,8 @@ After the release PR's review (2026-10-03):
 - **R-AUD-04** A chord (`Ctrl`/`Alt` with `y`, `n`, `o`) does nothing on the card; its `y` is ignored for the first half second, as every card's confirm key is.
 - The project spend's hats' share counts audit, review and scribe.
 
+After the 0.17.0 review (2026-10-04): a reply to a card restarts the activity's quiet clock and keeps `running <tool>` while the tool call is in flight (`Activity::note_reply`, `tool_in_flight`); a card too short for any row of the change keeps what, risk and the change's summary, drops the why first, and offers no scroll.
+
 Patch 4 (the scribe hat), 2026-10-03:
 
 - **R-SCR-01** The documentation rule is by name alone: the extensions `md`, `mdx`, `txt`, `rst`, `adoc` in any case, and the bare names `README`, `CHANGELOG`, `LICENSE`, `CONTRIBUTING`, `NOTICE`, `AUTHORS`. The secret rule runs first, so `.env`, `*.pem` and the dotenv family are refused whatever they end in: `.env.md` is refused, as a secret, not written as a document. Everything under `.ryter/` is refused except the session's notes, which every hat may write. `ROADMAP.md` and `DECISIONS.md` are documentation, so the scribe writes them as the plan and build hats do.
