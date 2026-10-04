@@ -222,12 +222,16 @@ impl Agent {
             });
         }
         let out = self.turn_inner(user, &mut tools).await;
+        // An audit phase still open closes first: its rollback has to be
+        // done before the turn's end is recorded, or what it put back
+        // would read as the user's edits since the turn and `/undo` would
+        // refuse.
+        self.close_audit();
         // However the turn ended (done, cancelled, failed), record what it
         // left for `/undo`.
         if let Err(e) = self.finish_turn_record() {
             crate::trace::log(&self.home, &format!("undo record: {e}"));
         }
-        self.close_audit();
         // The screen marks a turn failed only if it hears of the failure
         // before the turn closes. The caller used to report it after, so
         // every failed turn closed "✓ answered".
@@ -5130,6 +5134,10 @@ mod tests {
     async fn a_yes_into_the_audit_hat_arms_a_checkpoint() {
         let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
             call(
+                "write",
+                serde_json::json!({"path": "built.txt", "content": "fixed\n"}),
+            ),
+            call(
                 "request_hat",
                 serde_json::json!({"hat": "audit", "reason": "check it"}),
             ),
@@ -5164,6 +5172,19 @@ mod tests {
         assert!(
             evs.iter().any(|e| matches!(e, AgentEvent::Notice { message } if message.contains("put back from the checkpoint"))),
             "{evs:?}"
+        );
+        // The turn's end was recorded after the rollback: what the audit
+        // put back is not the user's edit since, and `/undo` takes the
+        // build's own file back.
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("built.txt")).unwrap(),
+            "fixed\n"
+        );
+        let msg = agent.undo().unwrap();
+        assert!(msg.starts_with("undone"), "{msg}");
+        assert!(
+            !cwd.path().join("built.txt").exists(),
+            "the build's file is undone"
         );
     }
 
