@@ -681,7 +681,8 @@ impl Agent {
         self.emit(AgentEvent::Notice {
             message: format!(
                 "stopped after {} rounds, the most one message may use (rounds a turn in \
-                 /settings, or [limits] rounds in config.toml; 0 lifts it). Say \"continue\" \
+                 /settings, [limits] rounds in config.toml, or --rounds N for one run; 0 \
+                 lifts it). Say \"continue\" \
                  to carry on.",
                 self.max_turns
             ),

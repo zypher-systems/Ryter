@@ -3303,6 +3303,50 @@ fn the_foot_shows_the_cards_keys_in_warn() {
     assert_ne!(buf[(at("^c"), foot)].fg, theme.warn, "{text}");
 }
 
+/// The classic layout's foot line takes the card's keys in warn too.
+#[test]
+fn the_classic_foot_shows_the_cards_keys_in_warn() {
+    let mut v = asking(8);
+    v.ui.layout = "classic".into();
+    let theme = Theme::truecolor_dark();
+    let buf = render_buffer(&v, 160, 42, theme);
+    let foot = buf.area.height - 1;
+    let text: String = (0..buf.area.width)
+        .map(|x| buf[(x, foot)].symbol().to_string())
+        .collect();
+    assert!(
+        text.contains("⏎ allow") && text.contains("^c stop the turn"),
+        "{text}"
+    );
+    let at = |needle: &str| {
+        text.find(needle)
+            .map(|i| text[..i].chars().count() as u16)
+            .unwrap()
+    };
+    assert_eq!(buf[(at("⏎"), foot)].fg, theme.warn, "{text}");
+    assert_eq!(buf[(at("a allow"), foot)].fg, theme.warn, "{text}");
+    assert_ne!(buf[(at("^c"), foot)].fg, theme.warn, "{text}");
+}
+
+/// The allow card's own key row holds `⏎`, `a` and `n` on a narrow column
+/// too: the scope is said in a word, and a key that doesn't fit is left
+/// out without taking the ones after it.
+#[test]
+fn the_allow_cards_key_row_keeps_its_keys_when_narrow() {
+    for (w, h) in [(100u16, 30u16), (80, 24), (160, 42)] {
+        let v = asking(8);
+        let shown = render_to_string(&v, w, h);
+        let row = shown
+            .lines()
+            .find(|l| l.contains("⏎ allow"))
+            .unwrap_or_else(|| panic!("{w}x{h}: no key row\n{shown}"));
+        assert!(
+            row.contains("a allow edits this session") && row.contains("n deny"),
+            "{w}x{h}: {row}"
+        );
+    }
+}
+
 /// What each question asks, as the status row says it; and the bell.
 #[test]
 fn a_question_is_named_and_may_ring() {

@@ -273,19 +273,16 @@ impl Panel for PermissionModal {
         } else if self.y_only() {
             "y allow once · n deny".into()
         } else if let (true, Some(scope)) = (self.can_allow_session(), &self.scope) {
-            // The kind of action in a word where the row is shared with
-            // the scroll hint: `edits`, not `edits to files in the project`.
-            let scope = if self.max_top.get() > 0 {
-                scope
-                    .split(" to ")
-                    .next()
-                    .unwrap_or(scope)
-                    .split(" in ")
-                    .next()
-                    .unwrap_or(scope)
-            } else {
-                scope.as_str()
-            };
+            // The kind of action in a word: `edits`, not `edits to files in
+            // the project`, so the row holds all of its keys on a column
+            // of sixty too. The card's risk line says the rest.
+            let scope = scope
+                .split(" to ")
+                .next()
+                .unwrap_or(scope)
+                .split(" in ")
+                .next()
+                .unwrap_or(scope);
             format!("⏎ allow · a allow {scope} this session · n deny")
         } else {
             "⏎ allow · n deny".into()

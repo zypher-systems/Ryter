@@ -16,9 +16,9 @@
    │ what    edit  app/server.js                                          │
    │ risk    changes a file in your project · /undo puts it back          │
    │ change  app/server.js  +1 −1                                         │
-   │ ⏎ allow   a allow edits to files in the project this session   n deny│
+   │ ⏎ allow   a allow edits this session   n deny                        │
    ╰──────────────────────────────────────────────────────────────────────╯
 ────────────────────────────────────────────────────────────────────────────────
   BUILD  › type to queue the next message, / for commands
 
- grok-4.6   ⏎ allow  a allow edits to files in the project this session  n deny
+ grok-4.6  ctx ──────── 5% │ $0     ⏎ allow  a allow edits this session  n deny
