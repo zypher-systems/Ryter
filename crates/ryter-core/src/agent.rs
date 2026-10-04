@@ -968,6 +968,18 @@ impl Agent {
                 }
                 self.put_on(to)?;
                 self.emit(AgentEvent::ModeChanged { role: to })?;
+                // Into the audit hat by the user's yes: an audit phase of
+                // its own, with its checkpoint, closed at the turn's end or
+                // at the next switch out.
+                if to == Role::SoloAudit && self.audit_live.is_none() {
+                    self.audit_live = Some(AuditLive {
+                        checkpoint: self.audit_checkpoint(),
+                        from: self.session.transcript.len(),
+                        spent_from: self.session.spend_log().map_or(0, |l| l.len()),
+                        asked: false,
+                        started: std::time::Instant::now(),
+                    });
+                }
                 let now = match to {
                     Role::SoloBuild => "you may now change files and run commands",
                     Role::SoloPlan => "nothing may change now; read and plan",
@@ -1072,6 +1084,12 @@ impl Agent {
                 })?;
                 let from = self.role;
                 if from != Role::SoloBuild {
+                    // Out of the audit hat by the user's yes to a plan: the
+                    // audit closes here, as it does for `request_hat`, so
+                    // the build that follows in this turn is not undone.
+                    if from == Role::SoloAudit {
+                        self.close_audit();
+                    }
                     self.put_on(Role::SoloBuild)?;
                     self.emit(AgentEvent::ModeChanged {
                         role: Role::SoloBuild,
@@ -5033,6 +5051,120 @@ mod tests {
         );
         assert!(dated[0].exists());
         assert_eq!(agent.last_audit_verdict, Some(true));
+    }
+
+    /// The user's yes to a plan in an audit turn closes the audit before
+    /// the build hat comes on, as `request_hat` does: the build's work in
+    /// the rest of the turn stays, the audit's changes go.
+    #[tokio::test]
+    async fn an_approved_plan_closes_the_audit_first() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
+            call(
+                "bash",
+                serde_json::json!({"command": "printf x > probe.txt"}),
+            ),
+            file_audit_call("fail"),
+            call(
+                "present_plan",
+                serde_json::json!({"title": "fix the sign", "plan": "## Goal\nfix it\n\n## Steps\n1. built.txt\n"}),
+            ),
+            call(
+                "write",
+                serde_json::json!({"path": "built.txt", "content": "fixed\n"}),
+            ),
+            say("done"),
+        ]));
+        agent.put_on(Role::SoloAudit).unwrap();
+        agent.ctx.always_approve = true;
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        let answering = std::thread::spawn(move || {
+            while let Ok(req) = rx.recv() {
+                match req {
+                    crate::user_io::UserRequest::Plan { reply, .. } => {
+                        let _ = reply.send(crate::user_io::PlanAnswer::Approve);
+                    }
+                    crate::user_io::UserRequest::Permission { reply, .. } => {
+                        let _ = reply.send(crate::user_io::Permission::Allow);
+                    }
+                    _ => {}
+                }
+            }
+        });
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("audit it, then plan the fix").await.unwrap();
+        agent.ctx.user_io = None;
+        answering.join().unwrap();
+        assert!(
+            !cwd.path().join("probe.txt").exists(),
+            "the audit's file is gone"
+        );
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("built.txt")).unwrap(),
+            "fixed\n",
+            "the build's file stays"
+        );
+        assert!(cwd.path().join(".ryter/plan.md").exists());
+        assert!(cwd.path().join(".ryter/audit.md").exists());
+        assert_eq!(agent.role, Role::SoloBuild);
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        assert_eq!(audited(&evs).len(), 1, "{evs:?}");
+        let at = |f: &dyn Fn(&AgentEvent) -> bool| evs.iter().position(f).unwrap();
+        let filed = at(&|e| matches!(e, AgentEvent::Audited { .. }));
+        let switched = at(&|e| {
+            matches!(
+                e,
+                AgentEvent::ModeChanged {
+                    role: Role::SoloBuild
+                }
+            )
+        });
+        assert!(filed < switched, "{evs:?}");
+    }
+
+    /// The user's yes that puts the audit hat on in the middle of a turn
+    /// starts an audit phase of its own: a checkpoint, and the tree put
+    /// back at the turn's end.
+    #[tokio::test]
+    async fn a_yes_into_the_audit_hat_arms_a_checkpoint() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
+            call(
+                "request_hat",
+                serde_json::json!({"hat": "audit", "reason": "check it"}),
+            ),
+            call(
+                "bash",
+                serde_json::json!({"command": "printf x > probe.txt"}),
+            ),
+            say("looked"),
+        ]));
+        agent.put_on(Role::SoloBuild).unwrap();
+        agent.ctx.always_approve = true;
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        let answering = std::thread::spawn(move || {
+            while let Ok(req) = rx.recv() {
+                if let crate::user_io::UserRequest::Permission { reply, .. } = req {
+                    let _ = reply.send(crate::user_io::Permission::Allow);
+                }
+            }
+        });
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("have a look").await.unwrap();
+        agent.ctx.user_io = None;
+        answering.join().unwrap();
+        assert!(
+            !cwd.path().join("probe.txt").exists(),
+            "put back at the turn's end"
+        );
+        assert_eq!(agent.role, Role::SoloAudit);
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        assert!(
+            evs.iter().any(|e| matches!(e, AgentEvent::Notice { message } if message.contains("put back from the checkpoint"))),
+            "{evs:?}"
+        );
     }
 
     /// The user's yes to another hat in an audit turn closes the audit
