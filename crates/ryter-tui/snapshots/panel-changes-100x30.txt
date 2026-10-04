@@ -25,6 +25,6 @@
 
 
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
-│› what should change? · Tab: review · / for commands                                              │
+│› what should change? · Tab: plan · ⇧Tab: specialists · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  ↑↓ file    pgup/pgdn diff    tab scope    x undo file    c commit    r refresh    esc

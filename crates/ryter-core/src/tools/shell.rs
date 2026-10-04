@@ -462,6 +462,7 @@ mod tests {
             web: false,
             cwd: Default::default(),
             vars: Default::default(),
+            read_only: false,
         };
         let waiter = cancel.clone();
         std::thread::spawn(move || {

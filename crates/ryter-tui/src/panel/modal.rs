@@ -141,15 +141,9 @@ impl PermissionModal {
     fn question(&self) -> Option<(&'static str, &'static str, &'static str)> {
         match self.tool.as_str() {
             "switch hat" => Some(("switch hat?", "switch", "stay")),
-            "review" => Some(("review?", "review", "not now")),
-            "review offer" => Some(("review this work?", "review", "not now")),
+            "audit" => Some(("audit?", "audit", "not now")),
             _ => None,
         }
-    }
-
-    /// Ryter offering a review after a build turn: `s` stops the offers.
-    fn is_offer(&self) -> bool {
-        self.tool == "review offer"
     }
 
     fn is_hat(&self) -> bool {
@@ -259,11 +253,7 @@ impl Panel for PermissionModal {
 
     fn legend(&self, _view: &View) -> String {
         if let Some((_, yes, no)) = self.question() {
-            if self.is_offer() {
-                format!("⏎ {yes} · n {no} · s stop offering")
-            } else {
-                format!("⏎ {yes} · n {no}")
-            }
+            format!("⏎ {yes} · n {no}")
         } else if self.y_only() {
             "y allow once · n deny".into()
         } else if let (true, Some(scope)) = (self.can_allow_session(), &self.scope) {
@@ -295,9 +285,11 @@ impl Panel for PermissionModal {
         true
     }
 
+    /// Ryter asking before an audit spends money: the card is in the audit
+    /// hat's color.
     fn offers(&self) -> Option<ryter_core::Role> {
         match self.tool.as_str() {
-            "review" | "review offer" => Some(ryter_core::Role::SoloReview),
+            "audit" => Some(ryter_core::Role::SoloAudit),
             _ => None,
         }
     }
@@ -549,9 +541,6 @@ impl Panel for PermissionModal {
             }
             KeyCode::Enter | KeyCode::Char('y' | 'Y') => reply(Permission::Allow),
             KeyCode::Char('n' | 'N') | KeyCode::Esc => reply(Permission::Deny),
-            KeyCode::Char('s' | 'S') if self.is_offer() => {
-                Outcome::CloseAct(Action::StopReviewOffers)
-            }
             // `a` allows this kind of action for the session, named on the
             // card, in one press. It used to allow everything, and needed
             // a second press because of it.
@@ -951,29 +940,21 @@ impl Panel for TrustModal {
 mod tests {
     use super::*;
 
-    /// Ryter's offer of an audit: `s` stops the offers; `a` (allow all)
-    /// means nothing, since each audit spends money.
+    /// Asked for with /audit: yes or no, with no "allow for the session",
+    /// since each audit spends money.
     #[test]
-    fn an_audit_offer_can_stop_the_offers_and_has_no_allow_all() {
+    fn an_audit_asks_yes_or_no_only() {
         use crossterm::event::{KeyEvent, KeyModifiers};
         let mut v = crate::view::View::new("openrouter".into(), "m".into(), "/tmp".into());
-        let mut m = PermissionModal::new("review offer".into(), "Review this work?".into());
-        assert!(m.legend(&v).contains("s stop offering"));
+        let mut m = PermissionModal::new("audit".into(), "x".into());
+        assert_eq!(m.title(&v), "audit?");
+        assert_eq!(m.legend(&v), "⏎ audit · n not now");
         let press = |m: &mut PermissionModal, v: &mut crate::view::View, c: char| {
             m.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE), v)
         };
         assert!(matches!(press(&mut m, &mut v, 'a'), Outcome::Stay));
-        assert!(matches!(
-            press(&mut m, &mut v, 's'),
-            Outcome::CloseAct(Action::StopReviewOffers)
-        ));
-        // Asked for with /audit: yes or no, no `s`.
-        let m = PermissionModal::new("review".into(), "x".into());
-        assert_eq!(m.title(&v), "review?");
-        assert!(!m.legend(&v).contains("stop offering"));
-        let mut asked = PermissionModal::new("audit".into(), "x".into());
-        assert!(!asked.legend(&v).contains("stop offering"));
-        assert!(matches!(press(&mut asked, &mut v, 's'), Outcome::Stay));
+        assert!(matches!(press(&mut m, &mut v, 's'), Outcome::Stay));
+        assert_eq!(m.offers(), Some(ryter_core::Role::SoloAudit));
     }
     use crossterm::event::KeyModifiers;
 

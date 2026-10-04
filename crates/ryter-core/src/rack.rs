@@ -28,20 +28,27 @@ pub struct HatTotals {
     pub verdicts_passed: u32,
     /// Reviews that ended `VERDICT: FAIL`.
     pub verdicts_failed: u32,
+    /// What the latest audit left in the tree: `Some(0)` changed nothing,
+    /// `Some(n)` had n files put back; `None` before any audit.
+    pub last_restored: Option<u32>,
 }
 
-/// The three hats' totals.
+/// The four hats' totals.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Rack {
     plan: HatTotals,
     build: HatTotals,
     review: HatTotals,
+    scribe: HatTotals,
     /// The hat the turn in progress is in.
     hat: Option<Role>,
     /// A hat put on in the middle of a turn that has not done anything
     /// yet. Its first step counts as a turn of its own: a plan approved in
     /// the plan hat is built in the build hat, in the same turn.
     switched: Option<Role>,
+    /// This turn's audit was counted from its `Audited` event; the
+    /// `Reviewed` that `/audit` adds after it is the same verdict.
+    audited: bool,
 }
 
 impl Rack {
@@ -49,7 +56,8 @@ impl Rack {
     pub fn of(&self, role: Role) -> &HatTotals {
         match role {
             Role::SoloPlan => &self.plan,
-            Role::SoloReview => &self.review,
+            Role::SoloAudit => &self.review,
+            Role::SoloScribe => &self.scribe,
             Role::SoloBuild | Role::Crew => &self.build,
         }
     }
@@ -57,7 +65,8 @@ impl Rack {
     fn of_mut(&mut self, role: Role) -> &mut HatTotals {
         match role {
             Role::SoloPlan => &mut self.plan,
-            Role::SoloReview => &mut self.review,
+            Role::SoloAudit => &mut self.review,
+            Role::SoloScribe => &mut self.scribe,
             Role::SoloBuild | Role::Crew => &mut self.build,
         }
     }
@@ -80,6 +89,7 @@ impl Rack {
             AgentEvent::TurnStarted { role, .. } => {
                 self.hat = Some(*role);
                 self.switched = None;
+                self.audited = false;
                 self.of_mut(*role).turns += 1;
             }
             AgentEvent::ModeChanged { role } => {
@@ -91,11 +101,17 @@ impl Rack {
             AgentEvent::ToolCall { .. } => self.step(),
             AgentEvent::ToolResult { is_error, diff, .. } => {
                 self.step();
-                // Only the build hat changes the project's files; a plan's
-                // notes are not the work.
+                // The build hat changes the project's files and the scribe
+                // its documentation; a plan's notes are not the work.
                 if let (false, Some(d)) = (*is_error, diff) {
-                    if self.hat.is_none_or(Role::writes_source) {
-                        let t = &mut self.build;
+                    let t = if self.hat.is_none_or(Role::writes_source) {
+                        Some(&mut self.build)
+                    } else if self.hat == Some(Role::SoloScribe) {
+                        Some(&mut self.scribe)
+                    } else {
+                        None
+                    };
+                    if let Some(t) = t {
                         t.files.insert(d.path.clone());
                         t.added += d.added as u64;
                         t.removed += d.removed as u64;
@@ -109,11 +125,23 @@ impl Rack {
                     self.plan.plans_rejected += 1;
                 }
             }
-            AgentEvent::Reviewed { verdict, .. } => match verdict {
+            // An old log's reviews; a new audit is counted from `Audited`.
+            AgentEvent::Reviewed { verdict, .. } if !self.audited => match verdict {
                 Some(true) => self.review.verdicts_passed += 1,
                 Some(false) => self.review.verdicts_failed += 1,
                 None => {}
             },
+            AgentEvent::Audited {
+                verdict, restored, ..
+            } => {
+                self.audited = true;
+                match verdict {
+                    Some(true) => self.review.verdicts_passed += 1,
+                    Some(false) => self.review.verdicts_failed += 1,
+                    None => {}
+                }
+                self.review.last_restored = Some(restored.len() as u32);
+            }
             _ => {}
         }
     }
@@ -186,12 +214,12 @@ mod tests {
             AgentEvent::Planned { approved: true },
             started(Role::SoloBuild),
             edit("a.rs", 8, 1),
-            started(Role::SoloReview),
+            started(Role::SoloAudit),
             reviewed(Some(false)),
             started(Role::SoloBuild),
             edit("a.rs", 5, 1),
             edit("b.rs", 2, 0),
-            started(Role::SoloReview),
+            started(Role::SoloAudit),
             reviewed(Some(true)),
             reviewed(None),
         ] {
@@ -201,9 +229,9 @@ mod tests {
         assert_eq!(r.of(Role::SoloPlan).plans_approved, 1);
         let b = r.of(Role::SoloBuild);
         assert_eq!((b.turns, b.files.len(), b.added, b.removed), (2, 2, 15, 2));
-        let v = r.of(Role::SoloReview);
+        let v = r.of(Role::SoloAudit);
         assert_eq!((v.turns, v.verdicts_passed, v.verdicts_failed), (2, 1, 1));
-        assert!(r.worn(Role::SoloReview));
+        assert!(r.worn(Role::SoloAudit));
         // A session from before: a turn in the test hat counts as build's.
         r.apply(&AgentEvent::TurnStarted {
             turn: 9,
@@ -247,11 +275,11 @@ mod tests {
         assert_eq!(r.of(Role::SoloBuild).turns, 1);
         // A hat change that a turn of its own follows is counted once.
         r.apply(&AgentEvent::ModeChanged {
-            role: Role::SoloReview,
+            role: Role::SoloAudit,
         });
-        r.apply(&started(Role::SoloReview));
+        r.apply(&started(Role::SoloAudit));
         r.apply(&edit("c.rs", 1, 0));
-        assert_eq!(r.of(Role::SoloReview).turns, 1);
+        assert_eq!(r.of(Role::SoloAudit).turns, 1);
     }
 
     #[test]
@@ -262,7 +290,7 @@ mod tests {
             started(Role::SoloBuild),
             AgentEvent::Token { text: "hi".into() },
             edit("a.rs", 2, 1),
-            started(Role::SoloReview),
+            started(Role::SoloAudit),
             reviewed(Some(true)),
         ];
         let mut live = Rack::default();
@@ -276,7 +304,15 @@ mod tests {
         std::fs::write(&path, text).unwrap();
         let read = Rack::from_log(&path);
         assert_eq!(read.of(Role::SoloBuild), live.of(Role::SoloBuild));
-        assert_eq!(read.of(Role::SoloReview), live.of(Role::SoloReview));
+        assert_eq!(read.of(Role::SoloAudit), live.of(Role::SoloAudit));
         assert_eq!(Rack::from_log(&dir.path().join("none")), Rack::default());
+        // A log from before the rename names the audit hat `review`.
+        let old = dir.path().join("old.jsonl");
+        std::fs::write(
+            &old,
+            "{\"kind\":\"turn_started\",\"turn\":1,\"role\":\"review\"}\n",
+        )
+        .unwrap();
+        assert_eq!(Rack::from_log(&old).of(Role::SoloAudit).turns, 1);
     }
 }

@@ -49,7 +49,7 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
         view.agent_hat = *role;
         view.hats_pending = view.hats_pending.saturating_sub(1);
         if view.hats_pending == 0 && view.mode != *role {
-            view.mode = *role;
+            view.set_mode(*role);
         }
         return;
     }
@@ -92,6 +92,16 @@ fn apply_to_shown(view: &mut View, ev: AgentEvent) {
 }
 
 fn apply_inner(view: &mut View, ev: &AgentEvent) {
+    // The guard card's `audit.md` row reads `writing…` through an audit turn.
+    match ev {
+        AgentEvent::TurnStarted { role, .. } => {
+            view.audit_writing = *role == ryter_core::Role::SoloAudit;
+        }
+        AgentEvent::TurnFinished { .. } | AgentEvent::Audited { .. } => {
+            view.audit_writing = false;
+        }
+        _ => {}
+    }
     match ev {
         AgentEvent::Token { text } => view.on_token(text),
         AgentEvent::Reasoning { text } => {
@@ -205,28 +215,53 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 *incomplete,
             );
         }
+        // `/audit` adds this after the turn's `Audited`, with the tree the
+        // audit covered: the commit receipt's mark. The words were said by
+        // `Audited`.
         AgentEvent::Reviewed {
             model,
             verdict,
             tree,
+            ..
+        } => {
+            view.last_review = Some((tree.clone(), model.clone(), *verdict));
+        }
+        AgentEvent::Audited {
+            model,
+            verdict,
+            headline,
+            restored,
+            filed,
             total_usd,
             ..
         } => {
-            let said = match verdict {
-                Some(true) => "✓ no blocking problems",
-                Some(false) => "✗ blocking problems",
-                None => "no verdict",
-            };
-            // To the tenth of a cent, as a turn's cost is: a review that
-            // cost $0.003 read "$0.00".
+            // To the tenth of a cent, as a turn's cost is.
             let cost = total_usd.map_or_else(String::new, |usd| {
                 format!(" · {}", crate::chat::turn_usd(usd))
             });
+            let tree = if restored.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " · restored {} file{}",
+                    restored.len(),
+                    if restored.len() == 1 { "" } else { "s" }
+                )
+            };
             view.system(format!(
-                "review · {} · {said}{cost}",
+                "audit · {} · {headline}{cost}{tree}",
                 crate::chat::short_model(model)
             ));
-            view.last_review = Some((tree.clone(), model.clone(), *verdict));
+            if view.last_review.is_none() {
+                view.last_review = Some((None, model.clone(), *verdict));
+            }
+            view.refresh_uncommitted();
+            if *filed {
+                let opened = view.now_ms;
+                if let Some(p) = crate::panel::audit::AuditModal::from_event(ev, opened) {
+                    view.panels.push(Box::new(p));
+                }
+            }
         }
         AgentEvent::Session { id, title } => {
             view.session_id = id.clone();
@@ -265,7 +300,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
         // Taken in `apply`, before anything is routed.
         AgentEvent::HatSet { .. } => {}
         AgentEvent::ModeChanged { role } => {
-            view.mode = *role;
+            view.set_mode(*role);
             // A hat on a model of its own says which: the next message
             // goes to it.
             let own = if view.hat_model() == view.model {

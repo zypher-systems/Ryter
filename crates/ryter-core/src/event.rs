@@ -116,6 +116,50 @@ pub enum AgentEvent {
         #[serde(default)]
         total_usd: Option<f64>,
     },
+    /// An audit turn ended. Filed with `file_audit`, it carries the
+    /// findings and its file; ended without, only the verdict its last
+    /// words gave. Either way the tree was compared with the checkpoint
+    /// taken before the turn, and `restored` says what was put back.
+    Audited {
+        /// Auditor model id.
+        model: String,
+        /// `Some(true)` for a pass, `Some(false)` for a fail, `None` when
+        /// it gave neither.
+        verdict: Option<bool>,
+        /// `✗ 2 of 6 failed`, `✓ 6 of 6 passed`; for a turn that filed no
+        /// report, the verdict in words.
+        headline: String,
+        /// The audit's one-line summary.
+        #[serde(default)]
+        summary: String,
+        /// The findings as rows for the screen: `mark n\ttitle\twhere`,
+        /// then indented detail rows.
+        #[serde(default)]
+        rows: Vec<String>,
+        /// What it ran.
+        #[serde(default)]
+        ran: Vec<String>,
+        /// The audit's file, as a path in the project; `None` when none
+        /// was filed.
+        #[serde(default)]
+        file: Option<String>,
+        /// Files the audit changed that were put back from the checkpoint.
+        #[serde(default)]
+        restored: Vec<String>,
+        /// Whether a checkpoint was taken (a project outside a repository
+        /// has none).
+        #[serde(default)]
+        checkpointed: bool,
+        /// Whether `file_audit` was called.
+        #[serde(default)]
+        filed: bool,
+        /// What the turn cost; `None` when unpriced.
+        #[serde(default)]
+        total_usd: Option<f64>,
+        /// How long the turn took.
+        #[serde(default)]
+        duration_ms: u64,
+    },
     /// The user answered a plan on its panel: approved it or rejected it.
     /// (Asking for changes is neither; the plan comes back.)
     Planned {
@@ -233,11 +277,11 @@ mod tests {
     #[test]
     fn json_tag_is_snake_case() {
         let ev = AgentEvent::ModeChanged {
-            role: Role::SoloReview,
+            role: Role::SoloAudit,
         };
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["kind"], "mode_changed");
-        assert_eq!(v["role"], "review");
+        assert_eq!(v["role"], "audit");
     }
 
     #[test]

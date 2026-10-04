@@ -7,8 +7,8 @@
               │                                                                      ┃
               │ SPEND                                                                ┃
               │  budget usd (0 = off)  ‹ 0.00 ›                              default ┃
-              │  warn usd              ‹ 1.00 ›                              default │
-              │  review usd (0 = off)  ‹ 0.00 ›                              default │
+              │  warn usd              ‹ 1.00 ›                              default ┃
+              │  audit usd (0 = off)   ‹ 0.00 ›                              default │
               │                                                                      │
               │ TOOLS                                                                │
               │  permission mode       ‹ ask ›                               default │
@@ -25,6 +25,6 @@
 
 
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
-│› what should change? · Tab: review · / for commands                                              │
+│› what should change? · Tab: plan · ⇧Tab: specialists · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    space/←→ change    enter edit    esc done

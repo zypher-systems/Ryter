@@ -265,14 +265,15 @@ fn reasoning_scroll(view: &mut View, dir: i32) {
 
 /// Composer editing and submit (`R-COMP-09..13`).
 fn composer_key(view: &mut View, key: KeyEvent) -> Action {
-    // Tab switches hats.
+    // Tab moves within the row of the rack the hat is in; Shift+Tab moves
+    // to the other row, onto the hat last worn there.
     if matches!(view.composer.mode, crate::composer::Mode::Normal)
         && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
     {
         return Action::SetMode(if key.code == KeyCode::BackTab {
-            view.mode.prev_hat()
+            view.other_row_hat()
         } else {
-            view.mode.next_hat()
+            view.mode.next_in_row()
         });
     }
     let action = keymap::lookup(Ctx::Composer, key);

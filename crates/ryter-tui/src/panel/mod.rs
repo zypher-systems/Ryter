@@ -3,6 +3,7 @@
 //! Each panel module owns its state, key handling, and rendering. The
 //! framework draws the shared chrome, dims what is behind, and drops a shadow.
 
+pub mod audit;
 pub mod budget;
 pub mod changes;
 pub mod chrome;

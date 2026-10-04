@@ -1,4 +1,4 @@
- RYTER │ ○ PLAN   ◆ BUILD 1   ○ REVIEW                                     main
+ RYTER │ ○ PLAN   ◆ BUILD 1                                                main
          ●  dusty  trim the query                                       ↑ 3
   ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
          │
@@ -19,6 +19,6 @@
          │    6 + })
          └─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s · $0.004
 ────────────────────────────────────────────────────────────────────────────────
-  BUILD  › what should change? · Tab: review · / for commands
+  BUILD  › what should change? · Tab: plan · ⇧Tab: specialists · / for comman…
 
  grok-4.6  ctx ──────── 5% │ $0.018 · budget off           ^b hat rack  ^c quit

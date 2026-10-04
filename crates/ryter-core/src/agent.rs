@@ -43,6 +43,21 @@ pub struct TurnResult {
 }
 
 /// Agent loop over a session + provider.
+/// An audit turn in progress ([`Agent::audit_live`]).
+#[derive(Debug)]
+pub struct AuditLive {
+    /// The checkpoint taken before the turn; `None` outside a repository.
+    pub checkpoint: Option<String>,
+    /// Where the turn began in the transcript.
+    pub from: usize,
+    /// Where it began in the spend log.
+    pub spent_from: usize,
+    /// Whether `/audit` asked for it.
+    pub asked: bool,
+    /// When it began.
+    pub started: std::time::Instant,
+}
+
 pub struct Agent {
     /// Inference.
     pub provider: Arc<dyn Provider>,
@@ -81,6 +96,17 @@ pub struct Agent {
     pub machine: String,
     /// The product run_project started, while Ryter holds it.
     pub product: Option<crate::run::Started>,
+    /// An audit filed in the running turn (`file_audit`), delivered when
+    /// the turn ends and the tree has been compared with the checkpoint.
+    pub audit_pending: Option<crate::audit::Audit>,
+    /// The audit turn in progress: its checkpoint and where it began.
+    /// Closed when the turn ends, or earlier when the user's yes puts
+    /// another hat on in the same turn, so the hat that follows is not
+    /// undone by the audit's rollback.
+    pub audit_live: Option<AuditLive>,
+    /// The verdict of the last audit turn that ended: filed, or read from
+    /// its last words. What `/audit` reports.
+    pub last_audit_verdict: Option<bool>,
 }
 
 /// Output ceiling per round of the conversation.
@@ -164,6 +190,18 @@ impl Agent {
         if !self.role.is_solo() {
             self.put_on(self.role.hat())?;
         }
+        // A plan approved in an earlier session, or put there by hand:
+        // `.ryter/plan.md` is the plan when this session has none on record
+        // (`docs/specialists-design.md` R-PLAN-02).
+        if self.session.meta.plan_file.is_none() {
+            let root = self
+                .project_root
+                .clone()
+                .unwrap_or_else(|| self.ctx.workspace.clone());
+            if let Some(file) = crate::plan::on_record(&root) {
+                self.session.set_plan_file(Some(file))?;
+            }
+        }
         let turn = next_turn();
         let started = std::time::Instant::now();
         let mut tools = 0u32;
@@ -171,7 +209,24 @@ impl Agent {
             turn,
             role: self.role,
         })?;
+        // An audit changes nothing: a checkpoint before, the tree put back
+        // after. Without a repository there is no checkpoint, and the hat
+        // is held to looking for the turn.
+        if self.role == Role::SoloAudit {
+            self.audit_live = Some(AuditLive {
+                checkpoint: self.audit_checkpoint(),
+                from: self.session.transcript.len(),
+                spent_from: self.session.spend_log().map_or(0, |l| l.len()),
+                asked: user.starts_with("[Ryter] Audit"),
+                started,
+            });
+        }
         let out = self.turn_inner(user, &mut tools).await;
+        // An audit phase still open closes first: its rollback has to be
+        // done before the turn's end is recorded, or what it put back
+        // would read as the user's edits since the turn and `/undo` would
+        // refuse.
+        self.close_audit();
         // However the turn ended (done, cancelled, failed), record what it
         // left for `/undo`.
         if let Err(e) = self.finish_turn_record() {
@@ -210,6 +265,10 @@ impl Agent {
         // Say which hat this message is in, per message, so a Tab never
         // changes the system prompt or the tools (or the cache).
         let content = match self.role.hat_note() {
+            Some(note) if self.ctx.read_only => format!(
+                "{note}\n[no git repository here, so no checkpoint: read-only commands only \
+                 this turn]\n\n{user}"
+            ),
             Some(note) => format!("{note}\n\n{user}"),
             None => user.to_string(),
         };
@@ -262,7 +321,7 @@ impl Agent {
                 }
                 reader = Some(model.clone());
             }
-            if self.role == Role::SoloReview {
+            if self.role == Role::SoloAudit {
                 let spent = self.session.meta.spend_usd_total.unwrap_or(0.0);
                 let (from, told) = *reviewing.get_or_insert((spent, false));
                 match self.review_fit(&model, &connection, &system, from) {
@@ -526,6 +585,7 @@ impl Agent {
                                 | "record_decision"
                                 | "propose_run"
                                 | "run_project"
+                                | "file_audit"
                                 | "load_skill"
                                 | "show_page"
                                 | "update_rules"
@@ -539,6 +599,7 @@ impl Agent {
                                 "record_decision" => self.record_decision(&args),
                                 "propose_run" => self.propose_run(&args),
                                 "run_project" => self.run_project(&args),
+                                "file_audit" => Ok(self.file_audit(&args)),
                                 "load_skill" => Ok(self.load_skill(&args)),
                                 "update_rules" => self.update_rules(&args),
                                 _ => self.show_page(&args),
@@ -876,7 +937,7 @@ impl Agent {
             .trim();
         let Ok(to) = hat.parse::<Role>() else {
             return Ok(ToolOutput::err(format!(
-                "unknown hat {hat:?}: build, plan, or review"
+                "unknown hat {hat:?}: build, plan, audit, or scribe"
             )));
         };
         if to == self.role {
@@ -903,12 +964,31 @@ impl Agent {
         match answer {
             crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
                 let from = self.role;
+                // Out of the audit hat by the user's yes: the audit closes
+                // here, tree put back and findings filed, so what the next
+                // hat does in this turn is not undone at its end.
+                if from == Role::SoloAudit {
+                    self.close_audit();
+                }
                 self.put_on(to)?;
                 self.emit(AgentEvent::ModeChanged { role: to })?;
+                // Into the audit hat by the user's yes: an audit phase of
+                // its own, with its checkpoint, closed at the turn's end or
+                // at the next switch out.
+                if to == Role::SoloAudit && self.audit_live.is_none() {
+                    self.audit_live = Some(AuditLive {
+                        checkpoint: self.audit_checkpoint(),
+                        from: self.session.transcript.len(),
+                        spent_from: self.session.spend_log().map_or(0, |l| l.len()),
+                        asked: false,
+                        started: std::time::Instant::now(),
+                    });
+                }
                 let now = match to {
                     Role::SoloBuild => "you may now change files and run commands",
                     Role::SoloPlan => "nothing may change now; read and plan",
-                    _ => "nothing may change now; review",
+                    Role::SoloScribe => "write documentation only; change no code",
+                    _ => "nothing may change now; audit",
                 };
                 Ok(ToolOutput {
                     text: format!(
@@ -1001,12 +1081,19 @@ impl Agent {
                 }
                 self.emit(AgentEvent::Notice {
                     message: format!(
-                        "plan · approved and saved to {shown} · edits to the project's files \
-                         won't ask for the rest of this session"
+                        "plan · approved and saved to {shown} and {} · edits to the project's \
+                         files won't ask for the rest of this session",
+                        crate::plan::FILE
                     ),
                 })?;
                 let from = self.role;
                 if from != Role::SoloBuild {
+                    // Out of the audit hat by the user's yes to a plan: the
+                    // audit closes here, as it does for `request_hat`, so
+                    // the build that follows in this turn is not undone.
+                    if from == Role::SoloAudit {
+                        self.close_audit();
+                    }
                     self.put_on(Role::SoloBuild)?;
                     self.emit(AgentEvent::ModeChanged {
                         role: Role::SoloBuild,
@@ -1126,7 +1213,7 @@ impl Agent {
             ),
         })?;
         Ok(ToolOutput::ok(format!(
-            "Recorded in `{}`, under the plan `{plan_file}`. A review will read it.",
+            "Recorded in `{}`, under the plan `{plan_file}`. An audit will read it.",
             crate::decisions::FILE
         )))
     }
@@ -1211,13 +1298,273 @@ impl Agent {
         })
     }
 
-    /// The project's own commands are the build and review hats' to run:
+    /// `file_audit`: the audit, filed. It is delivered when the turn ends,
+    /// once the tree has been compared with the checkpoint.
+    fn file_audit(&mut self, args: &Value) -> crate::tools::ToolOutput {
+        use crate::tools::ToolOutput;
+        if self.role != Role::SoloAudit {
+            return ToolOutput::err(format!(
+                "an audit is filed from the audit hat, not the {} hat",
+                self.role
+            ));
+        }
+        match crate::audit::Audit::from_args(args) {
+            Ok(audit) => {
+                let headline = audit.headline();
+                // A second report in one turn takes the first one's place.
+                self.audit_pending = Some(audit);
+                ToolOutput::ok(format!(
+                    "Filed: {headline}. It goes to the user when your turn ends: end it now, \
+                     in a line."
+                ))
+            }
+            Err(why) => ToolOutput::err(why),
+        }
+    }
+
+    /// Before an audit turn: a checkpoint of the tree, as before a build
+    /// turn. `None` where there is none to take; the hat is then held to
+    /// looking (`ctx.read_only`).
+    fn audit_checkpoint(&mut self) -> Option<String> {
+        let dir = self.ctx.workspace.clone();
+        let name = format!("audit-{}-{}", self.session.meta.id, next_turn());
+        let taken = self.ctx.sandboxed(|| crate::git::checkpoint(&dir, &name));
+        let message = match &taken {
+            Ok(Some(_)) => None,
+            Ok(None) => Some(
+                "no git repository here, so the audit has no checkpoint to put the tree back \
+                 from: it runs read-only commands only this turn"
+                    .to_string(),
+            ),
+            Err(e) => Some(format!(
+                "the audit's checkpoint could not be taken ({e}), so there is nothing to put \
+                 the tree back from: it runs read-only commands only this turn"
+            )),
+        };
+        let taken = taken.ok().flatten();
+        self.ctx.read_only = taken.is_none();
+        if let Some(message) = message {
+            let _ = self.emit(AgentEvent::Notice { message });
+        }
+        taken
+    }
+
+    /// Close the audit turn in progress, if there is one: the tree put
+    /// back, the audit filed, the screen told. Called when the turn ends,
+    /// and when the user's yes puts another hat on in the same turn.
+    fn close_audit(&mut self) {
+        let Some(live) = self.audit_live.take() else {
+            return;
+        };
+        self.ctx.read_only = false;
+        if let Err(e) = self.audit_done(live) {
+            crate::trace::log(&self.home, &format!("audit: {e}"));
+            let _ = self.emit(AgentEvent::Notice {
+                message: format!("the audit could not be closed: {e}"),
+            });
+        }
+    }
+
+    /// Put back what an audit turn changed outside Ryter's own folder:
+    /// the paths that differ between the checkpoint and the tree now,
+    /// mapped from the repository's top to this session's folder, less
+    /// everything under `.ryter/` (the audit's own files, and what the
+    /// user approved during the turn: a run file, a plan). Returns the
+    /// paths put back, as git names them.
+    fn audit_restore(&self, dir: &std::path::Path, before: &str) -> Result<Vec<String>> {
+        let Some(after) = self
+            .ctx
+            .sandboxed(|| crate::git::checkpoint(dir, "audit-after"))?
+        else {
+            return Err(Error::Config("no checkpoint after the audit".into()));
+        };
+        let moved = self
+            .ctx
+            .sandboxed(|| crate::git::checkpoint_tree(dir, before))?
+            != self
+                .ctx
+                .sandboxed(|| crate::git::checkpoint_tree(dir, &after))?;
+        if !moved {
+            return Ok(Vec::new());
+        }
+        let top = self.ctx.sandboxed(|| crate::git::toplevel(dir))?;
+        let here = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+        let prefix = here
+            .strip_prefix(&top)
+            .unwrap_or(std::path::Path::new(""))
+            .to_path_buf();
+        let paths: Vec<String> = self
+            .ctx
+            .sandboxed(|| crate::git::paths_between(dir, before, &after))?
+            .into_iter()
+            .filter(|p| !crate::audit::kept_from_restore(&prefix, std::path::Path::new(p)))
+            .collect();
+        if !paths.is_empty() {
+            self.ctx
+                .sandboxed(|| crate::git::restore_paths(dir, before, &paths))?;
+        }
+        Ok(paths)
+    }
+
+    /// An audit turn ended: put back whatever it changed, write the audit
+    /// it filed, and tell the screen. A turn that filed nothing, was not
+    /// asked for an audit and gave no verdict is a chat in the audit hat,
+    /// and passes in silence.
+    fn audit_done(&mut self, live: AuditLive) -> Result<()> {
+        let AuditLive {
+            checkpoint,
+            from,
+            spent_from,
+            asked,
+            started,
+        } = live;
+        let started = &started;
+        let dir = self.ctx.workspace.clone();
+        let mut restored: Vec<String> = Vec::new();
+        if let Some(before) = &checkpoint {
+            match self.audit_restore(&dir, before) {
+                Ok(paths) => restored = paths,
+                // The tree can't be compared: put it back whole, and say
+                // so, rather than leave the audit's changes in place.
+                Err(e) => {
+                    let whole = self
+                        .ctx
+                        .sandboxed(|| crate::git::restore_checkpoint(&dir, before));
+                    let message = match whole {
+                        Ok(_) => format!(
+                            "the audit's tree could not be compared with its checkpoint ({e}); \
+                             the whole tree was put back from the checkpoint"
+                        ),
+                        Err(e2) => format!(
+                            "the audit's tree could not be compared with its checkpoint ({e}), \
+                             and could not be put back ({e2}): check `git status`"
+                        ),
+                    };
+                    self.emit(AgentEvent::Notice { message })?;
+                    restored = vec!["the whole tree, after a failed comparison".to_string()];
+                }
+            }
+        }
+        let root = self.root();
+        let filed = self.audit_pending.take();
+        // What the audit's last words said, where it filed nothing.
+        let said = self
+            .session
+            .transcript
+            .iter()
+            .skip(from)
+            .filter(|m| m.role == "assistant")
+            .filter_map(|m| crate::gate::verdict(&m.content))
+            .next_back();
+        if filed.is_none() && !asked && said.is_none() {
+            self.last_audit_verdict = None;
+            if !restored.is_empty() {
+                self.emit(AgentEvent::Notice {
+                    message: format!(
+                        "the audit hat changed {} file{}; put back from the checkpoint: {}",
+                        restored.len(),
+                        if restored.len() == 1 { "" } else { "s" },
+                        restored.join(", ")
+                    ),
+                })?;
+            }
+            return Ok(());
+        }
+        let (_, model, _) = self.hat_stack();
+        let audits: Vec<_> = self
+            .session
+            .spend_log()
+            .unwrap_or_default()
+            .into_iter()
+            .skip(spent_from)
+            .filter(|r| r.role == Role::SoloAudit)
+            .collect();
+        let total_usd = audits
+            .iter()
+            .map(|r| if r.incomplete { None } else { r.total_usd })
+            .sum::<Option<f64>>()
+            .filter(|_| !audits.is_empty());
+        let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let event = match filed {
+            Some(audit) => {
+                let stamp = crate::clock::stamp();
+                let text = audit.document(&model, &stamp, &restored, checkpoint.is_some());
+                let day = crate::clock::today();
+                let file = match crate::audit::save(
+                    &root,
+                    &day,
+                    &crate::audit::slug(&audit.summary),
+                    &text,
+                ) {
+                    Ok((latest, _)) => latest
+                        .strip_prefix(&root)
+                        .unwrap_or(&latest)
+                        .display()
+                        .to_string(),
+                    Err(e) => {
+                        self.emit(AgentEvent::Notice {
+                            message: format!("the audit could not be saved: {e}"),
+                        })?;
+                        String::new()
+                    }
+                };
+                self.last_audit_verdict = Some(audit.passed);
+                AgentEvent::Audited {
+                    model,
+                    verdict: Some(audit.passed),
+                    headline: audit.headline(),
+                    summary: audit.summary.clone(),
+                    rows: audit.rows(),
+                    ran: audit.ran.clone(),
+                    file: (!file.is_empty()).then_some(file),
+                    restored,
+                    checkpointed: checkpoint.is_some(),
+                    filed: true,
+                    total_usd,
+                    duration_ms,
+                }
+            }
+            None => {
+                self.emit(AgentEvent::Notice {
+                    message: "the audit filed no report; its last words stand".into(),
+                })?;
+                self.last_audit_verdict = said;
+                AgentEvent::Audited {
+                    model,
+                    verdict: said,
+                    headline: match said {
+                        Some(true) => "✓ passed, unfiled".into(),
+                        Some(false) => "✗ failed, unfiled".into(),
+                        None => "no verdict".into(),
+                    },
+                    summary: String::new(),
+                    rows: Vec::new(),
+                    ran: Vec::new(),
+                    file: None,
+                    restored,
+                    checkpointed: checkpoint.is_some(),
+                    filed: false,
+                    total_usd,
+                    duration_ms,
+                }
+            }
+        };
+        self.emit(event)
+    }
+
+    /// The project's own commands are the build and audit hats' to run:
     /// the plan hat changes and starts nothing.
     fn not_the_plan_hat(&self, tool: &str) -> Option<crate::tools::ToolOutput> {
-        (self.role == Role::SoloPlan).then(|| {
+        matches!(self.role, Role::SoloPlan | Role::SoloScribe).then(|| {
             crate::tools::ToolOutput::err(format!(
-                "{tool} is the build and review hats': the plan hat changes and starts \
-                 nothing. Tell the user to press Tab to the build hat."
+                "{tool} is the build and audit hats': the {} hat changes and starts \
+                 nothing. Tell the user to press {} to the build hat.",
+                self.role,
+                if self.role == Role::SoloPlan {
+                    "Tab"
+                } else {
+                    "Shift+Tab"
+                }
             ))
         })
     }
@@ -2753,6 +3100,7 @@ mod tests {
             web: false,
             cwd: Default::default(),
             vars: Default::default(),
+            read_only: false,
         };
         let agent = Agent {
             provider: Arc::new(provider),
@@ -2772,6 +3120,9 @@ mod tests {
             cfg: None,
             machine: String::new(),
             product: None,
+            audit_pending: None,
+            audit_live: None,
+            last_audit_verdict: None,
         };
         (home, cwd, agent)
     }
@@ -3524,11 +3875,11 @@ mod tests {
         // The review hat runs them too; the plan hat starts nothing, with
         // the flag or not.
         std::fs::write(&file, "test = \"echo ok\"\n").unwrap();
-        let out = headless(&mut agent, Role::SoloReview, true).await;
+        let out = headless(&mut agent, Role::SoloAudit, true).await;
         assert_eq!(out, "$ echo ok\nok\n");
         let out = headless(&mut agent, Role::SoloPlan, true).await;
         assert!(
-            out.contains("run_project is the build and review hats'"),
+            out.contains("run_project is the build and audit hats'"),
             "{out}"
         );
     }
@@ -3544,7 +3895,7 @@ mod tests {
         agent.provider = asked.clone();
         let mut cfg = agent.cfg.clone().unwrap_or_default();
         cfg.specialists.insert(
-            "review".into(),
+            "audit".into(),
             crate::config::RoleModel {
                 connection: Some(agent.connection.clone()),
                 model: Some("vendor/reviewer-model".into()),
@@ -3563,7 +3914,7 @@ mod tests {
         agent.turn(&"a long request. ".repeat(800)).await.unwrap();
         hat(&mut agent, Role::SoloPlan);
         agent.turn("plan it").await.unwrap();
-        hat(&mut agent, Role::SoloReview);
+        hat(&mut agent, Role::SoloAudit);
         agent.turn("review it").await.unwrap();
         hat(&mut agent, Role::SoloBuild);
         agent.turn("fix it").await.unwrap();
@@ -3586,7 +3937,7 @@ mod tests {
             [
                 ("build".to_string(), main.as_str()),
                 ("plan".to_string(), main.as_str()),
-                ("review".to_string(), "vendor/reviewer-model"),
+                ("audit".to_string(), "vendor/reviewer-model"),
                 ("build".to_string(), main.as_str()),
             ]
         );
@@ -3601,7 +3952,7 @@ mod tests {
             .collect();
         assert_eq!(said.len(), 2, "{said:?}");
         assert!(
-            said[0].starts_with("review hat · reviewer-model re-reads ")
+            said[0].starts_with("audit hat · reviewer-model re-reads ")
                 && said[0].contains("k tokens"),
             "{said:?}"
         );
@@ -3727,6 +4078,86 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(cwd.path().join("README.md")).unwrap(),
             "built\n"
+        );
+    }
+
+    /// An approved plan is also at `.ryter/plan.md`, the fixed path every
+    /// hat knows; the next approval replaces it and the dated copies stay.
+    #[tokio::test]
+    async fn an_approved_plan_is_at_the_fixed_path_too() {
+        use crate::user_io::PlanAnswer;
+        let (cwd, agent, _, _, _) = plan_presented(Some(PlanAnswer::Approve)).await;
+        let fixed = cwd.path().join(crate::plan::FILE);
+        let dated = plans_in(&cwd);
+        assert_eq!(dated.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(&fixed).unwrap(),
+            std::fs::read_to_string(&dated[0]).unwrap()
+        );
+        assert_eq!(
+            agent
+                .session
+                .meta
+                .plan_file
+                .as_deref()
+                .map(|f| f.starts_with(crate::plan::DIR)),
+            Some(true)
+        );
+        drop(agent);
+        // Approved again, in another session: replaced, and the first kept.
+        let (cwd2, _agent2, _, _, _) = plan_presented(Some(PlanAnswer::Approve)).await;
+        let _ = cwd2;
+        assert!(dated[0].exists());
+        assert!(fixed.exists());
+    }
+
+    /// A session with no plan on record picks up `.ryter/plan.md` at its
+    /// first turn: the dated copy with the same text when there is one.
+    #[tokio::test]
+    async fn a_session_without_a_plan_picks_up_the_plan_file() {
+        let (_home, cwd, mut agent) =
+            repo_setup(ReplayProvider::scripted(vec![say("ok"), say("ok again")]));
+        agent.put_on(Role::SoloBuild).unwrap();
+        assert_eq!(agent.session.meta.plan_file, None);
+        let dated = crate::plan::save_on(cwd.path(), "2026-10-02", "Readme", "write it").unwrap();
+        agent.turn("hi").await.unwrap();
+        let rel = dated
+            .strip_prefix(cwd.path())
+            .unwrap()
+            .display()
+            .to_string();
+        assert_eq!(agent.session.meta.plan_file.as_deref(), Some(rel.as_str()));
+        // `plan.md` on its own, with no dated copy to match: it is the plan.
+        agent.session.set_plan_file(None).unwrap();
+        std::fs::write(cwd.path().join(crate::plan::FILE), "# By hand\n\nnothing\n").unwrap();
+        agent.turn("hi").await.unwrap();
+        assert_eq!(
+            agent.session.meta.plan_file.as_deref(),
+            Some(crate::plan::FILE)
+        );
+    }
+
+    /// Nothing but a plan's approval changes the hat on its own: a build
+    /// turn that reads, or ends on a verdict-shaped line, is still build.
+    #[tokio::test]
+    async fn only_an_approved_plan_changes_the_hat_by_itself() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
+            call("read_file", serde_json::json!({"path": "hello.txt"})),
+            say("looked\nVERDICT: PASS"),
+            say("VERDICT: FAIL"),
+        ]));
+        std::fs::write(cwd.path().join("hello.txt"), "hi\n").unwrap();
+        agent.put_on(Role::SoloBuild).unwrap();
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("read it").await.unwrap();
+        agent.turn("and again").await.unwrap();
+        assert_eq!(agent.role, Role::SoloBuild);
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e, AgentEvent::ModeChanged { .. })),
+            "{evs:?}"
         );
     }
 
@@ -3862,10 +4293,10 @@ mod tests {
         assert!(result.contains("no plan has been approved"), "{result}");
         assert!(notices.is_empty(), "{notices:?}");
         let (file, result, notices) =
-            decision_recorded(Role::SoloReview, Some(CMS_PLAN), "user").await;
+            decision_recorded(Role::SoloAudit, Some(CMS_PLAN), "user").await;
         assert_eq!(file, None);
         assert!(
-            result.contains("recorded from the plan and build hats, not the review hat"),
+            result.contains("recorded from the plan and build hats, not the audit hat"),
             "{result}"
         );
         assert!(notices.is_empty(), "{notices:?}");
@@ -4436,10 +4867,6 @@ mod tests {
         rates: Option<(f64, f64)>,
         /// The user's limit for a review; 0 is none.
         limit: f64,
-        /// Offered after a build turn, rather than asked for with `/audit`.
-        offered: bool,
-        /// Offers are on in the settings.
-        offers_on: bool,
         /// The review hat has a model of its own.
         own_model: bool,
         /// The plan the user approved, if any.
@@ -4454,8 +4881,6 @@ mod tests {
                 answer: crate::user_io::Permission::Allow,
                 rates: Some((3.0, 15.0)),
                 limit: 5.0,
-                offered: false,
-                offers_on: true,
                 own_model: true,
                 plan: None,
                 decided: false,
@@ -4470,15 +4895,22 @@ mod tests {
         run: ReviewRun,
         script: Vec<Vec<StreamDelta>>,
     ) -> (TempDir, TempDir, Agent, Vec<AgentEvent>, Vec<String>) {
+        review_run_from(Role::SoloBuild, run, script).await
+    }
+
+    /// [`review_run`], from the hat the user is in.
+    async fn review_run_from(
+        prior: Role,
+        run: ReviewRun,
+        script: Vec<Vec<StreamDelta>>,
+    ) -> (TempDir, TempDir, Agent, Vec<AgentEvent>, Vec<String>) {
         let (home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(script));
+        agent.put_on(prior).unwrap();
         let cfg = agent.cfg.as_mut().unwrap();
-        cfg.ui.offer_audit = run.offers_on;
-        // These are about the review; what follows one that passes has
-        // tests of its own.
-        cfg.spend.review_usd = run.limit;
+        cfg.spend.audit_usd = run.limit;
         if run.own_model {
             cfg.specialists.insert(
-                "review".into(),
+                "audit".into(),
                 crate::config::RoleModel {
                     connection: Some("spacexai".into()),
                     model: Some("claude-reviewer".into()),
@@ -4496,8 +4928,6 @@ mod tests {
                 tools: None,
             }]);
         }
-        agent.role = Role::SoloBuild;
-        agent.ctx.role = Role::SoloBuild;
         if let Some(plan) = run.plan {
             agent.session.set_plan_file(Some(plan.to_string())).unwrap();
             if run.decided {
@@ -4533,11 +4963,7 @@ mod tests {
         });
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
-        if run.offered {
-            agent.offer_review().await.unwrap();
-        } else {
-            agent.review_now().await.unwrap();
-        }
+        agent.review_now().await.unwrap();
         agent.ctx.user_io = None;
         let asked = asked.join().unwrap();
         (home, cwd, agent, events.try_iter().collect(), asked)
@@ -4553,103 +4979,516 @@ mod tests {
             .collect()
     }
 
+    fn file_audit_call(verdict: &str) -> Vec<StreamDelta> {
+        call(
+            "file_audit",
+            serde_json::json!({
+                "verdict": verdict,
+                "summary": "the greeting is right; the test is thin",
+                "findings": [
+                    {"result": if verdict == "pass" { "pass" } else { "fail" }, "title": "Greeting text",
+                     "where": "hello.txt:1", "detail": "says hi", "saw": "cat hello.txt → hi"},
+                    {"result": "pass", "title": "Tests", "where": "1 passed"}
+                ],
+                "ran": ["cat hello.txt", "run_project test"]
+            }),
+        )
+    }
+
+    fn audited(events: &[AgentEvent]) -> Vec<&AgentEvent> {
+        events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::Audited { .. }))
+            .collect()
+    }
+
+    /// `file_audit` in the audit hat: the audit is written to
+    /// `.ryter/audit.md` and a dated copy, the event carries it, and a
+    /// second audit replaces the one file and keeps the other.
+    #[tokio::test]
+    async fn an_audit_is_filed_to_its_files_and_the_screen() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
+            file_audit_call("fail"),
+            say("filed"),
+            file_audit_call("pass"),
+            say("filed again"),
+        ]));
+        std::fs::write(cwd.path().join("hello.txt"), "hi\n").unwrap();
+        agent.put_on(Role::SoloAudit).unwrap();
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("audit it").await.unwrap();
+        let latest = cwd.path().join(".ryter/audit.md");
+        let text = std::fs::read_to_string(&latest).unwrap();
+        assert!(text.starts_with("# Audit · "), "{text}");
+        assert!(
+            text.contains("· FAIL")
+                && text.contains("Greeting text")
+                && text.contains("Changed nothing")
+        );
+        let dated: Vec<_> = std::fs::read_dir(cwd.path().join(".ryter/audits"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(dated.len(), 1);
+        assert_eq!(agent.last_audit_verdict, Some(false));
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        let [ev] = audited(&evs)[..] else {
+            panic!("one audit: {evs:?}");
+        };
+        assert!(
+            matches!(
+                ev,
+                AgentEvent::Audited { filed: true, verdict: Some(false), checkpointed: true, restored, file: Some(f), rows, .. }
+                    if restored.is_empty() && f == ".ryter/audit.md" && rows[0].starts_with("✗ 1\tGreeting text\thello.txt:1")
+            ),
+            "{ev:?}"
+        );
+        // The second audit replaces the latest and keeps the first.
+        agent.turn("again").await.unwrap();
+        assert!(std::fs::read_to_string(&latest).unwrap().contains("· PASS"));
+        assert_eq!(
+            std::fs::read_dir(cwd.path().join(".ryter/audits"))
+                .unwrap()
+                .count(),
+            2
+        );
+        assert!(dated[0].exists());
+        assert_eq!(agent.last_audit_verdict, Some(true));
+    }
+
+    /// The user's yes to a plan in an audit turn closes the audit before
+    /// the build hat comes on, as `request_hat` does: the build's work in
+    /// the rest of the turn stays, the audit's changes go.
+    #[tokio::test]
+    async fn an_approved_plan_closes_the_audit_first() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
+            call(
+                "bash",
+                serde_json::json!({"command": "printf x > probe.txt"}),
+            ),
+            file_audit_call("fail"),
+            call(
+                "present_plan",
+                serde_json::json!({"title": "fix the sign", "plan": "## Goal\nfix it\n\n## Steps\n1. built.txt\n"}),
+            ),
+            call(
+                "write",
+                serde_json::json!({"path": "built.txt", "content": "fixed\n"}),
+            ),
+            say("done"),
+        ]));
+        agent.put_on(Role::SoloAudit).unwrap();
+        agent.ctx.always_approve = true;
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        let answering = std::thread::spawn(move || {
+            while let Ok(req) = rx.recv() {
+                match req {
+                    crate::user_io::UserRequest::Plan { reply, .. } => {
+                        let _ = reply.send(crate::user_io::PlanAnswer::Approve);
+                    }
+                    crate::user_io::UserRequest::Permission { reply, .. } => {
+                        let _ = reply.send(crate::user_io::Permission::Allow);
+                    }
+                    _ => {}
+                }
+            }
+        });
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("audit it, then plan the fix").await.unwrap();
+        agent.ctx.user_io = None;
+        answering.join().unwrap();
+        assert!(
+            !cwd.path().join("probe.txt").exists(),
+            "the audit's file is gone"
+        );
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("built.txt")).unwrap(),
+            "fixed\n",
+            "the build's file stays"
+        );
+        assert!(cwd.path().join(".ryter/plan.md").exists());
+        assert!(cwd.path().join(".ryter/audit.md").exists());
+        assert_eq!(agent.role, Role::SoloBuild);
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        assert_eq!(audited(&evs).len(), 1, "{evs:?}");
+        let at = |f: &dyn Fn(&AgentEvent) -> bool| evs.iter().position(f).unwrap();
+        let filed = at(&|e| matches!(e, AgentEvent::Audited { .. }));
+        let switched = at(&|e| {
+            matches!(
+                e,
+                AgentEvent::ModeChanged {
+                    role: Role::SoloBuild
+                }
+            )
+        });
+        assert!(filed < switched, "{evs:?}");
+    }
+
+    /// The user's yes that puts the audit hat on in the middle of a turn
+    /// starts an audit phase of its own: a checkpoint, and the tree put
+    /// back at the turn's end.
+    #[tokio::test]
+    async fn a_yes_into_the_audit_hat_arms_a_checkpoint() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
+            call(
+                "write",
+                serde_json::json!({"path": "built.txt", "content": "fixed\n"}),
+            ),
+            call(
+                "request_hat",
+                serde_json::json!({"hat": "audit", "reason": "check it"}),
+            ),
+            call(
+                "bash",
+                serde_json::json!({"command": "printf x > probe.txt"}),
+            ),
+            say("looked"),
+        ]));
+        agent.put_on(Role::SoloBuild).unwrap();
+        agent.ctx.always_approve = true;
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        let answering = std::thread::spawn(move || {
+            while let Ok(req) = rx.recv() {
+                if let crate::user_io::UserRequest::Permission { reply, .. } = req {
+                    let _ = reply.send(crate::user_io::Permission::Allow);
+                }
+            }
+        });
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("have a look").await.unwrap();
+        agent.ctx.user_io = None;
+        answering.join().unwrap();
+        assert!(
+            !cwd.path().join("probe.txt").exists(),
+            "put back at the turn's end"
+        );
+        assert_eq!(agent.role, Role::SoloAudit);
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        assert!(
+            evs.iter().any(|e| matches!(e, AgentEvent::Notice { message } if message.contains("put back from the checkpoint"))),
+            "{evs:?}"
+        );
+        // The turn's end was recorded after the rollback: what the audit
+        // put back is not the user's edit since, and `/undo` takes the
+        // build's own file back.
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("built.txt")).unwrap(),
+            "fixed\n"
+        );
+        let msg = agent.undo().unwrap();
+        assert!(msg.starts_with("undone"), "{msg}");
+        assert!(
+            !cwd.path().join("built.txt").exists(),
+            "the build's file is undone"
+        );
+    }
+
+    /// The user's yes to another hat in an audit turn closes the audit
+    /// there: the tree is put back and the audit filed before the next hat
+    /// works, so what that hat does is not undone when the turn ends.
+    #[tokio::test]
+    async fn a_yes_to_another_hat_closes_the_audit_first() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
+            call(
+                "bash",
+                serde_json::json!({"command": "printf x > probe.txt"}),
+            ),
+            file_audit_call("fail"),
+            call(
+                "request_hat",
+                serde_json::json!({"hat": "build", "reason": "repair what the audit found"}),
+            ),
+            call(
+                "write",
+                serde_json::json!({"path": "built.txt", "content": "fixed\n"}),
+            ),
+            say("done"),
+        ]));
+        agent.put_on(Role::SoloAudit).unwrap();
+        agent.ctx.always_approve = true;
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        let answering = std::thread::spawn(move || {
+            while let Ok(req) = rx.recv() {
+                if let crate::user_io::UserRequest::Permission { reply, .. } = req {
+                    let _ = reply.send(crate::user_io::Permission::Allow);
+                }
+            }
+        });
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("audit it").await.unwrap();
+        agent.ctx.user_io = None;
+        answering.join().unwrap();
+        assert!(
+            !cwd.path().join("probe.txt").exists(),
+            "the audit's file is gone"
+        );
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("built.txt")).unwrap(),
+            "fixed\n",
+            "the build's file stays"
+        );
+        assert!(cwd.path().join(".ryter/audit.md").exists());
+        assert_eq!(agent.role, Role::SoloBuild);
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        assert_eq!(audited(&evs).len(), 1, "{evs:?}");
+        let at = |f: &dyn Fn(&AgentEvent) -> bool| evs.iter().position(f).unwrap();
+        let filed = at(&|e| matches!(e, AgentEvent::Audited { .. }));
+        let switched = at(&|e| {
+            matches!(
+                e,
+                AgentEvent::ModeChanged {
+                    role: Role::SoloBuild
+                }
+            )
+        });
+        assert!(
+            filed < switched,
+            "the audit closes before the hat changes: {evs:?}"
+        );
+    }
+
+    /// Whatever an audit changes is put back from the checkpoint taken
+    /// before it, and the event and the file say which paths. The audit's
+    /// own files are left as written.
+    #[tokio::test]
+    async fn an_audit_that_changed_the_tree_is_put_back() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
+            call(
+                "bash",
+                serde_json::json!({"command": "printf x > probe.txt && printf y >> hello.txt"}),
+            ),
+            file_audit_call("fail"),
+            say("filed"),
+        ]));
+        std::fs::write(cwd.path().join("hello.txt"), "hi\n").unwrap();
+        crate::review::commit(cwd.path(), &["hello.txt".into()], "base").unwrap();
+        agent.put_on(Role::SoloAudit).unwrap();
+        agent.ctx.always_approve = true;
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("audit it").await.unwrap();
+        assert!(
+            !cwd.path().join("probe.txt").exists(),
+            "the file it made is gone"
+        );
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("hello.txt")).unwrap(),
+            "hi\n"
+        );
+        assert!(
+            cwd.path().join(".ryter/audit.md").exists(),
+            "the audit stays"
+        );
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        let [ev] = audited(&evs)[..] else {
+            panic!("one audit: {evs:?}");
+        };
+        let AgentEvent::Audited { restored, .. } = ev else {
+            unreachable!()
+        };
+        let mut restored = restored.clone();
+        restored.sort();
+        assert_eq!(restored, ["hello.txt", "probe.txt"]);
+        let text = std::fs::read_to_string(cwd.path().join(".ryter/audit.md")).unwrap();
+        assert!(
+            text.contains("left 2 files changed") && text.contains("- `probe.txt`"),
+            "{text}"
+        );
+    }
+
+    /// With no repository there is no checkpoint: the audit is told, held
+    /// to looking, and a write is refused.
+    #[tokio::test]
+    async fn an_audit_outside_a_repository_only_looks() {
+        let (_home, cwd, mut agent) = setup(ReplayProvider::scripted(vec![
+            call(
+                "bash",
+                serde_json::json!({"command": "printf x > probe.txt"}),
+            ),
+            say("could not write\nVERDICT: PASS"),
+        ]));
+        agent.cfg = Some(crate::config::Config::default());
+        agent.put_on(Role::SoloAudit).unwrap();
+        agent.ctx.always_approve = true;
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent
+            .turn("[Ryter] Audit the uncommitted changes")
+            .await
+            .unwrap();
+        assert!(!cwd.path().join("probe.txt").exists());
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        assert!(noticed(&evs, "no git repository here"), "{evs:?}");
+        let user = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "user")
+            .unwrap();
+        assert!(
+            user.content.contains("read-only commands only this turn"),
+            "{}",
+            user.content
+        );
+        assert!(
+            evs.iter()
+                .any(|e| matches!(e, AgentEvent::ToolResult { is_error: true, .. }))
+        );
+        assert!(
+            matches!(
+                audited(&evs)[..],
+                [AgentEvent::Audited {
+                    checkpointed: false,
+                    filed: false,
+                    verdict: Some(true),
+                    ..
+                }]
+            ),
+            "{evs:?}"
+        );
+        assert!(!agent.ctx.read_only, "the flag is for the turn");
+    }
+
+    /// A question asked in the audit hat is a chat: no notice, no event.
+    /// An audit asked for that files nothing is said so, and its verdict
+    /// line stands.
+    #[tokio::test]
+    async fn a_chat_in_the_audit_hat_is_not_an_audit() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
+            call("read_file", serde_json::json!({"path": "hello.txt"})),
+            say("it says hi"),
+            say("looked\nVERDICT: FAIL"),
+        ]));
+        std::fs::write(cwd.path().join("hello.txt"), "hi\n").unwrap();
+        agent.put_on(Role::SoloAudit).unwrap();
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("what does hello.txt say?").await.unwrap();
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        assert!(audited(&evs).is_empty(), "{evs:?}");
+        assert!(!noticed(&evs, "filed no report"));
+        assert!(!cwd.path().join(".ryter/audit.md").exists());
+        agent
+            .turn("[Ryter] Audit the uncommitted changes: 1 file")
+            .await
+            .unwrap();
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        assert!(
+            noticed(&evs, "the audit filed no report; its last words stand"),
+            "{evs:?}"
+        );
+        assert!(matches!(
+            audited(&evs)[..],
+            [AgentEvent::Audited {
+                filed: false,
+                verdict: Some(false),
+                ..
+            }]
+        ));
+        assert_eq!(agent.last_audit_verdict, Some(false));
+    }
+
+    /// `file_audit` is the audit hat's; its shape is checked.
+    #[tokio::test]
+    async fn file_audit_is_the_audit_hats_and_is_checked() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
+            file_audit_call("pass"),
+            say("ok"),
+        ]));
+        agent.put_on(Role::SoloBuild).unwrap();
+        agent.turn("file it").await.unwrap();
+        let refused = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .unwrap();
+        assert!(
+            refused.content.contains("filed from the audit hat"),
+            "{}",
+            refused.content
+        );
+        assert!(!cwd.path().join(".ryter/audit.md").exists());
+        agent.provider = Arc::new(ReplayProvider::scripted(vec![
+            call(
+                "file_audit",
+                serde_json::json!({"verdict": "fail", "summary": "x",
+                "findings": [{"result": "fail", "title": "bare"}]}),
+            ),
+            say("ok"),
+        ]));
+        agent.put_on(Role::SoloAudit).unwrap();
+        agent.turn("audit").await.unwrap();
+        let said: Vec<&str> = agent
+            .session
+            .transcript
+            .iter()
+            .filter(|m| m.role == "tool")
+            .map(|m| m.content.as_str())
+            .collect();
+        assert!(
+            said.last()
+                .unwrap()
+                .contains("finding 1 failed: say what is wrong"),
+            "{said:?}"
+        );
+    }
+
+    /// `/audit` asks for everything the project has and a filed audit, in
+    /// the audit hat, and the hat the user was in comes back.
+    #[tokio::test]
+    async fn the_audit_brief_asks_for_the_file_and_the_hat_comes_back() {
+        for prior in [Role::SoloPlan, Role::SoloBuild] {
+            let (_home, _cwd, agent, events, _) = review_run_from(
+                prior,
+                ReviewRun::default(),
+                vec![file_audit_call("pass"), say("filed")],
+            )
+            .await;
+            assert_eq!(agent.role, prior, "{prior:?}");
+            let brief = agent
+                .session
+                .transcript
+                .iter()
+                .find(|m| m.role == "user" && m.content.contains("[Ryter] Audit"))
+                .unwrap();
+            assert!(
+                brief.content.contains("Run everything the project has"),
+                "{}",
+                brief.content
+            );
+            assert!(
+                brief
+                    .content
+                    .contains("file your findings with file_audit as your last call")
+            );
+            assert!(matches!(
+                audited(&events)[..],
+                [AgentEvent::Audited { filed: true, .. }]
+            ));
+            // `/audit`'s own record of the verdict comes from the filed audit.
+            assert!(events.iter().any(|e| matches!(
+                e,
+                AgentEvent::Reviewed {
+                    verdict: Some(true),
+                    ..
+                }
+            )));
+            assert_eq!(agent.last_audit_verdict, Some(true));
+        }
+    }
+
     fn noticed(events: &[AgentEvent], what: &str) -> bool {
         events
             .iter()
             .any(|e| matches!(e, AgentEvent::Notice { message } if message.contains(what)))
-    }
-
-    /// After a build turn: Ryter offers the review with its cost, and yes
-    /// runs it, with no second question. It runs in the review hat, on the
-    /// review hat's model, and the build hat comes back after.
-    #[tokio::test]
-    async fn an_offered_review_asks_once_and_runs() {
-        let (_home, _cwd, agent, events, asked) = review_run(
-            ReviewRun {
-                offered: true,
-                ..ReviewRun::default()
-            },
-            vec![vec![
-                StreamDelta::Text("Nothing to report.\n\nVERDICT: PASS".into()),
-                StreamDelta::Usage(Usage {
-                    input_tokens: 100,
-                    output_tokens: 10,
-                    ..Usage::default()
-                }),
-                StreamDelta::Done,
-            ]],
-        )
-        .await;
-        assert_eq!(asked.len(), 1, "{asked:?}");
-        assert!(
-            asked[0].starts_with(
-                "review offer: Review this work before you commit?\n\
-                 claude-reviewer on spacexai (the review hat's model)\n\
-                 reviews 1 file, +2 −1, read-only\nabout $"
-            ),
-            "{asked:?}"
-        );
-        assert!(asked[0].contains("of your $5.00 limit"), "{asked:?}");
-        assert_eq!(reviewed(&events), [Some(true)]);
-        // What was reviewed is named, so a commit of anything else isn't
-        // called reviewed.
-        assert!(events.iter().any(|e| matches!(
-            e,
-            AgentEvent::Reviewed { model, tree: Some(t), total_usd: Some(_), .. }
-                if model == "claude-reviewer" && !t.is_empty()
-        )));
-        let hats: Vec<Role> = events
-            .iter()
-            .filter_map(|e| match e {
-                AgentEvent::ModeChanged { role } => Some(*role),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(hats, [Role::SoloReview, Role::SoloBuild]);
-        assert_eq!(agent.role, Role::SoloBuild);
-        let log = agent.session.spend_log().unwrap();
-        assert_eq!(log.len(), 1);
-        assert_eq!(
-            (log[0].role, log[0].model.as_str()),
-            (Role::SoloReview, "claude-reviewer")
-        );
-    }
-
-    /// A declined offer is silent, and no turn starts, so the build turn's
-    /// summary stays on screen.
-    #[tokio::test]
-    async fn a_declined_offer_leaves_no_trace() {
-        let (_home, _cwd, agent, events, asked) = review_run(
-            ReviewRun {
-                answer: crate::user_io::Permission::Deny,
-                offered: true,
-                ..ReviewRun::default()
-            },
-            vec![say("VERDICT: PASS")],
-        )
-        .await;
-        assert!(asked[0].starts_with("review offer:"), "{asked:?}");
-        assert!(events.is_empty(), "{events:?}");
-        assert!(agent.session.spend_log().unwrap().is_empty());
-        assert_eq!(agent.role, Role::SoloBuild);
-    }
-
-    /// Offers turned off: nothing is asked.
-    #[tokio::test]
-    async fn offers_turned_off_ask_nothing() {
-        let (_home, _cwd, _agent, events, asked) = review_run(
-            ReviewRun {
-                offered: true,
-                offers_on: false,
-                ..ReviewRun::default()
-            },
-            vec![say("VERDICT: PASS")],
-        )
-        .await;
-        assert!(
-            asked.is_empty() && events.is_empty(),
-            "{asked:?} {events:?}"
-        );
     }
 
     /// Nothing uncommitted: no offer; asked for, it says so.
@@ -4661,13 +5500,10 @@ mod tests {
         agent.ctx.user_io = Some(io);
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
-        agent.offer_review().await.unwrap();
-        assert!(rx.try_recv().is_err(), "nothing asked");
-        assert!(events.try_iter().next().is_none());
         agent.review_now().await.unwrap();
         assert!(rx.try_recv().is_err(), "nothing asked");
         let events: Vec<_> = events.try_iter().collect();
-        assert!(noticed(&events, "nothing uncommitted to review"));
+        assert!(noticed(&events, "nothing uncommitted to audit"));
     }
 
     /// `/audit`: the user sees who reviews, what it will read, and a cost
@@ -4686,7 +5522,7 @@ mod tests {
         )
         .await;
         assert!(
-            asked[0].starts_with("review: claude-reviewer on spacexai"),
+            asked[0].starts_with("audit: claude-reviewer on spacexai"),
             "{asked:?}"
         );
         let said: Vec<(&str, &str)> = agent
@@ -4697,10 +5533,10 @@ mod tests {
             .collect();
         assert_eq!(said.len(), 2, "{said:?}");
         assert_eq!(said[0].0, "user");
-        assert!(said[0].1.starts_with("[hat: review"), "{said:?}");
+        assert!(said[0].1.starts_with("[hat: audit"), "{said:?}");
         assert!(
             said[0].1.contains(
-                "[Ryter] Review the uncommitted changes before they are committed: 1 file, +2 −1."
+                "[Ryter] Audit the uncommitted changes before they are committed: 1 file, +2 −1."
             ),
             "{said:?}"
         );
@@ -4782,7 +5618,7 @@ mod tests {
         )
         .await;
         assert!(
-            asked[0].starts_with("review: grok-4.6 on spacexai, the model that built it\n"),
+            asked[0].starts_with("audit: grok-4.6 on spacexai, the model that built it\n"),
             "{asked:?}"
         );
         assert!(asked[0].contains("/models"), "{asked:?}");
@@ -4806,7 +5642,7 @@ mod tests {
         assert!(
             noticed(
                 &events,
-                "no review: no price is known for claude-reviewer, so your $5.00 review limit"
+                "no audit: no price is known for claude-reviewer, so your $5.00 review limit"
             ),
             "{events:?}"
         );
@@ -4889,7 +5725,7 @@ mod tests {
         assert!(asked.is_empty(), "{asked:?}");
         assert!(reviewed(&events).is_empty(), "{events:?}");
         assert!(
-            noticed(&events, "review stopped at your $0.01 limit: $0.00 spent"),
+            noticed(&events, "audit stopped at your $0.01 limit: $0.00 spent"),
             "{events:?}"
         );
         assert!(
@@ -4936,7 +5772,7 @@ mod tests {
         .await;
         assert_eq!(reviewed(&events), [None]);
         assert!(
-            noticed(&events, "review stopped at your $1.00 limit"),
+            noticed(&events, "audit stopped at your $1.00 limit"),
             "{events:?}"
         );
         assert_eq!(agent.session.spend_log().unwrap().len(), 2);
@@ -4954,7 +5790,7 @@ mod tests {
         )
         .await;
         assert!(reviewed(&events).is_empty());
-        assert!(noticed(&events, "review not run"));
+        assert!(noticed(&events, "audit not run"));
         assert!(agent.session.spend_log().unwrap().is_empty());
     }
 
@@ -4976,55 +5812,6 @@ mod tests {
             "hi there\nand more\n"
         );
         assert_eq!(reviewed(&events), [Some(false)]);
-    }
-
-    /// A failed review offers its fixes in the build hat. When the user
-    /// says yes and the fixes are made, that is new work: the verdict stays
-    /// the reviewer's FAIL, and a review of the fixes is offered.
-    #[tokio::test]
-    async fn fixes_made_after_a_failed_review_are_offered_a_review() {
-        let failed = vec![
-            StreamDelta::Text("- hello.txt:2 wrong word (blocking)\n\nVERDICT: FAIL".into()),
-            StreamDelta::ToolCall {
-                stream_key: None,
-                id: "h".into(),
-                name: "request_hat".into(),
-                arguments: serde_json::json!({"hat": "build", "reason": "fix the word"})
-                    .to_string(),
-            },
-            StreamDelta::Done,
-        ];
-        let (_home, cwd, agent, events, asked) = review_run(
-            ReviewRun::default(),
-            vec![
-                failed,
-                write("hello.txt", "hi there\nand less\n"),
-                say("Fixed the word."),
-                say("VERDICT: PASS"),
-            ],
-        )
-        .await;
-        let tools: Vec<&str> = asked
-            .iter()
-            .map(|a| a.split(':').next().unwrap_or(""))
-            .collect();
-        assert_eq!(tools, ["review", "switch hat", "review offer"], "{asked:?}");
-        assert_eq!(reviewed(&events), [Some(false), Some(true)]);
-        assert_eq!(
-            std::fs::read_to_string(cwd.path().join("hello.txt")).unwrap(),
-            "hi there\nand less\n"
-        );
-        // The two verdicts are about different files.
-        let trees: Vec<&str> = events
-            .iter()
-            .filter_map(|e| match e {
-                AgentEvent::Reviewed { tree, .. } => tree.as_deref(),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(trees.len(), 2);
-        assert_ne!(trees[0], trees[1]);
-        assert_eq!(agent.role, Role::SoloBuild);
     }
 
     #[tokio::test]
@@ -6023,7 +6810,7 @@ mod tests {
         agent.context_window = 500_000;
         let mut cfg = crate::config::Config::default();
         cfg.specialists.insert(
-            "review".into(),
+            "audit".into(),
             crate::config::RoleModel {
                 connection: Some(agent.connection.clone()),
                 model: Some("small-reviewer".into()),
@@ -6035,8 +6822,8 @@ mod tests {
             &agent.connection,
             &[crate::llm::ModelInfo::named("small-reviewer", Some(24_000))],
         );
-        agent.role = Role::SoloReview;
-        agent.ctx.role = Role::SoloReview;
+        agent.role = Role::SoloAudit;
+        agent.ctx.role = Role::SoloAudit;
         let report = agent.context_report().unwrap();
         assert_eq!(report.window, 24_000);
         assert!(

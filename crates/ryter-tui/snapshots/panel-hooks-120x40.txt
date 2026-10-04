@@ -35,6 +35,6 @@
 
 
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│› what should change? · Tab: review · / for commands                                                                  │
+│› what should change? · Tab: plan · ⇧Tab: specialists · / for commands                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  enter details    a add    d remove    esc

@@ -35,7 +35,7 @@ struct Cli {
     #[arg(short = 'c', long = "continue")]
     resume: bool,
 
-    /// build | plan | review. With `-p` the default is build, or the
+    /// build | plan | audit | scribe. With `-p` the default is build, or the
     /// hat a continued session was left in; the TUI opens in `[ui] start_hat`.
     #[arg(long)]
     hat: Option<String>,
@@ -180,7 +180,7 @@ fn headless_hat(asked: Option<Role>, left_in: Option<Role>) -> Role {
 fn tui_hat(hat: Option<&str>) -> Result<Option<Role>, Error> {
     match hat {
         Some("crew" | "lead") => Err(Error::Config(
-            "crew mode was removed: --hat takes build, plan, or review".into(),
+            "crew mode was removed: --hat takes build, plan, audit, or scribe".into(),
         )),
         Some(h) => Ok(Some(h.parse::<Role>()?)),
         None => Ok(None),
@@ -403,7 +403,7 @@ async fn run_prompt(
     let hat = match cli.hat.as_deref() {
         Some("crew" | "lead") => {
             return Err(Error::Config(
-                "crew mode was removed: --hat takes build, plan, or review".into(),
+                "crew mode was removed: --hat takes build, plan, audit, or scribe".into(),
             ));
         }
         Some(h) => Some(h.parse::<Role>()?),
@@ -473,6 +473,7 @@ async fn run_prompt(
             web: cfg.features.web,
             cwd: Default::default(),
             vars: Default::default(),
+            read_only: false,
         },
         connection: conn_name,
         model,
@@ -487,6 +488,9 @@ async fn run_prompt(
         cfg: Some(cfg.clone()),
         machine: ryter_core::prompt::machine_for(profile),
         product: None,
+        audit_pending: None,
+        audit_live: None,
+        last_audit_verdict: None,
     };
     agent.fire_session_start()?;
     let result = agent.turn(&prompt).await;
@@ -842,6 +846,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
             web: cfg.features.web,
             cwd: Default::default(),
             vars: Default::default(),
+            read_only: false,
         },
         connection: conn_name,
         model,
@@ -856,6 +861,9 @@ fn mcp_serve() -> ryter_core::Result<()> {
         cfg: Some(cfg.clone()),
         machine: ryter_core::prompt::machine_for(profile),
         product: None,
+        audit_pending: None,
+        audit_live: None,
+        last_audit_verdict: None,
     };
     if let Err(e) = agent.fire_session_start() {
         eprintln!("{e}");
@@ -964,6 +972,7 @@ fn serve_host_from_config(
             web: cfg.features.web,
             cwd: Default::default(),
             vars: Default::default(),
+            read_only: false,
         },
         connection: conn_name,
         model,
@@ -978,6 +987,9 @@ fn serve_host_from_config(
         cfg: Some(cfg.clone()),
         machine: ryter_core::prompt::machine_for(profile),
         product: None,
+        audit_pending: None,
+        audit_live: None,
+        last_audit_verdict: None,
     };
     agent.fire_session_start()?;
     Ok(ServeHost::new(agent, rt))
@@ -1104,11 +1116,7 @@ mod tests {
         for (asked, left_in, want) in [
             (None, None, Role::SoloBuild),
             (None, Some(Role::SoloPlan), Role::SoloPlan),
-            (
-                Some(Role::SoloReview),
-                Some(Role::SoloPlan),
-                Role::SoloReview,
-            ),
+            (Some(Role::SoloAudit), Some(Role::SoloPlan), Role::SoloAudit),
             (Some(Role::SoloPlan), None, Role::SoloPlan),
             // A session from crew mode continues in build.
             (None, Some(Role::Crew), Role::SoloBuild),
@@ -1121,6 +1129,7 @@ mod tests {
     fn the_hat_flag_names_a_hat_or_is_refused() {
         assert_eq!(tui_hat(None).unwrap(), None);
         assert_eq!(tui_hat(Some("plan")).unwrap(), Some(Role::SoloPlan));
+        assert_eq!(tui_hat(Some("scribe")).unwrap(), Some(Role::SoloScribe));
         assert!(tui_hat(Some("test")).is_err());
         assert!(tui_hat(Some("crew")).is_err());
         assert!(tui_hat(Some("bulid")).is_err());

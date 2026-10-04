@@ -1,4 +1,4 @@
- RYTER │ ● PLAN 1    ◆ BUILD 2    ● REVIEW 1          empty-query fix           shop · search-patch
+ RYTER │ ● PLAN 1    ◆ BUILD 2    ·   specialists ·1      empty-query fix       shop · search-patch
 ────────────────────────────────────────────────────────────────────────────────────────────────────
          ●  search returns eve… ···· ✓ answered · 1.2s · $0.004  ▸    │
          ●  build the plan ········ ✓ answered · 2 files (1 ne…  ▸    │ MODEL
@@ -19,12 +19,12 @@
          │     7 +                                                    │ GUARD
          │     8 + test('a missing query finds nothing', async ()     │ sandbox           workspace
          │         => {                                               │ this hat         asks first
-         │     9 +   assert.deepEqual(await search(), [])             │
-         │    10 + })                                                 │ CHANGES
-         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.0…    │ 2 files              +12 −1
-                     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                     │
-                                                                      │
+         │     9 +   assert.deepEqual(await search(), [])             │ plan.md                none
+         │    10 + })                                                 │ audit.md               none
+         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.0…    │
+                     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                     │ CHANGES
+                                                                      │ 2 files              +12 −1
 ──────────────────────────────────────────────────────────────────────│
-  BUILD  › what should change? · Tab: review · / for commands         │
+  BUILD  › what should change? · Tab: plan · ⇧Tab: specialists · / …  │
 
- $ spend    enter send    tab review    / commands    ^t changes    ^b hat rack    ^c quit
+ $ spend    enter send    tab plan    ⇧tab specialists    / commands    ^b hat rack    ^c quit

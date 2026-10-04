@@ -291,6 +291,22 @@ mod tests {
 
     /// The runtime reads the verdict a review ends with: the prompt must
     /// ask for it in the words the reader takes.
+    /// Every hat is told where the plan and the audit live.
+    #[test]
+    fn every_hat_is_told_about_the_plan_and_audit_files() {
+        let section = SOLO
+            .split("## Ryter's files in the project")
+            .nth(1)
+            .and_then(|s| s.split("\n## ").next())
+            .expect("the files section");
+        for file in [".ryter/plan.md", ".ryter/audit.md", ".ryter/decisions.md"] {
+            assert!(section.contains(file), "{file}");
+        }
+        assert!(section.contains("build hat works from it"));
+        assert!(section.contains("audit hat judges"));
+        assert!(section.contains("scribe documents"));
+    }
+
     #[test]
     fn the_prompt_states_the_contract_the_runtime_parses() {
         let body = shipped();

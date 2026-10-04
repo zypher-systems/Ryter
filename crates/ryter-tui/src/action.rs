@@ -164,11 +164,17 @@ pub enum Action {
         /// Stop it first.
         stop: bool,
     },
-    /// `/audit`: the review hat reviews the uncommitted work now.
+    /// `/audit`: the audit hat audits the uncommitted work now.
     ReviewNow,
-    /// `s` on a review offer: no more offers after build turns (the offer
-    /// itself is answered no).
-    StopReviewOffers,
+    /// `y` on the audit popout: the build hat repairs what the audit
+    /// found, the audit's file as its brief.
+    RepairFromAudit {
+        /// The audit's file, as a path in the project; `None` when none
+        /// was written.
+        file: Option<String>,
+    },
+    /// `o` on the audit popout: open the audit's file.
+    OpenAuditFile(String),
     /// `/changes` `x`: put one file back as `base` had it.
     Revert {
         /// Commit to restore from.

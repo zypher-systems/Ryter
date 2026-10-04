@@ -8,10 +8,10 @@
     │   follows all hats   │ grok-4.3        $1.25   $2.5  spacexai                            │
     │   Build              │ grok-build-0.1     $1     $2  spacexai                            │
     │   follows all hats   │                                                                   │
-    │   Review             │                                                                   │
+    │   Audit              │                                                                   │
     │   follows all hats   │                                                                   │
-    │                      │                                                                   │
-    │                      │                                                                   │
+    │   Scribe             │                                                                   │
+    │   follows all hats   │                                                                   │
     │                      │                                                                   │
     │                      │                                                                   │
     │                      │                                                                   │

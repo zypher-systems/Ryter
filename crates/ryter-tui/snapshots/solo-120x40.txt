@@ -1,4 +1,4 @@
- RYTER │ ● PLAN 1    ◆ BUILD 2    ● REVIEW 1                    empty-query fix                     shop · search-patch
+ RYTER │ ● PLAN 1    ◆ BUILD 2    ·   specialists ·1                empty-query fix                 shop · search-patch
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
          ●  search returns everything for an empty… ···· ✓ answered · 1.2s · $0.004  ▸    │
          ●  build the plan ·················· ✓ answered · 2 files (1 new, 1 chang…  ▸    │ MODEL
@@ -19,11 +19,11 @@
          │     7 +                                                                        │ GUARD
          │     8 + test('a missing query finds nothing', async () => {                    │ sandbox           workspace
          │     9 +   assert.deepEqual(await search(), [])                                 │ this hat         asks first
-         │    10 + })                                                                     │
-         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009                       │ CHANGES
-                   ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄                   │ 2 files              +12 −1
-             ▄▄                                                            ▄▄             │
-             ▀                                                              ▀             │
+         │    10 + })                                                                     │ plan.md                none
+         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009                       │ audit.md               none
+                   ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄                   │
+             ▄▄                                                            ▄▄             │ CHANGES
+             ▀                                                              ▀             │ 2 files              +12 −1
                  ▀▀▀▀▀▀                                            ▀▀▀▀▀▀                 │
                                ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                               │
                                                                                           │
@@ -35,6 +35,6 @@
                                                                                           │
                                                                                           │
 ──────────────────────────────────────────────────────────────────────────────────────────│
-  BUILD  › what should change? · Tab: review · / for commands                             │
+  BUILD  › what should change? · Tab: plan · ⇧Tab: specialists · / for commands           │
 
- $ spend    enter send    tab review    / commands    ^t changes    ^o expand    ^b hat rack    ^c quit
+ $ spend    enter send    tab plan    ⇧tab specialists    / commands    ^t changes    ^b hat rack    ^c quit

@@ -225,22 +225,39 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         Action::Undo { force } => cx.send(Work::Undo { force }),
         Action::Redo { force } => cx.send(Work::Redo { force }),
         Action::ReviewNow if view.busy => {
-            view.warn("a review reads the finished work: wait for this turn to end");
+            view.warn("an audit reads the finished work: wait for this turn to end");
         }
         Action::ReviewNow => cx.send(Work::ReviewNow),
-        Action::StopReviewOffers => {
-            if let Some(tx) = cx.perm_reply.take() {
-                let _ = tx.send(Permission::Deny);
+        Action::RepairFromAudit { file } => {
+            // The user's switch, not Ryter's: `y` on the audit.
+            set_mode(view, cx, ryter_core::Role::SoloBuild);
+            let brief = "Repair what this audit found; run the checks it ran.";
+            let body = file
+                .as_deref()
+                .and_then(|f| {
+                    let root = view.workspace.clone()?;
+                    std::fs::read_to_string(root.join(f)).ok()
+                })
+                .unwrap_or_else(|| {
+                    "(the audit filed no report; its findings are in the chat above)".into()
+                });
+            let shown = match &file {
+                Some(f) => format!("repair what the audit found · {f}"),
+                None => "repair what the audit found".into(),
+            };
+            let next = view.submit_user(shown, format!("{brief}\n\n{body}"));
+            perform(view, cx, next);
+        }
+        Action::OpenAuditFile(file) => {
+            let path = view
+                .workspace
+                .clone()
+                .map_or_else(|| std::path::PathBuf::from(&file), |root| root.join(&file));
+            if ryter_core::page::open(&path) {
+                view.system(format!("opened {file}"));
+            } else {
+                view.system(format!("{file} · open it in your editor"));
             }
-            view.ui.offer_audit = false;
-            cx.cfg.ui.offer_audit = false;
-            if let Err(e) = config::save_settings(&cx.home, &cx.cfg) {
-                view.error(e.to_string());
-            }
-            cx.send(Work::SetOfferAudit(false));
-            view.system(
-                "no more review offers · /audit still runs one · /settings turns them back on",
-            );
         }
         Action::Revert { base, path } => cx.send(Work::Revert { base, path }),
         Action::RevertHunk { base, path, hunk } => cx.send(Work::RevertHunk { base, path, hunk }),
@@ -587,10 +604,12 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
     view.session_id = session.meta.id.to_string();
     view.session_title = session.meta.title.clone();
     // A session left in crew mode, before it was removed, opens in build.
-    view.mode = session
-        .meta
-        .mode
-        .map_or(ryter_core::Role::SoloBuild, ryter_core::Role::hat);
+    view.set_mode(
+        session
+            .meta
+            .mode
+            .map_or(ryter_core::Role::SoloBuild, ryter_core::Role::hat),
+    );
     view.agent_hat = view.mode;
     view.spend = session.meta.spend_usd_total;
     view.spend_unknown = session.meta.spend_unknown;
@@ -842,7 +861,7 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
 
 /// Switch hats. A switch while a turn runs applies to the next message.
 fn set_mode(view: &mut View, cx: &mut Ctx, role: ryter_core::Role) {
-    view.mode = role;
+    view.set_mode(role);
     view.hats_pending += 1;
     cx.send(Work::SetRole(role));
 }
@@ -946,7 +965,7 @@ fn save_hats(view: &mut View, cx: &mut Ctx) {
 fn save_settings(view: &mut View, cx: &mut Ctx) {
     cx.cfg.spend.session_budget_usd = view.budget_usd;
     cx.cfg.spend.warn_usd = view.warn_usd;
-    cx.cfg.spend.review_usd = view.review_usd;
+    cx.cfg.spend.audit_usd = view.audit_usd;
     cx.cfg.sandbox.profile = view.sandbox_profile.clone();
     cx.cfg.mcp.inbound = view.mcp_inbound;
     cx.cfg.features.web = view.web;
@@ -983,11 +1002,10 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
     }
     cx.send(Work::SetSettings {
         budget_usd: view.budget_usd,
-        review_usd: view.review_usd,
+        audit_usd: view.audit_usd,
         web: view.web,
         open_pages: view.ui.open_pages,
     });
-    cx.send(Work::SetOfferAudit(view.ui.offer_audit));
 }
 
 fn set_budget(view: &mut View, cx: &mut Ctx, usd: f64) {
@@ -1009,7 +1027,7 @@ fn save_budget(view: &mut View, cx: &mut Ctx, usd: f64, warn: f64) {
     }
     cx.send(Work::SetSettings {
         budget_usd: usd,
-        review_usd: view.review_usd,
+        audit_usd: view.audit_usd,
         web: view.web,
         open_pages: view.ui.open_pages,
     });

@@ -35,6 +35,6 @@
  · ✓ done · 2 tools · 0:02                                                                             ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│› what should change? · Tab: review · / for commands                                                                  │
+│› what should change? · Tab: plan · ⇧Tab: specialists · / for commands                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- enter send    tab review    ⇧enter newline    / commands    ^r reasoning    ^b panel    ^c quit
+ enter send    tab plan    ⇧tab specialists    ⇧enter newline    / commands    ^r reasoning    ^b panel    ^c quit
