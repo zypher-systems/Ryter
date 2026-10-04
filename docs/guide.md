@@ -138,7 +138,7 @@ The **activity strip** shows what the model is doing (`⠙ thinking · …the AP
 
 `/sessions` (alias `/resume`) is one browser for this directory’s sessions: `Enter` resumes, `r` renames, `d` deletes (type the short id to confirm), `n` starts a new one. `ryter sessions` and `ryter resume [id]` are the CLI equivalents.
 
-**Approving.** When the build hat needs your yes, a card opens just above the message box, with the chat still readable behind it. It has these rows:
+**Approving.** When the build hat needs your yes, a card opens in the conversation's column, between the chat and the message box: inset from the column's edges so it reads as a card, with a heavy top edge in the warn color. The chat moves up to make room for it, so the last lines of the reply stay in sight above it; nothing is painted over. The card never takes more than a third of the column, and a change longer than that scrolls inside it with `↑↓` or the mouse wheel. It is announced where you are looking: the row under the model says `waiting for you · allow?`, the hat's chip in the top bar keeps spinning, and the foot line shows the card's keys in the warn color. `[ui] bell = true`, or *bell on a question* in `/settings`, rings the terminal's bell once when a card opens; it is off by default. The card has these rows:
 - **what** the call does (`edit stats.js`, `run cargo test`);
 - **why**: the model's own words just before it asked;
 - **risk** in plain words, including whether `/undo` can put it back;

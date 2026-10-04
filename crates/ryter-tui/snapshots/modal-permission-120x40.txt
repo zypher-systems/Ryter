@@ -25,13 +25,13 @@
 
 
 
-┏━ approve? ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│ what    run  rm -rf target/ && cargo build --release                                                                 │
-│ risk    runs a command that can change things · /undo covers files in the project                                    │
-│   rm -rf target/ && cargo build --release                                                                            │
-│                                                                                                                      │
-│ ⏎ allow   n deny                                                                                                     │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+              ┏━ allow? · run  rm -rf target/ && cargo build --release ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ build ━┓
+              │ what    run  rm -rf target/ && cargo build --release                                                │
+              │ risk    runs a command that can change things · /undo covers files in the project                   │
+              │   rm -rf target/ && cargo build --release                                                           │
+              │                                                                                                     │
+              │ ⏎ allow   n deny                                                                                    │
+              ╰─────────────────────────────────────────────────────────────────────────────────────────────────────╯
  ⠼ writing  ·  Reading the loop now. The event loop dr…  ·  0:12  ·  ~59 tok                           ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮

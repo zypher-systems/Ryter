@@ -1,21 +1,21 @@
  ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
- dusty  trim the query                                                    ↑ 4
+ dusty  trim the query                                                   ↑ 10
  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
-   5 -   const q = req.query.q
-   5 +   const q = (req.query.q || '').trim()
-   6 +   if (!q) return res.json([])
-   7     res.json(find(q))
-   8   })
- · write  test/search.test.js                              new · 6 lines  0.0s
    1 + import { test } from 'node:test'
-┏━ audit? ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│ x-ai/grok-4.7 on openrouter (the audit hat's model)                          │
-│ audits 2 files, +8 −1, read-only                                             │
-│ about $0.02–$0.31 of your $5.00 limit                                        │
-│ your last 4 audits with it cost $0.03–$0.19                                  │
-│ ⏎ audit   n not now                                                          │
-╰──────────────────────────────────────────────────────────────────────────────╯
+   2 + import assert from 'node:assert'
+   3 +
+   4 + test('an empty query finds nothing', async () => {
+   5 +   assert.deepEqual(await search(''), [])
+   6 + })
+
+ ───────────────── 2 files (1 new, 1 changed, +8 −1) · 2.1s ──────────────────
+  ┏━ audit? ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ audit ━┓
+  │ x-ai/grok-4.7 on openrouter (the audit hat's model)                     │
+  │ audits 2 files, +8 −1, read-only                                        │
+  │ about $0.02–$0.31 of your $5.00 limit                                   │
+  │ ⏎ audit   n not now                                                     │
+  ╰─────────────────────────────────────────────────────────────────────────╯
  · ✓ done · 2 tools · 0:02                                     ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮

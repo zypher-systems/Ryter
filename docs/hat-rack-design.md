@@ -669,4 +669,5 @@ On 2026-10-03 the user removed the test hat:
 
 | Change | Why |
 | --- | --- |
+| The allow card is inset in the conversation's column (fourteen in and two short of the right edge at a hundred columns, two each side down to sixty, the whole column under that), the chat is laid out above it rather than painted over, it is capped at a third of the column and scrolls inside, and it is announced in the status row, the bar's spinner and a warn-colored foot line; `[ui] bell` rings once, off by default (2026-10-04) | The user: "full width at the bottom is a bit much, sometimes you don't look down and see it, and it cuts the bottom of the AI response off". A card is a card; the chat is what is being approved, so it stays readable. |
 | Three hats: plan, build, review. The top bar, the rack and `Tab` lose the test hat (R-TOP-01, §5, R-INST-04, R-INST-05) | The test hat's one distinction, never writing the project, was what made it fail in use, and it fit only a product with an address. `run_project` moved to the build and review hats. See `DECISIONS.md`, 2026-10-03. |

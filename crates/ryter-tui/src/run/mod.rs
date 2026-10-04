@@ -39,7 +39,7 @@ use ryter_core::{
 };
 
 use crate::action::Action;
-use crate::activity::{Mode as ActivityMode, Verb};
+use crate::activity::Mode as ActivityMode;
 use crate::draw::{Hit, draw};
 use crate::panel::modal::{AskModal, PermissionModal, TrustModal};
 use crate::panel::{self, Notice};
@@ -406,7 +406,12 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         quit_after_turn: false,
         stop_reply: None,
         want_edit: None,
+        bells: 0,
     };
+    // The trust prompt opened before the loop: its bell, if one is wanted.
+    if view.panels.has_modal() {
+        cx.bells += bells_for(view.ui.bell);
+    }
     enter_terminal(mouse)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout())).map_err(io_err)?;
     let result = loop_ui(
@@ -672,6 +677,10 @@ fn loop_ui(
         } else {
             dirty || since >= Duration::from_millis(500)
         };
+        if cx.bells > 0 {
+            let n = std::mem::take(&mut cx.bells);
+            let _ = ring(terminal.backend_mut(), n);
+        }
         if due {
             paint_now = false;
             view.tick(now.duration_since(epoch).as_millis() as u64);
@@ -849,6 +858,7 @@ fn drain_user_prompts(
     let Ok(req) = prompt_rx.try_recv() else {
         return false;
     };
+    let ask = ask_for(&req);
     match req {
         UserRequest::Permission {
             tool,
@@ -899,9 +909,39 @@ fn drain_user_prompts(
     }
     panel::sync_composer(view);
     if view.activity.busy() {
-        view.activity.verb = Verb::Waiting;
+        view.activity.note_ask(ask);
     }
+    cx.bells += bells_for(view.ui.bell);
     true
+}
+
+/// What a question asks, in a word or two, for the status row under the
+/// model: `waiting for you · allow?`.
+pub fn ask_for(req: &UserRequest) -> &'static str {
+    match req {
+        UserRequest::Permission { tool, .. } if tool == "audit" => "audit?",
+        UserRequest::Permission { .. } => "allow?",
+        UserRequest::Plan { .. } => "plan?",
+        UserRequest::Run { .. } => "run?",
+        UserRequest::Question { .. } => "question",
+    }
+}
+
+/// Bells a question opening earns: one when `[ui] bell` is on.
+pub fn bells_for(bell_on: bool) -> u32 {
+    u32::from(bell_on)
+}
+
+/// Ring `n` bells through the terminal: `BEL` itself, written to what is
+/// drawn to, so it reaches the terminal and not a log.
+pub fn ring(out: &mut impl std::io::Write, n: u32) -> std::io::Result<()> {
+    if n == 0 {
+        return Ok(());
+    }
+    for _ in 0..n {
+        out.write_all(b"\x07")?;
+    }
+    out.flush()
 }
 
 /// Release the terminal, run `$EDITOR <path>`, and take it back.

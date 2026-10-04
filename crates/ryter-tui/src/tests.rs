@@ -3004,3 +3004,194 @@ fn the_drain_pauses_to_paint_after_a_tool_result() {
     let (n, paused) = crate::run::drain_events(&mut v, &rx);
     assert_eq!((n, paused), (32, true), "a run of events pauses too");
 }
+
+// -- The allow card: inset, the chat pushed up, announced ----------------------
+
+/// A view mid-turn on the rack screen with a long reply and a card asking
+/// about an edit: what the user sees when the build hat wants a yes.
+fn asking(width_lines: usize) -> View {
+    let mut v = mid_stream(ActivityMode::Collapsed);
+    v.ui.layout = "ledger".into();
+    let reply: String = (0..width_lines)
+        .map(|i| format!("reply line {i}\n"))
+        .collect();
+    v.on_token(&reply);
+    let old: String = (0..60).map(|i| format!("row {i}\n")).collect();
+    let new = old.replace("row 30\n", "row thirty\n");
+    let diff = ryter_core::diff::FileDiff::new("app/server.js", Some(&old), &new);
+    v.panels.push(Box::new(
+        PermissionModal::new("search_replace".into(), "app/server.js".into())
+            .with_preview(Some(Box::new(diff)))
+            .with_answers(false, Some("edits to files in the project".into()))
+            .with_context(Some("Next the form text".into()), 0),
+    ));
+    v.activity.note_ask("allow?");
+    v
+}
+
+#[test]
+fn snapshot_allow_card_on_the_rack() {
+    all_sizes("solo-allow", &asking(8));
+}
+
+/// The card is inset in the conversation's column: fourteen in and two
+/// short of its right edge at a hundred columns or more, two each side
+/// down to sixty, the whole column under that.
+#[test]
+fn the_allow_card_is_inset_in_the_conversation_column() {
+    let v = asking(8);
+    let theme = Theme::truecolor_dark();
+    // The margins follow the column's width, not the screen's: at 160
+    // columns the conversation's column is in the nineties, so two each
+    // side; the fourteen-and-two shape needs a column of a hundred.
+    for (w, h) in [(220u16, 50u16), (160, 50), (110, 40), (80, 24), (50, 24)] {
+        let (col_x, col_w) = crate::draw::chat_column(&v, theme, w, h);
+        let (left, right) = if col_w >= 100 {
+            (14u16, 2u16)
+        } else if col_w >= 60 {
+            (2, 2)
+        } else {
+            (0, 0)
+        };
+        if w == 220 {
+            assert!(col_w >= 100, "a column of a hundred at 220: {col_w}");
+        }
+        let drawn = render_to_string(&v, w, h);
+        let top = drawn
+            .lines()
+            .find(|l| l.contains("┏━ allow?"))
+            .unwrap_or_else(|| panic!("no card at {w}x{h}:\n{drawn}"));
+        let open = top.chars().position(|c| c == '┏').unwrap();
+        let close = top.chars().position(|c| c == '┓').unwrap();
+        assert_eq!(open as u16, col_x + left, "{w}x{h}: left edge\n{drawn}");
+        assert_eq!(
+            close as u16,
+            col_x + col_w - right - 1,
+            "{w}x{h}: right edge\n{drawn}"
+        );
+        // Every row of the card ends on its frame: square at every width.
+        let rows: Vec<&str> = drawn
+            .lines()
+            .skip_while(|l| !l.contains("┏━ allow?"))
+            .take_while(|l| !l.contains('╰'))
+            .collect();
+        for r in &rows[1..] {
+            assert_eq!(r.chars().nth(close), Some('│'), "{w}x{h}: {r:?}");
+        }
+    }
+}
+
+/// The chat is laid out above the card, not under it: the reply's last
+/// line and the status row stay in sight.
+#[test]
+fn the_chat_moves_up_for_the_allow_card() {
+    let v = asking(60);
+    let drawn = render_to_string(&v, 160, 42);
+    let lines: Vec<&str> = drawn.lines().collect();
+    let card = lines.iter().position(|l| l.contains("┏━ allow?")).unwrap();
+    let last = lines
+        .iter()
+        .position(|l| l.contains("reply line 59"))
+        .unwrap();
+    let status = lines
+        .iter()
+        .position(|l| l.contains("waiting for you · allow?"))
+        .unwrap();
+    assert!(
+        last < card,
+        "the reply's last line is above the card:\n{drawn}"
+    );
+    assert!(status < card, "the status row is above the card:\n{drawn}");
+    // And the card is capped at a third of the column, scrolling inside.
+    let bottom = lines.iter().position(|l| l.contains("╰───")).unwrap();
+    let height = bottom - card + 1;
+    assert!(height <= 42 / 3, "card is {height} rows:\n{drawn}");
+    assert!(
+        lines[bottom - 1].contains("wheel more of the change"),
+        "{drawn}"
+    );
+}
+
+/// The foot names the card's keys in the warn color, then the ways out.
+#[test]
+fn the_foot_shows_the_cards_keys_in_warn() {
+    let v = asking(8);
+    let theme = Theme::truecolor_dark();
+    let buf = render_buffer(&v, 160, 42, theme);
+    let foot = buf.area.height - 1;
+    let text: String = (0..buf.area.width)
+        .map(|x| buf[(x, foot)].symbol().to_string())
+        .collect();
+    assert!(
+        text.contains("⏎ allow") && text.contains("^c stop the turn"),
+        "{text}"
+    );
+    let at = |needle: &str| {
+        text.find(needle)
+            .map(|i| text[..i].chars().count() as u16)
+            .unwrap()
+    };
+    assert_eq!(buf[(at("⏎"), foot)].fg, theme.warn, "{text}");
+    assert_eq!(buf[(at("a allow"), foot)].fg, theme.warn, "{text}");
+    assert_ne!(buf[(at("^c"), foot)].fg, theme.warn, "{text}");
+}
+
+/// What each question asks, as the status row says it; and the bell.
+#[test]
+fn a_question_is_named_and_may_ring() {
+    use ryter_core::user_io::UserRequest;
+    let (p, _) = std::sync::mpsc::channel();
+    let (a, _) = std::sync::mpsc::channel();
+    let (q, _) = std::sync::mpsc::channel();
+    let perm = |tool: &str| UserRequest::Permission {
+        tool: tool.into(),
+        summary: "x".into(),
+        preview: None,
+        strict: false,
+        scope: None,
+        whole: false,
+        reply: p.clone(),
+    };
+    assert_eq!(crate::run::ask_for(&perm("bash")), "allow?");
+    assert_eq!(crate::run::ask_for(&perm("audit")), "audit?");
+    assert_eq!(
+        crate::run::ask_for(&UserRequest::Plan {
+            title: "t".into(),
+            plan: "p".into(),
+            reply: a.clone()
+        }),
+        "plan?"
+    );
+    assert_eq!(
+        crate::run::ask_for(&UserRequest::Run {
+            rows: Vec::new(),
+            note: None,
+            reply: a
+        }),
+        "run?"
+    );
+    assert_eq!(
+        crate::run::ask_for(&UserRequest::Question {
+            title: None,
+            question: "?".into(),
+            options: Vec::new(),
+            reply: q
+        }),
+        "question"
+    );
+    let mut v = mid_stream(ActivityMode::Collapsed);
+    v.ui.layout = "ledger".into();
+    v.activity.note_ask("plan?");
+    assert!(render_to_string(&v, 160, 42).contains("waiting for you · plan?"));
+    // A delta ends the question's word.
+    v.activity.note_delta(v.now_ms);
+    v.activity.verb = crate::activity::Verb::Writing;
+    assert!(!render_to_string(&v, 160, 42).contains("waiting for you"));
+    // The bell: once when on, never when off.
+    let mut out = Vec::new();
+    crate::run::ring(&mut out, crate::run::bells_for(true)).unwrap();
+    assert_eq!(out, b"\x07");
+    let mut out = Vec::new();
+    crate::run::ring(&mut out, crate::run::bells_for(false)).unwrap();
+    assert!(out.is_empty());
+}

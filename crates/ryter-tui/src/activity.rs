@@ -130,6 +130,8 @@ pub struct Activity {
     pub last_delta_ms: Option<u64>,
     /// The tail of the latest text, single-spaced, for the ticker.
     tail: String,
+    /// What the open question asks, while one is open: `allow?`, `plan?`.
+    pub ask: Option<String>,
 }
 
 impl Default for Activity {
@@ -158,6 +160,7 @@ impl Activity {
             has_history: false,
             last_delta_ms: None,
             tail: String::new(),
+            ask: None,
         }
     }
 
@@ -216,6 +219,14 @@ impl Activity {
     /// or its result. The caller sets the verb; this ends any waiting.
     pub fn note_delta(&mut self, now_ms: u64) {
         self.last_delta_ms = Some(now_ms);
+        self.ask = None;
+    }
+
+    /// A question for the user is open: what it asks, in a word or two
+    /// (`allow?`, `plan?`, `question`), for the status row.
+    pub fn note_ask(&mut self, ask: &str) {
+        self.verb = Verb::Waiting;
+        self.ask = Some(ask.to_string());
     }
 
     /// The latest text, for the ticker: its tail, single-spaced.
@@ -246,9 +257,10 @@ impl Activity {
     /// long, and how much it has produced. Narrow, the tokens go first,
     /// then the time.
     pub fn status(&self, width: usize) -> String {
-        let label = match &self.verb {
-            Verb::Tool(t) => format!("running {t}"),
-            v => v.label(),
+        let label = match (&self.verb, &self.ask) {
+            (Verb::Tool(t), _) => format!("running {t}"),
+            (Verb::Waiting, Some(ask)) => format!("waiting for you · {ask}"),
+            (v, _) => v.label(),
         };
         let mut parts = vec![label];
         if width >= 32 {

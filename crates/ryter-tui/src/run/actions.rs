@@ -70,6 +70,9 @@ pub struct Ctx {
     pub stop_reply: Option<mpsc::Receiver<std::result::Result<String, String>>>,
     /// A `$EDITOR` request to run with the terminal released.
     pub want_edit: Option<PathBuf>,
+    /// Bells the loop still has to ring: one per question opened while
+    /// `[ui] bell` is on.
+    pub bells: u32,
 }
 
 impl Ctx {
