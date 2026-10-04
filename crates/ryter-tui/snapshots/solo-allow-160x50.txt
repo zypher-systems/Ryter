@@ -30,6 +30,7 @@
                              │                                                                                                │
                              │                                                                                                │
                              │                                                                                                │
+                             │                                                                                                │
                              │   ┏━ allow? · edit  app/server.js ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ build ━┓     │
                              │   │ what    edit  app/server.js                                                          │     │
                              │   │ why     Next the form text                                                           │     │
@@ -43,7 +44,6 @@
                              │   │ 33   row 32                                                                          │     │
                              │   │ ⏎ allow   a allow edits to files in the project this session   n deny                │     │
                              │   ╰──────────────────────────────────────────────────────────────────────────────────────╯     │
-                             │  ⠼ waiting for you  ·  …ly line 4 reply line 5 reply line 6 re…  ·  0:12 … ^r  reasoning  ▾    │
                              │────────────────────────────────────────────────────────────────────────────────────────────────│
                              │  BUILD  › type to queue the next message, / for commands                                       │
 

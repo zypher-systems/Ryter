@@ -21,9 +21,9 @@
    │ why     Next the form text                                 │     │ plan.md                none
    │ risk    changes a file in your project · /undo puts it back│     │ audit.md               none
    │ change  app/server.js  +1 −1                               │     │
-   │ ⏎ allow                                                    │     │ CHANGES
-   ╰────────────────────────────────────────────────────────────╯     │ no repository here
-  ⠼ waiting for you  ·  …ly line 4 reply line 5 … ^r  reasoning  ▾    │
+   │ 29   row 28                                                │     │ CHANGES
+   │ ⏎ allow   a allow edits this session   n deny              │     │ no repository here
+   ╰────────────────────────────────────────────────────────────╯     │
 ──────────────────────────────────────────────────────────────────────│
   BUILD  › type to queue the next message, / for commands             │
 

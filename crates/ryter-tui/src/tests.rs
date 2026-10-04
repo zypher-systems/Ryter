@@ -2840,6 +2840,144 @@ fn the_wheel_scrolls_an_open_panel() {
     assert!(!v.panels.is_empty());
 }
 
+/// One spinner. The strip is gone from the solo and classic screens; `^r`
+/// opens the turn's reasoning as a pane right under the status row while
+/// the turn runs, under the turn's closing line after, never more than a
+/// third of the chat.
+#[test]
+fn the_reasoning_pane_opens_under_the_status_row() {
+    for layout in ["ledger", "classic"] {
+        let mut v = mid_stream(ActivityMode::Collapsed);
+        v.ui.layout = layout.into();
+        crate::run_events_apply(
+            &mut v,
+            AgentEvent::Reasoning {
+                text: "first the loop, then the tests ".repeat(30),
+            },
+        );
+        let shown = render_to_string(&v, 160, 42);
+        assert!(
+            !shown.contains("^r  reasoning  ▾"),
+            "{layout}: the strip is gone\n{shown}"
+        );
+        assert!(
+            !shown.contains("reasoning · "),
+            "{layout}: collapsed is the row alone\n{shown}"
+        );
+        // ^r opens the pane right under the row.
+        let _ = crate::run_keys_handle(
+            &mut v,
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(v.activity.mode, ActivityMode::Expanded);
+        let shown = render_to_string(&v, 160, 42);
+        let lines: Vec<&str> = shown.lines().collect();
+        let status = lines
+            .iter()
+            .position(|l| l.contains("thinking · "))
+            .unwrap_or_else(|| panic!("{layout}: no status row\n{shown}"));
+        let header = lines
+            .iter()
+            .position(|l| l.contains("reasoning · "))
+            .unwrap_or_else(|| panic!("{layout}: no pane header\n{shown}"));
+        assert_eq!(
+            header,
+            status + 1,
+            "{layout}: the pane is under the row\n{shown}"
+        );
+        // The fixture's own reasoning and the text pushed here both speak
+        // of the loop: the pane's rows are the ones that do.
+        let body = lines
+            .iter()
+            .skip(header + 1)
+            .take_while(|l| l.contains("loop"))
+            .count();
+        assert!(
+            (3..=13).contains(&body),
+            "{layout}: the pane is capped at a third: {body} rows\n{shown}"
+        );
+        // The turn ends: the row goes, and the pane sits where the turn
+        // closed.
+        let turn = v.turn;
+        crate::run_events_apply(
+            &mut v,
+            AgentEvent::TurnFinished {
+                turn,
+                tools: 0,
+                duration_ms: 1000,
+            },
+        );
+        let shown = render_to_string(&v, 160, 42);
+        assert!(!shown.contains("thinking · "), "{layout}\n{shown}");
+        let lines: Vec<&str> = shown.lines().collect();
+        let header = lines
+            .iter()
+            .position(|l| l.contains("reasoning · "))
+            .unwrap_or_else(|| panic!("{layout}: no pane after the turn\n{shown}"));
+        let after = lines
+            .iter()
+            .skip(header + 1)
+            .any(|l| l.contains("first the loop"));
+        assert!(after, "{layout}: the reasoning stays readable\n{shown}");
+        if layout == "ledger" {
+            let closing = lines[..header]
+                .iter()
+                .rposition(|l| l.contains("└─"))
+                .unwrap_or_else(|| panic!("no closing line\n{shown}"));
+            assert!(header > closing, "{shown}");
+        }
+        // ^r again closes it.
+        let _ = crate::run_keys_handle(
+            &mut v,
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+        );
+        assert!(!render_to_string(&v, 160, 42).contains("reasoning · "));
+    }
+}
+
+/// A click on the status row opens the pane, and a click on the pane's
+/// header closes it, on both screens.
+#[test]
+fn a_click_on_the_status_row_toggles_the_pane() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    for layout in ["ledger", "classic"] {
+        let mut v = mid_stream(ActivityMode::Collapsed);
+        v.ui.layout = layout.into();
+        crate::run_events_apply(&mut v, AgentEvent::Reasoning { text: "so ".into() });
+        let hit = crate::draw::render_hit(&v, 160, 42);
+        assert!(
+            hit.activity.height >= 1,
+            "{layout}: the row is a target: {:?}",
+            hit.activity
+        );
+        let click = |row: u16, col: u16| MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        let _ =
+            crate::run_mouse_handle_with(&mut v, click(hit.activity.y, hit.activity.x + 3), &hit);
+        assert_eq!(v.activity.mode, ActivityMode::Expanded, "{layout}");
+        let hit = crate::draw::render_hit(&v, 160, 42);
+        assert!(
+            hit.activity.height >= 2,
+            "{layout}: row and header: {:?}",
+            hit.activity
+        );
+        // The header, one row below the status row.
+        let _ = crate::run_mouse_handle_with(
+            &mut v,
+            click(hit.activity.y + 1, hit.activity.x + 3),
+            &hit,
+        );
+        assert_eq!(v.activity.mode, ActivityMode::Collapsed, "{layout}");
+        // A click elsewhere in the chat does nothing to it.
+        let _ = crate::run_mouse_handle_with(&mut v, click(hit.chat.y, hit.chat.x + 3), &hit);
+        assert_eq!(v.activity.mode, ActivityMode::Collapsed, "{layout}");
+    }
+}
+
 /// A running turn ends on a row that moves: the spinner and what the model
 /// is doing, with the time and the tokens, dropped in that order as the
 /// screen narrows. The row goes when the turn ends.

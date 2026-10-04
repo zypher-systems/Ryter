@@ -1,29 +1,29 @@
  ryter  ·  build                                                    ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  dusty                                                         │╭─ session ────────────────────────╮
- ▎ now implement step one                                      ││ untitled                   build │
+ ▎ now implement step one                                      ┃│ untitled                   build │
                                                                ┃│ tools ask                        │
  · read  crates/ryter-tui/src/run/mod.rs                       ┃╰──────────────────────────────────╯
                                                                ┃╭─ model ──────────────────────────╮
  grok-4.6                                                      ┃│ spacexai ●              grok-4.6 │
    Reading the loop now. The event loop drains                 ┃│ ctx █░░░░░░░░░░░░░░░░░░░   5%    │
  ⠼ writing · 0:12 · 59 tokens                                  ┃│     12.4k / 256k tokens          │
-                                                               ┃│ price unknown                    │
-                                                               ┃│ reasoning          auto · medium │
-                                                               ┃╰──────────────────────────────────╯
-                                                               ┃╭─ spend ──────────────────────────╮
-                                                               ┃│ session                    $?.?? │
+ reasoning · 0:12   ^r close ▴                                 ┃│ price unknown                    │
+  The user wants the loop wired. I should read run.rs first,   ┃│ reasoning          auto · medium │
+  then The user wants the loop wired. I should read run.rs     ┃╰──────────────────────────────────╯
+  first, then The user wants the loop wired. I should read     ┃╭─ spend ──────────────────────────╮
+  run.rs first, then                                           ┃│ session                    $?.?? │
                                                                ┃╰──────────────────────────────────╯
                                                                ┃╭─ budget ─────────────────── off ─╮
                                                                ┃│ cap                          off │
                                                                ┃╰──────────────────────────────────╯
                                                                ┃
- ⠼ writing                                                                        0:12   ^r close ▴
- The user wants the loop wired. I should read run.rs first, then The user wants the loop wired. I
- should read run.rs first, then The user wants the loop wired. I should read run.rs first, then
-
-
-────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                               ┃
+                                                               ┃
+                                                               ┃
+                                                               ┃
+                                                               ┃
+                                                               ┃
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
 │› type to queue the next message, / for commands                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

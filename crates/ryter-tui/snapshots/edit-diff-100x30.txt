@@ -1,29 +1,29 @@
  ryter  ·  build                                                    ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- dusty                                                         │╭─ session ────────────────────────╮
- ▎ trim the query                                              ┃│ untitled                   build │
-                                                               ┃│ tools ask                        │
- · edit  app/server.js                             +2 −1  0.0s ┃╰──────────────────────────────────╯
-   3                                                           ┃╭─ model ──────────────────────────╮
-   4   app.get('/search', (req, res) => {                      ┃│ spacexai ●              grok-4.6 │
-   5 -   const q = req.query.q                                 ┃│ ctx █░░░░░░░░░░░░░░░░░░░   5%    │
-   5 +   const q = (req.query.q || '').trim()                  ┃│     12.4k / 256k tokens          │
-   6 +   if (!q) return res.json([])                           ┃│ price unknown                    │
-   7     res.json(find(q))                                     ┃│ reasoning          auto · medium │
-   8   })                                                      ┃╰──────────────────────────────────╯
- · write  test/search.test.js              new · 6 lines  0.0s ┃╭─ spend ──────────────────────────╮
-   1 + import { test } from 'node:test'                        ┃│ session                    $?.?? │
-   2 + import assert from 'node:assert'                        ┃╰──────────────────────────────────╯
-   3 +                                                         ┃╭─ budget ─────────────────── off ─╮
-   4 + test('an empty query finds nothing', async () => {      ┃│ cap                          off │
-   5 +   assert.deepEqual(await search(''), [])                ┃╰──────────────────────────────────╯
-   6 + })                                                      ┃
-                                                               ┃
- ───────── 2 files (1 new, 1 changed, +8 −1) · 2.1s ────────── ┃
-                                                               ┃
-                                                               ┃
- · ✓ done · 2 tools · 0:02                                                         ^r  reasoning  ▾
-────────────────────────────────────────────────────────────────────────────────────────────────────
+ dusty                                                          ╭─ session ────────────────────────╮
+ ▎ trim the query                                               │ untitled                   build │
+                                                                │ tools ask                        │
+ · edit  app/server.js                             +2 −1  0.0s  ╰──────────────────────────────────╯
+   3                                                            ╭─ model ──────────────────────────╮
+   4   app.get('/search', (req, res) => {                       │ spacexai ●              grok-4.6 │
+   5 -   const q = req.query.q                                  │ ctx █░░░░░░░░░░░░░░░░░░░   5%    │
+   5 +   const q = (req.query.q || '').trim()                   │     12.4k / 256k tokens          │
+   6 +   if (!q) return res.json([])                            │ price unknown                    │
+   7     res.json(find(q))                                      │ reasoning          auto · medium │
+   8   })                                                       ╰──────────────────────────────────╯
+ · write  test/search.test.js              new · 6 lines  0.0s  ╭─ spend ──────────────────────────╮
+   1 + import { test } from 'node:test'                         │ session                    $?.?? │
+   2 + import assert from 'node:assert'                         ╰──────────────────────────────────╯
+   3 +                                                          ╭─ budget ─────────────────── off ─╮
+   4 + test('an empty query finds nothing', async () => {       │ cap                          off │
+   5 +   assert.deepEqual(await search(''), [])                 ╰──────────────────────────────────╯
+   6 + })
+
+ ───────── 2 files (1 new, 1 changed, +8 −1) · 2.1s ──────────
+
+
+
+
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · ⇧Tab: specialists · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

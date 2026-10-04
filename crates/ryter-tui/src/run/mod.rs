@@ -782,8 +782,15 @@ pub(crate) fn mouse_handle(view: &mut View, m: MouseEvent) -> Action {
     on_mouse(view, m, &hit)
 }
 
-/// Wheel scrolls the chat; clicks open info cards or toggle the activity strip
-/// (`R-SCROLL-11`). Nothing else is captured.
+/// [`mouse_handle`] against a frame's real hit test (`draw::render_hit`).
+#[cfg(test)]
+pub(crate) fn mouse_handle_with(view: &mut View, m: MouseEvent, hit: &Hit) -> Action {
+    on_mouse(view, m, hit)
+}
+
+/// Wheel scrolls the chat; clicks open info cards or, on the status row or
+/// the reasoning pane's header, toggle the pane (`R-SCROLL-11`). Nothing
+/// else is captured.
 fn on_mouse(view: &mut View, m: MouseEvent, hit: &Hit) -> Action {
     let inside = |r: Rect| -> bool {
         m.column >= r.x && m.column < r.x + r.width && m.row >= r.y && m.row < r.y + r.height
