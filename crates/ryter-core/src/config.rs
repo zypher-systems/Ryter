@@ -28,6 +28,9 @@ pub struct Config {
     pub specialists: BTreeMap<String, RoleModel>,
     /// Spend accounting.
     pub spend: SpendConfig,
+    /// `[limits]`: how far one message may go.
+    #[serde(default)]
+    pub limits: LimitsConfig,
     /// Per-model USD rates; always wins over shipped / catalog prices.
     #[serde(default)]
     pub pricing: BTreeMap<String, PriceOverride>,
@@ -141,6 +144,7 @@ impl Default for Config {
             },
             specialists: BTreeMap::new(),
             spend: SpendConfig::default(),
+            limits: LimitsConfig::default(),
             pricing: BTreeMap::new(),
             context_windows: BTreeMap::new(),
             mcp: McpSettings::default(),
@@ -368,6 +372,28 @@ pub struct SpendConfig {
 
 fn usd() -> String {
     "USD".into()
+}
+
+/// `[limits]`: how far one message may go before Ryter stops the turn and
+/// asks to continue. The spend budget is the real guard; this is the
+/// safety net under a model going round in circles.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LimitsConfig {
+    /// Model rounds one message may use (a round is one reply, with its
+    /// tool calls). `0` lifts the cap.
+    pub rounds: u32,
+}
+
+impl Default for LimitsConfig {
+    fn default() -> Self {
+        Self { rounds: 150 }
+    }
+}
+
+/// The cap the agent counts rounds against: `0` in the setting means none.
+pub fn rounds_cap(rounds: u32) -> u32 {
+    if rounds == 0 { u32::MAX } else { rounds }
 }
 
 /// `[mcp]` table.
@@ -1058,6 +1084,9 @@ struct SettingsFile {
     warn_usd: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "review_usd")]
     audit_usd: Option<f64>,
+    /// Rounds one message may use (`[limits] rounds`); `0` lifts the cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rounds: Option<u32>,
     sandbox: Option<String>,
     inbound: Option<bool>,
     web: Option<bool>,
@@ -1089,6 +1118,9 @@ fn apply_settings_file(cfg: &mut Config, path: &Path) {
     if let Some(v) = file.sandbox {
         cfg.sandbox.profile = v;
     }
+    if let Some(v) = file.rounds {
+        cfg.limits.rounds = v;
+    }
     if let Some(v) = file.tools {
         if crate::tools::ToolsMode::parse(&v).is_some() {
             cfg.tools_mode = v;
@@ -1112,6 +1144,7 @@ pub fn save_settings(home: &Path, cfg: &Config) -> Result<()> {
         session_budget_usd: Some(cfg.spend.session_budget_usd),
         warn_usd: Some(cfg.spend.warn_usd),
         audit_usd: Some(cfg.spend.audit_usd),
+        rounds: Some(cfg.limits.rounds),
         sandbox: Some(cfg.sandbox.profile.clone()),
         tools: Some(cfg.tools_mode.clone()),
         inbound: Some(cfg.mcp.inbound),
@@ -1198,6 +1231,8 @@ struct ConfigFile {
     sandbox: Option<SandboxConfig>,
     features: Option<FeaturesConfig>,
     permissions: Option<crate::permissions::Permissions>,
+    #[serde(default)]
+    limits: Option<LimitsConfig>,
     ui: Option<UiFile>,
     update: Option<UpdateConfig>,
     reasoning_effort: BTreeMap<String, String>,
@@ -1364,6 +1399,9 @@ impl ConfigFile {
         }
         if let Some(f) = self.features {
             cfg.features = f;
+        }
+        if let Some(l) = self.limits {
+            cfg.limits = l;
         }
         // Rules add up across files; a later file's answer for the same
         // pattern replaces an earlier one's.
@@ -1963,6 +2001,28 @@ mod tests {
         fs::write(home.path().join("settings.toml"), "tools = \"sometimes\"\n").unwrap();
         let again = load_at(home.path(), None, false).unwrap();
         assert_eq!(again.tools_mode, "ask");
+    }
+
+    /// `[limits] rounds` is how far one message may go: 150 unless set,
+    /// `0` lifts the cap, and the settings file carries the user's choice.
+    #[test]
+    fn the_round_cap_is_a_setting_and_zero_lifts_it() {
+        let home = TempDir::new().unwrap();
+        let cfg = load_at(home.path(), None, false).unwrap();
+        assert_eq!(cfg.limits.rounds, 150);
+        assert_eq!(rounds_cap(cfg.limits.rounds), 150);
+        fs::write(home.path().join("config.toml"), "[limits]\nrounds = 0\n").unwrap();
+        let cfg = load_at(home.path(), None, false).unwrap();
+        assert_eq!(cfg.limits.rounds, 0);
+        assert_eq!(rounds_cap(0), u32::MAX);
+        let mut cfg = cfg;
+        cfg.limits.rounds = 400;
+        save_settings(home.path(), &cfg).unwrap();
+        let again = load_at(home.path(), None, false).unwrap();
+        assert_eq!(
+            again.limits.rounds, 400,
+            "the settings file wins over config.toml"
+        );
     }
 
     #[test]

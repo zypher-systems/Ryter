@@ -156,7 +156,7 @@ The keys are on the card's last row:
 
 **When a turn stops by itself**, the chat says why:
 - the model made the same call and got the same result five times (it is told at the third);
-- it used the 40 rounds one message may have (say “continue”);
+- it used the rounds one message may have: 150 unless *rounds a turn* in `/settings` or `[limits] rounds` in `config.toml` says otherwise, and `0` lifts the cap (say “continue”);
 - the provider sent nothing but keep-alives for 5 minutes (15 for a local server), or reported an error mid-reply;
 - a reply was cut off at the output limit three times in a row.
 

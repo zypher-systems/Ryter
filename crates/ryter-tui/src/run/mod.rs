@@ -59,6 +59,8 @@ pub struct TuiOpts {
     pub always_approve: bool,
     /// A yes to every question (`--yolo`).
     pub yolo: bool,
+    /// `--rounds`: the rounds one message may use, for this run.
+    pub rounds: Option<u32>,
     /// Connection override.
     pub connection: Option<String>,
     /// Model override.
@@ -188,7 +190,10 @@ fn io_err(e: impl std::fmt::Display) -> ryter_core::Error {
 pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     let cwd = std::env::current_dir().map_err(io_err)?;
     let trusted = config::is_trusted(&cwd);
-    let cfg = config::load(Some(&cwd), trusted)?;
+    let mut cfg = config::load(Some(&cwd), trusted)?;
+    if let Some(r) = opts.rounds {
+        cfg.limits.rounds = r;
+    }
     let home = config::home_dir();
     let last = config::load_last_route(&home);
     let (mut conn_name, mut model) = config::resolve_route(
@@ -476,6 +481,7 @@ fn populate_view(
         view.budget_last = view.budget_usd;
     }
     view.audit_usd = cfg.spend.audit_usd;
+    view.rounds = cfg.limits.rounds;
     view.model_reasoning = cfg.model_reasoning.clone();
     view.warn_usd = cfg.spend.warn_usd;
     view.sandbox_profile = cfg.sandbox.profile.clone();

@@ -113,6 +113,16 @@ impl Settings {
                 1.0,
             ),
             num(
+                "rounds",
+                "rounds a turn (0 = no cap)",
+                f64::from(view.rounds),
+                0.0,
+                100_000.0,
+                10.0,
+                true,
+                150.0,
+            ),
+            num(
                 "review",
                 "audit usd (0 = off)",
                 view.audit_usd,
@@ -239,6 +249,9 @@ impl Settings {
         }
         if let Some(v) = number("review") {
             view.audit_usd = v;
+        }
+        if let Some(v) = number("rounds") {
+            view.rounds = v.max(0.0) as u32;
         }
         if let Some(v) = sel("perm") {
             view.perm_mode = v;
