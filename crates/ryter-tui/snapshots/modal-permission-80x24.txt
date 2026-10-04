@@ -10,14 +10,14 @@
  ⠼ writing · 0:12 · 59 tokens
 
 
+
+
   ┏━ allow? · run  rm -rf target/ && cargo build --release ━━━━━━━━━ build ━┓
   │ what    run  rm -rf target/ && cargo build --release                    │
   │ risk    runs a command that can change things · /undo covers files in th│
   │   rm -rf target/ && cargo build --release                               │
   │ ⏎ allow   n deny                                                        │
   ╰─────────────────────────────────────────────────────────────────────────╯
- ⠼ writing  ·  Reading the loop now. The event loop dr…  ·  0… ^r  reasoning  ▾
-────────────────────────────────────────────────────────────────────────────────
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
 │› type to queue the next message, / for commands                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯

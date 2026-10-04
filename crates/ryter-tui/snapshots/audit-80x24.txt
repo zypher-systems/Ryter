@@ -1,23 +1,23 @@
  ryter  ·  build                                ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
- dusty  trim the query                       ↑ 25  │╭─ session ────────────────╮
+ dusty  trim the query                       ↑ 23  │╭─ session ────────────────╮
  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥ ││ untitled           build │
-   • blocking  app/server.js:6 : an empty query    │╰──────────────────────────╯
-     returns early, but  find  still runs on       │╭─ model ──────────────────╮
-     undefined  when  q  is missing.               ││ spacexai ●      grok-4.6 │
-   • note: the test covers  ""  only.              ││ ctx █░░░░░░░░░░░░░   5%  │
-                                                   ││     12.4k / 256k tokens  │
-   VERDICT: FAIL                                   ││ price unknown            │
-                                                   ││ reasoning  auto · medium │
- · system                                          │╰──────────────────────────╯
-   audit · claude-opus-5.5 · ✗ failed, unfiled ·   │╭─ spend ──────────────────╮
-   $0.040                                          ┃│ session            $?.?? │
-                                                   ┃╰──────────────────────────╯
- · system                                          ┃╭─ budget ─────────── off ─╮
-   switched to the build hat · Tab to change it    ┃│ cap                  off │
-   again                                           ┃╰──────────────────────────╯
- · ✓ done · 0 tools · 0:03                                     ^r  reasoning  ▾
-────────────────────────────────────────────────────────────────────────────────
+                                                   ││ tools ask                │
+ claude-opus-5.5                                   │╰──────────────────────────╯
+   • blocking  app/server.js:6 : an empty query    │╭─ model ──────────────────╮
+     returns early, but  find  still runs on       ││ spacexai ●      grok-4.6 │
+     undefined  when  q  is missing.               ││ ctx █░░░░░░░░░░░░░   5%  │
+   • note: the test covers  ""  only.              ││     12.4k / 256k tokens  │
+                                                   ││ price unknown            │
+   VERDICT: FAIL                                   ││ reasoning  auto · medium │
+                                                   │╰──────────────────────────╯
+ · system                                          ┃╭─ spend ──────────────────╮
+   audit · claude-opus-5.5 · ✗ failed, unfiled ·   ┃│ session            $?.?? │
+   $0.040                                          ┃╰──────────────────────────╯
+                                                   ┃╭─ budget ─────────── off ─╮
+ · system                                          ┃│ cap                  off │
+   switched to the build hat · Tab to change it    ┃╰──────────────────────────╯
+   again                                           ┃
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · ⇧Tab: specialists · / for commands        │
 ╰──────────────────────────────────────────────────────────────────────────────╯

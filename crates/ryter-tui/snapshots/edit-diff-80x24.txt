@@ -1,23 +1,23 @@
  ryter  ·  build                                ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
- dusty  trim the query                        ↑ 5  │╭─ session ────────────────╮
+ dusty  trim the query                        ↑ 3  │╭─ session ────────────────╮
  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥ ││ untitled           build │
-   5 +   const q = (req.query.q || '').trim()      │╰──────────────────────────╯
-   6 +   if (!q) return res.json([])               │╭─ model ──────────────────╮
-   7     res.json(find(q))                         ││ spacexai ●      grok-4.6 │
-   8   })                                          ││ ctx █░░░░░░░░░░░░░   5%  │
- · write  test/search.test.js  new · 6 lines  0.0s ┃│     12.4k / 256k tokens  │
-   1 + import { test } from 'node:test'            ┃│ price unknown            │
-   2 + import assert from 'node:assert'            ┃│ reasoning  auto · medium │
-   3 +                                             ┃╰──────────────────────────╯
-   4 + test('an empty query finds nothing', async  ┃╭─ spend ──────────────────╮
-       () => {                                     ┃│ session            $?.?? │
-   5 +   assert.deepEqual(await search(''), [])    ┃╰──────────────────────────╯
-   6 + })                                          ┃╭─ budget ─────────── off ─╮
-                                                   ┃│ cap                  off │
- ─── 2 files (1 new, 1 changed, +8 −1) · 2.1s ──── ┃╰──────────────────────────╯
- · ✓ done · 2 tools · 0:02                                     ^r  reasoning  ▾
-────────────────────────────────────────────────────────────────────────────────
+   4   app.get('/search', (req, res) => {          ││ tools ask                │
+   5 -   const q = req.query.q                     │╰──────────────────────────╯
+   5 +   const q = (req.query.q || '').trim()      │╭─ model ──────────────────╮
+   6 +   if (!q) return res.json([])               ┃│ spacexai ●      grok-4.6 │
+   7     res.json(find(q))                         ┃│ ctx █░░░░░░░░░░░░░   5%  │
+   8   })                                          ┃│     12.4k / 256k tokens  │
+ · write  test/search.test.js  new · 6 lines  0.0s ┃│ price unknown            │
+   1 + import { test } from 'node:test'            ┃│ reasoning  auto · medium │
+   2 + import assert from 'node:assert'            ┃╰──────────────────────────╯
+   3 +                                             ┃╭─ spend ──────────────────╮
+   4 + test('an empty query finds nothing', async  ┃│ session            $?.?? │
+       () => {                                     ┃╰──────────────────────────╯
+   5 +   assert.deepEqual(await search(''), [])    ┃╭─ budget ─────────── off ─╮
+   6 + })                                          ┃│ cap                  off │
+                                                   ┃╰──────────────────────────╯
+ ─── 2 files (1 new, 1 changed, +8 −1) · 2.1s ──── ┃
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · ⇧Tab: specialists · / for commands        │
 ╰──────────────────────────────────────────────────────────────────────────────╯

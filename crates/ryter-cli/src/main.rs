@@ -49,6 +49,11 @@ struct Cli {
     #[arg(long)]
     yolo: bool,
 
+    /// Model rounds one message may use, for this run (`[limits] rounds`;
+    /// 0 lifts the cap).
+    #[arg(long)]
+    rounds: Option<u32>,
+
     /// Connection name.
     #[arg(long)]
     connection: Option<String>,
@@ -216,6 +221,7 @@ fn main() -> ExitCode {
             match ryter_tui::run(ryter_tui::TuiOpts {
                 always_approve: cli.always_approve,
                 yolo: cli.yolo,
+                rounds: cli.rounds,
                 connection: cli.connection,
                 model: cli.model,
                 sandbox: cli.sandbox,
@@ -298,6 +304,7 @@ fn main() -> ExitCode {
             match ryter_tui::run(ryter_tui::TuiOpts {
                 always_approve: cli.always_approve,
                 yolo: cli.yolo,
+                rounds: cli.rounds,
                 connection: cli.connection,
                 model: cli.model,
                 sandbox: cli.sandbox,
@@ -359,7 +366,10 @@ fn resolve_sandbox(
 fn run_headless(cli: Cli) -> ryter_core::Result<ExitCode> {
     let cwd = std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?;
     let trusted = config::is_trusted(&cwd);
-    let cfg = config::load(Some(&cwd), trusted)?;
+    let mut cfg = config::load(Some(&cwd), trusted)?;
+    if let Some(r) = cli.rounds {
+        cfg.limits.rounds = r;
+    }
     let profile = resolve_sandbox(cli.sandbox.as_deref(), &cfg)?;
     let rt = sandbox::runtime(profile).map_err(|e| Error::Io(e.to_string()))?;
     rt.block_on(run_prompt(cli, cfg, cwd, profile))
@@ -478,7 +488,7 @@ async fn run_prompt(
         connection: conn_name,
         model,
         role,
-        max_turns: 40,
+        max_turns: ryter_core::config::rounds_cap(cfg.limits.rounds),
         budget_usd: cfg.spend.session_budget_usd,
         sink: Some(tx),
         home,
@@ -851,7 +861,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
         connection: conn_name,
         model,
         role: Role::SoloBuild,
-        max_turns: 40,
+        max_turns: ryter_core::config::rounds_cap(cfg.limits.rounds),
         budget_usd: cfg.spend.session_budget_usd,
         sink: None,
         home,
@@ -977,7 +987,7 @@ fn serve_host_from_config(
         connection: conn_name,
         model,
         role: Role::SoloBuild,
-        max_turns: 40,
+        max_turns: ryter_core::config::rounds_cap(cfg.limits.rounds),
         budget_usd: cfg.spend.session_budget_usd,
         sink: None,
         home,

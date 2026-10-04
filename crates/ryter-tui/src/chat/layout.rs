@@ -33,6 +33,8 @@ enum Gutter {
     End,
     /// A folded turn: its time and `●`, dimmed.
     Folded(String, ratatui::style::Color),
+    /// The reasoning pane after a finished turn: the gutter's width, blank.
+    Blank,
 }
 
 /// One rendered message with its document offset.
@@ -56,6 +58,19 @@ pub struct ChatFrame {
     pub resolved: Resolved,
     /// Total document rows.
     pub doc_rows: usize,
+    /// The document row of the live status row, while a turn runs.
+    pub status_row: Option<usize>,
+    /// The document row of the reasoning pane's header, when it is open.
+    pub pane_header: Option<usize>,
+}
+
+/// What `place` laid out: the rows, their count, and where the status row
+/// and the reasoning pane's header are.
+struct Laid {
+    placed: Vec<Placed>,
+    rows: usize,
+    status_at: Option<usize>,
+    pane_at: Option<usize>,
 }
 
 fn flags(opts: &RenderOpts) -> u64 {
@@ -144,7 +159,7 @@ fn fold_line(view: &View, turn: u64, width: usize, theme: Theme) -> Line<'static
     ])
 }
 
-fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
+fn place(view: &View, width: usize, theme: Theme, pane_cap: usize) -> Laid {
     let mut placed = Vec::with_capacity(view.messages.len());
     let mut row = 0usize;
     let mut cache = view.cache.borrow_mut();
@@ -302,8 +317,11 @@ fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
     // While a turn runs, the conversation ends on a row that moves: the
     // spinner and what the model is doing, where the eye is. The turn's
     // closing line takes its place when it ends.
+    let mut status_at = None;
+    let mut pane_at = None;
     if view.busy {
         let line = status_row(view, width, theme);
+        status_at = Some(row);
         placed.push(Placed {
             start: row,
             separator: false,
@@ -316,7 +334,79 @@ fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
         });
         row += 1;
     }
-    (placed, row)
+    // The reasoning pane is part of the conversation: under the status row
+    // while the turn runs, under the turn's closing line after, where `^r`
+    // or a click on the row opened it.
+    // Not on the workbench: that screen keeps the strip as its one
+    // reasoning surface, and never publishes the row to click.
+    if view.activity.mode == crate::activity::Mode::Expanded
+        && view.activity.has_history
+        && view.workbench.is_none()
+    {
+        let lines = reasoning_pane(view, width, pane_cap, theme);
+        pane_at = Some(row);
+        let n = lines.len();
+        placed.push(Placed {
+            start: row,
+            separator: false,
+            spine: ledger && view.busy,
+            gutter: match (ledger, view.busy) {
+                (false, _) => Gutter::None,
+                (true, true) => Gutter::Line,
+                (true, false) => Gutter::Blank,
+            },
+            entry: Rc::new(Entry { bytes: 0, lines }),
+        });
+        row += n;
+    }
+    Laid {
+        placed,
+        rows: row,
+        status_at,
+        pane_at,
+    }
+}
+
+/// The reasoning pane: a header, `reasoning · 1:40   ^r close ▴`, then the
+/// turn's reasoning, following its tail unless the user scrolled, dim and
+/// italic; at most `cap` rows. While the model has sent nothing it says
+/// so; after a turn with no reasoning it says that.
+fn reasoning_pane(view: &View, width: usize, cap: usize, theme: Theme) -> Vec<Line<'static>> {
+    let a = &view.activity;
+    let dim = Style::default().fg(theme.dim).bg(theme.bg);
+    let dim_italic = dim.add_modifier(Modifier::ITALIC);
+    let secs = a.elapsed_ms / 1000;
+    let clock = format!("{}:{:02}", secs / 60, secs % 60);
+    let text = view
+        .reasoning
+        .get(&a.turn)
+        .map(String::as_str)
+        .unwrap_or("");
+    let body_w = width.saturating_sub(2).max(8);
+    let rows: Vec<String> = if text.trim().is_empty() {
+        if a.busy() {
+            vec![
+                format!("waiting for the model · nothing streamed yet · {clock}"),
+                "some models think on the server and send nothing until they answer".into(),
+            ]
+        } else {
+            vec!["no reasoning stream from this model".into()]
+        }
+    } else {
+        wrap::wrap_plain(text, body_w)
+    };
+    let body_h = rows.len().min(cap.saturating_sub(1).max(1));
+    let max_start = rows.len().saturating_sub(body_h);
+    let start = a.scroll.map_or(max_start, |s| s.min(max_start));
+    let head = format!("reasoning · {clock}   ^r close ▴");
+    let mut lines = vec![Line::from(Span::styled(wrap::truncate(&head, width), dim))];
+    for r in rows.iter().skip(start).take(body_h) {
+        lines.push(Line::from(vec![
+            Span::styled(" ", theme.body()),
+            Span::styled(r.clone(), dim_italic),
+        ]));
+    }
+    lines
 }
 
 /// The live status row of a running turn: the spinner in the hat's color,
@@ -343,7 +433,14 @@ fn status_row(view: &View, width: usize, theme: Theme) -> Line<'static> {
 /// Assemble the visible frame.
 pub fn frame(view: &View, width: usize, height: usize, theme: Theme) -> ChatFrame {
     let width = width.max(12);
-    let (placed, doc_rows) = place(view, width, theme);
+    // The pane takes at most a third of the chat's height.
+    let pane_cap = (height / 3).clamp(3, 12);
+    let Laid {
+        placed,
+        rows: doc_rows,
+        status_at,
+        pane_at,
+    } = place(view, width, theme, pane_cap);
     // On the ledger a new turn is pinned a few rows down, so the turns
     // folded above it stay in sight: they are one line each, there to be
     // glanced at.
@@ -432,6 +529,8 @@ pub fn frame(view: &View, width: usize, height: usize, theme: Theme) -> ChatFram
         sticky,
         resolved,
         doc_rows,
+        status_row: status_at,
+        pane_header: pane_at,
     }
 }
 
@@ -452,12 +551,13 @@ fn gutter_spans(g: &Gutter, first: bool, theme: Theme) -> Vec<Span<'static>> {
     if !first {
         return match g {
             Gutter::None => Vec::new(),
-            Gutter::Folded(..) => vec![pad("          ")],
+            Gutter::Folded(..) | Gutter::Blank => vec![pad("          ")],
             _ => spine(),
         };
     }
     match g {
         Gutter::None => Vec::new(),
+        Gutter::Blank => vec![pad("          ")],
         Gutter::User(t) => vec![
             Span::styled(format!("{t:<5}  "), dim),
             Span::styled("●", Style::default().fg(theme.user).bg(theme.bg)),

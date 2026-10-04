@@ -972,6 +972,9 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
     cx.cfg.spend.session_budget_usd = view.budget_usd;
     cx.cfg.spend.warn_usd = view.warn_usd;
     cx.cfg.spend.audit_usd = view.audit_usd;
+    if !view.rounds_from_flag {
+        cx.cfg.limits.rounds = view.rounds;
+    }
     cx.cfg.sandbox.profile = view.sandbox_profile.clone();
     cx.cfg.mcp.inbound = view.mcp_inbound;
     cx.cfg.features.web = view.web;
@@ -1008,6 +1011,7 @@ fn save_settings(view: &mut View, cx: &mut Ctx) {
     }
     cx.send(Work::SetSettings {
         budget_usd: view.budget_usd,
+        rounds: view.rounds,
         audit_usd: view.audit_usd,
         web: view.web,
         open_pages: view.ui.open_pages,
@@ -1033,6 +1037,7 @@ fn save_budget(view: &mut View, cx: &mut Ctx, usd: f64, warn: f64) {
     }
     cx.send(Work::SetSettings {
         budget_usd: usd,
+        rounds: view.rounds,
         audit_usd: view.audit_usd,
         web: view.web,
         open_pages: view.ui.open_pages,

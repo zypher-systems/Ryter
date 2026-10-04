@@ -1,6 +1,7 @@
  RYTER │ ○ PLAN   ⠼ BUILD                                           0.2.0-patch
-         ●  dusty  now implement step one                               ↑ 2
+         ●  dusty  now implement step one                               ↑ 1
   ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
+
          ●  dusty
          │  now implement step one
          │
@@ -17,7 +18,6 @@
    │ change  app/server.js  +1 −1                                         │
    │ ⏎ allow   a allow edits to files in the project this session   n deny│
    ╰──────────────────────────────────────────────────────────────────────╯
-  ⠼ waiting for you  ·  …ly line 4 reply line 5 reply line… ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────
   BUILD  › type to queue the next message, / for commands
 

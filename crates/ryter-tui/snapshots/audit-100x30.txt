@@ -1,29 +1,29 @@
  ryter  ·  build                                                    ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- dusty  trim the query                                   ↑ 15  │╭─ session ────────────────────────╮
+ dusty  trim the query                                   ↑ 13  │╭─ session ────────────────────────╮
  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥ ││ untitled                   build │
-   6 + })                                                      ││ tools ask                        │
-                                                               │╰──────────────────────────────────╯
- ───────── 2 files (1 new, 1 changed, +8 −1) · 2.1s ────────── │╭─ model ──────────────────────────╮
+   4 + test('an empty query finds nothing', async () => {      ││ tools ask                        │
+   5 +   assert.deepEqual(await search(''), [])                │╰──────────────────────────────────╯
+   6 + })                                                      │╭─ model ──────────────────────────╮
                                                                ││ spacexai ●              grok-4.6 │
- · system                                                      ││ ctx █░░░░░░░░░░░░░░░░░░░   5%    │
-   switched to the audit hat (claude-opus-5.5) · Tab to change ││     12.4k / 256k tokens          │
-   it again                                                    ││ price unknown                    │
-                                                               ││ reasoning          auto · medium │
- claude-opus-5.5                                               ┃╰──────────────────────────────────╯
-   • blocking  app/server.js:6 : an empty query returns early, ┃╭─ spend ──────────────────────────╮
-     but  find  still runs on  undefined  when  q  is missing. ┃│ session                    $?.?? │
-   • note: the test covers  ""  only.                          ┃╰──────────────────────────────────╯
-                                                               ┃╭─ budget ─────────────────── off ─╮
-   VERDICT: FAIL                                               ┃│ cap                          off │
+ ───────── 2 files (1 new, 1 changed, +8 −1) · 2.1s ────────── ││ ctx █░░░░░░░░░░░░░░░░░░░   5%    │
+                                                               ││     12.4k / 256k tokens          │
+ · system                                                      ││ price unknown                    │
+   switched to the audit hat (claude-opus-5.5) · Tab to change ││ reasoning          auto · medium │
+   it again                                                    ┃╰──────────────────────────────────╯
+                                                               ┃╭─ spend ──────────────────────────╮
+ claude-opus-5.5                                               ┃│ session                    $?.?? │
+   • blocking  app/server.js:6 : an empty query returns early, ┃╰──────────────────────────────────╯
+     but  find  still runs on  undefined  when  q  is missing. ┃╭─ budget ─────────────────── off ─╮
+   • note: the test covers  ""  only.                          ┃│ cap                          off │
                                                                ┃╰──────────────────────────────────╯
+   VERDICT: FAIL                                               ┃
+                                                               ┃
  · system                                                      ┃
    audit · claude-opus-5.5 · ✗ failed, unfiled · $0.040        ┃
                                                                ┃
  · system                                                      ┃
    switched to the build hat · Tab to change it again          ┃
- · ✓ done · 0 tools · 0:03                                                         ^r  reasoning  ▾
-────────────────────────────────────────────────────────────────────────────────────────────────────
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
 │› what should change? · Tab: plan · ⇧Tab: specialists · / for commands                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

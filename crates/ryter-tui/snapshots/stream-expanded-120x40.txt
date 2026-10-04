@@ -8,10 +8,10 @@
  grok-4.6                                                                           │ spacexai ●              grok-4.6 │
    Reading the loop now. The event loop drains                                      │ ctx █░░░░░░░░░░░░░░░░░░░   5%    │
  ⠼ writing · 0:12 · 59 tokens                                                       │     12.4k / 256k tokens          │
-                                                                                    │ price unknown                    │
-                                                                                    │ reasoning          auto · medium │
-                                                                                    ╰──────────────────────────────────╯
-                                                                                    ╭─ spend ──────────────────────────╮
+ reasoning · 0:12   ^r close ▴                                                      │ price unknown                    │
+  The user wants the loop wired. I should read run.rs first, then The user wants    │ reasoning          auto · medium │
+  the loop wired. I should read run.rs first, then The user wants the loop wired.   ╰──────────────────────────────────╯
+  I should read run.rs first, then                                                  ╭─ spend ──────────────────────────╮
                                                                                     │ session                    $?.?? │
                                                                                     ╰──────────────────────────────────╯
                                                                                     ╭─ budget ─────────────────── off ─╮
@@ -28,12 +28,12 @@
 
 
 
- ⠼ writing                                                                                            0:12   ^r close ▴
- The user wants the loop wired. I should read run.rs first, then The user wants the loop wired. I should read run.rs
- first, then The user wants the loop wired. I should read run.rs first, then
 
 
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› type to queue the next message, / for commands                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

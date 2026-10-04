@@ -680,8 +680,9 @@ impl Agent {
         // model had finished.
         self.emit(AgentEvent::Notice {
             message: format!(
-                "stopped after {} rounds, the most one message may use. Say \"continue\" to \
-                 carry on.",
+                "stopped after {} rounds, the most one message may use (rounds a turn in \
+                 /settings, or [limits] rounds in config.toml; 0 lifts it). Say \"continue\" \
+                 to carry on.",
                 self.max_turns
             ),
         })?;
@@ -4784,7 +4785,7 @@ mod tests {
         let r = agent.turn("look around").await.unwrap();
         assert_eq!(r.reason, StopReason::MaxTurns);
         assert!(events.try_iter().any(
-            |e| matches!(e, AgentEvent::Notice { message } if message.contains("after 3 rounds"))
+            |e| matches!(e, AgentEvent::Notice { message } if message.contains("after 3 rounds") && message.contains("[limits] rounds"))
         ));
     }
 

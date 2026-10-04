@@ -41,8 +41,10 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     let composer_h =
         composer::draw::height(view, full.width).min(full.height.saturating_sub(8).max(3));
     let body_avail = full.height.saturating_sub(1 + 1 + 1 + composer_h + 1);
-    let activity_h = activity::height(view, body_avail).min(body_avail.saturating_sub(8));
-    let hairline_h = u16::from(activity_h > 0);
+    // One spinner: the status row in the conversation. The strip's rows
+    // are gone from this screen; the reasoning pane opens under the row.
+    let activity_h: u16 = 0;
+    let hairline_h: u16 = 0;
     // A question takes rows of its own under the chat, so the reply's
     // last lines stay in sight above it.
     let prompt_h = panel::prompt_height(view, body_avail.saturating_sub(activity_h + hairline_h));
@@ -59,7 +61,7 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
             Constraint::Length(1),
         ])
         .split(full);
-    let (header, hair1, body, slot_row, act, hair2, comp, hint) = (
+    let (header, hair1, body, slot_row, _act, _hair2, comp, hint) = (
         rows[0], rows[1], rows[2], rows[3], rows[4], rows[5], rows[6], rows[7],
     );
 
@@ -110,10 +112,6 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     } else {
         Vec::new()
     };
-    if activity_h > 0 {
-        activity::draw(frame, act, view, theme);
-        hairline(frame, hair2, theme);
-    }
     let cursor = composer::draw::draw(frame, comp, view, theme);
     draw_hint(frame, hint, view, theme);
 
@@ -130,8 +128,29 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     Hit {
         chat,
         cards,
-        activity: act,
+        activity: status_hit(chat, &cf),
         composer: comp,
+    }
+}
+
+/// Where the live status row and the reasoning pane's header landed, as
+/// one rectangle in the chat's area: a click there toggles the pane.
+fn status_hit(area: Rect, cf: &layout::ChatFrame) -> Rect {
+    let off = cf.resolved.offset;
+    let rows: Vec<u16> = [cf.status_row, cf.pane_header]
+        .into_iter()
+        .flatten()
+        .filter(|r| *r >= off && *r < off + usize::from(area.height))
+        .filter_map(|r| u16::try_from(r - off).ok())
+        .collect();
+    let (Some(&top), Some(&bottom)) = (rows.iter().min(), rows.iter().max()) else {
+        return Rect::default();
+    };
+    Rect {
+        x: area.x,
+        y: area.y + top,
+        width: area.width,
+        height: bottom - top + 1,
     }
 }
 
@@ -350,7 +369,9 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         ..r
     };
     let below = main.height.saturating_sub(comp_h);
-    let activity_h = activity::height(view, below).min(below.saturating_sub(6));
+    // One spinner: the status row in the conversation. The strip's rows
+    // are gone from this screen; the reasoning pane opens under the row.
+    let activity_h: u16 = 0;
     // A question takes rows of its own between the chat and the strip,
     // so the reply's last lines stay in sight above it.
     let prompt_h = panel::prompt_height(view, below.saturating_sub(activity_h));
@@ -381,13 +402,6 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         // two lines where one separates.
         draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme, false);
     }
-    // The strip has its own rows between the chat and the composer. It was
-    // drawn into the composer's rows and painted over: the ticker and the
-    // reasoning pane were never seen on this screen.
-    let act = column(parts[2]);
-    if activity_h > 0 {
-        activity::draw(frame, act, view, theme);
-    }
     let cursor = composer::draw::draw_solo(frame, comp, view, theme);
     if narrow {
         draw_status_line(frame, foot, view, theme);
@@ -407,7 +421,7 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     Hit {
         chat,
         cards: Vec::new(),
-        activity: act,
+        activity: status_hit(chat, &cf),
         composer: comp,
     }
 }
@@ -1377,6 +1391,22 @@ fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
 /// Render a frame to plain text (tests). Secret text never appears (`R-COMP-07`).
 pub fn render_to_string(view: &View, width: u16, height: u16) -> String {
     render_with_theme(view, width, height, Theme::truecolor_dark())
+}
+
+/// Render, and return where things landed: for tests of the mouse.
+#[cfg(test)]
+pub fn render_hit(view: &View, width: u16, height: u16) -> Hit {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut hit = Hit::default();
+    terminal
+        .draw(|f| {
+            hit = draw(f, view, Theme::truecolor_dark());
+        })
+        .expect("draw");
+    hit
 }
 
 /// Render with a specific theme.

@@ -271,6 +271,11 @@ pub struct View {
     pub budget_last: f64,
     /// `[spend] audit_usd`: the most one review may spend (0 = no limit).
     pub audit_usd: f64,
+    /// `[limits] rounds`: model rounds one message may use (0 = no cap).
+    pub rounds: u32,
+    /// `rounds` came from `--rounds`, for this run: a save of the settings
+    /// leaves the saved value alone until the user edits the row.
+    pub rounds_from_flag: bool,
     /// Warn threshold.
     pub warn_usd: f64,
     /// Sandbox profile name.
@@ -451,6 +456,8 @@ impl View {
             budget_usd: 0.0,
             budget_last: 5.0,
             audit_usd: 0.0,
+            rounds: 150,
+            rounds_from_flag: false,
             warn_usd: 1.0,
             sandbox_profile: "off".into(),
             update_mode: ryter_core::config::UpdateMode::default(),

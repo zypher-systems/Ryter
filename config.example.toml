@@ -43,6 +43,13 @@ warn_usd = 1.00
 # The most one turn in the audit hat may spend. Off (0) by default: set it in /settings.
 audit_usd = 0
 
+# How far one message may go: model rounds (a reply with its tool calls)
+# before Ryter stops the turn and asks for "continue". The spend budget is
+# the real guard; 0 lifts this cap. Also `rounds a turn` in /settings and
+# `--rounds N` for one run.
+# [limits]
+# rounds = 150
+
 # TUI presentation. Every key is optional; defaults shown. Unknown keys warn once at
 # startup instead of failing. `/theme` persists its pick to ~/.ryter/settings.toml [ui].
 [ui]

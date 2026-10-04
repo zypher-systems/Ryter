@@ -307,6 +307,21 @@ mod tests {
         assert!(section.contains("scribe documents"));
     }
 
+    /// Asked for documentation, the scribe knows which two documents that
+    /// means, and that one asked for by name is the only one.
+    #[test]
+    fn the_scribe_is_told_which_documents_to_write() {
+        let section = SOLO
+            .split("## Writing documentation")
+            .nth(1)
+            .and_then(|s| s.split("\n## ").next())
+            .expect("the documentation section");
+        assert!(section.contains("`README.md`"), "{section}");
+        assert!(section.contains("`docs/guide.md`"), "{section}");
+        assert!(section.contains("Asked for one document, write that one"));
+        assert!(section.contains("CHANGELOG"));
+    }
+
     #[test]
     fn the_prompt_states_the_contract_the_runtime_parses() {
         let body = shipped();

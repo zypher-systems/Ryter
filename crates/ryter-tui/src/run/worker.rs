@@ -111,6 +111,8 @@ pub enum Work {
     SetSettings {
         /// Budget cap.
         budget_usd: f64,
+        /// Rounds one message may use; `0` lifts the cap.
+        rounds: u32,
         /// Most one review may spend.
         audit_usd: f64,
         /// Web tools.
@@ -627,6 +629,7 @@ pub fn run(init: WorkerInit) {
             }
             Ok(Work::SetSettings {
                 budget_usd,
+                rounds,
                 audit_usd,
                 web,
                 open_pages,
@@ -635,6 +638,7 @@ pub fn run(init: WorkerInit) {
                 // switch) starts from it, and used to lose live changes.
                 let apply = |c: &mut Config| {
                     c.spend.session_budget_usd = budget_usd;
+                    c.limits.rounds = rounds;
                     c.spend.audit_usd = audit_usd;
                     c.features.web = web;
                     c.ui.open_pages = open_pages;
@@ -642,6 +646,7 @@ pub fn run(init: WorkerInit) {
                 apply(&mut cfg);
                 if let Some(a) = &mut agent {
                     a.budget_usd = budget_usd;
+                    a.max_turns = ryter_core::config::rounds_cap(rounds);
                     a.ctx.web = web;
                     if let Some(c) = &mut a.cfg {
                         apply(c);
@@ -907,7 +912,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         connection: b.conn_name,
         model: b.model,
         role,
-        max_turns: 40,
+        max_turns: ryter_core::config::rounds_cap(b.cfg.limits.rounds),
         budget_usd: b.cfg.spend.session_budget_usd,
         sink: Some(b.ev_tx),
         home: b.home.to_path_buf(),
