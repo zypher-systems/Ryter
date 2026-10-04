@@ -46,6 +46,12 @@ pub struct AuditModal {
 
 impl AuditModal {
     /// From the event, when it carries a filed audit.
+    /// Whether the audit found nothing to repair: no failing finding (one
+    /// not reached is not a failure).
+    pub fn passed(&self) -> bool {
+        self.verdict == Some(true)
+    }
+
     pub fn from_event(ev: &AgentEvent, opened_ms: u64) -> Option<Self> {
         let AgentEvent::Audited {
             model,
@@ -231,11 +237,18 @@ impl Panel for AuditModal {
     }
 
     fn legend(&self, _view: &View) -> String {
-        if self.file.is_some() {
-            "y repair in build · n close · o open audit.md · ↑↓ scroll".into()
+        // A passed audit has nothing to repair: Enter closes it. A failed
+        // one goes to the build hat on Enter or `y`.
+        let mut keys: Vec<&str> = if self.passed() {
+            vec!["⏎ close", "n close"]
         } else {
-            "y repair in build · n close · ↑↓ scroll".into()
+            vec!["⏎ repair in build", "y repair in build", "n close"]
+        };
+        if self.file.is_some() {
+            keys.push("o open audit.md");
         }
+        keys.push("↑↓ scroll");
+        keys.join(" · ")
     }
 
     fn size(&self, _view: &View) -> (u16, u16) {
@@ -286,10 +299,15 @@ impl Panel for AuditModal {
             KeyCode::PageDown | KeyCode::Char(' ') => self.top = (top + page).min(max),
             KeyCode::Home => self.top = 0,
             KeyCode::End => self.top = max,
-            // A `y` in the moment the panel appeared was typed at something
-            // else.
-            KeyCode::Char('y' | 'Y') if view.now_ms < self.opened_ms + ENTER_GUARD_MS => {}
-            KeyCode::Char('y' | 'Y') => {
+            // A passed audit has nothing to repair: Enter closes it, and
+            // `y` is not one of its keys.
+            KeyCode::Enter if self.passed() => return Outcome::Close,
+            KeyCode::Char('y' | 'Y') if self.passed() => {}
+            // A `y` or an Enter in the moment the panel appeared was typed
+            // at something else.
+            KeyCode::Char('y' | 'Y') | KeyCode::Enter
+                if view.now_ms < self.opened_ms + ENTER_GUARD_MS => {}
+            KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
                 return Outcome::CloseAct(Action::RepairFromAudit {
                     file: self.file.clone(),
                 });
@@ -345,6 +363,76 @@ mod tests {
             total_usd: Some(0.07),
             duration_ms: 58_000,
         }
+    }
+
+    fn passed_event() -> AgentEvent {
+        match event() {
+            AgentEvent::Audited {
+                model,
+                file,
+                ran,
+                restored,
+                checkpointed,
+                filed,
+                total_usd,
+                duration_ms,
+                ..
+            } => AgentEvent::Audited {
+                model,
+                verdict: Some(true),
+                headline: "✓ 3 of 3 passed".into(),
+                summary: "nothing blocking".into(),
+                rows: vec![
+                    "✓ 1\tSize limit\tapp/images.py".into(),
+                    "✓ 2\tPhysics tests\t6 passed".into(),
+                    "○ 3\tPause keys\tnot reached: headless run".into(),
+                ],
+                ran,
+                file,
+                restored,
+                checkpointed,
+                filed,
+                total_usd,
+                duration_ms,
+            },
+            other => other,
+        }
+    }
+
+    /// A passed audit has nothing to repair: Enter and `n` close it, `y`
+    /// does nothing, and the legend says so. A failed one repairs on
+    /// Enter as on `y`.
+    #[test]
+    fn enter_closes_a_pass_and_repairs_a_failure() {
+        let mut v = view();
+        let mut pass = AuditModal::from_event(&passed_event(), 0).unwrap();
+        assert_eq!(
+            pass.legend(&v),
+            "⏎ close · n close · o open audit.md · ↑↓ scroll"
+        );
+        assert!(matches!(
+            press(&mut pass, &mut v, KeyCode::Char('y')),
+            Outcome::Stay
+        ));
+        assert!(matches!(
+            press(&mut pass, &mut v, KeyCode::Enter),
+            Outcome::Close
+        ));
+        let mut fail = AuditModal::from_event(&event(), 0).unwrap();
+        assert_eq!(
+            fail.legend(&v),
+            "⏎ repair in build · y repair in build · n close · o open audit.md · ↑↓ scroll"
+        );
+        assert!(matches!(
+            press(&mut fail, &mut v, KeyCode::Enter),
+            Outcome::CloseAct(Action::RepairFromAudit { file: Some(f) }) if f == ".ryter/audit.md"
+        ));
+        // Too soon after it opened, Enter is a key typed at something else.
+        let mut fresh = AuditModal::from_event(&event(), v.now_ms).unwrap();
+        assert!(matches!(
+            press(&mut fresh, &mut v, KeyCode::Enter),
+            Outcome::Stay
+        ));
     }
 
     fn press(p: &mut AuditModal, v: &mut View, code: KeyCode) -> Outcome {
