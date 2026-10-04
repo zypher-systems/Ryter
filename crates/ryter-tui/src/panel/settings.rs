@@ -185,6 +185,8 @@ impl Settings {
                 .origin(origin(&view.ui.panel, &d.panel)),
             Field::new("watermark", "watermark", Kind::Toggle(view.ui.watermark))
                 .origin(origin(&view.ui.watermark, &d.watermark)),
+            Field::new("bell", "bell on a question", Kind::Toggle(view.ui.bell))
+                .origin(origin(&view.ui.bell, &d.bell)),
             Field::new("timestamps", "timestamps", Kind::Toggle(view.ui.timestamps))
                 .origin(origin(&view.ui.timestamps, &d.timestamps)),
             Field::new(
@@ -273,6 +275,9 @@ impl Settings {
         }
         if let Some(v) = toggle("panel") {
             view.ui.panel = v;
+        }
+        if let Some(v) = toggle("bell") {
+            view.ui.bell = v;
         }
         if let Some(v) = toggle("watermark") {
             view.ui.watermark = v;

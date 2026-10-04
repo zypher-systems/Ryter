@@ -7,7 +7,7 @@
                                                    ││ price unknown            │
  grok-4.6                                          ┃│ reasoning  auto · medium │
    Reading the loop now. The event loop drains     ┃╰──────────────────────────╯
-                                                   ┃╭─ spend ──────────────────╮
+ ⠼ writing · 0:12                                  ┃╭─ spend ──────────────────╮
                                                    ┃│ session            $?.?? │
                                                    ┃╰──────────────────────────╯
                                                    ┃

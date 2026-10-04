@@ -7,7 +7,7 @@
                                                                                                                       ╭─ model ────────────────────────────────╮
  grok-4.6                                                                                                             │ spacexai ●                    grok-4.6 │
    Reading the loop now. The event loop drains                                                                        │ ctx █░░░░░░░░░░░░░░░░░░░   5%          │
-                                                                                                                      │     12.4k / 256k tokens                │
+ ⠼ writing · 0:12 · 59 tokens                                                                                         │     12.4k / 256k tokens                │
                                                                                                                       │ price unknown                          │
                                                                                                                       │ reasoning                auto · medium │
                                                                                                                       ╰────────────────────────────────────────╯

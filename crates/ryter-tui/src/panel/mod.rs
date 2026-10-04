@@ -427,6 +427,46 @@ pub fn shadow(frame: &mut Frame, area: Rect, theme: Theme) {
 }
 
 /// Where a docked panel sits: the bottom of `body`, full width.
+/// A docked question's inset within the conversation's column: a card,
+/// not a bar. Fourteen columns in from the left and two from the right
+/// when the column is a hundred wide or more; two on each side down to
+/// sixty; the whole column under that.
+pub fn inset(column: Rect) -> Rect {
+    let (left, right) = if column.width >= 100 {
+        (14, 2)
+    } else if column.width >= 60 {
+        (2, 2)
+    } else {
+        (0, 0)
+    };
+    Rect {
+        x: column.x + left,
+        width: column.width.saturating_sub(left + right),
+        ..column
+    }
+}
+
+/// The rows the open question takes between the chat and the strip, so
+/// the chat is laid out above it rather than painted over: its content
+/// plus the frame, never more than a third of the column's height, and
+/// nothing when the top panel is not a docked question.
+pub fn prompt_height(view: &View, column_h: u16) -> u16 {
+    let Some(p) = view
+        .panels
+        .top()
+        .filter(|p| p.docked() && p.modal().is_some())
+    else {
+        return 0;
+    };
+    let (pw, rows) = p.size(view);
+    let extra = u16::from(!p.legend(view).is_empty() && !p.keys_in_body())
+        + u16::from(p.inline_input() && p.input(view).is_some() && p.input_indent(pw) == 0);
+    let cap = (column_h / 3).max(6);
+    (rows + extra + 2)
+        .clamp(6, cap)
+        .min(column_h.saturating_sub(4).max(3))
+}
+
 fn docked_rect(body: Rect, content_rows: u16) -> Rect {
     let max_h = body.height.saturating_sub(2).max(6);
     let h = (content_rows + 2).clamp(6, max_h);
@@ -445,6 +485,7 @@ pub fn draw(
     frame: &mut Frame,
     full: Rect,
     body: Rect,
+    slot: Option<Rect>,
     view: &View,
     theme: Theme,
 ) -> Option<(u16, u16)> {
@@ -464,7 +505,15 @@ pub fn draw(
         let extra = u16::from(!p.legend(view).is_empty() && !p.keys_in_body())
             + u16::from(p.inline_input() && p.input(view).is_some() && p.input_indent(pw) == 0);
         let modal = p.modal();
-        let area = if p.docked() {
+        let area = if p.docked() && modal.is_some() {
+            // A question: in the rows the layout freed for it, inset in
+            // the conversation's column; with none freed, over the chat's
+            // foot, inset the same.
+            match slot.filter(|s| focused && s.height >= 3) {
+                Some(s) => inset(s),
+                None => inset(docked_rect(body, rows + extra)),
+            }
+        } else if p.docked() {
             docked_rect(body, rows + extra)
         } else {
             rect(full, body, pw, rows + extra, modal.is_some())
@@ -554,19 +603,18 @@ fn draw_one(
     // rather than dim text in the border. A panel that draws its own keys
     // still gets the full list when asked for it.
     let keys_here = !p.keys_in_body() || (focused && view.panels.show_keys);
-    if !legend.is_empty() && keys_here && inner.height > 2 {
+    // The row is kept now and written after the body: a card learns how
+    // much of a change fits as it draws, and its keys say so on the same
+    // frame.
+    let legend_row = (!legend.is_empty() && keys_here && inner.height > 2).then(|| {
         let row = Rect {
             y: inner.y + inner.height - 1,
             height: 1,
             ..inner
         };
-        frame.render_widget(
-            Paragraph::new(legend_line(&legend, usize::from(row.width), theme))
-                .style(theme.panel()),
-            row,
-        );
         inner.height -= 1;
-    }
+        row
+    });
     // The search row, inside the panel it filters.
     let mut cursor = None;
     let indent = p
@@ -590,6 +638,18 @@ fn draw_one(
     };
     let body = p.render(view, inner.width, inner.height, theme);
     frame.render_widget(Paragraph::new(body.lines).style(theme.panel()), inner);
+    if let Some(row) = legend_row {
+        let legend = if focused && view.panels.show_keys {
+            legend
+        } else {
+            p.legend(view)
+        };
+        frame.render_widget(
+            Paragraph::new(legend_line(&legend, usize::from(row.width), theme))
+                .style(theme.panel()),
+            row,
+        );
+    }
     // After the body: an indented search row shares the body's first row.
     if let Some((row, label)) = search {
         let (line, cx) = input_row(view, &label, usize::from(row.width), theme);

@@ -1,0 +1,30 @@
+ RYTER │ ○ PLAN    ⠼ BUILD    ·   specialists                                   ryter · 0.2.0-patch
+────────────────────────────────────────────────────────────────────────────────────────────────────
+         │                                                            │
+         │  1. wire the loop                                          │ MODEL
+         │  2. write tests                                            │ build              grok-4.6
+                                                                      │
+         ●  dusty                                                     │ CONTEXT
+         │  now implement step one                                    │ ━─────────────────────── 5%
+         │                                                            │ 12k / 256k tokens
+         ├─ read   crates/ryter-tui/src/run/mod.rs                    │
+         │                                                            │ PULSE
+         ◆  grok-4.6                                                  │ ▁▁▁▁▁▁▁█           18 tok/s
+         │  Reading the loop now. The event loop drains reply         │
+         │  line 0 reply line 1 reply line 2 reply line 3 reply       │ SPEND
+         │  line 4 reply line 5 reply line 6 reply line 7             │ session                  $0
+         │  ⠼ waiting for you · allow? · 0:12 · 85 tokens             │ budget                  off
+                                                                      │
+                                                                      │ GUARD
+   ┏━ allow? · edit  app/server.js ━━━━━━━━━━━━━━━━━━━━━ build ━┓     │ sandbox                 off
+   │ what    edit  app/server.js                                │     │ this hat         asks first
+   │ why     Next the form text                                 │     │ plan.md                none
+   │ risk    changes a file in your project · /undo puts it back│     │ audit.md               none
+   │ change  app/server.js  +1 −1                               │     │
+   │ ⏎ allow                                                    │     │ CHANGES
+   ╰────────────────────────────────────────────────────────────╯     │ no repository here
+  ⠼ waiting for you  ·  …ly line 4 reply line 5 … ^r  reasoning  ▾    │
+──────────────────────────────────────────────────────────────────────│
+  BUILD  › type to queue the next message, / for commands             │
+
+ ⏎ allow    a allow edits to files in the project this session    n deny    ^c stop the turn

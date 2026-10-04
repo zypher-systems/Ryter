@@ -39,7 +39,7 @@ use ryter_core::{
 };
 
 use crate::action::Action;
-use crate::activity::{Mode as ActivityMode, Verb};
+use crate::activity::Mode as ActivityMode;
 use crate::draw::{Hit, draw};
 use crate::panel::modal::{AskModal, PermissionModal, TrustModal};
 use crate::panel::{self, Notice};
@@ -406,7 +406,12 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         quit_after_turn: false,
         stop_reply: None,
         want_edit: None,
+        bells: 0,
     };
+    // The trust prompt opened before the loop: its bell, if one is wanted.
+    if view.panels.has_modal() {
+        cx.bells += bells_for(view.ui.bell);
+    }
     enter_terminal(mouse)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout())).map_err(io_err)?;
     let result = loop_ui(
@@ -606,11 +611,17 @@ fn loop_ui(
     let mut last_draw = epoch.checked_sub(FRAME).unwrap_or(epoch);
     let mut hit = Hit::default();
     let mut dirty = true;
+    let mut paint_now = false;
     loop {
-        // Drain everything that arrived since the last frame (`R-EVT-05`).
-        while let Ok(ev) = ev_rx.try_recv() {
-            events::apply(view, ev);
+        // Drain what arrived since the last frame (`R-EVT-05`), pausing to
+        // paint after a tool's result or a run of events, so a batch of
+        // tool calls lands as rows arriving, not one flash.
+        let (applied, paused) = drain_events(view, ev_rx);
+        if applied > 0 {
             dirty = true;
+        }
+        if paused {
+            paint_now = true;
         }
         while let Ok(n) = notice_rx.try_recv() {
             panel::on_notice(view, &n);
@@ -659,12 +670,19 @@ fn loop_ui(
         let since = now.duration_since(last_draw);
         // Draw when something changed or a spinner is running, but never more
         // than once per FRAME; idle screens still repaint every 500 ms for the clock.
-        let due = if animating {
+        let due = if paint_now {
+            true
+        } else if animating {
             since >= FRAME
         } else {
             dirty || since >= Duration::from_millis(500)
         };
+        if cx.bells > 0 {
+            let n = std::mem::take(&mut cx.bells);
+            let _ = ring(terminal.backend_mut(), n);
+        }
         if due {
+            paint_now = false;
             view.tick(now.duration_since(epoch).as_millis() as u64);
             let theme = cx.theme;
             let mut painted = Hit::default();
@@ -715,6 +733,26 @@ fn loop_ui(
         }
     }
 }
+
+/// Apply the agent's events that have arrived, stopping after a tool's
+/// result or after [`DRAIN_BATCH`] events so the screen is painted
+/// between them. Returns how many were applied and whether it stopped
+/// early (more may be waiting).
+pub(crate) fn drain_events(view: &mut View, rx: &mpsc::Receiver<AgentEvent>) -> (usize, bool) {
+    let mut n = 0;
+    while let Ok(ev) = rx.try_recv() {
+        let result = matches!(ev, AgentEvent::ToolResult { .. });
+        events::apply(view, ev);
+        n += 1;
+        if result || n >= DRAIN_BATCH {
+            return (n, true);
+        }
+    }
+    (n, false)
+}
+
+/// Events applied between two paints, at most.
+const DRAIN_BATCH: usize = 32;
 
 /// Bracketed paste → composer (`R-COMP-10`). Panels that own the composer get it too.
 fn on_paste(view: &mut View, text: &str) {
@@ -820,6 +858,7 @@ fn drain_user_prompts(
     let Ok(req) = prompt_rx.try_recv() else {
         return false;
     };
+    let ask = ask_for(&req);
     match req {
         UserRequest::Permission {
             tool,
@@ -870,9 +909,39 @@ fn drain_user_prompts(
     }
     panel::sync_composer(view);
     if view.activity.busy() {
-        view.activity.verb = Verb::Waiting;
+        view.activity.note_ask(ask);
     }
+    cx.bells += bells_for(view.ui.bell);
     true
+}
+
+/// What a question asks, in a word or two, for the status row under the
+/// model: `waiting for you · allow?`.
+pub fn ask_for(req: &UserRequest) -> &'static str {
+    match req {
+        UserRequest::Permission { tool, .. } if tool == "audit" => "audit?",
+        UserRequest::Permission { .. } => "allow?",
+        UserRequest::Plan { .. } => "plan?",
+        UserRequest::Run { .. } => "run?",
+        UserRequest::Question { .. } => "question",
+    }
+}
+
+/// Bells a question opening earns: one when `[ui] bell` is on.
+pub fn bells_for(bell_on: bool) -> u32 {
+    u32::from(bell_on)
+}
+
+/// Ring `n` bells through the terminal: `BEL` itself, written to what is
+/// drawn to, so it reaches the terminal and not a log.
+pub fn ring(out: &mut impl std::io::Write, n: u32) -> std::io::Result<()> {
+    if n == 0 {
+        return Ok(());
+    }
+    for _ in 0..n {
+        out.write_all(b"\x07")?;
+    }
+    out.flush()
 }
 
 /// Release the terminal, run `$EDITOR <path>`, and take it back.

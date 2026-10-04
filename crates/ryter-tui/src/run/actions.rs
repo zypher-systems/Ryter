@@ -70,6 +70,9 @@ pub struct Ctx {
     pub stop_reply: Option<mpsc::Receiver<std::result::Result<String, String>>>,
     /// A `$EDITOR` request to run with the terminal released.
     pub want_edit: Option<PathBuf>,
+    /// Bells the loop still has to ring: one per question opened while
+    /// `[ui] bell` is on.
+    pub bells: u32,
 }
 
 impl Ctx {
@@ -411,7 +414,8 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 let _ = tx.send(p);
             }
             if view.activity.busy() {
-                view.activity.verb = Verb::Thinking;
+                let now = view.now_ms;
+                view.activity.note_reply(now);
             }
         }
         Action::PlanReply(answer) => {
@@ -419,7 +423,8 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 let _ = tx.send(answer);
             }
             if view.activity.busy() {
-                view.activity.verb = Verb::Thinking;
+                let now = view.now_ms;
+                view.activity.note_reply(now);
             }
         }
         Action::AskUserReply(s) => {
@@ -427,7 +432,8 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 let _ = tx.send(s);
             }
             if view.activity.busy() {
-                view.activity.verb = Verb::Thinking;
+                let now = view.now_ms;
+                view.activity.note_reply(now);
             }
         }
         Action::TrustProject(yes) => {

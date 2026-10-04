@@ -35,6 +35,10 @@ class Provider(contextlib.AbstractContextManager):
         owner = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
+            # Chunked bodies need HTTP/1.1; each response closes its own
+            # connection, so a handler never waits for a second request.
+            protocol_version = 'HTTP/1.1'
+
             def log_message(self, *_args):
                 pass
 
@@ -45,16 +49,32 @@ class Provider(contextlib.AbstractContextManager):
                 if not owner.responses:
                     owner.errors.append('unexpected provider request')
                     self.send_error(500, 'fixture exhausted')
+                    self.close_connection = True
                     return
                 response = owner.responses.popleft()
                 if callable(response):
                     response = response(request)
-                payload = response.encode()
+                if isinstance(response, str):
+                    payload = response.encode()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/event-stream')
+                    self.send_header('Content-Length', str(len(payload)))
+                    self.send_header('Connection', 'close')
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
+                # An iterable of pieces, each sent as it comes: a model that
+                # streams at its own pace (a piece may sleep before it yields).
                 self.send_response(200)
                 self.send_header('Content-Type', 'text/event-stream')
-                self.send_header('Content-Length', str(len(payload)))
+                self.send_header('Transfer-Encoding', 'chunked')
+                self.send_header('Connection', 'close')
                 self.end_headers()
-                self.wfile.write(payload)
+                for piece in response:
+                    data = piece.encode()
+                    self.wfile.write(f'{len(data):x}\r\n'.encode() + data + b'\r\n')
+                    self.wfile.flush()
+                self.wfile.write(b'0\r\n\r\n')
 
         self.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)

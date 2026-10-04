@@ -43,20 +43,24 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     let body_avail = full.height.saturating_sub(1 + 1 + 1 + composer_h + 1);
     let activity_h = activity::height(view, body_avail).min(body_avail.saturating_sub(8));
     let hairline_h = u16::from(activity_h > 0);
+    // A question takes rows of its own under the chat, so the reply's
+    // last lines stay in sight above it.
+    let prompt_h = panel::prompt_height(view, body_avail.saturating_sub(activity_h + hairline_h));
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Min(8),
+            Constraint::Length(prompt_h),
             Constraint::Length(activity_h),
             Constraint::Length(hairline_h),
             Constraint::Length(composer_h),
             Constraint::Length(1),
         ])
         .split(full);
-    let (header, hair1, body, act, hair2, comp, hint) = (
-        rows[0], rows[1], rows[2], rows[3], rows[4], rows[5], rows[6],
+    let (header, hair1, body, slot_row, act, hair2, comp, hint) = (
+        rows[0], rows[1], rows[2], rows[3], rows[4], rows[5], rows[6], rows[7],
     );
 
     // A popout owns the whole body (`R-POP-01`). The info cards used to keep
@@ -86,6 +90,11 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     };
     let chat = cols[0];
     let gutter = cols[1];
+    let slot = (prompt_h > 0).then_some(Rect {
+        x: chat.x,
+        width: chat.width,
+        ..slot_row
+    });
 
     draw_header(frame, header, view, theme, panel_w == 0);
     hairline(frame, hair1, theme);
@@ -112,7 +121,7 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     if view.panels.is_empty() {
         palette::draw(frame, chat, comp.y, view, theme);
     }
-    let panel_cursor = panel::draw(frame, full, body, view, theme);
+    let panel_cursor = panel::draw(frame, full, body, slot, view, theme);
     if panel_cursor.is_some() {
         composer::draw::paint_cursor(frame, panel_cursor, theme);
     } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
@@ -124,6 +133,23 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         activity: act,
         composer: comp,
     }
+}
+
+/// Where the conversation's column sits on the rack screen at `width ×
+/// height`: its left edge and its width, as `draw_solo` lays it out. For
+/// tests of what is placed within it.
+#[cfg(test)]
+pub fn chat_column(view: &View, theme: Theme, width: u16, height: u16) -> (u16, u16) {
+    let tier = crate::rail::tier(width);
+    let narrow = tier == crate::rail::Tier::Narrow;
+    let gap = u16::from(height >= 24);
+    let rule_h = u16::from(!narrow);
+    let body_h = height.saturating_sub(1 + rule_h + gap + 1);
+    let (rack_w, inst_w) = side_columns(view, theme, width, body_h);
+    let main_w = width.saturating_sub(rack_w + inst_w);
+    let col_w = main_w.saturating_sub(4).min(LEDGER_COLUMN);
+    let col_x = rack_w + (main_w.saturating_sub(col_w + 1)) / 2;
+    (col_x, col_w)
 }
 
 /// Widest the ledger's reading column gets: the timeline gutter plus about
@@ -202,7 +228,7 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     if view.panels.is_empty() {
         palette::draw(frame, chat, comp.y, view, theme);
     }
-    let panel_cursor = panel::draw(frame, full, body, view, theme);
+    let panel_cursor = panel::draw(frame, full, body, None, view, theme);
     if panel_cursor.is_some() {
         composer::draw::paint_cursor(frame, panel_cursor, theme);
     } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
@@ -325,30 +351,39 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     };
     let below = main.height.saturating_sub(comp_h);
     let activity_h = activity::height(view, below).min(below.saturating_sub(6));
+    // A question takes rows of its own between the chat and the strip,
+    // so the reply's last lines stay in sight above it.
+    let prompt_h = panel::prompt_height(view, below.saturating_sub(activity_h));
     let parts = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(4),
+            Constraint::Length(prompt_h),
             Constraint::Length(activity_h),
             Constraint::Length(comp_h),
         ])
         .split(main);
-    let comp = parts[2];
+    let comp = parts[3];
+    let slot = (prompt_h > 0).then(|| column(parts[1]));
     let chat = column(parts[0]);
     let cf = draw_chat(frame, chat, view, theme);
     if view.ui.watermark {
         crate::watermark::draw(frame, parts[0], view.mode, theme);
     }
     if view.panels.is_empty() {
+        // The gutter runs beside the chat, the rows the thumb measures.
         let gutter = Rect {
             x: col_x + col_w,
             width: 1,
-            ..parts[1]
+            ..parts[0]
         };
         // The thumb alone: a track beside the instruments' hairline is
         // two lines where one separates.
         draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme, false);
     }
+    // The strip has its own rows between the chat and the composer. It was
+    // drawn into the composer's rows and painted over: the ticker and the
+    // reasoning pane were never seen on this screen.
     let act = column(parts[2]);
     if activity_h > 0 {
         activity::draw(frame, act, view, theme);
@@ -363,7 +398,7 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         palette::draw(frame, chat, comp.y, view, theme);
     }
     let panel_body = if panel_owns_body { body } else { main };
-    let panel_cursor = panel::draw(frame, full, panel_body, view, theme);
+    let panel_cursor = panel::draw(frame, full, panel_body, slot, view, theme);
     if panel_cursor.is_some() {
         composer::draw::paint_cursor(frame, panel_cursor, theme);
     } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
@@ -435,7 +470,12 @@ fn draw_top_bar(frame: &mut Frame, area: Rect, view: &View, theme: Theme, counts
             left.push(Span::styled(gap, dim));
         }
         let name = crate::rail::hat_name(hat);
-        let mark = crate::rail::hat_mark(view, hat);
+        // The hat that is on spins while its model works.
+        let mark = if view.mode == hat && view.busy {
+            crate::activity::SPINNER[view.activity.frame % crate::activity::SPINNER.len()]
+        } else {
+            crate::rail::hat_mark(view, hat)
+        };
         let turns = view.rack.of(hat).turns;
         let count = if counts && turns > 0 {
             format!(" {turns}")
@@ -591,16 +631,63 @@ fn key_spans(
     spans
 }
 
+/// Key spans with the first `warm` keys in the warn color: a question's
+/// own keys, then the rest as usual.
+fn key_spans_colored(
+    keys: &[(String, String, Hint)],
+    warm: usize,
+    theme: Theme,
+    bg: ratatui::style::Color,
+    sep: usize,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (i, (k, l, _)) in keys.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" ".repeat(sep), Style::default().bg(bg)));
+        }
+        let (kc, lc) = if i < warm {
+            (theme.warn, theme.warn)
+        } else {
+            (theme.fg, theme.dim)
+        };
+        spans.push(Span::styled(
+            k.clone(),
+            Style::default().fg(kc).bg(bg).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            format!(" {l}"),
+            Style::default().fg(lc).bg(bg),
+        ));
+    }
+    spans
+}
+
 /// The solo screen's foot: the keys, from the left.
 fn draw_keys(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let bg = theme.panel_bg;
-    let keys = fit_keys(
-        solo_keys(view),
-        usize::from(area.width).saturating_sub(2),
-        4,
-    );
+    // A question's keys are in the warn color, where the eye lands when
+    // the card above has not been seen; the ways out stay dim after them.
+    let asking = view
+        .panels
+        .top()
+        .is_some_and(|p| p.docked() && p.modal().is_some());
+    let mut all = solo_keys(view);
+    let card_keys = if asking { all.len() } else { 0 };
+    if asking {
+        if !all.iter().any(|(k, _, _)| k == "esc") {
+            all.push(("esc".into(), "deny".into(), Hint::Useful));
+        }
+        if view.busy {
+            all.push(("^c".into(), "stop the turn".into(), Hint::Essential));
+        }
+    }
+    let keys = fit_keys(all, usize::from(area.width).saturating_sub(2), 4);
     let mut spans = vec![Span::styled(" ", Style::default().bg(bg))];
-    spans.extend(key_spans(&keys, theme, bg, 4));
+    if asking {
+        spans.extend(key_spans_colored(&keys, card_keys, theme, bg, 4));
+    } else {
+        spans.extend(key_spans(&keys, theme, bg, 4));
+    }
     frame.render_widget(
         Paragraph::new(Line::from(spans)).style(Style::default().bg(bg)),
         area,

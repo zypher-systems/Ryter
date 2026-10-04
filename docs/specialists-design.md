@@ -127,11 +127,17 @@ Patch 3 (the plan file), 2026-10-03:
 - **Automatic hat changes:** the only ones found are a plan's approval (kept), `request_hat` after the user's yes, the audit turn putting the audit hat on for `/audit` and the user's hat back after it (a round trip, R-AUD-06), and a saved crew-mode or test-hat session opening in build. None was removed.
 - **R-PLAN-03** The audit card takes the wheel as the plan panel does; a test covers it.
 
+After the release (2026-10-04): the top bar's chip for the hat that is on spins while its model works (R-TOP-01), and the conversation ends on a live status row while a turn runs; `draw_solo` had drawn the activity strip into the composer's rows, where the composer painted over it, so the ticker and the reasoning pane were never seen on the rack screen (R-INST-04 as built).
+
+Allow card (2026-10-04): a docked question is inset in the conversation's column and the chat is laid out above it (`panel::inset`, `panel::prompt_height`, the slot in `draw_solo` and the classic layout); the status row says `waiting for you · allow?` / `plan?` / `audit?` / `question` / `trust?`; the foot's keys are in the warn color; `[ui] bell` is off by default. The spend drawer keeps the full width: it is a drawer, not a question. A change on an in-project edit scrolls on the card now (keys and wheel) instead of being folded; `y` still answers at once, only a change shown nowhere else is gated on being read to the end.
+
 After the release PR's review (2026-10-03):
 
 - **R-AUD-02** The rollback leaves everything under this session's `.ryter/` alone, not only the audit's files: a run file or a plan the user approved during the turn stays (`audit::kept_from_restore`). Git names paths from the repository's top; they are mapped to the session's folder before the test, so a session below the top keeps its own `.ryter/` and puts back the rest. When the user's yes to `request_hat`, or to a plan, takes the turn out of the audit hat, the audit closes at that moment (`Agent::close_audit`): tree put back, audit filed, card opened, and the hat that follows is not undone at the turn's end. A yes that puts the audit hat on in the middle of a turn arms an audit phase of its own, with a checkpoint, closed at the turn's end or at the next switch out. The card can therefore open while the turn goes on in the build hat; a `y` then queues the repair after it. At a turn's end the audit phase closes before the turn's end is recorded for `/undo`, so what the rollback put back is not read as the user's edits since the turn. A tree that cannot be compared with its checkpoint is put back whole, with a notice; a checkpoint that cannot be taken says why and holds the audit to read-only commands.
 - **R-AUD-04** A chord (`Ctrl`/`Alt` with `y`, `n`, `o`) does nothing on the card; its `y` is ignored for the first half second, as every card's confirm key is.
 - The project spend's hats' share counts audit, review and scribe.
+
+After the 0.17.0 review (2026-10-04): a reply to a card restarts the activity's quiet clock and keeps `running <tool>` while the tool call is in flight (`Activity::note_reply`, `tool_in_flight`); a card too short for any row of the change keeps what, risk and the change's summary, drops the why first, and offers no scroll.
 
 Patch 4 (the scribe hat), 2026-10-03:
 

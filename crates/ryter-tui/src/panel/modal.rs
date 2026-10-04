@@ -244,23 +244,56 @@ impl Panel for PermissionModal {
     fn title(&self, _view: &View) -> String {
         if let Some((title, _, _)) = self.question() {
             title.into()
+        } else if self.is_hat() {
+            "allow?".into()
         } else if self.y_only() {
-            "approve? · press y".into()
+            format!("allow? · {} · press y", self.what())
         } else {
-            "approve?".into()
+            format!("allow? · {}", self.what())
+        }
+    }
+
+    /// Top right: the hat that is asking, and, while an Enter pressed
+    /// with the card's opening would be ignored, that it is.
+    fn status(&self, view: &View) -> String {
+        let hat = self.offers().unwrap_or(view.mode).as_str().to_string();
+        let guarded = self.question().is_none()
+            && !self.y_only()
+            && view.now_ms < self.opened_ms + ENTER_GUARD_MS;
+        if guarded {
+            format!("{hat} · ⏎ in 0.5s")
+        } else {
+            hat
         }
     }
 
     fn legend(&self, _view: &View) -> String {
-        if let Some((_, yes, no)) = self.question() {
+        let mut keys = if let Some((_, yes, no)) = self.question() {
             format!("⏎ {yes} · n {no}")
         } else if self.y_only() {
             "y allow once · n deny".into()
         } else if let (true, Some(scope)) = (self.can_allow_session(), &self.scope) {
+            // The kind of action in a word where the row is shared with
+            // the scroll hint: `edits`, not `edits to files in the project`.
+            let scope = if self.max_top.get() > 0 {
+                scope
+                    .split(" to ")
+                    .next()
+                    .unwrap_or(scope)
+                    .split(" in ")
+                    .next()
+                    .unwrap_or(scope)
+            } else {
+                scope.as_str()
+            };
             format!("⏎ allow · a allow {scope} this session · n deny")
         } else {
             "⏎ allow · n deny".into()
+        };
+        if self.max_top.get() > 0 {
+            keys.push_str(" · ↑↓ wheel more of the change");
         }
+        keys
     }
 
     fn size(&self, _view: &View) -> (u16, u16) {
@@ -323,6 +356,7 @@ impl Panel for PermissionModal {
         // On a short card, a change that must be read whole gets the row
         // the model's reason would take.
         let short = self.whole && usize::from(height) < 6;
+        let why_at = (self.why.is_some() && !short).then_some(lines.len());
         if let Some(why) = self.why.as_ref().filter(|_| !short) {
             lines.push(Self::row(
                 "why",
@@ -367,10 +401,11 @@ impl Panel for PermissionModal {
                 bg: theme.panel_bg,
                 ..theme
             };
-            let diff_rows = if self.whole {
+            let diff_rows = {
                 // Every row of it, long lines wrapped, and a window on that
-                // when the card is shorter. Nothing is folded away: there
-                // is nowhere else to see it.
+                // when the card is shorter: the keys and the wheel move it.
+                // A change that must be read whole is also gated on having
+                // been seen to its end.
                 let mut laid_out = self.rows.borrow_mut();
                 if laid_out.as_ref().is_none_or(|(at, _)| *at != w) {
                     let rows = crate::chat::diff::render_folded(
@@ -399,7 +434,7 @@ impl Panel for PermissionModal {
                 // Too narrow for a line number, a sign and some text: the
                 // rows would run off the side, so none is shown or counted.
                 let avail = if w < MIN_WHOLE_WIDTH { 0 } else { avail };
-                if avail == 0 && !self.read.get() {
+                if avail == 0 && self.whole && !self.read.get() {
                     // No room for any of it: say so where the path was,
                     // since `y` will do nothing here.
                     lines.truncate(usize::from(height).saturating_sub(1));
@@ -408,6 +443,16 @@ impl Panel for PermissionModal {
                         theme.warn,
                         theme,
                     ));
+                } else if avail == 0 {
+                    // No row of the change fits: what, risk and the
+                    // change's summary stay, and the model's words go
+                    // first when something must. Nothing scrolls.
+                    if lines.len() > usize::from(height) {
+                        if let Some(i) = why_at.filter(|i| *i < lines.len()) {
+                            lines.remove(i);
+                        }
+                    }
+                    lines.truncate(usize::from(height));
                 }
                 let shown = if total <= avail {
                     total
@@ -417,11 +462,21 @@ impl Panel for PermissionModal {
                 } else {
                     avail
                 };
-                let max_top = total.saturating_sub(shown.max(1));
+                // With no row of the change on the card there is nothing to
+                // scroll, and the legend must not offer it.
+                let max_top = if avail == 0 {
+                    0
+                } else {
+                    total.saturating_sub(shown.max(1))
+                };
                 // The window starts no further down than what has been
                 // drawn, however many keys were pressed since the last
                 // frame: nothing is passed over unseen.
-                let top = self.top.min(max_top).min(self.seen.get());
+                let top = if self.whole {
+                    self.top.min(max_top).min(self.seen.get())
+                } else {
+                    self.top.min(max_top)
+                };
                 self.max_top.set(max_top);
                 self.page.set(shown);
                 self.seen.set(self.seen.get().max(top + shown));
@@ -432,25 +487,20 @@ impl Panel for PermissionModal {
                     all.iter().skip(top).take(shown).cloned().collect();
                 if total > shown && avail >= 2 {
                     let below = total - (top + shown);
-                    let note = if below > 0 {
-                        format!(
+                    let note = match (below > 0, self.whole) {
+                        (true, true) => format!(
                             "↓ {below} more row{} · read to the end (↓ PgDn), then y",
                             if below == 1 { "" } else { "s" }
-                        )
-                    } else {
-                        "the end of the change · ↑ PgUp to go back".to_string()
+                        ),
+                        (true, false) => format!(
+                            "↓ {below} more row{} · ↑↓ wheel · /changes shows it whole once it's made",
+                            if below == 1 { "" } else { "s" }
+                        ),
+                        (false, _) => "the end of the change · ↑ PgUp to go back".to_string(),
                     };
                     rows.push(widgets::note(&note, theme));
                 }
                 rows
-            } else {
-                crate::chat::diff::render_folded(
-                    diff,
-                    room.saturating_sub(1).max(1),
-                    w.saturating_sub(1),
-                    on_panel,
-                    "/changes shows it whole once it's made",
-                )
             };
             for row in diff_rows {
                 let mut spans = vec![Span::styled(" ", theme.panel())];
@@ -486,10 +536,8 @@ impl Panel for PermissionModal {
         if let Some(n) = self.nudge.filter(|_| show_nudge) {
             lines.push(widgets::colored(n, theme.warn, theme));
         }
-        if self.whole {
-            // Exactly what fits: the rows of the change were counted to.
-            lines.truncate(usize::from(height));
-        }
+        // Exactly what fits: the rows of the change were counted to.
+        lines.truncate(usize::from(height));
         Body {
             lines,
             scroll: None,
@@ -512,8 +560,14 @@ impl Panel for PermissionModal {
             // time or a page less a row. Several of these can arrive before
             // the next frame, so none goes past what has been drawn: the
             // next frame starts there at the furthest.
-            KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown if self.whole => {
-                let furthest = self.max_top.get().min(self.seen.get());
+            KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
+                if self.max_top.get() > 0 =>
+            {
+                let furthest = if self.whole {
+                    self.max_top.get().min(self.seen.get())
+                } else {
+                    self.max_top.get()
+                };
                 let top = self.top.min(furthest);
                 let page = self.page.get().saturating_sub(1).max(1);
                 self.top = match key.code {
@@ -1187,10 +1241,11 @@ mod tests {
         ));
     }
 
-    /// An edit in the project is folded as before: `/changes` has it whole,
-    /// and `y` answers at once.
+    /// An edit in the project scrolls on the card, with `/changes` named
+    /// for the whole of it, and `y` answers at once: nothing gates it on
+    /// having read to the end.
     #[test]
-    fn a_project_edit_is_still_folded() {
+    fn a_project_edit_scrolls_and_answers_at_once() {
         let theme = Theme::truecolor_dark();
         let mut v = view();
         v.now_ms = 10_000;
@@ -1205,11 +1260,54 @@ mod tests {
             rows.iter().any(|l| l.contains("/changes shows it whole")),
             "{rows:?}"
         );
-        // Paging doesn't move it, and `y` answers.
+        // Paging moves the window, and `y` answers wherever it is.
         key(&mut m, &mut v, KeyCode::PageDown);
-        assert_eq!(text(&m.render(&v, 90, 12, theme)), rows);
+        let paged = text(&m.render(&v, 90, 12, theme));
+        assert_ne!(paged, rows, "{paged:?}");
+        assert!(m.legend(&v).contains("wheel more of the change"));
         assert!(is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
     }
+    /// A card too short for any row of the change keeps what, risk and the
+    /// change's summary (the model's words go first), and offers no scroll;
+    /// one with two spare rows shows the change and scrolls it.
+    #[test]
+    fn a_short_card_keeps_the_risk_and_offers_no_scroll() {
+        let theme = Theme::truecolor_dark();
+        let mut v = view();
+        v.now_ms = 10_000;
+        let new: String = (0..40).map(|i| format!("line {i}\n")).collect();
+        let diff = ryter_core::diff::FileDiff::new("src/a.rs", Some(""), &new);
+        let m = PermissionModal::new("write".into(), "src/a.rs".into())
+            .with_preview(Some(Box::new(diff)))
+            .with_answers(false, Some("edits to files in the project".into()))
+            .with_context(Some("because the plan says so".into()), 0);
+        // Three body rows: what, risk, change; the why is dropped.
+        let rows = text(&m.render(&v, 90, 3, theme));
+        let joined = rows.join("\n");
+        assert!(joined.contains("what"), "{rows:?}");
+        assert!(joined.contains("risk"), "{rows:?}");
+        assert!(joined.contains("change"), "{rows:?}");
+        assert!(!joined.contains("why"), "{rows:?}");
+        assert!(!joined.contains("line 0"), "{rows:?}");
+        assert!(
+            !m.legend(&v).contains("more of the change"),
+            "{}",
+            m.legend(&v)
+        );
+        // Four rows: the why is back, still no change row, still no scroll.
+        let rows = text(&m.render(&v, 90, 4, theme));
+        assert!(rows.join("\n").contains("why"), "{rows:?}");
+        assert!(!m.legend(&v).contains("more of the change"));
+        // Six rows: two for the change, and it scrolls.
+        let rows = text(&m.render(&v, 90, 6, theme));
+        assert!(rows.join("\n").contains("line 0"), "{rows:?}");
+        assert!(
+            m.legend(&v).contains("more of the change"),
+            "{}",
+            m.legend(&v)
+        );
+    }
+
     fn hundred_rules() -> String {
         (0..100).map(|i| format!("- rule number {i};\n")).collect()
     }

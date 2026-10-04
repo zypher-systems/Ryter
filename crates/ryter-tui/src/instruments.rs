@@ -210,6 +210,8 @@ fn pulse(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>> {
                 Span::styled(" tok/s", dim),
             ],
         ),
+        // Busy with nothing arriving: the model has not sent a token.
+        None if view.busy => (dim, vec![Span::styled("waiting", dim)]),
         None => (dim, vec![Span::styled("idle", dim)]),
     };
     vec![

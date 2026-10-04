@@ -5,25 +5,25 @@
          │                                                            │ scribe             grok-4.6
          ├─ write  app/server.js ····················· +1 −1  0.0s    │
          │    1   app.get('/search', (req, res) => {                  │ CONTEXT
-         │    2 -   const q = (req.query.q || '').trim()              │ ━━━━━━━━━────────────── 38%
-         │    2 +   const q = String(req.query.q ?? '').trim()        │ 97k / 256k tokens
-         │    3     if (!q) return res.json([])                       │
-         │    4     res.json(find(q))                                 │ PULSE
-         ├─ write  test/search.test.js ··············· +4 −0  0.0s    │ ▁▁▁▁▁▁▁▁               idle
-         │     5     assert.deepEqual(await search(''), [])           │
-         │     6   })                                                 │ SPEND
-         │     7 +                                                    │ session              $0.065
-         │     8 + test('a missing query finds nothing', async ()     │ project               $4.82
-         │         => {                                               │ budget                  off
-         │     9 +   assert.deepEqual(await search(), [])             │
-         │    10 + })                                                 │ GUARD
-         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.0…    │ sandbox           workspace
-         │                                                            │ this hat          docs only
-         ├─ write  docs/install.md ·········· new · 20 lines  0.0s    │ plan.md                none
-         │    too large to show here · /changes has the diff          │ audit.md               none
-         ├─ edit   README.md ························· +3 −1  0.0s    │
-         │    too large to show here · /changes has the diff          │ CHANGES
-         └─ ✓ 2 tools · 2 files (1 new, 1 changed, +23 −1) · 0.9s…    │ 2 files              +12 −1
+         │    2 -   const q = (req.query.q || '').trim()           ┃  │ ━━━━━━━━━────────────── 38%
+         │    2 +   const q = String(req.query.q ?? '').trim()     ┃  │ 97k / 256k tokens
+         │    3     if (!q) return res.json([])                    ┃  │
+         │    4     res.json(find(q))                              ┃  │ PULSE
+         ├─ write  test/search.test.js ··············· +4 −0  0.0s ┃  │ ▁▁▁▁▁▁▁▁               idle
+         │     5     assert.deepEqual(await search(''), [])        ┃  │
+         │     6   })                                              ┃  │ SPEND
+         │     7 +                                                 ┃  │ session              $0.065
+         │     8 + test('a missing query finds nothing', async ()  ┃  │ project               $4.82
+         │         => {                                            ┃  │ budget                  off
+         │     9 +   assert.deepEqual(await search(), [])          ┃  │
+         │    10 + })                                              ┃  │ GUARD
+         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.0… ┃  │ sandbox           workspace
+         │                                                         ┃  │ this hat          docs only
+         ├─ write  docs/install.md ·········· new · 20 lines  0.0s ┃  │ plan.md                none
+         │    too large to show here · /changes has the diff       ┃  │ audit.md               none
+         ├─ edit   README.md ························· +3 −1  0.0s ┃  │
+         │    too large to show here · /changes has the diff       ┃  │ CHANGES
+         └─ ✓ 2 tools · 2 files (1 new, 1 changed, +23 −1) · 0.9s… ┃  │ 2 files              +12 −1
 ──────────────────────────────────────────────────────────────────────│
   SCRIBE  › what should be documented? · Tab: audit · ⇧Tab: plan · …  │
 

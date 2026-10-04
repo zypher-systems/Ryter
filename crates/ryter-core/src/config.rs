@@ -192,6 +192,9 @@ pub struct UiConfig {
     pub start_hat: String,
     /// The fedora behind the conversation, in the hat's color.
     pub watermark: bool,
+    /// Ring the terminal's bell when a question opens (a permission, a
+    /// plan, an `ask_user`, the trust prompt). Off: the screen says it.
+    pub bell: bool,
 }
 
 impl UiConfig {
@@ -217,6 +220,7 @@ impl Default for UiConfig {
             open_pages: true,
             start_hat: "plan".into(),
             watermark: true,
+            bell: false,
         }
     }
 }
@@ -240,6 +244,7 @@ pub const UI_KEYS: &[&str] = &[
     "open_pages",
     "start_hat",
     "watermark",
+    "bell",
 ];
 
 /// Unknown keys under `[ui]` in a TOML document (empty when none).
@@ -1229,6 +1234,8 @@ struct UiFile {
     start_hat: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     watermark: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bell: Option<bool>,
 }
 
 impl From<&UiConfig> for UiFile {
@@ -1247,6 +1254,7 @@ impl From<&UiConfig> for UiFile {
             open_pages: Some(ui.open_pages),
             start_hat: Some(ui.start_hat.clone()),
             watermark: Some(ui.watermark),
+            bell: Some(ui.bell),
         }
     }
 }
@@ -1291,6 +1299,9 @@ impl UiFile {
         }
         if let Some(v) = self.watermark {
             ui.watermark = v;
+        }
+        if let Some(v) = self.bell {
+            ui.bell = v;
         }
     }
 }
