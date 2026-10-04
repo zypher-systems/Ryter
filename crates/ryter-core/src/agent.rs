@@ -56,6 +56,9 @@ pub struct AuditLive {
     pub asked: bool,
     /// When it began.
     pub started: std::time::Instant,
+    /// The turn started the product, ran its tests, or aimed a command at
+    /// its address: its own data (files git ignores) is not restored.
+    pub used_product: bool,
 }
 
 pub struct Agent {
@@ -219,6 +222,7 @@ impl Agent {
                 spent_from: self.session.spend_log().map_or(0, |l| l.len()),
                 asked: user.starts_with("[Ryter] Audit"),
                 started,
+                used_product: false,
             });
         }
         let out = self.turn_inner(user, &mut tools).await;
@@ -570,6 +574,7 @@ impl Agent {
                 if self.role == Role::SoloBuild && checkpointed && parsed.is_ok() {
                     self.save_ignored(&call.name, &args)?;
                 }
+                self.note_product_use(&call.name, &args);
                 let out = match &parsed {
                     // Run with `null` arguments, the call was refused as
                     // "outside policy" and the model resent the same JSON.
@@ -896,6 +901,7 @@ impl Agent {
                 strict: true,
                 scope: None,
                 whole: true,
+                asks: None,
             },
             &self.ctx.cancel,
         );
@@ -984,6 +990,7 @@ impl Agent {
                         spent_from: self.session.spend_log().map_or(0, |l| l.len()),
                         asked: false,
                         started: std::time::Instant::now(),
+                        used_product: false,
                     });
                 }
                 let now = match to {
@@ -1419,6 +1426,7 @@ impl Agent {
             spent_from,
             asked,
             started,
+            used_product,
         } = live;
         let started = &started;
         let dir = self.ctx.workspace.clone();
@@ -1490,7 +1498,13 @@ impl Agent {
         let event = match filed {
             Some(audit) => {
                 let stamp = crate::clock::stamp();
-                let text = audit.document(&model, &stamp, &restored, checkpoint.is_some());
+                let text = audit.document(
+                    &model,
+                    &stamp,
+                    &restored,
+                    checkpoint.is_some(),
+                    used_product,
+                );
                 let day = crate::clock::today();
                 let file = match crate::audit::save(
                     &root,
@@ -1520,6 +1534,7 @@ impl Agent {
                     ran: audit.ran.clone(),
                     file: (!file.is_empty()).then_some(file),
                     restored,
+                    product_used: used_product,
                     checkpointed: checkpoint.is_some(),
                     filed: true,
                     total_usd,
@@ -1544,6 +1559,7 @@ impl Agent {
                     ran: Vec::new(),
                     file: None,
                     restored,
+                    product_used: used_product,
                     checkpointed: checkpoint.is_some(),
                     filed: false,
                     total_usd,
@@ -1552,6 +1568,39 @@ impl Agent {
             }
         };
         self.emit(event)
+    }
+
+    /// An audit's shell command aimed at the running product's address is
+    /// the audit using the product (`AuditLive::used_product`): whatever
+    /// the product then writes to its own data is not put back.
+    fn note_product_use(&mut self, name: &str, args: &Value) {
+        if name != "bash" || self.audit_live.is_none() {
+            return;
+        }
+        let Some(cmd) = args.get("command").and_then(Value::as_str) else {
+            return;
+        };
+        let root = self.root();
+        let address = self
+            .product
+            .as_ref()
+            .map(crate::run::Started::note)
+            .or_else(|| crate::run::remembered(&self.home, &root))
+            .and_then(|l| l.address);
+        let Some(address) = address else {
+            return;
+        };
+        // `http://localhost:8765` is asked for as `localhost:8765/items` too.
+        let bare = address
+            .split("://")
+            .nth(1)
+            .unwrap_or(&address)
+            .trim_end_matches('/');
+        if !bare.is_empty() && cmd.contains(bare) {
+            if let Some(live) = self.audit_live.as_mut() {
+                live.used_product = true;
+            }
+        }
     }
 
     /// The project's own commands are the build and audit hats' to run:
@@ -1835,6 +1884,13 @@ impl Agent {
             return Ok(refused);
         }
         let action = args.get("action").and_then(Value::as_str).unwrap_or("");
+        // An audit running the tests used the product: whatever they
+        // wrote to its own data stays (`AuditLive::used_product`).
+        if action == "test" {
+            if let Some(live) = self.audit_live.as_mut() {
+                live.used_product = true;
+            }
+        }
         let root = self.root();
         match action {
             "status" => Ok(ToolOutput::ok(
@@ -1937,6 +1993,9 @@ impl Agent {
                     Start::Up { started, how } => {
                         let note = started.note();
                         self.product = Some(started);
+                        if let Some(live) = self.audit_live.as_mut() {
+                            live.used_product = true;
+                        }
                         if let Err(e) = crate::run::remember(&self.home, &root, &note) {
                             crate::trace::log(&self.home, &format!("running note: {e}"));
                         }
@@ -5005,6 +5064,56 @@ mod tests {
     }
 
     /// `file_audit` in the audit hat: the audit is written to
+    /// An audit that aimed a command at the running product used it: the
+    /// event and the file say its own data was not the checkpoint's to put
+    /// back. One that only read the tree says nothing of the kind.
+    #[tokio::test]
+    async fn an_audit_that_used_the_product_says_so() {
+        for (address, used) in [
+            (Some("http://localhost:18765".to_string()), true),
+            (None, false),
+        ] {
+            let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
+                call(
+                    "bash",
+                    serde_json::json!({"command": "curl -s localhost:18765/items"}),
+                ),
+                file_audit_call("pass"),
+                say("filed"),
+            ]));
+            agent.product = address.map(|a| {
+                crate::run::Started::left(
+                    crate::run::Left {
+                        cleanup_pending: false,
+                        at: "2026-10-04 18:40".into(),
+                        address: Some(a),
+                        stop: None,
+                        pid: None,
+                    },
+                    cwd.path().join("project.log"),
+                )
+            });
+            agent.put_on(Role::SoloAudit).unwrap();
+            let (tx, events) = std::sync::mpsc::channel();
+            agent.sink = Some(tx);
+            agent.turn("audit it").await.unwrap();
+            let evs: Vec<AgentEvent> = events.try_iter().collect();
+            assert!(
+                matches!(
+                    audited(&evs)[..],
+                    [AgentEvent::Audited { product_used, .. }] if *product_used == used
+                ),
+                "{used}: {evs:?}"
+            );
+            let text = std::fs::read_to_string(cwd.path().join(".ryter/audit.md")).unwrap();
+            assert_eq!(
+                text.contains("The product was started and used"),
+                used,
+                "{text}"
+            );
+        }
+    }
+
     /// `.ryter/audit.md` and a dated copy, the event carries it, and a
     /// second audit replaces the one file and keeps the other.
     #[tokio::test]
@@ -6009,6 +6118,7 @@ mod tests {
                     scope,
                     whole,
                     reply,
+                    ..
                 } = req
                 {
                     asked.push(RulesAsk {

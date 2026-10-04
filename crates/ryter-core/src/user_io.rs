@@ -53,6 +53,9 @@ pub enum UserRequest {
         /// `preview` is the only view of the change there will be: show
         /// all of it, and take a yes only once its end has been shown.
         whole: bool,
+        /// For a script of several commands: the one that asked, which the
+        /// card names first.
+        asks: Option<String>,
         /// Reply channel.
         reply: mpsc::Sender<Permission>,
     },
@@ -104,6 +107,9 @@ pub struct ToolAsk {
     /// `preview` is the only view of the change there will be: show all of
     /// it, and take a yes only once its end has been shown.
     pub whole: bool,
+    /// For a script of several commands: the one that asked, which the
+    /// card names first. `None`: the summary's first line is the name.
+    pub asks: Option<String>,
 }
 
 /// Handle held by [`crate::tools::ToolContext`].
@@ -152,6 +158,7 @@ impl UserIo {
                 strict: false,
                 scope: None,
                 whole: false,
+                asks: None,
             },
             cancel,
         )
@@ -169,6 +176,7 @@ impl UserIo {
             strict: ask.strict,
             scope: ask.scope,
             whole: ask.whole,
+            asks: ask.asks,
             reply: reply_tx,
         };
         if self.send(req).is_err() {

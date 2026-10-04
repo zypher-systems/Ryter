@@ -35,6 +35,8 @@ pub struct AuditModal {
     pub file: Option<String>,
     pub restored: Vec<String>,
     pub checkpointed: bool,
+    /// The audit started or used the product: its own data stayed.
+    pub product_used: bool,
     pub total_usd: Option<f64>,
     pub duration_ms: u64,
     top: usize,
@@ -64,6 +66,7 @@ impl AuditModal {
             file,
             restored,
             checkpointed,
+            product_used,
             total_usd,
             duration_ms,
             ..
@@ -81,6 +84,7 @@ impl AuditModal {
             file: file.clone(),
             restored: restored.clone(),
             checkpointed: *checkpointed,
+            product_used: *product_used,
             total_usd: *total_usd,
             duration_ms: *duration_ms,
             top: 0,
@@ -204,7 +208,7 @@ impl AuditModal {
                 Span::styled(text, theme.on_panel(color)),
             ]));
         }
-        out.push(Line::from(vec![
+        let mut written = vec![
             Span::styled(" written", theme.panel_muted()),
             Span::styled(
                 format!(
@@ -215,7 +219,16 @@ impl AuditModal {
                 ),
                 theme.panel_muted(),
             ),
-        ]));
+        ];
+        // The checkpoint put the tree back, not what the product wrote to
+        // its own data while the audit used it.
+        if self.product_used {
+            written.push(Span::styled(
+                " · product data not restored",
+                theme.on_panel(theme.warn),
+            ));
+        }
+        out.push(Line::from(written));
         out
     }
 }
@@ -364,6 +377,7 @@ mod tests {
             file: Some(".ryter/audit.md".into()),
             restored: vec![],
             checkpointed: true,
+            product_used: false,
             filed: true,
             total_usd: Some(0.07),
             duration_ms: 58_000,
@@ -378,6 +392,7 @@ mod tests {
                 ran,
                 restored,
                 checkpointed,
+                product_used,
                 filed,
                 total_usd,
                 duration_ms,
@@ -396,6 +411,7 @@ mod tests {
                 file,
                 restored,
                 checkpointed,
+                product_used,
                 filed,
                 total_usd,
                 duration_ms,
@@ -583,6 +599,27 @@ mod tests {
     }
 
     /// A restored tree and a missing checkpoint are said in the card.
+    /// The audit used the product: the card says its own data stayed as
+    /// the audit left it, beside where the audit was written.
+    #[test]
+    fn the_card_says_when_product_data_was_not_restored() {
+        let v = view();
+        let mut ev = event();
+        if let AgentEvent::Audited { product_used, .. } = &mut ev {
+            *product_used = true;
+        }
+        let p = AuditModal::from_event(&ev, 0).unwrap();
+        let rows = text(&p, &v, WIDTH, 60);
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("written .ryter/audit.md · product data not restored")),
+            "{rows:?}"
+        );
+        let p = AuditModal::from_event(&event(), 0).unwrap();
+        let rows = text(&p, &v, WIDTH, 60);
+        assert!(!rows.iter().any(|r| r.contains("not restored")), "{rows:?}");
+    }
+
     #[test]
     fn the_tree_line() {
         let v = view();

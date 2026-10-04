@@ -131,7 +131,7 @@ fn run_rows(
         &format!("saved to {}", ryter_core::run::FILE),
         theme,
     ));
-    out.push(widgets::note("the tester runs these without asking", theme));
+    out.push(widgets::note("ryter runs these without asking", theme));
     out
 }
 
@@ -236,6 +236,9 @@ impl Panel for PlanModal {
     fn legend(&self, _view: &View) -> String {
         match (&self.pane, &self.shown) {
             (Pane::Read, Shown::Plan(_)) => "↑↓ scroll · y approve · e adjust · n reject".into(),
+            (Pane::Read, Shown::Run { .. }) if self.max_top.get() > 0 => {
+                "y approve · e adjust · n reject · ↑↓ scroll".into()
+            }
             (Pane::Read, Shown::Run { .. }) => "y approve · e adjust · n reject".into(),
             (Pane::Adjust, _) => "type what to change · enter send · esc back".into(),
         }
@@ -277,6 +280,14 @@ impl Panel for PlanModal {
         Some(ModalKind::Ask)
     }
 
+    /// How the project runs is a question put while a turn waits, like
+    /// the allow card: in the rows the chat frees for it, inset in the
+    /// conversation's column, never over the reply. A plan is read whole
+    /// and keeps its popout.
+    fn docked(&self) -> bool {
+        matches!(self.shown, Shown::Run { .. })
+    }
+
     fn render(&self, _view: &View, width: u16, height: u16, theme: Theme) -> Body {
         let w = usize::from(width);
         let h = usize::from(height).max(1);
@@ -284,9 +295,20 @@ impl Panel for PlanModal {
         if laid_out.as_ref().is_none_or(|(at, _)| *at != w) {
             *laid_out = Some((w, self.rows_at(w, theme)));
         }
-        let all = laid_out.as_ref().map_or(&[][..], |(_, rows)| rows);
+        let laid = laid_out.as_ref().map_or(&[][..], |(_, rows)| rows);
         let foot = usize::from(self.error.is_some());
         let room = h.saturating_sub(foot).max(1);
+        // Docked, the card gets a third of the column at most. Short of
+        // room, the rows of air go first; the commands and the notes stay,
+        // and what is left over scrolls.
+        let blank = |l: &Line<'static>| l.spans.iter().all(|s| s.content.trim().is_empty());
+        let compact: Vec<Line<'static>>;
+        let all: &[Line<'static>] = if self.docked() && laid.len() > room {
+            compact = laid.iter().filter(|l| !blank(l)).cloned().collect();
+            &compact
+        } else {
+            laid
+        };
         let total = all.len();
         let max_top = total.saturating_sub(room);
         let top = self.top.min(max_top);
@@ -615,9 +637,13 @@ mod run_tests {
                 " stop   docker compose down",
                 "",
                 " saved to .ryter/run.toml",
-                " the tester runs these without asking",
+                " ryter runs these without asking",
             ]
         );
+        // A question put while the turn waits: docked under the chat, as
+        // the allow card is; a plan keeps its popout.
+        assert!(p.docked());
+        assert!(!PlanModal::new("T".into(), "## Goal\nx".into(), 0).docked());
         // A box its own size, not a plan's.
         let (w, h) = p.size(&v);
         assert!((52..=60).contains(&w) && h == 9, "{w}x{h}");

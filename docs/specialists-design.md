@@ -153,3 +153,12 @@ Patch 4 (the scribe hat), 2026-10-03:
 - **R-KEY-03** `/scribe` (alias `/docs`) puts the hat on, as `/plan` and `/build` do; the composer's hint in the audit hat now names `Tab: scribe`.
 - The models panel's "last seat" tests moved from audit to scribe; the rack without figures is twenty rows with four blocks, so the height at which it drops its figures moved up by four rows.
 
+### The driving-run patch (2026-10-04, after 0.18.0)
+
+Two real projects through all four hats found five things to polish; none changes the contract.
+
+- **R-AUD-05 (new)** The audit's checkpoint snapshots tracked and untracked files, not ignored ones; when the audit started the product, ran its tests, or called its address, audit.md and the card say that the product's own data was not restored (`product data not restored`). `AgentEvent::Audited.product_used`.
+- **R-SCR-01 amended** The scribe (and the plan hat) may look at the product: `curl` GET/HEAD to the project's own address saving nothing into the project, and a project program run with exactly one of `--help`, `-h`, `--version`, `-V`. The refusal for anything else says the hat only looks and lists what it may run.
+- **R-INST** The run-file proposal ("how this project runs") is a docked question in the inset slot, as the allow card is; the plan popout is unchanged. The foot's `esc` is labelled after the card's `n` key.
+- **Gate** `export`/`declare`/`typeset`/`local`/`readonly NAME=value` set a variable as a plain assignment does; `asking_segment(cmd, ctx)` names the segment the gate stopped on, and the allow card's title and `what` row show it.
+

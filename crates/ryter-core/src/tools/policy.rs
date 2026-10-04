@@ -1779,15 +1779,40 @@ fn decide_bash(args: &Value, ctx: &ToolContext) -> Decision {
     let Some(cmd) = args.get("command").and_then(Value::as_str) else {
         return Decision::Deny;
     };
+    judge_bash(cmd, ctx).0
+}
+
+/// The command of `cmd` that made it a question, when one did and `cmd`
+/// has more than that one command in it: what the card names first. The
+/// whole script stays in its body. A script that is one command, or one
+/// that asks as a whole, names nothing here.
+///
+/// `set -e … rm -f "$TASKS_FILE"` was titled `run set -e`, the first word
+/// of the script, with the `rm` that asked three lines down.
+pub fn asking_segment(cmd: &str, ctx: &ToolContext) -> Option<String> {
+    let (decision, seg) = judge_bash(cmd, ctx);
+    if !matches!(
+        decision,
+        Decision::Ask | Decision::AskSecret | Decision::AskOutside
+    ) {
+        return None;
+    }
+    seg.map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s != cmd.trim())
+}
+
+/// [`decide_bash`], and the first command of the line that asked.
+fn judge_bash(cmd: &str, ctx: &ToolContext) -> (Decision, Option<String>) {
     // The gate keeps a quoted glob character as a character from a private
     // range. A command that already holds one can't be told apart.
     if expand::has_private(cmd) {
-        return Decision::Deny;
+        return (Decision::Deny, None);
     }
     let segs = split(cmd);
     if segs.is_empty() {
-        return Decision::Deny;
+        return (Decision::Deny, None);
     }
+    let mut asks: Option<String> = None;
     // `cd app && npm test`: after a `cd`, the rest is judged from the
     // folder it really runs in. The project stays the boundary: a link in
     // `app/` that points outside is caught where the command reads it.
@@ -1841,7 +1866,16 @@ fn decide_bash(args: &Value, ctx: &ToolContext) -> Decision {
                 vars: here,
                 ..ctx.clone()
             };
-            decision = decision.and(decide_segment(&s.text, &cx));
+            let judged = decide_segment(&s.text, &cx);
+            if asks.is_none()
+                && matches!(
+                    judged,
+                    Decision::Ask | Decision::AskSecret | Decision::AskOutside
+                )
+            {
+                asks = Some(s.text.clone());
+            }
+            decision = decision.and(judged);
             if goes_back(&s.text, &cx) {
                 // Back to where the last `cd` of this command left. With
                 // none, the shell has no old folder (Ryter starts it
@@ -1857,7 +1891,7 @@ fn decide_bash(args: &Value, ctx: &ToolContext) -> Decision {
             }
         }
         if decision == Decision::Deny {
-            return Decision::Deny;
+            return (Decision::Deny, None);
         }
         // `NAME=value` alone, at the top of the command: set for sure. Set
         // anywhere else, or to something only the shell can read, the
@@ -1875,19 +1909,34 @@ fn decide_bash(args: &Value, ctx: &ToolContext) -> Decision {
                 }
             }
         } else {
-            // A builtin that sets variables (`export B=…`, `read B`, a
-            // `for` loop): the names it mentions are no longer known.
             let mut said = set;
             strip_keywords(&mut said);
-            if matches!(
+            // `export NAME=value` (and `declare`, `typeset`, `local`,
+            // `readonly`) sets the variable as `NAME=value` does: read
+            // where it is used later, on the same terms. It used to only
+            // make the name unknown, so `export F=/tmp/x; rm -f "$F"` was
+            // a path the gate couldn't read, and asked for that, where
+            // `F=/tmp/x; rm -f "$F"` asked for the deletion it is.
+            // `export NAME` alone leaves a known value as it was; a value
+            // only the shell can read makes the name unknown.
+            const EXPORTERS: &[&str] = &["export", "declare", "typeset", "local", "readonly"];
+            if program(&said).is_some_and(|p| EXPORTERS.contains(&p)) {
+                let at = said
+                    .iter()
+                    .position(|w| EXPORTERS.contains(&w.as_str()))
+                    .map_or(said.len(), |i| i + 1);
+                for w in said.iter().skip(at).filter(|w| !w.starts_with('-')) {
+                    if let Some((name, value)) = assigned(w) {
+                        vars.retain(|(n, _)| n != name);
+                        if for_sure && !w.contains("+=") && !value.contains(['$', '`']) {
+                            vars.push((name.to_string(), value.to_string()));
+                        }
+                    }
+                }
+            } else if matches!(
                 program(&said),
                 Some(
-                    "export"
-                        | "declare"
-                        | "typeset"
-                        | "local"
-                        | "readonly"
-                        | "unset"
+                    "unset"
                         | "read"
                         | "mapfile"
                         | "readarray"
@@ -1928,7 +1977,7 @@ fn decide_bash(args: &Value, ctx: &ToolContext) -> Decision {
             moved
         };
     }
-    decision
+    (decision, asks)
 }
 
 /// Shell words that stand before a command and are not it: `then make`
@@ -2740,9 +2789,18 @@ fn judge(
             }
         }
         // The scribe runs what the plan hat runs: it looks, and writes only
-        // documentation, by the write tools.
+        // documentation, by the write tools. A look at the running product
+        // is a look: a `GET` of the project's own address, and what a
+        // program of the project's says of itself with `--help` or
+        // `--version`. The scribe documenting a service was refused
+        // `curl -s localhost:8765/docs`, and `tasks --help` for a CLI, as
+        // commands that change things.
         Role::SoloPlan | Role::SoloScribe => {
-            if read_only(prog, words) && !path_escapes(&seen, ctx) {
+            let as_written = from_prog.first().map_or("", String::as_str);
+            let looks = (read_only(prog, words) && !path_escapes(&seen, ctx))
+                || (own_request(prog, args, ctx) && looks_only_request(args))
+                || (!in_container && project_program_speaks(as_written, args, ctx));
+            if looks {
                 Decision::Allow
             } else {
                 Decision::Deny
@@ -2808,6 +2866,23 @@ fn looks_only_request(args: &[String]) -> bool {
         }
     }
     true
+}
+
+/// A program of the project's own, asked only what it is: a path under the
+/// project (`.venv/bin/tasks`, `./target/debug/app`, `node_modules/.bin/x`)
+/// with `--help`, `-h`, `--version` or `-V` as its one argument, and
+/// nothing redirected. What it prints is what the looking hats document;
+/// a program of the machine's, or any other argument, is a run. `prog` is
+/// the program as written (the parser keeps only its base name).
+fn project_program_speaks(prog: &str, args: &[String], ctx: &ToolContext) -> bool {
+    if !prog.contains('/') || prog.contains(['$', '`', '*', '?']) {
+        return false;
+    }
+    if !matches!(args, [a] if matches!(a.as_str(), "--help" | "-h" | "--version" | "-V")) {
+        return false;
+    }
+    let workspace = real_path(&ctx.workspace);
+    resolve(ctx, prog).is_some_and(|p| is_under(&p, &workspace) && !is_secret(&p, ctx))
 }
 
 /// Whether `host` is this machine: where a project under test is served.
@@ -8507,6 +8582,174 @@ mod tests {
         ] {
             assert_eq!(bash(cmd, Role::SoloScribe, d), Decision::Deny, "{cmd}");
         }
+    }
+
+    /// The hats that look may look at the running product: a `GET` of the
+    /// project's own address, and what a program of the project's says of
+    /// itself with `--help` or `--version`. The scribe documenting a
+    /// service was refused `curl -s localhost:8765/docs`, and `tasks
+    /// --help` for a CLI, as commands that change things.
+    #[test]
+    fn the_looking_hats_may_look_at_the_product() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::create_dir_all(d.join(".venv/bin")).unwrap();
+        std::fs::create_dir_all(d.join("target/debug")).unwrap();
+        std::fs::create_dir_all(d.join("node_modules/.bin")).unwrap();
+        std::fs::create_dir_all(d.join("docs")).unwrap();
+        std::fs::write(d.join(".venv/bin/tasks"), "#!/bin/sh\n").unwrap();
+        std::fs::write(d.join("target/debug/app"), "").unwrap();
+        std::fs::write(d.join("node_modules/.bin/x"), "").unwrap();
+        // The scribe's own commands, segment by segment, and their kin.
+        let looks = [
+            "curl -s -o /dev/null -w 'docs:%{http_code} ' localhost:8765/docs",
+            "curl -s -o /dev/null -w 'openapi:%{http_code}\\n' localhost:8765/openapi.json",
+            "curl -s localhost:8765/docs",
+            "curl -sI http://127.0.0.1:8765/",
+            "curl -s -X GET localhost:8765/items",
+            "curl -s localhost:8765/ | head -20",
+            ".venv/bin/tasks --help",
+            ".venv/bin/tasks -h",
+            "./target/debug/app --version",
+            "node_modules/.bin/x -V",
+        ];
+        for cmd in looks {
+            for role in [Role::SoloScribe, Role::SoloPlan, Role::SoloBuild] {
+                assert_eq!(bash(cmd, role, d), Decision::Allow, "{role:?}: {cmd}");
+            }
+        }
+        // What sends, runs, saves into the project, or is a program of the
+        // machine's is not a look.
+        let runs = [
+            "curl -s -X POST localhost:8765/items -H 'content-type: application/json' -d '{\"name\":\"X\"}'",
+            "curl -s localhost:8765/docs -o docs/api.html",
+            "curl -s https://example.com/",
+            ".venv/bin/tasks add x",
+            ".venv/bin/tasks --help > README.md",
+            ".venv/bin/tasks --help --verbose",
+            ".venv/bin/tasks",
+            "/usr/bin/foo --help",
+            "tasks --help",
+            "$BIN --help",
+        ];
+        for cmd in runs {
+            for role in [Role::SoloScribe, Role::SoloPlan] {
+                assert_eq!(bash(cmd, role, d), Decision::Deny, "{role:?}: {cmd}");
+            }
+        }
+        // The whole line the scribe sent: its POST makes it a refusal, in
+        // the hat that looks; the build hat runs it.
+        let line = "curl -s -o /dev/null -w 'docs:%{http_code} ' localhost:8765/docs; \
+                    curl -s -o /dev/null -w 'openapi:%{http_code}\\n' localhost:8765/openapi.json; \
+                    curl -s -X POST localhost:8765/items -H 'content-type: application/json' \
+                    -d '{\"name\":\"X\",\"quantity\":1,\"unit_price\":1.005}'";
+        assert_eq!(bash(line, Role::SoloScribe, d), Decision::Deny);
+        assert_eq!(bash(line, Role::SoloPlan, d), Decision::Deny);
+        assert_eq!(bash(line, Role::SoloBuild, d), Decision::Allow);
+    }
+
+    /// `export NAME=value` sets the variable as `NAME=value` does, so what
+    /// uses it later is judged the same: a deletion in scratch space is the
+    /// ask for the place it is, not a path the gate can't read. The
+    /// audit's `export TASKS_FILE=/tmp/audit-tasks.json; rm -f
+    /// "$TASKS_FILE"` asked as the latter.
+    #[test]
+    fn export_sets_a_variable_as_a_plain_assignment_does() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        // The build hat, and the audit hat behind its checkpoint.
+        let judge = |cmd: &str, role: Role| {
+            let ctx = ToolContext {
+                read_only: false,
+                ..ctx_for(role, d)
+            };
+            decide("bash", &json!({"command": cmd}), &ctx)
+        };
+        for role in [Role::SoloBuild, Role::SoloAudit] {
+            let literal = judge("rm -f /tmp/audit-tasks.json", role);
+            assert_eq!(literal, Decision::AskOutside, "{role:?}");
+            for sep in ["; ", " && ", "\n"] {
+                for used in [
+                    "rm -f \"$TASKS_FILE\"",
+                    "rm -f $TASKS_FILE",
+                    "rm -f ${TASKS_FILE}",
+                ] {
+                    let plain = judge(
+                        &format!("TASKS_FILE=/tmp/audit-tasks.json{sep}{used}"),
+                        role,
+                    );
+                    for set in [
+                        "export TASKS_FILE=/tmp/audit-tasks.json",
+                        "export TASKS_FILE=\"/tmp/audit-tasks.json\"",
+                        "declare -x TASKS_FILE=/tmp/audit-tasks.json",
+                        "TASKS_FILE=/tmp/audit-tasks.json; export TASKS_FILE",
+                    ] {
+                        let cmd = format!("{set}{sep}{used}");
+                        assert_eq!(judge(&cmd, role), plain, "{role:?}: {cmd:?}");
+                    }
+                }
+                let quoted =
+                    format!("export TASKS_FILE=/tmp/audit-tasks.json{sep}rm -f \"$TASKS_FILE\"");
+                assert_eq!(judge(&quoted, role), literal, "{role:?}: {quoted:?}");
+            }
+            // The observed scripts, whole.
+            for script in [
+                "export TASKS_FILE=/tmp/audit-tasks.json\nrm -f \"$TASKS_FILE\"\n.venv/bin/tasks add buy milk\n.venv/bin/tasks list",
+                "export TASKS_FILE=/tmp/audit-conc.json\nrm -f \"$TASKS_FILE\"\nfor i in 1 2 3 4 5; do .venv/bin/tasks add \"t$i\" & done >/dev/null 2>&1; wait",
+            ] {
+                assert_eq!(
+                    judge(script, role),
+                    Decision::AskOutside,
+                    "{role:?}: {script:?}"
+                );
+            }
+        }
+        // A value only the shell can read, or a name never set, is still
+        // one the gate doesn't know.
+        for cmd in [
+            "export F=$OTHER; rm -f \"$F\"",
+            "export F; rm -f \"$F\"",
+            "export F=/tmp/x; unset F; rm -f \"$F\"",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Ask, "{cmd}");
+        }
+        // Set where it may not have run, it is not known after.
+        assert_eq!(
+            bash(
+                "if true; then export F=/tmp/x; fi; rm -f \"$F\"",
+                Role::SoloBuild,
+                d
+            ),
+            Decision::Ask
+        );
+    }
+
+    /// Of a script of several commands, the one that asked is what the
+    /// card names: `run set -e` named the script's first word for an `rm`
+    /// two lines down.
+    #[test]
+    fn the_asking_segment_is_the_command_that_asked() {
+        let dir = TempDir::new().unwrap();
+        let ctx = ctx_for(Role::SoloBuild, dir.path());
+        let script = "set -e\n.venv/bin/pytest -q\nrm -f \"$TASKS_FILE\"\nls";
+        assert_eq!(
+            asking_segment(script, &ctx).as_deref(),
+            Some("rm -f \"$TASKS_FILE\"")
+        );
+        let script = "export TASKS_FILE=/tmp/audit-conc.json\nrm -f \"$TASKS_FILE\"\nfor i in 1 2 3 4 5; do .venv/bin/tasks add \"t$i\" & done >/dev/null 2>&1; wait";
+        assert_eq!(
+            asking_segment(script, &ctx).as_deref(),
+            Some("rm -f \"$TASKS_FILE\"")
+        );
+        assert_eq!(
+            asking_segment("cargo test && rm -rf target && ls", &ctx).as_deref(),
+            Some("rm -rf target")
+        );
+        // One command: the summary's first line is already it.
+        assert_eq!(asking_segment("rm fix_test.py", &ctx), None);
+        // Nothing asked, or refused: nothing named.
+        assert_eq!(asking_segment("set -e\ncargo test", &ctx), None);
+        assert_eq!(asking_segment("set -e\nsudo rm -rf /", &ctx), None);
     }
 
     /// Inside the project, the build hat's deletions are a question for

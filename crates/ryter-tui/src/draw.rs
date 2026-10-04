@@ -677,6 +677,15 @@ fn key_spans_colored(
 }
 
 /// The solo screen's foot: the keys, from the left.
+/// What `esc` does on the open card: the same as its `n` key, which a
+/// permission card calls `deny` and the run-file card `reject`. A card
+/// without an `n` key denies.
+fn esc_does(keys: &[(String, String, Hint)]) -> String {
+    keys.iter()
+        .find(|(k, _, _)| k == "n")
+        .map_or_else(|| "deny".to_string(), |(_, label, _)| label.clone())
+}
+
 fn draw_keys(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let bg = theme.panel_bg;
     // A question's keys are in the warn color, where the eye lands when
@@ -689,7 +698,8 @@ fn draw_keys(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let card_keys = if asking { all.len() } else { 0 };
     if asking {
         if !all.iter().any(|(k, _, _)| k == "esc") {
-            all.push(("esc".into(), "deny".into(), Hint::Useful));
+            let out = esc_does(&all);
+            all.push(("esc".into(), out, Hint::Useful));
         }
         if view.busy {
             all.push(("^c".into(), "stop the turn".into(), Hint::Essential));
@@ -1362,7 +1372,8 @@ fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         if asking {
             card_keys = items.len();
             if !items.iter().any(|(k, _, _)| k == "esc") {
-                items.push(("esc".into(), "deny".into(), Hint::Useful));
+                let out = esc_does(&items);
+                items.push(("esc".into(), out, Hint::Useful));
             }
             if view.busy {
                 items.push(("^c".into(), "stop the turn".into(), Hint::Essential));
