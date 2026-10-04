@@ -606,11 +606,17 @@ fn loop_ui(
     let mut last_draw = epoch.checked_sub(FRAME).unwrap_or(epoch);
     let mut hit = Hit::default();
     let mut dirty = true;
+    let mut paint_now = false;
     loop {
-        // Drain everything that arrived since the last frame (`R-EVT-05`).
-        while let Ok(ev) = ev_rx.try_recv() {
-            events::apply(view, ev);
+        // Drain what arrived since the last frame (`R-EVT-05`), pausing to
+        // paint after a tool's result or a run of events, so a batch of
+        // tool calls lands as rows arriving, not one flash.
+        let (applied, paused) = drain_events(view, ev_rx);
+        if applied > 0 {
             dirty = true;
+        }
+        if paused {
+            paint_now = true;
         }
         while let Ok(n) = notice_rx.try_recv() {
             panel::on_notice(view, &n);
@@ -659,12 +665,15 @@ fn loop_ui(
         let since = now.duration_since(last_draw);
         // Draw when something changed or a spinner is running, but never more
         // than once per FRAME; idle screens still repaint every 500 ms for the clock.
-        let due = if animating {
+        let due = if paint_now {
+            true
+        } else if animating {
             since >= FRAME
         } else {
             dirty || since >= Duration::from_millis(500)
         };
         if due {
+            paint_now = false;
             view.tick(now.duration_since(epoch).as_millis() as u64);
             let theme = cx.theme;
             let mut painted = Hit::default();
@@ -715,6 +724,26 @@ fn loop_ui(
         }
     }
 }
+
+/// Apply the agent's events that have arrived, stopping after a tool's
+/// result or after [`DRAIN_BATCH`] events so the screen is painted
+/// between them. Returns how many were applied and whether it stopped
+/// early (more may be waiting).
+pub(crate) fn drain_events(view: &mut View, rx: &mpsc::Receiver<AgentEvent>) -> (usize, bool) {
+    let mut n = 0;
+    while let Ok(ev) = rx.try_recv() {
+        let result = matches!(ev, AgentEvent::ToolResult { .. });
+        events::apply(view, ev);
+        n += 1;
+        if result || n >= DRAIN_BATCH {
+            return (n, true);
+        }
+    }
+    (n, false)
+}
+
+/// Events applied between two paints, at most.
+const DRAIN_BATCH: usize = 32;
 
 /// Bracketed paste → composer (`R-COMP-10`). Panels that own the composer get it too.
 fn on_paste(view: &mut View, text: &str) {

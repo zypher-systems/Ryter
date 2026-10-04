@@ -145,8 +145,10 @@ fn mid_stream(reasoning: ActivityMode) -> View {
             diff: None,
         },
     );
-    v.on_token("Reading the loop now. The event loop drains ");
+    // The last token arrives at the frame's time: the model is writing,
+    // not waiting.
     v.now_ms = 12_345;
+    v.on_token("Reading the loop now. The event loop drains ");
     v.tick(12_345);
     v
 }
@@ -2836,4 +2838,169 @@ fn the_wheel_scrolls_an_open_panel() {
     assert!(shown(&v).contains("1. step number 1"));
     // The panel still has the screen: the chat behind it did not move.
     assert!(!v.panels.is_empty());
+}
+
+/// A running turn ends on a row that moves: the spinner and what the model
+/// is doing, with the time and the tokens, dropped in that order as the
+/// screen narrows. The row goes when the turn ends.
+#[test]
+fn a_running_turn_ends_on_a_live_status_row() {
+    let mut v = mid_stream(ActivityMode::Collapsed);
+    v.ui.layout = "ledger".into();
+    let wide = render_to_string(&v, 160, 50);
+    assert!(
+        wide.contains("writing · 0:12 · 59 tokens"),
+        "writing with time and tokens:\n{wide}"
+    );
+    let narrow = render_to_string(&v, 60, 24);
+    assert!(
+        narrow.contains("writing · 0:12") && !narrow.contains("59 tokens"),
+        "{narrow}"
+    );
+    // Thinking: a reasoning delta.
+    crate::run_events_apply(&mut v, AgentEvent::Reasoning { text: "so ".into() });
+    assert!(render_to_string(&v, 160, 50).contains("thinking · 0:12"));
+    // Running a tool.
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::ToolCall {
+            id: "t2".into(),
+            name: "bash".into(),
+            args: serde_json::json!({"command": "cargo test"}),
+            role: Role::SoloBuild,
+            summary: Some("cargo test".into()),
+        },
+    );
+    assert!(render_to_string(&v, 160, 50).contains("running bash · 0:12"));
+    // Nothing for three seconds while thinking: waiting for the model.
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::ToolResult {
+            id: "t2".into(),
+            output: "ok".into(),
+            is_error: false,
+            duration_ms: Some(5),
+            diff: None,
+        },
+    );
+    v.tick(12_345 + crate::activity::WAIT_AFTER_MS);
+    let waiting = render_to_string(&v, 160, 50);
+    assert!(
+        waiting.contains("waiting for the model · 0:15"),
+        "{waiting}"
+    );
+    // A prompt open: waiting for the user.
+    v.activity.verb = crate::activity::Verb::Waiting;
+    assert!(render_to_string(&v, 160, 50).contains("waiting for you"));
+    // The turn ends: the row goes.
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnFinished {
+            turn: 2,
+            tools: 1,
+            duration_ms: 15_000,
+        },
+    );
+    let done = render_to_string(&v, 160, 50);
+    assert!(
+        !done.contains("waiting for") && !done.contains("thinking ·"),
+        "{done}"
+    );
+}
+
+/// The bar's chip spins while the hat's model works, and shows `◆` again
+/// when the turn ends.
+#[test]
+fn the_bar_spins_while_the_turn_runs() {
+    let mut v = mid_stream(ActivityMode::Collapsed);
+    v.ui.layout = "ledger".into();
+    for width in [160u16, 110, 80] {
+        let text = render_to_string(&v, width, 30);
+        let bar = text.lines().next().unwrap_or("");
+        assert!(bar.contains("⠼ BUILD"), "{width}: {bar}");
+        assert!(!bar.contains("◆ BUILD"), "{width}: {bar}");
+    }
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnFinished {
+            turn: 2,
+            tools: 1,
+            duration_ms: 1,
+        },
+    );
+    let bar = render_to_string(&v, 160, 30);
+    assert!(bar.lines().next().unwrap_or("").contains("◆ BUILD"));
+}
+
+/// Busy with nothing arriving, the pulse card says `waiting`; idle says
+/// `idle`; the reasoning pane says what is happening while it is empty.
+#[test]
+fn an_empty_wait_is_said_on_the_pulse_and_in_the_pane() {
+    let mut v = idle();
+    v.ui.layout = "ledger".into();
+    v.activity = crate::activity::Activity::new(ActivityMode::Expanded);
+    let _ = v.submit_user("plan it".into(), "plan it".into());
+    v.tick(20_000);
+    let text = render_to_string(&v, 160, 50);
+    assert!(text.contains("waiting"), "{text}");
+    assert!(text.contains("nothing streamed yet"), "{text}");
+    assert!(text.contains("think on the server"), "{text}");
+    assert!(!text.contains(" idle"), "{text}");
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnFinished {
+            turn: 1,
+            tools: 0,
+            duration_ms: 1,
+        },
+    );
+    let text = render_to_string(&v, 160, 50);
+    assert!(
+        text.contains("idle") || text.contains("no reasoning stream"),
+        "{text}"
+    );
+}
+
+/// The drain stops to paint after a tool's result, or after a run of
+/// events, so a batch of tool calls arrives as rows over frames.
+#[test]
+fn the_drain_pauses_to_paint_after_a_tool_result() {
+    let mut v = mid_stream(ActivityMode::Collapsed);
+    let (tx, rx) = std::sync::mpsc::channel();
+    for i in 0..3 {
+        tx.send(AgentEvent::ToolCall {
+            id: format!("w{i}"),
+            name: "write".into(),
+            args: serde_json::json!({"path": format!("f{i}.txt"), "content": "x"}),
+            role: Role::SoloBuild,
+            summary: None,
+        })
+        .unwrap();
+        tx.send(AgentEvent::ToolResult {
+            id: format!("w{i}"),
+            output: "created".into(),
+            is_error: false,
+            duration_ms: Some(1),
+            diff: None,
+        })
+        .unwrap();
+    }
+    let (n, paused) = crate::run::drain_events(&mut v, &rx);
+    assert_eq!(
+        (n, paused),
+        (2, true),
+        "a call and its result, then a paint"
+    );
+    let (n, paused) = crate::run::drain_events(&mut v, &rx);
+    assert_eq!((n, paused), (2, true));
+    let (n, paused) = crate::run::drain_events(&mut v, &rx);
+    assert_eq!((n, paused), (2, true));
+    let (n, paused) = crate::run::drain_events(&mut v, &rx);
+    assert_eq!((n, paused), (0, false), "nothing left");
+    for _ in 0..40 {
+        tx.send(AgentEvent::Reasoning { text: "a ".into() })
+            .unwrap();
+    }
+    let (n, paused) = crate::run::drain_events(&mut v, &rx);
+    assert_eq!((n, paused), (32, true), "a run of events pauses too");
 }

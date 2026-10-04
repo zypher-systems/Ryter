@@ -299,7 +299,45 @@ fn place(view: &View, width: usize, theme: Theme) -> (Vec<Placed>, usize) {
             last_hint = None;
         }
     }
+    // While a turn runs, the conversation ends on a row that moves: the
+    // spinner and what the model is doing, where the eye is. The turn's
+    // closing line takes its place when it ends.
+    if view.busy {
+        let line = status_row(view, width, theme);
+        placed.push(Placed {
+            start: row,
+            separator: false,
+            spine: ledger,
+            gutter: if ledger { Gutter::Line } else { Gutter::None },
+            entry: Rc::new(Entry {
+                bytes: 0,
+                lines: vec![line],
+            }),
+        });
+        row += 1;
+    }
     (placed, row)
+}
+
+/// The live status row of a running turn: the spinner in the hat's color,
+/// then `thinking · 1:40 · 12k tokens`, `running cargo test · 0:03`,
+/// `waiting for the model · 0:42`, or `waiting for you`.
+fn status_row(view: &View, width: usize, theme: Theme) -> Line<'static> {
+    let a = &view.activity;
+    let spinner = crate::activity::SPINNER[a.frame % crate::activity::SPINNER.len()];
+    let accent = Style::default()
+        .fg(theme.mode(view.mode))
+        .bg(theme.bg)
+        .add_modifier(Modifier::BOLD);
+    let text = a.status(width.saturating_sub(3));
+    Line::from(vec![
+        Span::styled(spinner.to_string(), accent),
+        Span::styled(" ", theme.body()),
+        Span::styled(
+            wrap::truncate(&text, width.saturating_sub(3)),
+            theme.muted(),
+        ),
+    ])
 }
 
 /// Assemble the visible frame.

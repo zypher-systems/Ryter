@@ -16,7 +16,7 @@
 │ … 1 more line · /changes shows it whole once it's made                       │
 │ ⏎ allow   n deny                                                             │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- ⠼ writing  ·  0:12  ·  ~11 tok                                ^r  reasoning  ▾
+ ⠼ writing  ·  Reading the loop now. The event loop dr…  ·  0… ^r  reasoning  ▾
 ────────────────────────────────────────────────────────────────────────────────
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
 │› type to queue the next message, / for commands                              │

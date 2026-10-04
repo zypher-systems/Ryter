@@ -340,16 +340,20 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         crate::watermark::draw(frame, parts[0], view.mode, theme);
     }
     if view.panels.is_empty() {
+        // The gutter runs beside the chat, the rows the thumb measures.
         let gutter = Rect {
             x: col_x + col_w,
             width: 1,
-            ..parts[1]
+            ..parts[0]
         };
         // The thumb alone: a track beside the instruments' hairline is
         // two lines where one separates.
         draw_scrollbar(frame, gutter, &cf, view.scroll.follow, theme, false);
     }
-    let act = column(parts[2]);
+    // The strip has its own rows between the chat and the composer. It was
+    // drawn into the composer's rows and painted over: the ticker and the
+    // reasoning pane were never seen on this screen.
+    let act = column(parts[1]);
     if activity_h > 0 {
         activity::draw(frame, act, view, theme);
     }
@@ -435,7 +439,12 @@ fn draw_top_bar(frame: &mut Frame, area: Rect, view: &View, theme: Theme, counts
             left.push(Span::styled(gap, dim));
         }
         let name = crate::rail::hat_name(hat);
-        let mark = crate::rail::hat_mark(view, hat);
+        // The hat that is on spins while its model works.
+        let mark = if view.mode == hat && view.busy {
+            crate::activity::SPINNER[view.activity.frame % crate::activity::SPINNER.len()]
+        } else {
+            crate::rail::hat_mark(view, hat)
+        };
         let turns = view.rack.of(hat).turns;
         let count = if counts && turns > 0 {
             format!(" {turns}")

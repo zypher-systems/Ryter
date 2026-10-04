@@ -569,6 +569,8 @@ impl View {
         if self.activity.busy() {
             self.activity.verb = crate::activity::Verb::Writing;
             self.activity.tokens += tokens;
+            self.activity.note_delta(self.now_ms);
+            self.activity.note_text(text);
         }
     }
 

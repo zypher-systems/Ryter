@@ -17,6 +17,12 @@ pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦"
 pub const REASONING_CAP: usize = 64 * 1024;
 /// Turns of reasoning retained.
 pub const REASONING_TURNS: usize = 20;
+/// With nothing received for this long, a busy turn is waiting for the
+/// model: one that thinks on the server and streams nothing, or a slow
+/// provider.
+pub const WAIT_AFTER_MS: u64 = 3000;
+/// How much of the latest text the ticker shows.
+const TICKER_TAIL: usize = 48;
 
 /// Startup / toggle state (`R-ACT-14`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,8 +57,10 @@ pub enum Verb {
     Writing,
     /// Tool call.
     Tool(String),
-    /// Permission / ask outstanding.
+    /// Permission / ask outstanding: waiting for the user.
     Waiting,
+    /// Nothing has arrived for [`WAIT_AFTER_MS`]: waiting for the model.
+    WaitingModel,
     /// Cancel requested.
     Cancelling,
     /// Turn finished normally.
@@ -64,13 +72,15 @@ pub enum Verb {
 }
 
 impl Verb {
-    fn label(&self) -> String {
+    /// The strip's word for the phase.
+    pub fn label(&self) -> String {
         match self {
             Verb::Idle => "idle".into(),
             Verb::Thinking => "thinking".into(),
             Verb::Writing => "writing".into(),
             Verb::Tool(t) => t.clone(),
-            Verb::Waiting => "waiting".into(),
+            Verb::Waiting => "waiting for you".into(),
+            Verb::WaitingModel => "waiting for the model".into(),
             Verb::Cancelling => "cancelling".into(),
             Verb::Done => "done".into(),
             Verb::Stopped => "stopped".into(),
@@ -115,6 +125,11 @@ pub struct Activity {
     pub turn: u64,
     /// Whether any turn has ever run (height 0 otherwise, `R-ACT-01`).
     pub has_history: bool,
+    /// `now_ms` of the last delta of any kind: a token, a thought, a tool
+    /// call or its result. Nothing for [`WAIT_AFTER_MS`] is waiting.
+    pub last_delta_ms: Option<u64>,
+    /// The tail of the latest text, single-spaced, for the ticker.
+    tail: String,
 }
 
 impl Default for Activity {
@@ -141,6 +156,8 @@ impl Activity {
             scroll: None,
             turn: 0,
             has_history: false,
+            last_delta_ms: None,
+            tail: String::new(),
         }
     }
 
@@ -148,6 +165,8 @@ impl Activity {
     pub fn start(&mut self, turn: u64, now_ms: u64) {
         self.verb = Verb::Thinking;
         self.current.clear();
+        self.tail.clear();
+        self.last_delta_ms = Some(now_ms);
         self.started_ms = Some(now_ms);
         self.elapsed_ms = 0;
         self.tokens = 0;
@@ -173,12 +192,72 @@ impl Activity {
         self.current.clear();
     }
 
-    /// Advance the spinner and elapsed clock.
+    /// Advance the spinner and elapsed clock. A turn that has received
+    /// nothing for [`WAIT_AFTER_MS`] while it was thinking or writing is
+    /// waiting for the model; a tool that is running is not, however long
+    /// it takes.
     pub fn tick(&mut self, now_ms: u64) {
         self.frame = (now_ms / 80) as usize % SPINNER.len();
         if let Some(s) = self.started_ms {
             self.elapsed_ms = now_ms.saturating_sub(s);
+            let since = now_ms.saturating_sub(self.last_delta_ms.unwrap_or(s));
+            if since >= WAIT_AFTER_MS
+                && matches!(
+                    self.verb,
+                    Verb::Thinking | Verb::Writing | Verb::WaitingModel
+                )
+            {
+                self.verb = Verb::WaitingModel;
+            }
         }
+    }
+
+    /// Something arrived from the model: a token, a thought, a tool call
+    /// or its result. The caller sets the verb; this ends any waiting.
+    pub fn note_delta(&mut self, now_ms: u64) {
+        self.last_delta_ms = Some(now_ms);
+    }
+
+    /// The latest text, for the ticker: its tail, single-spaced.
+    pub fn note_text(&mut self, text: &str) {
+        for w in text.split_whitespace() {
+            if !self.tail.is_empty() {
+                self.tail.push(' ');
+            }
+            self.tail.push_str(w);
+        }
+        let n = self.tail.chars().count();
+        if n > TICKER_TAIL {
+            let cut: String = self.tail.chars().skip(n - TICKER_TAIL).collect();
+            self.tail = cut;
+            self.current = format!("…{}", self.tail);
+        } else {
+            self.current.clone_from(&self.tail);
+        }
+    }
+
+    /// A tool's label took the ticker: the next text starts it afresh.
+    pub fn note_tool(&mut self, label: &str) {
+        self.tail.clear();
+        self.current = wrap::truncate(label, 48);
+    }
+
+    /// The status row's words for a busy turn: what it is doing, for how
+    /// long, and how much it has produced. Narrow, the tokens go first,
+    /// then the time.
+    pub fn status(&self, width: usize) -> String {
+        let label = match &self.verb {
+            Verb::Tool(t) => format!("running {t}"),
+            v => v.label(),
+        };
+        let mut parts = vec![label];
+        if width >= 32 {
+            parts.push(fmt_elapsed(self.elapsed_ms / 1000));
+        }
+        if width >= 48 && self.tokens > 0 {
+            parts.push(format!("{} tokens", humanize(self.tokens)));
+        }
+        parts.join(" · ")
     }
 
     /// Whether a turn is in flight from the strip's point of view.
@@ -238,7 +317,7 @@ pub fn height(view: &View, body_h: u16) -> u16 {
                 .map(String::as_str)
                 .unwrap_or("");
             let rows = if text.trim().is_empty() {
-                1
+                if a.busy() { 2 } else { 1 }
             } else {
                 wrap::wrap_plain(text, 76).len()
             };
@@ -331,7 +410,15 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         .get(&a.turn)
         .map(String::as_str)
         .unwrap_or("");
-    let rows: Vec<String> = if text.trim().is_empty() {
+    let rows: Vec<String> = if text.trim().is_empty() && a.busy() {
+        vec![
+            format!(
+                "waiting for the model · nothing streamed yet · {}",
+                fmt_elapsed(a.elapsed_ms / 1000)
+            ),
+            "some models think on the server and send nothing until they answer".into(),
+        ]
+    } else if text.trim().is_empty() {
         vec!["no reasoning stream from this model".into()]
     } else {
         wrap::wrap_plain(text, width.saturating_sub(2).max(8))
@@ -372,6 +459,59 @@ pub fn push_reasoning(view: &mut View, turn: u64, text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Nothing received for three seconds while thinking is waiting for
+    /// the model; a delta ends it; a tool that runs long is not waiting.
+    #[test]
+    fn waiting_for_the_model_after_three_quiet_seconds() {
+        let mut a = Activity::new(Mode::Collapsed);
+        a.start(1, 1000);
+        a.tick(3_900);
+        assert_eq!(a.verb, Verb::Thinking);
+        a.tick(4_000);
+        assert_eq!(a.verb, Verb::WaitingModel);
+        assert_eq!(a.status(80), "waiting for the model · 0:03");
+        a.note_delta(4_100);
+        a.verb = Verb::Writing;
+        a.tokens = 1200;
+        a.tick(6_000);
+        assert_eq!(a.verb, Verb::Writing);
+        assert_eq!(a.status(80), "writing · 0:05 · 1.2k tokens");
+        assert_eq!(a.status(40), "writing · 0:05");
+        assert_eq!(a.status(30), "writing");
+        a.verb = Verb::Tool("cargo test".into());
+        a.tick(60_000);
+        assert_eq!(
+            a.verb,
+            Verb::Tool("cargo test".into()),
+            "a long tool is not waiting"
+        );
+        assert_eq!(a.status(80), "running cargo test · 0:59 · 1.2k tokens");
+        a.verb = Verb::Waiting;
+        assert_eq!(a.status(80), "waiting for you · 0:59 · 1.2k tokens");
+    }
+
+    /// The ticker shows the tail of the latest text, single-spaced, and a
+    /// tool's label takes it over until the next text.
+    #[test]
+    fn the_ticker_follows_the_latest_text() {
+        let mut a = Activity::new(Mode::Collapsed);
+        a.start(1, 0);
+        a.note_text("The user wants\nthe loop   wired.");
+        assert_eq!(a.current, "The user wants the loop wired.");
+        a.note_text(" I should read run.rs first, then the tests, then write.");
+        assert!(a.current.starts_with('…'), "{}", a.current);
+        assert!(
+            a.current.ends_with("then the tests, then write."),
+            "{}",
+            a.current
+        );
+        assert!(a.current.chars().count() <= 49);
+        a.note_tool("read src/run.rs");
+        assert_eq!(a.current, "read src/run.rs");
+        a.note_text("Now the tests.");
+        assert_eq!(a.current, "Now the tests.");
+    }
 
     #[test]
     fn summary_and_modes() {

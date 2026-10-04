@@ -107,11 +107,15 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
         AgentEvent::Reasoning { text } => {
             let turn = view.turn;
             // Thought is output too: the pulse counts it.
-            view.pulse
-                .push(view.now_ms, (text.len() as u64).div_ceil(4));
+            let tokens = (text.len() as u64).div_ceil(4);
+            view.pulse.push(view.now_ms, tokens);
             activity::push_reasoning(view, turn, text);
             if view.activity.busy() {
                 view.activity.verb = Verb::Thinking;
+                view.activity.tokens += tokens;
+                let now = view.now_ms;
+                view.activity.note_delta(now);
+                view.activity.note_text(text);
             }
         }
         AgentEvent::ToolCall {
@@ -132,6 +136,8 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             if view.activity.busy() {
                 view.activity.verb = Verb::Thinking;
                 view.activity.current.clear();
+                let now = view.now_ms;
+                view.activity.note_delta(now);
             }
         }
         AgentEvent::TurnStarted { .. } => {
@@ -491,8 +497,10 @@ fn on_tool_call(
     }
     if view.activity.busy() && role.is_solo() {
         view.activity.verb = Verb::Tool(name.to_string());
-        view.activity.current = wrap::truncate(&label, 48);
+        view.activity.note_tool(&label);
         view.activity.tools += 1;
+        let now = view.now_ms;
+        view.activity.note_delta(now);
     }
 }
 
