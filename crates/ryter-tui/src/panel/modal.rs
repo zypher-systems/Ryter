@@ -356,7 +356,7 @@ impl Panel for PermissionModal {
         // On a short card, a change that must be read whole gets the row
         // the model's reason would take.
         let short = self.whole && usize::from(height) < 6;
-        let why_at = (self.why.is_some() && !short).then(|| lines.len());
+        let why_at = (self.why.is_some() && !short).then_some(lines.len());
         if let Some(why) = self.why.as_ref().filter(|_| !short) {
             lines.push(Self::row(
                 "why",
