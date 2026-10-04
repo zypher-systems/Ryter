@@ -190,10 +190,7 @@ fn io_err(e: impl std::fmt::Display) -> ryter_core::Error {
 pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     let cwd = std::env::current_dir().map_err(io_err)?;
     let trusted = config::is_trusted(&cwd);
-    let mut cfg = config::load(Some(&cwd), trusted)?;
-    if let Some(r) = opts.rounds {
-        cfg.limits.rounds = r;
-    }
+    let cfg = config::load(Some(&cwd), trusted)?;
     let home = config::home_dir();
     let last = config::load_last_route(&home);
     let (mut conn_name, mut model) = config::resolve_route(
@@ -351,8 +348,10 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     }
 
     let start_mode = start_tools_mode(&opts, &cfg);
+    // `--rounds` is for this run: the worker gets it, the loaded config
+    // that `/settings`, `/budget` and `/theme` save does not.
     let init = WorkerInit {
-        cfg: cfg.clone(),
+        cfg: worker_config(&cfg, opts.rounds),
         conn,
         key,
         session,
@@ -481,7 +480,8 @@ fn populate_view(
         view.budget_last = view.budget_usd;
     }
     view.audit_usd = cfg.spend.audit_usd;
-    view.rounds = cfg.limits.rounds;
+    view.rounds = opts.rounds.unwrap_or(cfg.limits.rounds);
+    view.rounds_from_flag = opts.rounds.is_some();
     view.model_reasoning = cfg.model_reasoning.clone();
     view.warn_usd = cfg.spend.warn_usd;
     view.sandbox_profile = cfg.sandbox.profile.clone();
@@ -986,6 +986,20 @@ fn edit_with_editor(
     }
 }
 
+/// The config the worker runs with: the loaded one, with `--rounds` on
+/// top for this run. The loaded config is what a later save writes, so
+/// the flag never lands in `settings.toml`.
+fn worker_config(
+    cfg: &ryter_core::config::Config,
+    rounds: Option<u32>,
+) -> ryter_core::config::Config {
+    let mut c = cfg.clone();
+    if let Some(r) = rounds {
+        c.limits.rounds = r;
+    }
+    c
+}
+
 /// The tools mode a session starts in: the flags win; otherwise the mode
 /// `/settings` saved.
 fn start_tools_mode(opts: &TuiOpts, cfg: &ryter_core::config::Config) -> ryter_core::ToolsMode {
@@ -995,6 +1009,22 @@ fn start_tools_mode(opts: &TuiOpts, cfg: &ryter_core::config::Config) -> ryter_c
         ryter_core::ToolsMode::Always
     } else {
         ryter_core::ToolsMode::parse(&cfg.tools_mode).unwrap_or(ryter_core::ToolsMode::Ask)
+    }
+}
+
+#[cfg(test)]
+mod rounds_flag_tests {
+    use super::*;
+
+    /// `--rounds` reaches the worker and never the config a save writes.
+    #[test]
+    fn the_rounds_flag_is_for_this_run_only() {
+        let mut cfg = ryter_core::config::Config::default();
+        cfg.limits.rounds = 150;
+        let w = worker_config(&cfg, Some(0));
+        assert_eq!(w.limits.rounds, 0);
+        assert_eq!(cfg.limits.rounds, 150, "the loaded config keeps its value");
+        assert_eq!(worker_config(&cfg, None).limits.rounds, 150);
     }
 }
 

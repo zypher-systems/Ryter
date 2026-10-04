@@ -45,13 +45,13 @@ pub struct AuditModal {
 }
 
 impl AuditModal {
-    /// From the event, when it carries a filed audit.
-    /// Whether the audit found nothing to repair: no failing finding (one
-    /// not reached is not a failure).
+    /// Whether the audit passed, by the verdict it filed (what the receipt
+    /// and the rack count too): a pass closes on Enter, a failure repairs.
     pub fn passed(&self) -> bool {
         self.verdict == Some(true)
     }
 
+    /// From the event, when it carries a filed audit.
     pub fn from_event(ev: &AgentEvent, opened_ms: u64) -> Option<Self> {
         let AgentEvent::Audited {
             model,

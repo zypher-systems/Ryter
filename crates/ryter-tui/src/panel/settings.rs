@@ -251,7 +251,12 @@ impl Settings {
             view.audit_usd = v;
         }
         if let Some(v) = number("rounds") {
-            view.rounds = v.max(0.0) as u32;
+            let v = v.max(0.0) as u32;
+            if v != view.rounds {
+                // The user's own number: it is theirs to keep.
+                view.rounds_from_flag = false;
+            }
+            view.rounds = v;
         }
         if let Some(v) = sel("perm") {
             view.perm_mode = v;

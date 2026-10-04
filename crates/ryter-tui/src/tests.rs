@@ -2844,6 +2844,35 @@ fn the_wheel_scrolls_an_open_panel() {
 /// opens the turn's reasoning as a pane right under the status row while
 /// the turn runs, under the turn's closing line after, never more than a
 /// third of the chat.
+/// The workbench keeps the strip as its one reasoning surface: the pane
+/// that the solo and classic screens place in the conversation is not
+/// placed there, so `^r` never shows the reasoning twice.
+#[test]
+fn the_workbench_keeps_its_strip_and_gets_no_pane() {
+    let repo = workbench_repo();
+    let mut v = mid_stream(ActivityMode::Expanded);
+    v.ui.layout = "ledger".into();
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::Reasoning {
+            text: "first the loop, then the tests ".repeat(30),
+        },
+    );
+    v.workbench = Some(crate::workbench::Workbench::open(
+        &v,
+        repo.path().to_path_buf(),
+    ));
+    let shown = render_to_string(&v, 160, 50);
+    assert!(
+        !shown.contains("reasoning · "),
+        "no pane in the workbench's chat\n{shown}"
+    );
+    assert!(
+        shown.contains("^r close"),
+        "the strip is the workbench's reasoning surface\n{shown}"
+    );
+}
+
 #[test]
 fn the_reasoning_pane_opens_under_the_status_row() {
     for layout in ["ledger", "classic"] {

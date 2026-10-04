@@ -337,7 +337,12 @@ fn place(view: &View, width: usize, theme: Theme, pane_cap: usize) -> Laid {
     // The reasoning pane is part of the conversation: under the status row
     // while the turn runs, under the turn's closing line after, where `^r`
     // or a click on the row opened it.
-    if view.activity.mode == crate::activity::Mode::Expanded && view.activity.has_history {
+    // Not on the workbench: that screen keeps the strip as its one
+    // reasoning surface, and never publishes the row to click.
+    if view.activity.mode == crate::activity::Mode::Expanded
+        && view.activity.has_history
+        && view.workbench.is_none()
+    {
         let lines = reasoning_pane(view, width, pane_cap, theme);
         pane_at = Some(row);
         let n = lines.len();
