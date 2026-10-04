@@ -4,19 +4,74 @@ Living plan for Ryter.
 
 ## What 1.0 means
 
-**There is no agreed list yet.** The list that stood here was written around crew mode, which was removed on 2026-10-01; it is in this file's history. A new one is to be written with the user once the plan, build and review flow has taken a real project from a plan to a reviewed change. Until there is one, Ryter stays below 1.0, and releases go 0.11, 0.12 and on.
+Agreed with the user on 2026-10-04. 1.0 is a gate, not a count: when every item holds, the user decides whether to release 1.0.0. Until then releases go 0.19, 0.20 and on. **No new specialist hat is added before 1.0.** The product as it stands, plan and build above the line and audit and scribe below, is what gets polished and proven. Ideas for more hats (a scout, the builder delegating to a specialist) wait on the other side of the gate.
 
-From the old list, what did not depend on a crew, as candidates for the user to keep, change or drop:
+1. **The flow holds on a real project.** Plan, build, audit, repair and scribe, on a web service and on a terminal or desktop app, driven by the user with real models, without a workaround. The audit starts the product and uses it; the scribe writes the README and the guide on a cheap seat. This has not been done since the hats took their present shape, and it is the item that gates the others.
+2. **A normal build asks for nothing.** Only deleting, discarding work in git, publishing or leaving the machine, writing outside the project, scratch space and home, and the project's `.env` ask. The user's real sessions, replayed through the gate, say so, and a new real session finds no new spelling.
+3. **Setup works the first time** on Linux and macOS: install, add a key, make a change, with no step the guide does not cover. Only models the account can use are offered, and a hat's model is checked when it is chosen, not on its first message.
+4. **Ryter touches only the project it was started in.** It never creates a repository in a folder that holds other projects, never commits on its own, and says what it set up.
+5. **Cost is predictable.** What a model switch or an audit will cost is said before it is spent; project cost counts only the project; a turn that stops for its round cap or its budget says so and how to go on.
+6. **The screen never lies.** A thinking model looks alive, a question is announced where the eye is and covers nothing, nothing in the conversation is hidden by a card, and the figures on the rack and the instruments match the session's records.
+7. **No known data-loss or wrong-number bug is open,** and the guide matches the release: every command, key and screen in `docs/guide.md` works as the release does, on Linux and on macOS by hand.
+8. **The week's decisions stay made:** two rows, Tab within and Shift+Tab between; the audit changes nothing by checkpoint and rollback; `.ryter/plan.md` and `.ryter/audit.md` known to every hat; plan approval the one automatic hat change; no delegation. These are lines not to cross before 1.0, not features to add.
 
-- Setup works the first time: install, add a key, and make a first change on Linux and macOS, with no step the guide doesn't cover. Only models the account can use are offered.
-- Ryter only touches the project it was started in: it never creates a repository in a folder that holds other projects, never commits anything itself, and says what it set up.
-- Cost is predictable: what a review or a model switch will cost is said before it is spent, and project cost counts only the project.
-- Review means something: the reviewer can look at what was built before it gives a verdict (the terminal for terminal apps, the browser for web apps).
-- The model has the tools the job needs: skills it loads itself, pages it can show the user, and images it can see.
-- No known data-loss or wrong-number bugs are open.
-- The guide matches the product: every command and screen in `docs/guide.md` works as the release does.
+Dropped from the earlier candidates: "the model has the tools the job needs" (open-ended; skills, pages and images exist) and everything that depended on a crew or the test hat.
 
 ## Now
+
+Work that is in `dev` and not yet released is marked *Unreleased*; its notes collect in `docs/releases/`. An entry gets its version when it is released.
+
+- **Unreleased — the polish patch after 0.18.0.** Queued by the user and the 0.18.0 reviews: the audit card on a failure offers Enter alone (`y` goes); the guide's stop message names `--rounds` beside `/settings` and `[limits] rounds`; the allow card's own key row at 100×30 fits only `⏎` while the foot line shows all three; an audit filed with no verdict repairs on Enter, where the contract defines only pass and fail; the classic layout's foot line does not take the warn color while a card is open.
+
+- **The first real run on the hats as they are (1.0 item 1).** The user takes a project from plan to audit to repair to scribe with real models, on a service and on a desktop or terminal app, and what breaks or asks goes into the next polish patch. Nothing in the audit's start-the-product path or the scribe's seat has been seen outside the simulated provider.
+
+## Next
+
+Everything here serves an item of the 1.0 list; the number says which. The direction that put the hats where they are is in `DECISIONS.md` (2026-10-01 to 2026-10-04) and `docs/specialists-design.md`; this section no longer repeats it.
+
+**Item 3, setup and models**
+- A hat's model is checked when it is chosen in `/models`: one tiny request with a tool, to catch a data policy that refuses it, missing tool support, or no credits. Today such a model fails on its first message.
+- macOS by hand: install, a key, a change, the TUI at three widths. The sandbox is Linux-only and is labelled so.
+
+**Item 5, cost**
+- Reconcile the context gauge with the provider's real `input_tokens` rather than bytes/4.
+- The round cap's message and the budget's message read the same way and say how to go on.
+
+**Item 6, the screen**
+- Streamed `bash` output in the conversation (the shell already passes a running command's newest lines to a hook nothing listens on).
+- The light theme on a real terminal, with the watermark, looked at by a person.
+
+**Item 7, correctness and the guide**
+- Recorded wire fixtures per provider (tool calls, parallel calls, truncation), replayed in tests, and one live round trip per built-in provider run by hand before a release. Tool calling was once broken on two backends while every test passed.
+- Anthropic extended thinking with tools (thinking blocks echoed back on `messages`).
+- The guide read against the release, screen by screen, before 1.0.
+- Rename what the one-mode world left behind: `[orchestrator]`, `[specialists.*]`, the `Solo*` names.
+
+**Item 2 and item 8, the gate and the lines**
+- Decide with the user what a sandbox profile is for. Under `workspace` or `read-only` the home folder is shut at the system level, so `cargo install` or a tool writing `~/.config/<name>` on first run fails; Landlock cannot grant a folder with exceptions.
+- Narrow the sandbox's grant on Ryter's own folder to this project's sessions.
+- Recorded live sessions replayed through the gate after each change to it, as was done for 0.14.0.
+
+**Also open, not gating 1.0**
+- A light-theme contrast pass; the kitty keyboard protocol for Shift+Enter where the terminal supports it; `/theme` previewing a custom theme's full syntax palette.
+- Landlock default-on once it is boring; ABI V4 for `AccessNet` (the sandbox is filesystem-only today).
+- Headless `ryter -p --pretty` reusing the TUI's Markdown renderer.
+- `ryter-cli` tests; confirm grok-4.6's context window (500k in `window_for`, 256k in fixtures).
+
+## Later
+
+After 1.0, by the user's decision then:
+
+- More specialists, if a need shows: a scout (read-only, cheap, for questions about the code), and whether the builder may hand a task to a specialist (delegation, which sank the crew and is a design of its own).
+- macOS and Windows as first-class.
+- SQLite FTS over notes when DECISIONS.md outgrows a prompt.
+- Session search across transcripts from `/sessions`.
+
+## Done
+
+### 0.13.0 to 0.18.0 — the hat rack, the lenient gate, three hats, two rows, the screen (2026-10-02 to 2026-10-04)
+
+Released in six releases over three days, each from a dev → main PR with two external reviews; the notes are under `docs/releases/`.
 
 - **0.18.0 — after the first session on 0.17.0.** One spinner: the activity strip is gone from the solo and classic screens, and the reasoning pane opens in the conversation under the status row (`^r`, or a click on the row), under the turn's closing line after. The rounds one message may use are `[limits] rounds` (150; `0` lifts the cap), *rounds a turn* in `/settings`, `--rounds N`. The scribe, asked for documentation, writes `README.md` and `docs/guide.md`. A passed audit's card closes on Enter; a failed one repairs in build on Enter as on `y`.
 
@@ -44,7 +99,6 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 
 - **0.12.0 — review repair 7c: session sandbox scopes.** Each tool, hook, automatic Git operation and approved lifecycle command runs in a fresh scope with only the active session’s notes and pages. Other sessions and private records stay closed. Session switching keeps working without accumulating grants.
 
-
 - **0.12.0 — review repair 1 follow-up: protected path components.** Shared secret classification now catches credential directories at the project root as well as nested paths. All four hats reject direct reads, shell reads and linked aliases; grep skips their contents. Example environment files and published verification keys remain readable.
 
 - **0.12.0 — review repair 8d: Git scratch ownership.** Each checkpoint, initial-index probe and commit message owns a unique private scratch directory in Git metadata. Cleanup runs on success and failure. Concurrent snapshots preserve the real index; concurrent session appends remain readable after resume.
@@ -70,8 +124,6 @@ From the old list, what did not depend on a crew, as candidates for the user to 
 - **0.12.0 — review repair 3: spending integrity.** Commit drafting obeys the same budget admission checks as turns. Interrupted calls retain reported usage and mark accounting incomplete; a budget then stops further requests even after resume. Missing override rates remain unknown.
 
 - **0.12.0 — review repair 1: file-read boundaries.** Project instructions, prompt overrides and memory refuse linked files and directories; memory has one 48 KB cap. Search refuses linked files, and nested `.env` variants follow the same secret rules as root files. Regression tests cover all four hats. Remaining repair stages are in `docs/review-2026-10-02.md`.
-
-Work that is in `dev` and not yet released is marked *Unreleased*, and its notes collect in `docs/releases/next.md`. An entry gets its version when it's released.
 
 - **0.11.0 — the gate judges what runs, not what was written.** From the release's first round of external reviews. The gate expands patterns and lists as the shell does and judges every match; follows `cd`; reads option values, unspaced redirects and the shell's own words; refuses what changes how the shell reads (`HOME=…`, `shopt`, `env -C`); reads inline-code flags per interpreter; judges `git`, searches through folders and container paths. The plan and review hats no longer write the user's folder. Ryter's own files are never written or read through a link, and its records are kept from outside the sandbox.
 - **0.11.0 — fixes from two independent reviews, before the acceptance run.** One agent read the permission gate and one the Test hat and run file, neither having written them. Twenty defects, each fixed with a test: secrets printed by commands the gate didn't count as printing, `xargs` and `/dev/stdin` as ways round, the review hat running scripts it had just written, `docker cp` and mounts of the folder above the project; the run-file panel cutting long commands, approval recorded for a file other than the one shown, headless self-approval, a review reading the tester's conversation, a start left half up, a product started twice, the receipt in a project that is a subfolder of its repository, and the screen and the agent disagreeing about the hat. Also: the trust question is not asked for Ryter's own files, and each conversation has its own context gauge.
@@ -208,53 +260,6 @@ Work that is in `dev` and not yet released is marked *Unreleased*, and its notes
 - 0.2.0 TUI redesign (`design.md`) — all seven phases landed on `0.2.0-patch`; PR to `dev` for outside review, then `dev` → `main`
 - `gaps.md` review closed: G-01..G-07 all fixed. One new item opened there — S-01, the snapshot harness cannot see style, so `R-POP-04` (dim behind a panel) is unassertable
 - Resolve `design.md` open items in review: O-01 drop `Spend` as the `busy` fallback once headless/MCP consumers read `TurnFinished`; O-02 `ryter doctor --json` (CLI, not the panel); O-03 `light` theme shipped but marked experimental; O-04 per-message copy deferred with the clipboard question (mitigated: `Ctrl+G` releases the mouse so terminal selection works)
-
-## Next
-
-Product direction, as it was written with two modes: `docs/product-direction.md`.
-
-### Direction (decided 2026-10-01): one mode, with the user as the lead
-
-Ryter is one mode: one model in the project, with a hat for each stage of the work and, if the user wants, a different model for each hat. Crew mode is removed.
-
-**Why.** Crew mode ran a lead, an architect, builders and an auditor without the user, and no real project completed that way. On the one tried with a paid crew (a Docker CMS, 2026-10-01), every failure was a missing person: the architect made the first task too big, the auditor could not verify it, and the lead reported a limit the machine didn't have. That session spent $4.36 and its first task was rejected seven times. Cost can't be predicted for an unattended run either: the tokens one builder task used varied about a hundredfold across twelve runs. The user's words: "I keep wasting money trying to get the crew to work when we already decided to rip it out."
-
-**What was kept,** as hats the user moves between: a second model reviewing before the work is called done, spend that is capped and shown, and changes that can be undone as one.
-
-**The order:**
-
-1. **Plan approval in a popout** (in `dev`). The plan hat writes a plan; it opens in a scrolling panel with approve, adjust and reject, and is written to disk on approve. The build hat works from that file.
-2. **A model for each hat** (in `dev`), set in `/models`. By default every hat follows one model. The hats share one conversation, and a switch to another model shows what re-reading it will cost.
-3. **Review as a gate** (in `dev`). The review hat, on a different model when the user sets one, checks the change against the plan and for bugs before it is called done. It took `/audit`'s place: there is one reviewer.
-4. **Crew mode removed** (in `dev`), moved ahead of the rest on 2026-10-01 so that no more time or money goes into it.
-5. **The Test hat**, removed on 2026-10-03 after the first real session on 0.14.0 (the Now entry and `DECISIONS.md`; `docs/test-hat.md` is its design, kept as history). It was: (designed with the user on 2026-10-01; the approved design and mockups are in `docs/test-hat.md`). All of it is in `dev`. A fourth hat that uses the product as a user would, in a thread of its own that continues through the session. It reads the plan and the decisions, not the conversation. Its report goes into the main conversation, into `.ryter/tests/`, and onto the commit receipt. The project's start, ready, test and stop commands are drafted by the model, approved by the user, and kept in `.ryter/run.toml`.
-6. **The acceptance test:** the CMS project, taken from a plan to a tested change this way.
-7. **A benchmark on the hats,** using the tasks in `bench/`, and the list of what 1.0 means written with the user.
-
-- **Narrow the sandbox's grant on Ryter's own folder.** Under a profile, commands can read and write every project's sessions under `~/.ryter`, not only this project's. Grant this project's alone.
-- **A limit for a test.** A review has its own spending limit; a test has only the session budget. Its estimate is wide (a handful of rounds to a few dozen) until the user has a history of tests with that model.
-- **How much of the home folder a sandbox profile opens.** The gate leaves the home folder open (keys and startup files aside); `workspace` and `read-only` shut it at the system level, beyond tools and their caches. So `cargo install`, or a tool that writes `~/.config/<name>` on first run, fails under a profile. Landlock can't grant a folder with exceptions, so opening it means listing its entries at start, and a new entry directly in `~` or `~/.config` still couldn't be made. Decide with the user what a profile is for.
-- **A new session can pick up an earlier plan.** The approved plan is remembered by the session. Quit, come back the next day in a new session, and a review says no plan was approved, and no decision can be recorded against it. Let the user make a plan in `.ryter/plans/` the current one.
-- **A hat's model is checked before it is used.** `ryter crew check` and the crew builder sent each seat's model one tiny request with a tool, to catch a data policy that refuses it, missing tool support, or no credits. That went with crew mode. Today such a model fails on its first message. Check a hat's model when it is chosen in `/models`.
-- **The project says how to test itself.** Detect it on first use (`Cargo.toml` → `cargo test`, `package.json` → its test script, `pyproject.toml` → `pytest`, `go.mod` → `go test`, a compose file → the command in its container), confirmed by the user and kept in the project. The fourth hat needs it, and a review can run it before it reads the diff.
-- **Recorded wire fixtures + a live smoke test.** Tool calling was broken on two backends while 212 tests passed, because every test used idealized deltas. Record real SSE per provider (tool calls, parallel calls, truncation) and replay those; add one nightly live round trip per built-in provider.
-- **Streamed `bash` output** (the shell already passes a running command's newest lines to a hook nothing listens on), and **reconcile the context gauge** with the provider's real `input_tokens` rather than bytes/4.
-- **macOS without the sandbox**, labelled Linux-only.
-- Anthropic extended thinking + tools (thinking blocks must be echoed back on `messages`); `ryter-cli` tests; confirm grok-4.6's context window (500k in `window_for`, 256k in fixtures); rename `[orchestrator]`, `[specialists.*]` and the `Solo*` names in the code now that there is one mode.
-
-Previously listed:
-
-- 0.2.1 — light-theme contrast pass on real terminals, kitty keyboard protocol for Shift+Enter where the terminal supports it, `/theme` custom `~/.ryter/themes/*.toml` preview of the full syntax palette
-- 0.3.0 — Landlock default-on once it is boring; consider ABI V4 for `AccessNet` (the sandbox is filesystem-only today)
-- 0.3.0 — headless `ryter -p` output that reuses the TUI markdown renderer for `--pretty`
-
-## Later
-
-- macOS / Windows
-- SQLite FTS over notes when DECISIONS.md outgrows a prompt
-- Session search across transcripts from `/sessions`
-
-## Done
 
 ### 0.2.0-patch — solo mode: one model, three hats (2026-09-21)
 
