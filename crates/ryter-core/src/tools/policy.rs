@@ -1903,11 +1903,9 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> (Decision, Option<String>) {
                 let Some((name, value)) = assigned(w) else {
                     continue;
                 };
-                // An assignment to a nameref lands on its referent.
-                let name = assigns(&vars, name);
-                vars.retain(|(n, _)| *n != name);
+                vars.retain(|(n, _)| n != name);
                 if for_sure && !w.contains("+=") && !value.contains(['$', '`']) {
-                    vars.push((name, value.to_string()));
+                    vars.push((name.to_string(), value.to_string()));
                 }
             }
         } else {
@@ -1916,18 +1914,13 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> (Decision, Option<String>) {
             // `export NAME=value`, `declare`, `typeset`, `local` and
             // `readonly` set the variable as `NAME=value` does, read where
             // it is used later on the same terms, whatever other flags
-            // they carry: `-x`, `-r`, `-g`, `-a`, `-i`, `-t` and the `+`
-            // forms leave `$NAME` the text written, and `-u`/`-l` change
-            // its case, which is applied. The one flag that changes what
-            // `$NAME` is: `-n` on `declare`, `typeset` or `local` makes
-            // NAME a nameref, so `$NAME` is the referent's value and an
-            // assignment to NAME lands on the referent. The nameref is
-            // stored as a pointer ([`nameref`]) and followed where it is
-            // read ([`known_variables`]) and written ([`assigns`]); one
-            // whose referent the gate does not know is unknown itself.
-            // `export -n` only un-exports, and `+n` removes the pointer.
-            // `export NAME` alone leaves a known value as it was; a value
-            // only the shell can read makes the name unknown.
+            // they carry: `$NAME` is the text written, with `-u`/`-l`
+            // applied as bash applies them, when exactly one of the two is
+            // set and not removed by its `+` form. A nameref (`-n`) is
+            // refused before this ([`makes_a_nameref`]). `local` outside a
+            // function fails and changes nothing. `export NAME` alone
+            // leaves a known value as it was; a value only the shell can
+            // read makes the name unknown.
             const EXPORTERS: &[&str] = &["export", "declare", "typeset", "local", "readonly"];
             if let Some(exporter) = program(&said).filter(|p| EXPORTERS.contains(p)) {
                 let at = said
@@ -1944,67 +1937,25 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> (Decision, Option<String>) {
                     opts.iter()
                         .any(|w| w.starts_with(sign) && w[1..].contains(flag))
                 };
-                let points = matches!(exporter, "declare" | "typeset" | "local") && has('-', 'n');
-                let unpoints = has('+', 'n');
-                // `local` outside a function fails and changes nothing.
+                let upper = has('-', 'u') && !has('+', 'u');
+                let lower = has('-', 'l') && !has('+', 'l');
                 let acts = exporter != "local" || s.inside;
                 for w in said
                     .iter()
                     .skip(at)
                     .filter(|w| acts && !w.starts_with(['-', '+']))
                 {
-                    if points {
-                        match assigned(w) {
-                            // `declare -n F=G` points F at G. `-u`/`-l`
-                            // recase the name, since a nameref's value is
-                            // that name; a name that is not one fails.
-                            Some((name, target)) => {
-                                let target = if has('-', 'u') {
-                                    target.to_uppercase()
-                                } else if has('-', 'l') {
-                                    target.to_lowercase()
-                                } else {
-                                    target.to_string()
-                                };
-                                vars.retain(|(n, _)| n != name);
-                                if for_sure && is_identifier(&target) && target != name {
-                                    vars.push((name.to_string(), format!("{REF}{target}")));
-                                }
-                            }
-                            // `declare -n F` points F at the name F held. A
-                            // value that is not a name fails and leaves the
-                            // scalar; a pointer stays as it is; a name the
-                            // gate does not know stays unknown.
-                            None => {
-                                let held = vars
-                                    .iter()
-                                    .find(|(n, _)| n == w)
-                                    .map(|(_, v)| v.clone())
-                                    .filter(|v| nameref(v).is_none() && is_identifier(v) && v != w);
-                                if let Some(held) = held {
-                                    vars.retain(|(n, _)| n != w);
-                                    if for_sure {
-                                        vars.push((w.clone(), format!("{REF}{held}")));
-                                    }
-                                }
-                            }
-                        }
-                    } else if let Some((name, value)) = assigned(w) {
-                        let name = if unpoints {
-                            name.to_string()
-                        } else {
-                            assigns(&vars, name)
-                        };
-                        let value = if has('-', 'u') {
+                    if let Some((name, value)) = assigned(w) {
+                        let value = if upper && !lower {
                             value.to_uppercase()
-                        } else if has('-', 'l') {
+                        } else if lower && !upper {
                             value.to_lowercase()
                         } else {
                             value.to_string()
                         };
-                        vars.retain(|(n, _)| *n != name);
+                        vars.retain(|(n, _)| n != name);
                         if for_sure && !w.contains("+=") && !value.contains(['$', '`']) {
-                            vars.push((name, value));
+                            vars.push((name.to_string(), value));
                         }
                     }
                 }
@@ -2025,44 +1976,12 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> (Decision, Option<String>) {
                         | "."
                 )
             ) {
-                // A name this command sets or unsets is one the gate no
-                // longer knows. Through a nameref it is the referent that
-                // changes: `unset F`, `read F`, `let F=…`, `printf -v F`
-                // and the readers land on what F points at, and the
-                // pointer stays. `unset -n F` drops the pointer and keeps
-                // the referent; `for F`, `select F` repoint F; a name only
-                // printed or passed to `eval` is forgotten as before, its
-                // referent kept.
-                let prog = program(&said).unwrap_or("");
-                let flagged = |flag: char| {
-                    said.iter()
-                        .any(|w| w.starts_with('-') && w.len() > 1 && w[1..].contains(flag))
-                };
-                let through = match prog {
-                    "unset" => !flagged('n'),
-                    "read" | "mapfile" | "readarray" | "getopts" | "let" => true,
-                    "printf" => flagged('v'),
-                    _ => false,
-                };
-                let mentioned = |n: &str| {
-                    said.iter().any(|w| {
+                vars.retain(|(n, _)| {
+                    !said.iter().any(|w| {
                         w.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
                             .any(|part| part == n)
                     })
-                };
-                let named: Vec<(String, bool)> = vars
-                    .iter()
-                    .filter(|(n, _)| mentioned(n))
-                    .map(|(n, v)| (n.clone(), nameref(v).is_some()))
-                    .collect();
-                for (n, is_pointer) in named {
-                    if is_pointer && through {
-                        let target = assigns(&vars, &n);
-                        vars.retain(|(m, _)| *m != target);
-                    } else {
-                        vars.retain(|(m, _)| *m != n);
-                    }
-                }
+                });
             }
         }
         if moved.is_empty() {
@@ -2218,6 +2137,9 @@ fn decide_segment_in(seg: &str, ctx: &ToolContext, in_container: bool) -> Decisi
     // work, that is the judgment, and the name is theirs to give. The hats
     // that only look may not hide a command behind a name. A coprocess
     // runs on out of sight, in any hat.
+    if makes_a_nameref(&words) {
+        return Decision::Deny;
+    }
     if let Some(first) = words.first() {
         if first == "coproc" {
             return Decision::Deny;
@@ -2518,6 +2440,24 @@ fn assignment(name: &str, value: &str, ctx: &ToolContext) -> Decision {
 /// later (`trap … EXIT`). The gate reads the rest of the command as it is
 /// written, so these are refused.
 const REWIRES_THE_SHELL: &[&str] = &["shopt", "hash", "alias", "enable", "trap", "bind"];
+
+/// `declare -n F=G` (and `typeset -n`, `local -n`) makes F a nameref: `$F`
+/// is G's value, an assignment to F lands on G, `-nu` recases the name,
+/// `read F` loads G, `unset F` unsets G. The command the gate reads is
+/// then not the command that runs, in as many spellings as bash has, so
+/// the declaration is refused in every hat, as `alias` and `HOME=` are.
+/// Only the minus form makes one: `+n` removes it, `--` ends the options,
+/// and `export -n`, `readonly -n` are scalars.
+fn makes_a_nameref(words: &[String]) -> bool {
+    let p = parse(words);
+    if !matches!(p.prog, Some("declare" | "typeset" | "local")) {
+        return false;
+    }
+    words[p.args.min(words.len())..]
+        .iter()
+        .take_while(|w| w.starts_with(['-', '+']) && w.as_str() != "--")
+        .any(|w| w.starts_with('-') && w[1..].contains('n'))
+}
 
 /// `set` with only the options that stop or trace a script: `set -e`,
 /// `set -euo pipefail`, `set -x`.
@@ -3391,6 +3331,16 @@ fn removes_container_data(prog: &str, args: &[String]) -> bool {
 /// policy", a reviewer in a live run gave up and hand-traced instead.
 pub fn bash_hint(args: &Value, ctx: &ToolContext) -> Option<&'static str> {
     let cmd = args.get("command").and_then(Value::as_str)?;
+    if segments(cmd)
+        .iter()
+        .any(|s| makes_a_nameref(&read(s, ctx, false)))
+    {
+        return Some(
+            "`declare -n` makes one name stand for another, so `$NAME` is not what was \
+             written to it and the command the gate reads is not the one that runs. \
+             Refused in every hat; use the variable itself.",
+        );
+    }
     let searches_a_secret = segments(cmd).iter().any(|s| {
         let w = read(s, ctx, false);
         let p = parse(&w);
@@ -4555,55 +4505,6 @@ fn words(seg: &str) -> Vec<String> {
     lex(seg).iter().map(|w| expand::plain(w)).collect()
 }
 
-/// The mark a stored value carries when the name is a nameref (`declare -n
-/// F=G`): what follows is the referent's name, not a value.
-const REF: &str = "\u{0}ref:";
-
-/// The referent a stored value points at, if the name is a nameref.
-fn nameref(value: &str) -> Option<&str> {
-    value.strip_prefix(REF)
-}
-
-/// A shell variable name.
-fn is_identifier(s: &str) -> bool {
-    let mut chars = s.chars();
-    chars
-        .next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-/// The value `$name` expands to, following namerefs to the end of the
-/// chain; `None` for a name the gate does not know, or a chain that loops.
-fn value_of<'a>(vars: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    let mut name = name;
-    for _ in 0..8 {
-        let (_, value) = vars.iter().find(|(n, _)| n == name)?;
-        match nameref(value) {
-            Some(target) => name = target,
-            None => return Some(value),
-        }
-    }
-    None
-}
-
-/// The name an assignment to `name` lands on: the end of its nameref
-/// chain, or `name` itself when it is a plain variable.
-fn assigns(vars: &[(String, String)], name: &str) -> String {
-    let mut name = name;
-    for _ in 0..8 {
-        match vars
-            .iter()
-            .find(|(n, _)| n == name)
-            .and_then(|(_, v)| nameref(v))
-        {
-            Some(target) => name = target,
-            None => break,
-        }
-    }
-    name.to_string()
-}
-
 /// `word` with the variables an earlier part of the command set put in:
 /// `$B/health` after `B=http://localhost:8001`. One that wasn't set there
 /// stays as written, a word only the shell can read.
@@ -4611,13 +4512,6 @@ fn known_variables(word: &str, vars: &[(String, String)]) -> String {
     if !word.contains('$') || vars.is_empty() {
         return word.to_string();
     }
-    // A nameref reads as its referent's value; one pointing at a name the
-    // gate does not know is unknown itself.
-    let resolved: Vec<(String, String)> = vars
-        .iter()
-        .filter_map(|(name, _)| value_of(vars, name).map(|v| (name.clone(), v.to_string())))
-        .collect();
-    let vars = &resolved;
     let mut out = word.to_string();
     // Longest names first, so `$BASE` is not read as `$B` and `ASE`.
     let mut by_length: Vec<&(String, String)> = vars.iter().collect();
@@ -8816,136 +8710,57 @@ mod tests {
     /// ask for the place it is, not a path the gate can't read. The
     /// audit's `export TASKS_FILE=/tmp/audit-tasks.json; rm -f
     /// "$TASKS_FILE"` asked as the latter.
-    /// `declare -n F=G` makes F a nameref: `$F` is G's value, read when it
-    /// is used, so a later `G=…` is followed; `F=…` lands on G; `unset F`
-    /// forgets G. A referent the gate does not know makes F unknown. Every
-    /// other flag keeps the value written (`-u`/`-l` with its case
-    /// changed), as the plain assignment does: dropping the name would
-    /// make a later deletion a plain Ask, which `--always-approve` runs,
-    /// where the known path stays AskOutside.
+    /// A nameref (`declare -n F=G`) makes `$F` G's value and an assignment
+    /// to F land on G, in as many spellings as bash has (`-nu` recases the
+    /// referent, `read F` loads it, `unset F` unsets G): the command the
+    /// gate reads is not the one that runs. The declaration is refused in
+    /// every hat, by every spelling, as `alias` and `HOME=` are. Every
+    /// other flag keeps the value written, with `-u`/`-l` applied as bash
+    /// applies them: when exactly one is set and not removed. `local`
+    /// outside a function changes nothing.
     #[test]
-    fn a_nameref_is_its_referent_and_other_flags_keep_the_value() {
+    fn a_nameref_is_refused_and_other_flags_keep_the_value() {
         let dir = TempDir::new().unwrap();
         let d = dir.path();
-        let judge = |cmd: &str| bash(cmd, Role::SoloBuild, d);
-        let secret = judge("cat ~/.ssh/id_rsa");
-        assert_eq!(secret, Decision::Deny);
-        let outside = judge("echo x > /opt/other/x");
-        assert_eq!(outside, Decision::AskOutside);
-        let unknown = judge("echo x > \"$F\"");
-        assert_eq!(unknown, Decision::AskOutside);
-        // Read through the nameref: the referent's value, by every spelling.
-        for set in [
-            "G=~/.ssh/id_rsa; declare -n F=G",
-            "G=~/.ssh/id_rsa; declare -nx F=G",
-            "G=~/.ssh/id_rsa; declare -xn F=G",
-            "G=~/.ssh/id_rsa; declare +x -n F=G",
-            "G=~/.ssh/id_rsa; typeset -n F=G",
-            "G=~/.ssh/id_rsa; local -n F=G",
-            "G=~/.ssh/id_rsa; declare -n F=\"G\"",
-            // The bare form points F at the name it held.
-            "F=G; G=~/.ssh/id_rsa; declare -n F",
-            // Followed when read, so a later referent counts.
-            "G=README.md; declare -n F=G; G=~/.ssh/id_rsa",
-            // Two hops.
-            "H=~/.ssh/id_rsa; declare -n G=H; declare -n F=G",
-        ] {
-            let cmd = format!("{set}; cat \"$F\"");
-            assert_eq!(judge(&cmd), secret, "{cmd}");
-        }
-        // Written through the nameref: lands on the referent.
-        assert_eq!(
-            judge("G=README.md; declare -n F=G; F=~/.ssh/id_rsa; cat \"$G\""),
-            secret
-        );
-        assert_eq!(
-            judge("G=README.md; declare -n F=G; export F=~/.ssh/id_rsa; cat \"$G\""),
-            secret
-        );
-        // Judged as the referent's path: outside asks, inside runs.
-        assert_eq!(
-            judge("G=/opt/other/x; declare -n F=G; echo x > \"$F\""),
-            outside
-        );
-        assert_eq!(
-            judge("G=README.md; declare -n F=G; echo x > \"$F\""),
-            Decision::Allow
-        );
-        // A referent the gate does not know, or none: F is unknown.
-        for set in [
+        for cmd in [
             "declare -n F=G",
-            "declare -n F=$X",
-            "G=$X; declare -n F=G",
-            "G=/opt/other/x; declare -n F=G; unset G",
-            "G=/opt/other/x; declare -n F=G; unset F",
-            "G=/opt/other/x; if true; then declare -n F=G; fi",
-            // `read F` through the nameref: G is now what was read.
-            "G=README.md; declare -n F=G; read F < run.sh",
-            "G=README.md; declare -n F=G; let F=1",
-            "G=README.md; declare -n F=G; printf -v F %s x",
+            "declare -nx F=G",
+            "declare -xn F=G",
+            "declare +x -n F=G",
+            "declare -n F",
+            "declare -nu F=g",
+            "declare -n -u -l F=g",
+            "declare -nu +u F=g",
+            "declare -n +u -u F=g",
+            "declare -n F=/tmp/x",
+            "declare -n F=F",
+            "typeset -n F=G",
+            "local -n F=G",
+            "f() { local -n F=G; }",
+            "if true; then declare -n F=G; fi",
+            "G=x && declare -n F=G",
+            "G=x; declare -n F=G; cat \"$F\"",
+            "command declare -n F=G",
+            "builtin declare -n F=G",
+            "\\declare -n F=G",
+            "declare -n F=G 2>/dev/null",
         ] {
-            let cmd = format!("{set}; echo x > \"$F\"");
-            assert_eq!(judge(&cmd), unknown, "{cmd}");
+            for role in [
+                Role::SoloBuild,
+                Role::SoloPlan,
+                Role::SoloAudit,
+                Role::SoloScribe,
+            ] {
+                assert_eq!(bash(cmd, role, d), Decision::Deny, "{role:?}: {cmd}");
+            }
         }
-        // `unset F` on a nameref unsets the referent and keeps the pointer,
-        // so a later `G=` is read through F again. `unset -n F` drops the
-        // pointer and keeps the referent. A name only printed, passed to
-        // `eval` or repointed by `for` leaves the referent known.
-        assert_eq!(
-            judge("G=/opt/other/x; declare -n F=G; unset F; echo x > \"$G\""),
-            unknown
+        let hint = bash_hint(
+            &json!({"command": "G=x; declare -n F=G; cat \"$F\""}),
+            &ctx_for(Role::SoloBuild, d),
         );
-        for cmd in [
-            "G=/tmp/x; declare -n F=G; unset F; G=~/.ssh/id_rsa; cat \"$F\"",
-            "G=~/.ssh/id_rsa; declare -n F=G; unset -n F; cat \"$G\"",
-            "G=~/.ssh/id_rsa; declare -n F=G; printf %s F; cat \"$G\"",
-            "G=~/.ssh/id_rsa; declare -n F=G; eval echo F; cat \"$G\"",
-            "G=~/.ssh/id_rsa; declare -n F=G; for F in x; do :; done; cat \"$G\"",
-        ] {
-            assert_eq!(judge(cmd), secret, "{cmd}");
-        }
-        assert_eq!(
-            judge("G=/tmp/x; declare -n F=G; unset -n F; rm -f \"$G\""),
-            Decision::AskOutside
-        );
-        // The case flags on a nameref recase the referent's name, not the
-        // value: `declare -nu F=g` points F at G.
-        std::fs::write(d.join("run.sh"), "/opt/other/x\n").unwrap();
-        for cmd in [
-            "G=~/.ssh/id_rsa; declare -nu F=g; cat \"$F\"",
-            "G=~/.ssh/id_rsa; declare -n -u F=g; cat \"$F\"",
-            "g=~/.ssh/id_rsa; declare -ln F=G; cat \"$F\"",
-            "G=~/.ssh/id_rsa; declare -nu F=G; cat \"$F\"",
-            "F=g; g=~/.ssh/id_rsa; declare -nu F; cat \"$F\"",
-        ] {
-            assert_eq!(judge(cmd), secret, "{cmd}");
-        }
-        for cmd in [
-            "g=README.md; read G < run.sh; declare -nu F=g; echo x > \"$F\"",
-            "G=README.md; read g < run.sh; declare -nl F=G; echo x > \"$F\"",
-        ] {
-            assert_eq!(judge(cmd), unknown, "{cmd}");
-        }
-        // A bare `-n` on a value that is not a name fails and leaves the
-        // scalar.
-        assert_eq!(judge("F=~/.ssh/id_rsa; declare -n F; cat \"$F\""), secret);
-        assert_eq!(judge("F=~/.ssh/id_rsa; typeset -n F; cat \"$F\""), secret);
-        assert_eq!(
-            judge("F=/opt/other/x; declare -n F; echo x > \"$F\""),
-            outside
-        );
-        // `local` outside a function fails and changes nothing.
-        assert_eq!(
-            judge("F=/opt/other/x; G=README.md; local -n F=G; echo x > \"$F\""),
-            outside
-        );
-        assert_eq!(
-            judge("F=~/.ssh/id_rsa; local F=README.md; cat \"$F\""),
-            secret
-        );
-        assert_eq!(judge("local F=/tmp/x; rm -f \"$F\""), judge("rm -f \"$F\""));
-        // Every other flag keeps the value written.
-        let plain = judge("F=/tmp/x; rm -f \"$F\"");
+        assert!(hint.is_some_and(|h| h.contains("`declare -n`")), "{hint:?}");
+        // Not a nameref: every other flag keeps the value written.
+        let plain = bash("F=/tmp/x; rm -f \"$F\"", Role::SoloBuild, d);
         assert_eq!(plain, Decision::AskOutside);
         for set in [
             "declare -x F=/tmp/x",
@@ -8959,24 +8774,69 @@ mod tests {
             "declare -I F=/tmp/x",
             "declare +n F=/tmp/x",
             "declare -l F=/TMP/X",
+            "declare -ul F=/tmp/x",
+            "declare -u +u F=/tmp/x",
             "typeset F=/tmp/x",
             "readonly F=/tmp/x",
             "readonly -n F=/tmp/x",
             "export -n F=/tmp/x",
             "export -p F=/tmp/x",
             "export -a F=/tmp/x",
-            // `+n` on a nameref makes it a plain variable again.
-            "G=README.md; declare -n F=G; declare +n F=/tmp/x",
         ] {
             let cmd = format!("{set}; rm -f \"$F\"");
-            assert_eq!(judge(&cmd), plain, "{cmd}");
+            assert_eq!(bash(&cmd, Role::SoloBuild, d), plain, "{cmd}");
         }
-        // `-u` and `-l` are applied to the value.
+        // `-u`/`-l`: applied when exactly one is set and not removed.
+        let secret = bash("cat ~/.ssh/id_rsa", Role::SoloBuild, d);
+        assert_eq!(secret, Decision::Deny);
+        let upper = bash("cat ~/.SSH/ID_RSA", Role::SoloBuild, d);
         assert_eq!(
-            judge("declare -u F=~/.ssh/id_rsa; cat \"$F\""),
-            judge("cat ~/.SSH/ID_RSA")
+            bash("declare -u F=~/.ssh/id_rsa; cat \"$F\"", Role::SoloBuild, d),
+            upper
         );
-        assert_eq!(judge("declare -l F=~/.SSH/ID_RSA; cat \"$F\""), secret);
+        assert_eq!(
+            bash(
+                "declare -u +l F=~/.ssh/id_rsa; cat \"$F\"",
+                Role::SoloBuild,
+                d
+            ),
+            upper
+        );
+        assert_eq!(
+            bash("declare -l F=~/.SSH/ID_RSA; cat \"$F\"", Role::SoloBuild, d),
+            secret
+        );
+        for set in [
+            "declare -ul F=~/.ssh/id_rsa",
+            "declare -lu F=~/.ssh/id_rsa",
+            "declare -u -l F=~/.ssh/id_rsa",
+            "declare -u +u F=~/.ssh/id_rsa",
+            "declare +u -u F=~/.ssh/id_rsa",
+        ] {
+            let cmd = format!("{set}; cat \"$F\"");
+            assert_eq!(bash(&cmd, Role::SoloBuild, d), secret, "{cmd}");
+        }
+        // `local` outside a function fails and changes nothing.
+        assert_eq!(
+            bash(
+                "F=/opt/other/x; local F=README.md; echo x > \"$F\"",
+                Role::SoloBuild,
+                d
+            ),
+            bash("echo x > /opt/other/x", Role::SoloBuild, d)
+        );
+        assert_eq!(
+            bash(
+                "F=~/.ssh/id_rsa; local F=README.md; cat \"$F\"",
+                Role::SoloBuild,
+                d
+            ),
+            secret
+        );
+        assert_eq!(
+            bash("local F=/tmp/x; rm -f \"$F\"", Role::SoloBuild, d),
+            bash("rm -f \"$F\"", Role::SoloBuild, d)
+        );
     }
 
     #[test]
