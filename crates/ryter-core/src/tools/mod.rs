@@ -49,6 +49,7 @@ pub fn strict_prompt(name: &str, args: &Value) -> bool {
             .and_then(Value::as_str)
             .is_some_and(policy::destructive_command)
 }
+pub(crate) use policy::own_host;
 pub use policy::{Decision, decide, removes_stack_data};
 
 /// How the build and test hats answer their own questions: `ask` a

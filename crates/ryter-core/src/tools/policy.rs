@@ -1911,24 +1911,37 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> (Decision, Option<String>) {
         } else {
             let mut said = set;
             strip_keywords(&mut said);
-            // `export NAME=value` (and `declare`, `typeset`, `local`,
-            // `readonly`) sets the variable as `NAME=value` does: read
-            // where it is used later, on the same terms. It used to only
-            // make the name unknown, so `export F=/tmp/x; rm -f "$F"` was
-            // a path the gate couldn't read, and asked for that, where
-            // `F=/tmp/x; rm -f "$F"` asked for the deletion it is.
-            // `export NAME` alone leaves a known value as it was; a value
-            // only the shell can read makes the name unknown.
+            // `export NAME=value`, `declare`, `typeset`, `local` and
+            // `readonly` set the variable as `NAME=value` does, read where
+            // it is used later on the same terms. Only a plain scalar is
+            // stored: a flag that makes the name something else (`-n` a
+            // nameref, `-a`/`-A` an array, `-i` an integer, `-l`/`-u` a
+            // case change, `-p`/`-f` not an assignment at all) makes the
+            // name unknown instead, since `$NAME` then expands to
+            // something other than the value written. `export`'s `-n`
+            // only un-exports and keeps the scalar. `-x`, `-r` and `-g`
+            // change nothing about the value. `export NAME` alone leaves a
+            // known value as it was; a value only the shell can read makes
+            // the name unknown.
             const EXPORTERS: &[&str] = &["export", "declare", "typeset", "local", "readonly"];
-            if program(&said).is_some_and(|p| EXPORTERS.contains(&p)) {
+            if let Some(exporter) = program(&said).filter(|p| EXPORTERS.contains(p)) {
                 let at = said
                     .iter()
                     .position(|w| EXPORTERS.contains(&w.as_str()))
                     .map_or(said.len(), |i| i + 1);
-                for w in said.iter().skip(at).filter(|w| !w.starts_with('-')) {
+                let names = said.iter().skip(at).filter(|w| !w.starts_with(['-', '+']));
+                let flags: String = said
+                    .iter()
+                    .skip(at)
+                    .take_while(|w| w.starts_with(['-', '+']) && w.as_str() != "--")
+                    .flat_map(|w| w.chars().skip(1))
+                    .collect();
+                let scalar_flags = if exporter == "export" { "nxrg" } else { "xrg" };
+                let plain = flags.chars().all(|c| scalar_flags.contains(c));
+                for w in names {
                     if let Some((name, value)) = assigned(w) {
                         vars.retain(|(n, _)| n != name);
-                        if for_sure && !w.contains("+=") && !value.contains(['$', '`']) {
+                        if plain && for_sure && !w.contains("+=") && !value.contains(['$', '`']) {
                             vars.push((name.to_string(), value.to_string()));
                         }
                     }
@@ -2886,7 +2899,7 @@ fn project_program_speaks(prog: &str, args: &[String], ctx: &ToolContext) -> boo
 }
 
 /// Whether `host` is this machine: where a project under test is served.
-fn own_host(host: &str) -> bool {
+pub(crate) fn own_host(host: &str) -> bool {
     let host = host.trim_matches(['[', ']']).to_ascii_lowercase();
     matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1" | "0.0.0.0")
         || host.ends_with(".localhost")
@@ -8653,6 +8666,62 @@ mod tests {
     /// ask for the place it is, not a path the gate can't read. The
     /// audit's `export TASKS_FILE=/tmp/audit-tasks.json; rm -f
     /// "$TASKS_FILE"` asked as the latter.
+    /// `declare`, `typeset` and `local` with a flag that makes the name
+    /// something other than a scalar (`-n` a nameref, `-a`/`-A` an array,
+    /// `-i`, `-l`, `-u`, `-p`) make it unknown, as the old loop did, since
+    /// `$NAME` then expands to something other than the value written:
+    /// `G=/etc/passwd; declare -n F=G; echo x > "$F"` writes `/etc/passwd`,
+    /// not the project file `G` the stored value would have named. `-x`,
+    /// `-r`, `-g`, `--` and `export -n` keep the scalar.
+    #[test]
+    fn a_declare_that_is_not_a_scalar_makes_the_name_unknown() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        // A write to a name the gate doesn't know asks; to a project file,
+        // it runs.
+        let unknown = bash("echo x > \"$F\"", Role::SoloBuild, d);
+        assert_eq!(unknown, Decision::AskOutside);
+        assert_eq!(
+            bash("F=G; echo x > \"$F\"", Role::SoloBuild, d),
+            Decision::Allow
+        );
+        for set in [
+            "G=/etc/passwd; declare -n F=G",
+            "G=/etc/passwd; declare -nx F=G",
+            "G=/etc/passwd; declare -xn F=G",
+            "G=/etc/passwd; typeset -n F=G",
+            "G=/etc/passwd; local -n F=G",
+            "G=/etc/passwd; declare +x -n F=G",
+            "declare -a F=(G)",
+            "declare -A F=([a]=G)",
+            "declare -i F=G",
+            "declare -u F=G",
+            "declare -l F=G",
+            "declare -p F=G",
+            "readonly -a F=(G)",
+        ] {
+            let cmd = format!("{set}; echo x > \"$F\"");
+            assert_eq!(bash(&cmd, Role::SoloBuild, d), unknown, "{cmd}");
+        }
+        let plain = bash("F=/tmp/x; rm -f \"$F\"", Role::SoloBuild, d);
+        assert_eq!(plain, Decision::AskOutside);
+        for set in [
+            "declare -x F=/tmp/x",
+            "declare -xr F=/tmp/x",
+            "declare -g F=/tmp/x",
+            "declare -- F=/tmp/x",
+            "typeset F=/tmp/x",
+            "local F=/tmp/x",
+            "readonly F=/tmp/x",
+            "export -n F=/tmp/x",
+        ] {
+            let cmd = format!("{set}; rm -f \"$F\"");
+            assert_eq!(bash(&cmd, Role::SoloBuild, d), plain, "{cmd}");
+            let cmd = format!("{}; echo x > \"$F\"", set.replace("/tmp/x", "G"));
+            assert_eq!(bash(&cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+        }
+    }
+
     #[test]
     fn export_sets_a_variable_as_a_plain_assignment_does() {
         let dir = TempDir::new().unwrap();
