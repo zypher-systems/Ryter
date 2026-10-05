@@ -9957,11 +9957,13 @@ mod tests {
         )
         .made;
         let made: Vec<String> = made.iter().map(|p| p.display().to_string()).collect();
+        // Resolved, as the gate records them: on macOS the temp folder is
+        // behind `/var` → `/private/var`.
         for p in [
-            d.join("tmpdir"),
-            d.join("tmpdir/inner"),
-            d.join("tmpdir/inner/p.sh"),
-            d.join("y.rs"),
+            real_path(&d.join("tmpdir")),
+            real_path(&d.join("tmpdir/inner")),
+            real_path(&d.join("tmpdir/inner/p.sh")),
+            real_path(&d.join("y.rs")),
         ] {
             let p = p.display().to_string();
             assert!(made.contains(&p), "{p} in {made:?}");
