@@ -4085,6 +4085,7 @@ enum Sep {
 /// `{a,b}`), and splitting there took `cat ${HOME}/.ssh/id_rsa` apart into
 /// pieces that named no key.
 fn split(cmd: &str) -> Vec<Seg> {
+    let cmd = &strip_comments(cmd);
     let mut out: Vec<Seg> = Vec::new();
     let mut cur = String::new();
     let mut single = false;
@@ -4431,6 +4432,113 @@ fn opens_a_function(cur: &str) -> bool {
 /// The commands of a line, each on its own ([`split`]).
 fn segments(cmd: &str) -> Vec<String> {
     split(cmd).into_iter().map(|s| s.text).collect()
+}
+
+/// The command without its comments: a `#` that begins a word, outside
+/// quotes, runs to the end of its line, as the shell reads it. A
+/// here-document's body is kept whole: to the shell a `#` there is text,
+/// and an unquoted body's substitutions still run. The gate once read
+/// comments as commands, and an apostrophe in one (`# B's expense list`)
+/// opened a quote that swallowed the lines after it: a real audit script
+/// asked for a `curl` of the product that was, read right, a look.
+fn strip_comments(cmd: &str) -> String {
+    let chars: Vec<char> = cmd.chars().collect();
+    let len = chars.len();
+    let mut out = String::with_capacity(cmd.len());
+    let (mut single, mut double) = (false, false);
+    // Where a word may begin, which is where `#` means a comment.
+    let mut word_start = true;
+    // The delimiters of here-documents opened on this line, whose bodies
+    // follow it in order; and the body being copied.
+    let mut pending: Vec<String> = Vec::new();
+    let mut body: Option<String> = None;
+    let mut i = 0;
+    while i < len {
+        if let Some(delim) = &body {
+            let end = chars[i..]
+                .iter()
+                .position(|&c| c == '\n')
+                .map_or(len, |p| i + p);
+            let line: String = chars[i..end].iter().collect();
+            out.push_str(&line);
+            if end < len {
+                out.push('\n');
+            }
+            if line.trim_start_matches('\t') == delim {
+                body = None;
+                if !pending.is_empty() {
+                    body = Some(pending.remove(0));
+                }
+            }
+            i = end + 1;
+            continue;
+        }
+        let c = chars[i];
+        match c {
+            '\\' if !single => {
+                out.push(c);
+                if i + 1 < len {
+                    out.push(chars[i + 1]);
+                }
+                i += 2;
+                word_start = false;
+                continue;
+            }
+            '\'' if !double => single = !single,
+            '"' if !single => double = !double,
+            '#' if !single && !double && word_start => {
+                while i < len && chars[i] != '\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            '\n' if !single && !double => {
+                out.push(c);
+                i += 1;
+                word_start = true;
+                if !pending.is_empty() {
+                    body = Some(pending.remove(0));
+                }
+                continue;
+            }
+            '<' if !single
+                && !double
+                && chars.get(i + 1) == Some(&'<')
+                && chars.get(i + 2) != Some(&'<') =>
+            {
+                out.push_str("<<");
+                i += 2;
+                if chars.get(i) == Some(&'-') {
+                    out.push('-');
+                    i += 1;
+                }
+                while chars.get(i) == Some(&' ') {
+                    out.push(' ');
+                    i += 1;
+                }
+                let mut delim = String::new();
+                while i < len
+                    && !chars[i].is_whitespace()
+                    && !matches!(chars[i], ';' | '|' | '&' | '<' | '>')
+                {
+                    if !matches!(chars[i], '\'' | '"' | '\\') {
+                        delim.push(chars[i]);
+                    }
+                    out.push(chars[i]);
+                    i += 1;
+                }
+                pending.push(delim);
+                word_start = false;
+                continue;
+            }
+            _ => {}
+        }
+        out.push(c);
+        word_start =
+            !single && !double && (c.is_whitespace() || matches!(c, ';' | '|' | '&' | '('));
+        i += 1;
+    }
+    out
 }
 
 /// Words of one segment as the shell splits them, quotes stripped.
@@ -4889,9 +4997,19 @@ fn path_escapes(words: &[String], ctx: &ToolContext) -> bool {
     // `sed -n '1p;$p'`: the `$` is the last line, in a script that only
     // prints ([`sed_only_prints`]).
     let mut sed_script = program(words) == Some("sed") && sed_only_prints(words);
+    let p = parse(words);
+    let mut texts = text_words(
+        p.prog.unwrap_or(""),
+        &words[p.args.saturating_sub(1).min(words.len())..],
+    );
     for w in words.iter().skip(1) {
         if sed_script && !w.starts_with('-') {
             sed_script = false;
+            continue;
+        }
+        // What `curl` sends as text opens nothing.
+        if let Some(k) = texts.iter().position(|t| t == w) {
+            texts.swap_remove(k);
             continue;
         }
         // `echo $f` prints a variable; it opens nothing.
@@ -6145,7 +6263,9 @@ fn outside_segment(
     // is given (`strace -o file`, `flock file`) is a file like any other.
     let program = args_at.saturating_sub(1);
     // A search's pattern names no place: `sed -n '/\.env/p' f` reads `f`.
+    // What `curl` sends as text names none either.
     let mut patterns = pattern_words(prog, &words[program.min(own)..own]);
+    patterns.extend(text_words(prog, &words[program.min(own)..own]));
     for (i, w) in words.iter().enumerate().skip(usize::from(!prog.is_empty())) {
         if i == program && i > 0 {
             continue;
@@ -6515,6 +6635,112 @@ fn pattern_words(prog: &str, from_prog: &[String]) -> Vec<String> {
         if !elsewhere {
             out.push(a.to_string());
             elsewhere = true;
+        }
+    }
+    out
+}
+
+/// The words a program that reaches out sends as text, which name no file:
+/// `curl -d '{"email":"e2e-$(…)@t.dev"}'` sends the braces and what is
+/// between them. To `curl` a `-d` value is a file only when it begins with
+/// `@`, a `-F` value only after `=@` or `=<`; a value whose first character
+/// the gate cannot read (`-d "$BODY"`) could be either, and stays a path
+/// to it. Both the word and, for `-F name=value`, the value are listed,
+/// since the gate reads an option's value as a path of its own too.
+fn text_words(prog: &str, from_prog: &[String]) -> Vec<String> {
+    if !matches!(prog, "curl" | "wget") {
+        return Vec::new();
+    }
+    // Text unless it begins with `@`.
+    const DATA: &[&str] = &[
+        "-d",
+        "--data",
+        "--data-raw",
+        "--data-binary",
+        "--data-ascii",
+        "--json",
+        "-H",
+        "--header",
+        "-w",
+        "--write-out",
+        "--post-data",
+        "--body-data",
+    ];
+    // Text, whatever it says.
+    const TEXT: &[&str] = &[
+        "-X",
+        "--request",
+        "-A",
+        "--user-agent",
+        "-e",
+        "--referer",
+        "-u",
+        "--user",
+        "-r",
+        "--range",
+        "--url",
+    ];
+    let known_start = |v: &str| v.chars().next().is_some_and(|c| c != '$' && c != '@');
+    let mut out = Vec::new();
+    let args = from_prog.get(1..).unwrap_or_default();
+    let mut at = 0;
+    while let Some(a) = args.get(at).map(String::as_str) {
+        at += 1;
+        if a == "--" {
+            break;
+        }
+        let (opt, attached) = if let Some(long) = a.strip_prefix("--") {
+            match long.split_once('=') {
+                Some((n, v)) => (format!("--{n}"), Some(v.to_string())),
+                None => (a.to_string(), None),
+            }
+        } else if a.len() > 2 && a.starts_with('-') {
+            (a[..2].to_string(), Some(a[2..].to_string()))
+        } else {
+            (a.to_string(), None)
+        };
+        let data = DATA.contains(&opt.as_str());
+        let text = TEXT.contains(&opt.as_str());
+        let form = matches!(opt.as_str(), "-F" | "--form" | "--form-string");
+        let urlencode = opt == "--data-urlencode";
+        if !(data || text || form || urlencode) {
+            continue;
+        }
+        let value = match attached {
+            Some(v) => v,
+            None => {
+                at += 1;
+                match args.get(at - 1) {
+                    Some(v) => v.clone(),
+                    None => break,
+                }
+            }
+        };
+        let is_text = if text || opt == "--form-string" {
+            true
+        } else if form {
+            // `name=value`: a file after `=@` or `=<`.
+            value
+                .split_once('=')
+                .is_some_and(|(_, v)| known_start(v) && !v.starts_with('<'))
+        } else if urlencode {
+            // `=content`, `name=content`, or `name@file`: text when `=`
+            // comes first.
+            match (value.find('='), value.find('@')) {
+                (Some(e), Some(a)) => e < a,
+                (Some(_), None) => true,
+                _ => false,
+            }
+        } else {
+            known_start(&value)
+        };
+        if is_text {
+            out.push(value.clone());
+            if form {
+                if let Some((_, v)) = value.split_once('=') {
+                    out.push(v.to_string());
+                }
+            }
         }
     }
     out
@@ -9584,6 +9810,212 @@ mod tests {
         );
         assert!(!made.iter().any(|p| p.ends_with("/x.rs")), "{made:?}");
         assert_eq!(made.len(), 5, "{made:?}");
+    }
+
+    /// What `curl` sends as text is text: a `$(date +%s)` inside a `-d`
+    /// body, or a `$ID` inside a `-F` field, names no file. Fourteen of the
+    /// first real run's eighteen remaining asks were this, every one a
+    /// request to the product's own address.
+    #[test]
+    fn what_curl_sends_as_text_names_no_file() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("body.json"), "{}\n").unwrap();
+        std::fs::write(d.join(".env"), "S=1\n").unwrap();
+        let audit = |cmd: &str| {
+            decide(
+                "bash",
+                &json!({"command": cmd}),
+                &ToolContext {
+                    read_only: false,
+                    ..ctx_for(Role::SoloAudit, d)
+                },
+            )
+        };
+        let base = "http://localhost:5173/api";
+        for cmd in [
+            format!(
+                r#"cd /tmp && rm -f cj.txt && curl -s -c cj.txt -X POST {base}/auth/register -H 'content-type: application/json' -d "{{\"email\":\"e2e-$(date +%s)@t.dev\",\"password\":\"pw\"}}" -w "\nregister:%{{http_code}}\n""#
+            ),
+            format!(
+                r#"curl -s -b /tmp/a.txt -X POST {base}/receipts -F "file=@/tmp/fake.pdf;type=application/pdf" -F "meta={{\"expenseId\":\"$EID\",\"sizeBytes\":$SZ}}" -w " upload:%{{http_code}}\n""#
+            ),
+            format!(
+                r#"EID=$(curl -s -b /tmp/v.txt {base}/expenses | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4); curl -s -b /tmp/v.txt -o /dev/null -w "%{{http_code}}" "{base}/expenses/$EID""#
+            ),
+            format!(r#"curl -s -X POST {base}/x --data-raw "{{\"t\":\"$(date +%s)\"}}""#),
+            format!(r#"curl -s -X POST {base}/x --data "a=$(date +%s)""#),
+            format!(r#"curl -s -X POST {base}/x --json "{{\"t\":$(date +%s)}}""#),
+            format!(r#"curl -s -X POST {base}/x -d"{{\"t\":$(date +%s)}}""#),
+            format!(
+                r#"curl -s {base}/x -H "Authorization: Bearer $TOKEN" -H "X-Run: $(date +%s)""#
+            ),
+            format!(
+                r#"curl -s {base}/x -A "probe/$(date +%s)" -e "$REF" -u "user:$PASS" -X "$METHOD""#
+            ),
+            format!(
+                r#"curl -s {base}/x --data-urlencode "q=$(date +%s)" --data-urlencode "=$(date +%s)""#
+            ),
+            format!(r#"curl -s -F "name=run-$(date +%s)" -F "file=@body.json" {base}/x"#),
+            format!(
+                r#"wget -q -O - --post-data "t=$(date +%s)" --header "X: $(date +%s)" {base}/x"#
+            ),
+        ] {
+            assert_eq!(bash(&cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+            assert_eq!(audit(&cmd), Decision::Allow, "audit: {cmd}");
+        }
+        // A value that is a file keeps the question. (A bare `-d "$BODY"`
+        // never looked like a path and ran before this rule; a bare
+        // `-d "$(cat .env)"` is refused for the command inside it.)
+        assert_eq!(
+            bash(
+                &format!(r#"curl -s -X POST {base}/x -d "$(cat .env)""#),
+                Role::SoloBuild,
+                d
+            ),
+            Decision::Deny
+        );
+        for cmd in [
+            format!(r#"curl -s -X POST {base}/x -d @$F/body.json"#),
+            format!(r#"curl -s -X POST {base}/x -F "file=@$F/x.pdf""#),
+            format!(r#"curl -s -X POST {base}/x -F "file=<$F/x.pdf""#),
+            format!(r#"curl -s -X POST {base}/x --data-urlencode "name@$F/x""#),
+            format!(r#"curl -s -X POST {base}/x -T "$F/x.txt""#),
+            format!(r#"curl -s -X POST {base}/x -o "$OUT/x.txt""#),
+            format!(r#"curl -s -X POST {base}/x -H @$H/h.txt"#),
+        ] {
+            assert_ne!(bash(&cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+        }
+        // A file named is still the file read, and a secret still refused.
+        for cmd in [
+            format!(r#"curl -s -X POST {base}/x -d @.env"#),
+            format!(r#"curl -s -X POST {base}/x -F "file=@.env""#),
+            format!(r#"curl -s -X POST {base}/x --data-urlencode "s@.env""#),
+            format!(r#"curl -s -X POST {base}/x -H @.env"#),
+        ] {
+            assert_eq!(bash(&cmd, Role::SoloBuild, d), Decision::Deny, "{cmd}");
+        }
+        // Sent elsewhere, the body asks as it did: text or not, it leaves.
+        assert_eq!(
+            bash(
+                r#"curl -s -X POST https://example.com/x -d "{\"t\":\"$(date +%s)\"}""#,
+                Role::SoloBuild,
+                d
+            ),
+            Decision::Ask
+        );
+        // The looking hats: a GET of the product's address with a text
+        // header is a look.
+        for role in [Role::SoloPlan, Role::SoloScribe] {
+            assert_eq!(
+                bash(
+                    &format!(r#"curl -s {base}/health -H "X-Run: $(date +%s)""#),
+                    role,
+                    d
+                ),
+                Decision::Allow,
+                "{role:?}"
+            );
+        }
+        assert_eq!(
+            text_words(
+                "curl",
+                &words_of(r#"curl -d {"a":1} -F meta={"b":"$X"} -F f=@x -H X:y -o out"#)
+            ),
+            vec![r#"{"a":1}"#, r#"meta={"b":"$X"}"#, r#"{"b":"$X"}"#, "X:y"]
+        );
+    }
+
+    /// A comment is not a command, and an apostrophe in one opens no
+    /// quote. Two of the first real run's audit scripts asked for a `curl`
+    /// of the product because `# B's expense list` had swallowed the lines
+    /// after it. A here-document's body keeps its `#` lines, substitutions
+    /// included.
+    #[test]
+    fn a_comment_is_not_read_and_an_apostrophe_in_one_opens_nothing() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join(".env"), "S=1\n").unwrap();
+        let audit = |cmd: &str| {
+            decide(
+                "bash",
+                &json!({"command": cmd}),
+                &ToolContext {
+                    read_only: false,
+                    ..ctx_for(Role::SoloAudit, d)
+                },
+            )
+        };
+        let script = "# B tries to read A's expense directly\ncurl -s -b /tmp/b.txt -o /dev/null -w \"B:%{http_code}\\n\" \"http://localhost:5173/api/expenses/$EID\"\n# B's expense list must not contain it\ncurl -s -b /tmp/b.txt http://localhost:5173/api/expenses | grep -c \"$EID\" | sed 's/^/hits:/'\n";
+        assert_eq!(bash(script, Role::SoloBuild, d), Decision::Allow);
+        assert_eq!(audit(script), Decision::Allow);
+        for cmd in [
+            "# a comment\nls",
+            "ls # a comment with 'quotes' and \"more\"\ncargo test",
+            "ls; # don't\ncargo test",
+            "ls && # don't\ncargo test",
+            "echo '# not a comment' && ls",
+            "echo \"# not a comment\" && ls",
+            "echo a#b && ls",
+            "echo $# ${#x} && ls",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd:?}");
+        }
+        // A comment hides nothing that follows a newline.
+        assert_eq!(bash("# fine\nsudo ls", Role::SoloBuild, d), Decision::Deny);
+        assert_eq!(
+            bash("ls # fine\ncat .env", Role::SoloBuild, d),
+            Decision::Deny
+        );
+        // Only a word-starting `#` comments: `cat .env` is still read here.
+        assert_eq!(
+            bash("echo a#b; cat .env", Role::SoloBuild, d),
+            Decision::Deny
+        );
+        // Here-document bodies are text to the shell, substitutions apart.
+        assert_eq!(
+            bash(
+                "cat <<'EOF' > x.sh\n# not a comment\necho hi\nEOF\n",
+                Role::SoloBuild,
+                d
+            ),
+            Decision::Allow
+        );
+        assert_eq!(
+            bash("cat <<EOF > x.sh\n# $(cat .env)\nEOF\n", Role::SoloBuild, d),
+            Decision::Deny,
+            "a substitution in an unquoted body's `#` line still runs"
+        );
+        assert_eq!(
+            bash(
+                "cat <<'EOF' > x.sh\n# $(cat .env)\nEOF\n",
+                Role::SoloBuild,
+                d
+            ),
+            Decision::Allow,
+            "a quoted body is text"
+        );
+        assert_eq!(
+            bash(
+                "cat <<-EOF > x.sh\n\t# it's text\n\tEOF\nls",
+                Role::SoloBuild,
+                d
+            ),
+            Decision::Allow
+        );
+        assert_eq!(
+            bash(
+                "cat <<EOF > x.sh\n# it's text\nEOF\nsudo ls",
+                Role::SoloBuild,
+                d
+            ),
+            Decision::Deny,
+            "the body ends at its delimiter"
+        );
+        assert_eq!(
+            strip_comments("a # b's\nc <<X\n# d's\nX\ne # f"),
+            "a \nc <<X\n# d's\nX\ne "
+        );
     }
 
     /// Inside the project, the build hat's deletions are a question for
