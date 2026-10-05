@@ -206,6 +206,7 @@ impl Audit {
         stamp: &str,
         restored: &[String],
         checkpointed: bool,
+        product_used: bool,
     ) -> String {
         let mut s = String::new();
         let day = stamp.split_whitespace().next().unwrap_or(stamp);
@@ -255,6 +256,15 @@ impl Audit {
             for p in restored {
                 s.push_str(&format!("- `{p}`\n"));
             }
+        }
+        // The checkpoint covers the tree, not what the product keeps in
+        // files git ignores: a database it wrote to while the audit used
+        // it stays as the audit left it.
+        if product_used {
+            s.push_str(
+                "The product was started and used; whatever it wrote to its own data \
+                 (files git ignores) was not restored.\n",
+            );
         }
         s.push_str(&format!("\n- Audited by: {model} · {stamp}\n"));
         s
@@ -418,16 +428,26 @@ mod tests {
     #[test]
     fn the_document_and_the_files() {
         let a = filed();
-        let text = a.document("kimi-k3", "2026-10-03 19:48", &[], true);
+        let text = a.document("kimi-k3", "2026-10-03 19:48", &[], true, false);
         assert!(text.starts_with("# Audit · 2026-10-03 · FAIL\n"));
         assert!(text.contains("1. ✗ **Size limit checked after the write** — `app/images.py:41`"));
         assert!(text.contains("   - saw: curl -F picture=@big.png → 200"));
         assert!(text.contains("- `run_project test`"));
         assert!(text.contains("Changed nothing; the checkpoint was kept."));
-        let restored = a.document("m", "2026-10-03 19:48", &["app/x.py".into()], true);
+        let restored = a.document("m", "2026-10-03 19:48", &["app/x.py".into()], true, false);
         assert!(restored.contains("left 1 file changed") && restored.contains("- `app/x.py`"));
-        let bare = a.document("m", "2026-10-03 19:48", &[], false);
+        let bare = a.document("m", "2026-10-03 19:48", &[], false, false);
         assert!(bare.contains("No checkpoint"));
+        // The product used: the tree section says its own data stayed.
+        let used = a.document("m", "2026-10-03 19:48", &[], true, true);
+        assert!(
+            used.contains(
+                "Changed nothing; the checkpoint was kept.\nThe product was started and used; \
+                 whatever it wrote to its own data (files git ignores) was not restored.\n"
+            ),
+            "{used}"
+        );
+        assert!(!text.contains("was not restored"));
         assert_eq!(slug(&a.summary), "the-upload-limit-and-the-delete");
         assert_eq!(slug("  "), "audit");
         let dir = tempfile::TempDir::new().unwrap();

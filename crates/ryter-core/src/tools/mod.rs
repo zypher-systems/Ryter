@@ -49,6 +49,7 @@ pub fn strict_prompt(name: &str, args: &Value) -> bool {
             .and_then(Value::as_str)
             .is_some_and(policy::destructive_command)
 }
+pub(crate) use policy::own_host;
 pub use policy::{Decision, decide, removes_stack_data};
 
 /// How the build and test hats answer their own questions: `ask` a
@@ -732,19 +733,30 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                      not this file. Tell the user: Shift+Tab to the build hat for code.",
                 ));
             }
+            let key = if matches!(ctx.role, Role::SoloAudit | Role::SoloScribe) {
+                "Shift+Tab"
+            } else {
+                "Tab"
+            };
+            // The looking hats refuse most commands because they look, not
+            // because the command changes anything: a `GET` of the product
+            // was once refused as one that did.
+            if name == "bash" && matches!(ctx.role, Role::SoloPlan | Role::SoloScribe) {
+                return Ok(ToolOutput::err(format!(
+                    "denied: the {} hat only looks — it runs read-only commands, curl GET/HEAD \
+                     to this project's own address, and a project program's --help or \
+                     --version; tell the user, who can press {key} for build.",
+                    ctx.role
+                )));
+            }
             Ok(ToolOutput::err(format!(
-                "denied: the {} hat can't {} — tell the user; they can press {} to switch to \
+                "denied: the {} hat can't {} — tell the user; they can press {key} to switch to \
                  build.{}",
                 ctx.role,
                 if name == "bash" {
                     "run commands that change things"
                 } else {
                     "edit files"
-                },
-                if matches!(ctx.role, Role::SoloAudit | Role::SoloScribe) {
-                    "Shift+Tab"
-                } else {
-                    "Tab"
                 },
                 if name == "bash" && ctx.role == Role::SoloAudit && policy::names_containers(args) {
                     CONTAINER_CHECKS
@@ -778,6 +790,10 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                         strict: strict_prompt(name, args),
                         scope: scope.as_ref().map(|(_, label)| label.clone()),
                         whole: false,
+                        asks: (name == "bash")
+                            .then(|| args.get("command").and_then(serde_json::Value::as_str))
+                            .flatten()
+                            .and_then(|c| policy::asking_segment(c, ctx)),
                     },
                     &ctx.cancel,
                 );
@@ -1394,6 +1410,28 @@ mod tests {
         for cmd in ["sudo ls", "cat .env", "cat ~/.ssh/id_rsa"] {
             let out = gated_execute("bash", &json!({"command": cmd}), &c).unwrap();
             assert!(out.is_error, "{cmd}: {out:?}");
+        }
+    }
+
+    /// The hats that look refuse a command because they look, not because
+    /// it changes anything: the refusal says what they may run, and which
+    /// key reaches the build hat. A `GET` of the product was refused as a
+    /// command that changes things.
+    #[test]
+    fn the_looking_hats_say_they_only_look() {
+        let dir = TempDir::new().unwrap();
+        for (role, key) in [(Role::SoloScribe, "Shift+Tab"), (Role::SoloPlan, "Tab")] {
+            let out = gated_execute(
+                "bash",
+                &json!({ "command": ".venv/bin/tasks add x" }),
+                &ctx(role, dir.path()),
+            )
+            .unwrap();
+            assert!(out.is_error, "{out:?}");
+            assert!(out.text.contains("hat only looks"), "{out:?}");
+            assert!(out.text.contains("curl GET/HEAD"), "{out:?}");
+            assert!(out.text.contains(key), "{out:?}");
+            assert!(!out.text.contains("change things"), "{out:?}");
         }
     }
 

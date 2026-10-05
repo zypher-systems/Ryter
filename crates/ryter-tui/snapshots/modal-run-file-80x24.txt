@@ -11,14 +11,14 @@
          │  Reading the loop now. The event loop drains reply line 0 reply
          │  line 1 reply line 2 reply line 3 reply line 4 reply line 5
          │  reply line 6 reply line 7
-         │  ⠼ waiting for you · allow? · 0:12 · 85 tokens
-   ┏━ allow? · edit  app/server.js ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ build ━┓
-   │ what    edit  app/server.js                                          │
-   │ risk    changes a file in your project · /undo puts it back          │
-   │ change  app/server.js  +1 −1                                         │
-   │ ⏎ allow   a allow edits this session   n deny                        │
+         │  ⠼ waiting for you · run? · 0:12 · 85 tokens
+   ┏━ how this project runs ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+   │ start  docker compose up -d --wait                                   ┃
+   │ ready  http://localhost:8000/healthz                                 ┃
+   │ test   docker compose run --rm web pytest -q                         │
+   │ y approve   e adjust   n reject   ↑↓ scroll                          │
    ╰──────────────────────────────────────────────────────────────────────╯
 ────────────────────────────────────────────────────────────────────────────────
   BUILD  › type to queue the next message, / for commands
 
- grok-4.6  ctx ──────── 5% │ $0     ⏎ allow  a allow edits this session  n deny
+ grok-4.6  ctx ──────── 5% │ $0 · budget off      y approve  e adjust  n reject

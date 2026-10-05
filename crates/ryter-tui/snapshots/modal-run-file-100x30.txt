@@ -13,18 +13,18 @@
          │  Reading the loop now. The event loop drains reply         │
          │  line 0 reply line 1 reply line 2 reply line 3 reply       │ SPEND
          │  line 4 reply line 5 reply line 6 reply line 7             │ session                  $0
-         │  ⠼ waiting for you · allow? · 0:12 · 85 tokens             │ budget                  off
+         │  ⠼ waiting for you · run? · 0:12 · 85 tokens               │ budget                  off
                                                                       │
                                                                       │ GUARD
-   ┏━ allow? · edit  app/server.js ━━━━━━━━━━━━━━━━━━━━━ build ━┓     │ sandbox                 off
-   │ what    edit  app/server.js                                │     │ this hat         asks first
-   │ why     Next the form text                                 │     │ plan.md                none
-   │ risk    changes a file in your project · /undo puts it back│     │ audit.md               none
-   │ change  app/server.js  +1 −1                               │     │
-   │ 29   row 28                                                │     │ CHANGES
-   │ ⏎ allow   a allow edits this session   n deny              │     │ no repository here
+   ┏━ how this project runs ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓     │ sandbox                 off
+   │ start  docker compose up -d --wait                         ┃     │ this hat         asks first
+   │ ready  http://localhost:8000/healthz                       ┃     │ plan.md                none
+   │ test   docker compose run --rm web pytest -q               ┃     │ audit.md               none
+   │ stop   docker compose down                                 ┃     │
+   │ saved to .ryter/run.toml                                   ┃     │ CHANGES
+   │ y approve   e adjust   n reject   ↑↓ scroll                │     │ no repository here
    ╰────────────────────────────────────────────────────────────╯     │
 ──────────────────────────────────────────────────────────────────────│
   BUILD  › type to queue the next message, / for commands             │
 
- ⏎ allow    a allow edits this session    n deny    esc deny    ^c stop the turn
+ y approve    e adjust    n reject    ↑↓ scroll    esc reject    ^c stop the turn

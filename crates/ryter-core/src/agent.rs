@@ -56,6 +56,9 @@ pub struct AuditLive {
     pub asked: bool,
     /// When it began.
     pub started: std::time::Instant,
+    /// The turn started the product, ran its tests, or aimed a command at
+    /// its address: its own data (files git ignores) is not restored.
+    pub used_product: bool,
 }
 
 pub struct Agent {
@@ -177,6 +180,52 @@ pub fn tool_summary(name: &str, args: &Value) -> String {
     }
 }
 
+/// Whether a shell command names the product's address: a `host:port` of
+/// its own as one token (`curl localhost:8000/items`,
+/// `http://127.0.0.1:8000/docs`, `[::1]:8000`), the ready URL's path left
+/// aside. A loopback product answers to every loopback spelling, as the
+/// gate's `own_host` reads them; any other host must match as written.
+/// `localhost:80000` and `notlocalhost:8000` are other addresses. On the
+/// default port (80, 443) the bare host counts too.
+fn names_address(cmd: &str, host: &str, port: u16) -> bool {
+    let own = crate::tools::own_host(host);
+    let same_host = |h: &str| {
+        let h = h.trim_matches(['[', ']']);
+        if own {
+            crate::tools::own_host(h)
+        } else {
+            h.eq_ignore_ascii_case(host)
+        }
+    };
+    let default_port = matches!(port, 80 | 443);
+    cmd.split(|c: char| {
+        !(c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '-' | '_' | '[' | ']'))
+    })
+    .filter(|t| !t.is_empty())
+    .any(|token| {
+        let (h, p) = if let Some(after) = token.strip_prefix('[') {
+            match after.split_once(']') {
+                Some((h, rest)) => (h, rest.strip_prefix(':')),
+                None => return false,
+            }
+        } else {
+            match token.rsplit_once(':') {
+                Some((h, p))
+                    if !h.is_empty() && !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) =>
+                {
+                    (h, Some(p))
+                }
+                Some(_) => return false,
+                None => (token, None),
+            }
+        };
+        match p {
+            Some(p) => p.parse::<u16>() == Ok(port) && same_host(h),
+            None => default_port && same_host(h),
+        }
+    })
+}
+
 impl Agent {
     /// Run one user message to completion (or cap).
     ///
@@ -219,6 +268,7 @@ impl Agent {
                 spent_from: self.session.spend_log().map_or(0, |l| l.len()),
                 asked: user.starts_with("[Ryter] Audit"),
                 started,
+                used_product: false,
             });
         }
         let out = self.turn_inner(user, &mut tools).await;
@@ -570,6 +620,7 @@ impl Agent {
                 if self.role == Role::SoloBuild && checkpointed && parsed.is_ok() {
                     self.save_ignored(&call.name, &args)?;
                 }
+                self.note_product_use(&call.name, &args);
                 let out = match &parsed {
                     // Run with `null` arguments, the call was refused as
                     // "outside policy" and the model resent the same JSON.
@@ -681,7 +732,8 @@ impl Agent {
         self.emit(AgentEvent::Notice {
             message: format!(
                 "stopped after {} rounds, the most one message may use (rounds a turn in \
-                 /settings, or [limits] rounds in config.toml; 0 lifts it). Say \"continue\" \
+                 /settings, [limits] rounds in config.toml, or --rounds N for one run; 0 \
+                 lifts it). Say \"continue\" \
                  to carry on.",
                 self.max_turns
             ),
@@ -895,6 +947,7 @@ impl Agent {
                 strict: true,
                 scope: None,
                 whole: true,
+                asks: None,
             },
             &self.ctx.cancel,
         );
@@ -983,6 +1036,7 @@ impl Agent {
                         spent_from: self.session.spend_log().map_or(0, |l| l.len()),
                         asked: false,
                         started: std::time::Instant::now(),
+                        used_product: false,
                     });
                 }
                 let now = match to {
@@ -1418,6 +1472,7 @@ impl Agent {
             spent_from,
             asked,
             started,
+            used_product,
         } = live;
         let started = &started;
         let dir = self.ctx.workspace.clone();
@@ -1489,7 +1544,13 @@ impl Agent {
         let event = match filed {
             Some(audit) => {
                 let stamp = crate::clock::stamp();
-                let text = audit.document(&model, &stamp, &restored, checkpoint.is_some());
+                let text = audit.document(
+                    &model,
+                    &stamp,
+                    &restored,
+                    checkpoint.is_some(),
+                    used_product,
+                );
                 let day = crate::clock::today();
                 let file = match crate::audit::save(
                     &root,
@@ -1519,6 +1580,7 @@ impl Agent {
                     ran: audit.ran.clone(),
                     file: (!file.is_empty()).then_some(file),
                     restored,
+                    product_used: used_product,
                     checkpointed: checkpoint.is_some(),
                     filed: true,
                     total_usd,
@@ -1543,6 +1605,7 @@ impl Agent {
                     ran: Vec::new(),
                     file: None,
                     restored,
+                    product_used: used_product,
                     checkpointed: checkpoint.is_some(),
                     filed: false,
                     total_usd,
@@ -1551,6 +1614,36 @@ impl Agent {
             }
         };
         self.emit(event)
+    }
+
+    /// An audit's shell command aimed at the running product's address is
+    /// the audit using the product (`AuditLive::used_product`): whatever
+    /// the product then writes to its own data is not put back.
+    fn note_product_use(&mut self, name: &str, args: &Value) {
+        if name != "bash" || self.audit_live.is_none() {
+            return;
+        }
+        let Some(cmd) = args.get("command").and_then(Value::as_str) else {
+            return;
+        };
+        let root = self.root();
+        let address = self
+            .product
+            .as_ref()
+            .map(crate::run::Started::note)
+            .or_else(|| crate::run::remembered(&self.home, &root))
+            .and_then(|l| l.address);
+        let Some(address) = address else {
+            return;
+        };
+        let Some((_, host, port, _)) = crate::run::parts(&address) else {
+            return;
+        };
+        if names_address(cmd, &host, port) {
+            if let Some(live) = self.audit_live.as_mut() {
+                live.used_product = true;
+            }
+        }
     }
 
     /// The project's own commands are the build and audit hats' to run:
@@ -1936,6 +2029,9 @@ impl Agent {
                     Start::Up { started, how } => {
                         let note = started.note();
                         self.product = Some(started);
+                        if let Some(live) = self.audit_live.as_mut() {
+                            live.used_product = true;
+                        }
                         if let Err(e) = crate::run::remember(&self.home, &root, &note) {
                             crate::trace::log(&self.home, &format!("running note: {e}"));
                         }
@@ -1973,6 +2069,13 @@ impl Agent {
                 let mut text = String::new();
                 let mut failed = 0;
                 for cmd in &run.test {
+                    // A test command the audit starts used the product:
+                    // whatever it wrote to the product's own data stays
+                    // (`AuditLive::used_product`). A run file that is
+                    // missing, unapproved or without tests ran nothing.
+                    if let Some(live) = self.audit_live.as_mut() {
+                        live.used_product = true;
+                    }
                     let out = self.ctx.sandboxed(|| {
                         crate::tools::shell::run_command_live(
                             cmd,
@@ -5003,6 +5106,130 @@ mod tests {
             .collect()
     }
 
+    /// A command names the product when a `host:port` token of its own is
+    /// in it, whatever the ready URL's path; loopback spellings are one
+    /// machine; a longer port, another host or a prefix is another address.
+    #[test]
+    fn names_address_matches_the_products_host_and_port() {
+        for (cmd, host, port, hit) in [
+            ("curl -s localhost:8000/items", "localhost", 8000, true),
+            ("curl http://localhost:8000/docs", "localhost", 8000, true),
+            (
+                "curl http://127.0.0.1:8000/healthz",
+                "localhost",
+                8000,
+                true,
+            ),
+            ("curl 'http://[::1]:8000/x'", "localhost", 8000, true),
+            ("curl -s localhost:8000", "127.0.0.1", 8000, true),
+            ("curl -s localhost:80000/items", "localhost", 8000, false),
+            ("curl -s notlocalhost:8000/items", "localhost", 8000, false),
+            ("curl -s localhost:8001/items", "localhost", 8000, false),
+            ("curl -s example.com:8000/items", "localhost", 8000, false),
+            ("curl http://localhost/x", "localhost", 80, true),
+            ("curl http://localhost:8000/x", "localhost", 80, false),
+            ("curl api.internal:8000/x", "api.internal", 8000, true),
+            ("curl API.INTERNAL:8000/x", "api.internal", 8000, true),
+            ("curl localhost:8000/x", "api.internal", 8000, false),
+            ("ls", "localhost", 8000, false),
+        ] {
+            assert_eq!(
+                names_address(cmd, host, port),
+                hit,
+                "{cmd} vs {host}:{port}"
+            );
+        }
+    }
+
+    /// An audit that aimed a command at the running product used it: the
+    /// event and the file say its own data was not the checkpoint's to put
+    /// back. One that only read the tree says nothing of the kind.
+    #[tokio::test]
+    async fn an_audit_that_used_the_product_says_so() {
+        for (address, command, used) in [
+            // The ready URL's path is not what a command names; another
+            // loopback spelling is the same product.
+            (
+                Some("http://localhost:18765/healthz".to_string()),
+                "curl -s 127.0.0.1:18765/items",
+                true,
+            ),
+            // A longer port is another address.
+            (
+                Some("http://localhost:18765/healthz".to_string()),
+                "curl -s localhost:187650/items",
+                false,
+            ),
+            (None, "curl -s localhost:18765/items", false),
+        ] {
+            let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
+                call("bash", serde_json::json!({"command": command})),
+                file_audit_call("pass"),
+                say("filed"),
+            ]));
+            agent.product = address.map(|a| {
+                crate::run::Started::left(
+                    crate::run::Left {
+                        cleanup_pending: false,
+                        at: "2026-10-04 18:40".into(),
+                        address: Some(a),
+                        stop: None,
+                        pid: None,
+                    },
+                    cwd.path().join("project.log"),
+                )
+            });
+            agent.put_on(Role::SoloAudit).unwrap();
+            let (tx, events) = std::sync::mpsc::channel();
+            agent.sink = Some(tx);
+            agent.turn("audit it").await.unwrap();
+            let evs: Vec<AgentEvent> = events.try_iter().collect();
+            assert!(
+                matches!(
+                    audited(&evs)[..],
+                    [AgentEvent::Audited { product_used, .. }] if *product_used == used
+                ),
+                "{used}: {evs:?}"
+            );
+            let text = std::fs::read_to_string(cwd.path().join(".ryter/audit.md")).unwrap();
+            assert_eq!(
+                text.contains("The product was started and used"),
+                used,
+                "{text}"
+            );
+        }
+    }
+
+    /// A `run_project test` that ran nothing, here for want of a run file,
+    /// is not the audit using the product: the event and the file say
+    /// nothing about its data.
+    #[tokio::test]
+    async fn a_test_action_that_ran_nothing_is_not_product_use() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
+            call("run_project", serde_json::json!({"action": "test"})),
+            file_audit_call("pass"),
+            say("filed"),
+        ]));
+        assert!(!cwd.path().join(".ryter/run.toml").exists());
+        agent.put_on(Role::SoloAudit).unwrap();
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("audit it").await.unwrap();
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        assert!(
+            matches!(
+                audited(&evs)[..],
+                [AgentEvent::Audited {
+                    product_used: false,
+                    ..
+                }]
+            ),
+            "{evs:?}"
+        );
+        let text = std::fs::read_to_string(cwd.path().join(".ryter/audit.md")).unwrap();
+        assert!(!text.contains("The product was started and used"), "{text}");
+    }
+
     /// `file_audit` in the audit hat: the audit is written to
     /// `.ryter/audit.md` and a dated copy, the event carries it, and a
     /// second audit replaces the one file and keeps the other.
@@ -6008,6 +6235,7 @@ mod tests {
                     scope,
                     whole,
                     reply,
+                    ..
                 } = req
                 {
                     asked.push(RulesAsk {

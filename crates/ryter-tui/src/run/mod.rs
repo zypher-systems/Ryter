@@ -880,6 +880,7 @@ fn drain_user_prompts(
             strict,
             scope,
             whole,
+            asks,
             reply,
         } => {
             cx.perm_reply = Some(reply);
@@ -890,6 +891,7 @@ fn drain_user_prompts(
                     .with_preview(preview)
                     .with_answers(strict, scope)
                     .showing_whole(whole)
+                    .asking(asks)
                     .with_context(why, opened),
             ));
         }

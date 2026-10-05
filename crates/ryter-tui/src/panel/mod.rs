@@ -538,18 +538,20 @@ pub fn draw(
 fn legend_line(legend: &str, width: usize, theme: Theme) -> Line<'static> {
     let mut spans = vec![Span::styled(" ", theme.panel())];
     let mut used = 1;
-    for (i, item) in legend.split(" · ").enumerate() {
+    for item in legend.split(" · ") {
         let (key, label) = item.split_once(' ').unwrap_or((item, ""));
         let color = match key {
             "⏎" | "y" | "enter" => theme.success,
             "n" | "esc" => theme.error,
             _ => theme.accent,
         };
-        let piece = wrap::width(key) + wrap::width(label) + 1 + if i > 0 { 3 } else { 0 };
+        let piece = wrap::width(key) + wrap::width(label) + 1 + if spans.len() > 1 { 3 } else { 0 };
+        // A key that doesn't fit is left out; the ones after it still get
+        // their chance, so `n deny` is on the row when `a allow …` is long.
         if used + piece > width {
-            break;
+            continue;
         }
-        if i > 0 {
+        if spans.len() > 1 {
             spans.push(Span::styled("   ", theme.panel()));
         }
         spans.push(Span::styled(

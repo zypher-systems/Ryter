@@ -146,6 +146,10 @@ pub enum AgentEvent {
         /// Files the audit changed that were put back from the checkpoint.
         #[serde(default)]
         restored: Vec<String>,
+        /// Whether the audit started or used the running product: what the
+        /// product wrote to its own data (files git ignores) is not restored.
+        #[serde(default)]
+        product_used: bool,
         /// Whether a checkpoint was taken (a project outside a repository
         /// has none).
         #[serde(default)]

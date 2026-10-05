@@ -35,6 +35,8 @@ pub struct AuditModal {
     pub file: Option<String>,
     pub restored: Vec<String>,
     pub checkpointed: bool,
+    /// The audit started or used the product: its own data stayed.
+    pub product_used: bool,
     pub total_usd: Option<f64>,
     pub duration_ms: u64,
     top: usize,
@@ -45,10 +47,11 @@ pub struct AuditModal {
 }
 
 impl AuditModal {
-    /// Whether the audit passed, by the verdict it filed (what the receipt
-    /// and the rack count too): a pass closes on Enter, a failure repairs.
-    pub fn passed(&self) -> bool {
-        self.verdict == Some(true)
+    /// Whether the audit failed, by the verdict it filed (what the receipt
+    /// and the rack count too): a failure repairs on Enter; a pass, or no
+    /// verdict, closes.
+    pub fn failed(&self) -> bool {
+        self.verdict == Some(false)
     }
 
     /// From the event, when it carries a filed audit.
@@ -63,6 +66,7 @@ impl AuditModal {
             file,
             restored,
             checkpointed,
+            product_used,
             total_usd,
             duration_ms,
             ..
@@ -80,6 +84,7 @@ impl AuditModal {
             file: file.clone(),
             restored: restored.clone(),
             checkpointed: *checkpointed,
+            product_used: *product_used,
             total_usd: *total_usd,
             duration_ms: *duration_ms,
             top: 0,
@@ -203,7 +208,7 @@ impl AuditModal {
                 Span::styled(text, theme.on_panel(color)),
             ]));
         }
-        out.push(Line::from(vec![
+        let mut written = vec![
             Span::styled(" written", theme.panel_muted()),
             Span::styled(
                 format!(
@@ -214,7 +219,16 @@ impl AuditModal {
                 ),
                 theme.panel_muted(),
             ),
-        ]));
+        ];
+        // The checkpoint put the tree back, not what the product wrote to
+        // its own data while the audit used it.
+        if self.product_used {
+            written.push(Span::styled(
+                " · product data not restored",
+                theme.on_panel(theme.warn),
+            ));
+        }
+        out.push(Line::from(written));
         out
     }
 }
@@ -228,21 +242,27 @@ impl Panel for AuditModal {
         let cost = self.total_usd.map_or_else(String::new, |usd| {
             format!(" · {}", crate::chat::turn_usd(usd))
         });
+        // An audit that filed nothing and gave no verdict is said so where
+        // the verdict would be: there is nothing to repair from it.
+        let headline = if self.verdict.is_none() {
+            "no verdict"
+        } else {
+            self.headline.as_str()
+        };
         format!(
-            "audit · {} · {}{cost} · {}",
+            "audit · {} · {headline}{cost} · {}",
             crate::chat::short_model(&self.model),
-            self.headline,
             Self::clock(self.duration_ms)
         )
     }
 
     fn legend(&self, _view: &View) -> String {
-        // A passed audit has nothing to repair: Enter closes it. A failed
-        // one goes to the build hat on Enter or `y`.
-        let mut keys: Vec<&str> = if self.passed() {
-            vec!["⏎ close", "n close"]
+        // One key does the thing: Enter. A failed audit goes to the build
+        // hat on it; a passed one, or one with no verdict, closes on it.
+        let mut keys: Vec<&str> = if self.failed() {
+            vec!["⏎ repair in build", "n close"]
         } else {
-            vec!["⏎ repair in build", "y repair in build", "n close"]
+            vec!["⏎ close", "n close"]
         };
         if self.file.is_some() {
             keys.push("o open audit.md");
@@ -299,15 +319,13 @@ impl Panel for AuditModal {
             KeyCode::PageDown | KeyCode::Char(' ') => self.top = (top + page).min(max),
             KeyCode::Home => self.top = 0,
             KeyCode::End => self.top = max,
-            // A passed audit has nothing to repair: Enter closes it, and
-            // `y` is not one of its keys.
-            KeyCode::Enter if self.passed() => return Outcome::Close,
-            KeyCode::Char('y' | 'Y') if self.passed() => {}
-            // A `y` or an Enter in the moment the panel appeared was typed
-            // at something else.
-            KeyCode::Char('y' | 'Y') | KeyCode::Enter
-                if view.now_ms < self.opened_ms + ENTER_GUARD_MS => {}
-            KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
+            // A passed audit, or one with no verdict, has nothing to
+            // repair: Enter closes it. `y` is not one of the card's keys.
+            KeyCode::Enter if !self.failed() => return Outcome::Close,
+            // An Enter in the moment the panel appeared was typed at
+            // something else.
+            KeyCode::Enter if view.now_ms < self.opened_ms + ENTER_GUARD_MS => {}
+            KeyCode::Enter => {
                 return Outcome::CloseAct(Action::RepairFromAudit {
                     file: self.file.clone(),
                 });
@@ -359,6 +377,7 @@ mod tests {
             file: Some(".ryter/audit.md".into()),
             restored: vec![],
             checkpointed: true,
+            product_used: false,
             filed: true,
             total_usd: Some(0.07),
             duration_ms: 58_000,
@@ -373,6 +392,7 @@ mod tests {
                 ran,
                 restored,
                 checkpointed,
+                product_used,
                 filed,
                 total_usd,
                 duration_ms,
@@ -391,6 +411,7 @@ mod tests {
                 file,
                 restored,
                 checkpointed,
+                product_used,
                 filed,
                 total_usd,
                 duration_ms,
@@ -399,9 +420,9 @@ mod tests {
         }
     }
 
-    /// A passed audit has nothing to repair: Enter and `n` close it, `y`
-    /// does nothing, and the legend says so. A failed one repairs on
-    /// Enter as on `y`.
+    /// A passed audit has nothing to repair: Enter and `n` close it, and
+    /// the legend says so. A failed one repairs on Enter. `y` is not one
+    /// of the card's keys on either.
     #[test]
     fn enter_closes_a_pass_and_repairs_a_failure() {
         let mut v = view();
@@ -421,8 +442,12 @@ mod tests {
         let mut fail = AuditModal::from_event(&event(), 0).unwrap();
         assert_eq!(
             fail.legend(&v),
-            "⏎ repair in build · y repair in build · n close · o open audit.md · ↑↓ scroll"
+            "⏎ repair in build · n close · o open audit.md · ↑↓ scroll"
         );
+        assert!(matches!(
+            press(&mut fail, &mut v, KeyCode::Char('y')),
+            Outcome::Stay
+        ));
         assert!(matches!(
             press(&mut fail, &mut v, KeyCode::Enter),
             Outcome::CloseAct(Action::RepairFromAudit { file: Some(f) }) if f == ".ryter/audit.md"
@@ -510,14 +535,36 @@ mod tests {
         assert!(p.legend(&v).contains("o open audit.md"));
     }
 
-    /// `y` hands the audit to the build hat, `n` and `esc` close, `o`
-    /// opens the file, and the rows scroll by key.
+    /// An audit that filed nothing and gave no verdict has nothing to
+    /// repair: its title says so, Enter and `n` close it.
+    #[test]
+    fn no_verdict_closes_and_offers_no_repair() {
+        let mut v = view();
+        let mut p = AuditModal::from_event(&event(), 0).unwrap();
+        p.verdict = None;
+        assert!(p.title(&v).contains("no verdict"), "{}", p.title(&v));
+        assert_eq!(
+            p.legend(&v),
+            "⏎ close · n close · o open audit.md · ↑↓ scroll"
+        );
+        assert!(matches!(
+            press(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Close
+        ));
+        assert!(matches!(
+            press(&mut p, &mut v, KeyCode::Char('y')),
+            Outcome::Stay
+        ));
+    }
+
+    /// Enter hands a failed audit to the build hat, `n` and `esc` close,
+    /// `o` opens the file, and the rows scroll by key.
     #[test]
     fn the_keys() {
         let mut v = view();
         let mut p = AuditModal::from_event(&event(), 0).unwrap();
         assert!(matches!(
-            press(&mut p, &mut v, KeyCode::Char('y')),
+            press(&mut p, &mut v, KeyCode::Enter),
             Outcome::CloseAct(Action::RepairFromAudit { file: Some(f) }) if f == ".ryter/audit.md"
         ));
         assert!(matches!(
@@ -532,10 +579,10 @@ mod tests {
             press(&mut p, &mut v, KeyCode::Char('o')),
             Outcome::Act(Action::OpenAuditFile(f)) if f == ".ryter/audit.md"
         ));
-        // Too soon after it opened, `y` is a key typed at something else.
+        // Too soon after it opened, Enter is a key typed at something else.
         let mut fresh = AuditModal::from_event(&event(), v.now_ms).unwrap();
         assert!(matches!(
-            press(&mut fresh, &mut v, KeyCode::Char('y')),
+            press(&mut fresh, &mut v, KeyCode::Enter),
             Outcome::Stay
         ));
         // Scrolling: a short window moves through the rows.
@@ -552,6 +599,27 @@ mod tests {
     }
 
     /// A restored tree and a missing checkpoint are said in the card.
+    /// The audit used the product: the card says its own data stayed as
+    /// the audit left it, beside where the audit was written.
+    #[test]
+    fn the_card_says_when_product_data_was_not_restored() {
+        let v = view();
+        let mut ev = event();
+        if let AgentEvent::Audited { product_used, .. } = &mut ev {
+            *product_used = true;
+        }
+        let p = AuditModal::from_event(&ev, 0).unwrap();
+        let rows = text(&p, &v, WIDTH, 60);
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("written .ryter/audit.md · product data not restored")),
+            "{rows:?}"
+        );
+        let p = AuditModal::from_event(&event(), 0).unwrap();
+        let rows = text(&p, &v, WIDTH, 60);
+        assert!(!rows.iter().any(|r| r.contains("not restored")), "{rows:?}");
+    }
+
     #[test]
     fn the_tree_line() {
         let v = view();

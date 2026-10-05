@@ -2030,6 +2030,7 @@ fn reviewed(verdict: Option<bool>) -> View {
             file: None,
             restored: Vec::new(),
             checkpointed: true,
+            product_used: false,
             filed: false,
             total_usd: Some(0.04),
             duration_ms: 3000,
@@ -2262,6 +2263,7 @@ fn a_filed_audit_opens_its_popout_and_counts_in_the_rack() {
             file: Some(".ryter/audit.md".into()),
             restored: vec!["app/a.py".into()],
             checkpointed: true,
+            product_used: false,
             filed: true,
             total_usd: Some(0.07),
             duration_ms: 58_000,
@@ -2294,6 +2296,7 @@ fn a_filed_audit_opens_its_popout_and_counts_in_the_rack() {
             file: None,
             restored: Vec::new(),
             checkpointed: true,
+            product_used: false,
             filed: false,
             total_usd: None,
             duration_ms: 1000,
@@ -2765,6 +2768,7 @@ fn the_wheel_scrolls_the_audit_card() {
         file: Some(".ryter/audit.md".into()),
         restored: Vec::new(),
         checkpointed: true,
+        product_used: false,
         filed: true,
         total_usd: Some(0.01),
         duration_ms: 1000,
@@ -3279,6 +3283,118 @@ fn the_chat_moves_up_for_the_allow_card() {
     );
 }
 
+/// A view mid-turn on the rack screen with a long reply and the build hat
+/// proposing how the project runs: the run-file card.
+fn proposing_run(width_lines: usize) -> View {
+    let mut v = mid_stream(ActivityMode::Collapsed);
+    v.ui.layout = "ledger".into();
+    let reply: String = (0..width_lines)
+        .map(|i| format!("reply line {i}\n"))
+        .collect();
+    v.on_token(&reply);
+    let rows = [
+        ("start", "docker compose up -d --wait"),
+        ("ready", "http://localhost:8000/healthz"),
+        ("test", "docker compose run --rm web pytest -q"),
+        ("stop", "docker compose down"),
+    ]
+    .iter()
+    .map(|(l, c)| (l.to_string(), c.to_string()))
+    .collect();
+    v.panels
+        .push(Box::new(crate::panel::plan::PlanModal::run(rows, None, 0)));
+    v.activity.note_ask("run?");
+    v
+}
+
+#[test]
+fn snapshot_run_file_card() {
+    all_sizes("modal-run-file", &proposing_run(8));
+}
+
+/// The run-file card is a question like the allow card: in the rows the
+/// chat frees for it, inset in the conversation's column. The reply is
+/// laid out above it, whole; nothing of it is under the card.
+#[test]
+fn the_chat_moves_up_for_the_run_file_card() {
+    let theme = Theme::truecolor_dark();
+    for (w, h) in [(160u16, 48u16), (100, 30)] {
+        let v = proposing_run(60);
+        let (col_x, col_w) = crate::draw::chat_column(&v, theme, w, h);
+        let drawn = render_to_string(&v, w, h);
+        let lines: Vec<&str> = drawn.lines().collect();
+        let card = lines
+            .iter()
+            .position(|l| l.contains("┏━ how this project runs"))
+            .unwrap_or_else(|| panic!("no card at {w}x{h}:\n{drawn}"));
+        // The reply's last row (it wraps in a narrow column) is above the
+        // card, not under it.
+        let last = lines
+            .iter()
+            .rposition(|l| l.contains("reply line"))
+            .unwrap_or_else(|| panic!("the reply at {w}x{h}:\n{drawn}"));
+        assert!(
+            last < card,
+            "{w}x{h}: the reply ends above the card:\n{drawn}"
+        );
+        let status = lines
+            .iter()
+            .position(|l| l.contains("waiting for you · run?"))
+            .unwrap_or_else(|| panic!("the status row at {w}x{h}:\n{drawn}"));
+        assert!(
+            status < card,
+            "{w}x{h}: the status row is above the card:\n{drawn}"
+        );
+        // No edge of the card in the conversation's column above it: the
+        // rows there are the chat's, whole.
+        for l in &lines[..card] {
+            let col: String = l
+                .chars()
+                .skip(usize::from(col_x))
+                .take(usize::from(col_w))
+                .collect();
+            assert!(
+                !col.contains('┏') && !col.contains('╰') && !col.contains('┃'),
+                "{w}x{h}: a card's edge in the chat: {l:?}\n{drawn}"
+            );
+        }
+        // Inset as the allow card is, and capped at a third of the column.
+        let open = lines[card].chars().position(|c| c == '┏').unwrap();
+        let left = if col_w >= 100 { 14 } else { 2 };
+        assert_eq!(open as u16, col_x + left, "{w}x{h}: left edge\n{drawn}");
+        let bottom = lines.iter().position(|l| l.contains("╰───")).unwrap();
+        let height = bottom - card + 1;
+        assert!(
+            height <= usize::from(h) / 3 + 1,
+            "{w}x{h}: card is {height} rows:\n{drawn}"
+        );
+        // The commands and the keys are on it whatever the room: the rows
+        // of air go first, then it scrolls.
+        let body: Vec<&str> = lines[card..=bottom].to_vec();
+        assert!(
+            body.iter().any(|l| l.contains("start  docker compose up")),
+            "{w}x{h}:\n{drawn}"
+        );
+        assert!(
+            body[body.len() - 2].contains("y approve"),
+            "{w}x{h}:\n{drawn}"
+        );
+        if h == 30 {
+            assert!(
+                body[body.len() - 2].contains("↑↓ scroll"),
+                "{w}x{h}:\n{drawn}"
+            );
+            let card_rows = &body[1..body.len() - 2];
+            assert!(
+                !card_rows
+                    .iter()
+                    .any(|l| l.trim_matches(|c| c == '│' || c == ' ').is_empty()),
+                "{w}x{h}: a blank row kept:\n{drawn}"
+            );
+        }
+    }
+}
+
 /// The foot names the card's keys in the warn color, then the ways out.
 #[test]
 fn the_foot_shows_the_cards_keys_in_warn() {
@@ -3303,6 +3419,50 @@ fn the_foot_shows_the_cards_keys_in_warn() {
     assert_ne!(buf[(at("^c"), foot)].fg, theme.warn, "{text}");
 }
 
+/// The classic layout's foot line takes the card's keys in warn too.
+#[test]
+fn the_classic_foot_shows_the_cards_keys_in_warn() {
+    let mut v = asking(8);
+    v.ui.layout = "classic".into();
+    let theme = Theme::truecolor_dark();
+    let buf = render_buffer(&v, 160, 42, theme);
+    let foot = buf.area.height - 1;
+    let text: String = (0..buf.area.width)
+        .map(|x| buf[(x, foot)].symbol().to_string())
+        .collect();
+    assert!(
+        text.contains("⏎ allow") && text.contains("^c stop the turn"),
+        "{text}"
+    );
+    let at = |needle: &str| {
+        text.find(needle)
+            .map(|i| text[..i].chars().count() as u16)
+            .unwrap()
+    };
+    assert_eq!(buf[(at("⏎"), foot)].fg, theme.warn, "{text}");
+    assert_eq!(buf[(at("a allow"), foot)].fg, theme.warn, "{text}");
+    assert_ne!(buf[(at("^c"), foot)].fg, theme.warn, "{text}");
+}
+
+/// The allow card's own key row holds `⏎`, `a` and `n` on a narrow column
+/// too: the scope is said in a word, and a key that doesn't fit is left
+/// out without taking the ones after it.
+#[test]
+fn the_allow_cards_key_row_keeps_its_keys_when_narrow() {
+    for (w, h) in [(100u16, 30u16), (80, 24), (160, 42)] {
+        let v = asking(8);
+        let shown = render_to_string(&v, w, h);
+        let row = shown
+            .lines()
+            .find(|l| l.contains("⏎ allow"))
+            .unwrap_or_else(|| panic!("{w}x{h}: no key row\n{shown}"));
+        assert!(
+            row.contains("a allow edits this session") && row.contains("n deny"),
+            "{w}x{h}: {row}"
+        );
+    }
+}
+
 /// What each question asks, as the status row says it; and the bell.
 #[test]
 fn a_question_is_named_and_may_ring() {
@@ -3317,6 +3477,7 @@ fn a_question_is_named_and_may_ring() {
         strict: false,
         scope: None,
         whole: false,
+        asks: None,
         reply: p.clone(),
     };
     assert_eq!(crate::run::ask_for(&perm("bash")), "allow?");

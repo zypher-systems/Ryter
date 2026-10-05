@@ -37,4 +37,4 @@
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› type to queue the next message, / for commands                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ⏎ allow    n deny    ↑↓ wheel more of the change
+ ⏎ allow    n deny    ↑↓ wheel more of the change    esc deny    ^c stop the turn

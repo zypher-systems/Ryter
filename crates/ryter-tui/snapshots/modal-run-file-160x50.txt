@@ -12,39 +12,39 @@
    not worn yet              │         ◆  grok-4.6                                                                            │
                              │         │  Reading the loop now. The event loop drains reply line 0 reply line 1 reply         │ PULSE
  ─────────────── specialists │         │  line 2 reply line 3 reply line 4 reply line 5 reply line 6 reply line 7             │ ▁▁▁▁▁▁▁█               18 tok/s
-                             │         │  ⠼ waiting for you · allow? · 0:12 · 85 tokens                                       │
+                             │         │  ⠼ waiting for you · run? · 0:12 · 85 tokens                                         │
  ○ AUDIT                     │                                                                                                │ SPEND
-   grok-4.6                  │                               ▄                                ▄                               │ session                      $0
-   not worn yet              │                                                                                                │ budget                      off
+   grok-4.6                  │                                                                                                │ session                      $0
+   not worn yet              │                               ▄                                ▄                               │ budget                      off
                              │                                                                                                │
  ○ SCRIBE                    │                                                                                                │ GUARD
    grok-4.6                  │                                                                                                │ sandbox                     off
    not worn yet              │                                                                                                │ this hat        edits ask first
-                             │                      ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄                      │ plan.md                    none
-                             │                ▄▄                                                            ▄▄                │ audit.md                   none
-                             │                ▀                                                              ▀                │
-                             │                    ▀▀▀▀▀▀                                            ▀▀▀▀▀▀                    │ CHANGES             uncommitted
-                             │                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                  │ no repository here
+                             │                                                                                                │ plan.md                    none
+                             │                      ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄                      │ audit.md                   none
+                             │                ▄▄                                                            ▄▄                │
+                             │                ▀                                                              ▀                │ CHANGES             uncommitted
+                             │                    ▀▀▀▀▀▀                                            ▀▀▀▀▀▀                    │ no repository here
+                             │                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                  │
                              │                                                                                                │
                              │                                                                                                │
                              │                                                                                                │
                              │                                                                                                │
                              │                                                                                                │
                              │                                                                                                │
-                             │   ┏━ allow? · edit  app/server.js ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ build ━┓     │
-                             │   │ what    edit  app/server.js                                                          │     │
-                             │   │ why     Next the form text                                                           │     │
-                             │   │ risk    changes a file in your project · /undo puts it back                          │     │
-                             │   │ change  app/server.js  +1 −1                                                         │     │
-                             │   │ 29   row 28                                                                          │     │
-                             │   │ 30   row 29                                                                          │     │
-                             │   │ 31 - row 30                                                                          │     │
-                             │   │ 31 + row thirty                                                                      │     │
-                             │   │ 32   row 31                                                                          │     │
-                             │   │ 33   row 32                                                                          │     │
-                             │   │ ⏎ allow   a allow edits this session   n deny                                        │     │
+                             │                                                                                                │
+                             │   ┏━ how this project runs ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓     │
+                             │   │ start  docker compose up -d --wait                                                   │     │
+                             │   │ ready  http://localhost:8000/healthz                                                 │     │
+                             │   │ test   docker compose run --rm web pytest -q                                         │     │
+                             │   │ stop   docker compose down                                                           │     │
+                             │   │                                                                                      │     │
+                             │   │ saved to .ryter/run.toml                                                             │     │
+                             │   │ ryter runs these without asking                                                      │     │
+                             │   │                                                                                      │     │
+                             │   │ y approve   e adjust   n reject                                                      │     │
                              │   ╰──────────────────────────────────────────────────────────────────────────────────────╯     │
                              │────────────────────────────────────────────────────────────────────────────────────────────────│
                              │  BUILD  › type to queue the next message, / for commands                                       │
 
- ⏎ allow    a allow edits this session    n deny    ↑↓ wheel more of the change    esc deny    ^c stop the turn
+ y approve    e adjust    n reject    esc reject    ^c stop the turn

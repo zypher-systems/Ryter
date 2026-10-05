@@ -36,6 +36,9 @@ pub struct PermissionModal {
     pub scope: Option<String>,
     /// What the model said just before asking.
     pub why: Option<String>,
+    /// Of a script of several commands, the one that asked: the title and
+    /// the `what` row name it, and the body keeps the whole script.
+    pub asks: Option<String>,
     /// `view.now_ms` when the prompt opened, for the Enter guard.
     pub opened_ms: u64,
     /// The card is the only view of the change there will be (the user's
@@ -74,6 +77,7 @@ impl PermissionModal {
             strict: false,
             scope: None,
             why: None,
+            asks: None,
             opened_ms: 0,
             whole: false,
             top: 0,
@@ -176,9 +180,23 @@ impl PermissionModal {
             .map_or(self.tool.as_str(), str::trim)
     }
 
+    /// The command of a script that asked, named first (`R-POP-76`): the
+    /// title read `run set -e` for a script whose `rm` three lines down
+    /// was the question.
+    pub fn asking(mut self, asks: Option<String>) -> Self {
+        self.asks = asks.filter(|a| !a.trim().is_empty());
+        self
+    }
+
     /// `edit app/server.js`, `run cargo test`.
     fn what(&self) -> String {
-        let target = self.summary.lines().next().unwrap_or("").trim().to_string();
+        let target = self
+            .asks
+            .as_deref()
+            .or_else(|| self.summary.lines().next())
+            .unwrap_or("")
+            .trim()
+            .to_string();
         let verb = match self.base_tool() {
             "write" if self.preview.as_ref().is_some_and(|d| d.created) => "create",
             "write" => "rewrite",
@@ -273,19 +291,16 @@ impl Panel for PermissionModal {
         } else if self.y_only() {
             "y allow once · n deny".into()
         } else if let (true, Some(scope)) = (self.can_allow_session(), &self.scope) {
-            // The kind of action in a word where the row is shared with
-            // the scroll hint: `edits`, not `edits to files in the project`.
-            let scope = if self.max_top.get() > 0 {
-                scope
-                    .split(" to ")
-                    .next()
-                    .unwrap_or(scope)
-                    .split(" in ")
-                    .next()
-                    .unwrap_or(scope)
-            } else {
-                scope.as_str()
-            };
+            // The kind of action in a word: `edits`, not `edits to files in
+            // the project`, so the row holds all of its keys on a column
+            // of sixty too. The card's risk line says the rest.
+            let scope = scope
+                .split(" to ")
+                .next()
+                .unwrap_or(scope)
+                .split(" in ")
+                .next()
+                .unwrap_or(scope);
             format!("⏎ allow · a allow {scope} this session · n deny")
         } else {
             "⏎ allow · n deny".into()
@@ -1021,6 +1036,25 @@ mod tests {
             KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
             &mut view(),
         )
+    }
+
+    /// The title and the `what` row name the command that asked, not the
+    /// script's first word: `run set -e` stood for an `rm` two lines down.
+    /// The body keeps the whole script.
+    #[test]
+    fn the_title_names_the_command_that_asked() {
+        let v = view();
+        let script = "set -e\n.venv/bin/pytest -q\nrm -f \"$TASKS_FILE\"";
+        let m = PermissionModal::new("bash".into(), script.into())
+            .with_answers(true, None)
+            .asking(Some("rm -f \"$TASKS_FILE\"".into()));
+        assert_eq!(m.title(&v), "allow? · run  rm -f \"$TASKS_FILE\" · press y");
+        assert_eq!(m.summary, script);
+        // Nothing named: the first line, as before.
+        let first = PermissionModal::new("bash".into(), script.into())
+            .with_answers(true, None)
+            .asking(Some("  ".into()));
+        assert_eq!(first.title(&v), "allow? · run  set -e · press y");
     }
 
     /// A hat switch is a yes/no question: no "allow all", which would

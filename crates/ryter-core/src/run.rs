@@ -405,7 +405,7 @@ impl Answer {
 }
 
 /// `host`, `port` and `path` of an `http://` or `https://` address.
-fn parts(url: &str) -> Option<(bool, String, u16, String)> {
+pub(crate) fn parts(url: &str) -> Option<(bool, String, u16, String)> {
     let (tls, rest) = match url.split_once("://") {
         Some(("http", r)) => (false, r),
         Some(("https", r)) => (true, r),

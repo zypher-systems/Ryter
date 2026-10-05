@@ -677,6 +677,15 @@ fn key_spans_colored(
 }
 
 /// The solo screen's foot: the keys, from the left.
+/// What `esc` does on the open card: the same as its `n` key, which a
+/// permission card calls `deny` and the run-file card `reject`. A card
+/// without an `n` key denies.
+fn esc_does(keys: &[(String, String, Hint)]) -> String {
+    keys.iter()
+        .find(|(k, _, _)| k == "n")
+        .map_or_else(|| "deny".to_string(), |(_, label, _)| label.clone())
+}
+
 fn draw_keys(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let bg = theme.panel_bg;
     // A question's keys are in the warn color, where the eye lands when
@@ -689,7 +698,8 @@ fn draw_keys(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let card_keys = if asking { all.len() } else { 0 };
     if asking {
         if !all.iter().any(|(k, _, _)| k == "esc") {
-            all.push(("esc".into(), "deny".into(), Hint::Useful));
+            let out = esc_does(&all);
+            all.push(("esc".into(), out, Hint::Useful));
         }
         if view.busy {
             all.push(("^c".into(), "stop the turn".into(), Hint::Essential));
@@ -1349,8 +1359,26 @@ fn legend_keys(legend: &str) -> Vec<(String, String, Hint)> {
 fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let w = area.width as usize;
     let mut items = hints_ranked(view);
+    // A question's keys are in the warn color here as on the rack screen,
+    // where the eye lands when the card above has not been seen; the ways
+    // out stay dim after them.
+    let asking = view
+        .panels
+        .top()
+        .is_some_and(|p| p.docked() && p.modal().is_some());
+    let mut card_keys = 0;
     if let Some(p) = view.panels.top() {
         items = legend_keys(&p.legend(view));
+        if asking {
+            card_keys = items.len();
+            if !items.iter().any(|(k, _, _)| k == "esc") {
+                let out = esc_does(&items);
+                items.push(("esc".into(), out, Hint::Useful));
+            }
+            if view.busy {
+                items.push(("^c".into(), "stop the turn".into(), Hint::Essential));
+            }
+        }
     }
     // Drop the least important hints until the rest fit, rather than chopping
     // whatever happens to be last.
@@ -1375,15 +1403,19 @@ fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         }
     }
     let mut spans: Vec<Span<'static>> = vec![Span::styled(" ", theme.body())];
-    for (i, (key, label, _)) in items.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled("    ", theme.body()));
+    if asking {
+        spans.extend(key_spans_colored(&items, card_keys, theme, theme.bg, 4));
+    } else {
+        for (i, (key, label, _)) in items.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled("    ", theme.body()));
+            }
+            spans.push(Span::styled(
+                key.clone(),
+                theme.body().add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(format!(" {label}"), theme.muted()));
         }
-        spans.push(Span::styled(
-            key.clone(),
-            theme.body().add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled(format!(" {label}"), theme.muted()));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)).style(theme.body()), area);
 }
