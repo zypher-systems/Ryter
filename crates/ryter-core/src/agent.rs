@@ -259,6 +259,7 @@ impl Agent {
         // What this turn makes, it may delete without asking; the turn's
         // checkpoint holds none of it.
         self.ctx.created.clear();
+        self.ctx.kept.clear();
         let started = std::time::Instant::now();
         let mut tools = 0u32;
         self.emit(AgentEvent::TurnStarted {
@@ -311,16 +312,22 @@ impl Agent {
     }
 
     /// Remember the files a call made this turn: a `write` of a file that
-    /// was not there, and what a shell command made ([`crate::tools::makes`]).
-    /// Deleting one of them later in the turn does not ask.
+    /// was not there, and what a shell command made or moved
+    /// ([`crate::tools::effects`]). Deleting one it made later in the turn
+    /// does not ask; a place it moved the user's file to always does.
     fn note_created(
         &mut self,
         name: &str,
         args: &Value,
         diff: Option<&crate::diff::FileDiff>,
-        makes: Vec<PathBuf>,
+        effects: crate::tools::Effects,
     ) {
-        let mut made = makes;
+        let crate::tools::Effects { mut made, kept } = effects;
+        for p in kept {
+            if !self.ctx.kept.contains(&p) {
+                self.ctx.kept.push(p);
+            }
+        }
         if name == "write" && diff.is_some_and(|d| d.created) {
             if let Some(p) = args
                 .get("path")
@@ -687,10 +694,10 @@ impl Agent {
                 self.note_product_use(&call.name, &args);
                 // Read before the command runs: what is not there yet is
                 // what it makes.
-                let makes = if call.name == "bash" && parsed.is_ok() {
-                    crate::tools::makes(&args, &self.ctx)
+                let effects = if call.name == "bash" && parsed.is_ok() {
+                    crate::tools::effects(&args, &self.ctx)
                 } else {
-                    Vec::new()
+                    crate::tools::Effects::default()
                 };
                 let out = match &parsed {
                     // Run with `null` arguments, the call was refused as
@@ -747,7 +754,7 @@ impl Agent {
                     }
                 };
                 if !out.is_error {
-                    self.note_created(&call.name, &args, out.diff.as_ref(), makes);
+                    self.note_created(&call.name, &args, out.diff.as_ref(), effects);
                 }
                 let sig = format!("{}\u{0}{args}\u{0}{}", call.name, out.text);
                 if !out.is_error && matches!(call.name.as_str(), "write" | "search_replace") {
@@ -3283,6 +3290,7 @@ mod tests {
             vars: Default::default(),
             read_only: false,
             created: Vec::new(),
+            kept: Vec::new(),
         };
         let agent = Agent {
             provider: Arc::new(provider),

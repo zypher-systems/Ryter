@@ -1779,7 +1779,7 @@ fn decide_bash(args: &Value, ctx: &ToolContext) -> Decision {
     let Some(cmd) = args.get("command").and_then(Value::as_str) else {
         return Decision::Deny;
     };
-    judge_bash(cmd, ctx).0
+    judge_bash(cmd, ctx).decision
 }
 
 /// The command of `cmd` that made it a question, when one did and `cmd`
@@ -1790,7 +1790,11 @@ fn decide_bash(args: &Value, ctx: &ToolContext) -> Decision {
 /// `set -e … rm -f "$TASKS_FILE"` was titled `run set -e`, the first word
 /// of the script, with the `rm` that asked three lines down.
 pub fn asking_segment(cmd: &str, ctx: &ToolContext) -> Option<String> {
-    let (decision, seg, _) = judge_bash(cmd, ctx);
+    let Judged {
+        decision,
+        asks: seg,
+        ..
+    } = judge_bash(cmd, ctx);
     if !matches!(
         decision,
         Decision::Ask | Decision::AskSecret | Decision::AskOutside
@@ -1801,31 +1805,68 @@ pub fn asking_segment(cmd: &str, ctx: &ToolContext) -> Option<String> {
         .filter(|s| !s.is_empty() && s != cmd.trim())
 }
 
-/// The files the command in `args` would make that are not there yet
-/// ([`segment_makes`]), read before it runs. Deleting one of them later in
-/// the turn does not ask.
-pub fn makes(args: &Value, ctx: &ToolContext) -> Vec<PathBuf> {
+/// What a shell command does to the files around it, read before it runs,
+/// for the turn's record ([`ToolContext::created`], [`ToolContext::kept`]).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Effects {
+    /// Files it would make that are not there yet ([`segment_makes`]):
+    /// deleting one later in the turn does not ask.
+    pub made: Vec<PathBuf>,
+    /// Places it moves a file of the user's to (`mv src/x new/`): never
+    /// a free deletion, whatever else is known about them.
+    pub kept: Vec<PathBuf>,
+}
+
+/// The [`Effects`] of the command in `args`.
+pub fn effects(args: &Value, ctx: &ToolContext) -> Effects {
     args.get("command")
         .and_then(Value::as_str)
-        .map(|cmd| judge_bash(cmd, ctx).2)
+        .map(|cmd| judge_bash(cmd, ctx).effects)
         .unwrap_or_default()
 }
 
+/// What [`judge_bash`] found.
+struct Judged {
+    decision: Decision,
+    /// The first command of the line that asked.
+    asks: Option<String>,
+    effects: Effects,
+}
+
+impl Judged {
+    fn deny() -> Self {
+        Self {
+            decision: Decision::Deny,
+            asks: None,
+            effects: Effects::default(),
+        }
+    }
+}
+
 /// [`decide_bash`], the first command of the line that asked, and the files
-/// the line would make.
-fn judge_bash(cmd: &str, ctx: &ToolContext) -> (Decision, Option<String>, Vec<PathBuf>) {
+/// the line would make or move.
+fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
     // The gate keeps a quoted glob character as a character from a private
     // range. A command that already holds one can't be told apart.
     if expand::has_private(cmd) {
-        return (Decision::Deny, None, Vec::new());
+        return Judged::deny();
     }
     let segs = split(cmd);
     if segs.is_empty() {
-        return (Decision::Deny, None, Vec::new());
+        return Judged::deny();
     }
     // Files an earlier part of the command makes: a later part may delete
     // them without asking (`cat > probe.sh; sh probe.sh; rm probe.sh`).
+    // Only a part that is sure to run when the command succeeds counts:
+    // after `||`, inside `if`, in a subshell, `touch decoy` may never have
+    // run, and a later `mv src/lib.rs decoy && rm -f decoy` would have
+    // deleted the user's file as the turn's own. A `&&` chain is sure
+    // when nothing in the command can hide a failed part behind `||`.
     let mut made: Vec<PathBuf> = Vec::new();
+    let mut kept: Vec<PathBuf> = Vec::new();
+    let any_or = segs
+        .iter()
+        .any(|s| !s.inside && (s.before == Sep::Or || s.after == Sep::Or));
     let mut asks: Option<String> = None;
     // `cd app && npm test`: after a `cd`, the rest is judged from the
     // folder it really runs in. The project stays the boundary: a link in
@@ -1879,12 +1920,28 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> (Decision, Option<String>, Vec<Pa
                 cwd: at.clone(),
                 vars: here,
                 created: [ctx.created.as_slice(), made.as_slice()].concat(),
+                kept: [ctx.kept.as_slice(), kept.as_slice()].concat(),
                 ..ctx.clone()
             };
             let judged = decide_segment(&s.text, &cx);
-            for p in segment_makes(&s.text, &cx) {
-                if !made.contains(&p) {
-                    made.push(p);
+            let runs = !s.inside
+                && !led_by_keyword(&s.text)
+                && match s.before {
+                    Sep::Then | Sep::Pipe | Sep::Background => true,
+                    Sep::And => !any_or,
+                    Sep::Or => false,
+                };
+            let fx = segment_makes(&s.text, &cx);
+            if runs {
+                for p in fx.made {
+                    if !made.contains(&p) {
+                        made.push(p);
+                    }
+                }
+            }
+            for p in fx.kept {
+                if !kept.contains(&p) {
+                    kept.push(p);
                 }
             }
             if asks.is_none()
@@ -1911,7 +1968,7 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> (Decision, Option<String>, Vec<Pa
             }
         }
         if decision == Decision::Deny {
-            return (Decision::Deny, None, Vec::new());
+            return Judged::deny();
         }
         // `NAME=value` alone, at the top of the command: set for sure. Set
         // anywhere else, or to something only the shell can read, the
@@ -2023,7 +2080,11 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> (Decision, Option<String>, Vec<Pa
             moved
         };
     }
-    (decision, asks, made)
+    Judged {
+        decision,
+        asks,
+        effects: Effects { made, kept },
+    }
 }
 
 /// Shell words that stand before a command and are not it: `then make`
@@ -4450,11 +4511,12 @@ fn strip_comments(cmd: &str) -> String {
     let mut word_start = true;
     // The delimiters of here-documents opened on this line, whose bodies
     // follow it in order; and the body being copied.
-    let mut pending: Vec<String> = Vec::new();
-    let mut body: Option<String> = None;
+    // Each with whether `<<-` lets the delimiter be indented by tabs.
+    let mut pending: Vec<(String, bool)> = Vec::new();
+    let mut body: Option<(String, bool)> = None;
     let mut i = 0;
     while i < len {
-        if let Some(delim) = &body {
+        if let Some((delim, strip)) = &body {
             let end = chars[i..]
                 .iter()
                 .position(|&c| c == '\n')
@@ -4464,7 +4526,12 @@ fn strip_comments(cmd: &str) -> String {
             if end < len {
                 out.push('\n');
             }
-            if line.trim_start_matches('\t') == delim {
+            let l = if *strip {
+                line.trim_start_matches('\t')
+            } else {
+                line.as_str()
+            };
+            if l == delim {
                 body = None;
                 if !pending.is_empty() {
                     body = Some(pending.remove(0));
@@ -4508,7 +4575,8 @@ fn strip_comments(cmd: &str) -> String {
             {
                 out.push_str("<<");
                 i += 2;
-                if chars.get(i) == Some(&'-') {
+                let strip = chars.get(i) == Some(&'-');
+                if strip {
                     out.push('-');
                     i += 1;
                 }
@@ -4527,7 +4595,7 @@ fn strip_comments(cmd: &str) -> String {
                     out.push(chars[i]);
                     i += 1;
                 }
-                pending.push(delim);
+                pending.push((delim, strip));
                 word_start = false;
                 continue;
             }
@@ -4535,7 +4603,7 @@ fn strip_comments(cmd: &str) -> String {
         }
         out.push(c);
         word_start =
-            !single && !double && (c.is_whitespace() || matches!(c, ';' | '|' | '&' | '('));
+            !single && !double && (c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')'));
         i += 1;
     }
     out
@@ -6476,33 +6544,80 @@ fn deletes_freely(seg: &str, prog: &str, from_prog: &[String], ctx: &ToolContext
     }
     let scratch = scratch_dirs();
     let workspace = real_path(&ctx.workspace);
+    let free_scratch = |p: &Path| {
+        scratch
+            .iter()
+            .any(|t| p != t && is_under(p, t) && !is_under(&workspace, p) && !in_a_repository(p, t))
+    };
     operands.iter().all(|w| {
-        // A value the shell fills in could name anything.
-        if w.contains(['$', '`']) {
+        // A value the shell fills in could name anything, and an unquoted
+        // one it globs and splits again: `F=/tmp/*; rm -rf $F` is every
+        // match, `F='/tmp/a b'; rm $F` two paths.
+        if w.contains(['$', '`', '*', '?', '[']) || w.chars().any(char::is_whitespace) {
             return false;
         }
-        match resolve(ctx, w) {
-            Some(p) => ctx.created.contains(&p),
-            None => resolve_outside(ctx, w).is_some_and(|p| {
-                ctx.created.contains(&p)
-                    || scratch.iter().any(|t| {
-                        p != *t
-                            && is_under(&p, t)
-                            && !is_under(&workspace, &p)
-                            && !in_a_repository(&p, t)
-                    })
-            }),
+        // The entry `rm` removes, and what it points at. A link in the
+        // project to a scratch file is a project file; the checkpoint
+        // holds it, and the question stays.
+        let Some(entry) = entry_path(ctx, w) else {
+            return false;
+        };
+        let target = resolve(ctx, w)
+            .or_else(|| resolve_outside(ctx, w))
+            .unwrap_or_else(|| entry.clone());
+        // A file of the user's was moved here this turn.
+        if ctx
+            .kept
+            .iter()
+            .any(|k| is_under(k, &entry) || is_under(k, &target))
+        {
+            return false;
         }
+        // In the project, only what the turn made; a project in `/tmp` is
+        // not scratch space.
+        let notes = real_path(&ctx.notes_dir);
+        let inside = |p: &Path| is_under(p, &workspace) || is_under(p, &notes);
+        if inside(&entry) || inside(&target) {
+            return ctx.created.contains(&entry);
+        }
+        ctx.created.contains(&entry) || (free_scratch(&entry) && free_scratch(&target))
     })
+}
+
+/// The directory entry a path names: its folder resolved, links followed,
+/// and its own name as written. `rm link` removes the entry, not what it
+/// points at. `None` for a path with no name of its own (`/`, `..`); a
+/// trailing `/` or `.` names the folder itself, resolved.
+fn entry_path(ctx: &ToolContext, w: &str) -> Option<PathBuf> {
+    let p = Path::new(w);
+    let name = p.file_name()?;
+    if w.ends_with('/') || w.ends_with("/.") || w == "." {
+        return resolve(ctx, w).or_else(|| resolve_outside(ctx, w));
+    }
+    let parent = p
+        .parent()
+        .map(|d| d.to_string_lossy().into_owned())
+        .filter(|d| !d.is_empty())
+        .unwrap_or_else(|| ".".to_string());
+    let dir = resolve(ctx, &parent).or_else(|| resolve_outside(ctx, &parent))?;
+    Some(dir.join(name))
 }
 
 /// The files a command would make that are not there yet: a redirect's
 /// target, and what `tee`, `touch`, `mkdir` and `cp` are given to write.
-/// With them, the folders that would be made on the way.
-fn segment_makes(seg: &str, ctx: &ToolContext) -> Vec<PathBuf> {
+/// With them, the folders that would be made on the way. And the places
+/// `mv` or `git mv` moves a file of the user's to: a folder made this turn
+/// with the user's file moved into it, or a scratch path the last copy of
+/// it was moved to, is not the turn's own to delete.
+fn segment_makes(seg: &str, ctx: &ToolContext) -> Effects {
     let words = read(seg, ctx, false);
     let parsed = parse(&words);
-    let prog = parsed.prog.unwrap_or("");
+    let mut prog = parsed.prog.unwrap_or("");
+    let mut args_at = parsed.args;
+    if prog == "git" && words.get(args_at).map(String::as_str) == Some("mv") {
+        prog = "mv";
+        args_at += 1;
+    }
     let mut named: Vec<String> = Vec::new();
     let mut operands: Vec<String> = Vec::new();
     // The next word is a redirect's target: written, or (`<`) read.
@@ -6521,15 +6636,53 @@ fn segment_makes(seg: &str, ctx: &ToolContext) -> Vec<PathBuf> {
             Redir::No if w.starts_with("<<") => {}
             Redir::No if redirect(w, true) != Redir::No => next = Some(false),
             Redir::No => {
-                if i >= parsed.args && !w.starts_with('-') {
+                if i >= args_at && !w.starts_with('-') {
                     operands.push(w.clone());
                 }
             }
         }
     }
+    let mut kept: Vec<PathBuf> = Vec::new();
     match prog {
         "tee" | "touch" | "mkdir" => named.extend(operands),
         "cp" if operands.len() >= 2 => named.extend(operands.pop()),
+        "mv" if operands.len() >= 2 => {
+            // `mv a b dir`, or `mv -t dir a b`.
+            let target_opt = words
+                .iter()
+                .skip(args_at)
+                .position(|w| w == "-t" || w == "--target-directory")
+                .map(|k| k + args_at);
+            let (dest, sources): (String, Vec<String>) = match target_opt {
+                Some(k) => (
+                    words.get(k + 1).cloned().unwrap_or_default(),
+                    operands
+                        .iter()
+                        .filter(|o| Some(*o) != words.get(k + 1))
+                        .cloned()
+                        .collect(),
+                ),
+                None => {
+                    let mut ops = operands.clone();
+                    let dest = ops.pop().unwrap_or_default();
+                    (dest, ops)
+                }
+            };
+            let scratch = scratch_dirs();
+            let users = |src: &str| {
+                resolve(ctx, src).is_some()
+                    || resolve_outside(ctx, src)
+                        .is_some_and(|p| !scratch.iter().any(|t| is_under(&p, t)))
+            };
+            if let Some(to) = resolve(ctx, &dest).or_else(|| resolve_outside(ctx, &dest)) {
+                for src in sources.iter().filter(|s| users(s)) {
+                    kept.push(to.clone());
+                    if let Some(name) = Path::new(src).file_name() {
+                        kept.push(to.join(name));
+                    }
+                }
+            }
+        }
         _ => {}
     }
     let mut out: Vec<PathBuf> = Vec::new();
@@ -6549,7 +6702,7 @@ fn segment_makes(seg: &str, ctx: &ToolContext) -> Vec<PathBuf> {
             }
         }
     }
-    out
+    Effects { made: out, kept }
 }
 
 /// The words a searching or editing program reads as its pattern or its
@@ -6565,7 +6718,7 @@ fn pattern_words(prog: &str, from_prog: &[String]) -> Vec<String> {
         "grep" | "egrep" | "fgrep" => ("efmABCdD", "e"),
         "rg" => ("efgtTmABCjMEr", "e"),
         "sed" => ("elf", "e"),
-        "awk" | "gawk" | "mawk" | "nawk" => ("Ffv", ""),
+        "awk" | "gawk" | "mawk" | "nawk" => ("Ffve", "e"),
         _ => return Vec::new(),
     };
     let mut out = Vec::new();
@@ -6587,7 +6740,8 @@ fn pattern_words(prog: &str, from_prog: &[String]) -> Vec<String> {
                 None => (long, None),
             };
             let takes_next = attached.is_none()
-                && (LONG_VALUED.contains(&format!("--{name}").as_str()) || name == "expression");
+                && (LONG_VALUED.contains(&format!("--{name}").as_str())
+                    || matches!(name, "expression" | "source"));
             let value = if takes_next {
                 at += 1;
                 args.get(at - 1).cloned()
@@ -6595,7 +6749,7 @@ fn pattern_words(prog: &str, from_prog: &[String]) -> Vec<String> {
                 attached
             };
             match name {
-                "regexp" | "expression" => {
+                "regexp" | "expression" | "source" => {
                     elsewhere = true;
                     out.extend(value);
                 }
@@ -6922,6 +7076,7 @@ mod tests {
             // the build hat does; `the_audit_hat_runs_as_build_behind_a_checkpoint`.
             read_only: role == Role::SoloAudit,
             created: Vec::new(),
+            kept: Vec::new(),
         }
     }
 
@@ -9419,6 +9574,7 @@ mod tests {
             let ctx = ToolContext {
                 read_only: false,
                 created: Vec::new(),
+                kept: Vec::new(),
                 ..ctx_for(role, d)
             };
             decide("bash", &json!({"command": cmd}), &ctx)
@@ -9751,7 +9907,12 @@ mod tests {
         );
         // What the turn made, inside the project: the agent keeps the list.
         let mut ctx = ctx_for(Role::SoloBuild, d);
-        ctx.created = vec![d.join("probe.sh"), d.join("apps/web/dbg.mjs")];
+        // As the agent records them: resolved, so a temp folder behind a
+        // link (`/var` → `/private/var` on macOS) matches itself.
+        ctx.created = vec![
+            resolve(&ctx, "probe.sh").unwrap(),
+            resolve(&ctx, "apps/web/dbg.mjs").unwrap(),
+        ];
         let own = |cmd: &str, ctx: &ToolContext| decide("bash", &json!({"command": cmd}), ctx);
         assert_eq!(own("rm probe.sh", &ctx), Decision::Allow);
         assert_eq!(
@@ -9790,10 +9951,11 @@ mod tests {
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Ask, "{cmd:?}");
         }
         // What a command makes, read before it runs.
-        let made = makes(
+        let made = effects(
             &json!({"command": "mkdir -p tmpdir/inner && cat > tmpdir/inner/p.sh <<'EOF'\nx\nEOF\ncp x.rs y.rs; echo 1 > /tmp/ryter-makes.txt; echo 2 > x.rs; cat < x.rs"}),
             &ctx_for(Role::SoloBuild, d),
-        );
+        )
+        .made;
         let made: Vec<String> = made.iter().map(|p| p.display().to_string()).collect();
         for p in [
             d.join("tmpdir"),
@@ -9810,6 +9972,126 @@ mod tests {
         );
         assert!(!made.iter().any(|p| p.ends_with("/x.rs")), "{made:?}");
         assert_eq!(made.len(), 5, "{made:?}");
+    }
+
+    /// The review of 0.20.0 found seven ways round the free deletion and the
+    /// comment stripper, each shown in bash. Each is closed here.
+    #[cfg(unix)]
+    #[test]
+    fn the_free_deletion_holds_its_lines_after_review() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("x.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(d.join("Cargo.toml"), "[package]\n").unwrap();
+        std::fs::write(d.join(".env"), "S=1\n").unwrap();
+        std::fs::write(d.join("notes.txt"), "n\n").unwrap();
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::write(d.join("src/lib.rs"), "\n").unwrap();
+        let scratch = TempDir::new().unwrap();
+        let sp = scratch.path().display().to_string();
+        let build = |cmd: &str| bash(cmd, Role::SoloBuild, d);
+        // 1. A tab-indented delimiter ends only a `<<-` body; the `#` line
+        //    after a false end held a substitution that bash still runs.
+        assert_eq!(
+            build("cat <<EOF > x.sh\n\tEOF\n# $(cat .env)\nEOF\nls"),
+            Decision::Deny
+        );
+        assert_eq!(
+            build("cat <<-EOF > x.sh\n\tEOF\n# it's fine\nls"),
+            Decision::Allow
+        );
+        // 2. `)#` is a comment.
+        assert_eq!(build("(echo hi)# B's list\ncat .env"), Decision::Deny);
+        assert_eq!(build("(echo hi)# B's list\nls"), Decision::Allow);
+        // 3. An unquoted variable is globbed and split again by the shell.
+        assert_ne!(build("F=/tmp/*; rm -rf $F"), Decision::Allow);
+        assert_ne!(build("F='/tmp/no-such keep/b'; rm -rf $F"), Decision::Allow);
+        assert_ne!(build("F=/tmp/no-such?; rm -rf $F"), Decision::Allow);
+        assert_eq!(build("F=/tmp/x; rm -f \"$F\""), Decision::Allow);
+        // 4. A part that may not have run made nothing.
+        assert_ne!(
+            build("test -f Cargo.toml || touch decoy; mv src/lib.rs decoy && rm -f decoy"),
+            Decision::Allow
+        );
+        assert_ne!(
+            build("if false; then touch decoy; fi; rm -f decoy"),
+            Decision::Allow
+        );
+        assert_ne!(build("(touch decoy); rm -f decoy"), Decision::Allow);
+        assert_ne!(
+            build("false && touch decoy || true; rm -f decoy"),
+            Decision::Allow
+        );
+        assert!(
+            effects(
+                &json!({"command": "test -f Cargo.toml || touch decoy"}),
+                &ctx_for(Role::SoloBuild, d)
+            )
+            .made
+            .is_empty()
+        );
+        assert_eq!(build("touch a.tmp && rm a.tmp"), Decision::Allow);
+        assert_eq!(build("touch a.tmp; rm a.tmp"), Decision::Allow);
+        assert_eq!(build("echo x | tee a.tmp && rm a.tmp"), Decision::Allow);
+        // 5. A folder made this turn with the user's file moved into it,
+        //    or a scratch path the user's file was moved to, is not free.
+        for cmd in [
+            "mkdir new && mv src/lib.rs new/ && rm -rf new",
+            "mkdir new && mv -t new src/lib.rs && rm -rf new",
+            "mkdir new && git mv src/lib.rs new/ && rm -rf new",
+            "mkdir new && mv src/lib.rs new/kept.rs && rm -rf new",
+            "mv src/lib.rs /tmp/ryter-moved && rm -f /tmp/ryter-moved",
+            "mv src/lib.rs /tmp/ryter-moved.rs; rm -f /tmp/ryter-moved.rs",
+            "mkdir new && mv ~/notes.txt new/ && rm -rf new",
+        ] {
+            assert_ne!(build(cmd), Decision::Allow, "{cmd}");
+        }
+        // A scratch file moved to another scratch place is still scratch.
+        assert_eq!(
+            build("mv /tmp/ryter-a /tmp/ryter-b && rm -f /tmp/ryter-b"),
+            Decision::Allow
+        );
+        // Across calls: the agent keeps what was moved.
+        let mut ctx = ctx_for(Role::SoloBuild, d);
+        ctx.created = vec![resolve(&ctx, "new").unwrap()];
+        ctx.kept = vec![resolve(&ctx, "new/lib.rs").unwrap()];
+        assert_ne!(
+            decide("bash", &json!({"command": "rm -rf new"}), &ctx),
+            Decision::Allow
+        );
+        let fx = effects(
+            &json!({"command": "mkdir new && mv src/lib.rs new/"}),
+            &ctx_for(Role::SoloBuild, d),
+        );
+        assert!(fx.kept.iter().any(|k| k.ends_with("new/lib.rs")), "{fx:?}");
+        // 6. `awk --source` and `-e` give the program; the plain word is
+        //    then the file, read.
+        for cmd in [
+            "awk --source='{print}' .env",
+            "awk --source '{print}' .env",
+            "awk -e '{print}' .env",
+            "gawk --source='{print}' .env",
+        ] {
+            assert_eq!(build(cmd), Decision::Deny, "{cmd}");
+        }
+        assert_eq!(build("awk --source='{print}' notes.txt"), Decision::Allow);
+        // 7. `rm link` removes the entry, a project file; what it points
+        //    at does not make it scratch.
+        std::fs::write(scratch.path().join("target.txt"), "t\n").unwrap();
+        std::os::unix::fs::symlink(scratch.path().join("target.txt"), d.join("link")).unwrap();
+        assert_ne!(build("rm link"), Decision::Allow);
+        assert_ne!(build("rm -f ./link"), Decision::Allow);
+        // And a link in scratch into the project is not free either way.
+        std::os::unix::fs::symlink(d.join("x.rs"), scratch.path().join("link2")).unwrap();
+        assert_ne!(build(&format!("rm {sp}/link2")), Decision::Allow);
+        assert_ne!(build(&format!("rm -rf {sp}/link2/")), Decision::Allow);
+        // A scratch link to a scratch file is scratch.
+        std::os::unix::fs::symlink(
+            scratch.path().join("target.txt"),
+            scratch.path().join("link3"),
+        )
+        .unwrap();
+        assert_eq!(build(&format!("rm {sp}/link3")), Decision::Allow);
     }
 
     /// What `curl` sends as text is text: a `$(date +%s)` inside a `-d`

@@ -16,7 +16,7 @@ use crate::llm::ToolSpec;
 use crate::role::Role;
 
 pub use fs::changed_lines;
-pub(crate) use policy::{makes, on_this_machine, resolve};
+pub(crate) use policy::{Effects, effects, on_this_machine, resolve};
 
 /// What `a` ("allow for this session") on this call's prompt would cover:
 /// a key, and the words for it. `None` when the prompt must not offer it.
@@ -148,6 +148,9 @@ pub struct ToolContext {
     /// `cp`, `mkdir`), which the turn's checkpoint does not hold: deleting
     /// one loses nothing, so it does not ask.
     pub created: Vec<std::path::PathBuf>,
+    /// Places this turn moved a file of the user's to (`mv src/x new/`):
+    /// never a free deletion, whatever else is known about them.
+    pub kept: Vec<std::path::PathBuf>,
 }
 
 impl ToolContext {
@@ -909,6 +912,7 @@ mod tests {
             // `ctx_for`).
             read_only: role == Role::SoloAudit,
             created: Vec::new(),
+            kept: Vec::new(),
         }
     }
 

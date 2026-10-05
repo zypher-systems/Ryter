@@ -464,6 +464,7 @@ mod tests {
             vars: Default::default(),
             read_only: false,
             created: Vec::new(),
+            kept: Vec::new(),
         };
         let waiter = cancel.clone();
         std::thread::spawn(move || {

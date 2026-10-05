@@ -909,6 +909,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
             vars: Default::default(),
             read_only: false,
             created: Vec::new(),
+            kept: Vec::new(),
         },
         connection: b.conn_name,
         model: b.model,
