@@ -6680,10 +6680,10 @@ fn segment_makes(seg: &str, ctx: &ToolContext) -> Effects {
                         k += 1;
                         continue;
                     }
-                    Redir::No if w.starts_with("<<") => {
-                        k += 1;
-                        continue;
-                    }
+                    // A here-document or here-string: its delimiter, its
+                    // word and its body are the shell's. `mv` reads no
+                    // input, so nothing of mv's follows.
+                    Redir::No if w.starts_with("<<") => break,
                     Redir::No if redirect(w, true) != Redir::No => {
                         k += 2;
                         continue;
@@ -10118,6 +10118,12 @@ mod tests {
             "mkdir new && mv src/lib.rs new/ > /dev/null && rm -rf new",
             "mkdir new && mv -v src/lib.rs new/ 2>/dev/null >/dev/null && rm -rf new",
             "mkdir new && mv -t new src/lib.rs 2>/dev/null && rm -rf new",
+            "mv src/lib.rs /tmp/mv-h.rs <<EOF\nEOF\nrm -f /tmp/mv-h.rs",
+            "mv src/lib.rs /tmp/mv-h.rs <<'EOF'\nsome body words\nEOF\nrm -f /tmp/mv-h.rs",
+            "mv src/lib.rs /tmp/mv-h.rs <<-EOF\n\tEOF\nrm -f /tmp/mv-h.rs",
+            "mv src/lib.rs /tmp/mv-h.rs <<< x; rm -f /tmp/mv-h.rs",
+            "mkdir new && mv src/lib.rs new/ <<'EOF'\nbody\nEOF\nrm -rf new",
+            "mkdir new && mv src/lib.rs new/ < /dev/null && rm -rf new",
             "mv --target-directory=/tmp src/lib.rs && rm -f /tmp/lib.rs",
             "mkdir new && git mv src/lib.rs new/ && rm -rf new",
             "mkdir new && git -C . mv src/lib.rs new/ && rm -rf new",
