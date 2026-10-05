@@ -55,6 +55,8 @@ Everything here serves an item of the 1.0 list; the number says which. The direc
 - Decide with the user what a sandbox profile is for. Under `workspace` or `read-only` the home folder is shut at the system level, so `cargo install` or a tool writing `~/.config/<name>` on first run fails; Landlock cannot grant a folder with exceptions.
 - Narrow the sandbox's grant on Ryter's own folder to this project's sessions.
 - Recorded live sessions replayed through the gate after each change to it, as was done for 0.14.0 and the fiscus run. The replay is a throwaway test each time; a kept `#[ignore]` test over a recorded `events.jsonl` would make it one command.
+- `curl`'s body to another host asks (it leaves the machine), but a header, user agent, referer, `-u` or `-w` value carrying `$VAR` to another host runs: `uploads_elsewhere` counts bodies, not headers. Older than 0.20.0 (found by its reviewers); a secret in a header leaves the machine as surely as one in a body.
+- A repository nested *below* a scratch folder the turn deletes freely (`rm -rf /tmp/probe` with someone's repository at `/tmp/probe/sub`) is not protected; the check looks at the path and above it, as `free_place` always has.
 - The looking hats (plan, scribe, the audit without a checkpoint) are refused `sed 's/a/b/' f` and `awk '{print}' f` while `sed -n p f` runs: a script with a `/` or a brace reads as a path. Older than the fiscus patch; found by its tests.
 - Writing a key-named file to scratch space (`touch /tmp/tls_test.key`, to check a `.gitignore`) is refused as naming a secret. Left as the secret rule for now.
 

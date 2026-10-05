@@ -3833,6 +3833,11 @@ fn git_config_runs(key: &str, value: &str) -> bool {
 /// (`git -C sub status` is `status`). The same options [`decide_git`]
 /// reads on its way to the verb.
 fn git_verb(words: &[String]) -> &str {
+    git_verb_at(words).map_or("", |i| words[i].as_str())
+}
+
+/// Where [`git_verb`] stands in `words`.
+fn git_verb_at(words: &[String]) -> Option<usize> {
     const VALUED: &[&str] = &[
         "-c",
         "--config-env",
@@ -3847,14 +3852,14 @@ fn git_verb(words: &[String]) -> &str {
     let mut i = 1;
     while let Some(w) = words.get(i).map(String::as_str) {
         if !w.starts_with('-') {
-            return w;
+            return Some(i);
         }
         if VALUED.contains(&w) {
             i += 1;
         }
         i += 1;
     }
-    ""
+    None
 }
 
 /// `git` is one binary with many verbs; the verb decides.
@@ -6614,9 +6619,14 @@ fn segment_makes(seg: &str, ctx: &ToolContext) -> Effects {
     let parsed = parse(&words);
     let mut prog = parsed.prog.unwrap_or("");
     let mut args_at = parsed.args;
-    if prog == "git" && words.get(args_at).map(String::as_str) == Some("mv") {
-        prog = "mv";
-        args_at += 1;
+    // `git mv`, past git's global options (`git -C . mv`).
+    if prog == "git" {
+        if let Some(v) = git_verb_at(&words[args_at.saturating_sub(1)..]) {
+            if words[args_at - 1 + v] == "mv" {
+                prog = "mv";
+                args_at += v;
+            }
+        }
     }
     let mut named: Vec<String> = Vec::new();
     let mut operands: Vec<String> = Vec::new();
@@ -6646,19 +6656,32 @@ fn segment_makes(seg: &str, ctx: &ToolContext) -> Effects {
     match prog {
         "tee" | "touch" | "mkdir" => named.extend(operands),
         "cp" if operands.len() >= 2 => named.extend(operands.pop()),
-        "mv" if operands.len() >= 2 => {
-            // `mv a b dir`, or `mv -t dir a b`.
-            let target_opt = words
-                .iter()
-                .skip(args_at)
-                .position(|w| w == "-t" || w == "--target-directory")
-                .map(|k| k + args_at);
-            let (dest, sources): (String, Vec<String>) = match target_opt {
-                Some(k) => (
-                    words.get(k + 1).cloned().unwrap_or_default(),
+        "mv" if !operands.is_empty() => {
+            // `mv a b dir`, or the folder named by `-t dir`, `-tdir`,
+            // `-ft dir`, `--target-directory dir`, `--target-directory=dir`.
+            let mut target: Option<(String, Option<usize>)> = None;
+            for (k, w) in words.iter().enumerate().skip(args_at) {
+                if let Some(v) = w.strip_prefix("--target-directory=") {
+                    target = Some((v.to_string(), None));
+                } else if w == "--target-directory" {
+                    target = Some((words.get(k + 1).cloned().unwrap_or_default(), Some(k + 1)));
+                } else if w.len() > 1 && w.starts_with('-') && !w.starts_with("--") {
+                    if let Some(t) = w[1..].find('t') {
+                        let rest = &w[2 + t..];
+                        target = Some(if rest.is_empty() {
+                            (words.get(k + 1).cloned().unwrap_or_default(), Some(k + 1))
+                        } else {
+                            (rest.to_string(), None)
+                        });
+                    }
+                }
+            }
+            let (dest, sources): (String, Vec<String>) = match target {
+                Some((dest, next)) => (
+                    dest,
                     operands
                         .iter()
-                        .filter(|o| Some(*o) != words.get(k + 1))
+                        .filter(|o| next.is_none_or(|k| Some(*o) != words.get(k)))
                         .cloned()
                         .collect(),
                 ),
@@ -10040,7 +10063,18 @@ mod tests {
         for cmd in [
             "mkdir new && mv src/lib.rs new/ && rm -rf new",
             "mkdir new && mv -t new src/lib.rs && rm -rf new",
+            "mkdir new && mv -tnew src/lib.rs && rm -rf new",
+            "mkdir new && mv -ft new src/lib.rs && rm -rf new",
+            "mkdir new && mv -vtnew src/lib.rs && rm -rf new",
+            "mkdir new && mv --target-directory new src/lib.rs && rm -rf new",
+            "mkdir new && mv --target-directory=new src/lib.rs && rm -rf new",
+            "mv -t/tmp src/lib.rs && rm -f /tmp/lib.rs",
+            "mv --target-directory=/tmp src/lib.rs && rm -f /tmp/lib.rs",
             "mkdir new && git mv src/lib.rs new/ && rm -rf new",
+            "mkdir new && git -C . mv src/lib.rs new/ && rm -rf new",
+            "mkdir new && git -c core.quotepath=off mv src/lib.rs new/ && rm -rf new",
+            "mkdir new && git --git-dir=.git --work-tree=. mv -f src/lib.rs new/ && rm -rf new",
+            "mkdir new && git mv -k src/lib.rs new/ && rm -rf new",
             "mkdir new && mv src/lib.rs new/kept.rs && rm -rf new",
             "mv src/lib.rs /tmp/ryter-moved && rm -f /tmp/ryter-moved",
             "mv src/lib.rs /tmp/ryter-moved.rs; rm -f /tmp/ryter-moved.rs",
