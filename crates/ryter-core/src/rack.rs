@@ -176,7 +176,11 @@ mod tests {
     use crate::diff::FileDiff;
 
     fn started(role: Role) -> AgentEvent {
-        AgentEvent::TurnStarted { turn: 1, role }
+        AgentEvent::TurnStarted {
+            turn: 1,
+            role,
+            at: 0,
+        }
     }
 
     fn edit(path: &str, added: usize, removed: usize) -> AgentEvent {
@@ -236,6 +240,7 @@ mod tests {
         r.apply(&AgentEvent::TurnStarted {
             turn: 9,
             role: Role::Crew,
+            at: 0,
         });
         assert_eq!(r.of(Role::SoloBuild).turns, 3);
     }

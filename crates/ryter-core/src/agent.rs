@@ -110,6 +110,9 @@ pub struct Agent {
     /// The verdict of the last audit turn that ended: filed, or read from
     /// its last words. What `/audit` reports.
     pub last_audit_verdict: Option<bool>,
+    /// The turn in progress, for the events made during it; `0` between
+    /// turns.
+    pub turn: u64,
 }
 
 /// Output ceiling per round of the conversation.
@@ -252,12 +255,19 @@ impl Agent {
             }
         }
         let turn = next_turn();
+        self.turn = turn;
+        // What this turn makes, it may delete without asking; the turn's
+        // checkpoint holds none of it.
+        self.ctx.created.clear();
         let started = std::time::Instant::now();
         let mut tools = 0u32;
         self.emit(AgentEvent::TurnStarted {
             turn,
             role: self.role,
+            at: crate::event::now_ms(),
         })?;
+        // A card shown between turns (the audit offer) is this turn's.
+        self.emit_asked(None)?;
         // An audit changes nothing: a checkpoint before, the tree put back
         // after. Without a repository there is no checkpoint, and the hat
         // is held to looking for the turn.
@@ -290,12 +300,64 @@ impl Agent {
                 message: e.to_string(),
             });
         }
+        let _ = self.emit_asked(None);
         let _ = self.emit(AgentEvent::TurnFinished {
             turn,
             tools,
             duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         });
+        self.turn = 0;
         out
+    }
+
+    /// Remember the files a call made this turn: a `write` of a file that
+    /// was not there, and what a shell command made ([`crate::tools::makes`]).
+    /// Deleting one of them later in the turn does not ask.
+    fn note_created(
+        &mut self,
+        name: &str,
+        args: &Value,
+        diff: Option<&crate::diff::FileDiff>,
+        makes: Vec<PathBuf>,
+    ) {
+        let mut made = makes;
+        if name == "write" && diff.is_some_and(|d| d.created) {
+            if let Some(p) = args
+                .get("path")
+                .and_then(Value::as_str)
+                .and_then(|p| crate::tools::resolve(&self.ctx, p))
+            {
+                made.push(p);
+            }
+        }
+        for p in made {
+            if !self.ctx.created.contains(&p) {
+                self.ctx.created.push(p);
+            }
+        }
+    }
+
+    /// Write the permission cards shown since the last call to the log,
+    /// each as an [`AgentEvent::Asked`] of the call `id`. The gate asks on
+    /// the tool thread and has no log; the agent writes for it, beside
+    /// the call. A session's asks were once nowhere in its log.
+    fn emit_asked(&mut self, id: Option<&str>) -> Result<()> {
+        let Some(io) = &self.ctx.user_io else {
+            return Ok(());
+        };
+        for a in io.take_asked() {
+            self.emit(AgentEvent::Asked {
+                id: id.map(str::to_string),
+                turn: self.turn,
+                tool: a.tool,
+                what: a.what,
+                strict: a.strict,
+                answer: a.answer,
+                waited_ms: a.waited_ms,
+                at: a.at,
+            })?;
+        }
+        Ok(())
     }
 
     async fn turn_inner(&mut self, user: &str, tools: &mut u32) -> Result<TurnResult> {
@@ -608,6 +670,8 @@ impl Agent {
                     } else {
                         tool_summary(&call.name, &args)
                     }),
+                    turn: self.turn,
+                    at: crate::event::now_ms(),
                 })?;
                 let t0 = std::time::Instant::now();
                 if self.role == Role::SoloBuild
@@ -621,6 +685,13 @@ impl Agent {
                     self.save_ignored(&call.name, &args)?;
                 }
                 self.note_product_use(&call.name, &args);
+                // Read before the command runs: what is not there yet is
+                // what it makes.
+                let makes = if call.name == "bash" && parsed.is_ok() {
+                    crate::tools::makes(&args, &self.ctx)
+                } else {
+                    Vec::new()
+                };
                 let out = match &parsed {
                     // Run with `null` arguments, the call was refused as
                     // "outside policy" and the model resent the same JSON.
@@ -659,6 +730,9 @@ impl Agent {
                     }
                     Ok(_) => gated_execute(&call.name, &args, &self.ctx),
                 };
+                // Whatever the call came to, the cards it put up are logged
+                // under it, a cancelled one included.
+                self.emit_asked(Some(&call.id))?;
                 let mut out = match out {
                     Ok(o) => o,
                     // Esc while a command ran. Every call still gets its
@@ -672,6 +746,9 @@ impl Agent {
                         return Err(e);
                     }
                 };
+                if !out.is_error {
+                    self.note_created(&call.name, &args, out.diff.as_ref(), makes);
+                }
                 let sig = format!("{}\u{0}{args}\u{0}{}", call.name, out.text);
                 if !out.is_error && matches!(call.name.as_str(), "write" | "search_replace") {
                     // The files changed: running the same check again is
@@ -3205,6 +3282,7 @@ mod tests {
             cwd: Default::default(),
             vars: Default::default(),
             read_only: false,
+            created: Vec::new(),
         };
         let agent = Agent {
             provider: Arc::new(provider),
@@ -3227,6 +3305,7 @@ mod tests {
             audit_pending: None,
             audit_live: None,
             last_audit_verdict: None,
+            turn: 0,
         };
         (home, cwd, agent)
     }
@@ -3322,6 +3401,158 @@ mod tests {
 
     fn say(text: &str) -> Vec<StreamDelta> {
         vec![StreamDelta::Text(text.into()), StreamDelta::Done]
+    }
+
+    /// Answers every permission card with `answer` and counts them.
+    fn answering(
+        agent: &mut Agent,
+        answer: crate::user_io::Permission,
+    ) -> std::thread::JoinHandle<Vec<String>> {
+        let (io, rx) = crate::user_io::UserIo::pair();
+        agent.ctx.user_io = Some(io);
+        // The test context says yes to everything; here a person answers.
+        agent.ctx.always_approve = false;
+        std::thread::spawn(move || {
+            let mut asked = Vec::new();
+            while let Ok(req) = rx.recv() {
+                if let crate::user_io::UserRequest::Permission {
+                    tool,
+                    summary,
+                    reply,
+                    ..
+                } = req
+                {
+                    asked.push(format!("{tool}: {summary}"));
+                    let _ = reply.send(answer);
+                }
+            }
+            asked
+        })
+    }
+
+    /// A permission card is in the session's log, beside the call that put
+    /// it up: what was asked, the answer, how long it took, and the turn.
+    /// The first real run on 0.19.0 had some two dozen asks and its log
+    /// held none of them; they had to be reconstructed by replaying its
+    /// commands through the gate.
+    #[tokio::test]
+    async fn an_ask_is_written_to_the_log_beside_its_call() {
+        let p = ReplayProvider::scripted(vec![
+            call("bash", serde_json::json!({"command": "rm -rf src"})),
+            say("left it"),
+        ]);
+        let (_home, cwd, mut agent) = repo_setup(p);
+        std::fs::create_dir_all(cwd.path().join("src")).unwrap();
+        std::fs::write(cwd.path().join("src/a.rs"), "x\n").unwrap();
+        agent.role = Role::SoloBuild;
+        agent.ctx.role = Role::SoloBuild;
+        let answerer = answering(&mut agent, crate::user_io::Permission::Deny);
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("clean up").await.unwrap();
+        agent.ctx.user_io = None;
+        assert_eq!(answerer.join().unwrap().len(), 1);
+        assert!(cwd.path().join("src/a.rs").exists());
+        let events: Vec<AgentEvent> = events.try_iter().collect();
+        let at = |f: &dyn Fn(&AgentEvent) -> bool| events.iter().position(f).unwrap();
+        let call_at = at(&|e| matches!(e, AgentEvent::ToolCall { name, .. } if name == "bash"));
+        let asked_at = at(&|e| matches!(e, AgentEvent::Asked { .. }));
+        let result_at = at(&|e| matches!(e, AgentEvent::ToolResult { .. }));
+        assert!(call_at < asked_at && asked_at < result_at, "{events:?}");
+        let AgentEvent::ToolCall {
+            turn: call_turn,
+            at: call_time,
+            ..
+        } = &events[call_at]
+        else {
+            unreachable!()
+        };
+        let AgentEvent::Asked {
+            id,
+            turn,
+            tool,
+            what,
+            strict,
+            answer,
+            at: time,
+            ..
+        } = &events[asked_at]
+        else {
+            unreachable!()
+        };
+        assert_eq!(id.as_deref(), Some("bash-1"));
+        assert_eq!(turn, call_turn);
+        assert!(*turn > 0);
+        assert_eq!(tool, "bash");
+        assert!(what.contains("rm -rf src"), "{what}");
+        assert!(*strict);
+        assert_eq!(answer, "deny");
+        assert!(*time >= *call_time && *call_time > 0);
+        let AgentEvent::TurnStarted { at: started, .. } = &events[0] else {
+            unreachable!()
+        };
+        assert!(*started > 0 && started <= call_time);
+        // And it is on disk, where a later session can read it.
+        let log = std::fs::read_to_string(agent.session.dir.join("events.jsonl")).unwrap();
+        let line = log
+            .lines()
+            .find(|l| l.starts_with(r#"{"kind":"asked""#))
+            .unwrap_or_else(|| panic!("{log}"));
+        let v: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert_eq!(v["answer"], "deny");
+        assert_eq!(v["id"], "bash-1");
+        assert!(log.contains(r#""kind":"tool_call","id":"bash-1""#));
+        assert!(
+            log.lines()
+                .any(|l| l.starts_with(r#"{"kind":"turn_started"#) && l.contains(r#""at":"#))
+        );
+    }
+
+    /// A file the turn made is the turn's to delete: no card for `rm` of a
+    /// probe script the model wrote moments before, by `write` or by a
+    /// redirect. The next turn's checkpoint holds it, so the next turn asks.
+    #[tokio::test]
+    async fn a_file_the_turn_made_is_deleted_without_asking() {
+        let p = ReplayProvider::scripted(vec![
+            write("probe.sh", "echo hi\n"),
+            call("bash", serde_json::json!({"command": "echo 1 > out.txt"})),
+            call(
+                "bash",
+                serde_json::json!({"command": "rm probe.sh out.txt"}),
+            ),
+            say("probed"),
+            write("probe2.sh", "echo hi\n"),
+            say("left for later"),
+            call("bash", serde_json::json!({"command": "rm probe2.sh"})),
+            say("asked"),
+        ]);
+        let (_home, cwd, mut agent) = repo_setup(p);
+        agent.role = Role::SoloBuild;
+        agent.ctx.role = Role::SoloBuild;
+        let answerer = answering(&mut agent, crate::user_io::Permission::Deny);
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("probe it").await.unwrap();
+        assert!(!cwd.path().join("probe.sh").exists());
+        assert!(!cwd.path().join("out.txt").exists());
+        let first: Vec<AgentEvent> = events.try_iter().collect();
+        assert!(
+            !first.iter().any(|e| matches!(e, AgentEvent::Asked { .. })),
+            "{first:?}"
+        );
+        assert!(
+            first
+                .iter()
+                .all(|e| !matches!(e, AgentEvent::ToolResult { is_error: true, .. }))
+        );
+        agent.turn("write another").await.unwrap();
+        assert!(cwd.path().join("probe2.sh").exists());
+        agent.turn("now remove it").await.unwrap();
+        agent.ctx.user_io = None;
+        let asked = answerer.join().unwrap();
+        assert_eq!(asked.len(), 1, "{asked:?}");
+        assert!(asked[0].contains("rm probe2.sh"), "{asked:?}");
+        assert!(cwd.path().join("probe2.sh").exists());
     }
 
     /// "Are you there?" is a conversation, not a reason to touch git: a turn

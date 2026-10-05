@@ -1252,6 +1252,12 @@ Kept deliberately minimal.
   for exhaustive matches on `AgentEvent`.
 - **R-CORE-06** Nothing in this redesign may cause `ryter --version` to touch config, the
   keyring, or the network.
+- **R-CORE-07** (after the first real run on 0.19.0) `AgentEvent::ToolCall` gains
+  `#[serde(default)] turn: u64` and `at: u64` (milliseconds since the Unix epoch), and
+  `TurnStarted` gains `at`. A new `AgentEvent::Asked { id, turn, tool, what, strict, answer,
+  waited_ms, at }` is written beside the tool call that put a permission card up, with the
+  answer (`allow`, `always`, `deny`, `none`) and how long the person took, so a session's
+  asks can be read from its log instead of replayed through the gate. The TUI ignores it.
 
 ### 13.4 Event handling
 

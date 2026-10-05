@@ -1790,7 +1790,7 @@ fn decide_bash(args: &Value, ctx: &ToolContext) -> Decision {
 /// `set -e … rm -f "$TASKS_FILE"` was titled `run set -e`, the first word
 /// of the script, with the `rm` that asked three lines down.
 pub fn asking_segment(cmd: &str, ctx: &ToolContext) -> Option<String> {
-    let (decision, seg) = judge_bash(cmd, ctx);
+    let (decision, seg, _) = judge_bash(cmd, ctx);
     if !matches!(
         decision,
         Decision::Ask | Decision::AskSecret | Decision::AskOutside
@@ -1801,17 +1801,31 @@ pub fn asking_segment(cmd: &str, ctx: &ToolContext) -> Option<String> {
         .filter(|s| !s.is_empty() && s != cmd.trim())
 }
 
-/// [`decide_bash`], and the first command of the line that asked.
-fn judge_bash(cmd: &str, ctx: &ToolContext) -> (Decision, Option<String>) {
+/// The files the command in `args` would make that are not there yet
+/// ([`segment_makes`]), read before it runs. Deleting one of them later in
+/// the turn does not ask.
+pub fn makes(args: &Value, ctx: &ToolContext) -> Vec<PathBuf> {
+    args.get("command")
+        .and_then(Value::as_str)
+        .map(|cmd| judge_bash(cmd, ctx).2)
+        .unwrap_or_default()
+}
+
+/// [`decide_bash`], the first command of the line that asked, and the files
+/// the line would make.
+fn judge_bash(cmd: &str, ctx: &ToolContext) -> (Decision, Option<String>, Vec<PathBuf>) {
     // The gate keeps a quoted glob character as a character from a private
     // range. A command that already holds one can't be told apart.
     if expand::has_private(cmd) {
-        return (Decision::Deny, None);
+        return (Decision::Deny, None, Vec::new());
     }
     let segs = split(cmd);
     if segs.is_empty() {
-        return (Decision::Deny, None);
+        return (Decision::Deny, None, Vec::new());
     }
+    // Files an earlier part of the command makes: a later part may delete
+    // them without asking (`cat > probe.sh; sh probe.sh; rm probe.sh`).
+    let mut made: Vec<PathBuf> = Vec::new();
     let mut asks: Option<String> = None;
     // `cd app && npm test`: after a `cd`, the rest is judged from the
     // folder it really runs in. The project stays the boundary: a link in
@@ -1864,9 +1878,15 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> (Decision, Option<String>) {
                 live: None,
                 cwd: at.clone(),
                 vars: here,
+                created: [ctx.created.as_slice(), made.as_slice()].concat(),
                 ..ctx.clone()
             };
             let judged = decide_segment(&s.text, &cx);
+            for p in segment_makes(&s.text, &cx) {
+                if !made.contains(&p) {
+                    made.push(p);
+                }
+            }
             if asks.is_none()
                 && matches!(
                     judged,
@@ -1891,7 +1911,7 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> (Decision, Option<String>) {
             }
         }
         if decision == Decision::Deny {
-            return (Decision::Deny, None);
+            return (Decision::Deny, None, Vec::new());
         }
         // `NAME=value` alone, at the top of the command: set for sure. Set
         // anywhere else, or to something only the shell can read, the
@@ -2003,7 +2023,7 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> (Decision, Option<String>) {
             moved
         };
     }
-    (decision, asks)
+    (decision, asks, made)
 }
 
 /// Shell words that stand before a command and are not it: `then make`
@@ -2536,8 +2556,16 @@ fn judge(
         prog,
         "export" | "declare" | "typeset" | "local" | "readonly"
     );
+    // A deletion of the turn's own scratch files or of what it made.
+    let free_delete = works
+        && deletes_freely(
+            seg,
+            prog,
+            &words[parsed.args.saturating_sub(1).min(words.len())..],
+            ctx,
+        );
     let outside = if works && !in_container && !exports {
-        let d = outside_segment(prog, parsed.args, &seen, own, ctx);
+        let d = outside_segment(prog, parsed.args, &seen, own, free_delete, ctx);
         if d == Decision::Deny {
             return Decision::Deny;
         }
@@ -2615,8 +2643,13 @@ fn judge(
     }
     if prog == "git" {
         // To git a quoted pattern is a pattern still: `git log -p -- '.en*'`.
+        // `git check-ignore .env` and `check-attr` answer a question about
+        // the name and print nothing of the file: naming is not reading.
         let every = read(seg, ctx, true);
-        if reads_secret(&with_values(&every, 0).0, ctx) || names_a_place_of_keys(&seen, ctx) {
+        let tests_a_name = matches!(git_verb(from_prog), "check-ignore" | "check-attr");
+        if (!tests_a_name && reads_secret(&with_values(&every, 0).0, ctx))
+            || names_a_place_of_keys(&seen, ctx)
+        {
             return Decision::Deny;
         }
         if !works && git_leaves(from_prog, &seen, ctx) {
@@ -2651,7 +2684,10 @@ fn judge(
     // Printing a secret is denied even when the command itself is read-only,
     // otherwise `cat .env` walks around the `read_file` gate.
     if READERS.contains(&prog) {
-        if reads_secret(&seen, ctx) {
+        // A pattern names nothing to read: `grep '\.env' .gitignore` reads
+        // `.gitignore`. Read as a file, the pattern was refused as a
+        // secret, and it ended a twelve-line audit script.
+        if reads_secret(&files_named(prog, from_prog, &seen), ctx) {
             return Decision::Deny;
         }
         // In a container the paths are the container's: a name is all
@@ -2713,7 +2749,7 @@ fn judge(
     }
     if !only_looks
         && !in_container
-        && (names_a_secret(from_prog, ctx)
+        && (names_a_secret(&files_named(prog, from_prog, from_prog), ctx)
             || names_a_secret(
                 &[
                     String::new(),
@@ -2749,6 +2785,11 @@ fn judge(
         // asks, as the build hat does.
         if !works {
             return Decision::Deny;
+        }
+        // A question protects nothing when what goes is the turn's own
+        // scratch file or a file the turn made.
+        if free_delete {
+            return Decision::Allow.and(outside).and(nested);
         }
         // In the user's own tree, destruction always asks.
         return Decision::Ask.and(outside).and(nested);
@@ -2818,7 +2859,8 @@ fn judge(
                 // What it runs is the project's, and nothing else's; and a
                 // secret is not something to hand a tool.
                 if !in_container
-                    && (leaves_project(seen_from_prog, ctx) || names_a_secret(&seen, ctx))
+                    && (leaves_project(seen_from_prog, ctx)
+                        || names_a_secret(&files_named(prog, from_prog, &seen), ctx))
                 {
                     Decision::Deny
                 } else {
@@ -3377,6 +3419,8 @@ pub fn bash_hint(args: &Value, ctx: &ToolContext) -> Option<&'static str> {
         let w = read(&s, ctx, false);
         let p = parse(&w);
         let (seen, _) = with_values(&w, p.args.saturating_sub(1));
+        let prog = p.prog.unwrap_or("");
+        let seen = files_named(prog, &w[p.args.saturating_sub(1).min(w.len())..], &seen);
         secret |= names_a_secret(&seen, ctx) || names_a_place_of_keys(&seen, ctx);
         escapes |= p.prog.is_some_and(|prog| READERS.contains(&prog)) && path_escapes(&seen, ctx);
     }
@@ -3724,6 +3768,34 @@ fn git_config_runs(key: &str, value: &str) -> bool {
         || (key.starts_with("alias.") && value.trim_start().starts_with('!'))
 }
 
+/// The verb of a `git` command, past the global options and their values
+/// (`git -C sub status` is `status`). The same options [`decide_git`]
+/// reads on its way to the verb.
+fn git_verb(words: &[String]) -> &str {
+    const VALUED: &[&str] = &[
+        "-c",
+        "--config-env",
+        "-C",
+        "--git-dir",
+        "--work-tree",
+        "--namespace",
+        "--super-prefix",
+        "--list-cmds",
+        "--attr-source",
+    ];
+    let mut i = 1;
+    while let Some(w) = words.get(i).map(String::as_str) {
+        if !w.starts_with('-') {
+            return w;
+        }
+        if VALUED.contains(&w) {
+            i += 1;
+        }
+        i += 1;
+    }
+    ""
+}
+
 /// `git` is one binary with many verbs; the verb decides.
 fn decide_git(words: &[String], ctx: &ToolContext) -> Decision {
     // Global options before the verb. `-c` sets configuration, some of
@@ -3768,16 +3840,37 @@ fn decide_git(words: &[String], ctx: &ToolContext) -> Decision {
         i += 1;
     }
     let sub = words.get(i).map(String::as_str).unwrap_or("");
+    let rest = &words[i.min(words.len())..];
+    // `git remote`, `remote -v`, `remote show` and `remote get-url` print
+    // the remotes; the rest of the verb changes them. A real session's
+    // `git remote -v` asked in the build hat and was refused in the audit,
+    // as if it were `set-url`.
+    let remote_looks = sub == "remote" && {
+        let mut target_next = false;
+        rest.iter()
+            .skip(1)
+            .find(|w| {
+                if std::mem::take(&mut target_next) {
+                    return false;
+                }
+                match redirect(w, false) {
+                    Redir::Next => target_next = true,
+                    Redir::To(_) | Redir::Dup => return false,
+                    Redir::No => {}
+                }
+                !target_next && !matches!(w.as_str(), "-v" | "--verbose")
+            })
+            .is_none_or(|w| matches!(w.as_str(), "show" | "get-url"))
+    };
     // Pushing, rewriting history and the remotes: the build hat asks, the
     // others may not.
-    if GIT_NEVER.contains(&sub) {
+    if GIT_NEVER.contains(&sub) && !remote_looks {
         return if ctx.role == Role::SoloBuild {
             Decision::Ask
         } else {
             Decision::Deny
         };
     }
-    let rest = &words[i.min(words.len())..];
     // `git grep -O<pager>` runs a program on the matches, and
     // `--upload-pack=<cmd>` runs one in place of the other end.
     if rest.iter().any(|w| {
@@ -3829,6 +3922,7 @@ fn decide_git(words: &[String], ctx: &ToolContext) -> Decision {
     // `git stash list` and `git stash show` look at the stash; the rest of
     // `stash` moves work.
     let reads = (GIT_READ.contains(&sub)
+        || remote_looks
         || (sub == "stash" && matches!(rest.get(1).map(String::as_str), Some("list" | "show"))))
         && !moves_a_ref;
     match ctx.role {
@@ -5233,6 +5327,48 @@ fn packed_tree(from_prog: &[String], ctx: &ToolContext) -> Tree {
 /// The most files looked through for a secret before a search is run.
 const MAX_SEARCHED: usize = 100_000;
 
+/// The long options of `grep` and `rg` that take the next word as their
+/// value when none is attached.
+const LONG_VALUED: &[&str] = &[
+    "--regexp",
+    "--file",
+    "--include",
+    "--exclude",
+    "--exclude-dir",
+    "--exclude-from",
+    "--max-count",
+    "--context",
+    "--after-context",
+    "--before-context",
+    "--glob",
+    "--iglob",
+    "--type",
+    "--type-not",
+    "--type-add",
+    "--max-depth",
+    "--maxdepth",
+    "--threads",
+    "--replace",
+    "--encoding",
+    "--max-columns",
+    "--max-filesize",
+    "--sort",
+    "--sortr",
+    "--ignore-file",
+    "--pre-glob",
+    "--label",
+    "--directories",
+    "--devices",
+    "--binary-files",
+    "--color",
+    "--colors",
+    "--engine",
+    "--path-separator",
+    "--context-separator",
+    "--field-match-separator",
+    "--field-context-separator",
+];
+
 /// The files a search through folders would read, looked through for a
 /// secret: `grep -r KEY .` printed the `.env` that `cat .env` was refused.
 /// `rg` leaves out hidden and ignored files unless told otherwise, and so
@@ -5291,45 +5427,6 @@ fn searched_tree(prog: &str, from_prog: &[String], ctx: &ToolContext) -> Tree {
     } else {
         "efmABCdD"
     };
-    const LONG_VALUED: &[&str] = &[
-        "--regexp",
-        "--file",
-        "--include",
-        "--exclude",
-        "--exclude-dir",
-        "--exclude-from",
-        "--max-count",
-        "--context",
-        "--after-context",
-        "--before-context",
-        "--glob",
-        "--iglob",
-        "--type",
-        "--type-not",
-        "--type-add",
-        "--max-depth",
-        "--maxdepth",
-        "--threads",
-        "--replace",
-        "--encoding",
-        "--max-columns",
-        "--max-filesize",
-        "--sort",
-        "--sortr",
-        "--ignore-file",
-        "--pre-glob",
-        "--label",
-        "--directories",
-        "--devices",
-        "--binary-files",
-        "--color",
-        "--colors",
-        "--engine",
-        "--path-separator",
-        "--context-separator",
-        "--field-match-separator",
-        "--field-context-separator",
-    ];
     let mut plain: Vec<&str> = Vec::new();
     // `--include='*.py'`, `rg -g '*.py'`: only files of those names are
     // read. They are taken from the same reading of the options as the
@@ -6022,12 +6119,14 @@ fn outside_segment(
     args_at: usize,
     words: &[String],
     own: usize,
+    free_delete: bool,
     ctx: &ToolContext,
 ) -> Decision {
-    // Destruction outside the project is a question every time, scratch
-    // space and the user's folder included: "allow all" covers the project,
-    // and `rm -rf ~/x` is not something it should cover.
-    let destroys = DESTRUCTIVE.contains(&prog) || deleting_find(prog, words);
+    // Destruction outside the project is a question every time, the user's
+    // folder included: "allow all" covers the project, and `rm -rf ~/x` is
+    // not something it should cover. A file of the command's own in
+    // scratch space is the exception ([`deletes_freely`]).
+    let destroys = (DESTRUCTIVE.contains(&prog) || deleting_find(prog, words)) && !free_delete;
     let containers = is_container_tool(prog);
     let mut outside = false;
     let mut writes_outside = false;
@@ -6045,8 +6144,14 @@ fn outside_segment(
     // interpreter the link points at, it doesn't write it. What a wrapper
     // is given (`strace -o file`, `flock file`) is a file like any other.
     let program = args_at.saturating_sub(1);
+    // A search's pattern names no place: `sed -n '/\.env/p' f` reads `f`.
+    let mut patterns = pattern_words(prog, &words[program.min(own)..own]);
     for (i, w) in words.iter().enumerate().skip(usize::from(!prog.is_empty())) {
         if i == program && i > 0 {
+            continue;
+        }
+        if let Some(k) = patterns.iter().position(|p| p == w) {
+            patterns.swap_remove(k);
             continue;
         }
         if expect_redirect {
@@ -6194,6 +6299,241 @@ fn writes_project_via_redirect(words: &[String], ctx: &ToolContext) -> bool {
         }
     }
     false
+}
+
+/// Whether every file a deleting command names is one a question would
+/// protect nothing of: a file of its own in scratch space (`/tmp/x`, not
+/// `/tmp` itself, not a glob there, not a repository there), or a file
+/// this turn made (`ToolContext::created`), which the turn's checkpoint
+/// does not hold. The first real run on 0.19.0 asked some two dozen
+/// times; eighteen were the model deleting cookie jars in `/tmp` and
+/// probe scripts it had written moments before.
+fn deletes_freely(seg: &str, prog: &str, from_prog: &[String], ctx: &ToolContext) -> bool {
+    if !(DESTRUCTIVE.contains(&prog) || deleting_find(prog, from_prog)) {
+        return false;
+    }
+    let operands_of = |words: &[String]| -> Vec<String> {
+        if prog == "find" {
+            // The places it starts from, before the first test.
+            words
+                .iter()
+                .skip(1)
+                .take_while(|w| !w.starts_with(['-', '(', '!']))
+                .cloned()
+                .collect()
+        } else {
+            // `truncate -s 0 f`: the size is the option's, not a file.
+            let mut value_next = false;
+            words
+                .iter()
+                .skip(1)
+                .filter(|w| {
+                    if std::mem::take(&mut value_next) {
+                        return false;
+                    }
+                    value_next = prog == "truncate" && matches!(w.as_str(), "-s" | "-r");
+                    !w.starts_with('-')
+                })
+                .cloned()
+                .collect()
+        }
+    };
+    // As written, before the shell fills a glob in: `rm -rf *` in `/tmp`
+    // read as the files it matched would be every file there.
+    let raw = lex(seg);
+    let Some(at) = raw.iter().position(|w| w == &from_prog[0]) else {
+        return false;
+    };
+    if operands_of(&raw[at..])
+        .iter()
+        .any(|w| w.contains(['*', '?', '[']) || expand::has_private(w))
+    {
+        return false;
+    }
+    let operands = operands_of(from_prog);
+    if operands.is_empty() {
+        return false;
+    }
+    let scratch = scratch_dirs();
+    let workspace = real_path(&ctx.workspace);
+    operands.iter().all(|w| {
+        // A value the shell fills in could name anything.
+        if w.contains(['$', '`']) {
+            return false;
+        }
+        match resolve(ctx, w) {
+            Some(p) => ctx.created.contains(&p),
+            None => resolve_outside(ctx, w).is_some_and(|p| {
+                ctx.created.contains(&p)
+                    || scratch.iter().any(|t| {
+                        p != *t
+                            && is_under(&p, t)
+                            && !is_under(&workspace, &p)
+                            && !in_a_repository(&p, t)
+                    })
+            }),
+        }
+    })
+}
+
+/// The files a command would make that are not there yet: a redirect's
+/// target, and what `tee`, `touch`, `mkdir` and `cp` are given to write.
+/// With them, the folders that would be made on the way.
+fn segment_makes(seg: &str, ctx: &ToolContext) -> Vec<PathBuf> {
+    let words = read(seg, ctx, false);
+    let parsed = parse(&words);
+    let prog = parsed.prog.unwrap_or("");
+    let mut named: Vec<String> = Vec::new();
+    let mut operands: Vec<String> = Vec::new();
+    // The next word is a redirect's target: written, or (`<`) read.
+    let mut next = None;
+    for (i, w) in words.iter().enumerate() {
+        if let Some(written) = next.take() {
+            if written {
+                named.push(w.clone());
+            }
+            continue;
+        }
+        match redirect(w, false) {
+            Redir::Next => next = Some(true),
+            Redir::To(t) => named.push(t),
+            Redir::Dup => {}
+            Redir::No if w.starts_with("<<") => {}
+            Redir::No if redirect(w, true) != Redir::No => next = Some(false),
+            Redir::No => {
+                if i >= parsed.args && !w.starts_with('-') {
+                    operands.push(w.clone());
+                }
+            }
+        }
+    }
+    match prog {
+        "tee" | "touch" | "mkdir" => named.extend(operands),
+        "cp" if operands.len() >= 2 => named.extend(operands.pop()),
+        _ => {}
+    }
+    let mut out: Vec<PathBuf> = Vec::new();
+    for w in named {
+        if w == "/dev/null" || w.contains(['*', '?', '[', '$', '`']) {
+            continue;
+        }
+        let Some(p) = resolve(ctx, &w).or_else(|| resolve_outside(ctx, &w)) else {
+            continue;
+        };
+        for a in p.ancestors() {
+            if a.symlink_metadata().is_ok() {
+                break;
+            }
+            if !out.contains(&a.to_path_buf()) {
+                out.push(a.to_path_buf());
+            }
+        }
+    }
+    out
+}
+
+/// The words a searching or editing program reads as its pattern or its
+/// script, which name no file: the first plain word, unless `-e`,
+/// `--regexp` or `--expression` gave it, or `-f`/`--file` gave a file of
+/// them (read, so not one of these). `grep '\.env' .gitignore` reads
+/// `.gitignore` and `sed -n '/\.pem/p' x` reads `x`.
+fn pattern_words(prog: &str, from_prog: &[String]) -> Vec<String> {
+    let args = from_prog.get(1..).unwrap_or_default();
+    // The short options that take a value, and which of them carry the
+    // pattern.
+    let (valued, carries) = match prog {
+        "grep" | "egrep" | "fgrep" => ("efmABCdD", "e"),
+        "rg" => ("efgtTmABCjMEr", "e"),
+        "sed" => ("elf", "e"),
+        "awk" | "gawk" | "mawk" | "nawk" => ("Ffv", ""),
+        _ => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    // The pattern was given by an option, or read from a file: the plain
+    // words are all files.
+    let mut elsewhere = false;
+    let mut at = 0;
+    while let Some(a) = args.get(at).map(String::as_str) {
+        at += 1;
+        if a == "--" {
+            if !elsewhere {
+                out.extend(args.get(at).cloned());
+            }
+            break;
+        }
+        if let Some(long) = a.strip_prefix("--") {
+            let (name, attached) = match long.split_once('=') {
+                Some((n, v)) => (n, Some(v.to_string())),
+                None => (long, None),
+            };
+            let takes_next = attached.is_none()
+                && (LONG_VALUED.contains(&format!("--{name}").as_str()) || name == "expression");
+            let value = if takes_next {
+                at += 1;
+                args.get(at - 1).cloned()
+            } else {
+                attached
+            };
+            match name {
+                "regexp" | "expression" => {
+                    elsewhere = true;
+                    out.extend(value);
+                }
+                "file" | "files" => elsewhere = true,
+                _ => {}
+            }
+            continue;
+        }
+        if a.len() > 1 && a.starts_with('-') {
+            for (k, c) in a[1..].char_indices() {
+                if valued.contains(c) {
+                    let rest = &a[1 + k + c.len_utf8()..];
+                    let value = if rest.is_empty() {
+                        at += 1;
+                        args.get(at - 1).cloned()
+                    } else {
+                        Some(rest.to_string())
+                    };
+                    if carries.contains(c) {
+                        elsewhere = true;
+                        out.extend(value);
+                    } else if c == 'f' {
+                        elsewhere = true;
+                    }
+                    break;
+                }
+            }
+            continue;
+        }
+        if redirect(a, true) != Redir::No || redirect(a, false) == Redir::Next {
+            at += 1;
+            continue;
+        }
+        if a.starts_with("<<") || redirect(a, false) != Redir::No {
+            continue;
+        }
+        if !elsewhere {
+            out.push(a.to_string());
+            elsewhere = true;
+        }
+    }
+    out
+}
+
+/// `seen` without the words [`pattern_words`] says are the program's
+/// pattern: the files it was handed, and the values its options carry.
+fn files_named(prog: &str, from_prog: &[String], seen: &[String]) -> Vec<String> {
+    let mut patterns = pattern_words(prog, from_prog);
+    seen.iter()
+        .filter(|w| match patterns.iter().position(|p| p == *w) {
+            Some(i) => {
+                patterns.remove(i);
+                false
+            }
+            None => true,
+        })
+        .cloned()
+        .collect()
 }
 
 /// True when a printing command was pointed at a secret.
@@ -6355,6 +6695,7 @@ mod tests {
             // review hat's old answers. With a checkpoint it answers as
             // the build hat does; `the_audit_hat_runs_as_build_behind_a_checkpoint`.
             read_only: role == Role::SoloAudit,
+            created: Vec::new(),
         }
     }
 
@@ -6712,14 +7053,17 @@ mod tests {
         assert_eq!(sh("cp key.pem ~/.ssh/"), Decision::Deny);
         // Destruction outside the project is a question every time, in
         // scratch space and the user's folder too: "allow all" covers the
-        // project, not `rm -rf ~/x`.
+        // project, not `rm -rf ~/x`. Scratch space is the exception: a
+        // file or folder of the command's own there goes without a word
+        // (`deletes_freely`, tested on its own).
+        for cmd in ["rm -rf /opt/ryter-scratch", "rm -rf ~/ryter-scratch"] {
+            assert_eq!(sh(cmd), Decision::AskOutside, "{cmd}");
+        }
         for cmd in [
             "rm -rf /tmp/ryter-scratch",
-            "rm -rf /opt/ryter-scratch",
-            "rm -rf ~/ryter-scratch",
             "find /tmp/ryter-scratch -name '*.log' -delete",
         ] {
-            assert_eq!(sh(cmd), Decision::AskOutside, "{cmd}");
+            assert_eq!(sh(cmd), Decision::Allow, "{cmd}");
         }
         // A move into the user's folder is a write there, which is open.
         assert_eq!(sh("mv a.rs ~/ryter-scratch/"), Decision::Allow);
@@ -7347,7 +7691,7 @@ mod tests {
             Decision::AskOutside
         );
         assert_eq!(
-            bash("cd scripts && rm -rf ../../x", Role::SoloBuild, d),
+            bash("cd scripts && rm -rf ../../../opt/x", Role::SoloBuild, d),
             Decision::AskOutside
         );
         // The hats that change nothing run none of it.
@@ -8759,9 +9103,10 @@ mod tests {
             &ctx_for(Role::SoloBuild, d),
         );
         assert!(hint.is_some_and(|h| h.contains("`declare -n`")), "{hint:?}");
-        // Not a nameref: every other flag keeps the value written.
+        // Not a nameref: every other flag keeps the value written (a
+        // scratch file of its own, deleted freely; unknown, it would ask).
         let plain = bash("F=/tmp/x; rm -f \"$F\"", Role::SoloBuild, d);
-        assert_eq!(plain, Decision::AskOutside);
+        assert_eq!(plain, Decision::Allow);
         for set in [
             "declare -x F=/tmp/x",
             "declare -xr F=/tmp/x",
@@ -8847,13 +9192,15 @@ mod tests {
         let judge = |cmd: &str, role: Role| {
             let ctx = ToolContext {
                 read_only: false,
+                created: Vec::new(),
                 ..ctx_for(role, d)
             };
             decide("bash", &json!({"command": cmd}), &ctx)
         };
         for role in [Role::SoloBuild, Role::SoloAudit] {
+            // A scratch file of the command's own: deleted without asking.
             let literal = judge("rm -f /tmp/audit-tasks.json", role);
-            assert_eq!(literal, Decision::AskOutside, "{role:?}");
+            assert_eq!(literal, Decision::Allow, "{role:?}");
             for sep in ["; ", " && ", "\n"] {
                 for used in [
                     "rm -f \"$TASKS_FILE\"",
@@ -8883,11 +9230,7 @@ mod tests {
                 "export TASKS_FILE=/tmp/audit-tasks.json\nrm -f \"$TASKS_FILE\"\n.venv/bin/tasks add buy milk\n.venv/bin/tasks list",
                 "export TASKS_FILE=/tmp/audit-conc.json\nrm -f \"$TASKS_FILE\"\nfor i in 1 2 3 4 5; do .venv/bin/tasks add \"t$i\" & done >/dev/null 2>&1; wait",
             ] {
-                assert_eq!(
-                    judge(script, role),
-                    Decision::AskOutside,
-                    "{role:?}: {script:?}"
-                );
+                assert_eq!(judge(script, role), Decision::Allow, "{role:?}: {script:?}");
             }
         }
         // A value only the shell can read, or a name never set, is still
@@ -8922,7 +9265,11 @@ mod tests {
             asking_segment(script, &ctx).as_deref(),
             Some("rm -f \"$TASKS_FILE\"")
         );
+        // Known to be a scratch file of its own, the deletion runs and
+        // nothing is named.
         let script = "export TASKS_FILE=/tmp/audit-conc.json\nrm -f \"$TASKS_FILE\"\nfor i in 1 2 3 4 5; do .venv/bin/tasks add \"t$i\" & done >/dev/null 2>&1; wait";
+        assert_eq!(asking_segment(script, &ctx), None);
+        let script = "export TASKS_FILE=~/audit-conc.json\nrm -f \"$TASKS_FILE\"\nls";
         assert_eq!(
             asking_segment(script, &ctx).as_deref(),
             Some("rm -f \"$TASKS_FILE\"")
@@ -8936,6 +9283,307 @@ mod tests {
         // Nothing asked, or refused: nothing named.
         assert_eq!(asking_segment("set -e\ncargo test", &ctx), None);
         assert_eq!(asking_segment("set -e\nsudo rm -rf /", &ctx), None);
+    }
+
+    /// `git remote -v`, `show` and `get-url` print the remotes: a look,
+    /// in every hat. The first real run on 0.19.0 had `git remote -v` ask
+    /// in the build hat and refused in the audit, as if it were `set-url`.
+    #[test]
+    fn git_remote_is_looked_at_without_asking_and_changed_only_by_build() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        let audit = |cmd: &str| {
+            decide(
+                "bash",
+                &json!({"command": cmd}),
+                &ToolContext {
+                    read_only: false,
+                    ..ctx_for(Role::SoloAudit, d)
+                },
+            )
+        };
+        for cmd in [
+            "git remote",
+            "git remote -v",
+            "git remote --verbose",
+            "git remote show",
+            "git remote show origin",
+            "git remote show -n origin",
+            "git remote get-url origin",
+            "git remote get-url --push --all origin",
+            "git -C . remote -v",
+            "git remote -v 2>/dev/null; echo done",
+            "git remote -v 2> /dev/null; echo done",
+            "git remote show origin 2>&1 | head -3",
+        ] {
+            for role in [Role::SoloBuild, Role::SoloPlan, Role::SoloScribe] {
+                assert_eq!(bash(cmd, role, d), Decision::Allow, "{role:?}: {cmd}");
+            }
+            assert_eq!(audit(cmd), Decision::Allow, "audit: {cmd}");
+        }
+        for cmd in [
+            "git remote add origin git@github.com:x/y.git",
+            "git remote set-url origin x",
+            "git remote remove origin",
+            "git remote rm origin",
+            "git remote rename origin upstream",
+            "git remote prune origin",
+            "git remote update",
+            "git remote set-head origin -a",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Ask, "{cmd}");
+            assert_eq!(bash(cmd, Role::SoloPlan, d), Decision::Deny, "{cmd}");
+            assert_eq!(audit(cmd), Decision::Deny, "audit: {cmd}");
+        }
+    }
+
+    /// A secret's name in a search pattern, or handed to `git check-ignore`,
+    /// reads nothing: `grep '\.env' .gitignore` reads `.gitignore`. Read as
+    /// a file named, the pattern was refused as a secret, and one such
+    /// refusal ended a twelve-line audit script in the first real run.
+    #[test]
+    fn naming_a_secret_in_a_pattern_or_to_check_ignore_is_not_reading_it() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join(".gitignore"), ".env\n*.pem\n*.key\n").unwrap();
+        std::fs::write(d.join(".env"), "SECRET=1\n").unwrap();
+        std::fs::write(d.join(".env.example"), "SECRET=\n").unwrap();
+        std::fs::write(d.join("notes.txt"), "see .env\n").unwrap();
+        let audit = |cmd: &str| {
+            decide(
+                "bash",
+                &json!({"command": cmd}),
+                &ToolContext {
+                    read_only: false,
+                    ..ctx_for(Role::SoloAudit, d)
+                },
+            )
+        };
+        for cmd in [
+            r"grep -E '\*\.pem|\*\.key' .gitignore",
+            r"grep -n '\.env' .gitignore",
+            r"grep -E 'env.example|\.env' notes.txt | head -5",
+            r"git status --short --ignored | grep -E 'env.example|\.env' | head -5",
+            r"grep -e '\.env' .gitignore",
+            r"grep --regexp='\.env' .gitignore",
+            r"grep --regexp '\.env' .gitignore",
+            r"grep -A 2 '\.env' .gitignore",
+            r"grep -A2 -- '\.env' .gitignore",
+            r"egrep 'server\.key' .gitignore",
+            r"rg '\.pem' .gitignore",
+            r"rg -e '\.pem' -n .gitignore",
+            "git check-ignore -v server.pem server.key deploy/cert.pem",
+            "git check-ignore -v .env",
+            "git check-ignore -v .env.example >/dev/null 2>&1 && echo ignored || echo not",
+            "git check-ignore -q .env",
+            "git -C . check-ignore .env",
+            "git check-attr -a .env",
+            "git check-attr --all server.pem",
+        ] {
+            for role in [Role::SoloBuild, Role::SoloPlan, Role::SoloScribe] {
+                assert_eq!(bash(cmd, role, d), Decision::Allow, "{role:?}: {cmd}");
+            }
+            assert_eq!(audit(cmd), Decision::Allow, "audit: {cmd}");
+        }
+        // The hats that work run `sed` and `awk` scripts; the looking hats
+        // are refused a script with a `/` in it, which is older than this
+        // rule and noted in the roadmap.
+        for cmd in [
+            r"grep -E '\*\.pem|\*\.key' .gitignore | sed 's/^/gitignore:/'",
+            r"sed -n '/\.env/p' .gitignore",
+            r"sed -e '/\.pem/d' .gitignore",
+            r"awk '/\.env/ {print}' .gitignore",
+            r"awk -F: '/\.key/' .gitignore",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+            assert_eq!(audit(cmd), Decision::Allow, "audit: {cmd}");
+        }
+        // The file named is still the file read.
+        for cmd in [
+            "grep KEY .env",
+            "grep -n SECRET .env .gitignore",
+            r"grep '\.env' .env",
+            "grep -f .env notes.txt",
+            "grep -f.env notes.txt",
+            "grep --file=.env notes.txt",
+            r"grep -e '\.env' .env",
+            "rg SECRET .env",
+            "sed -n p .env",
+            "sed -f .env notes.txt",
+            "awk '{print}' .env",
+            "awk -f .env notes.txt",
+            "git show HEAD:.env",
+            "git diff -- .env",
+            "git grep SECRET -- .env",
+            "cat .env",
+        ] {
+            for role in [Role::SoloBuild, Role::SoloPlan, Role::SoloScribe] {
+                assert_eq!(bash(cmd, role, d), Decision::Deny, "{role:?}: {cmd}");
+            }
+            assert_eq!(audit(cmd), Decision::Deny, "audit: {cmd}");
+        }
+        // The hint says what was wrong, and a pattern is not it.
+        let ctx = ctx_for(Role::SoloBuild, d);
+        let hint = bash_hint(&json!({"command": "grep KEY .env"}), &ctx);
+        assert!(
+            hint.is_some_and(|h| h.contains("names a secret file")),
+            "{hint:?}"
+        );
+        assert_eq!(
+            pattern_words("grep", &words_of("grep -A 2 '\\.env' .gitignore")),
+            vec!["\\.env"]
+        );
+        assert_eq!(
+            pattern_words("grep", &words_of("grep -f .env notes.txt")),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            pattern_words("awk", &words_of("awk -F: '/x/' f")),
+            vec!["/x/"]
+        );
+        assert_eq!(
+            pattern_words("sed", &words_of("sed -i.bak -e s/a/b/ f")),
+            vec!["s/a/b/"]
+        );
+    }
+
+    fn words_of(cmd: &str) -> Vec<String> {
+        cmd.split_whitespace()
+            .map(|w| w.trim_matches('\'').to_string())
+            .collect()
+    }
+
+    /// A file of the turn's own goes without a question: one in scratch
+    /// space, or one the turn made, which the turn's checkpoint does not
+    /// hold. Eighteen of the first real run's two dozen asks were the model
+    /// deleting cookie jars in `/tmp` and probe scripts it had just written.
+    #[test]
+    fn deleting_the_turns_own_files_does_not_ask() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::create_dir_all(d.join("apps/web")).unwrap();
+        std::fs::create_dir_all(d.join("target")).unwrap();
+        std::fs::write(d.join("x.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(d.join("apps/web/index.js"), "1\n").unwrap();
+        let scratch = TempDir::new().unwrap();
+        let repo = scratch.path().join("someone-elses-repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let repo = repo.display().to_string();
+        let audit = |cmd: &str| {
+            decide(
+                "bash",
+                &json!({"command": cmd}),
+                &ToolContext {
+                    read_only: false,
+                    ..ctx_for(Role::SoloAudit, d)
+                },
+            )
+        };
+        // Scratch space: a file or a folder of its own there.
+        for cmd in [
+            "cd /tmp && rm -f cj.txt && curl -s -c cj.txt http://localhost:5173/api/auth/register",
+            "cd /tmp && rm -f a.txt b.txt",
+            "rm -f /tmp/tls_test.txt",
+            "rm -rf /tmp/ryter-probe-dir",
+            "rm -rf /var/tmp/ryter-probe-dir",
+            "unlink /tmp/x.sock",
+            "truncate -s 0 /tmp/log.txt",
+            "find /tmp/ryter-probe-dir -name '*.log' -delete",
+            "F=/tmp/x; rm -f \"$F\"",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+            assert_eq!(audit(cmd), Decision::Allow, "audit: {cmd}");
+        }
+        // Not scratch space itself, not everything in it, not a repository
+        // there, not the user's folder, and not the project's own files.
+        for cmd in [
+            "rm -rf /tmp",
+            "rm -rf /tmp/",
+            "rm -rf /tmp/.",
+            "rm -rf /tmp/*",
+            "cd /tmp && rm -rf *",
+            "cd /tmp && rm -rf ./*",
+            "rm -rf /tmp/ryter-*",
+            "rm -rf ~/ryter-scratch",
+            "rm -rf /opt/ryter-scratch",
+            "rm -rf target",
+            "rm x.rs",
+            "rm -rf /tmp/x $D",
+            "find /tmp -name '*.log' -delete",
+            "find -name '*.log' -delete",
+        ] {
+            assert_ne!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+            assert_ne!(audit(cmd), Decision::Allow, "audit: {cmd}");
+        }
+        assert_ne!(
+            bash(&format!("rm -rf {repo}"), Role::SoloBuild, d),
+            Decision::Allow
+        );
+        assert_ne!(
+            bash(&format!("rm -rf {repo}/src"), Role::SoloBuild, d),
+            Decision::Allow
+        );
+        // What the turn made, inside the project: the agent keeps the list.
+        let mut ctx = ctx_for(Role::SoloBuild, d);
+        ctx.created = vec![d.join("probe.sh"), d.join("apps/web/dbg.mjs")];
+        let own = |cmd: &str, ctx: &ToolContext| decide("bash", &json!({"command": cmd}), ctx);
+        assert_eq!(own("rm probe.sh", &ctx), Decision::Allow);
+        assert_eq!(
+            own("rm -f probe.sh apps/web/dbg.mjs", &ctx),
+            Decision::Allow
+        );
+        assert_eq!(own("cd apps/web && rm -f dbg.mjs", &ctx), Decision::Allow);
+        assert_eq!(own("rm -f ./probe.sh", &ctx), Decision::Allow);
+        assert_eq!(own("rm probe.sh x.rs", &ctx), Decision::Ask);
+        assert_eq!(own("rm x.rs", &ctx), Decision::Ask);
+        assert_eq!(own("rm 'probe.sh'", &ctx), Decision::Allow);
+        // And what one command makes, a later part of it may delete.
+        for cmd in [
+            "cat > probe.sh <<'EOF'\necho hi\nEOF\nsh probe.sh; rm probe.sh",
+            "cat > probe.sh <<'EOF'\necho hi\nEOF\nsh probe.sh && rm -f probe.sh",
+            "echo hi > out.txt && cat out.txt && rm out.txt",
+            "echo hi >> out.txt; rm out.txt",
+            "touch a.tmp b.tmp && rm a.tmp b.tmp",
+            "cp x.rs y.rs && rm y.rs",
+            "mkdir -p tmpdir/inner && rm -rf tmpdir",
+            "printf x | tee out.txt && rm out.txt",
+            "cd apps/web && cat > dbg.mjs <<'EOF'\n1\nEOF\nnode dbg.mjs; rm -f dbg.mjs",
+            "cat > /tmp/probe.test.ts <<'EOF'\n1\nEOF\nnpx vitest run /tmp/probe.test.ts; rm /tmp/probe.test.ts",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd:?}");
+            assert_eq!(audit(cmd), Decision::Allow, "audit: {cmd:?}");
+        }
+        // Not before it is made, not a file that was there, not a move.
+        for cmd in [
+            "rm probe.sh; cat > probe.sh <<'EOF'\necho hi\nEOF",
+            "cat > x.rs <<'EOF'\nfn main() {}\nEOF\nrm x.rs",
+            "cp x.rs apps/web/index.js && rm apps/web/index.js",
+            "mv x.rs moved.rs && rm moved.rs",
+            "touch a.tmp && rm a.tmp x.rs",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Ask, "{cmd:?}");
+        }
+        // What a command makes, read before it runs.
+        let made = makes(
+            &json!({"command": "mkdir -p tmpdir/inner && cat > tmpdir/inner/p.sh <<'EOF'\nx\nEOF\ncp x.rs y.rs; echo 1 > /tmp/ryter-makes.txt; echo 2 > x.rs; cat < x.rs"}),
+            &ctx_for(Role::SoloBuild, d),
+        );
+        let made: Vec<String> = made.iter().map(|p| p.display().to_string()).collect();
+        for p in [
+            d.join("tmpdir"),
+            d.join("tmpdir/inner"),
+            d.join("tmpdir/inner/p.sh"),
+            d.join("y.rs"),
+        ] {
+            let p = p.display().to_string();
+            assert!(made.contains(&p), "{p} in {made:?}");
+        }
+        assert!(
+            made.iter().any(|p| p.ends_with("/ryter-makes.txt")),
+            "{made:?}"
+        );
+        assert!(!made.iter().any(|p| p.ends_with("/x.rs")), "{made:?}");
+        assert_eq!(made.len(), 5, "{made:?}");
     }
 
     /// Inside the project, the build hat's deletions are a question for

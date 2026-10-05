@@ -116,6 +116,27 @@ pub struct ToolAsk {
 #[derive(Clone)]
 pub struct UserIo {
     tx: Arc<Mutex<mpsc::Sender<UserRequest>>>,
+    /// The permission cards shown since the agent last took them, for the
+    /// session's log.
+    asked: Arc<Mutex<Vec<Asked>>>,
+}
+
+/// A permission card and what came of it. The agent turns each into an
+/// [`crate::AgentEvent::Asked`] beside the tool call that put it up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Asked {
+    /// The card's title: the tool, or the tool and why.
+    pub tool: String,
+    /// What was asked, as the card showed it.
+    pub what: String,
+    /// Only `y` would do.
+    pub strict: bool,
+    /// `allow`, `always`, `deny`, or `none` when nobody answered.
+    pub answer: String,
+    /// How long the person took.
+    pub waited_ms: u64,
+    /// When the card opened, milliseconds since the Unix epoch.
+    pub at: u64,
 }
 
 impl std::fmt::Debug for UserIo {
@@ -131,9 +152,18 @@ impl UserIo {
         (
             Self {
                 tx: Arc::new(Mutex::new(tx)),
+                asked: Arc::default(),
             },
             rx,
         )
+    }
+
+    /// The cards shown since the last call, oldest first.
+    pub fn take_asked(&self) -> Vec<Asked> {
+        self.asked
+            .lock()
+            .map(|mut a| std::mem::take(&mut *a))
+            .unwrap_or_default()
     }
 
     /// Ask the TUI about a tool. Disconnected, timeout, or a cancelled turn
@@ -167,11 +197,21 @@ impl UserIo {
     /// Ask about a tool call.
     pub fn ask_tool(&self, ask: ToolAsk, cancel: &Cancel) -> Permission {
         let (reply_tx, reply_rx) = mpsc::channel();
+        // Wrapped in the prompt; the cap keeps a pasted blob from
+        // filling it. An edit's whole change rides in `preview`.
+        let summary: String = ask.summary.chars().take(400).collect();
+        let mut record = Asked {
+            tool: ask.tool.clone(),
+            what: ask.asks.clone().unwrap_or_else(|| summary.clone()),
+            strict: ask.strict,
+            answer: "none".into(),
+            waited_ms: 0,
+            at: crate::event::now_ms(),
+        };
+        let opened = std::time::Instant::now();
         let req = UserRequest::Permission {
             tool: ask.tool,
-            // Wrapped in the prompt; the cap keeps a pasted blob from
-            // filling it. An edit's whole change rides in `preview`.
-            summary: ask.summary.chars().take(400).collect(),
+            summary,
             preview: ask.preview.map(Box::new),
             strict: ask.strict,
             scope: ask.scope,
@@ -179,10 +219,23 @@ impl UserIo {
             asks: ask.asks,
             reply: reply_tx,
         };
-        if self.send(req).is_err() {
-            return Permission::Deny;
+        let answer = if self.send(req).is_err() {
+            None
+        } else {
+            wait(&reply_rx, cancel)
+        };
+        record.waited_ms = u64::try_from(opened.elapsed().as_millis()).unwrap_or(u64::MAX);
+        record.answer = match answer {
+            Some(Permission::Allow) => "allow",
+            Some(Permission::Always) => "always",
+            Some(Permission::Deny) => "deny",
+            None => "none",
         }
-        wait(&reply_rx, cancel).unwrap_or(Permission::Deny)
+        .into();
+        if let Ok(mut a) = self.asked.lock() {
+            a.push(record);
+        }
+        answer.unwrap_or(Permission::Deny)
     }
 
     /// Ask the human. Empty string on timeout, disconnect, or cancel.

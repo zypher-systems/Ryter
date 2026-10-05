@@ -720,6 +720,8 @@ fn fill_chat(view: &mut View, messages: &[ryter_core::Message], model: &str) {
                         crate::run::events::apply(
                             view,
                             AgentEvent::ToolCall {
+                                turn: 0,
+                                at: 0,
                                 id: c.id.clone(),
                                 name: c.name.clone(),
                                 // The project's command isn't in the call,

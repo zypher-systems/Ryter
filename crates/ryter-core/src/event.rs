@@ -31,6 +31,39 @@ pub enum AgentEvent {
         /// Short human label (`read Cargo.toml`), produced by the core.
         #[serde(default)]
         summary: Option<String>,
+        /// The turn it belongs to, from [`AgentEvent::TurnStarted`]. `0`
+        /// in a log written before the field existed.
+        #[serde(default)]
+        turn: u64,
+        /// When it was made, milliseconds since the Unix epoch. `0` in an
+        /// older log.
+        #[serde(default)]
+        at: u64,
+    },
+    /// The gate stopped a tool call and a person was asked. Written beside
+    /// the call, so a session's asks can be read from its log instead of
+    /// replayed through the gate.
+    Asked {
+        /// The tool call that asked, when one did; `None` for a question
+        /// the agent itself put (the audit offer).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        /// The turn it belongs to.
+        turn: u64,
+        /// The card's title: the tool, or the tool and why (`write
+        /// outside the project`, `switch hat`).
+        tool: String,
+        /// What was asked, as the card showed it.
+        what: String,
+        /// Only `y` would do: a deletion, a write outside the project.
+        strict: bool,
+        /// `allow`, `always`, `deny`, or `none` when nobody answered: the
+        /// turn was cancelled, the card timed out, or the screen went away.
+        answer: String,
+        /// How long the person took.
+        waited_ms: u64,
+        /// When the card opened, milliseconds since the Unix epoch.
+        at: u64,
     },
     /// A tool call finished.
     ToolResult {
@@ -53,6 +86,10 @@ pub enum AgentEvent {
         turn: u64,
         /// The hat it runs in, which says whose conversation it is part of.
         role: Role,
+        /// When it began, milliseconds since the Unix epoch. `0` in an
+        /// older log.
+        #[serde(default)]
+        at: u64,
     },
     /// A user turn ended, however it ended.
     TurnFinished {
@@ -274,9 +311,81 @@ pub enum AgentEvent {
     },
 }
 
+/// Now, as the log stamps it: milliseconds since the Unix epoch.
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A session's asks are in its log. The first real run on 0.19.0 had
+    /// some two dozen asks, and the log held none of them: they had to
+    /// be reconstructed by replaying its commands through the gate.
+    #[test]
+    fn an_ask_is_an_event_with_its_answer_and_its_wait() {
+        let ev = AgentEvent::Asked {
+            id: Some("c1".into()),
+            turn: 3,
+            tool: "bash".into(),
+            what: "rm -f /tmp/cookies.txt".into(),
+            strict: true,
+            answer: "allow".into(),
+            waited_ms: 1200,
+            at: 1_700_000_000_000,
+        };
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["kind"], "asked");
+        assert_eq!(v["id"], "c1");
+        assert_eq!(v["turn"], 3);
+        assert_eq!(v["answer"], "allow");
+        assert_eq!(v["waited_ms"], 1200);
+        let back: AgentEvent = serde_json::from_value(v).unwrap();
+        assert_eq!(back, ev);
+        // The audit offer is a question with no tool call behind it.
+        let v = serde_json::to_value(AgentEvent::Asked {
+            id: None,
+            turn: 1,
+            tool: "audit".into(),
+            what: "run the audit".into(),
+            strict: false,
+            answer: "deny".into(),
+            waited_ms: 0,
+            at: 0,
+        })
+        .unwrap();
+        assert!(v.get("id").is_none());
+    }
+
+    /// A tool call says which turn it was made in and when, so a log
+    /// reads in order without counting turn markers.
+    #[test]
+    fn a_tool_call_carries_its_turn_and_its_time() {
+        let v = serde_json::to_value(AgentEvent::ToolCall {
+            id: "c1".into(),
+            name: "bash".into(),
+            args: serde_json::json!({"command": "ls"}),
+            role: Role::SoloBuild,
+            summary: None,
+            turn: 4,
+            at: 5,
+        })
+        .unwrap();
+        assert_eq!(v["turn"], 4);
+        assert_eq!(v["at"], 5);
+        let v = serde_json::to_value(AgentEvent::TurnStarted {
+            turn: 4,
+            role: Role::SoloBuild,
+            at: 6,
+        })
+        .unwrap();
+        assert_eq!(v["at"], 6);
+        assert!(now_ms() > 1_600_000_000_000);
+    }
 
     #[test]
     fn json_tag_is_snake_case() {
@@ -294,7 +403,18 @@ mod tests {
             r#"{"kind":"tool_call","id":"c1","name":"bash","args":{},"role":"orchestrator"}"#,
         )
         .unwrap();
-        assert!(matches!(ev, AgentEvent::ToolCall { summary: None, .. }));
+        assert!(matches!(
+            ev,
+            AgentEvent::ToolCall {
+                summary: None,
+                turn: 0,
+                at: 0,
+                ..
+            }
+        ));
+        let ev: AgentEvent =
+            serde_json::from_str(r#"{"kind":"turn_started","turn":1,"role":"build"}"#).unwrap();
+        assert!(matches!(ev, AgentEvent::TurnStarted { at: 0, .. }));
         let ev: AgentEvent = serde_json::from_str(
             r#"{"kind":"tool_result","id":"c1","output":"ok","is_error":false}"#,
         )

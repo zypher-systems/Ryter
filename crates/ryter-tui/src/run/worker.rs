@@ -908,6 +908,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
             cwd: Default::default(),
             vars: Default::default(),
             read_only: false,
+            created: Vec::new(),
         },
         connection: b.conn_name,
         model: b.model,
@@ -925,5 +926,6 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         audit_pending: None,
         audit_live: None,
         last_audit_verdict: None,
+        turn: 0,
     }
 }

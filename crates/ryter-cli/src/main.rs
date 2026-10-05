@@ -484,6 +484,7 @@ async fn run_prompt(
             cwd: Default::default(),
             vars: Default::default(),
             read_only: false,
+            created: Vec::new(),
         },
         connection: conn_name,
         model,
@@ -501,6 +502,7 @@ async fn run_prompt(
         audit_pending: None,
         audit_live: None,
         last_audit_verdict: None,
+        turn: 0,
     };
     agent.fire_session_start()?;
     let result = agent.turn(&prompt).await;
@@ -857,6 +859,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
             cwd: Default::default(),
             vars: Default::default(),
             read_only: false,
+            created: Vec::new(),
         },
         connection: conn_name,
         model,
@@ -874,6 +877,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
         audit_pending: None,
         audit_live: None,
         last_audit_verdict: None,
+        turn: 0,
     };
     if let Err(e) = agent.fire_session_start() {
         eprintln!("{e}");
@@ -983,6 +987,7 @@ fn serve_host_from_config(
             cwd: Default::default(),
             vars: Default::default(),
             read_only: false,
+            created: Vec::new(),
         },
         connection: conn_name,
         model,
@@ -1000,6 +1005,7 @@ fn serve_host_from_config(
         audit_pending: None,
         audit_live: None,
         last_audit_verdict: None,
+        turn: 0,
     };
     agent.fire_session_start()?;
     Ok(ServeHost::new(agent, rt))

@@ -16,7 +16,7 @@ use crate::llm::ToolSpec;
 use crate::role::Role;
 
 pub use fs::changed_lines;
-pub(crate) use policy::{on_this_machine, resolve};
+pub(crate) use policy::{makes, on_this_machine, resolve};
 
 /// What `a` ("allow for this session") on this call's prompt would cover:
 /// a key, and the words for it. `None` when the prompt must not offer it.
@@ -144,6 +144,10 @@ pub struct ToolContext {
     /// The audit hat with no checkpoint to fall back on (a folder that is
     /// not a git repository): held to read-only commands for the turn.
     pub read_only: bool,
+    /// Files this turn made (a `write` of a new file, a redirect, `touch`,
+    /// `cp`, `mkdir`), which the turn's checkpoint does not hold: deleting
+    /// one loses nothing, so it does not ask.
+    pub created: Vec<std::path::PathBuf>,
 }
 
 impl ToolContext {
@@ -721,10 +725,16 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
             ) && matches!(name, "write" | "search_replace" | "bash")
                 && !(name == "bash" && policy::bash_hint(args, ctx).is_some()) =>
         {
+            // What the audit may do is said, or the model took "changes
+            // nothing" for "writes nothing" while its shell commands wrote
+            // probe scripts behind the checkpoint all along.
             if ctx.role == Role::SoloAudit && name != "bash" {
                 return Ok(ToolOutput::err(
-                    "denied: the audit changes nothing; its findings go in audit.md \
-                     (file_audit). Tell the user: Shift+Tab to the build hat changes code.",
+                    "denied: the audit's only file is audit.md (file_audit); its findings go \
+                     there. A probe or a fixture it needs goes through bash (`cat > probe.sh`), \
+                     in the project or /tmp: the checkpoint puts the tree back when the turn \
+                     ends. A lasting change is the build hat's: tell the user, who can press \
+                     Shift+Tab for it.",
                 ));
             }
             if ctx.role == Role::SoloScribe && name != "bash" {
@@ -898,6 +908,7 @@ mod tests {
             // The audit hat with no checkpoint behind it (see policy's
             // `ctx_for`).
             read_only: role == Role::SoloAudit,
+            created: Vec::new(),
         }
     }
 
@@ -1370,7 +1381,7 @@ mod tests {
         c.read_only = false;
         let out = gated_execute("write", &json!({"path": "src/a.rs", "content": "x"}), &c).unwrap();
         assert!(
-            out.is_error && out.text.contains("findings go in audit.md"),
+            out.is_error && out.text.contains("only file is audit.md"),
             "{out:?}"
         );
         assert!(out.text.contains("Shift+Tab"), "{out:?}");
