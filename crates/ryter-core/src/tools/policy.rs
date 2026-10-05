@@ -6669,6 +6669,27 @@ fn segment_makes(seg: &str, ctx: &ToolContext) -> Effects {
             let mut k = 0;
             while k < tail.len() {
                 let w = tail[k].as_str();
+                // A redirect and its target are the shell's, not mv's:
+                // `mv a b 2>/dev/null` moves `a` to `b`.
+                match redirect(w, false) {
+                    Redir::Next => {
+                        k += 2;
+                        continue;
+                    }
+                    Redir::To(_) | Redir::Dup => {
+                        k += 1;
+                        continue;
+                    }
+                    Redir::No if w.starts_with("<<") => {
+                        k += 1;
+                        continue;
+                    }
+                    Redir::No if redirect(w, true) != Redir::No => {
+                        k += 2;
+                        continue;
+                    }
+                    Redir::No => {}
+                }
                 if past || !w.starts_with('-') || w == "-" {
                     sources.push(w.to_string());
                 } else if w == "--" {
@@ -10090,6 +10111,13 @@ mod tests {
             "mkdir new && mv -bt new src/lib.rs && rm -rf new",
             "mkdir new && mv -- -t src/lib.rs new/ && rm -rf new",
             "mkdir new && mv -T src/lib.rs new/renamed.rs && rm -rf new",
+            "mv src/lib.rs /tmp/mv-r.rs 2>/dev/null; rm -f /tmp/mv-r.rs",
+            "mv src/lib.rs /tmp/mv-r.rs > /tmp/log.txt; rm -f /tmp/mv-r.rs",
+            "mv src/lib.rs /tmp/mv-r.rs >/tmp/log.txt 2>&1; rm -f /tmp/mv-r.rs",
+            "mv src/lib.rs /tmp/mv-r.rs 2>&1; rm -f /tmp/mv-r.rs",
+            "mkdir new && mv src/lib.rs new/ > /dev/null && rm -rf new",
+            "mkdir new && mv -v src/lib.rs new/ 2>/dev/null >/dev/null && rm -rf new",
+            "mkdir new && mv -t new src/lib.rs 2>/dev/null && rm -rf new",
             "mv --target-directory=/tmp src/lib.rs && rm -f /tmp/lib.rs",
             "mkdir new && git mv src/lib.rs new/ && rm -rf new",
             "mkdir new && git -C . mv src/lib.rs new/ && rm -rf new",
