@@ -6656,52 +6656,63 @@ fn segment_makes(seg: &str, ctx: &ToolContext) -> Effects {
     match prog {
         "tee" | "touch" | "mkdir" => named.extend(operands),
         "cp" if operands.len() >= 2 => named.extend(operands.pop()),
-        "mv" if !operands.is_empty() => {
-            // `mv a b dir`, or the folder named by `-t dir`, `-tdir`,
-            // `-ft dir`, `--target-directory dir`, `--target-directory=dir`.
-            let mut target: Option<(String, Option<usize>)> = None;
-            for (k, w) in words.iter().enumerate().skip(args_at) {
-                if let Some(v) = w.strip_prefix("--target-directory=") {
-                    target = Some((v.to_string(), None));
+        "mv" => {
+            // `mv a b dir`, or the folder named by `-t`/`--target-directory`
+            // in any spelling. The cluster is walked by mv's own letters:
+            // `-S` and `-t` take a value, attached or next, so the `t` in
+            // `-S.txt` is a suffix, not the target flag; nothing past `--`
+            // is an option.
+            let tail = &words[args_at.min(words.len())..];
+            let mut dest: Option<String> = None;
+            let mut sources: Vec<String> = Vec::new();
+            let mut past = false;
+            let mut k = 0;
+            while k < tail.len() {
+                let w = tail[k].as_str();
+                if past || !w.starts_with('-') || w == "-" {
+                    sources.push(w.to_string());
+                } else if w == "--" {
+                    past = true;
+                } else if let Some(v) = w.strip_prefix("--target-directory=") {
+                    dest = Some(v.to_string());
                 } else if w == "--target-directory" {
-                    target = Some((words.get(k + 1).cloned().unwrap_or_default(), Some(k + 1)));
-                } else if w.len() > 1 && w.starts_with('-') && !w.starts_with("--") {
-                    if let Some(t) = w[1..].find('t') {
-                        let rest = &w[2 + t..];
-                        target = Some(if rest.is_empty() {
-                            (words.get(k + 1).cloned().unwrap_or_default(), Some(k + 1))
-                        } else {
-                            (rest.to_string(), None)
-                        });
+                    dest = tail.get(k + 1).cloned();
+                    k += 1;
+                } else if w == "--suffix" {
+                    k += 1;
+                } else if !w.starts_with("--") {
+                    for (i, c) in w[1..].char_indices() {
+                        if c == 'S' || c == 't' {
+                            let rest = &w[1 + i + c.len_utf8()..];
+                            let value = if rest.is_empty() {
+                                k += 1;
+                                tail.get(k).cloned()
+                            } else {
+                                Some(rest.to_string())
+                            };
+                            if c == 't' {
+                                dest = value;
+                            }
+                            break;
+                        }
                     }
                 }
+                k += 1;
             }
-            let (dest, sources): (String, Vec<String>) = match target {
-                Some((dest, next)) => (
-                    dest,
-                    operands
-                        .iter()
-                        .filter(|o| next.is_none_or(|k| Some(*o) != words.get(k)))
-                        .cloned()
-                        .collect(),
-                ),
-                None => {
-                    let mut ops = operands.clone();
-                    let dest = ops.pop().unwrap_or_default();
-                    (dest, ops)
-                }
-            };
-            let scratch = scratch_dirs();
-            let users = |src: &str| {
-                resolve(ctx, src).is_some()
-                    || resolve_outside(ctx, src)
-                        .is_some_and(|p| !scratch.iter().any(|t| is_under(&p, t)))
-            };
-            if let Some(to) = resolve(ctx, &dest).or_else(|| resolve_outside(ctx, &dest)) {
-                for src in sources.iter().filter(|s| users(s)) {
-                    kept.push(to.clone());
-                    if let Some(name) = Path::new(src).file_name() {
-                        kept.push(to.join(name));
+            let dest = dest.or_else(|| sources.pop());
+            if let Some(dest) = dest.filter(|_| !sources.is_empty()) {
+                let scratch = scratch_dirs();
+                let users = |src: &str| {
+                    resolve(ctx, src).is_some()
+                        || resolve_outside(ctx, src)
+                            .is_some_and(|p| !scratch.iter().any(|t| is_under(&p, t)))
+                };
+                if let Some(to) = resolve(ctx, &dest).or_else(|| resolve_outside(ctx, &dest)) {
+                    for src in sources.iter().filter(|s| users(s)) {
+                        kept.push(to.clone());
+                        if let Some(name) = Path::new(src).file_name() {
+                            kept.push(to.join(name));
+                        }
                     }
                 }
             }
@@ -10069,6 +10080,16 @@ mod tests {
             "mkdir new && mv --target-directory new src/lib.rs && rm -rf new",
             "mkdir new && mv --target-directory=new src/lib.rs && rm -rf new",
             "mv -t/tmp src/lib.rs && rm -f /tmp/lib.rs",
+            "mkdir new && mv -S.txt src/lib.rs new/ && rm -rf new",
+            "mv -S.txt src/lib.rs /tmp/m.rs; rm -f /tmp/m.rs",
+            "mkdir new && mv -S .txt src/lib.rs new/ && rm -rf new",
+            "mkdir new && mv --suffix=.txt src/lib.rs new/ && rm -rf new",
+            "mkdir new && mv --suffix .txt src/lib.rs new/ && rm -rf new",
+            "mkdir new && mv -b src/lib.rs new/ && rm -rf new",
+            "mkdir new && mv -St src/lib.rs new/ && rm -rf new",
+            "mkdir new && mv -bt new src/lib.rs && rm -rf new",
+            "mkdir new && mv -- -t src/lib.rs new/ && rm -rf new",
+            "mkdir new && mv -T src/lib.rs new/renamed.rs && rm -rf new",
             "mv --target-directory=/tmp src/lib.rs && rm -f /tmp/lib.rs",
             "mkdir new && git mv src/lib.rs new/ && rm -rf new",
             "mkdir new && git -C . mv src/lib.rs new/ && rm -rf new",
