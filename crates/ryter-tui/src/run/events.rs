@@ -124,6 +124,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             args,
             role,
             summary,
+            ..
         } => on_tool_call(view, id, name, args, *role, summary.as_deref()),
         AgentEvent::ToolResult {
             id,
@@ -410,6 +411,8 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
         AgentEvent::McpStatus { servers } => {
             view.mcp_status = servers.iter().cloned().collect();
         }
+        // The card was the screen's part; the event is for the log.
+        AgentEvent::Asked { .. } => {}
     }
     panel::on_event(view, ev);
 }
@@ -721,6 +724,8 @@ mod tests {
             apply(
                 v,
                 AgentEvent::ToolCall {
+                    turn: 0,
+                    at: 0,
                     id: id.into(),
                     name: "record_decision".into(),
                     args: serde_json::json!({"title": "No export button in this pass"}),
@@ -802,6 +807,8 @@ mod tests {
         apply(
             &mut v,
             AgentEvent::ToolCall {
+                turn: 0,
+                at: 0,
                 id: "t1".into(),
                 name: "bash".into(),
                 args: serde_json::json!({"command": "cargo test --all"}),

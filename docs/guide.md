@@ -289,14 +289,14 @@ stop  = "docker compose down"
 
 **What asks, in the build hat.** The work runs: edits, your toolchains, scripts wherever they are, inline code (`python3 -c`, a heredoc to `node`), system programs (`mkdir`, `cp`, `mv`, `chmod`, `sed -i`), the project's containers, `git commit`, and a command Ryter has never heard of. A checkpoint before each build turn is what `/undo` comes back to. A question is kept for what no checkpoint undoes:
 
-- **Deleting:** `rm`, `rmdir`, `truncate`, `find -delete`, `find -exec`, and the volumes of a stack (`docker compose down -v`, `docker volume rm`, any `prune`).
+- **Deleting:** `rm`, `rmdir`, `truncate`, `find -delete`, `find -exec`, and the volumes of a stack (`docker compose down -v`, `docker volume rm`, any `prune`). Two exceptions, since a question would protect nothing: a file or folder of the command's own in scratch space (`rm -f /tmp/cookies.txt`; not `/tmp` itself, not `/tmp/*`, not a repository at or above it, not a place this turn moved one of your files to), and a file this turn made (`write`, a redirect, `touch`, `cp`, `mkdir`), which the turn's checkpoint does not hold, so `cat > probe.sh; sh probe.sh; rm probe.sh` runs whole. The next turn's checkpoint holds the file, and deleting it then asks. A path with a space in it asks even in scratch space (`rm -f '/tmp/x y'`), since the gate cannot tell a quoted space from one the shell would split on.
 - **Throwing work away in git:** `git reset --hard`, `git clean`, `git checkout -- <path>`, `git restore`, `git stash drop`, `git branch -D`.
 - **Leaving the machine:** `git push`, `cargo publish`, `npm publish`, `docker push`, a login; `curl` or `wget` sending a file or data to a host that isn't this machine; and a tool that works on a service somewhere else (`gh pr create`, `aws s3 sync`, `kubectl apply`, `terraform apply`, `fly deploy`, and their kind). Their looks run: `gh pr view`, `kubectl get`, `terraform plan`, and a download.
 - **Writing anywhere but the project, scratch space or your home folder:** `/opt`, `/srv`, another disk, and a `cd` there followed by work. Those prompts say "outside the project" and offer only `y` (allow once) or `n`.
 - **The project's `.env`:** the build hat may write or copy one into being, asked every time (see "Safety").
-- **A path only the shell can read:** `cat "$FILE"`, files handed over by `xargs`, a `cd "$DIR"` and everything after it. The gate can't see where it leads. `$PWD`, `$(pwd)` and `$HOME` it reads.
+- **A path only the shell can read:** `cat "$FILE"`, files handed over by `xargs`, a `cd "$DIR"` and everything after it. The gate can't see where it leads. `$PWD`, `$(pwd)` and `$HOME` it reads. What `curl` sends as text is not a path: a `$(date +%s)` inside a `-d` body or a `-F` field, a header, a `-w` format. `-d @file`, `-F name=@file`, `-T` and `-o` name files, and a variable in those is one the gate can't see.
 
-Refused in every hat, whatever is answered: reading a secret or a credential folder, `sudo` and its kind, a shell handed a command as text (`bash -c`, `sh <<<`, a pipe into `sh`), and rewiring the shell (`alias`, `HOME=`, `IFS=`, a coprocess, a nameref by `declare -n`). A variable that gives a program something else to load (`LD_PRELOAD`, `PATH=/tmp:$PATH`, `NODE_OPTIONS='--require …'`, `RUSTC_WRAPPER`, `DOCKER_HOST`) asks in the build hat and is refused in the others. Ordinary variables run: `NODE_ENV=test`, `DATABASE_URL=…`, `RUST_BACKTRACE=1`, `PATH="$HOME/.cargo/bin:$PATH"`.
+Refused in every hat, whatever is answered: reading a secret or a credential folder (naming one is not reading it: `grep '\.env' .gitignore`, `sed -n '/\.pem/p' .gitignore` and `git check-ignore .env` run, `grep KEY .env` does not), `sudo` and its kind, a shell handed a command as text (`bash -c`, `sh <<<`, a pipe into `sh`), and rewiring the shell (`alias`, `HOME=`, `IFS=`, a coprocess, a nameref by `declare -n`). A variable that gives a program something else to load (`LD_PRELOAD`, `PATH=/tmp:$PATH`, `NODE_OPTIONS='--require …'`, `RUSTC_WRAPPER`, `DOCKER_HOST`) asks in the build hat and is refused in the others. Ordinary variables run: `NODE_ENV=test`, `DATABASE_URL=…`, `RUST_BACKTRACE=1`, `PATH="$HOME/.cargo/bin:$PATH"`.
 
 **Your own rules.** `[permissions]` in `~/.ryter/config.toml` moves any of the asks above, either way, short of a refusal. It is read from your own file only: a project's `.ryter/config.toml` can set its models and its budget, not what the gate asks about, so a repository can't widen the gate for itself.
 
@@ -676,10 +676,16 @@ If an interrupted append leaves a torn final record, resume keeps the valid hist
 ```
 ~/.ryter/sessions/<cwd-slug>/<id>/
   meta.json
-  events.jsonl
+  events.jsonl     # one JSON object a line, `kind` first: what the screen was shown
   transcript.jsonl # the conversation
   spend.jsonl
   notes/           # the plan hat's notes, and project.log: the output of a product run_project started
+```
+
+`events.jsonl` is the same stream `ryter -p --json` prints. A `turn_started` line carries the turn number, its hat and `at` (milliseconds since the Unix epoch); every `tool_call` carries its `turn` and `at`; and each permission card is an `asked` line beside the call that put it up: the card's title (`tool`), what it asked (`what`), whether only `y` would do (`strict`), the `answer` (`allow`, `always`, `deny`, or `none` when nobody answered) and `waited_ms`. So a session's asks can be counted from its log:
+
+```sh
+jq -r 'select(.kind=="asked") | "\(.turn)\t\(.answer)\t\(.what)"' events.jsonl
 ```
 
 A session saved in crew mode, before it was removed, still opens: its conversation and its spend are there, and it carries on in the build hat.

@@ -128,6 +128,8 @@ fn mid_stream(reasoning: ActivityMode) -> View {
     crate::run_events_apply(
         &mut v,
         AgentEvent::ToolCall {
+            turn: 0,
+            at: 0,
             id: "t1".into(),
             name: "read_file".into(),
             args: serde_json::json!({"path": "crates/ryter-tui/src/run/mod.rs"}),
@@ -655,6 +657,8 @@ fn edited_on(mut v: View) -> View {
         crate::run_events_apply(
             &mut v,
             AgentEvent::ToolCall {
+                turn: 0,
+                at: 0,
                 id: id.into(),
                 name: name.into(),
                 args: args.clone(),
@@ -710,6 +714,7 @@ fn ledger() -> View {
         AgentEvent::TurnStarted {
             turn: 1,
             role: Role::SoloBuild,
+            at: 0,
         },
     );
     v.on_token("A first run has no config yet, so it falls back to the defaults.");
@@ -749,6 +754,8 @@ fn spent(role: Role, usd: Option<f64>) -> AgentEvent {
 fn edit_of(id: &str, path: &str, before: Option<&str>, after: &str) -> [AgentEvent; 2] {
     [
         AgentEvent::ToolCall {
+            turn: 0,
+            at: 0,
             id: id.into(),
             name: "write".into(),
             args: serde_json::json!({"path": path, "content": "…"}),
@@ -771,7 +778,7 @@ fn edit_of(id: &str, path: &str, before: Option<&str>, after: &str) -> [AgentEve
 fn hat_turn(v: &mut View, turn: u64, role: Role, ask: &str, events: Vec<AgentEvent>) {
     v.mode = role;
     let _ = v.submit_user(ask.into(), ask.into());
-    crate::run_events_apply(v, AgentEvent::TurnStarted { turn, role });
+    crate::run_events_apply(v, AgentEvent::TurnStarted { turn, role, at: 0 });
     for ev in events {
         crate::run_events_apply(v, ev);
     }
@@ -994,6 +1001,7 @@ fn the_rack_shows_each_hats_own_figures() {
         AgentEvent::TurnStarted {
             turn: 7,
             role: Role::SoloAudit,
+            at: 0,
         },
         AgentEvent::Reviewed {
             model: "m".into(),
@@ -1609,7 +1617,7 @@ fn a_resumed_session_has_the_rack_it_had() {
             tool_calls: None,
         })
         .unwrap();
-        let mut all = vec![AgentEvent::TurnStarted { turn, role }];
+        let mut all = vec![AgentEvent::TurnStarted { turn, role, at: 0 }];
         all.extend(events);
         for ev in all {
             s.emit(&ev).unwrap();
@@ -2012,6 +2020,7 @@ fn reviewed(verdict: Option<bool>) -> View {
         AgentEvent::TurnStarted {
             turn: 2,
             role: Role::SoloBuild,
+            at: 0,
         },
         AgentEvent::Token { text: body.into() },
         // An audit that gave its verdict in words and filed no report.
@@ -2085,8 +2094,11 @@ fn scribed() -> View {
         AgentEvent::TurnStarted {
             turn: 7,
             role: Role::SoloScribe,
+            at: 0,
         },
         AgentEvent::ToolCall {
+            turn: 0,
+            at: 0,
             id: "s1".into(),
             name: "write".into(),
             args: serde_json::json!({"path": "docs/install.md"}),
@@ -2101,6 +2113,8 @@ fn scribed() -> View {
             diff: diff("docs/install.md", 20, 0),
         },
         AgentEvent::ToolCall {
+            turn: 0,
+            at: 0,
             id: "s2".into(),
             name: "search_replace".into(),
             args: serde_json::json!({"path": "README.md"}),
@@ -2229,6 +2243,7 @@ fn a_filed_audit_opens_its_popout_and_counts_in_the_rack() {
         AgentEvent::TurnStarted {
             turn: 2,
             role: ryter_core::Role::SoloAudit,
+            at: 0,
         },
     );
     assert!(v.audit_writing);
@@ -2540,6 +2555,8 @@ fn the_projects_commands_are_named_for_what_they_do() {
         crate::run_events_apply(
             &mut v,
             AgentEvent::ToolCall {
+                turn: 0,
+                at: 0,
                 id: id.into(),
                 name: "run_project".into(),
                 args: serde_json::json!({ "action": action }),
@@ -3035,6 +3052,8 @@ fn a_running_turn_ends_on_a_live_status_row() {
     crate::run_events_apply(
         &mut v,
         AgentEvent::ToolCall {
+            turn: 0,
+            at: 0,
             id: "t2".into(),
             name: "bash".into(),
             args: serde_json::json!({"command": "cargo test"}),
@@ -3140,6 +3159,8 @@ fn the_drain_pauses_to_paint_after_a_tool_result() {
     let (tx, rx) = std::sync::mpsc::channel();
     for i in 0..3 {
         tx.send(AgentEvent::ToolCall {
+            turn: 0,
+            at: 0,
             id: format!("w{i}"),
             name: "write".into(),
             args: serde_json::json!({"path": format!("f{i}.txt"), "content": "x"}),
