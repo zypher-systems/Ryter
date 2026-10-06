@@ -838,12 +838,15 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
     apply_old_review_file(&mut cfg, home);
     validate(&cfg)?;
     // A key read from the environment stays out of the commands Ryter runs,
-    // whatever its variable is called.
+    // whatever its variable is called. Here, before any MCP server is
+    // started: a hide that waited for the search to be built left the
+    // servers spawned at session start with the key.
     for conn in cfg.connections.values() {
         if let Some(var) = conn.env_key.as_deref() {
             crate::tools::shell::hide_env(var);
         }
     }
+    crate::tools::shell::hide_env(crate::tools::TAVILY_KEY_VAR);
     Ok(cfg)
 }
 
@@ -2464,6 +2467,16 @@ mod tests {
         assert_eq!(cfg.search.max_results, 3);
         assert_eq!(cfg.search.key_name(), Some("tavily"));
         assert!(cfg.features.web, "web is on by default");
+        // The key's variable is hidden by the load alone, before anything
+        // that could start a child; a `Search` is built later than the
+        // MCP servers.
+        assert!(
+            crate::tools::shell::hidden_vars()
+                .iter()
+                .any(|v| v == "TAVILY_API_KEY"),
+            "{:?}",
+            crate::tools::shell::hidden_vars()
+        );
         fs::write(
             dir.path().join("config.toml"),
             "[search]\nprovider = \"searxng\"\nurl = \"http://localhost:8080\"\n",

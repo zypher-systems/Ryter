@@ -19,6 +19,7 @@ use crate::role::Role;
 pub use fs::changed_lines;
 pub(crate) use policy::{Effects, effects, on_this_machine, resolve};
 pub use web::Search;
+pub(crate) use web::TAVILY_KEY_VAR;
 
 /// What `a` ("allow for this session") on this call's prompt would cover:
 /// a key, and the words for it. `None` when the prompt must not offer it.

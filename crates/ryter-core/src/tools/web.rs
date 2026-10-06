@@ -58,8 +58,10 @@ impl std::fmt::Debug for Provider {
     }
 }
 
-/// The variable a Tavily key may be read from.
-const TAVILY_KEY_VAR: &str = "TAVILY_API_KEY";
+/// The variable a Tavily key may be read from. Hidden from every child in
+/// [`crate::config::load_at`], before any MCP server starts; the call in
+/// [`Search::from_config`] is for a `Search` built without a config load.
+pub(crate) const TAVILY_KEY_VAR: &str = "TAVILY_API_KEY";
 
 impl Search {
     /// From `[search]`, reading the key where there is one. The variable
