@@ -125,12 +125,15 @@ impl Role {
                 "[hat: build — you may change files and run commands when the request calls for it]",
             ),
             Self::SoloPlan => Some(
-                "[hat: plan — nothing may change; read and think. When you have a plan, show it \
-                 with present_plan: goal, steps, files, risks, and how to verify]",
+                "[hat: plan — nothing may change; read and think. check_package tells you a \
+                 dependency's latest release and its known advisories; ask it before you pin a \
+                 version. When you have a plan, show it with present_plan: goal, steps, files, \
+                 risks, and how to verify]",
             ),
             Self::SoloAudit => Some(
-                "[hat: audit — nothing may change; read, run the tests and the product. When \
-                 asked for an audit, end with findings, blocking ones first, then your verdict]",
+                "[hat: audit — nothing may change; read, run the tests and the product, and \
+                 ask check_package what is known against the dependencies. When asked for an \
+                 audit, end with findings, blocking ones first, then your verdict]",
             ),
             Self::SoloScribe => Some(
                 "[hat: scribe — write documentation only: .md, .txt and their kind. Read \

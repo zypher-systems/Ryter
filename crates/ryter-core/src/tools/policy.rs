@@ -78,6 +78,16 @@ pub fn decide(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
                 Decision::Deny
             }
         }
+        // Fixed public registries and OSV.dev, read-only, no key: the
+        // hats that look ask; the hats that build and document do not
+        // (the user's placing, 2026-10-05).
+        "check_package" => {
+            if matches!(ctx.role, Role::SoloPlan | Role::SoloAudit) {
+                Decision::Allow
+            } else {
+                Decision::Deny
+            }
+        }
         _ => Decision::Deny,
     }
 }
@@ -10389,6 +10399,39 @@ mod tests {
             strip_comments("a # b's\nc <<X\n# d's\nX\ne # f"),
             "a \nc <<X\n# d's\nX\ne "
         );
+    }
+
+    /// `check_package` is the plan and audit hats' question: a dependency's
+    /// latest release and known advisories, from fixed public registries.
+    /// Build and scribe are refused it, whatever `[features] web` says.
+    #[test]
+    fn the_looking_hats_check_packages_and_the_others_do_not() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        let args = json!({"ecosystem": "npm", "name": "fastify", "version": "4.0.0"});
+        for role in [Role::SoloPlan, Role::SoloAudit] {
+            assert_eq!(
+                decide("check_package", &args, &ctx_for(role, d)),
+                Decision::Allow,
+                "{role:?}"
+            );
+            let mut ctx = ctx_for(role, d);
+            ctx.read_only = false;
+            assert_eq!(
+                decide("check_package", &args, &ctx),
+                Decision::Allow,
+                "{role:?}"
+            );
+        }
+        for role in [Role::SoloBuild, Role::SoloScribe] {
+            let mut ctx = ctx_for(role, d);
+            ctx.web = true;
+            assert_eq!(
+                decide("check_package", &args, &ctx),
+                Decision::Deny,
+                "{role:?}"
+            );
+        }
     }
 
     /// Inside the project, the build hat's deletions are a question for
