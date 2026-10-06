@@ -264,9 +264,7 @@ impl Panel for Providers {
                         Some(color),
                     ));
                 }
-                // Where `web_search` looks, beside the model connections,
-                // so the key has a place in the menu and not only in a
-                // typed command (`/provider set-key tavily`).
+                // Where `web_search` looks, beside the model connections.
                 lines.push(widgets::blank(theme));
                 let sr = &view.search;
                 let (name, secondary, status, color) =
@@ -281,7 +279,9 @@ impl Panel for Providers {
                                 theme.warn
                             }),
                         ),
-                        "searxng" => (
+                        // The spellings `Search::from_config` reads as the
+                        // same provider.
+                        "searxng" | "searx" => (
                             "searxng",
                             format!(
                                 "web search · {}",
@@ -290,7 +290,7 @@ impl Panel for Providers {
                             "server",
                             Some(theme.success),
                         ),
-                        "" => (
+                        "" | "none" | "off" => (
                             "web search",
                             "not set up · enter to choose".to_string(),
                             "",
@@ -470,9 +470,16 @@ impl Panel for Providers {
                     }
                     KeyCode::Enter => {
                         if self.selected == Self::search_row(view) {
+                            // Opens on the provider in use; none is `off`.
+                            let word =
+                                match view.search.provider.trim().to_ascii_lowercase().as_str() {
+                                    "" | "none" => "off".to_string(),
+                                    "searx" => "searxng".to_string(),
+                                    other => other.to_string(),
+                                };
                             let idx = SEARCH_CHOICES
                                 .iter()
-                                .position(|(k, _)| view.search.provider.eq_ignore_ascii_case(k))
+                                .position(|(k, _)| *k == word)
                                 .unwrap_or(0);
                             self.mode = Mode::PickSearch { idx };
                             return Outcome::Stay;
@@ -596,6 +603,23 @@ impl Panel for Providers {
                         .to_string();
                     if !(text.starts_with("http://") || text.starts_with("https://")) {
                         self.error = Some("the address must start with http:// or https://".into());
+                        return Outcome::Stay;
+                    }
+                    // `user:pass@host` would sit in settings.toml, which is
+                    // not a secret file, and could be echoed in an error.
+                    let authority = text
+                        .split("://")
+                        .nth(1)
+                        .unwrap_or("")
+                        .split('/')
+                        .next()
+                        .unwrap_or("");
+                    if authority.contains('@') {
+                        self.error = Some(
+                            "no user name or password in the address; the server's own \
+                             settings hold those"
+                                .into(),
+                        );
                         return Outcome::Stay;
                     }
                     view.composer.clear();

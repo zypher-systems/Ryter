@@ -814,7 +814,7 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
                 }
                 if cfg.search != own_search {
                     cfg.warnings.push(format!(
-                        "{}: [search] ignored; where web_search looks comes from ~/.ryter/config.toml only",
+                        "{}: [search] ignored; where web_search looks is chosen in /provider or your own ~/.ryter files only",
                         project.display()
                     ));
                     cfg.search = own_search;

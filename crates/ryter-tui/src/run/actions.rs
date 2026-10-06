@@ -919,12 +919,17 @@ fn test_connection(view: &mut View, cx: &mut Ctx, name: &str) {
 /// `/provider`'s web-search row: save the choice to settings.toml, tell the
 /// session, and go straight to the key when Tavily has none yet.
 fn set_search(view: &mut View, cx: &mut Ctx, provider: String, url: Option<String>) {
-    cx.cfg.search.provider = provider.clone();
-    cx.cfg.search.url = url.clone();
-    if let Err(e) = config::save_settings(&cx.home, &cx.cfg) {
+    // Saved first, applied after: a save that fails leaves the config, the
+    // row and the session as they were, or a later unrelated save would
+    // have written the unsaved choice.
+    let mut cfg = cx.cfg.clone();
+    cfg.search.provider = provider.clone();
+    cfg.search.url = url.clone();
+    if let Err(e) = config::save_settings(&cx.home, &cfg) {
         view.error(e.to_string());
         return;
     }
+    cx.cfg.search = cfg.search;
     let has_key = config::has_search_key(&cx.cfg.search);
     view.search = crate::view::SearchRow {
         provider: provider.clone(),

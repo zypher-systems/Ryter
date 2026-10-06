@@ -472,7 +472,7 @@ User-invocable skills and `~/.ryter/commands/*.md` join the palette under **skil
 
 ## Web search
 
-`web_search` looks where you tell it to. Two providers are built in. The easy way: `/provider`, then the **web search** row under the connections. Enter offers Tavily, SearXNG or off; Tavily goes on to the key prompt, SearXNG asks for your server's address. The choice is saved to `~/.ryter/settings.toml`. The same can be written in `~/.ryter/config.toml`:
+`web_search` looks where you tell it to. Two providers are built in. The easy way: `/provider`, then the **web search** row under the connections. Enter offers Tavily, SearXNG or off; Tavily goes on to the key prompt, SearXNG asks for your server's address. The choice is saved to `~/.ryter/settings.toml`, which wins over `[search]` in `config.toml` (and every TUI save copies the provider there, so after the first one `settings.toml` is the file that counts). The same can be written in `~/.ryter/config.toml` by hand:
 
 ```toml
 [search]
