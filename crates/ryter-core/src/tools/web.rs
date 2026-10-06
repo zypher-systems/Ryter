@@ -29,7 +29,7 @@ pub struct Search {
 }
 
 /// A search provider.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub enum Provider {
     /// `[search]` names none: `web_search` says how to set one.
     #[default]
@@ -42,10 +42,32 @@ pub enum Provider {
     Unknown(String),
 }
 
+/// The key never prints: a `{:?}` of the context once would have.
+impl std::fmt::Debug for Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => write!(f, "None"),
+            Self::Tavily { key } => write!(
+                f,
+                "Tavily {{ key: {} }}",
+                if key.is_some() { "Some(…)" } else { "None" }
+            ),
+            Self::Searxng { url } => write!(f, "Searxng {{ url: {url:?} }}"),
+            Self::Unknown(p) => write!(f, "Unknown({p:?})"),
+        }
+    }
+}
+
+/// The variable a Tavily key may be read from.
+const TAVILY_KEY_VAR: &str = "TAVILY_API_KEY";
+
 impl Search {
-    /// From `[search]`, reading the key where there is one.
+    /// From `[search]`, reading the key where there is one. The variable
+    /// is hidden from every shell and MCP child, set or not, as a
+    /// connection's `env_key` is.
     pub fn from_config(cfg: &SearchConfig) -> Self {
-        let key = std::env::var("TAVILY_API_KEY")
+        crate::tools::shell::hide_env(TAVILY_KEY_VAR);
+        let key = std::env::var(TAVILY_KEY_VAR)
             .ok()
             .map(|k| k.trim().to_string())
             .filter(|k| !k.is_empty())
@@ -151,18 +173,48 @@ pub fn web_search(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     }
 }
 
-fn client() -> Result<reqwest::blocking::Client> {
+fn client(redirects: reqwest::redirect::Policy) -> Result<reqwest::blocking::Client> {
     reqwest::blocking::Client::builder()
         .timeout(TIMEOUT)
-        .redirect(reqwest::redirect::Policy::limited(3))
+        .redirect(redirects)
         .user_agent(format!("ryter/{}", crate::VERSION))
         .build()
         .map_err(|e| Error::Io(e.to_string()))
 }
 
+/// Whether a SearXNG redirect may be followed: back to the server the user
+/// named, or to any public host; never to a private or metadata address
+/// the user did not name. The server itself may be private by the user's
+/// configuration; a redirect from it is not theirs.
+fn searxng_redirect_allowed(base_host: Option<&str>, next_host: &str) -> bool {
+    base_host.is_some_and(|b| b.eq_ignore_ascii_case(next_host)) || !blocked_host(next_host)
+}
+
+/// A client for the user's SearXNG: at most three redirects, each judged
+/// by [`searxng_redirect_allowed`].
+fn searxng_client(base_host: Option<String>) -> Result<reqwest::blocking::Client> {
+    let policy = reqwest::redirect::Policy::custom(move |attempt| {
+        if attempt.previous().len() >= 3 {
+            return attempt.error("too many redirects");
+        }
+        let host = attempt.url().host_str().unwrap_or("").to_string();
+        if searxng_redirect_allowed(base_host.as_deref(), &host) {
+            attempt.follow()
+        } else {
+            attempt.error(format!("redirected to a private address ({host})"))
+        }
+    });
+    client(policy)
+}
+
 fn json_body(resp: reqwest::blocking::Response, who: &str) -> Result<Value> {
+    use std::io::Read;
     let status = resp.status();
-    let raw = resp.bytes().map_err(|e| Error::Io(e.to_string()))?;
+    // Read to the cap and one byte more, not the whole answer first.
+    let mut raw = Vec::new();
+    resp.take(MAX_BYTES as u64 + 1)
+        .read_to_end(&mut raw)
+        .map_err(|e| Error::Io(e.to_string()))?;
     if raw.len() > MAX_BYTES {
         return Err(Error::Io(format!("{who}: the answer is too large")));
     }
@@ -181,7 +233,7 @@ fn json_body(resp: reqwest::blocking::Response, who: &str) -> Result<Value> {
 }
 
 fn tavily(key: &str, q: &str, n: u8) -> Result<Vec<Hit>> {
-    let resp = client()?
+    let resp = client(reqwest::redirect::Policy::limited(3))?
         .post(TAVILY)
         .bearer_auth(key)
         .json(&json!({
@@ -200,10 +252,22 @@ fn tavily(key: &str, q: &str, n: u8) -> Result<Vec<Hit>> {
 /// private one included.
 fn searxng(base: &str, q: &str, n: u8) -> Result<Vec<Hit>> {
     let url = format!("{base}/search?q={}&format=json", urlencoding(q));
-    let resp = client()?
+    let base_host = reqwest::Url::parse(base)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string));
+    let resp = searxng_client(base_host.clone())?
         .get(&url)
         .send()
         .map_err(|e| Error::Io(e.to_string()))?;
+    // The policy judged each hop; the last answer's host once more, as
+    // `web_fetch` does.
+    if let Some(h) = resp.url().host_str() {
+        if !searxng_redirect_allowed(base_host.as_deref(), h) {
+            return Err(Error::Config(format!(
+                "SearXNG: redirected to a private address ({h})"
+            )));
+        }
+    }
     let mut hits = parse_searxng(&json_body(resp, "SearXNG")?);
     hits.truncate(usize::from(n));
     Ok(hits)
@@ -560,6 +624,46 @@ mod tests {
         ctx.search = Search::from_parts(&tav, None);
         let out = web_search(&json!({"query": "fastify cookies"}), &ctx).unwrap();
         assert!(out.is_error && out.text.contains("has no key"), "{out:?}");
+    }
+
+    /// The key read from the environment is hidden from every child, and
+    /// never printed; a SearXNG redirect goes back to the user's server or
+    /// to a public host, never to a private one.
+    #[test]
+    fn the_key_stays_out_of_children_and_debug_and_redirects_stay_public() {
+        let s = Search::from_config(&SearchConfig {
+            provider: "tavily".into(),
+            ..Default::default()
+        });
+        assert!(
+            crate::tools::shell::hidden_vars()
+                .iter()
+                .any(|v| v == "TAVILY_API_KEY")
+        );
+        let _ = s;
+        let shown = format!(
+            "{:?}",
+            Provider::Tavily {
+                key: Some("tvly-secret-value".into())
+            }
+        );
+        assert!(!shown.contains("secret"), "{shown}");
+        assert!(shown.contains("Some(…)"), "{shown}");
+        assert_eq!(
+            format!("{:?}", Provider::Tavily { key: None }),
+            "Tavily { key: None }"
+        );
+        // Literal addresses only: a name would resolve.
+        assert!(searxng_redirect_allowed(Some("10.0.0.5"), "10.0.0.5"));
+        assert!(searxng_redirect_allowed(Some("10.0.0.5"), "93.184.216.34"));
+        assert!(!searxng_redirect_allowed(
+            Some("10.0.0.5"),
+            "169.254.169.254"
+        ));
+        assert!(!searxng_redirect_allowed(Some("10.0.0.5"), "127.0.0.1"));
+        assert!(!searxng_redirect_allowed(Some("10.0.0.5"), "localhost"));
+        assert!(!searxng_redirect_allowed(Some("93.184.216.34"), "10.0.0.5"));
+        assert!(!searxng_redirect_allowed(None, "169.254.169.254"));
     }
 
     /// Both providers' answers read as the same list.

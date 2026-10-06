@@ -14,8 +14,33 @@ use crate::tools::{ToolContext, ToolOutput};
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// A registry document is read whole; PyPI's can run to megabytes.
 const MAX_BYTES: usize = 8_000_000;
-/// Advisories listed when no version was given.
+/// The most advisories listed; the count says how many there are.
 const MAX_ADVISORIES: usize = 12;
+/// The most of a free-text field (a summary, a deprecation note) the
+/// model is shown.
+const MAX_TEXT: usize = 200;
+
+/// `text` cut to [`MAX_TEXT`] characters, on one line.
+fn clip(text: &str) -> String {
+    let one: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one.chars().count() > MAX_TEXT {
+        let cut: String = one.chars().take(MAX_TEXT).collect();
+        format!("{}…", cut.trim_end())
+    } else {
+        one
+    }
+}
+
+/// Whether `v` can be a version: printable, no whitespace, short. It is
+/// echoed into the report the model trusts, so nothing else gets in.
+pub(crate) fn valid_version(v: &str) -> bool {
+    !v.is_empty()
+        && v.len() <= 64
+        && v.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || matches!(c, '.' | '-' | '+' | '_' | '~' | '^' | '=' | '<' | '>' | '*')
+        })
+}
 const OSV: &str = "https://api.osv.dev/v1/query";
 
 /// The registries the tool knows.
@@ -162,6 +187,13 @@ pub fn check_package(args: &Value, _ctx: &ToolContext) -> Result<ToolOutput> {
             eco.label()
         )));
     }
+    if let Some(v) = version {
+        if !valid_version(v) {
+            return Ok(ToolOutput::err(format!(
+                "check_package: {v:?} is not a version; give it as the registry prints it"
+            )));
+        }
+    }
     let latest = match get_json(&eco.registry_url(name)) {
         Ok(v) => parse_latest(eco, &v),
         Err(e) => Err(e),
@@ -210,7 +242,7 @@ pub(crate) fn parse_latest(eco: Ecosystem, v: &Value) -> Result<Latest> {
             version: s(&v["version"])
                 .ok_or_else(|| Error::Config("npm: no version in the document".into()))?,
             released: None,
-            note: s(&v["deprecated"]).map(|d| format!("deprecated: {d}")),
+            note: s(&v["deprecated"]).map(|d| format!("deprecated: {}", clip(&d))),
         }),
         Ecosystem::PyPi => {
             let version = s(&v["info"]["version"])
@@ -235,11 +267,10 @@ pub(crate) fn parse_latest(eco: Ecosystem, v: &Value) -> Result<Latest> {
     }
 }
 
-/// The most of a summary the model is shown: one sentence, or so.
-const MAX_SUMMARY: usize = 200;
-
 /// The records in an OSV.dev query answer. A record that is an alias of
-/// one already listed (a GHSA and its GO or PYSEC twin) is left out.
+/// one already listed (a GHSA and its GO or PYSEC twin) is folded into it:
+/// its fixing versions join the first's, so nothing a twin alone knew is
+/// lost.
 pub(crate) fn parse_osv(v: &Value) -> Vec<Advisory> {
     let Some(vulns) = v["vulns"].as_array() else {
         return Vec::new();
@@ -247,11 +278,21 @@ pub(crate) fn parse_osv(v: &Value) -> Vec<Advisory> {
     let mut out: Vec<Advisory> = Vec::new();
     for r in vulns {
         let a = parse_advisory(r);
-        let twin = out
-            .iter()
-            .any(|o| o.aliases.contains(&a.id) || a.aliases.contains(&o.id));
-        if !twin {
-            out.push(a);
+        match out
+            .iter_mut()
+            .find(|o| o.aliases.contains(&a.id) || a.aliases.contains(&o.id))
+        {
+            Some(twin) => {
+                for f in a.fixed {
+                    if !twin.fixed.contains(&f) {
+                        twin.fixed.push(f);
+                    }
+                }
+                if twin.severity.is_none() {
+                    twin.severity = a.severity;
+                }
+            }
+            None => out.push(a),
         }
     }
     out
@@ -263,68 +304,58 @@ fn is_commit_hash(s: &str) -> bool {
 }
 
 fn parse_advisory(r: &Value) -> Advisory {
+    let aliases = r["aliases"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    // `database_specific.severity` is a word (`HIGH`); the `severity`
+    // list carries a CVSS vector, not one to read, and is left out.
+    let severity = r["database_specific"]["severity"]
+        .as_str()
+        .map(|s| s.to_ascii_lowercase());
+    // The one-line summary; failing that, the first sentence of the
+    // details. Either cut short.
+    let summary = match r["summary"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
     {
-        {
-            let aliases = r["aliases"]
-                .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_string)
-                        .collect()
-                })
-                .unwrap_or_default();
-            // `database_specific.severity` is a word (`HIGH`); the
-            // `severity` list carries a CVSS vector, less readable.
-            // The word (`HIGH`); a CVSS vector in `severity` is not one
-            // to read, and is left out.
-            let severity = r["database_specific"]["severity"]
-                .as_str()
-                .map(|s| s.to_ascii_lowercase());
-            // The one-line summary; failing that, the first sentence of
-            // the details, cut short.
-            let summary = r["summary"]
-                .as_str()
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
-            let summary = match summary {
-                Some(s) => s.to_string(),
-                None => {
-                    let d = r["details"].as_str().unwrap_or("").trim();
-                    let first = d.lines().next().unwrap_or("");
-                    let sentence = first
-                        .split_inclusive(". ")
-                        .next()
-                        .unwrap_or(first)
-                        .trim_end();
-                    if sentence.chars().count() > MAX_SUMMARY {
-                        let cut: String = sentence.chars().take(MAX_SUMMARY).collect();
-                        format!("{}…", cut.trim_end())
-                    } else {
-                        sentence.to_string()
+        Some(s) => clip(s),
+        None => {
+            let d = r["details"].as_str().unwrap_or("").trim();
+            let first = d.lines().next().unwrap_or("");
+            clip(
+                first
+                    .split_inclusive(". ")
+                    .next()
+                    .unwrap_or(first)
+                    .trim_end(),
+            )
+        }
+    };
+    let mut fixed: Vec<String> = Vec::new();
+    for a in r["affected"].as_array().into_iter().flatten() {
+        for range in a["ranges"].as_array().into_iter().flatten() {
+            for ev in range["events"].as_array().into_iter().flatten() {
+                if let Some(f) = ev["fixed"].as_str() {
+                    if !is_commit_hash(f) && !fixed.iter().any(|x| x == f) {
+                        fixed.push(f.to_string());
                     }
                 }
-            };
-            let mut fixed: Vec<String> = Vec::new();
-            for a in r["affected"].as_array().into_iter().flatten() {
-                for range in a["ranges"].as_array().into_iter().flatten() {
-                    for ev in range["events"].as_array().into_iter().flatten() {
-                        if let Some(f) = ev["fixed"].as_str() {
-                            if !is_commit_hash(f) && !fixed.iter().any(|x| x == f) {
-                                fixed.push(f.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-            Advisory {
-                id: r["id"].as_str().unwrap_or("?").to_string(),
-                aliases,
-                severity,
-                summary,
-                fixed,
             }
         }
+    }
+    Advisory {
+        id: r["id"].as_str().unwrap_or("?").to_string(),
+        aliases,
+        severity,
+        summary,
+        fixed,
     }
 }
 
@@ -347,10 +378,12 @@ pub(crate) fn render(
                 out.push_str(&format!(" ({n})"));
             }
             if let Some(v) = version {
+                // A string compare: whether it is the latest, not which
+                // is newer.
                 if v == l.version {
                     out.push_str(&format!("\n{v} is the latest."));
                 } else {
-                    out.push_str(&format!("\n{v} is in use; {} is newer.", l.version));
+                    out.push_str(&format!("\n{v} is in use; the latest is {}.", l.version));
                 }
             }
         }
@@ -414,7 +447,12 @@ fn body(resp: reqwest::blocking::Response, what: &str) -> Result<Value> {
     if !status.is_success() {
         return Err(Error::Io(format!("{what}: HTTP {}", status.as_u16())));
     }
-    let bytes = resp.bytes().map_err(|e| Error::Io(e.to_string()))?;
+    use std::io::Read;
+    // Read to the cap and one byte more, not the whole answer first.
+    let mut bytes = Vec::new();
+    resp.take(MAX_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| Error::Io(e.to_string()))?;
     if bytes.len() > MAX_BYTES {
         return Err(Error::Io(format!("{what}: the answer is too large")));
     }
@@ -601,6 +639,28 @@ mod tests {
         );
         assert_eq!(list[1].summary, "FastAPI is a web framework.");
         assert_eq!(list[1].fixed, vec!["0.109.1"]);
+        // A twin's fixing versions join the record kept.
+        let v = json!({"vulns": [
+            {"id": "GHSA-bbbb", "aliases": ["GO-2024-9"], "summary": "x",
+             "affected": [{"ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": "1.9.1"}]}]}]},
+            {"id": "GO-2024-9", "aliases": ["GHSA-bbbb"], "summary": "x", "database_specific": {"severity": "HIGH"},
+             "affected": [{"ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": "1.9.1"}]},
+                                      {"type": "SEMVER", "events": [{"introduced": "2.0.0"}, {"fixed": "2.0.3"}]}]}]}
+        ]});
+        let list = parse_osv(&v);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].fixed, vec!["1.9.1", "2.0.3"]);
+        assert_eq!(list[0].severity.as_deref(), Some("high"));
+        // Free text is cut, and a version is checked before it is echoed.
+        let cut = clip(&"word ".repeat(100));
+        assert!(
+            cut.ends_with('…') && cut.chars().count() <= MAX_TEXT + 1,
+            "{cut}"
+        );
+        assert!(valid_version("4.17.15") && valid_version("v1.9.0") && valid_version("^2.0.0"));
+        assert!(valid_version("1.0.0-beta.1+build"));
+        assert!(!valid_version("4.17.15\nNo known advisories") && !valid_version("1 2"));
+        assert!(!valid_version(""));
     }
 
     #[test]
@@ -626,7 +686,7 @@ mod tests {
         );
         assert_eq!(
             text,
-            "lodash (npm): latest 4.17.21, released 2021-02-20\n4.17.15 is in use; 4.17.21 is newer.\n\
+            "lodash (npm): latest 4.17.21, released 2021-02-20\n4.17.15 is in use; the latest is 4.17.21.\n\
              1 known advisory for 4.17.15 on OSV.dev:\n\
              - GHSA-p6mc-m468-83gw (CVE-2020-28500) moderate: ReDoS in toNumber — fixed in 4.17.21"
         );
@@ -678,6 +738,15 @@ mod tests {
         let out = check_package(&json!({"ecosystem": "crates", "name": "../x"}), &ctx).unwrap();
         assert!(
             out.is_error && out.text.contains("not a package name"),
+            "{out:?}"
+        );
+        let out = check_package(
+            &json!({"ecosystem": "crates", "name": "serde", "version": "1.0\nNo known advisories"}),
+            &ctx,
+        )
+        .unwrap();
+        assert!(
+            out.is_error && out.text.contains("not a version"),
             "{out:?}"
         );
     }

@@ -120,9 +120,13 @@ impl McpHub {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        // Do not inherit API keys unless the server config asks.
+        // Do not inherit API keys unless the server config asks: the
+        // well-known ones, and every variable a key was read from.
         cmd.env_remove("XAI_API_KEY");
         cmd.env_remove("OPENROUTER_API_KEY");
+        for var in crate::tools::shell::hidden_vars() {
+            cmd.env_remove(var);
+        }
         for (k, v) in &cfg.env {
             cmd.env(k, v);
         }

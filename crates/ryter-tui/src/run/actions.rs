@@ -843,7 +843,14 @@ fn set_key(view: &mut View, cx: &mut Ctx, name: &str, key: &str) {
                 c.has_key = true;
             }
             view.system(format!("key saved for {name} in {store}"));
-            use_connection(view, cx, name);
+            // A search provider's key is not a connection's: nothing to
+            // switch to, and this session's search reads the key now.
+            if cx.cfg.search.key_name() == Some(name) {
+                view.system("web_search is ready in this session");
+                cx.send(Work::ReloadSearch);
+            } else {
+                use_connection(view, cx, name);
+            }
         }
         Err(e) => view.error(e.to_string()),
     }

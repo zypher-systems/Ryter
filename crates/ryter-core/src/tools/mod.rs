@@ -736,10 +736,18 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
         // The web is the looking hats': off, say where it is turned on;
         // on, say who may use it.
         Decision::Deny if matches!(name, "web_fetch" | "web_search") => {
+            // `/settings` is the one place that turns it on: `settings.toml`
+            // is applied after `config.toml`, so an edit there does nothing
+            // against a saved no.
             Ok(ToolOutput::err(if !ctx.web {
                 format!(
                     "denied: {name} is off ([features] web = false). Tell the user: /settings \
-                     turns web on, or `[features] web = true` in ~/.ryter/config.toml."
+                     turns web on{}.",
+                    if matches!(ctx.role, Role::SoloPlan | Role::SoloAudit) {
+                        ""
+                    } else {
+                        ", and it is the plan and audit hats' tool"
+                    }
                 )
             } else {
                 format!(
@@ -1438,7 +1446,15 @@ mod tests {
         assert!(
             out.is_error
                 && out.text.contains("[features] web = false")
-                && out.text.contains("/settings"),
+                && out.text.contains("/settings")
+                && !out.text.contains("config.toml"),
+            "{out:?}"
+        );
+        let mut c = ctx(Role::SoloBuild, dir.path());
+        c.web = false;
+        let out = gated_execute("web_search", &json!({"query": "x"}), &c).unwrap();
+        assert!(
+            out.text.contains("/settings") && out.text.contains("plan and audit hats' tool"),
             "{out:?}"
         );
     }

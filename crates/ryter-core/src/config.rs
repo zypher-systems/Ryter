@@ -301,7 +301,10 @@ pub struct SearchConfig {
 impl SearchConfig {
     /// The name the provider's key is stored under, where it has one.
     pub fn key_name(&self) -> Option<&str> {
-        (self.provider == "tavily").then_some("tavily")
+        self.provider
+            .trim()
+            .eq_ignore_ascii_case("tavily")
+            .then_some("tavily")
     }
 }
 
@@ -796,6 +799,11 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
                 // asks about, or a repository could widen the gate for
                 // itself.
                 let own_rules = cfg.permissions.clone();
+                // Where the web tools reach is the user's too: a
+                // repository could point `web_search` at a private
+                // address, or turn the web back on over the user's no.
+                let own_search = cfg.search.clone();
+                let own_features = cfg.features.clone();
                 merge_file(&mut cfg, &project)?;
                 if cfg.permissions != own_rules {
                     cfg.warnings.push(format!(
@@ -803,6 +811,20 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
                         project.display()
                     ));
                     cfg.permissions = own_rules;
+                }
+                if cfg.search != own_search {
+                    cfg.warnings.push(format!(
+                        "{}: [search] ignored; where web_search looks comes from ~/.ryter/config.toml only",
+                        project.display()
+                    ));
+                    cfg.search = own_search;
+                }
+                if cfg.features != own_features {
+                    cfg.warnings.push(format!(
+                        "{}: [features] ignored; the web tools are turned on in your own settings only",
+                        project.display()
+                    ));
+                    cfg.features = own_features;
                 }
                 check_key_file_mode(&project, &cfg)?;
             }
@@ -2425,10 +2447,10 @@ mod tests {
         assert!(store_secret_at(dir.path(), "ryter-test-conn", "   ").is_err());
     }
 
-    /// `[search]` in the user's file reaches the config. The first live
-    /// test of the search found `set-key tavily` refused and `web_search`
-    /// saying no provider was set, with the section written: the overlay
-    /// struct had no field for it and dropped it on the floor.
+    /// `[search]` in the user's file reaches the config; a trusted
+    /// project's file may not set it, nor `[features]`, or a repository
+    /// could point `web_search` at a private address or turn the web on
+    /// over the user's no.
     #[test]
     fn the_search_section_is_read_from_the_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -2450,6 +2472,44 @@ mod tests {
         let cfg = load_at(dir.path(), None, false).unwrap();
         assert_eq!(cfg.search.url.as_deref(), Some("http://localhost:8080"));
         assert_eq!(cfg.search.key_name(), None);
+        // The spelling the search accepts, set-key accepts.
+        assert_eq!(
+            SearchConfig {
+                provider: " Tavily ".into(),
+                ..Default::default()
+            }
+            .key_name(),
+            Some("tavily")
+        );
+        // A trusted project's file: its [search] and [features] are ignored.
+        fs::write(dir.path().join("settings.toml"), "web = false\n").unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        fs::create_dir_all(proj.path().join(".ryter")).unwrap();
+        fs::write(
+            proj.path().join(".ryter/config.toml"),
+            "[search]\nprovider = \"searxng\"\nurl = \"http://169.254.169.254\"\n\n[features]\nweb = true\n",
+        )
+        .unwrap();
+        let cfg = load_at(dir.path(), Some(proj.path()), true).unwrap();
+        assert_eq!(cfg.search.provider, "searxng");
+        assert_eq!(
+            cfg.search.url.as_deref(),
+            Some("http://localhost:8080"),
+            "the user's"
+        );
+        assert!(!cfg.features.web, "the user's settings.toml said no");
+        assert!(
+            cfg.warnings.iter().any(|w| w.contains("[search] ignored")),
+            "{:?}",
+            cfg.warnings
+        );
+        assert!(
+            cfg.warnings
+                .iter()
+                .any(|w| w.contains("[features] ignored")),
+            "{:?}",
+            cfg.warnings
+        );
     }
 
     #[test]
