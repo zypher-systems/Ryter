@@ -1147,6 +1147,12 @@ struct SettingsFile {
     sandbox: Option<String>,
     inbound: Option<bool>,
     web: Option<bool>,
+    /// `[search]` as chosen in the TUI (`/provider`): the provider word,
+    /// and a SearXNG server's address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    search_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    search_url: Option<String>,
     #[serde(default)]
     ui: Option<UiFile>,
     #[serde(default)]
@@ -1189,6 +1195,12 @@ fn apply_settings_file(cfg: &mut Config, path: &Path) {
     if let Some(v) = file.web {
         cfg.features.web = v;
     }
+    if let Some(p) = file.search_provider {
+        cfg.search.provider = p;
+    }
+    if let Some(u) = file.search_url {
+        cfg.search.url = (!u.trim().is_empty()).then(|| u.trim().to_string());
+    }
     if let Some(v) = file.update {
         cfg.update.mode = v;
     }
@@ -1206,6 +1218,8 @@ pub fn save_settings(home: &Path, cfg: &Config) -> Result<()> {
         tools: Some(cfg.tools_mode.clone()),
         inbound: Some(cfg.mcp.inbound),
         web: Some(cfg.features.web),
+        search_provider: Some(cfg.search.provider.clone()),
+        search_url: cfg.search.url.clone(),
         ui: Some(UiFile::from(&cfg.ui)),
         update: Some(cfg.update.mode),
     };
@@ -1628,6 +1642,18 @@ fn keyring_delete(connection: &str) {
 /// Whether a connection has a resolvable key (never returns the secret).
 pub fn has_secret(cfg: &Config, connection: &str) -> bool {
     resolve_secret(cfg, &ConnectionId::new(connection)).is_ok()
+}
+
+/// Whether the search provider in `[search]` has the key it needs: a
+/// provider without one (SearXNG, none) reads as `true`. Never the secret.
+pub fn has_search_key(search: &SearchConfig) -> bool {
+    match search.key_name() {
+        None => true,
+        Some(name) => {
+            std::env::var(crate::tools::TAVILY_KEY_VAR).is_ok_and(|v| !v.trim().is_empty())
+                || stored_secret(name).is_some()
+        }
+    }
 }
 
 /// Where a stored secret ended up, so the caller can tell the user.
@@ -2526,6 +2552,23 @@ mod tests {
                 .any(|w| w.contains("[features] ignored")),
             "{:?}",
             cfg.warnings
+        );
+        // The TUI's choice lives in settings.toml and wins over config.toml.
+        fs::write(
+            dir.path().join("settings.toml"),
+            "web = true\nsearch_provider = \"searxng\"\nsearch_url = \"http://box:8888\"\n",
+        )
+        .unwrap();
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(cfg.search.provider, "searxng");
+        assert_eq!(cfg.search.url.as_deref(), Some("http://box:8888"));
+        assert!(has_search_key(&cfg.search), "SearXNG needs no key");
+        save_settings(dir.path(), &cfg).unwrap();
+        let saved = fs::read_to_string(dir.path().join("settings.toml")).unwrap();
+        assert!(saved.contains("search_provider = \"searxng\""), "{saved}");
+        assert!(
+            saved.contains("search_url = \"http://box:8888\""),
+            "{saved}"
         );
     }
 

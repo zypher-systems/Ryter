@@ -8,14 +8,14 @@
                │›● spacexai  spacexai · grok-4.6                            key set │
                │ ○ openrouter  openrouter · claude-sonnet-4.6                no key │
                │                                                                    │
+               │ ◇ web search  not set up · enter to choose                         │
+               │                                                                    │
                │ + add connection                                                   │
                │ ⚙ test connection  live GET /models on the highlighted row         │
                │                                                                    │
                │                                                                    │
-               │                                                                    │
                │ enter use   k set key   t test   d remove   esc                    │
                ╰────────────────────────────────────────────────────────────────────╯
-
 
 
 

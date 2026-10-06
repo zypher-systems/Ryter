@@ -122,6 +122,9 @@ pub enum Work {
     },
     /// A search provider's key was saved: read `[search]` and its key again.
     ReloadSearch,
+    /// `[search]` was chosen in the TUI: the worker's copy, and the
+    /// session's search, follow.
+    SetSearch(ryter_core::config::SearchConfig),
     /// Load a saved session.
     Resume(String),
     /// Set the session title.
@@ -414,6 +417,15 @@ pub fn run(init: WorkerInit) {
             Ok(Work::ReloadSearch) => {
                 if let Some(a) = &mut agent {
                     a.ctx.search = ryter_core::tools::Search::from_config(&cfg.search);
+                }
+            }
+            Ok(Work::SetSearch(search)) => {
+                cfg.search = search.clone();
+                if let Some(a) = &mut agent {
+                    a.ctx.search = ryter_core::tools::Search::from_config(&cfg.search);
+                    if let Some(c) = &mut a.cfg {
+                        c.search = search;
+                    }
                 }
             }
             Ok(Work::SetTools { mode }) => {

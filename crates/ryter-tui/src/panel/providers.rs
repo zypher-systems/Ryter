@@ -69,11 +69,24 @@ impl Step {
     }
 }
 
+/// The web-search choices, in the order the chooser lists them.
+const SEARCH_CHOICES: [(&str, &str); 3] = [
+    ("tavily", "a key · generous free tier"),
+    ("searxng", "a server of your own · no key"),
+    ("off", "no web search"),
+];
+
 #[derive(Debug, Clone, PartialEq)]
 enum Mode {
     Browse,
     Add(Step),
     ConfirmRemove(String),
+    /// The web-search row's chooser (`R-POP-60`).
+    PickSearch {
+        idx: usize,
+    },
+    /// A SearXNG server's address.
+    SearxUrl,
 }
 
 /// Connections panel.
@@ -98,8 +111,21 @@ impl Providers {
         }
     }
 
-    /// Rows: connections + `add` + `test`.
+    /// Rows: connections + the web-search row + `add` + `test`.
     fn len(&self, view: &View) -> usize {
+        view.connections.len() + 3
+    }
+
+    /// The web-search row's index.
+    fn search_row(view: &View) -> usize {
+        view.connections.len()
+    }
+
+    fn add_row(view: &View) -> usize {
+        view.connections.len() + 1
+    }
+
+    fn test_row(view: &View) -> usize {
         view.connections.len() + 2
     }
 
@@ -138,6 +164,7 @@ impl Panel for Providers {
             Mode::Browse => "connections".into(),
             Mode::Add(_) => "add connection".into(),
             Mode::ConfirmRemove(n) => format!("remove {n}"),
+            Mode::PickSearch { .. } | Mode::SearxUrl => "web search".into(),
         }
     }
 
@@ -145,12 +172,19 @@ impl Panel for Providers {
         match &self.mode {
             Mode::Browse => format!("{}", view.connections.len()),
             Mode::Add(s) => format!("step {} of 6", s.number()),
-            Mode::ConfirmRemove(_) => String::new(),
+            Mode::ConfirmRemove(_) | Mode::PickSearch { .. } | Mode::SearxUrl => String::new(),
         }
     }
 
-    fn legend(&self, _view: &View) -> String {
+    fn legend(&self, view: &View) -> String {
         match &self.mode {
+            Mode::Browse if self.selected == Self::search_row(view) => {
+                if view.search.provider.eq_ignore_ascii_case("tavily") {
+                    "enter choose · k set key · esc".into()
+                } else {
+                    "enter choose · esc".into()
+                }
+            }
             Mode::Browse => "enter use · k set key · t test · d remove · esc".into(),
             Mode::Add(Step::Kind { .. }) => "↑↓ choose · enter next · esc back".into(),
             Mode::Add(Step::Review { .. }) => {
@@ -158,6 +192,8 @@ impl Panel for Providers {
             }
             Mode::Add(_) => "type · enter next · esc back".into(),
             Mode::ConfirmRemove(n) => format!("type `{n}` · enter remove · esc cancel"),
+            Mode::PickSearch { .. } => "↑↓ choose · enter · esc back".into(),
+            Mode::SearxUrl => "type · enter save · esc back".into(),
         }
     }
 
@@ -165,6 +201,20 @@ impl Panel for Providers {
         match &self.mode {
             Mode::Add(s) if s.takes_text() => Some(s.title().into()),
             Mode::ConfirmRemove(_) => Some("confirm".into()),
+            Mode::SearxUrl => Some("searxng address".into()),
+            _ => None,
+        }
+    }
+
+    fn prefill(&self, view: &View) -> Option<String> {
+        match &self.mode {
+            Mode::Add(s) if s.takes_text() => Some(Self::step_prefill(s)),
+            Mode::SearxUrl => Some(
+                view.search
+                    .url
+                    .clone()
+                    .unwrap_or_else(|| "http://localhost:8080".into()),
+            ),
             _ => None,
         }
     }
@@ -214,13 +264,62 @@ impl Panel for Providers {
                         Some(color),
                     ));
                 }
+                // Where `web_search` looks, beside the model connections,
+                // so the key has a place in the menu and not only in a
+                // typed command (`/provider set-key tavily`).
+                lines.push(widgets::blank(theme));
+                let sr = &view.search;
+                let (name, secondary, status, color) =
+                    match sr.provider.to_ascii_lowercase().as_str() {
+                        "tavily" => (
+                            "tavily",
+                            "web search · Tavily".to_string(),
+                            if sr.has_key { "key set" } else { "no key" },
+                            Some(if sr.has_key {
+                                theme.success
+                            } else {
+                                theme.warn
+                            }),
+                        ),
+                        "searxng" => (
+                            "searxng",
+                            format!(
+                                "web search · {}",
+                                sr.url.as_deref().unwrap_or("http://localhost:8080")
+                            ),
+                            "server",
+                            Some(theme.success),
+                        ),
+                        "" => (
+                            "web search",
+                            "not set up · enter to choose".to_string(),
+                            "",
+                            Some(theme.warn),
+                        ),
+                        _ => (
+                            sr.provider.as_str(),
+                            "web search · unknown provider".to_string(),
+                            "",
+                            Some(theme.warn),
+                        ),
+                    };
+                lines.push(widgets::list_row(
+                    "◇",
+                    name,
+                    &secondary,
+                    status,
+                    self.selected == Self::search_row(view),
+                    w,
+                    theme,
+                    color,
+                ));
                 lines.push(widgets::blank(theme));
                 lines.push(widgets::list_row(
                     "+",
                     "add connection",
                     "",
                     "",
-                    self.selected == view.connections.len(),
+                    self.selected == Self::add_row(view),
                     w,
                     theme,
                     Some(theme.accent),
@@ -230,7 +329,7 @@ impl Panel for Providers {
                     "test connection",
                     "live GET /models on the highlighted row",
                     "",
-                    self.selected == view.connections.len() + 1,
+                    self.selected == Self::test_row(view),
                     w,
                     theme,
                     Some(theme.accent),
@@ -244,6 +343,42 @@ impl Panel for Providers {
                         theme.warn,
                         theme,
                     ));
+                }
+            }
+            Mode::PickSearch { idx } => {
+                lines.push(widgets::text(
+                    "where web_search looks, for the plan and audit hats",
+                    theme,
+                ));
+                lines.push(widgets::blank(theme));
+                for (i, (k, note)) in SEARCH_CHOICES.iter().enumerate() {
+                    lines.push(widgets::list_row(
+                        "◇",
+                        k,
+                        note,
+                        "",
+                        i == *idx,
+                        w,
+                        theme,
+                        None,
+                    ));
+                }
+                lines.push(widgets::blank(theme));
+                lines.push(widgets::note("saved to ~/.ryter/settings.toml", theme));
+            }
+            Mode::SearxUrl => {
+                lines.push(widgets::text(
+                    "the address of your SearXNG server, e.g. http://localhost:8080",
+                    theme,
+                ));
+                lines.push(widgets::blank(theme));
+                lines.push(widgets::note(
+                    "its settings.yml must list json under search.formats",
+                    theme,
+                ));
+                if let Some(e) = &self.error {
+                    lines.push(widgets::blank(theme));
+                    lines.push(widgets::colored(&format!("✕ {e}"), theme.error, theme));
                 }
             }
             Mode::Add(step) => {
@@ -334,16 +469,31 @@ impl Panel for Providers {
                         Outcome::Stay
                     }
                     KeyCode::Enter => {
-                        if self.selected == view.connections.len() {
+                        if self.selected == Self::search_row(view) {
+                            let idx = SEARCH_CHOICES
+                                .iter()
+                                .position(|(k, _)| view.search.provider.eq_ignore_ascii_case(k))
+                                .unwrap_or(0);
+                            self.mode = Mode::PickSearch { idx };
+                            return Outcome::Stay;
+                        }
+                        if self.selected == Self::add_row(view) {
                             self.enter_step(view, Step::Name);
                             return Outcome::Stay;
                         }
-                        if self.selected == view.connections.len() + 1 {
+                        if self.selected == Self::test_row(view) {
                             return Outcome::Act(Action::TestConnection(view.connection.clone()));
                         }
                         match view.connections.get(self.selected) {
                             Some(c) => Outcome::CloseAct(Action::UseConnection(c.name.clone())),
                             None => Outcome::Stay,
+                        }
+                    }
+                    KeyCode::Char('k') if self.selected == Self::search_row(view) => {
+                        if view.search.provider.eq_ignore_ascii_case("tavily") {
+                            Outcome::CloseAct(Action::BeginSetKey("tavily".into()))
+                        } else {
+                            Outcome::Stay
                         }
                     }
                     KeyCode::Char('k') => match view.connections.get(self.selected) {
@@ -386,6 +536,78 @@ impl Panel for Providers {
                 }
                 _ => {
                     super::edit_field(&mut view.composer, key);
+                    Outcome::Stay
+                }
+            },
+            Mode::PickSearch { idx } => match key.code {
+                KeyCode::Esc => {
+                    self.mode = Mode::Browse;
+                    Outcome::Stay
+                }
+                KeyCode::Up | KeyCode::Down => {
+                    let d = if key.code == KeyCode::Up { -1 } else { 1 };
+                    self.mode = Mode::PickSearch {
+                        idx: super::step(idx, d, SEARCH_CHOICES.len()),
+                    };
+                    Outcome::Stay
+                }
+                KeyCode::Enter => match SEARCH_CHOICES[idx].0 {
+                    "searxng" => {
+                        view.composer.set_text(
+                            view.search
+                                .url
+                                .as_deref()
+                                .unwrap_or("http://localhost:8080"),
+                        );
+                        self.error = None;
+                        self.mode = Mode::SearxUrl;
+                        Outcome::Stay
+                    }
+                    "off" => {
+                        self.mode = Mode::Browse;
+                        Outcome::CloseAct(Action::SetSearch {
+                            provider: String::new(),
+                            url: None,
+                        })
+                    }
+                    other => {
+                        self.mode = Mode::Browse;
+                        Outcome::CloseAct(Action::SetSearch {
+                            provider: other.to_string(),
+                            url: None,
+                        })
+                    }
+                },
+                _ => Outcome::Stay,
+            },
+            Mode::SearxUrl => match key.code {
+                KeyCode::Esc => {
+                    view.composer.clear();
+                    self.error = None;
+                    self.mode = Mode::PickSearch { idx: 1 };
+                    Outcome::Stay
+                }
+                KeyCode::Enter => {
+                    let text = view
+                        .composer
+                        .text()
+                        .trim()
+                        .trim_end_matches('/')
+                        .to_string();
+                    if !(text.starts_with("http://") || text.starts_with("https://")) {
+                        self.error = Some("the address must start with http:// or https://".into());
+                        return Outcome::Stay;
+                    }
+                    view.composer.clear();
+                    self.mode = Mode::Browse;
+                    Outcome::CloseAct(Action::SetSearch {
+                        provider: "searxng".into(),
+                        url: Some(text),
+                    })
+                }
+                _ => {
+                    super::edit_field(&mut view.composer, key);
+                    self.error = None;
                     Outcome::Stay
                 }
             },

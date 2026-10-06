@@ -115,6 +115,12 @@ pub trait Panel {
     fn input(&self, _view: &View) -> Option<String> {
         None
     }
+    /// What the field starts with when it opens. The composer is cleared
+    /// as a field begins, so a panel that set text before the sync lost
+    /// it: the add-connection wizard's base URL, the SearXNG address.
+    fn prefill(&self, _view: &View) -> Option<String> {
+        None
+    }
     /// Draw the input field as the panel's first row, where the list it
     /// filters is, instead of in the composer at the foot of the screen.
     fn inline_input(&self) -> bool {
@@ -227,6 +233,11 @@ impl PanelStack {
         self.top().and_then(|p| p.input(view))
     }
 
+    /// The focused panel's starting text for its field.
+    pub fn prefill(&self, view: &View) -> Option<String> {
+        self.top().and_then(|p| p.prefill(view))
+    }
+
     /// The focused panel draws its own input row.
     pub fn inline_input(&self, view: &View) -> bool {
         self.top()
@@ -306,7 +317,10 @@ pub fn sync_composer(view: &mut View) {
         (crate::composer::Mode::Field { .. }, Some(l)) => {
             view.composer.mode = crate::composer::Mode::Field { label: l };
         }
-        (_, Some(l)) => view.composer.begin_field(l, ""),
+        (_, Some(l)) => {
+            let pre = view.panels.prefill(view).unwrap_or_default();
+            view.composer.begin_field(l, &pre);
+        }
         (crate::composer::Mode::Field { .. }, None) => view.composer.end_special(),
         _ => {}
     }

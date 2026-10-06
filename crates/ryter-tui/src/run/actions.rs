@@ -327,6 +327,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         }
         Action::TestConnection(name) => test_connection(view, cx, &name),
         Action::AddConnection { name, conn } => add_connection(view, cx, &name, conn),
+        Action::SetSearch { provider, url } => set_search(view, cx, provider, url),
         Action::RemoveConnection(name) => remove_connection(view, cx, &name),
         Action::SetModel(model) => set_model(view, cx, model),
         Action::SetHatModel {
@@ -846,6 +847,7 @@ fn set_key(view: &mut View, cx: &mut Ctx, name: &str, key: &str) {
             // A search provider's key is not a connection's: nothing to
             // switch to, and this session's search reads the key now.
             if cx.cfg.search.key_name() == Some(name) {
+                view.search.has_key = true;
                 view.system("web_search is ready in this session");
                 cx.send(Work::ReloadSearch);
             } else {
@@ -912,6 +914,38 @@ fn test_connection(view: &mut View, cx: &mut Ctx, name: &str) {
         };
         let _ = tx.send(Notice::ConnTest { name, result });
     });
+}
+
+/// `/provider`'s web-search row: save the choice to settings.toml, tell the
+/// session, and go straight to the key when Tavily has none yet.
+fn set_search(view: &mut View, cx: &mut Ctx, provider: String, url: Option<String>) {
+    cx.cfg.search.provider = provider.clone();
+    cx.cfg.search.url = url.clone();
+    if let Err(e) = config::save_settings(&cx.home, &cx.cfg) {
+        view.error(e.to_string());
+        return;
+    }
+    let has_key = config::has_search_key(&cx.cfg.search);
+    view.search = crate::view::SearchRow {
+        provider: provider.clone(),
+        url: url.clone(),
+        has_key,
+    };
+    cx.send(Work::SetSearch(cx.cfg.search.clone()));
+    match provider.as_str() {
+        "" => view.system("web search · off"),
+        "searxng" => view.system(format!(
+            "web search · SearXNG at {}",
+            url.unwrap_or_else(|| "http://localhost:8080".into())
+        )),
+        _ => view.system(format!("web search · {provider}")),
+    }
+    if !view.web {
+        view.system("web is off in /settings; turn it on for the plan and audit hats to search");
+    }
+    if !has_key {
+        perform(view, cx, Action::BeginSetKey(provider));
+    }
 }
 
 fn add_connection(view: &mut View, cx: &mut Ctx, name: &str, conn: ryter_core::ConnectionConfig) {
