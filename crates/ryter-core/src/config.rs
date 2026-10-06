@@ -52,6 +52,9 @@ pub struct Config {
     /// Optional tools (web fetch/search).
     #[serde(default)]
     pub features: FeaturesConfig,
+    /// Where `web_search` looks.
+    #[serde(default)]
+    pub search: SearchConfig,
     /// What the build and test hats ask about, beyond the gate's fixed
     /// rules: the user's own answers, by pattern.
     #[serde(default)]
@@ -152,6 +155,7 @@ impl Default for Config {
             hooks: Vec::new(),
             sandbox: SandboxConfig::default(),
             features: FeaturesConfig::default(),
+            search: SearchConfig::default(),
             permissions: crate::permissions::Permissions::default(),
             tools_mode: default_tools_mode(),
             ui: UiConfig::default(),
@@ -266,11 +270,42 @@ pub fn unknown_ui_keys(text: &str) -> Vec<String> {
 }
 
 /// Optional capabilities.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FeaturesConfig {
-    /// Offer `web_fetch` / `web_search`.
+    /// Offer `web_fetch` / `web_search` to the plan and audit hats. On by
+    /// default since 0.21: `web_search` needs a `[search]` provider, and
+    /// `web_fetch` refuses every private address.
     pub web: bool,
+}
+
+impl Default for FeaturesConfig {
+    fn default() -> Self {
+        Self { web: true }
+    }
+}
+
+/// Where `web_search` looks: `[search]` in `config.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SearchConfig {
+    /// `tavily` (a key, stored as `tavily` like a connection's), `searxng`
+    /// (a server of your own at `url`), or empty for none.
+    pub provider: String,
+    /// The SearXNG server, `http://localhost:8080`.
+    pub url: Option<String>,
+    /// Results per search, 1 to 10.
+    pub max_results: u8,
+}
+
+impl SearchConfig {
+    /// The name the provider's key is stored under, where it has one.
+    pub fn key_name(&self) -> Option<&str> {
+        self.provider
+            .trim()
+            .eq_ignore_ascii_case("tavily")
+            .then_some("tavily")
+    }
 }
 
 /// One named LLM endpoint.
@@ -764,6 +799,11 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
                 // asks about, or a repository could widen the gate for
                 // itself.
                 let own_rules = cfg.permissions.clone();
+                // Where the web tools reach is the user's too: a
+                // repository could point `web_search` at a private
+                // address, or turn the web back on over the user's no.
+                let own_search = cfg.search.clone();
+                let own_features = cfg.features.clone();
                 merge_file(&mut cfg, &project)?;
                 if cfg.permissions != own_rules {
                     cfg.warnings.push(format!(
@@ -771,6 +811,20 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
                         project.display()
                     ));
                     cfg.permissions = own_rules;
+                }
+                if cfg.search != own_search {
+                    cfg.warnings.push(format!(
+                        "{}: [search] ignored; where web_search looks comes from ~/.ryter/config.toml only",
+                        project.display()
+                    ));
+                    cfg.search = own_search;
+                }
+                if cfg.features != own_features {
+                    cfg.warnings.push(format!(
+                        "{}: [features] ignored; the web tools are turned on in your own settings only",
+                        project.display()
+                    ));
+                    cfg.features = own_features;
                 }
                 check_key_file_mode(&project, &cfg)?;
             }
@@ -784,12 +838,15 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
     apply_old_review_file(&mut cfg, home);
     validate(&cfg)?;
     // A key read from the environment stays out of the commands Ryter runs,
-    // whatever its variable is called.
+    // whatever its variable is called. Here, before any MCP server is
+    // started: a hide that waited for the search to be built left the
+    // servers spawned at session start with the key.
     for conn in cfg.connections.values() {
         if let Some(var) = conn.env_key.as_deref() {
             crate::tools::shell::hide_env(var);
         }
     }
+    crate::tools::shell::hide_env(crate::tools::TAVILY_KEY_VAR);
     Ok(cfg)
 }
 
@@ -1230,6 +1287,7 @@ struct ConfigFile {
     hooks: Vec<HookConfig>,
     sandbox: Option<SandboxConfig>,
     features: Option<FeaturesConfig>,
+    search: Option<SearchConfig>,
     permissions: Option<crate::permissions::Permissions>,
     #[serde(default)]
     limits: Option<LimitsConfig>,
@@ -1399,6 +1457,9 @@ impl ConfigFile {
         }
         if let Some(f) = self.features {
             cfg.features = f;
+        }
+        if let Some(s) = self.search {
+            cfg.search = s;
         }
         if let Some(l) = self.limits {
             cfg.limits = l;
@@ -1804,6 +1865,17 @@ pub fn write_default_connection(home: &Path, name: &str) -> Result<()> {
     }
     fs::write(&path, out).map_err(|e| Error::Config(e.to_string()))?;
     Ok(())
+}
+
+/// A secret stored under `name` by `set-key`, from the keychain or the key
+/// file, whichever is durable here; `None` when there is none. For keys
+/// that are not a connection's, such as a search provider's.
+pub fn stored_secret(name: &str) -> Option<String> {
+    if durable_keyring() {
+        keyring_get(name).or_else(|| file_key(name))
+    } else {
+        file_key(name).or_else(|| keyring_get(name))
+    }
 }
 
 fn file_key(connection: &str) -> Option<String> {
@@ -2376,6 +2448,81 @@ mod tests {
     fn store_secret_rejects_an_empty_key() {
         let dir = TempDir::new().unwrap();
         assert!(store_secret_at(dir.path(), "ryter-test-conn", "   ").is_err());
+    }
+
+    /// `[search]` in the user's file reaches the config; a trusted
+    /// project's file may not set it, nor `[features]`, or a repository
+    /// could point `web_search` at a private address or turn the web on
+    /// over the user's no.
+    #[test]
+    fn the_search_section_is_read_from_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("config.toml"),
+            "default_connection = \"openrouter\"\n\n[search]\nprovider = \"tavily\"\nmax_results = 3\n",
+        )
+        .unwrap();
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(cfg.search.provider, "tavily");
+        assert_eq!(cfg.search.max_results, 3);
+        assert_eq!(cfg.search.key_name(), Some("tavily"));
+        assert!(cfg.features.web, "web is on by default");
+        // The key's variable is hidden by the load alone, before anything
+        // that could start a child; a `Search` is built later than the
+        // MCP servers.
+        assert!(
+            crate::tools::shell::hidden_vars()
+                .iter()
+                .any(|v| v == "TAVILY_API_KEY"),
+            "{:?}",
+            crate::tools::shell::hidden_vars()
+        );
+        fs::write(
+            dir.path().join("config.toml"),
+            "[search]\nprovider = \"searxng\"\nurl = \"http://localhost:8080\"\n",
+        )
+        .unwrap();
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(cfg.search.url.as_deref(), Some("http://localhost:8080"));
+        assert_eq!(cfg.search.key_name(), None);
+        // The spelling the search accepts, set-key accepts.
+        assert_eq!(
+            SearchConfig {
+                provider: " Tavily ".into(),
+                ..Default::default()
+            }
+            .key_name(),
+            Some("tavily")
+        );
+        // A trusted project's file: its [search] and [features] are ignored.
+        fs::write(dir.path().join("settings.toml"), "web = false\n").unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        fs::create_dir_all(proj.path().join(".ryter")).unwrap();
+        fs::write(
+            proj.path().join(".ryter/config.toml"),
+            "[search]\nprovider = \"searxng\"\nurl = \"http://169.254.169.254\"\n\n[features]\nweb = true\n",
+        )
+        .unwrap();
+        let cfg = load_at(dir.path(), Some(proj.path()), true).unwrap();
+        assert_eq!(cfg.search.provider, "searxng");
+        assert_eq!(
+            cfg.search.url.as_deref(),
+            Some("http://localhost:8080"),
+            "the user's"
+        );
+        assert!(!cfg.features.web, "the user's settings.toml said no");
+        assert!(
+            cfg.warnings.iter().any(|w| w.contains("[search] ignored")),
+            "{:?}",
+            cfg.warnings
+        );
+        assert!(
+            cfg.warnings
+                .iter()
+                .any(|w| w.contains("[features] ignored")),
+            "{:?}",
+            cfg.warnings
+        );
     }
 
     #[test]

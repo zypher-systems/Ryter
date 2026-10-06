@@ -55,6 +55,12 @@ const NON_INTERACTIVE: &[(&str, &str)] = &[
 static KEY_VARS: std::sync::RwLock<Vec<String>> = std::sync::RwLock::new(Vec::new());
 
 /// Keep `var` out of the environment of every command run from here on.
+/// The variables [`hide_env`] was given, for every other place that
+/// starts a child (the MCP servers).
+pub fn hidden_vars() -> Vec<String> {
+    KEY_VARS.read().map(|v| v.clone()).unwrap_or_default()
+}
+
 pub fn hide_env(var: &str) {
     let var = var.trim();
     if var.is_empty() {
@@ -465,6 +471,7 @@ mod tests {
             read_only: false,
             created: Vec::new(),
             kept: Vec::new(),
+            search: Default::default(),
         };
         let waiter = cancel.clone();
         std::thread::spawn(move || {

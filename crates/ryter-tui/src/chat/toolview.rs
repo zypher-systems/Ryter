@@ -28,6 +28,7 @@ pub fn verb(tool: &str) -> &str {
         "propose_run" => "setup",
         "web_fetch" => "fetch",
         "web_search" => "web",
+        "check_package" => "package",
         other => other,
     }
 }
@@ -47,6 +48,7 @@ pub fn target(tool: &str, args: &Value) -> String {
         "record_decision" | "present_plan" => arg(args, &["title"]),
         "web_fetch" => arg(args, &["url"]),
         "web_search" => arg(args, &["query"]),
+        "check_package" => arg(args, &["name"]),
         _ => arg(args, &["path", "target_file"]),
     };
     t.unwrap_or("")

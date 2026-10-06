@@ -120,6 +120,8 @@ pub enum Work {
         /// Open pages the model shows in the browser.
         open_pages: bool,
     },
+    /// A search provider's key was saved: read `[search]` and its key again.
+    ReloadSearch,
     /// Load a saved session.
     Resume(String),
     /// Set the session title.
@@ -407,6 +409,11 @@ pub fn run(init: WorkerInit) {
                     if let Some(reply) = reply {
                         let _ = reply.send(String::new());
                     }
+                }
+            }
+            Ok(Work::ReloadSearch) => {
+                if let Some(a) = &mut agent {
+                    a.ctx.search = ryter_core::tools::Search::from_config(&cfg.search);
                 }
             }
             Ok(Work::SetTools { mode }) => {
@@ -910,6 +917,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
             read_only: false,
             created: Vec::new(),
             kept: Vec::new(),
+            search: ryter_core::tools::Search::from_config(&b.cfg.search),
         },
         connection: b.conn_name,
         model: b.model,

@@ -61,6 +61,8 @@ SpaceXAI and OpenRouter are compiled in as equals. Other OpenAI-compatible or An
 
 Credential order per connection: TOML `api_key` → `env_key` → the stored key → well-known env (`OPENROUTER_API_KEY`, `XAI_API_KEY`).
 
+A search provider's key is stored the same way under the provider's name: `ryter connections set-key tavily`, or `/provider set-key tavily` in the TUI (`TAVILY_API_KEY` in the environment also works). See [Web search](#web-search).
+
 **Reasoning.** Each model has a reasoning level you choose: **Tab** on a model in `/models`, for any seat, steps it through `auto → low → medium → high → model's own`. The model card shows the level in use (`reasoning  auto · medium`). The choice follows the model into every hat that uses it, and is saved to `~/.ryter/reasoning.toml`; `[model_reasoning]` in `config.toml` does the same by hand, keyed by model id.
 
 **Auto** means Ryter picks by hat: `high` for the plan hat, `medium` for build and audit. `[reasoning_effort]` overrides that per hat (`build`, `plan`, `audit`; `review` still reads as `audit`). **Model's own** sends nothing. Beware: with no setting, some models think for minutes before acting. The level is sent only to OpenRouter connections.
@@ -91,7 +93,7 @@ ryter connections set-key spacexai
 ryter models [connection]
 ```
 
-`/settings` edits budget, warn, max, sandbox, inbound MCP, and `[features] web` (persists `~/.ryter/settings.toml`). Sandbox changes apply on the next launch.
+`/settings` edits budget, warn, max, sandbox, inbound MCP, and `[features] web` (on by default; persists `~/.ryter/settings.toml`). Sandbox changes apply on the next launch.
 
 ## Talking to Ryter
 
@@ -206,8 +208,8 @@ One model works in your project, in the plan hat to start with. The hats are in 
 | Hat | May | May not |
 | --- | --- | --- |
 | **build** | edit files and run commands. Edits, your toolchains, scripts, inline code, the project's containers and ordinary git run without asking; what deletes, throws work away in git, publishes or leaves the machine asks (see "What asks") | read secrets, run a shell handed a command as text, gain privilege |
-| **plan** | read, search, run read-only commands, look at the running product (a `GET` of its address, a project program's `--help` or `--version`), and show you a plan to approve | edit source, run anything that changes the project |
-| **audit** | everything the build hat runs: the tests, the end-to-end checks, the product through the run file, inline code, the containers. A checkpoint before the turn puts back whatever it changed. Its one file is `.ryter/audit.md` | commit, push or discard work in git; keep a change in the project; read secrets |
+| **plan** | read, search, run read-only commands, look at the running product (a `GET` of its address, a project program's `--help` or `--version`), ask `check_package` what a dependency's latest release is and what is known against it, search the web through your provider (`web_search`, `web_fetch`), and show you a plan to approve | edit source, run anything that changes the project |
+| **audit** | `check_package` for what is known against the dependencies, `web_search` and `web_fetch`, and everything the build hat runs: the tests, the end-to-end checks, the product through the run file, inline code, the containers. A checkpoint before the turn puts back whatever it changed. Its one file is `.ryter/audit.md` | commit, push or discard work in git; keep a change in the project; read secrets |
 | **scribe** | read, search, run read-only commands, look at the running product (a `GET` of its address, a project program's `--help` or `--version`), and write documentation: `.md`, `.txt` and their kind, anywhere in the project | write code, configuration or Ryter's own files; run anything that changes the project |
 
 **A model for each hat.** Every hat runs on one model until you give a hat its own. `/models` lists the seats on the left: *All hats*, then *Plan*, *Build*, *Audit* and *Scribe*, each showing its model or "follows all hats". Pick a seat, pick a model, `⏎`, and the cursor moves to the next seat, so one visit sets them all. To put a hat back, choose `default` at the top of its list. The choice is kept in `~/.ryter/hats.toml`.
@@ -468,6 +470,25 @@ Type `/` to open the palette; every built-in has a one-line description there. C
 
 User-invocable skills and `~/.ryter/commands/*.md` join the palette under **skills**. Built-ins win on a name clash.
 
+## Web search
+
+`web_search` looks where you tell it to. Two providers are built in; pick one in `~/.ryter/config.toml`:
+
+```toml
+[search]
+provider = "tavily"      # a key, generous free tier; then: ryter connections set-key tavily
+max_results = 5          # 1 to 10
+
+# or a server of your own:
+[search]
+provider = "searxng"
+url = "http://localhost:8080"
+```
+
+**Tavily** needs a key, stored like a connection's: `ryter connections set-key tavily`, `/provider set-key tavily`, or `TAVILY_API_KEY`. **SearXNG** needs nothing but the address of your server, which may be on this machine (`docker run -d -p 8080:8080 searxng/searxng`; its `settings.yml` must list `json` under `search.formats`). Either way the model gets the same thing: titles, addresses, dates where the provider gives one, and a snippet of each result; `max_results` on the call overrides the configured number. With no `[search]` section the tool refuses and says what to set, so a fresh install searches nowhere until you choose. A key saved with `/provider set-key tavily` is used by the running session at once; one saved from another terminal with `ryter connections set-key tavily` is read at the next launch. A project's `.ryter/config.toml` cannot set `[search]` or `[features]`: where the web tools reach is yours alone, as the gate's rules are.
+
+The plan and audit hats have `web_search` and `web_fetch`; the build and scribe hats do not. For what version of a dependency is current, and what is known against it, the same hats have `check_package`, which asks the registries and OSV.dev directly and needs no provider.
+
 ## MCP
 
 **Outbound.** `[mcp_servers.<name>]` stdio children. The model discovers them with `search_tool` and calls one with `use_tool`. Child env does not inherit API keys unless that server’s `env` table asks. In the TUI, `/mcp` is a panel: `Enter` toggles a server, `r` reconnects, `d` removes it (type the name to confirm), and `Enter` on the trailing `+ add server` row walks name → command → args → review. Each server row shows its live status (`connected · 5 tools`, `error: …`, `disabled`).
@@ -652,7 +673,8 @@ Plans, decisions and test reports stored in the project follow the workspace’s
 - Denied in every hat: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files. An example file (`.env.example`, `.env.sample`) is not a secret. One exception: the build hat may **write** the project's own `.env` (or `.env.local`, `config/.env.production`, `local.env`) whole, or copy it from its example (`cp .env.example .env`), with your `y` each time, since a project that needs one can't run without it. The card shows what would be written; nothing reads it back, and an edit in place stays refused, as does every other hat. An approved plan, `a` and `--always-approve` don't cover it; headless refuses it.
 - Shell commands are judged per segment (`a && b` is two commands). Privilege escalation, disk writes, `git push`, and piping into a shell are denied. In the TUI a permission modal shows the tool and its arguments: `⏎` or `y` allow this call, `n` deny, `a` allow that kind of action for the rest of the session; destructive commands and writes outside the project take only `y` (see [Approving](#talking-to-ryter)). Headless (no TUI) fail-closes.
 - `ask_user` lets the model ask a question; the TUI shows it as a modal (number keys pick a choice, or type free text).
-- `[features] web = true` offers `web_fetch` / `web_search`. Localhost and private IPs are blocked.
+- `check_package` tells the plan and audit hats a dependency's latest release and its known advisories, from its registry (crates.io, npm, PyPI, the Go module proxy) and OSV.dev: fixed public hosts, read-only, no key, on by default. The build and scribe hats are refused it and told who asks.
+- `[features] web` (on by default) offers `web_fetch` and `web_search` to the plan and audit hats; the build and scribe hats are refused them and told who uses them. `web_fetch` refuses localhost, private, link-local and metadata addresses, and follows no redirect into them. `web_search` goes through the provider in `[search]` and nowhere else (see [Web search](#web-search)); without one it says what to set.
 - Hooks can still deny after the policy allows.
 
 Logs append to `~/.ryter/logs/ryter.log` (no secrets). Project `.ryter/` overlays apply after `ryter trust`, or after the TUI “trust this project?” prompt.

@@ -164,7 +164,7 @@ pub fn tool_summary(name: &str, args: &Value) -> String {
         "grep" | "glob" => args.get("pattern").and_then(Value::as_str).unwrap_or(""),
         "web_search" | "search_tool" => args.get("query").and_then(Value::as_str).unwrap_or(""),
         "web_fetch" => args.get("url").and_then(Value::as_str).unwrap_or(""),
-        "use_tool" => args.get("name").and_then(Value::as_str).unwrap_or(""),
+        "use_tool" | "check_package" => args.get("name").and_then(Value::as_str).unwrap_or(""),
         "ask_user" => args.get("question").and_then(Value::as_str).unwrap_or(""),
         _ => "",
     };
@@ -173,6 +173,7 @@ pub fn tool_summary(name: &str, args: &Value) -> String {
         "list_dir" => "list",
         "write" | "search_replace" => "edit",
         "todo_write" => "todo",
+        "check_package" => "check",
         other => other,
     };
     let arg: String = arg.lines().next().unwrap_or("").chars().take(40).collect();
@@ -3291,6 +3292,7 @@ mod tests {
             read_only: false,
             created: Vec::new(),
             kept: Vec::new(),
+            search: Default::default(),
         };
         let agent = Agent {
             provider: Arc::new(provider),

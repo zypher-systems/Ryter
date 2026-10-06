@@ -2,6 +2,7 @@
 
 mod bounded;
 mod fs;
+mod packages;
 mod policy;
 mod secret;
 pub(crate) mod shell;
@@ -17,6 +18,8 @@ use crate::role::Role;
 
 pub use fs::changed_lines;
 pub(crate) use policy::{Effects, effects, on_this_machine, resolve};
+pub use web::Search;
+pub(crate) use web::TAVILY_KEY_VAR;
 
 /// What `a` ("allow for this session") on this call's prompt would cover:
 /// a key, and the words for it. `None` when the prompt must not offer it.
@@ -151,6 +154,8 @@ pub struct ToolContext {
     /// Places this turn moved a file of the user's to (`mv src/x new/`):
     /// never a free deletion, whatever else is known about them.
     pub kept: Vec<std::path::PathBuf>,
+    /// Where `web_search` looks, with its key read once.
+    pub search: web::Search,
 }
 
 impl ToolContext {
@@ -476,13 +481,26 @@ fn spec(name: &str) -> Option<ToolSpec> {
             "Ask the human a question. Use options for a short multiple-choice; omit options for free text.",
             json!({"type":"object","properties":{"question":{"type":"string"},"options":{"type":"array","items":{"type":"string"}}},"required":["question"]}),
         ),
+        "check_package" => (
+            "A dependency's latest release and its known security advisories, from its registry \
+             (crates.io, npm, PyPI, the Go module proxy) and OSV.dev. Give the ecosystem, the \
+             package name, and the version in use when you know it. For the plan and audit hats.",
+            json!({"type":"object","properties":{
+                "ecosystem":{"type":"string","enum":["crates","npm","pypi","go"]},
+                "name":{"type":"string","description":"the package as its registry names it (`serde`, `@fastify/cookie`, `fastapi`, `github.com/gin-gonic/gin`)"},
+                "version":{"type":"string","description":"the version in use, if any; advisories are then for it alone"}
+            },"required":["ecosystem","name"]}),
+        ),
         "web_fetch" => (
-            "HTTP GET a URL and return text. Requires [features] web = true. No localhost or private IPs.",
+            "HTTP GET a public URL and return its text. For the plan and audit hats. No localhost \
+             or private addresses.",
             json!({"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}),
         ),
         "web_search" => (
-            "Search the public web. Requires [features] web = true.",
-            json!({"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}),
+            "Search the web through the user's configured provider ([search] in config: tavily or \
+             searxng) and return titles, addresses and snippets. For the plan and audit hats. For \
+             a dependency's version or advisories use check_package instead.",
+            json!({"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer","description":"1 to 10; the configured number by default"}},"required":["query"]}),
         ),
         _ => return None,
     };
@@ -519,6 +537,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "file_audit",
             "search_tool",
             "use_tool",
+            "check_package",
             "web_fetch",
             "web_search",
         ],
@@ -549,6 +568,7 @@ fn execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutp
         | "update_rules" | "propose_run" | "run_project" | "file_audit" => Ok(ToolOutput::err(
             format!("{name} is handled by the agent loop"),
         )),
+        "check_package" => packages::check_package(args, ctx),
         "web_fetch" => web::web_fetch(args, ctx),
         "web_search" => web::web_search(args, ctx),
         other => Ok(ToolOutput::err(format!("unknown tool {other}"))),
@@ -714,6 +734,38 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
         {
             run_with_hooks(name, args, ctx)
         }
+        // The web is the looking hats': off, say where it is turned on;
+        // on, say who may use it.
+        Decision::Deny if matches!(name, "web_fetch" | "web_search") => {
+            // `/settings` is the one place that turns it on: `settings.toml`
+            // is applied after `config.toml`, so an edit there does nothing
+            // against a saved no.
+            Ok(ToolOutput::err(if !ctx.web {
+                format!(
+                    "denied: {name} is off ([features] web = false). Tell the user: /settings \
+                     turns web on{}.",
+                    if matches!(ctx.role, Role::SoloPlan | Role::SoloAudit) {
+                        ""
+                    } else {
+                        ", and it is the plan and audit hats' tool"
+                    }
+                )
+            } else {
+                format!(
+                    "denied: {name} is the plan and audit hats' tool; the {} hat does not use \
+                     it. Tell the user, who can switch to plan or audit.",
+                    ctx.role
+                )
+            }))
+        }
+        // The looking hats ask after dependencies; the hats that build and
+        // document do not, and are told who does.
+        Decision::Deny if name == "check_package" => Ok(ToolOutput::err(format!(
+            "denied: check_package (a dependency's latest release and known advisories) is the \
+             plan and audit hats' question; the {} hat does not ask it. Tell the user, who can \
+             switch to plan or audit.",
+            ctx.role
+        ))),
         // Say which gate refused. "not allowed for <role>" on every denial
         // taught models a tool was forbidden when only the arguments were.
         Decision::Deny if !tools_for(ctx.role).contains(&name) => {
@@ -913,6 +965,7 @@ mod tests {
             read_only: role == Role::SoloAudit,
             created: Vec::new(),
             kept: Vec::new(),
+            search: Default::default(),
         }
     }
 
@@ -1374,6 +1427,57 @@ mod tests {
         // Other refusals keep the general wording.
         let out = gated_execute("bash", &json!({ "command": "sudo ls" }), &c).unwrap();
         assert!(out.text.contains("outside policy"), "{out:?}");
+    }
+
+    /// A web tool refused says why: off, where it is turned on; on, who
+    /// may use it.
+    #[test]
+    fn a_web_refusal_says_off_or_whose() {
+        let dir = TempDir::new().unwrap();
+        let mut c = ctx(Role::SoloBuild, dir.path());
+        c.web = true;
+        let out = gated_execute("web_search", &json!({"query": "x"}), &c).unwrap();
+        assert!(
+            out.is_error && out.text.contains("plan and audit hats' tool"),
+            "{out:?}"
+        );
+        let mut c = ctx(Role::SoloPlan, dir.path());
+        c.web = false;
+        let out = gated_execute("web_fetch", &json!({"url": "https://example.com"}), &c).unwrap();
+        assert!(
+            out.is_error
+                && out.text.contains("[features] web = false")
+                && out.text.contains("/settings")
+                && !out.text.contains("config.toml"),
+            "{out:?}"
+        );
+        let mut c = ctx(Role::SoloBuild, dir.path());
+        c.web = false;
+        let out = gated_execute("web_search", &json!({"query": "x"}), &c).unwrap();
+        assert!(
+            out.text.contains("/settings") && out.text.contains("plan and audit hats' tool"),
+            "{out:?}"
+        );
+    }
+
+    /// The build and scribe hats are refused `check_package` with a note
+    /// naming the hats that ask it, not a note about its arguments.
+    #[test]
+    fn a_package_check_from_the_wrong_hat_names_who_asks() {
+        let dir = TempDir::new().unwrap();
+        for role in [Role::SoloBuild, Role::SoloScribe] {
+            let c = ctx(role, dir.path());
+            let out = gated_execute(
+                "check_package",
+                &json!({"ecosystem": "npm", "name": "fastify"}),
+                &c,
+            )
+            .unwrap();
+            assert!(
+                out.is_error && out.text.contains("plan and audit hats' question"),
+                "{role:?}: {out:?}"
+            );
+        }
     }
 
     /// The audit hat's write outside its own files is refused with where
