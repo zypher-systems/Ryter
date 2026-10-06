@@ -52,6 +52,9 @@ pub struct Config {
     /// Optional tools (web fetch/search).
     #[serde(default)]
     pub features: FeaturesConfig,
+    /// Where `web_search` looks.
+    #[serde(default)]
+    pub search: SearchConfig,
     /// What the build and test hats ask about, beyond the gate's fixed
     /// rules: the user's own answers, by pattern.
     #[serde(default)]
@@ -152,6 +155,7 @@ impl Default for Config {
             hooks: Vec::new(),
             sandbox: SandboxConfig::default(),
             features: FeaturesConfig::default(),
+            search: SearchConfig::default(),
             permissions: crate::permissions::Permissions::default(),
             tools_mode: default_tools_mode(),
             ui: UiConfig::default(),
@@ -266,11 +270,39 @@ pub fn unknown_ui_keys(text: &str) -> Vec<String> {
 }
 
 /// Optional capabilities.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FeaturesConfig {
-    /// Offer `web_fetch` / `web_search`.
+    /// Offer `web_fetch` / `web_search` to the plan and audit hats. On by
+    /// default since 0.21: `web_search` needs a `[search]` provider, and
+    /// `web_fetch` refuses every private address.
     pub web: bool,
+}
+
+impl Default for FeaturesConfig {
+    fn default() -> Self {
+        Self { web: true }
+    }
+}
+
+/// Where `web_search` looks: `[search]` in `config.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SearchConfig {
+    /// `tavily` (a key, stored as `tavily` like a connection's), `searxng`
+    /// (a server of your own at `url`), or empty for none.
+    pub provider: String,
+    /// The SearXNG server, `http://localhost:8080`.
+    pub url: Option<String>,
+    /// Results per search, 1 to 10.
+    pub max_results: u8,
+}
+
+impl SearchConfig {
+    /// The name the provider's key is stored under, where it has one.
+    pub fn key_name(&self) -> Option<&str> {
+        (self.provider == "tavily").then_some("tavily")
+    }
 }
 
 /// One named LLM endpoint.
@@ -1804,6 +1836,17 @@ pub fn write_default_connection(home: &Path, name: &str) -> Result<()> {
     }
     fs::write(&path, out).map_err(|e| Error::Config(e.to_string()))?;
     Ok(())
+}
+
+/// A secret stored under `name` by `set-key`, from the keychain or the key
+/// file, whichever is durable here; `None` when there is none. For keys
+/// that are not a connection's, such as a search provider's.
+pub fn stored_secret(name: &str) -> Option<String> {
+    if durable_keyring() {
+        keyring_get(name).or_else(|| file_key(name))
+    } else {
+        file_key(name).or_else(|| keyring_get(name))
+    }
 }
 
 fn file_key(connection: &str) -> Option<String> {

@@ -3292,6 +3292,7 @@ mod tests {
             read_only: false,
             created: Vec::new(),
             kept: Vec::new(),
+            search: Default::default(),
         };
         let agent = Agent {
             provider: Arc::new(provider),

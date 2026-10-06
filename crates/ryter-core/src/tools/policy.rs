@@ -71,8 +71,10 @@ pub fn decide(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
         // The run file is the user's to approve, and Ryter runs only what
         // they approved.
         "propose_run" | "run_project" => Decision::Allow,
+        // The web is for the hats that look, as the registries are; and
+        // only with `[features] web` on.
         "web_fetch" | "web_search" => {
-            if ctx.web {
+            if ctx.web && matches!(ctx.role, Role::SoloPlan | Role::SoloAudit) {
                 Decision::Allow
             } else {
                 Decision::Deny
@@ -7142,6 +7144,7 @@ mod tests {
             read_only: role == Role::SoloAudit,
             created: Vec::new(),
             kept: Vec::new(),
+            search: Default::default(),
         }
     }
 
@@ -9640,6 +9643,7 @@ mod tests {
                 read_only: false,
                 created: Vec::new(),
                 kept: Vec::new(),
+                search: Default::default(),
                 ..ctx_for(role, d)
             };
             decide("bash", &json!({"command": cmd}), &ctx)
@@ -10399,6 +10403,39 @@ mod tests {
             strip_comments("a # b's\nc <<X\n# d's\nX\ne # f"),
             "a \nc <<X\n# d's\nX\ne "
         );
+    }
+
+    /// The web is the looking hats' too: with `[features] web` on, plan and
+    /// audit search and fetch; build and scribe are refused; off, nobody.
+    #[test]
+    fn the_web_is_the_looking_hats_with_the_feature_on() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        for (tool, args) in [
+            ("web_search", json!({"query": "fastify cookies"})),
+            ("web_fetch", json!({"url": "https://example.com/"})),
+        ] {
+            for role in [Role::SoloPlan, Role::SoloAudit] {
+                let mut ctx = ctx_for(role, d);
+                ctx.web = true;
+                assert_eq!(
+                    decide(tool, &args, &ctx),
+                    Decision::Allow,
+                    "{role:?} {tool}"
+                );
+                ctx.web = false;
+                assert_eq!(
+                    decide(tool, &args, &ctx),
+                    Decision::Deny,
+                    "{role:?} {tool} off"
+                );
+            }
+            for role in [Role::SoloBuild, Role::SoloScribe] {
+                let mut ctx = ctx_for(role, d);
+                ctx.web = true;
+                assert_eq!(decide(tool, &args, &ctx), Decision::Deny, "{role:?} {tool}");
+            }
+        }
     }
 
     /// `check_package` is the plan and audit hats' question: a dependency's

@@ -1,16 +1,91 @@
-//! Optional web_fetch / web_search (`[features] web = true`).
+//! `web_fetch` and `web_search` (`[features] web`), for the plan and audit
+//! hats. The search goes through a provider of the user's choosing
+//! (`[search]`): Tavily with a key, or a SearXNG server of their own.
 
 use regex::Regex;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::net::IpAddr;
 use std::time::Duration;
 
+use crate::config::SearchConfig;
 use crate::error::{Error, Result};
 use crate::tools::{ToolContext, ToolOutput};
 
 const MAX_BYTES: usize = 1_000_000;
 const MAX_CHARS: usize = 24_000;
 const TIMEOUT: Duration = Duration::from_secs(15);
+/// The most of a result's text the model is shown.
+const MAX_SNIPPET: usize = 400;
+const DEFAULT_RESULTS: u8 = 5;
+const MAX_RESULTS: u8 = 10;
+const TAVILY: &str = "https://api.tavily.com/search";
+
+/// Where `web_search` looks, with its key read once when the session is
+/// made.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Search {
+    pub provider: Provider,
+    pub max_results: u8,
+}
+
+/// A search provider.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Provider {
+    /// `[search]` names none: `web_search` says how to set one.
+    #[default]
+    None,
+    /// Tavily, with the key stored as `tavily` (or `TAVILY_API_KEY`).
+    Tavily { key: Option<String> },
+    /// A SearXNG server of the user's, by its address.
+    Searxng { url: String },
+    /// A `provider` word the gate does not know.
+    Unknown(String),
+}
+
+impl Search {
+    /// From `[search]`, reading the key where there is one.
+    pub fn from_config(cfg: &SearchConfig) -> Self {
+        let key = std::env::var("TAVILY_API_KEY")
+            .ok()
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty())
+            .or_else(|| crate::config::stored_secret("tavily"));
+        Self::from_parts(cfg, key)
+    }
+
+    /// [`Self::from_config`] with the key already in hand.
+    pub fn from_parts(cfg: &SearchConfig, tavily_key: Option<String>) -> Self {
+        let provider = match cfg.provider.trim().to_ascii_lowercase().as_str() {
+            "" | "none" | "off" => Provider::None,
+            "tavily" => Provider::Tavily { key: tavily_key },
+            "searxng" | "searx" => Provider::Searxng {
+                url: cfg
+                    .url
+                    .clone()
+                    .unwrap_or_else(|| "http://localhost:8080".to_string())
+                    .trim_end_matches('/')
+                    .to_string(),
+            },
+            other => Provider::Unknown(other.to_string()),
+        };
+        Self {
+            provider,
+            max_results: match cfg.max_results {
+                0 => DEFAULT_RESULTS,
+                n => n.min(MAX_RESULTS),
+            },
+        }
+    }
+}
+
+/// One result, whichever provider found it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Hit {
+    pub title: String,
+    pub url: String,
+    pub snippet: String,
+    pub date: Option<String>,
+}
 
 pub fn web_fetch(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     if !ctx.web {
@@ -37,18 +112,174 @@ pub fn web_search(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     let q = args
         .get("query")
         .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|q| !q.is_empty())
         .ok_or_else(|| Error::Config("web_search: missing query".into()))?;
-    let encoded: String = urlencoding(q);
-    let url = format!("https://lite.duckduckgo.com/lite/?q={encoded}");
-    let html = match get_text(&url) {
-        Ok(t) => t,
-        Err(e) => return Ok(ToolOutput::err(e.to_string())),
+    let n = args
+        .get("max_results")
+        .and_then(Value::as_u64)
+        .map_or(ctx.search.max_results, |n| {
+            n.clamp(1, u64::from(MAX_RESULTS)) as u8
+        });
+    let hits = match &ctx.search.provider {
+        Provider::None => {
+            return Ok(ToolOutput::err(
+                "web_search: no search provider is set. Tell the user: in ~/.ryter/config.toml, \
+                 `[search] provider = \"tavily\"` with a key (`ryter connections set-key tavily`, \
+                 or /provider set-key tavily), or `provider = \"searxng\"` with `url = \
+                 \"http://localhost:8080\"` for a server of their own.",
+            ));
+        }
+        Provider::Unknown(p) => {
+            return Ok(ToolOutput::err(format!(
+                "web_search: unknown provider {p:?} in [search]; tavily or searxng"
+            )));
+        }
+        Provider::Tavily { key: None } => {
+            return Ok(ToolOutput::err(
+                "web_search: Tavily is set but has no key. Tell the user: `ryter connections \
+                 set-key tavily`, /provider set-key tavily, or TAVILY_API_KEY in the environment.",
+            ));
+        }
+        Provider::Tavily { key: Some(key) } => tavily(key, q, n),
+        Provider::Searxng { url } => searxng(url, q, n),
     };
-    let links = extract_results(&html);
-    if links.is_empty() {
-        return Ok(ToolOutput::ok("no search results parsed"));
+    match hits {
+        Ok(hits) if hits.is_empty() => Ok(ToolOutput::ok(format!("no results for {q:?}"))),
+        Ok(hits) => Ok(ToolOutput::ok(render(&hits))),
+        Err(e) => Ok(ToolOutput::err(format!("web_search: {e}"))),
     }
-    Ok(ToolOutput::ok(links.join("\n")))
+}
+
+fn client() -> Result<reqwest::blocking::Client> {
+    reqwest::blocking::Client::builder()
+        .timeout(TIMEOUT)
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .user_agent(format!("ryter/{}", crate::VERSION))
+        .build()
+        .map_err(|e| Error::Io(e.to_string()))
+}
+
+fn json_body(resp: reqwest::blocking::Response, who: &str) -> Result<Value> {
+    let status = resp.status();
+    let raw = resp.bytes().map_err(|e| Error::Io(e.to_string()))?;
+    if raw.len() > MAX_BYTES {
+        return Err(Error::Io(format!("{who}: the answer is too large")));
+    }
+    if !status.is_success() {
+        let text = String::from_utf8_lossy(&raw);
+        let line = text
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(200)
+            .collect::<String>();
+        return Err(Error::Io(format!("{who}: HTTP {} {line}", status.as_u16())));
+    }
+    serde_json::from_slice(&raw).map_err(|e| Error::Io(format!("{who}: not JSON ({e})")))
+}
+
+fn tavily(key: &str, q: &str, n: u8) -> Result<Vec<Hit>> {
+    let resp = client()?
+        .post(TAVILY)
+        .bearer_auth(key)
+        .json(&json!({
+            "query": q,
+            "max_results": n,
+            "search_depth": "basic",
+            "include_answer": false,
+            "include_raw_content": false,
+        }))
+        .send()
+        .map_err(|e| Error::Io(e.to_string()))?;
+    Ok(parse_tavily(&json_body(resp, "Tavily")?))
+}
+
+/// A SearXNG server of the user's: its address is theirs to choose, a
+/// private one included.
+fn searxng(base: &str, q: &str, n: u8) -> Result<Vec<Hit>> {
+    let url = format!("{base}/search?q={}&format=json", urlencoding(q));
+    let resp = client()?
+        .get(&url)
+        .send()
+        .map_err(|e| Error::Io(e.to_string()))?;
+    let mut hits = parse_searxng(&json_body(resp, "SearXNG")?);
+    hits.truncate(usize::from(n));
+    Ok(hits)
+}
+
+fn hit(title: &Value, url: &Value, content: &Value, date: &Value) -> Option<Hit> {
+    let url = url.as_str()?.trim();
+    if url.is_empty() {
+        return None;
+    }
+    let snippet: String = content
+        .as_str()
+        .unwrap_or("")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let snippet = if snippet.chars().count() > MAX_SNIPPET {
+        let cut: String = snippet.chars().take(MAX_SNIPPET).collect();
+        format!("{}…", cut.trim_end())
+    } else {
+        snippet
+    };
+    Some(Hit {
+        title: title.as_str().unwrap_or("").trim().to_string(),
+        url: url.to_string(),
+        snippet,
+        date: date
+            .as_str()
+            .map(|d| d.chars().take(10).collect())
+            .filter(|d: &String| !d.is_empty()),
+    })
+}
+
+/// Tavily's answer: `results[]` of `title`, `url`, `content`,
+/// `published_date`.
+pub(crate) fn parse_tavily(v: &Value) -> Vec<Hit> {
+    v["results"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| hit(&r["title"], &r["url"], &r["content"], &r["published_date"]))
+        .collect()
+}
+
+/// SearXNG's JSON: `results[]` of `title`, `url`, `content`,
+/// `publishedDate`.
+pub(crate) fn parse_searxng(v: &Value) -> Vec<Hit> {
+    v["results"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| hit(&r["title"], &r["url"], &r["content"], &r["publishedDate"]))
+        .collect()
+}
+
+/// What the model reads: a numbered list, one result in three lines.
+pub(crate) fn render(hits: &[Hit]) -> String {
+    let mut out = String::new();
+    for (i, h) in hits.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(&format!(
+            "{}. {}",
+            i + 1,
+            if h.title.is_empty() { &h.url } else { &h.title }
+        ));
+        if let Some(d) = &h.date {
+            out.push_str(&format!(" ({d})"));
+        }
+        out.push_str(&format!("\n   {}", h.url));
+        if !h.snippet.is_empty() {
+            out.push_str(&format!("\n   {}", h.snippet));
+        }
+    }
+    out
 }
 
 fn get_text(url: &str) -> Result<String> {
@@ -178,25 +409,6 @@ fn strip_html(s: &str) -> String {
     t.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn extract_results(html: &str) -> Vec<String> {
-    let Ok(re) = Regex::new(r#"(?is)href="(https?://[^"]+)"[^>]*>([^<]{3,120})"#) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for cap in re.captures_iter(html) {
-        let url = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-        let title = cap.get(2).map(|m| m.as_str().trim()).unwrap_or("");
-        if url.contains("duckduckgo.com") || title.is_empty() {
-            continue;
-        }
-        out.push(format!("{title}\n  {url}"));
-        if out.len() >= 8 {
-            break;
-        }
-    }
-    out
-}
-
 fn urlencoding(s: &str) -> String {
     let mut o = String::new();
     for b in s.as_bytes() {
@@ -277,6 +489,107 @@ mod tests {
         if resolve_host("example.com").is_ok() {
             assert!(!blocked_host("example.com"));
         }
+    }
+
+    /// `[search]` picks the provider; the key comes with it or is missing,
+    /// and the tool says so instead of searching nowhere.
+    #[test]
+    fn the_search_provider_is_read_from_config() {
+        let none = Search::from_parts(&SearchConfig::default(), None);
+        assert_eq!(none.provider, Provider::None);
+        assert_eq!(none.max_results, DEFAULT_RESULTS);
+        let tav = SearchConfig {
+            provider: "tavily".into(),
+            url: None,
+            max_results: 20,
+        };
+        let s = Search::from_parts(&tav, Some("tvly-x".into()));
+        assert_eq!(
+            s.provider,
+            Provider::Tavily {
+                key: Some("tvly-x".into())
+            }
+        );
+        assert_eq!(s.max_results, MAX_RESULTS);
+        assert_eq!(
+            Search::from_parts(&tav, None).provider,
+            Provider::Tavily { key: None }
+        );
+        let sx = SearchConfig {
+            provider: "SearXNG".into(),
+            url: Some("http://localhost:8080/".into()),
+            max_results: 3,
+        };
+        assert_eq!(
+            Search::from_parts(&sx, None).provider,
+            Provider::Searxng {
+                url: "http://localhost:8080".into()
+            }
+        );
+        let sx = SearchConfig {
+            provider: "searxng".into(),
+            url: None,
+            max_results: 0,
+        };
+        assert_eq!(
+            Search::from_parts(&sx, None).provider,
+            Provider::Searxng {
+                url: "http://localhost:8080".into()
+            }
+        );
+        assert_eq!(
+            Search::from_parts(
+                &SearchConfig {
+                    provider: "bing".into(),
+                    ..Default::default()
+                },
+                None
+            )
+            .provider,
+            Provider::Unknown("bing".into())
+        );
+        // Without a provider or a key, the tool says what to set.
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut ctx = crate::tools::tests::ctx(crate::Role::SoloPlan, dir.path());
+        ctx.web = true;
+        let out = web_search(&json!({"query": "fastify cookies"}), &ctx).unwrap();
+        assert!(
+            out.is_error && out.text.contains("no search provider is set"),
+            "{out:?}"
+        );
+        ctx.search = Search::from_parts(&tav, None);
+        let out = web_search(&json!({"query": "fastify cookies"}), &ctx).unwrap();
+        assert!(out.is_error && out.text.contains("has no key"), "{out:?}");
+    }
+
+    /// Both providers' answers read as the same list.
+    #[test]
+    fn results_from_either_provider_read_the_same() {
+        let tav = json!({"query": "x", "results": [
+            {"title": "Fastify cookie plugin", "url": "https://github.com/fastify/fastify-cookie", "content": "  A plugin for  Fastify that adds support for reading and setting cookies. ", "score": 0.9, "published_date": "2024-03-01T00:00:00Z"},
+            {"title": "", "url": "https://example.com/x", "content": ""},
+            {"title": "no url", "content": "dropped"}
+        ]});
+        let hits = parse_tavily(&tav);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(
+            hits[0].snippet,
+            "A plugin for Fastify that adds support for reading and setting cookies."
+        );
+        assert_eq!(hits[0].date.as_deref(), Some("2024-03-01"));
+        let sx = json!({"results": [
+            {"title": "Fastify cookie plugin", "url": "https://github.com/fastify/fastify-cookie", "content": "A plugin for Fastify that adds support for reading and setting cookies.", "publishedDate": "2024-03-01", "engine": "duckduckgo"}
+        ]});
+        let same = parse_searxng(&sx);
+        assert_eq!(same[0], hits[0]);
+        let text = render(&hits);
+        assert_eq!(
+            text,
+            "1. Fastify cookie plugin (2024-03-01)\n   https://github.com/fastify/fastify-cookie\n   A plugin for Fastify that adds support for reading and setting cookies.\n2. https://example.com/x\n   https://example.com/x"
+        );
+        let long = json!({"results": [{"title": "t", "url": "https://e.com", "content": "word ".repeat(200)}]});
+        let h = parse_tavily(&long);
+        assert!(h[0].snippet.ends_with('…') && h[0].snippet.chars().count() <= MAX_SNIPPET + 1);
     }
 
     #[test]

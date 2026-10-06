@@ -127,8 +127,9 @@ impl Role {
             Self::SoloPlan => Some(
                 "[hat: plan — nothing may change; read and think. check_package tells you a \
                  dependency's latest release and its known advisories; ask it before you pin a \
-                 version. When you have a plan, show it with present_plan: goal, steps, files, \
-                 risks, and how to verify]",
+                 version. web_search and web_fetch are yours for what is current on the web. \
+                 When you have a plan, show it with present_plan: goal, steps, files, risks, and \
+                 how to verify]",
             ),
             Self::SoloAudit => Some(
                 "[hat: audit — nothing may change; read, run the tests and the product, and \

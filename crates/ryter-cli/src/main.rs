@@ -486,6 +486,7 @@ async fn run_prompt(
             read_only: false,
             created: Vec::new(),
             kept: Vec::new(),
+            search: ryter_core::tools::Search::from_config(&cfg.search),
         },
         connection: conn_name,
         model,
@@ -560,8 +561,12 @@ fn connections_cmd(cmd: Option<ConnCmd>) -> ryter_core::Result<()> {
             Ok(())
         }
         Some(ConnCmd::SetKey { name }) => {
-            if !cfg.connections.contains_key(&name) {
-                return Err(Error::Config(format!("unknown connection {name}")));
+            if !cfg.connections.contains_key(&name) && cfg.search.key_name() != Some(name.as_str())
+            {
+                return Err(Error::Config(format!(
+                    "unknown connection {name}; a search provider's key takes its name \
+                     ([search] provider = \"tavily\", then set-key tavily)"
+                )));
             }
             eprint!("API key for {name}: ");
             let _ = io::stderr().flush();
@@ -862,6 +867,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
             read_only: false,
             created: Vec::new(),
             kept: Vec::new(),
+            search: ryter_core::tools::Search::from_config(&cfg.search),
         },
         connection: conn_name,
         model,
@@ -991,6 +997,7 @@ fn serve_host_from_config(
             read_only: false,
             created: Vec::new(),
             kept: Vec::new(),
+            search: ryter_core::tools::Search::from_config(&cfg.search),
         },
         connection: conn_name,
         model,
