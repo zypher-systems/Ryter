@@ -1262,6 +1262,7 @@ struct ConfigFile {
     hooks: Vec<HookConfig>,
     sandbox: Option<SandboxConfig>,
     features: Option<FeaturesConfig>,
+    search: Option<SearchConfig>,
     permissions: Option<crate::permissions::Permissions>,
     #[serde(default)]
     limits: Option<LimitsConfig>,
@@ -1431,6 +1432,9 @@ impl ConfigFile {
         }
         if let Some(f) = self.features {
             cfg.features = f;
+        }
+        if let Some(s) = self.search {
+            cfg.search = s;
         }
         if let Some(l) = self.limits {
             cfg.limits = l;
@@ -2419,6 +2423,33 @@ mod tests {
     fn store_secret_rejects_an_empty_key() {
         let dir = TempDir::new().unwrap();
         assert!(store_secret_at(dir.path(), "ryter-test-conn", "   ").is_err());
+    }
+
+    /// `[search]` in the user's file reaches the config. The first live
+    /// test of the search found `set-key tavily` refused and `web_search`
+    /// saying no provider was set, with the section written: the overlay
+    /// struct had no field for it and dropped it on the floor.
+    #[test]
+    fn the_search_section_is_read_from_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("config.toml"),
+            "default_connection = \"openrouter\"\n\n[search]\nprovider = \"tavily\"\nmax_results = 3\n",
+        )
+        .unwrap();
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(cfg.search.provider, "tavily");
+        assert_eq!(cfg.search.max_results, 3);
+        assert_eq!(cfg.search.key_name(), Some("tavily"));
+        assert!(cfg.features.web, "web is on by default");
+        fs::write(
+            dir.path().join("config.toml"),
+            "[search]\nprovider = \"searxng\"\nurl = \"http://localhost:8080\"\n",
+        )
+        .unwrap();
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(cfg.search.url.as_deref(), Some("http://localhost:8080"));
+        assert_eq!(cfg.search.key_name(), None);
     }
 
     #[test]

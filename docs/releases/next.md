@@ -8,6 +8,11 @@ Unreleased: what is in `dev` since 0.20.0. These notes become the next release's
 
 - **`web_search` looks where you tell it to.** `[search] provider = "tavily"`, with a key stored like a connection's (`ryter connections set-key tavily`, `/provider set-key tavily`, or `TAVILY_API_KEY`), or `provider = "searxng"` with the `url` of a server of your own. Each result comes back as its title, address, date where known and a snippet; `max_results` is yours (1 to 10, 5 by default). The DuckDuckGo page scrape is gone; without a `[search]` section the tool says what to set. `[features] web` is now on by default, and `web_search` and `web_fetch` belong to the plan and audit hats, as `check_package` does; the build and scribe hats are refused them and told who uses them, and a refusal with the feature off says where it is turned on.
 
+## Tried before release
+
+- **With a real model, under a $1.00 cap:** `claude-opus-5.5` in the plan hat on a scratch project with three pinned npm packages. `check_package` was called once per package and read back correctly: eleven advisories against fastify 4.0.0 with their fixing versions, none against @fastify/cookie 9.0.0, four against lodash 4.17.15. `web_search` through Tavily returned eight results with snippets on the second turn; the first turn found the `[search]` section was being dropped by the config file reader, fixed before this note. Told search was off, the model fetched the Fastify v5 migration guide with `web_fetch` and summarised it. The two turns cost $0.17.
+- **Not yet tried:** SearXNG live; the audit hat using either tool; anything on a Mac.
+
 ## Why
 
 Building anything means knowing what is current and what is broken, and the web search behind `[features] web` was a scrape of a search page that nobody had turned on. The registries and OSV.dev answer the actual question exactly, for nothing, so that is the first thing Ryter learns to look up. Where it sits is the user's placing (2026-10-05): plan, yes; audit, yes; build and scribe, no. The search provider is the user's choice too: Tavily for its free tier, and SearXNG beside it so that nobody is made to take a key.
