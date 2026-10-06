@@ -61,7 +61,7 @@ SpaceXAI and OpenRouter are compiled in as equals. Other OpenAI-compatible or An
 
 Credential order per connection: TOML `api_key` → `env_key` → the stored key → well-known env (`OPENROUTER_API_KEY`, `XAI_API_KEY`).
 
-A search provider's key is stored the same way under the provider's name: `ryter connections set-key tavily`, or `/provider set-key tavily` in the TUI (`TAVILY_API_KEY` in the environment also works). See [Web search](#web-search).
+A search provider's key is stored the same way under the provider's name. In the TUI, `/provider` has a **web search** row under the connections: Enter on it chooses Tavily, SearXNG or off, and choosing Tavily goes straight to the key prompt (`k` on the row later re-enters it). The typed forms work too: `/provider set-key tavily`, `ryter connections set-key tavily`, or `TAVILY_API_KEY` in the environment. See [Web search](#web-search).
 
 **Reasoning.** Each model has a reasoning level you choose: **Tab** on a model in `/models`, for any seat, steps it through `auto → low → medium → high → model's own`. The model card shows the level in use (`reasoning  auto · medium`). The choice follows the model into every hat that uses it, and is saved to `~/.ryter/reasoning.toml`; `[model_reasoning]` in `config.toml` does the same by hand, keyed by model id.
 
@@ -472,7 +472,7 @@ User-invocable skills and `~/.ryter/commands/*.md` join the palette under **skil
 
 ## Web search
 
-`web_search` looks where you tell it to. Two providers are built in; pick one in `~/.ryter/config.toml`:
+`web_search` looks where you tell it to. Two providers are built in. The easy way: `/provider`, then the **web search** row under the connections. Enter offers Tavily, SearXNG or off; Tavily goes on to the key prompt, SearXNG asks for your server's address. The choice is saved to `~/.ryter/settings.toml`, which wins over `[search]` in `config.toml` (and every TUI save copies the provider there, so after the first one `settings.toml` is the file that counts). The same can be written in `~/.ryter/config.toml` by hand:
 
 ```toml
 [search]

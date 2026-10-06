@@ -487,6 +487,11 @@ fn populate_view(
     view.sandbox_profile = cfg.sandbox.profile.clone();
     view.update_mode = cfg.update.mode;
     view.web = cfg.features.web;
+    view.search = crate::view::SearchRow {
+        provider: cfg.search.provider.clone(),
+        url: cfg.search.url.clone(),
+        has_key: config::has_search_key(&cfg.search),
+    };
     view.mcp_inbound = cfg.mcp.inbound;
     view.mcp_bind = cfg.mcp.bind.clone();
     view.mcp_servers = cfg.mcp_servers.clone();

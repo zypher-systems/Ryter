@@ -195,6 +195,120 @@ fn snapshot_palette_open() {
     all_sizes("palette", &v);
 }
 
+/// `/provider` has a web-search row under the connections. Enter on it
+/// chooses a provider; Tavily becomes the saved choice (the handler then
+/// asks for the key), SearXNG asks for the server's address first, and
+/// `k` on a Tavily row re-enters the key.
+#[test]
+fn the_provider_panel_offers_web_search() {
+    use crate::panel::providers::Providers;
+    use crate::panel::{Outcome, Panel};
+    let key = |c: KeyCode| KeyEvent::new(c, KeyModifiers::NONE);
+    let set_search = |o: &Outcome, provider: &str, url: Option<&str>| -> bool {
+        matches!(o, Outcome::CloseAct(Action::SetSearch { provider: p, url: u })
+            if p == provider && u.as_deref() == url)
+    };
+    let mut v = idle();
+    let row = v.connections.len();
+    let to_row = |p: &mut Providers, v: &mut View| {
+        for _ in 0..row {
+            p.key(key(KeyCode::Down), v);
+        }
+    };
+    let frame = render_to_string(&with_panel(PanelId::Providers), 120, 40);
+    assert!(frame.contains("web search"), "{frame}");
+    assert!(frame.contains("not set up"), "{frame}");
+    // Enter opens the chooser on the row, on `off` since nothing is set;
+    // one step down wraps to Tavily, the first choice.
+    let mut p = Providers::new(&v);
+    to_row(&mut p, &mut v);
+    assert!(matches!(p.key(key(KeyCode::Enter), &mut v), Outcome::Stay));
+    let body = p.render(&v, 70, 20, Theme::truecolor_dark());
+    let text: String = body.lines.iter().map(|l| l.to_string() + "\n").collect();
+    assert!(
+        text.contains("tavily") && text.contains("searxng") && text.contains("off"),
+        "{text}"
+    );
+    p.key(key(KeyCode::Down), &mut v);
+    assert!(set_search(
+        &p.key(key(KeyCode::Enter), &mut v),
+        "tavily",
+        None
+    ));
+    // SearXNG asks for the address, offers the local default, and keeps a
+    // non-address out. From `off`, two steps down.
+    let mut p = Providers::new(&v);
+    to_row(&mut p, &mut v);
+    p.key(key(KeyCode::Enter), &mut v);
+    p.key(key(KeyCode::Down), &mut v);
+    p.key(key(KeyCode::Down), &mut v);
+    assert!(matches!(p.key(key(KeyCode::Enter), &mut v), Outcome::Stay));
+    assert_eq!(v.composer.text(), "http://localhost:8080");
+    v.composer.set_text("box:8888");
+    assert!(
+        matches!(p.key(key(KeyCode::Enter), &mut v), Outcome::Stay),
+        "no scheme, stays"
+    );
+    v.composer.set_text("http://me:secret@box:8888");
+    assert!(
+        matches!(p.key(key(KeyCode::Enter), &mut v), Outcome::Stay),
+        "credentials in the address, stays"
+    );
+    let text: String = p
+        .render(&v, 70, 20, Theme::truecolor_dark())
+        .lines
+        .iter()
+        .map(|l| l.to_string() + "\n")
+        .collect();
+    assert!(text.contains("no user name or password"), "{text}");
+    v.composer.set_text("http://box:8888/");
+    assert!(set_search(
+        &p.key(key(KeyCode::Enter), &mut v),
+        "searxng",
+        Some("http://box:8888")
+    ));
+    // With Tavily chosen, the row says whether the key is in, and `k` asks
+    // for it.
+    v.search = crate::view::SearchRow {
+        provider: "tavily".into(),
+        url: None,
+        has_key: false,
+    };
+    let mut shown = v.clone();
+    let _ = panel::open(&mut shown, PanelId::Providers, &env());
+    panel::sync_composer(&mut shown);
+    let frame = render_to_string(&shown, 120, 40);
+    assert!(
+        frame.contains("tavily") && frame.contains("no key"),
+        "{frame}"
+    );
+    let mut p = Providers::new(&v);
+    to_row(&mut p, &mut v);
+    assert!(matches!(
+        p.key(key(KeyCode::Char('k')), &mut v),
+        Outcome::CloseAct(Action::BeginSetKey(n)) if n == "tavily"
+    ));
+    // A hand-written `off` or `none` reads as not set up, and the chooser
+    // opens on `off` for it.
+    v.search.provider = "off".into();
+    let mut shown = v.clone();
+    let _ = panel::open(&mut shown, PanelId::Providers, &env());
+    assert!(render_to_string(&shown, 120, 40).contains("not set up"));
+    let mut p = Providers::new(&v);
+    to_row(&mut p, &mut v);
+    p.key(key(KeyCode::Enter), &mut v);
+    assert!(set_search(&p.key(key(KeyCode::Enter), &mut v), "", None));
+    v.search.provider = "tavily".into();
+    // Off clears the provider. The chooser opens on the provider in use
+    // (Tavily, the first), so two steps down reach it.
+    let mut p = Providers::new(&v);
+    to_row(&mut p, &mut v);
+    p.key(key(KeyCode::Enter), &mut v);
+    p.key(key(KeyCode::Down), &mut v);
+    p.key(key(KeyCode::Down), &mut v);
+    assert!(set_search(&p.key(key(KeyCode::Enter), &mut v), "", None));
+}
+
 #[test]
 fn snapshot_every_panel() {
     let panels: [(&str, PanelId); 16] = [

@@ -31,6 +31,17 @@ pub struct ConnRow {
     pub has_key: bool,
 }
 
+/// The search provider as the `/provider` panel shows it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SearchRow {
+    /// `tavily`, `searxng`, or empty for none.
+    pub provider: String,
+    /// A SearXNG server's address.
+    pub url: Option<String>,
+    /// Whether the key the provider needs is in place (never the secret).
+    pub has_key: bool,
+}
+
 /// The product a test started, while it is up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductUp {
@@ -284,6 +295,8 @@ pub struct View {
     pub update_mode: ryter_core::config::UpdateMode,
     /// `[features] web`.
     pub web: bool,
+    /// Where `web_search` looks, for the `/provider` panel's row.
+    pub search: SearchRow,
     /// `[ui]` settings in effect.
     pub ui: UiConfig,
     /// Recently run command names (`R-PAL-12`).
@@ -462,6 +475,7 @@ impl View {
             sandbox_profile: "off".into(),
             update_mode: ryter_core::config::UpdateMode::default(),
             web: false,
+            search: SearchRow::default(),
             // Tests and snapshots start on the classic layout; the app takes
             // the user's `[ui] layout` (ledger by default) from config.
             ui: UiConfig {

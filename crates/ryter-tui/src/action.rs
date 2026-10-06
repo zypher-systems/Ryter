@@ -88,8 +88,16 @@ pub enum Action {
         /// Secret.
         key: String,
     },
-    /// Begin secret capture for a connection.
+    /// Begin secret capture for a connection, or for the search provider.
     BeginSetKey(String),
+    /// Choose where `web_search` looks (`/provider`): `tavily`, `searxng`
+    /// with its address, or empty for none. Saved to settings.toml.
+    SetSearch {
+        /// The provider word.
+        provider: String,
+        /// A SearXNG server's address.
+        url: Option<String>,
+    },
     /// Live connectivity test.
     TestConnection(String),
     /// Write a new user connection.
