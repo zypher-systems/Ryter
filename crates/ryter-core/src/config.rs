@@ -2469,7 +2469,11 @@ mod tests {
         assert!(cfg.features.web, "web is on by default");
         // The key's variable is hidden by the load alone, before anything
         // that could start a child; a `Search` is built later than the
-        // MCP servers.
+        // MCP servers. The list is process-global and another test hides
+        // the same name, so it is emptied and the load run again.
+        crate::tools::shell::forget_hidden();
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(cfg.search.provider, "tavily");
         assert!(
             crate::tools::shell::hidden_vars()
                 .iter()

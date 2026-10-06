@@ -61,6 +61,15 @@ pub fn hidden_vars() -> Vec<String> {
     KEY_VARS.read().map(|v| v.clone()).unwrap_or_default()
 }
 
+/// Tests only: forget every hidden variable, so a test of what a load
+/// hides is not passed by another test's hide in the same process.
+#[cfg(test)]
+pub(crate) fn forget_hidden() {
+    if let Ok(mut vars) = KEY_VARS.write() {
+        vars.clear();
+    }
+}
+
 pub fn hide_env(var: &str) {
     let var = var.trim();
     if var.is_empty() {
