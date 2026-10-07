@@ -2,7 +2,7 @@
 
 Ryter is Zypher Systems’ terminal AI coding harness.
 
-One model works in your project, with you, and `Tab` switches between its two working hats, **plan** and **build**; `Shift+Tab` reaches the specialists, today **audit**. Each hat can run on a model of its own: a strong one to plan, a cheaper one to build, a different one to audit. Bring your own keys: **SpaceXAI** and **OpenRouter** are built in, and local model servers (Ollama, LM Studio, llama.cpp) work without one.
+One model works in your project, with you, and `Tab` switches between its two working hats, **plan** and **build**; `Shift+Tab` reaches the specialists, **audit** and **scribe**. Each hat can run on a model of its own: a strong one to plan, a cheaper one to build, a different one to audit, a small one to write the docs. Bring your own keys: **SpaceXAI** and **OpenRouter** are built in, and local model servers (Ollama, LM Studio, llama.cpp) work without one.
 
 Linux first. Apache-2.0.
 
@@ -61,7 +61,7 @@ Nothing is committed unless you commit it.
 ryter                         TUI
 ryter -p TEXT [--json]        one headless turn
 ryter -c -p TEXT              continue the latest session headless
-ryter --hat build|plan|audit -p TEXT    (default build)
+ryter --hat build|plan|audit|scribe -p TEXT    (default build)
 ryter --hat build             the TUI in that hat, for this run
 ryter --connection spacexai|openrouter
 ryter --sandbox off|workspace|read-only

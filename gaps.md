@@ -1,12 +1,16 @@
 # TUI redesign — review gaps
 
-Status: **resolved** (all G-01..G-07 landed)
+Status: **resolved** (all G-01..G-07 landed), and **archived**.
 Against: `0.2.0-patch` (`60adb20` Implement 0.2.0 TUI redesign)
 Fixed in: `8e317d1` (G-01/G-02/G-04/G-06), `aa51ad0` (G-03/G-05/G-07)
 Evidence: golden snapshots under `crates/ryter-tui/snapshots/`
-Not a new design contract. `design.md` still wins on intent.
 
-The 0.2 direction is right: conversation in the center, composer always on screen, command palette, one panel per config surface, activity strip for thinking, info cards instead of a flat key/value dump. These were the gaps.
+This is the review of the 0.2.0 screen. It is not the current contract.
+`design.md` is an archive of that same screen. Crew cards (`cards::crew`),
+the activity strip, and the commands this note assumes (`/crew`) were removed
+with crew mode. The user guide is `docs/guide.md`.
+
+The 0.2 direction was: conversation in the center, composer always on screen, command palette, one panel per config surface, an activity strip for thinking, info cards instead of a flat key/value dump. These were the gaps. The activity strip has since been replaced by the status row and the reasoning pane.
 
 ---
 

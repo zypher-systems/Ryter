@@ -115,9 +115,11 @@ allow_dangerous = false
 # [update]
 # mode = "install"              # install | notify | off
 
-# Public web tools (SSRF-blocked: no localhost / private IPs). Off by default.
+# Public web tools (SSRF-blocked: no localhost / private IPs). On by default.
+# The plan and audit hats use web_fetch and web_search; build and scribe do not.
+# A search still needs a provider, chosen in /provider or set as [search] in this file.
 # [features]
-# web = false
+# web = false                   # set false to turn the web tools off
 
 # Skills: ~/.ryter/skills/<name>/SKILL.md (user-invocable → /name)
 # User slash: ~/.ryter/commands/<name>.md  ($ARGUMENTS)

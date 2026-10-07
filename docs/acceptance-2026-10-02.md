@@ -1,5 +1,10 @@
 # Acceptance evidence — 2026-10-02
 
+> **Archive.** This run used the four hats of 0.12.0, including the test hat.
+> The test hat was removed on 2026-10-03. The numbers below are that day's
+> result, not a description of the current benchmark. The benchmark guide is
+> `bench/README.md`.
+
 The live run completed ten isolated coding tasks using the app’s configured OpenRouter connection and `qwen/qwen3-coder-flash`. Recorded provider cost was **$0.418755831 of the authorized $5 total**, across **524 requests**. All recorded calls had complete accounting. No further paid run was used to improve these results.
 
 **Six implementations passed the hidden tests. Five also finished all four phases with passing review and Test-hat outcomes. Three failing implementations received a review pass and a Test-hat pass.** This is one small model/configuration sample, not a claim that reviews or model-generated changes are reliable enough to skip external review.

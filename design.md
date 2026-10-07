@@ -1,9 +1,11 @@
 # Ryter TUI — Design Contract
 
-> **History.** This is the 0.2.0 design contract. Crew mode, which its crew card, `/crew`,
-> `/agents`, `/auditor` and merge-notice requirements describe, was removed on 2026-10-01
-> (see `DECISIONS.md`). Those requirements no longer apply; the rest still describes the
-> classic screen.
+> **Archive.** This is the 0.2.0 design contract, kept as a record. Crew mode
+> (`/crew`, `/agents`, `/auditor`, the crew card, mission control) was removed
+> on 2026-10-01. The test hat was removed on 2026-10-03, and the review hat is
+> the audit hat. The activity strip this contract specifies is gone. Do not
+> implement from this file. The user guide is `docs/guide.md`. The current
+> screen contracts are `docs/hat-rack-design.md` and `docs/specialists-design.md`.
 
 Status: **proposed / not implemented**
 Target release: **0.2.0** (feature add — new UI surface, no product rename)

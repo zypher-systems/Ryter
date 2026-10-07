@@ -14,18 +14,20 @@ python3 bench/run.py --mode simulated
 python3 bench/run.py --mode simulated --simulate-broken-build --task pager-off-by-one
 ```
 
-The simulated provider scripts plan/build/review turns through the real CLI,
-permission gate, filesystem tools, session persistence and spending code. Its
-builder writes reference answers; its verdicts and charges are synthetic. Those
-scores validate the harness, not a model's ability. The simulated reviewer runs
-the project's checks through the run file the harness provides (`run_project`,
-action `test`), as the review hat may. The broken-builder control leaves the
-fixture unchanged while the simulated reviewer claims it passed; the hidden
-checks must identify that false pass. One task shows the review hat's limit:
-`runner-script`'s checks are a script of the project's own (`sh dev lint`), and
-headless `--always-approve` goes only as far as the review hat's gate, which
-refuses that; its `checks_pass` is false while the scripted verdict still says
-PASS. In the TUI the user's approval of the run file goes further.
+The simulated provider scripts plan, build and audit turns through the real CLI,
+permission gate, filesystem tools, session persistence and spending code. The
+runner still passes `--hat review` for the third phase: that name selects the
+audit hat. Its builder writes reference answers; its verdicts and charges are
+synthetic. Those scores validate the harness, not a model's ability. The
+simulated auditor runs the project's checks through the run file the harness
+provides (`run_project`, action `test`), as the audit hat may. The
+broken-builder control leaves the fixture unchanged while the simulated auditor
+claims it passed; the hidden checks must identify that false pass. One task
+shows the audit hat's limit: `runner-script`'s checks are a script of the
+project's own (`sh dev lint`), and headless `--always-approve` goes only as far
+as the audit hat's gate, which refuses that; its `checks_pass` is false while
+the scripted verdict still says PASS. In the TUI the user's approval of the run
+file goes further.
 
 Live runs are opt-in and use the app's existing configured connection and key.
 The runner never copies credentials. It explicitly selects the model for every
@@ -48,8 +50,8 @@ costs take precedence. No CI job runs live mode.
 
 Plan replies are headless proposals, followed by the harness's explicit build
 instruction. Headless `--always-approve` covers the fixture's run file within the
-review hat's policy. The complete interactive approval protocol is separately
-covered by `agent::tests::acceptance`, including plan approval, review, approved
+audit hat's policy. The complete interactive approval protocol is separately
+covered by `agent::tests::acceptance`, including plan approval, an audit, approved
 run commands, resume, undo/redo, later user edits and commit receipts.
 
 `--task NAME` selects tasks; `--output PATH` chooses a new report directory.
@@ -93,9 +95,9 @@ See [the October 2 acceptance report](../docs/acceptance-2026-10-02.md), made on
 0.12.0 with four hats: six of ten implementations passed hidden checks, five
 completed with both verification hats passing, and three incorrect
 implementations received false passes from each hat. The authorized $5 run
-recorded $0.418755831. Since 0.15.0 there are three hats and the review runs the
-checks; `flow_completed` and the false-pass count are the review's alone. No live
-calls run in CI.
+recorded $0.418755831. The benchmark still runs three phases: plan, build and
+audit. The scribe is not a phase. The audit runs the checks; `flow_completed`
+and the false-pass count are the audit's alone. No live calls run in CI.
 
 `completed` measures hidden acceptance; `flow_completed` additionally requires all
 three phases to exit successfully and the review to pass. Explicit
