@@ -1,8 +1,11 @@
 # Ryter TUI: the hat rack screen (design contract)
 
-Status: **built** on `hat-rack-patch` (2026-10-02). Where the build differs from the first
-draft of this contract, the requirement below was rewritten to say what was built, and §18
-lists each change with its reason.
+Status: **built** on `hat-rack-patch` (2026-10-02), then amended. The current hats
+are plan and build, then audit and scribe. `docs/specialists-design.md` wins
+wherever this file still says three hats, a review hat, or a test hat. §18
+records those amendments. The test hat drawn in the body was removed on 2026-10-03.
+Where the build differs from the first draft of this contract, the requirement
+below was rewritten to say what was built, and §18 lists each change with its reason.
 Designed with the user on 2026-10-02, from mockups reviewed over three rounds.
 Applies to: `crates/ryter-tui`, with small listed additions to `crates/ryter-core` and `crates/ryter-cli`.
 Work branch: `hat-rack-patch`, cut from `dev`.

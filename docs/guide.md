@@ -99,7 +99,7 @@ ryter models [connection]
 
 `ryter` on a tty opens the TUI in the **ledger** layout (`[ui] layout = "ledger"`, the default since 0.6.0).
 
-The hat that is on sets the screen's one accent color: plan is cyan, build green, audit amber. Everything else stays the same under every hat. A fedora in that color sits faintly behind the conversation (`[ui] watermark = false`, or *watermark* in `/settings`, turns it off; it is left out on 16-color and no-color terminals).
+The hat that is on sets the screen's one accent color: plan is cyan, build green, audit amber, scribe violet. Everything else stays the same under every hat. A fedora in that color sits faintly behind the conversation (`[ui] watermark = false`, or *watermark* in `/settings`, turns it off; it is left out on 16-color and no-color terminals).
 
 - **The bar across the top** names the hats in their two rows, plan and build, then a dot, then audit and scribe. The hat that is on is a filled chip marked `◆`; a hat that has had a turn this session is marked `●` in its own color, and one that hasn't is `○`. The bar says which hats have been worn, not an order to wear them in. Then the session's title, the folder and the branch.
 - **The hat rack** runs down the left (screens 132 columns and wider). It has one block a hat, always in the same place: plan and build, a hairline marked `specialists`, then the specialists below it. Each block: the hat's model, how many turns it has had this session and what it has cost, and the figures that are its own. Plan: plans approved and rejected. Build: files and lines it changed in the session, and the latest run of the project's tests as three rows, `success`, `warning` (skipped or ignored) and `failure`. Audit: audits failed and passed. A hat with no turns yet says `not worn yet`. The block of the hat that is on is tinted.
@@ -122,7 +122,7 @@ The rest of the screen:
 
 Its keys: `↑↓` pick a file, `j`/`k` move between its changes, `x` undoes the selected change alone, `X` undoes the whole file (after a `y`), and `u` undoes the turn. `x` and `X` are recorded like a turn, so `/undo` brings them back. While the workbench is open, keys go to it and not the composer; `esc` or `^T` returns to the chat.
 
-`[ui] layout = "classic"` (also in `/settings`, applied at once) brings back the 0.5 screen. That's a header row, the chat with a right-hand **info panel** of cards (session, model + context gauge, spend + budget gauge, mcp), the **activity strip** while a turn runs, the bordered **composer**, and a hint bar. `^b` shows or hides the info panel there (it also drops automatically under 80 columns).
+`[ui] layout = "classic"` (also in `/settings`, applied at once) brings back the 0.5 arrangement: a header row, the chat with a right-hand **info panel** of cards (session, model and context gauge, spend and budget, mcp), a bordered **composer**, and a hint bar. A turn uses the same status row and reasoning pane as the ledger. The old activity strip is not on either screen. `^b` shows or hides the info panel (it also drops automatically under 80 columns).
 
 Every message is a left-aligned block under a speaker header — your name (from `[ui] username`, then `git user.name`, then `$USER`), the model name, `· system`, or a one-line tool row (`· read_file  path  0.1s`). Markdown renders with headings, lists, quotes, tables, and fenced code with syntax highlighting and a line-number gutter. Long model turns end with a summary line (`3 tools · 12.4k tok · 0:42 · $0.01`).
 
@@ -414,11 +414,11 @@ The panel updates when a turn finishes. You can open it while a turn is running,
 
   `git log --grep "Ryter:"` finds them later.
 
-Headless, `ryter -p` runs in build; `--hat plan|audit` picks another. Headless nobody can approve an edit, so pass `--always-approve` to let build change files.
+Headless, `ryter -p` runs in build; `--hat plan|audit|scribe` picks another. Headless nobody can approve an edit, so pass `--always-approve` to let build change files.
 
 ## Choosing models
 
-**Every model is chosen in `/models`.** The seats are on the left, each with the model it runs on now: *All hats*, then *Plan*, *Build* and *Audit*. The models for the chosen seat are on the right.
+**Every model is chosen in `/models`.** The seats are on the left, each with the model it runs on now: *All hats*, then *Plan*, *Build*, *Audit* and *Scribe*. The models for the chosen seat are on the right.
 - **Choosing a seat:** `↑↓` picks one. `→` or `⏎` moves to its models, and typing starts a filter there straight away.
 - **Setting a model:** `⏎` sets the highlighted model for the seat and takes you back to the seats, on the next one. You can set every seat in one visit: pick, `⏎`, pick, `⏎`. A `✓` marks each seat you've set.
 - **Other keys:** `←` goes back to the seats without setting anything. `Tab` steps the highlighted model's reasoning, `s` sorts, and `Esc` closes.
@@ -649,7 +649,7 @@ They can also write the tools' download caches (`~/.cargo/registry`, `~/.npm`, p
 
 The configured Ryter home must be outside the workspace and outside shared system/scratch directories. A home under `/tmp`, for example, would be exposed by the scratch grant and is refused under a profile. Linked session, page or skill storage is refused. Choose a private home outside those locations or use `off`.
 
-Plans, decisions and test reports stored in the project follow the workspace’s access rights. Run-file approvals and lifecycle ownership are kept separately in Ryter’s home.
+Plans, decisions and audits stored in the project follow the workspace’s access rights. Run-file approvals and lifecycle ownership are kept separately in Ryter’s home.
 
 **Git metadata must be reachable too.** For sandboxed Git workflows, launch Ryter from the repository root. A nested project whose Git metadata is outside the granted workspace may not have Git checkpoints or review available; the filesystem profile does not grant parent repositories automatically.
 
@@ -669,9 +669,10 @@ Plans, decisions and test reports stored in the project follow the workspace’s
 - One gate: `decide(hat, tool, args)` → Allow / Ask / Deny. Every hat is offered the same tools; the gate decides what each may do with them.
 - **Build:** edits, toolchains, scripts, inline code, the project's containers and ordinary git run without asking; deleting, discarding work in git, publishing and leaving the machine ask; `[permissions]` moves any of those, short of a refusal. `/yolo` answers every question yes.
 - **Plan:** reading and read-only commands; it may write the project's memory files and its own notes, nothing else.
-- **Audit:** what the build hat runs, behind a checkpoint that puts the tree back when the turn ends; git stays read-only (`git stash list` and `show` included); its only files are `.ryter/audit.md` and the dated copies. Without a git repository there is no checkpoint, and it is held to reading, tests and linters, as the review hat was.
+- **Audit:** what the build hat runs, behind a checkpoint that puts the tree back when the turn ends; git stays read-only (`git stash list` and `show` included); its only files are `.ryter/audit.md` and the dated copies. Without a git repository there is no checkpoint, and it is held to reading, tests and linters.
+- **Scribe:** reading, read-only commands, and documentation files. It does not write code or Ryter's own files.
 - Denied in every hat: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files. An example file (`.env.example`, `.env.sample`) is not a secret. One exception: the build hat may **write** the project's own `.env` (or `.env.local`, `config/.env.production`, `local.env`) whole, or copy it from its example (`cp .env.example .env`), with your `y` each time, since a project that needs one can't run without it. The card shows what would be written; nothing reads it back, and an edit in place stays refused, as does every other hat. An approved plan, `a` and `--always-approve` don't cover it; headless refuses it.
-- Shell commands are judged per segment (`a && b` is two commands). Privilege escalation, disk writes, `git push`, and piping into a shell are denied. In the TUI a permission modal shows the tool and its arguments: `⏎` or `y` allow this call, `n` deny, `a` allow that kind of action for the rest of the session; destructive commands and writes outside the project take only `y` (see [Approving](#talking-to-ryter)). Headless (no TUI) fail-closes.
+- Shell commands are judged per segment (`a && b` is two commands). Privilege escalation and piping into a shell are denied. `git push` asks. What each hat may write is in [Hats](#hats). In the TUI a card shows the tool and its arguments: `⏎` or `y` allow this call, `n` deny, `a` allow that kind of action for the rest of the session; destructive commands and writes outside the project take only `y` (see [Approving](#talking-to-ryter)). Headless, an ask is refused unless `--always-approve` or `--yolo` is set, and those two still stop at what [Hats](#hats) says they stop at.
 - `ask_user` lets the model ask a question; the TUI shows it as a modal (number keys pick a choice, or type free text).
 - `check_package` tells the plan and audit hats a dependency's latest release and its known advisories, from its registry (crates.io, npm, PyPI, the Go module proxy) and OSV.dev: fixed public hosts, read-only, no key, on by default. The build and scribe hats are refused it and told who asks.
 - `[features] web` (on by default) offers `web_fetch` and `web_search` to the plan and audit hats; the build and scribe hats are refused them and told who uses them. `web_fetch` refuses localhost, private, link-local and metadata addresses, and follows no redirect into them. `web_search` goes through the provider in `[search]` and nowhere else (see [Web search](#web-search)); without one it says what to set.
@@ -689,7 +690,7 @@ A project can keep **why** on disk, not only in a conversation:
 | `DECISIONS.md` | Decision records (chosen vs rejected, why, where). |
 | `notes/*.md` | Notes kept beside them. |
 
-When these files exist, the model **reads** them on every turn (capped), and is told to update them as work changes and to add a short entry to `DECISIONS.md` when it makes a non-obvious decision. When you ask why something is a certain way, it should quote `DECISIONS.md` and open the files it names. Ryter doesn't create them: a project that has none gets none until you or the model writes one. The plan hat may write these files; the review hat may not.
+When these files exist, the model **reads** them on every turn (capped), and is told to update them as work changes and to add a short entry to `DECISIONS.md` when it makes a non-obvious decision. When you ask why something is a certain way, it should quote `DECISIONS.md` and open the files it names. Ryter doesn't create them: a project that has none gets none until you or the model writes one. The plan, build and scribe hats may write these files; the audit hat may not.
 
 ## Sessions
 
@@ -733,8 +734,7 @@ streams, recovery and permission refusals. These checks spend no provider credit
 `python3 bench/run.py --mode simulated` exercises all ten retained benchmark
 fixtures. See [the benchmark guide](../bench/README.md) for reference validation,
 false-pass controls, saved reports and explicitly budgeted live runs. A model's
-review or test pass is its reported verdict; it does not prove the hidden tests
-will pass.
+audit verdict is what it reported; it does not prove the hidden tests will pass.
 
 For headless runs, explicit `--model` or `--connection` flags override saved
 hat-specific routes for that run. They do not rewrite those saved hat defaults.

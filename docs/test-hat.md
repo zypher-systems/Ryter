@@ -1,10 +1,10 @@
-> **Removed on 2026-10-03.** The test hat was taken out of Ryter after its first real session on 0.14.0; `DECISIONS.md` has the reasoning. This document is kept as history. `run_project` and the run file live on, for the build and review hats.
+> **Removed on 2026-10-03.** The test hat, `/test`, its own conversation, the test offer, `report_test` and `.ryter/tests/` were taken out after the first real session on 0.14.0. `DECISIONS.md` has the reasoning. This page is the record of that design. None of it is in Ryter. `run_project` and the run file live on, for the build and audit hats, and [the user guide](guide.md) describes them.
 
-# The Test hat: approved design
+# The Test hat: approved design (archive)
 
-Designed with the user on 2026-10-01, a mockup for each choice. This page is what the build is held to; where the build has to differ, it says so here.
+Designed with the user on 2026-10-01, a mockup for each choice. What follows is how it was built. Do not follow it.
 
-**All of it is built:** the hat and its own thread, its seat in `/models`, what it may run, `.ryter/decisions.md`, `.ryter/run.toml` with its approval panel, `/stop` and the question on quit, the report into the main conversation and its file, `/test`, the offer after a review that passed, and the receipt.
+**What had been built, and was then removed:** the hat and its own thread, its seat in `/models`, what it may run, `.ryter/decisions.md`, `.ryter/run.toml` with its approval panel, `/stop` and the question on quit, the report into the main conversation and its file, `/test`, the offer after a review that passed, and the receipt. `.ryter/decisions.md`, `.ryter/run.toml`, `/stop` and the quit question stayed, on the build and audit hats.
 
 **Where the build differs from the mockups:**
 

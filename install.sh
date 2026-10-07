@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/zypher-systems/ryter/main/install.sh | sh
 #
 # Environment:
-#   RYTER_VERSION      a release tag like v0.2.0 (default: the latest release)
+#   RYTER_VERSION      a release tag like v0.22.0 (default: the latest release)
 #   RYTER_INSTALL_DIR  where the binary goes (default: ~/.local/bin)
 #   RYTER_DOWNLOAD_URL where release files are (default: GitHub; for mirrors)
 #

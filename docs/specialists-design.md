@@ -20,7 +20,7 @@ Why: the first real sessions on three hats showed that a hat earns its place by 
 
 - **R-KEY-01** `Tab`: the next hat in the current row. In the primary row that is the other primary hat.
 - **R-KEY-02** `Shift+Tab`: the other row. Into the specialist row it puts on the specialist last worn this session, audit when none; back into the primary row, the primary last worn, build when none.
-- **R-KEY-03** `/plan`, `/build`, `/audit`, `/scribe` jump straight to a hat from either row. `/review` is kept for one release as `/audit` with a notice.
+- **R-KEY-03** `/plan`, `/build` and `/scribe` jump straight to a hat. `/audit` runs an audit (it does not merely put the hat on), and `/review` is a hidden alias of it, with a notice. The hat itself is reached with `Shift+Tab`. The later note under "What changed in the building" is the one that was built.
 - **R-KEY-04** The composer's hint and the foot line name both keys for where the user is: `tab build · ⇧tab specialists` in the primary row, `tab scribe · ⇧tab plan · build` in the specialist row.
 - **R-KEY-05** Panels keep their own Tab meaning; these keys apply to the solo screen with no panel open, as today.
 
