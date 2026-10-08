@@ -111,22 +111,36 @@ impl Selection {
 
     /// The pointer moved onto `cover`, something drawn over the
     /// conversation: the pinned question at its top, the palette or the
-    /// "new rows" mark at its bottom. That is past the text there, as the
-    /// pane's edge is: the selection ends at the last row of text before
-    /// the cover, and the pane scrolls toward it.
+    /// "new rows" mark lower down. That is past the text there, as the
+    /// pane's edge is: the selection ends at the last row of text on the
+    /// side it came from, and the pane scrolls toward the cover.
+    ///
+    /// The side is where the selection began, not where the cover sits. A
+    /// palette long enough to start above the pane's middle was taken for
+    /// something at its top: a drag down onto it ended below it, with the
+    /// rows under it copied and none of them painted.
     pub fn drag_onto(&mut self, column: u16, cover: Rect, top: usize) {
-        let middle = self.area.y + self.area.height / 2;
-        let row = if cover.y < middle {
-            self.pull = -1;
-            cover.y + cover.height
+        let first = i64::try_from(top).unwrap_or(i64::MAX);
+        let began = i64::from(self.area.y) + (self.anchor.1 - first);
+        let (above, below) = (
+            i64::from(cover.y),
+            i64::from(cover.y) + i64::from(cover.height),
+        );
+        let (pull, row) = if began < above {
+            (1, cover.y.saturating_sub(1))
+        } else if began >= below {
+            (-1, cover.y + cover.height)
         } else {
-            self.pull = 1;
-            cover.y.saturating_sub(1)
+            // It began beside the cover, on a row the cover is also on:
+            // there is no row of text between them to end at. It stays
+            // where it was.
+            return;
         };
         let row = row.clamp(
             self.area.y,
             self.area.y + self.area.height.saturating_sub(1),
         );
+        self.pull = pull;
         self.pull_at = row - self.area.y;
         self.reach(column, row, top);
     }

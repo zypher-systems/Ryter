@@ -4620,3 +4620,88 @@ fn a_pulled_selection_ends_at_the_panes_edge() {
     );
     assert!(text.contains("line 0\nline 1\nline 2"), "the whole reply");
 }
+
+/// A drag that reaches something drawn over the conversation ends on the
+/// side it came from. The palette can be long enough to start above the
+/// pane's middle: a drag down onto it stops on the row above it, and the
+/// rows under it are neither copied nor painted.
+#[test]
+fn a_drag_onto_a_cover_ends_on_the_side_it_came_from() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    let theme = Theme::truecolor_dark();
+    let size = (100, 30);
+    let none = KeyModifiers::NONE;
+    let left = MouseButton::Left;
+    let mut v = many_lines();
+    v.busy = false;
+    let _ = render_buffer(&v, size.0, size.1, theme);
+    v.scroll.to_top(false);
+    crate::run::keys::handle(&mut v, key(KeyCode::Char('/')));
+    assert!(v.palette.is_some());
+    let plain = render_buffer(&v, size.0, size.1, theme);
+    let hit = crate::draw::render_hit(&v, size.0, size.1);
+    let palette = hit
+        .covers
+        .iter()
+        .copied()
+        .max_by_key(|c| c.height)
+        .expect("the palette is drawn");
+    let area = hit.chat_text;
+    assert!(
+        palette.y > area.y && palette.y < area.y + area.height / 2,
+        "long enough to start above the middle: {palette:?} in {area:?}"
+    );
+    // The text of each row of the pane, as drawn.
+    let row = |y: u16| -> String {
+        (area.x..area.x + area.width)
+            .map(|x| plain[(x, y)].symbol().to_string())
+            .collect::<String>()
+            .trim()
+            .to_string()
+    };
+    let from = (area.x, area.y);
+    // A point on the palette, well into the conversation's columns.
+    let onto = (
+        (palette.x + palette.width - 2).min(area.x + area.width - 1),
+        palette.y + 5,
+    );
+    assert!(onto.0 > area.x + 8 && onto.0 >= palette.x);
+    let _ =
+        crate::run_mouse_handle_with(&mut v, mouse(MouseEventKind::Down(left), from, none), &hit);
+    let _ =
+        crate::run_mouse_handle_with(&mut v, mouse(MouseEventKind::Drag(left), onto, none), &hit);
+    let above = palette.y - 1 - area.y;
+    assert_eq!(
+        v.selection.as_ref().map(|s| (s.pull, s.pull_at)),
+        Some((1, above)),
+        "it ends on the row above the palette"
+    );
+    let held = render_buffer(&v, size.0, size.1, theme);
+    assert!(held[(area.x + 1, palette.y - 1)].bg == theme.selection_bg);
+    for y in palette.y..palette.y + palette.height {
+        for x in area.x..area.x + area.width {
+            // The palette marks its own current row in the same color:
+            // nothing there may have changed since before the drag.
+            assert!(
+                held[(x, y)].bg == plain[(x, y)].bg,
+                "painted under it at {x},{y}"
+            );
+        }
+    }
+    let sel = v.selection.clone().expect("held");
+    let text = sel.text(&v, &held, theme);
+    let seen: Vec<String> = (area.y..palette.y).map(row).collect();
+    assert_eq!(
+        text.lines().map(str::trim).collect::<Vec<_>>(),
+        seen.iter().map(String::as_str).collect::<Vec<_>>(),
+        "the rows in sight above the palette, and no others"
+    );
+    // A selection that began beside a cover, on one of its rows, stays put
+    // when the pointer moves onto the cover.
+    let mut beside =
+        crate::select::Selection::begin(area, Some(hit.chat), false, area.x, palette.y + 1, 0);
+    beside.drag(area.x + 3, palette.y + 1, 0);
+    let before = beside.clone();
+    beside.drag_onto(palette.x + 2, palette, 0);
+    assert_eq!(beside, before);
+}

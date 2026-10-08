@@ -349,7 +349,8 @@ two distinct guarantees.
 - **R-SEL-07** What is highlighted is what is copied. A conversation's selection is painted
   only on cells that show the document: not on what is drawn over the pane, not below the
   document's end, and not under a panel. A drag from the text onto something drawn over the
-  pane ends at the nearest row of text in sight and pulls the pane as its edge does.
+  pane ends at the last row of text in sight on the side the selection began, and pulls the
+  pane toward the cover as its edge does.
 - **R-SEL-03** In the conversation a selection is in document rows: it stays on its text
   when the pane scrolls or the reply grows, and its text is read from the document, so rows
   out of sight are copied. The pointer held past the pane's top or bottom edge scrolls one
