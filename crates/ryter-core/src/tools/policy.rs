@@ -8610,7 +8610,6 @@ mod tests {
             "sudo cp /etc/shadow /tmp/x",
             "sudo tar czf /tmp/x.tgz /root",
             "sudo cat /etc/../etc/shadow",
-            "sudo cat /etc/shad*",
             "sudo cat /etc/{shadow,hosts}",
             "cd /etc && sudo cat shadow",
             "cd /root && sudo ls",
@@ -8696,6 +8695,11 @@ mod tests {
             ("sudo cat open.txt", false),
             ("sudo cp open.txt later.txt", false),
             ("sudo cat shut.db", true),
+            // A pattern is the files it matches. One that matches nothing
+            // is handed over as written, and names nothing.
+            ("sudo cat shut.*", true),
+            ("sudo cat sh*", true),
+            ("sudo cat nothing-here.*", false),
             ("sudo cp shut.db /tmp/copy.db", true),
             ("sudo ls vault", true),
             ("sudo cat vault/inside.txt", true),
