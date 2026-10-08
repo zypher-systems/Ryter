@@ -495,6 +495,11 @@ impl Panel for Models {
     fn legend(&self, _view: &View) -> String {
         match self.focus {
             Focus::Seats => "↑↓ seat · → models · esc done".into(),
+            // On the first seat the choice is every hat's.
+            Focus::Models if self.assign_role.is_none() => {
+                "↑↓ move · enter set for all hats · ← seats · tab reasoning · s sort · esc done"
+                    .into()
+            }
             Focus::Models => {
                 "↑↓ move · enter set · ← seats · tab reasoning · s sort · esc done".into()
             }
@@ -666,9 +671,15 @@ impl Panel for Models {
             Some(text) => widgets::note(&wrap::truncate(&text, right_w.saturating_sub(2)), theme),
             None => widgets::blank(theme),
         });
+        // On the first seat the choice is every hat's.
+        let set = if self.assign_role.is_none() {
+            "set for all hats"
+        } else {
+            "set"
+        };
         right.push(Line::from(hints(
             &[
-                ("enter", "set"),
+                ("enter", set),
                 ("←", "seats"),
                 ("esc", "done"),
                 ("tab", "reasoning"),
@@ -950,6 +961,8 @@ mod tests {
         // is asked for in the same breath.
         assert!(matches!(key(&mut p, &mut v, KeyCode::Right), Outcome::Stay));
         assert_eq!(p.focus, Focus::Models);
+        // On this seat the choice is every hat's, and the keys say so.
+        assert!(p.legend(&v).contains("enter set for all hats"));
         v.composer.set_text("grok-4.7");
         match key(&mut p, &mut v, KeyCode::Enter) {
             Outcome::Act(Action::Many(acts)) => {

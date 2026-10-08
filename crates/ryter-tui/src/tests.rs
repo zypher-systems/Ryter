@@ -4705,3 +4705,39 @@ fn a_drag_onto_a_cover_ends_on_the_side_it_came_from() {
     beside.drag_onto(palette.x + 2, palette, 0);
     assert_eq!(beside, before);
 }
+
+/// A model chosen for "All hats" is every hat's: the ones that had a model
+/// of their own follow it again, and the line in the chat says which. It
+/// used to change only what the others followed, so with every hat set the
+/// choice changed nothing that ran.
+#[test]
+fn a_model_for_all_hats_is_every_hats() {
+    let own = |model: &str| ryter_core::RoleModel {
+        connection: Some("openrouter".into()),
+        model: Some(model.into()),
+    };
+    let mut v = idle();
+    v.specialists
+        .insert("plan".into(), own("anthropic/claude-opus-5.5"));
+    v.specialists.insert("audit".into(), own("z-ai/glm-5.3"));
+    v.specialists
+        .insert("scribe".into(), own("deepseek/deepseek-v4.1-flash"));
+    v.mode = Role::SoloAudit;
+    assert_eq!(v.hat_model(), "z-ai/glm-5.3");
+    // The hats that had their own, in the seats' order.
+    assert_eq!(v.hats_follow(), ["plan", "audit", "scribe"]);
+    assert!(v.specialists.is_empty());
+    assert_eq!(v.hat_model(), v.model, "the audit hat follows all hats");
+    assert!(v.hats_follow().is_empty(), "nothing left to put back");
+
+    let said = crate::view::followed;
+    assert_eq!(said(&[]), "");
+    assert_eq!(
+        said(&["audit"]),
+        " · all hats follow it (audit had a model of its own)"
+    );
+    assert_eq!(
+        said(&["plan", "audit", "scribe"]),
+        " · all hats follow it (plan, audit and scribe had models of their own)"
+    );
+}

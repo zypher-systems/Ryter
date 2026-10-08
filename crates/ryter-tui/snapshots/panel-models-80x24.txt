@@ -14,7 +14,7 @@
     │   follows all hats   │                                               │
     │                      │                                               │
     │                      │ spacexai · grok-4.6 · reasoning auto (medium… │
-    │ ↑↓ seat   → models   │ enter set   ← seats   esc done   tab reasoning│
+    │ ↑↓ seat   → models   │ enter set for all hats   ← seats   esc done   │
     ╰──────────────────────────────────────────────────────────────────────╯
 
 

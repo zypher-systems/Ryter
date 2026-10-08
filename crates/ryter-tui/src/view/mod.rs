@@ -18,6 +18,22 @@ use crate::panel::PanelStack;
 use history::History;
 use scroll::ChatScroll;
 
+/// What is said after the model when hats that had their own now follow
+/// it: ` · all hats follow it (plan and audit had models of their own)`.
+pub fn followed(own: &[&str]) -> String {
+    let names = match own {
+        [] => return String::new(),
+        [one] => (*one).to_string(),
+        [first @ .., last] => format!("{} and {last}", first.join(", ")),
+    };
+    let had = if own.len() == 1 {
+        "had a model of its own"
+    } else {
+        "had models of their own"
+    };
+    format!(" · all hats follow it ({names} {had})")
+}
+
 /// How long a word on the last row stays (`copied 3 lines`).
 const FLASH_MS: u64 = 1800;
 /// How often the conversation scrolls a row while a selection is held past
@@ -377,6 +393,25 @@ impl View {
     /// model the rest follow): the hats.
     pub fn seat_roles(&self) -> &'static [&'static str] {
         HAT_ROLES
+    }
+
+    /// Every hat follows the model all hats use: a hat that had a model of
+    /// its own loses it. Returns those hats, in the seats' order.
+    ///
+    /// Choosing a model for "All hats" is this. It used to change only the
+    /// model the hats without one of their own follow, so with every hat
+    /// set the choice changed nothing that ran, and each hat had to be put
+    /// back to `default` by hand.
+    pub fn hats_follow(&mut self) -> Vec<&'static str> {
+        let own: Vec<&'static str> = HAT_ROLES
+            .iter()
+            .copied()
+            .filter(|role| self.specialists.get(*role).is_some_and(|m| m.is_override()))
+            .collect();
+        for role in HAT_ROLES {
+            self.specialists.remove(*role);
+        }
+        own
     }
 
     /// The model the next message goes to: this hat's own where it has

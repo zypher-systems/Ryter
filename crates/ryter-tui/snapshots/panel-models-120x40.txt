@@ -25,7 +25,7 @@
     │                             │                                                                                │
     │                             │                                                                                │
     │                             │ spacexai · grok-4.6 · reasoning auto (medium in build) · 500k ctx · $2/M inpu… │
-    │ ↑↓ seat   → models          │ enter set   ← seats   esc done   tab reasoning   s sort                        │
+    │ ↑↓ seat   → models          │ enter set for all hats   ← seats   esc done   tab reasoning   s sort           │
     ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 

@@ -19,10 +19,11 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.23.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.24.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
-- **0.24.0 — text is selected with the mouse.** Hold the left button and drag to highlight; letting go copies to the clipboard (OSC 52 and the desktop's tool). In the conversation the selection is the text: it stays on it through scrolling and streaming, scrolls when held past the pane's edge, and copies a code block without its frame. `Alt` selects a rectangle. `DECISIONS.md` 2026-10-07, `design.md` R-SEL-01 to 06, guide "Selecting text". Not yet tried on a Mac, or by the user in their own terminal.
-- **0.24.0 — four small things.** An audit's verdict of pass is refused over a finding that failed (the tunes run's audit read PASS above "1 of 5 failed"). `list_dir` and `glob` say when there is nothing to list. `/rename`, `/budget` and `/settings` open their fields on what they hold. A question's card gives the model's latest words as its reason, not what it said a response or two earlier (the card could open before the screen had caught up).
+- **0.24.1 — a model chosen for "All hats" is every hat's.** In `/models` (and with `/model <id>`) it puts each hat that had its own model back to following, and says which. Reported by the user from their own use. `DECISIONS.md` 2026-10-08.
+
+- **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
 
 - **The first real run on the hats as they are (1.0 item 1): half done.** The service half is the fiscus run, released in 0.20.0. The terminal half was run on 2026-10-07 on 0.22.0 ("tunes", a Rust TUI music player, $1.62): the four hats handed off, but a missing system package (`alsa-lib-devel`) had no path, so Ryter never built or ran the product, and the audit filed PASS with a failed finding beside it. Root by `sudo`, released in 0.23.0, is the fix for the first. Taken from that run since: the audit's verdict and its findings must agree, and an empty folder says it is empty (both in `dev`, below). Open from that run, not yet taken: reads of `/etc` and `/usr` ask (four times, each answered "always", which on a compound command covers only that command); `rm -rf` of a folder the write tool made this turn asks; `cp` and `ln -s` from `/usr` are refused while `cat … >` asks; the plan hat is refused `cargo --version`; a decision was recorded before it was tried. Whether this run closes the item is the user's call; the audit has still not driven a terminal app.
@@ -57,6 +58,7 @@ Everything here serves an item of the 1.0 list; the number says which. The direc
 - A repository nested *below* a scratch folder the turn deletes freely (`rm -rf /tmp/probe` with someone's repository at `/tmp/probe/sub`) is not protected; the check looks at the path and above it, as `free_place` always has.
 - The looking hats (plan, scribe, the audit without a checkpoint) are refused `sed 's/a/b/' f` and `awk '{print}' f` while `sed -n p f` runs: a script with a `/` or a brace reads as a path. Older than the fiscus patch; found by its tests.
 - Writing a key-named file to scratch space (`touch /tmp/tls_test.key`, to check a `.gitignore`) is refused as naming a secret. Left as the secret rule for now.
+- Selection, from the 0.24.0 reviews, non-blocking: a scrolled message box copies the `↑`/`↓` mark in its corner; where the "new rows" mark meets the palette a press uses the mark's rect; a pulled selection whose start has scrolled off the screen, dragged onto the pinned question, ends a row or two short; a click on a card can open its panel on top of a card that opened between press and release; prose that wrapped is copied with the screen's line breaks.
 - As root, the programs that only list (`ls`, `find`, `du`, `stat`) are not held to the folder rule, so `sudo find / -name x` or `sudo ls -R /` prints the names, not the contents, of what is in root's folders when an ancestor is named. From the 0.23.0 approving review, non-blocking: refuse them a folder that holds one of root's own folders, which `holds_something_closed` nearly computes already.
 - As root, programs that run a text of their own are refused by name (`runs_a_text`), and a name on no list gets through (`pythonw`, a database client's shell escape). The guide says so. Decide with the user whether root should instead be offered only to programs on a list (package managers, `make`, the project's own), which ends the chase at the cost of a list per distribution.
 
@@ -78,9 +80,13 @@ After 1.0, by the user's decision then:
 
 ## Done
 
-### 0.19.0 to 0.23.0 — the gate after a real run, package checks, web search, and root by `sudo` (2026-10-04 to 2026-10-07)
+### 0.19.0 to 0.24.0 — the gate after a real run, package checks, web search, root by `sudo`, and selecting with the mouse (2026-10-04 to 2026-10-08)
 
 Released. The notes are under `docs/releases/`.
+
+- **0.24.0 — text is selected with the mouse.** Hold the left button and drag to highlight; letting go copies to the clipboard (OSC 52 and the desktop's tool). In the conversation the selection is the text: it stays on it through scrolling and streaming, scrolls when held past the pane's edge, and copies a code block without its frame. `Alt` selects a rectangle. `DECISIONS.md` 2026-10-07, `design.md` R-SEL-01 to 06, guide "Selecting text". The release PR's reviews found four ways the highlight and the copy disagreed (the workbench's pane, what is drawn over the conversation, a dim line of code taken for the frame, a drag from a card) and one more in the second round; all fixed before the merge.
+
+- **0.24.0 — four small things.** An audit's verdict of pass is refused over a finding that failed (the tunes run's audit read PASS above "1 of 5 failed"). `list_dir` and `glob` say when there is nothing to list. `/rename`, `/budget` and `/settings` open their fields on what they hold. A question's card gives the model's latest words as its reason, not what it said a response or two earlier (the card could open before the screen had caught up).
 
 - **0.23.0 — the build hat may ask to run a command as root.** `sudo <command>` asks on a card of its own (`y` only, every time, yolo included) and sudo's question for the password is answered in a panel in Ryter; the password goes to sudo alone. Every refusal holds as root, and only the plain spelling is read. From the tunes run of 2026-10-07. `DECISIONS.md` 2026-10-07, guide "As root". The release PR's reviews found four more ways a root command could print what the account can't read (a listable folder, an interpreter under another name, a link made earlier on the line, an unreadable pipe); all four are closed, and a root command now runs in a call of its own.
 

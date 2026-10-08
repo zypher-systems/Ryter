@@ -883,7 +883,13 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
             view.ctx_window = Some(ryter_core::window_for(&model));
             apply_pricing(view, &cx.cfg, &model);
             let _ = config::save_last_route(&cx.home, &route_from_view(view));
-            view.system(format!("model · {model}"));
+            // The model for all hats is every hat's: the ones that had
+            // their own follow it again, and the line says which.
+            let own = view.hats_follow();
+            if !own.is_empty() {
+                save_hats(view, cx);
+            }
+            view.system(format!("model · {model}{}", crate::view::followed(&own)));
             cx.send(Work::Reconnect {
                 name: view.connection.clone(),
                 model,
