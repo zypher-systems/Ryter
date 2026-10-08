@@ -19,9 +19,9 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.22.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+Nothing in `dev` is waiting on a release. The last release is 0.23.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
-- **0.23.0 — the build hat may ask to run a command as root.** `sudo <command>` asks on a card of its own (`y` only, every time, yolo included) and sudo's question for the password is answered in a panel in Ryter; the password goes to sudo alone. Every refusal holds as root, and only the plain spelling is read. From the tunes run below. `DECISIONS.md` 2026-10-07, guide "As root". Still to do by the user: one real `sudo` with their own password.
+- **A real `sudo`, by the user (from 0.23.0).** Root by `sudo` shipped tried end to end with a stand-in `sudo` only. One approved root command with a real password, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 
 - **The first real run on the hats as they are (1.0 item 1): half done.** The service half is the fiscus run, released in 0.20.0. The terminal half was run on 2026-10-07 on 0.22.0 ("tunes", a Rust TUI music player, $1.62): the four hats handed off, but a missing system package (`alsa-lib-devel`) had no path, so Ryter never built or ran the product, and the audit filed PASS with a failed finding beside it. Root by `sudo`, above, is the fix for the first. Open from that run, not yet taken: the audit's verdict is the model's word alone and can disagree with its findings; reads of `/etc` and `/usr` ask (four times, each answered "always", which on a compound command covers only that command); `rm -rf` of a folder the write tool made this turn asks; `cp` and `ln -s` from `/usr` are refused while `cat … >` asks; the plan hat is refused `cargo --version`; an empty folder lists as an empty string; a decision was recorded before it was tried. Whether this run closes the item is the user's call; the audit has still not driven a terminal app.
 
@@ -56,6 +56,8 @@ Everything here serves an item of the 1.0 list; the number says which. The direc
 - `Panel::prefill` is implemented for `/provider` only; `/rename`'s title, `/budget`'s cap and `/settings`' text fields still open empty because the composer clears a panel's text as the field begins (the 0.22.0 approving reviewer, verified). The hook is in place; implement it in `sessions`, `budget` and `settings`.
 - The looking hats (plan, scribe, the audit without a checkpoint) are refused `sed 's/a/b/' f` and `awk '{print}' f` while `sed -n p f` runs: a script with a `/` or a brace reads as a path. Older than the fiscus patch; found by its tests.
 - Writing a key-named file to scratch space (`touch /tmp/tls_test.key`, to check a `.gitignore`) is refused as naming a secret. Left as the secret rule for now.
+- As root, the programs that only list (`ls`, `find`, `du`, `stat`) are not held to the folder rule, so `sudo find / -name x` or `sudo ls -R /` prints the names, not the contents, of what is in root's folders when an ancestor is named. From the 0.23.0 approving review, non-blocking: refuse them a folder that holds one of root's own folders, which `holds_something_closed` nearly computes already.
+- As root, programs that run a text of their own are refused by name (`runs_a_text`), and a name on no list gets through (`pythonw`, a database client's shell escape). The guide says so. Decide with the user whether root should instead be offered only to programs on a list (package managers, `make`, the project's own), which ends the chase at the cost of a list per distribution.
 
 **Also open, not gating 1.0**
 - More search providers behind `[search]`, if asked for: Brave Search (a key), or the model provider's own search (OpenRouter's plugin, Anthropic's and OpenAI's tools), which the gate cannot see and would need checking against zero data retention. Tavily and SearXNG are in.
@@ -75,9 +77,11 @@ After 1.0, by the user's decision then:
 
 ## Done
 
-### 0.19.0 to 0.22.0 — the gate after a real run, package checks, and web search (2026-10-04 to 2026-10-06)
+### 0.19.0 to 0.23.0 — the gate after a real run, package checks, web search, and root by `sudo` (2026-10-04 to 2026-10-07)
 
 Released. The notes are under `docs/releases/`.
+
+- **0.23.0 — the build hat may ask to run a command as root.** `sudo <command>` asks on a card of its own (`y` only, every time, yolo included) and sudo's question for the password is answered in a panel in Ryter; the password goes to sudo alone. Every refusal holds as root, and only the plain spelling is read. From the tunes run of 2026-10-07. `DECISIONS.md` 2026-10-07, guide "As root". The release PR's reviews found four more ways a root command could print what the account can't read (a listable folder, an interpreter under another name, a link made earlier on the line, an unreadable pipe); all four are closed, and a root command now runs in a call of its own.
 
 - **0.22.0 — the search provider has a row in `/provider`.** Under the connections: Enter chooses Tavily, SearXNG or off; Tavily goes straight to the key prompt, SearXNG asks for the server's address; `k` on the row re-enters the key. The choice is saved to `settings.toml` (`search_provider`, `search_url`), which wins over `config.toml`'s `[search]`. Asked for by the user on 2026-10-06: the panel showed only model connections, and nobody should have to remember `/provider set-key tavily`.
 
