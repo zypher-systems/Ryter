@@ -122,6 +122,19 @@ impl Audit {
                 saw,
             });
         }
+        // A finding that failed is something to repair, and a verdict of
+        // pass says nothing is: an audit filed both, and its file read
+        // PASS under "1 of 5 failed", with no repair offered.
+        if passed {
+            if let Some(n) = findings.iter().position(|f| f.result == Outcome::Fail) {
+                return Err(format!(
+                    "the verdict is pass and finding {} failed: they have to agree. If it \
+                     needs repair, the verdict is fail. If nothing needs repair, the finding \
+                     passed: file it as pass and keep what you saw in its `detail`",
+                    n + 1
+                ));
+            }
+        }
         let ran = args
             .get("ran")
             .and_then(serde_json::Value::as_array)
@@ -403,6 +416,29 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("keep it to 40"), "{err}");
+        // A verdict and its findings agree: a pass filed over a failed
+        // finding wrote PASS above "1 of 5 failed", and offered no repair.
+        let finding = |result: &str| serde_json::json!({"title": "a", "result": result, "detail": "d", "saw": "s"});
+        let filing = |verdict: &str, results: &[&str]| {
+            Audit::from_args(&serde_json::json!({
+                "verdict": verdict,
+                "summary": "x",
+                "findings": results.iter().map(|r| finding(r)).collect::<Vec<_>>(),
+            }))
+        };
+        let err = filing("pass", &["pass", "not_reached", "fail"]).unwrap_err();
+        assert!(
+            err.contains("finding 3 failed") && err.contains("have to agree"),
+            "{err}"
+        );
+        assert!(filing("fail", &["pass", "fail"]).is_ok());
+        // What could not be checked does not fail an audit by itself, and
+        // a verdict of fail needs no failed finding to stand.
+        assert_eq!(
+            filing("pass", &["pass", "not_reached"]).unwrap().headline(),
+            "✓ 1 of 2 passed"
+        );
+        assert!(filing("fail", &["pass", "not_reached"]).is_ok());
         let a = filed();
         assert_eq!(a.headline(), "✗ 1 of 3 failed");
         assert_eq!(

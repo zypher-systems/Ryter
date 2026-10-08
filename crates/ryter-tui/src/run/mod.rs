@@ -640,7 +640,7 @@ fn loop_ui(
             panel::on_notice(view, &n);
             dirty = true;
         }
-        if drain_user_prompts(view, cx, prompt_rx) {
+        if drain_user_prompts(view, cx, prompt_rx, ev_rx) {
             dirty = true;
         }
         if !view.busy {
@@ -943,6 +943,7 @@ fn drain_user_prompts(
     view: &mut View,
     cx: &mut Ctx,
     prompt_rx: &mpsc::Receiver<UserRequest>,
+    ev_rx: &mpsc::Receiver<AgentEvent>,
 ) -> bool {
     if view.panels.has_modal() {
         return false;
@@ -950,6 +951,13 @@ fn drain_user_prompts(
     let Ok(req) = prompt_rx.try_recv() else {
         return false;
     };
+    // Everything the agent said before it asked is on its way or here:
+    // apply it first. The events are paced for painting ([`drain_events`]),
+    // so a question could open on a screen a response behind, and its card
+    // gave as the model's reason what it had said two messages earlier.
+    while let Ok(ev) = ev_rx.try_recv() {
+        events::apply(view, ev);
+    }
     let ask = ask_for(&req);
     match req {
         UserRequest::Permission {

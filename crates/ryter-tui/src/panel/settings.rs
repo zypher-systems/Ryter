@@ -475,6 +475,13 @@ impl Panel for Settings {
         })
     }
 
+    /// A field is edited from what it holds, not from nothing.
+    fn prefill(&self, _view: &View) -> Option<String> {
+        self.editing
+            .then(|| self.form.current().map(Field::value_text))
+            .flatten()
+    }
+
     fn size(&self, _view: &View) -> (u16, u16) {
         (72, 26)
     }

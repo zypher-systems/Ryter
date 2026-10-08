@@ -13,6 +13,13 @@ Unreleased: what is in `dev` since 0.23.0. These notes become the next release's
 
 Guide: "Selecting text".
 
+Smaller:
+
+- **An audit's verdict and its findings agree.** A verdict of pass is no longer taken over a finding that failed; the auditor is told to make it a fail, or the finding a pass with what it saw. An audit read PASS above "1 of 5 failed" on a real run, and offered no repair.
+- **An empty folder says it is empty.** `list_dir` and `glob` answered with nothing at all, which a model took for a listing that had failed.
+- **`/rename`, `/budget` and `/settings` open their fields on what they hold,** as `/provider` has since 0.22.0: the title, the amount, the name are there to edit.
+- **The reason on a question's card is the model's latest words.** The card could open before the screen had caught up, and give as the reason what the model had said a response or two earlier.
+
 ## Why
 
 To copy a command or a block of code out of a reply you had to hold your terminal's modifier, and what came out had the timeline, the box around the code and its line numbers in it. The user's words: "hold click to highlight a section and releasing copies the text to clipboard."
@@ -26,6 +33,7 @@ To copy a command or a block of code out of a reply you had to hold your termina
 ## Tried before release
 
 - **Driven in the real binary,** offline against the simulated provider, with the mouse reports a terminal sends and a stand-in `wl-copy`: a sentence into a code block (eight lines, no frame), a click (nothing copied), `Alt`+drag, the pointer held above a sixty-line reply until the pane reached its top (63 lines copied), and the message box.
+- **The card's reason:** the same four-card run that showed the stale reason, three times over, with the right one each time.
 - **Not yet tried:**
   - By a person, in a real terminal emulator, with a real clipboard.
   - Anything on a Mac.

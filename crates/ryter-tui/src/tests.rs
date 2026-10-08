@@ -4170,3 +4170,55 @@ fn a_code_block_is_copied_without_its_frame() {
         );
     }
 }
+
+/// A field is edited from what it holds: the session's title in `/rename`,
+/// the cap in `/budget`, a name in `/settings`. Each set its text and then
+/// had it cleared as the composer became its field, so each opened empty.
+#[test]
+fn a_panels_field_opens_on_what_it_holds() {
+    let enter = || KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+    let down = || KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+    // `/rename`.
+    let mut v = idle();
+    v.session_title = "the pager fix".into();
+    let _ = panel::open(&mut v, PanelId::Sessions(SessionsMode::Rename), &env());
+    panel::sync_composer(&mut v);
+    assert_eq!(v.composer.text(), "the pager fix");
+    assert!(render_to_string(&v, 120, 40).contains("the pager fix"));
+
+    // `/budget`: down to the first amount, Enter to edit it.
+    let mut v = with_panel(PanelId::Budget);
+    let mut opened = None;
+    for _ in 0..8 {
+        let _ = crate::run_keys_handle(&mut v, enter());
+        if matches!(v.composer.mode, crate::composer::Mode::Field { .. }) {
+            opened = Some(v.composer.text().to_string());
+            break;
+        }
+        let _ = crate::run_keys_handle(&mut v, down());
+    }
+    let amount = opened.expect("an amount to edit");
+    assert!(
+        amount.parse::<f64>().is_ok(),
+        "the amount as it stands: {amount:?}"
+    );
+
+    // `/settings`: the username.
+    let mut v = idle();
+    v.ui.username = "dusty".into();
+    let _ = panel::open(&mut v, PanelId::Settings, &env());
+    panel::sync_composer(&mut v);
+    let mut opened = None;
+    for _ in 0..40 {
+        if render_to_string(&v, 120, 50)
+            .lines()
+            .any(|l| l.contains('›') && l.contains("username"))
+        {
+            let _ = crate::run_keys_handle(&mut v, enter());
+            opened = Some(v.composer.text().to_string());
+            break;
+        }
+        let _ = crate::run_keys_handle(&mut v, down());
+    }
+    assert_eq!(opened.as_deref(), Some("dusty"));
+}

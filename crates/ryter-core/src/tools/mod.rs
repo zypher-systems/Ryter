@@ -393,7 +393,7 @@ fn spec(name: &str) -> Option<ToolSpec> {
         ),
         "file_audit" => (
             "File the audit, once, as your last call in the audit hat. `verdict` is pass or \
-             fail. `summary` is one line. `findings` are what you checked, worst first, each \
+             fail, and is fail when any finding failed. `summary` is one line. `findings` are what you checked, worst first, each \
              with `result` (pass, fail, not_reached), `title`, and for a failure `where` \
              (path:line), `detail` (what is wrong) and `saw` (what you ran and what came back). \
              `ran` lists the commands and tools you used. Ryter writes .ryter/audit.md and a \
@@ -1474,6 +1474,38 @@ mod tests {
         // No other hat is asked: it is refused.
         let out = gated_execute("write", &args, &ctx(Role::SoloPlan, dir.path())).unwrap();
         assert!(out.is_error, "{out:?}");
+    }
+
+    /// A listing with nothing in it says so. An empty answer for a new
+    /// project's folder was taken for a listing that had failed: the model
+    /// tried `glob`, then a shell command the plan hat refused.
+    #[test]
+    fn an_empty_listing_says_it_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(Role::SoloPlan, dir.path());
+        // `ctx` keeps its notes in a hidden folder of the project.
+        let list = |c: &ToolContext| gated_execute("list_dir", &json!({"path": "."}), c).unwrap();
+        let out = list(&c);
+        assert!(!out.is_error, "{out:?}");
+        assert_eq!(
+            out.text,
+            "(empty but for 1 hidden entry, whose name starts with `.`)"
+        );
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        assert!(list(&c).text.contains("2 hidden entries"));
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        let out = gated_execute("list_dir", &json!({"path": "src"}), &c).unwrap();
+        assert_eq!(out.text, "(empty folder)");
+        assert_eq!(list(&c).text, "src/");
+
+        let glob = |pattern: &str| {
+            gated_execute("glob", &json!({"pattern": pattern}), &c)
+                .unwrap()
+                .text
+        };
+        assert_eq!(glob("*.rs"), "(no file matches `*.rs`)");
+        std::fs::write(dir.path().join("src/main.rs"), "").unwrap();
+        assert_eq!(glob("src/*.rs"), "src/main.rs");
     }
 
     /// A command as root: the user is asked on a card of its own, whatever
