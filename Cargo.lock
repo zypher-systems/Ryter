@@ -1645,6 +1645,7 @@ dependencies = [
 name = "ryter-tui"
 version = "0.23.0"
 dependencies = [
+ "base64",
  "crossterm",
  "ratatui",
  "ryter-core",

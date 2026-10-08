@@ -3787,3 +3787,386 @@ fn a_password_can_be_refused() {
         Err(std::sync::mpsc::TryRecvError::Disconnected)
     );
 }
+
+// -- selecting with the mouse ------------------------------------------------
+
+/// Where `needle` starts on a drawn screen: column, row.
+fn find_on(buf: &ratatui::buffer::Buffer, needle: &str) -> (u16, u16) {
+    for y in 0..buf.area.height {
+        let row: Vec<&str> = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
+        let text = row.concat();
+        if let Some(at) = text.find(needle) {
+            let column = text[..at].chars().count();
+            return (column as u16, y);
+        }
+    }
+    panic!("{needle:?} is not on the screen");
+}
+
+fn mouse(
+    kind: crossterm::event::MouseEventKind,
+    (column, row): (u16, u16),
+    modifiers: KeyModifiers,
+) -> crossterm::event::MouseEvent {
+    crossterm::event::MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers,
+    }
+}
+
+/// Press at `from`, drag to `to`, and let go. Returns the screen as it was
+/// drawn with the button still down, and what the release asked for.
+fn drag(
+    v: &mut View,
+    (w, h): (u16, u16),
+    from: (u16, u16),
+    to: (u16, u16),
+    modifiers: KeyModifiers,
+) -> (ratatui::buffer::Buffer, Action) {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    let left = MouseButton::Left;
+    let hit = crate::draw::render_hit(v, w, h);
+    let a =
+        crate::run_mouse_handle_with(v, mouse(MouseEventKind::Down(left), from, modifiers), &hit);
+    assert_eq!(a, Action::None);
+    let a = crate::run_mouse_handle_with(v, mouse(MouseEventKind::Drag(left), to, modifiers), &hit);
+    assert_eq!(a, Action::None);
+    let held = render_buffer(v, w, h, Theme::truecolor_dark());
+    let a = crate::run_mouse_handle_with(v, mouse(MouseEventKind::Up(left), to, modifiers), &hit);
+    (held, a)
+}
+
+/// What a release copies, read as the loop reads it.
+fn copied(v: &View, held: &ratatui::buffer::Buffer, a: Action) -> String {
+    match a {
+        Action::CopySelection(sel) => sel.text(v, held, Theme::truecolor_dark()),
+        other => panic!("nothing to copy: {other:?}"),
+    }
+}
+
+fn talking(layout: &str, reply: &str) -> View {
+    let mut v = idle();
+    v.ui.layout = layout.into();
+    v.ui.line_numbers = false;
+    let _ = v.submit_user("summarise".into(), "summarise".into());
+    v.on_token(reply);
+    v
+}
+
+const PROSE: &str = "alpha beta gamma\n\nsecond paragraph here\n\n```rust\nfn main() {\n    println!(\"hi\");\n}\n```\n";
+
+/// A wide character is one character, though it takes two cells.
+#[test]
+fn a_wide_character_is_copied_once() {
+    let theme = Theme::truecolor_dark();
+    let mut v = talking("ledger", "start 日本語 and 한글 end\n");
+    let plain = render_buffer(&v, 120, 40, theme);
+    let from = find_on(&plain, "start");
+    let (x, y) = find_on(&plain, "end");
+    // `find_on` counts characters; the wide ones took five more cells.
+    let (held, a) = drag(&mut v, (120, 40), from, (x + 5 + 2, y), KeyModifiers::NONE);
+    assert_eq!(copied(&v, &held, a), "start 日本語 and 한글 end");
+}
+
+/// Hold the button and drag: the text between is highlighted, and letting
+/// go copies it. The highlight and the copy are the conversation's text,
+/// not the timeline beside it.
+#[test]
+fn dragging_over_the_conversation_highlights_and_copies_its_text() {
+    let theme = Theme::truecolor_dark();
+    for layout in ["ledger", "classic"] {
+        let mut v = talking(layout, PROSE);
+        let size = (120, 40);
+        let plain = render_buffer(&v, size.0, size.1, theme);
+        let from = find_on(&plain, "beta");
+        let (x, y) = find_on(&plain, "paragraph");
+        let to = (x + 8, y);
+        let (held, a) = drag(&mut v, size, from, to, KeyModifiers::NONE);
+        // What is highlighted: from the press to the pointer, and whole
+        // rows of text between; nothing left of the text.
+        let lit = |x: u16, y: u16| held[(x, y)].bg == theme.selection_bg;
+        assert!(lit(from.0, from.1) && lit(to.0, to.1), "{layout}");
+        assert!(!lit(from.0 - 1, from.1), "{layout}: before the press");
+        assert!(!lit(to.0 + 1, to.1), "{layout}: after the pointer");
+        let hit = crate::draw::render_hit(&v, size.0, size.1);
+        assert!(lit(hit.chat_text.x, to.1), "{layout}: the row's start");
+        assert!(
+            !lit(hit.chat_text.x - 1, to.1) && !lit(hit.chat.x, from.1 + 1),
+            "{layout}: the timeline is not text"
+        );
+        assert_eq!(
+            copied(&v, &held, a),
+            "beta gamma\n\nsecond paragraph",
+            "{layout}"
+        );
+        assert!(v.selection.is_none(), "{layout}: the highlight goes");
+        let after = render_buffer(&v, size.0, size.1, theme);
+        assert!(after[(from.0, from.1)].bg != theme.selection_bg, "{layout}");
+    }
+}
+
+/// A click is not a selection: nothing is highlighted and nothing copied,
+/// and what a click did before, it still does.
+#[test]
+fn a_click_selects_nothing() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    let theme = Theme::truecolor_dark();
+    let mut v = talking("ledger", PROSE);
+    let hit = crate::draw::render_hit(&v, 120, 40);
+    let at = find_on(&render_buffer(&v, 120, 40, theme), "beta");
+    let none = KeyModifiers::NONE;
+    let down = mouse(MouseEventKind::Down(MouseButton::Left), at, none);
+    assert_eq!(
+        crate::run_mouse_handle_with(&mut v, down, &hit),
+        Action::None
+    );
+    let held = render_buffer(&v, 120, 40, theme);
+    assert!(held[(at.0, at.1)].bg != theme.selection_bg);
+    let up = mouse(MouseEventKind::Up(MouseButton::Left), at, none);
+    assert_eq!(crate::run_mouse_handle_with(&mut v, up, &hit), Action::None);
+    assert!(v.selection.is_none());
+    // The status row still opens the pane.
+    let row = (hit.activity.x + 3, hit.activity.y);
+    let down = mouse(MouseEventKind::Down(MouseButton::Left), row, none);
+    let _ = crate::run_mouse_handle_with(&mut v, down, &hit);
+    assert_eq!(v.activity.mode, ActivityMode::Expanded);
+    assert!(v.selection.is_none());
+}
+
+/// With Alt held the selection is a rectangle: a column of a code block
+/// without what is beside it.
+#[test]
+fn alt_drag_selects_a_rectangle() {
+    let theme = Theme::truecolor_dark();
+    let mut v = talking("ledger", PROSE);
+    let plain = render_buffer(&v, 120, 40, theme);
+    let (x, y) = find_on(&plain, "fn main");
+    let (held, a) = drag(
+        &mut v,
+        (120, 40),
+        (x, y),
+        (x + 10, y + 2),
+        KeyModifiers::ALT,
+    );
+    assert!(held[(x + 10, y)].bg == theme.selection_bg);
+    assert!(held[(x + 11, y + 1)].bg != theme.selection_bg);
+    assert_eq!(copied(&v, &held, a), "fn main() {\n    println\n}");
+}
+
+fn many_lines() -> View {
+    let lines: String = (0..120).map(|i| format!("line {i}\n")).collect();
+    talking("ledger", &format!("```\n{lines}```\n"))
+}
+
+/// The highlight is on the text, not on the screen: when the conversation
+/// scrolls under a held button, it goes with the text, and what has left
+/// the screen is still copied.
+#[test]
+fn a_selection_stays_on_its_text_when_the_conversation_scrolls() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    let theme = Theme::truecolor_dark();
+    let mut v = many_lines();
+    let size = (100, 30);
+    let hit = crate::draw::render_hit(&v, size.0, size.1);
+    let plain = render_buffer(&v, size.0, size.1, theme);
+    let from = find_on(&plain, "line 110");
+    let (x, y) = find_on(&plain, "line 112");
+    let none = KeyModifiers::NONE;
+    let left = MouseButton::Left;
+    let _ =
+        crate::run_mouse_handle_with(&mut v, mouse(MouseEventKind::Down(left), from, none), &hit);
+    let _ = crate::run_mouse_handle_with(
+        &mut v,
+        mouse(MouseEventKind::Drag(left), (x + 7, y), none),
+        &hit,
+    );
+    v.scroll.scroll_by(-5, true);
+    let held = render_buffer(&v, size.0, size.1, theme);
+    let moved = find_on(&held, "line 110");
+    assert_eq!(moved, (from.0, from.1 + 5), "the text moved down five rows");
+    assert!(held[(moved.0, moved.1)].bg == theme.selection_bg);
+    assert!(held[(from.0, from.1)].bg != theme.selection_bg);
+    // Scrolled out of sight, and copied all the same.
+    v.scroll.scroll_by(-60, true);
+    let gone = render_buffer(&v, size.0, size.1, theme);
+    let a = crate::run_mouse_handle_with(
+        &mut v,
+        mouse(MouseEventKind::Up(left), (x + 7, y), none),
+        &hit,
+    );
+    assert_eq!(copied(&v, &gone, a), "line 110\nline 111\nline 112");
+}
+
+/// Held past the top of the conversation, the pointer pulls it down a row
+/// at a time, and the selection takes in what comes into view: more than a
+/// screen can be copied.
+#[test]
+fn holding_past_the_edge_scrolls_and_selects_on() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    let theme = Theme::truecolor_dark();
+    let mut v = many_lines();
+    let size = (100, 30);
+    let hit = crate::draw::render_hit(&v, size.0, size.1);
+    let plain = render_buffer(&v, size.0, size.1, theme);
+    let (x, y) = find_on(&plain, "line 115");
+    let none = KeyModifiers::NONE;
+    let left = MouseButton::Left;
+    let _ = crate::run_mouse_handle_with(
+        &mut v,
+        mouse(MouseEventKind::Down(left), (x + 7, y), none),
+        &hit,
+    );
+    let above = (x, hit.chat.y.saturating_sub(1));
+    let _ =
+        crate::run_mouse_handle_with(&mut v, mouse(MouseEventKind::Drag(left), above, none), &hit);
+    assert_eq!(v.selection.as_ref().map(|s| s.pull), Some(-1));
+    let top_before = v.scroll.effective.get();
+    for step in 1..=60u64 {
+        v.tick(v.now_ms + 50);
+        let _ = render_buffer(&v, size.0, size.1, theme);
+        assert!(step < 60 || v.scroll.effective.get() < top_before);
+    }
+    assert_eq!(top_before - v.scroll.effective.get(), 60, "a row a tick");
+    let held = render_buffer(&v, size.0, size.1, theme);
+    let a =
+        crate::run_mouse_handle_with(&mut v, mouse(MouseEventKind::Up(left), above, none), &hit);
+    let text = copied(&v, &held, a);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines.len() > 60, "more than a screen: {}", lines.len());
+    assert_eq!(lines.last().copied(), Some("line 115"));
+    assert!(text.contains("line 60\nline 61\nline 62"), "{text}");
+    // At the top there is nothing more to pull.
+    let mut v = many_lines();
+    let _ = render_buffer(&v, size.0, size.1, theme);
+    v.scroll.to_top(true);
+    let hit = crate::draw::render_hit(&v, size.0, size.1);
+    assert_eq!(v.scroll.effective.get(), 0);
+    let at = find_on(&render_buffer(&v, size.0, size.1, theme), "line 3");
+    let _ = crate::run_mouse_handle_with(&mut v, mouse(MouseEventKind::Down(left), at, none), &hit);
+    let _ =
+        crate::run_mouse_handle_with(&mut v, mouse(MouseEventKind::Drag(left), above, none), &hit);
+    let head = v.selection.as_ref().map(|s| s.head);
+    v.tick(v.now_ms + 50);
+    assert_eq!(v.selection.as_ref().map(|s| s.head), head);
+}
+
+/// Outside the conversation a selection is the screen's cells, kept to the
+/// pane it began in: the composer's text, or anything on the screen while a
+/// panel is open.
+#[test]
+fn the_composer_and_a_panel_can_be_selected_too() {
+    let theme = Theme::truecolor_dark();
+    let mut v = talking("ledger", PROSE);
+    for c in "hello world".chars() {
+        crate::run::keys::handle(&mut v, key(KeyCode::Char(c)));
+    }
+    let plain = render_buffer(&v, 120, 40, theme);
+    let (x, y) = find_on(&plain, "hello world");
+    // Dragged far above the composer: it stays in the composer.
+    let (held, a) = drag(
+        &mut v,
+        (120, 40),
+        (x + 10, y),
+        (x + 6, 2),
+        KeyModifiers::NONE,
+    );
+    assert_eq!(copied(&v, &held, a), "world");
+    assert!(held[(x + 6, 2)].bg != theme.selection_bg);
+
+    let mut v = asking(8);
+    let plain = render_buffer(&v, 120, 40, theme);
+    let (x, y) = find_on(&plain, "app/server.js");
+    let (held, a) = drag(&mut v, (120, 40), (x, y), (x + 12, y), KeyModifiers::NONE);
+    assert_eq!(copied(&v, &held, a), "app/server.js");
+    assert_eq!(v.panels.kinds(), ["permission"], "the card is still up");
+}
+
+/// The rows a selection reads are the rows the pane draws.
+#[test]
+fn the_documents_rows_are_the_rows_on_the_screen() {
+    use crate::chat::layout;
+    let theme = Theme::truecolor_dark();
+    let v = many_lines();
+    let text = |l: &ratatui::text::Line<'_>| -> String {
+        l.spans.iter().map(|s| s.content.as_ref()).collect()
+    };
+    let frame = layout::frame(&v, 80, 24, theme);
+    let off = frame.resolved.offset;
+    let rows = layout::rows(&v, 80, 24, theme, off, off + 24);
+    assert_eq!(
+        rows.iter().map(text).collect::<Vec<_>>(),
+        frame.lines.iter().map(text).collect::<Vec<_>>()
+    );
+    // Past the end there are no rows.
+    assert_eq!(
+        layout::rows(&v, 80, 24, theme, frame.doc_rows, frame.doc_rows + 9).len(),
+        0
+    );
+}
+
+/// A copy is said on the last row for a moment, and then the row is the
+/// keys again.
+#[test]
+fn a_copy_is_said_on_the_last_row_and_goes() {
+    assert_eq!(crate::select::describe("one\ntwo\nthree"), "copied 3 lines");
+    assert_eq!(crate::select::describe("word"), "copied 4 characters");
+    assert_eq!(crate::select::describe("x"), "copied 1 character");
+    for layout in ["ledger", "classic"] {
+        let mut v = talking(layout, PROSE);
+        v.flash("copied 3 lines");
+        let drawn = render_to_string(&v, 120, 40);
+        let last = drawn.lines().last().unwrap_or_default();
+        assert_eq!(
+            last.trim(),
+            "copied 3 lines",
+            "{layout}: the row is its own"
+        );
+        v.tick(v.now_ms + 5_000);
+        assert!(!render_to_string(&v, 120, 40).contains("copied 3 lines"));
+    }
+}
+
+/// A code block is copied as code: without the box drawn around it, its
+/// line numbers, or the margin it sits in.
+#[test]
+fn a_code_block_is_copied_without_its_frame() {
+    let theme = Theme::truecolor_dark();
+    let code =
+        "fn main() {\n    let n = 2;\n    if n > 1 {\n        println!(\"{n}\");\n    }\n}\n";
+    for numbers in [true, false] {
+        let mut v = talking(
+            "ledger",
+            &format!("Here it is:\n\n```rust\n{code}```\n\nDone.\n"),
+        );
+        v.ui.line_numbers = numbers;
+        let plain = render_buffer(&v, 120, 40, theme);
+        assert_eq!(
+            render_to_string(&v, 120, 40).contains("1 fn main"),
+            numbers,
+            "line numbers are drawn when they are on"
+        );
+        // From the first line of the code to its last brace.
+        let from = find_on(&plain, "fn main");
+        let (_, y) = find_on(&plain, "Done.");
+        let (x, _) = find_on(&plain, "    let n");
+        let last = (x, y - 3);
+        assert_eq!(plain[(last.0, last.1)].symbol(), "}");
+        let (held, a) = drag(&mut v, (120, 40), from, last, KeyModifiers::NONE);
+        assert_eq!(copied(&v, &held, a), code.trim_end(), "numbers: {numbers}");
+        // From the sentence before it to the one after: the frame's rules
+        // are empty rows, and the code keeps its own indentation.
+        let from = find_on(&plain, "Here it is");
+        let (x, y) = find_on(&plain, "Done.");
+        let (held, a) = drag(&mut v, (120, 40), from, (x + 4, y), KeyModifiers::NONE);
+        let text = copied(&v, &held, a);
+        assert!(text.starts_with("Here it is:\n"), "{text:?}");
+        assert!(text.ends_with("\nDone."), "{text:?}");
+        assert_eq!(
+            text,
+            format!("Here it is:\n\n{}\n\nDone.", code.trim_end()),
+            "numbers: {numbers}"
+        );
+    }
+}

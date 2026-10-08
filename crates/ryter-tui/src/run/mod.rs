@@ -411,6 +411,8 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         stop_reply: None,
         want_edit: None,
         bells: 0,
+        frame: None,
+        clip: None,
     };
     // The trust prompt opened before the loop: its bell, if one is wanted.
     if view.panels.has_modal() {
@@ -677,7 +679,10 @@ fn loop_ui(
         }
 
         let now = Instant::now();
-        let animating = view.busy || view.quit_armed_until.is_some();
+        let animating = view.busy
+            || view.quit_armed_until.is_some()
+            || view.flash.is_some()
+            || view.selection.as_ref().is_some_and(|s| s.pull != 0);
         let since = now.duration_since(last_draw);
         // Draw when something changed or a spinner is running, but never more
         // than once per FRAME; idle screens still repaint every 500 ms for the clock.
@@ -692,14 +697,24 @@ fn loop_ui(
             let n = std::mem::take(&mut cx.bells);
             let _ = ring(terminal.backend_mut(), n);
         }
+        if let Some(text) = cx.clip.take() {
+            let _ = crate::clipboard::copy(terminal.backend_mut(), &text);
+        }
         if due {
             paint_now = false;
             view.tick(now.duration_since(epoch).as_millis() as u64);
             let theme = cx.theme;
             let mut painted = Hit::default();
-            terminal
+            let drawn = terminal
                 .draw(|f| painted = draw(f, view, theme))
                 .map_err(io_err)?;
+            // A selection reads its text from what was on the screen.
+            if cx.mouse_grabbed {
+                match &mut cx.frame {
+                    Some(kept) => kept.clone_from(drawn.buffer),
+                    None => cx.frame = Some(drawn.buffer.clone()),
+                }
+            }
             hit = painted;
             last_draw = Instant::now();
             dirty = false;
@@ -731,7 +746,11 @@ fn loop_ui(
                     Action::None
                 }
                 Event::Mouse(m) => on_mouse(view, m, &hit),
-                Event::Resize(_, _) => Action::None,
+                Event::Resize(_, _) => {
+                    // The text is laid out again: the rows it named are gone.
+                    view.selection = None;
+                    Action::None
+                }
                 Event::FocusGained | Event::FocusLost => Action::None,
             };
             actions::perform(view, cx, action);
@@ -790,6 +809,7 @@ pub(crate) fn paste_handle(view: &mut View, text: &str) {
 pub(crate) fn mouse_handle(view: &mut View, m: MouseEvent) -> Action {
     let hit = Hit {
         chat: Rect::default(),
+        chat_text: Rect::default(),
         cards: Vec::new(),
         activity: Rect::default(),
         composer: Rect::default(),
@@ -854,22 +874,66 @@ fn on_mouse(view: &mut View, m: MouseEvent, hit: &Hit) -> Action {
             Action::None
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            if !view.panels.is_empty() {
-                return Action::None;
-            }
-            if inside(hit.activity) && hit.activity.height > 0 {
-                view.activity.toggle();
-                return Action::None;
-            }
-            for (card, rect) in &hit.cards {
-                if inside(*rect) {
-                    if let Some(id) = card.opens() {
-                        return Action::OpenPanel(id);
+            view.selection = None;
+            if view.panels.is_empty() {
+                if inside(hit.activity) && hit.activity.height > 0 {
+                    view.activity.toggle();
+                    return Action::None;
+                }
+                for (card, rect) in &hit.cards {
+                    if inside(*rect) {
+                        if let Some(id) = card.opens() {
+                            return Action::OpenPanel(id);
+                        }
                     }
                 }
             }
+            // The press may be the start of a selection: it is one once the
+            // pointer leaves this cell with the button down. It stays in
+            // the pane it began in; with a panel open, that is the screen.
+            let (w, h) = view.screen.get();
+            let screen = Rect::new(0, 0, w, h);
+            let (area, chat) = if !view.panels.is_empty() {
+                (screen, None)
+            } else if inside(hit.chat_text) {
+                (hit.chat_text, Some(hit.chat))
+            } else if inside(hit.composer) {
+                // Its text, not the rule drawn above it.
+                let rule = u16::from(hit.composer.height > 1);
+                let text = Rect {
+                    y: hit.composer.y + rule,
+                    height: hit.composer.height - rule,
+                    ..hit.composer
+                };
+                (text, None)
+            } else if let Some((_, card)) = hit.cards.iter().find(|(_, r)| inside(*r)) {
+                (*card, None)
+            } else {
+                (screen, None)
+            };
+            if area.width > 0 && area.height > 0 {
+                view.selection = Some(crate::select::Selection::begin(
+                    area,
+                    chat,
+                    m.modifiers.contains(crossterm::event::KeyModifiers::ALT),
+                    m.column,
+                    m.row,
+                    view.scroll.effective.get(),
+                ));
+            }
             Action::None
         }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            let top = view.scroll.effective.get();
+            if let Some(sel) = &mut view.selection {
+                sel.drag(m.column, m.row, top);
+            }
+            Action::None
+        }
+        MouseEventKind::Up(MouseButton::Left) => match view.selection.take() {
+            Some(sel) if sel.moved => Action::CopySelection(sel),
+            _ => Action::None,
+        },
         _ => Action::None,
     }
 }

@@ -9,6 +9,7 @@ repository.workspace = true
 description = "Ratatui frontend for Ryter"
 
 [dependencies]
+base64.workspace = true
 ryter-core.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true

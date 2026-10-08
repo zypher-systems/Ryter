@@ -455,36 +455,7 @@ pub fn frame(view: &View, width: usize, height: usize, theme: Theme) -> ChatFram
     let off = resolved.offset;
     let end = off + height;
     let blank = || Line::from(Span::styled(String::new(), theme.body()));
-    let ledger = !view.ui.classic();
-    let dim = Style::default().fg(theme.dim).bg(theme.bg);
-    let spine_row = || Line::from(Span::styled(format!("{}│", " ".repeat(7)), dim));
-    let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
-    for p in &placed {
-        let sep_row = p.start.checked_sub(1);
-        if p.separator {
-            if let Some(r) = sep_row {
-                if r >= off && r < end {
-                    lines.push(if p.spine { spine_row() } else { blank() });
-                }
-            }
-        }
-        let p_end = p.start + p.entry.rows();
-        if p_end <= off || p.start >= end {
-            continue;
-        }
-        let from = off.saturating_sub(p.start);
-        let to = (end - p.start).min(p.entry.rows());
-        for (i, l) in p.entry.lines[from..to].iter().enumerate() {
-            if !ledger || p.gutter == Gutter::None {
-                lines.push(l.clone());
-                continue;
-            }
-            let first = from + i == 0;
-            let mut spans = gutter_spans(&p.gutter, first, theme);
-            spans.extend(l.spans.iter().cloned());
-            lines.push(Line::from(spans));
-        }
-    }
+    let mut lines = rows_between(&placed, off, end, view, theme);
     while lines.len() < height {
         lines.push(blank());
     }
@@ -532,6 +503,71 @@ pub fn frame(view: &View, width: usize, height: usize, theme: Theme) -> ChatFram
         status_row: status_at,
         pane_header: pane_at,
     }
+}
+
+/// The document's rows from `off` up to `end`, as the pane draws them:
+/// each message's rows behind its gutter, and the row between messages.
+fn rows_between(
+    placed: &[Placed],
+    off: usize,
+    end: usize,
+    view: &View,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let blank = || Line::from(Span::styled(String::new(), theme.body()));
+    let ledger = !view.ui.classic();
+    let dim = Style::default().fg(theme.dim).bg(theme.bg);
+    let spine_row = || Line::from(Span::styled(format!("{}│", " ".repeat(7)), dim));
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(end.saturating_sub(off));
+    for p in placed {
+        let sep_row = p.start.checked_sub(1);
+        if p.separator {
+            if let Some(r) = sep_row {
+                if r >= off && r < end {
+                    lines.push(if p.spine { spine_row() } else { blank() });
+                }
+            }
+        }
+        let p_end = p.start + p.entry.rows();
+        if p_end <= off || p.start >= end {
+            continue;
+        }
+        let from = off.saturating_sub(p.start);
+        let to = (end - p.start).min(p.entry.rows());
+        for (i, l) in p.entry.lines[from..to].iter().enumerate() {
+            if !ledger || p.gutter == Gutter::None {
+                lines.push(l.clone());
+                continue;
+            }
+            let first = from + i == 0;
+            let mut spans = gutter_spans(&p.gutter, first, theme);
+            spans.extend(l.spans.iter().cloned());
+            lines.push(Line::from(spans));
+        }
+    }
+    lines
+}
+
+/// Rows `from` up to `to` of the document a pane `width` wide and `height`
+/// tall is showing, in sight or not: what a selection that has scrolled
+/// reads its text from. A row past the document's end is not there.
+pub fn rows(
+    view: &View,
+    width: usize,
+    height: usize,
+    theme: Theme,
+    from: usize,
+    to: usize,
+) -> Vec<Line<'static>> {
+    let pane_cap = (height / 3).clamp(3, 12);
+    let laid = place(view, width.max(12), theme, pane_cap);
+    let to = to.min(laid.rows);
+    let mut lines = rows_between(&laid.placed, from, to, view, theme);
+    lines.resize(
+        to.saturating_sub(from),
+        Line::from(Span::styled(String::new(), theme.body())),
+    );
+    lines
 }
 
 /// A question's time in the gutter, unless `[ui] timestamps` is off.

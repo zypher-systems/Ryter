@@ -19,9 +19,10 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-Nothing in `dev` is waiting on a release. The last release is 0.23.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.23.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
-- **A real `sudo`, by the user (from 0.23.0).** Root by `sudo` shipped tried end to end with a stand-in `sudo` only. One approved root command with a real password, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
+- **In `dev`, unreleased: text is selected with the mouse.** Hold the left button and drag to highlight; letting go copies to the clipboard (OSC 52 and the desktop's tool). In the conversation the selection is the text: it stays on it through scrolling and streaming, scrolls when held past the pane's edge, and copies a code block without its frame. `Alt` selects a rectangle. `DECISIONS.md` 2026-10-07, `design.md` R-SEL-01 to 06, guide "Selecting text". Not yet tried on a Mac, or by the user in their own terminal.
+- **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
 
 - **The first real run on the hats as they are (1.0 item 1): half done.** The service half is the fiscus run, released in 0.20.0. The terminal half was run on 2026-10-07 on 0.22.0 ("tunes", a Rust TUI music player, $1.62): the four hats handed off, but a missing system package (`alsa-lib-devel`) had no path, so Ryter never built or ran the product, and the audit filed PASS with a failed finding beside it. Root by `sudo`, released in 0.23.0, is the fix for the first. Open from that run, not yet taken: the audit's verdict is the model's word alone and can disagree with its findings; reads of `/etc` and `/usr` ask (four times, each answered "always", which on a compound command covers only that command); `rm -rf` of a folder the write tool made this turn asks; `cp` and `ln -s` from `/usr` are refused while `cat … >` asks; the plan hat is refused `cargo --version`; an empty folder lists as an empty string; a decision was recorded before it was tried. Whether this run closes the item is the user's call; the audit has still not driven a terminal app.
 

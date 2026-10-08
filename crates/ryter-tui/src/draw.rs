@@ -19,6 +19,8 @@ use crate::{activity, composer, palette, panel};
 pub struct Hit {
     /// Chat pane.
     pub chat: Rect,
+    /// The part of the chat pane its text is in: right of the timeline.
+    pub chat_text: Rect,
     /// Info panel cards.
     pub cards: Vec<(CardId, Rect)>,
     /// Activity strip.
@@ -29,6 +31,53 @@ pub struct Hit {
 
 /// Paint one frame.
 pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
+    let mut hit = draw_screen(frame, view, theme);
+    // The conversation's text starts after the pane's margin and, on the
+    // ledger, its timeline; its last column is the pane's margin too.
+    let lead = 1 + if view.ui.classic() {
+        0
+    } else {
+        layout::GUTTER as u16
+    };
+    hit.chat_text = Rect {
+        x: hit.chat.x + lead.min(hit.chat.width),
+        width: hit.chat.width.saturating_sub(lead + 1),
+        ..hit.chat
+    };
+    let full = frame.area();
+    if let Some(sel) = &view.selection {
+        sel.paint(
+            frame.buffer_mut(),
+            view.scroll.effective.get(),
+            theme.selection_bg,
+        );
+    }
+    if let Some((text, _)) = &view.flash {
+        if full.height > 0 {
+            let row = Rect {
+                y: full.y + full.height - 1,
+                height: 1,
+                ..full
+            };
+            // The whole row: the keys under it would show through.
+            frame.render_widget(ratatui::widgets::Clear, row);
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    format!(" {text}"),
+                    Style::default()
+                        .fg(theme.accent)
+                        .bg(theme.panel_bg)
+                        .add_modifier(Modifier::BOLD),
+                ))
+                .style(Style::default().bg(theme.panel_bg)),
+                row,
+            );
+        }
+    }
+    hit
+}
+
+fn draw_screen(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     let full = frame.area();
     view.screen.set((full.width, full.height));
     frame.render_widget(Block::default().style(theme.body()), full);
@@ -127,6 +176,7 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     }
     Hit {
         chat,
+        chat_text: Rect::default(),
         cards,
         activity: status_hit(chat, &cf),
         composer: comp,
@@ -255,6 +305,7 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     }
     Hit {
         chat,
+        chat_text: Rect::default(),
         cards: Vec::new(),
         activity: act,
         composer: comp,
@@ -420,6 +471,7 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     }
     Hit {
         chat,
+        chat_text: Rect::default(),
         cards: Vec::new(),
         activity: status_hit(chat, &cf),
         composer: comp,

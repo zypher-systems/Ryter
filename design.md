@@ -334,10 +334,28 @@ two distinct guarantees.
 - **R-SCROLL-10** Scroll inputs: `PgUp`/`PgDn` (one viewport minus two rows),
   `Shift+↑`/`Shift+↓` (one row), `Ctrl+Home` (top), `Ctrl+End` (bottom, re-follow),
   `Ctrl+↑`/`Ctrl+↓` (previous/next turn boundary), mouse wheel (three rows).
-- **R-SCROLL-11** Mouse capture is enabled (`crossterm::event::EnableMouseCapture`) but
-  restricted to wheel events and clicks inside panels. Text selection must remain possible
-  via the terminal's own modifier (documented in `docs/guide.md` as Shift+drag on most
-  terminals). `[ui] mouse = false` disables capture entirely.
+- **R-SCROLL-11** Mouse capture is enabled (`crossterm::event::EnableMouseCapture`): wheel
+  events, clicks, and a drag with the left button, which selects text (`R-SEL-*`). The
+  terminal's own selection must remain possible via its modifier (documented in
+  `docs/guide.md` as Shift+drag on most terminals). `[ui] mouse = false` disables capture
+  entirely.
+- **R-SEL-01** A press of the left button followed by a drag highlights text
+  (`theme.selection_bg`); the release copies it and clears the highlight. A press and release
+  in one cell is a click and copies nothing.
+- **R-SEL-02** A selection stays in the pane the press landed in: the conversation's text
+  column (never the ledger's timeline), the composer's text rows, a card, or the whole screen
+  while a panel is open.
+- **R-SEL-03** In the conversation a selection is in document rows: it stays on its text
+  when the pane scrolls or the reply grows, and its text is read from the document, so rows
+  out of sight are copied. The pointer held past the pane's top or bottom edge scrolls one
+  row per 40 ms and extends the selection.
+- **R-SEL-04** A code block's frame (box, line numbers, wrap mark) is not copied, and its
+  rules are not rows of the copy. The margin every selected row shares is left out. A wide
+  character is copied once.
+- **R-SEL-05** `Alt` at the press makes the selection a rectangle.
+- **R-SEL-06** The copy is sent by OSC 52 and, when installed, through the desktop's tool
+  (`wl-copy`, `xclip`/`xsel`, `pbcopy`), fed off the UI thread. The last row says
+  `copied N lines` or `copied N characters` for 1.8 s.
 - **R-SCROLL-12** Plain `↑`/`↓` in the composer with no palette open move the **cursor**
   within multiline input, and only move history when the composer is empty (§7.3). They
   never scroll the chat.
@@ -1343,7 +1361,6 @@ Existing harness (`render_to_string` + string assertions) is kept and extended.
 Explicitly out of scope, so the contract has edges:
 
 - Image or sixel rendering.
-- Mouse-driven text selection replacing the terminal's own.
 - A second frontend (web, GUI).
 - Persisting reasoning to session files.
 - Changing the agent loop, provider layer, sandbox, or tool set.

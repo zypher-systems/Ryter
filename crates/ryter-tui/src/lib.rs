@@ -5,6 +5,7 @@
 mod action;
 mod activity;
 mod chat;
+mod clipboard;
 mod composer;
 mod draw;
 mod info;
@@ -14,6 +15,7 @@ mod palette;
 mod panel;
 mod rail;
 mod run;
+mod select;
 mod theme;
 mod view;
 mod watermark;
