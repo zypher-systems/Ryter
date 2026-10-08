@@ -3642,6 +3642,15 @@ fn a_question_is_named_and_may_ring() {
         }),
         "question"
     );
+    let (pw, _) = std::sync::mpsc::channel();
+    assert_eq!(
+        crate::run::ask_for(&UserRequest::Password {
+            prompt: "[sudo] password for kim:".into(),
+            again: false,
+            reply: pw
+        }),
+        "password"
+    );
     let mut v = mid_stream(ActivityMode::Collapsed);
     v.ui.layout = "ledger".into();
     v.activity.note_ask("plan?");
@@ -3657,4 +3666,124 @@ fn a_question_is_named_and_may_ring() {
     let mut out = Vec::new();
     crate::run::ring(&mut out, crate::run::bells_for(false)).unwrap();
     assert!(out.is_empty());
+}
+
+/// A command as root asks on a card of its own: `y` only, no "always",
+/// and it says the password comes next.
+#[test]
+fn snapshot_root_permission_card() {
+    let mut v = asking(8);
+    v.panels.clear();
+    v.panels.push(Box::new(
+        PermissionModal::new(
+            format!("bash {}", ryter_core::tools::AS_ROOT),
+            "sudo dnf install -y alsa-lib-devel pkgconf".into(),
+        )
+        .with_answers(true, None),
+    ));
+    let drawn = render_to_string(&v, 120, 40);
+    assert!(
+        drawn.contains("run as root  sudo dnf install -y alsa-lib-devel pkgconf"),
+        "{drawn}"
+    );
+    assert!(drawn.contains("your password is asked next"), "{drawn}");
+    assert!(
+        drawn.contains("y allow once") && !drawn.contains("always"),
+        "{drawn}"
+    );
+    all_sizes("modal-permission-root", &v);
+}
+
+/// A key with no modifier.
+fn key(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::NONE)
+}
+
+fn password_panel(again: bool) -> (View, std::sync::mpsc::Receiver<Option<(String, bool)>>) {
+    let mut v = asking(8);
+    v.panels.clear();
+    let (reply, answer) = std::sync::mpsc::channel();
+    let opened = v.now_ms;
+    v.panels
+        .push(Box::new(crate::panel::modal::PasswordModal::new(
+            "[sudo] password for kim:".into(),
+            again,
+            reply,
+            opened,
+        )));
+    panel::sync_composer(&mut v);
+    (v, answer)
+}
+
+#[test]
+fn snapshot_password_panel() {
+    let (mut v, _answer) = password_panel(false);
+    for c in "hunter2".chars() {
+        crate::run::keys::handle(&mut v, key(KeyCode::Char(c)));
+    }
+    all_sizes("modal-password", &v);
+    let (v, _answer) = password_panel(true);
+    assert!(render_to_string(&v, 120, 40).contains("sudo did not accept that one"));
+}
+
+/// What is typed for sudo is shown as dots, stays out of the composer,
+/// and reaches the reply channel and nothing else. Every character is the
+/// password's, `?` and a paste included.
+#[test]
+fn a_password_is_typed_into_its_own_field() {
+    let (mut v, answer) = password_panel(false);
+    for c in "p?ss wörd".chars() {
+        assert_eq!(
+            crate::run::keys::handle(&mut v, key(KeyCode::Char(c))),
+            Action::None
+        );
+    }
+    crate::run::paste_handle(&mut v, "-pasted\n");
+    crate::run::keys::handle(&mut v, key(KeyCode::Char('x')));
+    crate::run::keys::handle(&mut v, key(KeyCode::Backspace));
+    assert!(v.composer.is_empty(), "nothing reaches the composer");
+    assert!(!v.panels.show_keys, "`?` is a character here");
+    for (w, h) in SIZES {
+        let drawn = render_to_string(&v, w, h);
+        assert!(drawn.contains("••••••••••••••••"), "{w}x{h}: {drawn}");
+        for part in ["p?ss", "wörd", "pasted"] {
+            assert!(!drawn.contains(part), "{w}x{h} shows {part}");
+        }
+    }
+    assert!(!format!("{:?}", v.panels).contains("pasted"));
+    // An Enter that arrives with the panel is not an answer.
+    crate::run::keys::handle(&mut v, key(KeyCode::Enter));
+    assert!(answer.try_recv().is_err());
+    assert_eq!(v.panels.kinds(), ["password"]);
+    v.now_ms += crate::panel::modal::ENTER_GUARD_MS;
+    // Tab: don't keep it.
+    crate::run::keys::handle(&mut v, key(KeyCode::Tab));
+    assert!(render_to_string(&v, 120, 40).contains("not at all · tab: keep it 5 minutes"));
+    crate::run::keys::handle(&mut v, key(KeyCode::Enter));
+    assert_eq!(
+        answer.try_recv().unwrap(),
+        Some(("p?ss wörd-pasted".to_string(), false))
+    );
+    assert!(v.panels.is_empty());
+}
+
+/// Esc refuses; an empty Enter sends nothing; a cancelled turn, which
+/// closes every card, ends sudo's wait.
+#[test]
+fn a_password_can_be_refused() {
+    let (mut v, answer) = password_panel(false);
+    v.now_ms += crate::panel::modal::ENTER_GUARD_MS;
+    crate::run::keys::handle(&mut v, key(KeyCode::Enter));
+    assert!(answer.try_recv().is_err(), "nothing typed, nothing sent");
+    crate::run::keys::handle(&mut v, key(KeyCode::Esc));
+    assert_eq!(answer.try_recv().unwrap(), None);
+    assert!(v.panels.is_empty());
+
+    let (mut v, answer) = password_panel(false);
+    crate::run::keys::handle(&mut v, key(KeyCode::Char('x')));
+    v.panels.pop();
+    assert_eq!(
+        answer.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Disconnected)
+    );
 }

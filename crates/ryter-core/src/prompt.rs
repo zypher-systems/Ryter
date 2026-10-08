@@ -137,6 +137,10 @@ pub fn container_tools_in(path: Option<&std::ffi::OsStr>) -> (bool, bool) {
 /// - **The sandbox.** A command refused by the profile fails with
 ///   "Permission denied", and the model reported a broken tool or a missing
 ///   one. It is told what the profile shuts and where scratch space is.
+/// - **Root.** A build that needed a system package (`alsa-lib-devel`) was
+///   refused `sudo -n dnf install`, and the model spent fifteen calls
+///   building around the missing headers. It is told the one spelling that
+///   asks the user, and that a sandbox profile leaves no way to root.
 pub fn machine((docker, podman): (bool, bool), sandbox: crate::sandbox::SandboxProfile) -> String {
     use crate::sandbox::SandboxProfile;
     let mut lines = Vec::new();
@@ -168,6 +172,23 @@ pub fn machine((docker, podman): (bool, bool), sandbox: crate::sandbox::SandboxP
              work needs more, say so: the user changes the profile in /settings. Docker's own \
              work is not limited by it."
         ));
+    }
+    if cfg!(unix) && sandbox == SandboxProfile::Off {
+        lines.push(
+            "- Root: when the work needs a system package or another command as root, the \
+             build hat runs `sudo <command>`, written plainly with no options to sudo itself \
+             (`sudo dnf install -y alsa-lib-devel`). The user is asked, and types their \
+             password in Ryter; you never see it. Ask once for what is needed instead of \
+             building around a missing package. The other hats, and a run with nobody at \
+             the screen, can't: name the command for the user."
+                .to_string(),
+        );
+    } else if cfg!(unix) {
+        lines.push(
+            "- Root: `sudo` can't gain privilege under this profile. If the work needs a \
+             system package, name the command for the user to run."
+                .to_string(),
+        );
     }
     if lines.is_empty() {
         String::new()
@@ -247,7 +268,17 @@ mod tests {
         let only_podman = machine((false, true), SandboxProfile::Off);
         assert!(only_podman.contains("Podman is installed") && !only_podman.contains("Use Docker"));
         assert!(machine((true, false), SandboxProfile::Off).contains("Docker is installed"));
-        assert_eq!(machine((false, false), SandboxProfile::Off), "");
+        // Root is asked for one way, and not at all under a profile.
+        let bare = machine((false, false), SandboxProfile::Off);
+        if cfg!(unix) {
+            assert!(
+                bare.starts_with("\n## This machine\n- Root: ")
+                    && bare.contains("`sudo <command>`"),
+                "{bare}"
+            );
+        } else {
+            assert_eq!(bare, "");
+        }
         let boxed = machine((false, false), SandboxProfile::Workspace);
         assert!(
             boxed.contains("under the `workspace` profile")
@@ -255,6 +286,12 @@ mod tests {
                 && boxed.contains("They can write the project"),
             "{boxed}"
         );
+        if cfg!(unix) {
+            assert!(
+                boxed.contains("`sudo` can't gain privilege") && !boxed.contains("sudo <command>"),
+                "{boxed}"
+            );
+        }
         let ro = machine((false, false), SandboxProfile::ReadOnly);
         assert!(
             ro.contains("can't write it") && ro.contains("`/tmp` is open"),

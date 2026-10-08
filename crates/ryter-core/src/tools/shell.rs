@@ -9,13 +9,58 @@ use crate::error::{Error, Result};
 use crate::tools::{LiveOutput, ToolContext, ToolOutput};
 
 pub fn bash(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
+    run_bash(args, ctx, &[])
+}
+
+/// [`bash`] for a command the user approved to run as root: Ryter's `sudo`
+/// wrapper first on its `PATH`, and the askpass answering for as long as
+/// the command runs.
+#[cfg(unix)]
+pub(crate) fn bash_as_root(
+    args: &Value,
+    ctx: &ToolContext,
+    askpass: &crate::sudo::Askpass,
+) -> Result<ToolOutput> {
+    let path = std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".into());
+    let _armed = askpass.arm();
+    let mut out = run_bash(args, ctx, &askpass.env(&path))?;
+    // sudo's own words for it; the model otherwise tries again, and each
+    // try is another prompt and can count against the account.
+    if out.is_error
+        && ["no password was provided", "a password is required"]
+            .iter()
+            .any(|said| out.text.contains(said))
+    {
+        out.text.push_str(
+            "\n[Ryter] sudo got no password: the user closed the prompt, or nobody answered \
+             it. Don't run it again unless they ask; say what it was for.",
+        );
+    } else if out.is_error && out.text.contains("incorrect password") {
+        // Whatever was kept is the one sudo turned down.
+        askpass.forget();
+        out.text.push_str(
+            "\n[Ryter] sudo was given a wrong password. Don't run it again unless the user \
+             asks: each try counts against their account.",
+        );
+    }
+    Ok(out)
+}
+
+fn run_bash(args: &Value, ctx: &ToolContext, env: &[(String, String)]) -> Result<ToolOutput> {
     let cmd = args
         .get("command")
         .and_then(Value::as_str)
         .ok_or_else(|| Error::Config("bash: missing command".into()))?;
     let timeout = Duration::from_secs(timeout_secs(args));
     Ok(
-        match run_command_live(cmd, &ctx.workspace, timeout, &ctx.cancel, ctx.live.as_ref())? {
+        match run_command_with(
+            cmd,
+            &ctx.workspace,
+            timeout,
+            &ctx.cancel,
+            ctx.live.as_ref(),
+            env,
+        )? {
             Run::Ok(text) => ToolOutput::ok(text),
             Run::Failed(text) => ToolOutput::err(text),
             Run::Cancelled => ToolOutput::err("cancelled"),
@@ -146,6 +191,12 @@ pub(crate) fn command(cmd: &str, cwd: &std::path::Path) -> Command {
         // And nothing that changes what a search reads.
         .env_remove("RIPGREP_CONFIG_PATH")
         .env_remove("GREP_OPTIONS")
+        // sudo's password is asked for in Ryter, for a command the user
+        // approved as root ([`bash_as_root`]), and by nothing else: not a
+        // desktop's own askpass, popping up for a `make install`.
+        .env_remove("SUDO_ASKPASS")
+        .env_remove("RYTER_ASKPASS_SOCK")
+        .env_remove("RYTER_ASKPASS_TOKEN")
         .stdin(Stdio::null());
     if let Ok(vars) = KEY_VARS.read() {
         for var in vars.iter() {
@@ -221,8 +272,22 @@ pub fn run_command_live(
     cancel: &crate::cancel::Cancel,
     live: Option<&LiveOutput>,
 ) -> Result<Run> {
+    run_command_with(cmd, cwd, timeout, cancel, live, &[])
+}
+
+/// [`run_command_live`], with `env` set on the command over what every
+/// command is given.
+fn run_command_with(
+    cmd: &str,
+    cwd: &std::path::Path,
+    timeout: Duration,
+    cancel: &crate::cancel::Cancel,
+    live: Option<&LiveOutput>,
+    env: &[(String, String)],
+) -> Result<Run> {
     let mut command = command(cmd, cwd);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    command.envs(env.iter().map(|(k, v)| (k, v)));
     if cancel.is_cancelled() {
         return Ok(Run::Cancelled);
     }

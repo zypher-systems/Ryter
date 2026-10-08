@@ -1,0 +1,40 @@
+ RYTER │ ○ PLAN    ⠼ BUILD    ·   specialists                                                       ryter · 0.2.0-patch
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+         │                                                                                │
+         │  1. wire the loop                                                              │ MODEL
+         │  2. write tests                                                                │ build              grok-4.6
+                                                                                          │
+         ●  dusty                                                                         │ CONTEXT
+         │  now implement step one                                                        │ ━─────────────────────── 5%
+         │                                                                                │ 12k / 256k tokens
+         ├─ read   crates/ryter-tui/src/run/mod.rs                                        │
+         │                                                                                │ PULSE
+         ◆  grok-4.6                                                                      │ ▁▁▁▁▁▁▁█           18 tok/s
+         │  Reading the loop now. The event loop drains reply line 0 reply line 1         │
+         │  reply line 2 reply line 3 reply line 4 reply line 5 reply line 6 reply        │ SPEND
+         │  line 7                                                                        │ session                  $0
+         │  ⠼ waiting for you · allow? · 0:12 · 85 tokens                                 │ budget                  off
+                                                                                          │
+                                                                                          │ GUARD
+                                                                                          │ sandbox                 off
+                                                                                          │ this hat         asks first
+                                                                                          │ plan.md                none
+                   ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄                   │ audit.md               none
+             ▄▄                                                            ▄▄             │
+             ▀                                                              ▀             │ CHANGES
+                 ▀▀▀▀▀▀                                            ▀▀▀▀▀▀                 │ no repository here
+                               ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                               │
+                                                                                          │
+                                                                                          │
+                                                                                          │
+   ┏━ allow? · run as root  sudo dnf install -y alsa-lib-devel pkgconf · press y   ━┓     │
+   │ what    run as root  sudo dnf install -y alsa-lib-devel pkgconf                │     │
+   │ risk    as root · /undo can't reach it · your password is asked next           │     │
+   │   sudo dnf install -y alsa-lib-devel pkgconf                                   │     │
+   │                                                                                │     │
+   │ y allow once   n deny                                                          │     │
+   ╰────────────────────────────────────────────────────────────────────────────────╯     │
+──────────────────────────────────────────────────────────────────────────────────────────│
+  BUILD  › type to queue the next message, / for commands                                 │
+
+ y allow once    n deny    esc deny    ^c stop the turn

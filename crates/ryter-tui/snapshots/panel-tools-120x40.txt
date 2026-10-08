@@ -16,8 +16,8 @@
                            │    and to the project's .env still ask.                        │
                            │                                                                │
                            │ ○ yolo                                                         │
-                           │    a yes to every question, outside the project too. What is   │
-                           │    refused (secrets, sudo, the disk) stays refused.            │
+                           │    a yes to every question, outside the project too. Root      │
+                           │    still asks; what is refused (secrets, the disk) stays       │
                            │ ↑↓ move   enter apply   esc   changes apply immediately        │
                            ╰────────────────────────────────────────────────────────────────╯
 

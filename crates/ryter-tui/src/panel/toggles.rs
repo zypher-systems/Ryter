@@ -29,7 +29,7 @@ const TOOLS: [Opt; 3] = [
     },
     Opt {
         value: "yolo",
-        prose: "a yes to every question, outside the project too. What is refused (secrets, sudo, the disk) stays refused.",
+        prose: "a yes to every question, outside the project too. Root still asks; what is refused (secrets, the disk) stays refused.",
         warn: true,
     },
 ];

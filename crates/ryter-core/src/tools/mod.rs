@@ -199,6 +199,9 @@ pub const OUTSIDE: &str = "· outside the project";
 /// Appended to a tool name in a permission prompt for a write to the
 /// project's own `.env`: a person answers every time.
 pub const SECRET: &str = "· a secret file";
+/// Appended to a tool name in a permission prompt for a command run as
+/// root: a person answers every time, and sudo then asks for their password.
+pub const AS_ROOT: &str = "· as root";
 
 /// Result of `execute`.
 #[derive(Debug, Clone)]
@@ -727,6 +730,9 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                 crate::user_io::summary_args(name, args)
             ))),
         },
+        // As root: a person answers every time, whatever the session allows,
+        // and sudo then asks them for their password.
+        Decision::AskRoot => run_as_root(name, args, ctx),
         Decision::Ask
             if ctx.always_approve
                 || allow_scope(name, args)
@@ -888,6 +894,71 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
             ))),
         },
     }
+}
+
+/// A command the gate read as `sudo <command>` in the build hat: ask the
+/// user, then run it with Ryter's askpass in reach, so sudo's question for
+/// the password comes up in the TUI and the answer goes to sudo alone.
+#[cfg(unix)]
+fn run_as_root(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
+    let summary = crate::user_io::summary_args(name, args);
+    let Some(io) = &ctx.user_io else {
+        return Ok(ToolOutput::err(format!(
+            "denied: {name} {summary} runs as root, which needs a person's yes and their \
+             password, and nobody can be asked here (headless). No flag covers it. Tell the \
+             user the command to run themselves"
+        )));
+    };
+    let answer = io.ask_tool(
+        crate::user_io::ToolAsk {
+            tool: format!("{name} {AS_ROOT}"),
+            summary: summary.clone(),
+            preview: None,
+            strict: true,
+            scope: None,
+            whole: false,
+            asks: args
+                .get("command")
+                .and_then(Value::as_str)
+                .and_then(|cmd| policy::asking_segment(cmd, ctx)),
+        },
+        &ctx.cancel,
+    );
+    match answer {
+        crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {}
+        crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
+            return Err(crate::error::Error::Cancelled);
+        }
+        crate::user_io::Permission::Deny => {
+            return Ok(ToolOutput::err(format!(
+                "denied by user: {name} {summary} (as root). Don't retry it: say what it was \
+                 for, and carry on with what doesn't need it"
+            )));
+        }
+    }
+    let askpass = match io.askpass(&crate::config::home_dir()) {
+        Ok(askpass) => askpass,
+        Err(why) => {
+            return Ok(ToolOutput::err(format!(
+                "sudo can't be used from here: Ryter could not set up the helper that asks \
+                 the user for their password ({why}). Tell the user that, and the command to \
+                 run themselves"
+            )));
+        }
+    };
+    let mut scoped = ctx.clone();
+    scoped.sandbox = None;
+    with_hooks(name, args, &scoped, || {
+        shell::bash_as_root(args, ctx, &askpass)
+    })
+}
+
+#[cfg(not(unix))]
+fn run_as_root(name: &str, args: &Value, _ctx: &ToolContext) -> Result<ToolOutput> {
+    Ok(ToolOutput::err(format!(
+        "denied: {name} {} runs as root, which Ryter does not do on this system",
+        crate::user_io::summary_args(name, args)
+    )))
 }
 
 fn run_with_hooks(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
@@ -1405,6 +1476,98 @@ mod tests {
         assert!(out.is_error, "{out:?}");
     }
 
+    /// A command as root: the user is asked on a card of its own, whatever
+    /// the session allows, and on a yes it runs with Ryter's `sudo` first on
+    /// its `PATH` and the askpass named. A stand-in sudo says what it was
+    /// run with; no real one runs.
+    #[cfg(unix)]
+    #[test]
+    fn a_root_command_asks_every_time_and_runs_with_the_askpass() {
+        use std::os::unix::fs::PermissionsExt;
+        struct Nobody;
+        impl crate::sudo::PasswordSource for Nobody {
+            fn password(&self, _prompt: &str, _again: bool) -> Option<crate::sudo::Typed> {
+                None
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let stand_in = home.path().join("stand-in-sudo");
+        std::fs::write(
+            &stand_in,
+            "#!/bin/sh\necho \"ran: $*\"\necho \"askpass: ${SUDO_ASKPASS##*/}\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&stand_in, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let askpass = std::sync::Arc::new(
+            crate::sudo::Askpass::start_with(home.path(), std::sync::Arc::new(Nobody), &stand_in)
+                .unwrap(),
+        );
+        let args = json!({ "command": "sudo ldconfig -v" });
+        for (always, yolo, yes) in [
+            (false, false, true),
+            (true, false, true),
+            (true, true, true),
+            (true, true, false),
+        ] {
+            let (io, rx) = crate::user_io::UserIo::pair();
+            io.set_askpass(askpass.clone());
+            let mut c = ctx(Role::SoloBuild, dir.path());
+            c.user_io = Some(io);
+            c.always_approve = always;
+            c.yolo = yolo;
+            let asked = std::thread::spawn(move || match rx.recv().unwrap() {
+                crate::user_io::UserRequest::Permission {
+                    tool,
+                    strict,
+                    scope,
+                    reply,
+                    ..
+                } => {
+                    let _ = reply.send(if yes {
+                        crate::user_io::Permission::Allow
+                    } else {
+                        crate::user_io::Permission::Deny
+                    });
+                    (tool, strict, scope)
+                }
+                _ => Default::default(),
+            });
+            let out = gated_execute("bash", &args, &c).unwrap();
+            let (tool, strict, scope) = asked.join().unwrap();
+            assert!(tool.ends_with(AS_ROOT), "the card says it is root: {tool}");
+            assert!(strict && scope.is_none(), "y only, and no always");
+            if yes {
+                assert!(!out.is_error, "{out:?}");
+                assert!(out.text.contains("ran: -A ldconfig -v"), "{out:?}");
+                assert!(
+                    out.text
+                        .contains(&format!("askpass: {}", crate::sudo::HELPER_NAME)),
+                    "{out:?}"
+                );
+            } else {
+                assert!(
+                    out.is_error && out.text.contains("denied by user"),
+                    "{out:?}"
+                );
+            }
+        }
+        // Nobody to ask: refused, and no flag changes that.
+        let mut c = ctx(Role::SoloBuild, dir.path());
+        c.always_approve = true;
+        c.yolo = true;
+        let out = gated_execute("bash", &args, &c).unwrap();
+        assert!(out.is_error && out.text.contains("headless"), "{out:?}");
+        // An ordinary command is given none of it.
+        let out = gated_execute(
+            "bash",
+            &json!({ "command": "echo \"askpass: ${SUDO_ASKPASS:-none} $RYTER_ASKPASS_SOCK\"" }),
+            &c,
+        )
+        .unwrap();
+        assert!(out.text.contains("askpass: none"), "{out:?}");
+    }
+
     /// Inline code runs in the build hat. The review hat, refused it, is
     /// told which hats run it and what it may run itself; a shell handed a
     /// command as text is refused in both, and told why.
@@ -1425,7 +1588,7 @@ mod tests {
             gated_execute("bash", &json!({ "command": "python3 -c 'print(1)'" }), &r).unwrap();
         assert!(out.is_error && out.text.contains("build hat"), "{out:?}");
         // Other refusals keep the general wording.
-        let out = gated_execute("bash", &json!({ "command": "sudo ls" }), &c).unwrap();
+        let out = gated_execute("bash", &json!({ "command": "chown root x" }), &c).unwrap();
         assert!(out.text.contains("outside policy"), "{out:?}");
     }
 

@@ -767,11 +767,21 @@ const DRAIN_BATCH: usize = 32;
 
 /// Bracketed paste → composer (`R-COMP-10`). Panels that own the composer get it too.
 fn on_paste(view: &mut View, text: &str) {
+    // A password goes to its own field, never through the composer.
+    if view.panels.paste(text) {
+        return;
+    }
     if view.panels.has_modal() && view.panels.wants_input(view).is_none() {
         return;
     }
     view.composer.paste(text);
     crate::palette::refresh(view);
+}
+
+/// A paste, as the loop hands it on.
+#[cfg(test)]
+pub(crate) fn paste_handle(view: &mut View, text: &str) {
+    on_paste(view, text);
 }
 
 /// A mouse event with nothing under it but the screen: for tests of the
@@ -926,6 +936,17 @@ fn drain_user_prompts(
             view.panels
                 .push(Box::new(AskModal::new(question, options).titled(title)));
         }
+        UserRequest::Password {
+            prompt,
+            again,
+            reply,
+        } => {
+            let opened = view.now_ms;
+            view.panels
+                .push(Box::new(crate::panel::modal::PasswordModal::new(
+                    prompt, again, reply, opened,
+                )));
+        }
     }
     panel::sync_composer(view);
     if view.activity.busy() {
@@ -944,6 +965,7 @@ pub fn ask_for(req: &UserRequest) -> &'static str {
         UserRequest::Plan { .. } => "plan?",
         UserRequest::Run { .. } => "run?",
         UserRequest::Question { .. } => "question",
+        UserRequest::Password { .. } => "password",
     }
 }
 

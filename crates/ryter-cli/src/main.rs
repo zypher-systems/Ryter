@@ -193,6 +193,20 @@ fn tui_hat(hat: Option<&str>) -> Result<Option<Role>, Error> {
 }
 
 fn main() -> ExitCode {
+    // sudo runs the askpass link for a root command the user approved:
+    // `~/.ryter/bin/ryter-askpass`, which is this binary by another name.
+    #[cfg(unix)]
+    if std::env::args_os()
+        .next()
+        .and_then(|a| {
+            std::path::Path::new(&a)
+                .file_name()
+                .map(|n| n == ryter_core::sudo::HELPER_NAME)
+        })
+        .unwrap_or(false)
+    {
+        return ExitCode::from(ryter_core::sudo::helper_main() as u8);
+    }
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Version) => {

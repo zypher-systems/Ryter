@@ -36,6 +36,8 @@ pub mod sandbox;
 pub mod session;
 pub mod skill;
 pub mod spend;
+#[cfg(unix)]
+pub mod sudo;
 pub mod tools;
 pub mod trace;
 pub mod update;

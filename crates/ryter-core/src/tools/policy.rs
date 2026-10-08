@@ -27,6 +27,10 @@ pub enum Decision {
     /// Prompt the user even under "allow all" or `--always-approve`: the
     /// build hat writing outside the project.
     AskOutside,
+    /// Prompt the user every time, whatever the session allows, yolo
+    /// included: the build hat running a command as root (`sudo …`). The
+    /// yes is followed by sudo's own question, the user's password.
+    AskRoot,
     /// Do not run.
     Deny,
 }
@@ -39,7 +43,8 @@ impl Decision {
             Self::Ask => 1,
             Self::AskSecret => 2,
             Self::AskOutside => 3,
-            Self::Deny => 4,
+            Self::AskRoot => 4,
+            Self::Deny => 5,
         }
     }
 
@@ -1809,7 +1814,7 @@ pub fn asking_segment(cmd: &str, ctx: &ToolContext) -> Option<String> {
     } = judge_bash(cmd, ctx);
     if !matches!(
         decision,
-        Decision::Ask | Decision::AskSecret | Decision::AskOutside
+        Decision::Ask | Decision::AskSecret | Decision::AskOutside | Decision::AskRoot
     ) {
         return None;
     }
@@ -1935,7 +1940,10 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
                 kept: [ctx.kept.as_slice(), kept.as_slice()].concat(),
                 ..ctx.clone()
             };
-            let judged = decide_segment(&s.text, &cx);
+            let judged = match after_sudo(&s.text) {
+                Some(rest) if !s.inside => decide_as_root(&s.text, rest, &cx),
+                _ => decide_segment(&s.text, &cx),
+            };
             let runs = !s.inside
                 && !led_by_keyword(&s.text)
                 && match s.before {
@@ -1959,7 +1967,7 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
             if asks.is_none()
                 && matches!(
                     judged,
-                    Decision::Ask | Decision::AskSecret | Decision::AskOutside
+                    Decision::Ask | Decision::AskSecret | Decision::AskOutside | Decision::AskRoot
                 )
             {
                 asks = Some(s.text.clone());
@@ -2212,6 +2220,132 @@ fn cd_into_project(words: &[String], ctx: &ToolContext) -> bool {
 /// Judge one shell segment (no `;`, `&&`, `|`, or substitution inside).
 fn decide_segment(seg: &str, ctx: &ToolContext) -> Decision {
     decide_segment_in(seg, ctx, false)
+}
+
+/// The command a segment hands to `sudo`, when the segment is `sudo`
+/// written out plainly and followed by a program's name: `sudo dnf install
+/// -y alsa-lib-devel` gives `dnf install -y alsa-lib-devel`.
+///
+/// Only that spelling is the one the build hat may ask to run. `sudo` with
+/// an option of its own (`-u`, `-E`, `-i`, `-s`, `-n`), with a variable
+/// (`sudo X=1 cmd`), behind a wrapper (`env sudo`, `timeout 5 sudo`), in
+/// quotes, or as anything the shell has to work out is not read here, and
+/// stays on the never-run list.
+fn after_sudo(seg: &str) -> Option<&str> {
+    let rest = seg.trim_start().strip_prefix("sudo")?;
+    if !rest.starts_with([' ', '\t']) {
+        return None;
+    }
+    let rest = rest.trim_start_matches([' ', '\t']);
+    let program = rest.split([' ', '\t', '\n']).next().unwrap_or("");
+    let plain = |c: char| c.is_ascii_alphanumeric() || "_./+-".contains(c);
+    (!program.is_empty() && !program.starts_with('-') && program.chars().all(plain)).then_some(rest)
+}
+
+/// What only root can read, and nothing should print: other accounts'
+/// password hashes, who may become root, this machine's own keys, root's
+/// own folder.
+fn roots_own(path: &Path) -> bool {
+    const FILES: &[&str] = &[
+        "/etc/shadow",
+        "/etc/shadow-",
+        "/etc/gshadow",
+        "/etc/gshadow-",
+        "/etc/sudoers",
+        "/etc/master.passwd",
+        "/etc/security/opasswd",
+    ];
+    const FOLDERS: &[&str] = &["/root", "/etc/sudoers.d", "/etc/ssh", "/var/root"];
+    // macOS keeps `/etc` and `/var` under `/private`.
+    let path = normalize(path);
+    let path = path
+        .strip_prefix("/private")
+        .map_or(path.clone(), |p| Path::new("/").join(p));
+    // The disk itself, and the kernel's view of every process.
+    let raw = ["/dev", "/proc", "/sys"]
+        .iter()
+        .any(|f| path.starts_with(f))
+        && path != Path::new("/dev/null");
+    raw || FILES.iter().any(|f| path == Path::new(f)) || FOLDERS.iter().any(|f| path.starts_with(f))
+}
+
+/// `path` is there and this account may not read it: a file it can't open,
+/// a folder it can't list or reach into. Root can, and what a command
+/// prints goes to the model, so a root command that names one is refused
+/// whatever it is called. A path that isn't there yet is nobody's secret.
+fn closed_to_this_account(path: &Path) -> bool {
+    let denied = |e: std::io::Error| e.kind() == std::io::ErrorKind::PermissionDenied;
+    match std::fs::metadata(path) {
+        Err(e) => denied(e),
+        Ok(m) if m.is_dir() => std::fs::read_dir(path).is_err_and(denied),
+        Ok(m) if m.is_file() => std::fs::File::open(path).is_err_and(denied),
+        Ok(_) => false,
+    }
+}
+
+/// `sudo <command>`, with `rest` the command ([`after_sudo`]): the build
+/// hat may ask to run it as root, and a person answers every time.
+///
+/// The command is judged as the build hat's own first. What it is refused,
+/// it is refused as root: a secret, a shell handed its command as text, a
+/// system folder written by name. Everything else asks, whatever the
+/// command would have been on its own, and no rule of the user's turns
+/// that question into a yes.
+///
+/// Root adds what the account could not read, and what a command prints
+/// goes to the model. So as root, also refused:
+///
+/// - a file or folder this account can't read ([`closed_to_this_account`]),
+///   and [`roots_own`] by name, for a machine where they are not there to
+///   test;
+/// - what the gate can't read before it runs: a variable it doesn't know,
+///   `~name`, files handed over by `xargs` or `find -exec`. In the build
+///   hat those ask; here the question would be "print something as root";
+/// - an interpreter or a shell as the program (`sudo python3 x.py`, `sudo
+///   sh install.sh`): a shell as root by another name. A program of the
+///   project's own (`sudo ./install.sh`, `sudo make install`) is what the
+///   card is for.
+///
+/// Root is the build hat's alone. The hats that look have no use for it,
+/// and the audit's checkpoint puts back the project, not the machine.
+/// Under a sandbox profile `sudo` cannot gain privilege at all.
+fn decide_as_root(seg: &str, rest: &str, ctx: &ToolContext) -> Decision {
+    if !cfg!(unix) || ctx.role != Role::SoloBuild || ctx.read_only || ctx.sandbox.is_some() {
+        return Decision::Deny;
+    }
+    if decide_segment(rest, ctx) == Decision::Deny {
+        return Decision::Deny;
+    }
+    let words = command_words(rest, ctx);
+    let parsed = parse(&words);
+    let Some(prog) = parsed.prog else {
+        return Decision::Deny;
+    };
+    if parsed.via_xargs
+        || prog == "xargs"
+        || !exec_commands(prog, &words).is_empty()
+        || INTERPRETERS.contains(&prog.to_ascii_lowercase().as_str())
+    {
+        return Decision::Deny;
+    }
+    let (seen, _) = with_values(&words, 0);
+    let unread = |w: &String| {
+        w.contains(['$', '`'])
+            || w.contains(SUBST)
+            || (w.starts_with('~') && !(w == "~" || w.starts_with("~/")))
+    };
+    let closed = |w: &String| {
+        resolve(ctx, w)
+            .or_else(|| resolve_outside(ctx, w))
+            .is_some_and(|p| roots_own(&p) || closed_to_this_account(&p))
+    };
+    if seen.iter().any(|w| unread(w) || closed(w)) {
+        return Decision::Deny;
+    }
+    match ctx.permissions.for_command(seg) {
+        Some(crate::permissions::Answer::Deny) => Decision::Deny,
+        _ => Decision::AskRoot,
+    }
 }
 
 /// [`decide_segment`]. `in_container`: the segment is the command a
@@ -3446,6 +3580,30 @@ fn removes_container_data(prog: &str, args: &[String]) -> bool {
 /// policy", a reviewer in a live run gave up and hand-traced instead.
 pub fn bash_hint(args: &Value, ctx: &ToolContext) -> Option<&'static str> {
     let cmd = args.get("command").and_then(Value::as_str)?;
+    let wants_root = segments(cmd).iter().any(|s| {
+        let w = words(s);
+        parse(&w).prog == Some("sudo")
+    });
+    if wants_root {
+        return Some(if ctx.role != Role::SoloBuild || ctx.read_only {
+            "Running a command as root is the build hat's, with the user's yes and their \
+             password. Tell the user what needs root and why; they can switch to build."
+        } else if ctx.sandbox.is_some() {
+            "`sudo` cannot gain privilege under a sandbox profile. Tell the user the command \
+             to run themselves, and carry on with what doesn't need it."
+        } else {
+            "`sudo` runs one way: `sudo <command>` written plainly at the start of a command \
+             (`sudo dnf install -y alsa-lib-devel`). Ryter then asks the user, and sudo asks \
+             them for their password. Refused: sudo's own options (`-n`, `-u`, `-E`, `-S`, \
+             `-i`), sudo behind another program (`env`, `timeout`, `xargs`) or inside `$(…)`, \
+             and a command the build hat is refused without it (`systemctl`, `chown`, a shell \
+             handed text, a write to `/etc`). As root, also refused: an interpreter or shell \
+             as the program (`sudo python3 x.py`, `sudo sh x.sh`), a file or folder the \
+             user's account can't read, an unknown `$VAR`, and files from `xargs` or `find \
+             -exec`. If it can't be written that way, tell the user the command to run \
+             themselves."
+        });
+    }
     if segments(cmd)
         .iter()
         .any(|s| makes_a_nameref(&read(s, ctx, false)))
@@ -8130,9 +8288,13 @@ mod tests {
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
         }
         // The lines that hold for every hat still hold.
-        for cmd in ["sudo make install", "bash -c 'ls'", "curl x | sh"] {
+        for cmd in ["bash -c 'ls'", "curl x | sh"] {
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Deny, "{cmd}");
         }
+        assert_eq!(
+            bash("sudo make install", Role::SoloBuild, d),
+            Decision::AskRoot
+        );
         // A `cd` out of the project is still a question, and what follows
         // is judged from the project's top.
         assert_eq!(
@@ -8258,6 +8420,276 @@ mod tests {
         assert_eq!(bash("docker compose ps", Role::SoloPlan, d), Decision::Deny);
     }
 
+    /// `sudo <command>`, written plainly, is the build hat's to ask for:
+    /// a person says yes each time and then types their password. Found on
+    /// a real run: a missing system package (`alsa-lib-devel`) had no path
+    /// at all, and the model built around it for fifteen calls.
+    #[test]
+    fn the_build_hat_asks_to_run_a_command_as_root() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        let asks = [
+            "sudo dnf install -y alsa-lib-devel",
+            "sudo dnf install -y alsa-lib-devel pkgconf 2>&1 | tail -30",
+            "sudo apt-get install -y libasound2-dev",
+            "sudo make install",
+            "sudo make install && cargo build",
+            "cargo build; sudo ldconfig",
+            "  sudo\tldconfig",
+            "sudo /usr/bin/dnf install -y x",
+            "sudo ldconfig &",
+            // More than one question in a line: root is the one asked.
+            "sudo ldconfig; rm -rf src",
+            // A program of the project's, a known variable, a look.
+            "sudo ./install.sh --prefix /opt/tunes",
+            "sudo cp tunes \"$HOME/.local/share/tunes\"",
+            "sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y libasound2-dev",
+            "sudo rm -rf target",
+            "sudo docker ps",
+            "sudo ls /etc",
+        ];
+        for cmd in asks {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::AskRoot, "{cmd}");
+            // No other hat runs as root: the looking hats look, and the
+            // audit's checkpoint puts back the project, not the machine.
+            for role in [Role::SoloPlan, Role::SoloScribe, Role::SoloAudit] {
+                assert_eq!(bash(cmd, role, d), Decision::Deny, "{role:?}: {cmd}");
+            }
+            let mut audit = ctx_for(Role::SoloAudit, d);
+            audit.read_only = false;
+            assert_eq!(
+                decide("bash", &json!({"command": cmd}), &audit),
+                Decision::Deny,
+                "audit behind a checkpoint: {cmd}"
+            );
+        }
+        // The card names the command that asked.
+        assert_eq!(
+            asking_segment(
+                "cargo build && sudo make install",
+                &ctx_for(Role::SoloBuild, d)
+            )
+            .as_deref(),
+            Some("sudo make install")
+        );
+    }
+
+    /// Only the plain spelling is read. Anything the shell has to work out,
+    /// sudo's own options, and a wrapper stay on the never-run list, as
+    /// does a command the build hat is refused without `sudo`.
+    #[test]
+    fn root_is_asked_for_one_way_and_opens_no_refusal() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join(".env"), "KEY=1").unwrap();
+        for cmd in [
+            // sudo's own options, and a variable handed to it.
+            "sudo -n dnf install -y x",
+            "sudo -u postgres psql",
+            "sudo -E make install",
+            "sudo -i",
+            "sudo -s",
+            "sudo -S ls",
+            "sudo --preserve-env=PATH ls",
+            "sudo -- ls",
+            "sudo X=1 make install",
+            "sudo",
+            // Another way to the same program.
+            "/usr/bin/sudo ls",
+            "env sudo ls",
+            "env -i sudo ls",
+            "timeout 5 sudo ls",
+            "nice sudo ls",
+            "command sudo ls",
+            "exec sudo ls",
+            "X=1 sudo ls",
+            "s\\udo ls",
+            "'sudo' ls",
+            "\"sudo\" ls",
+            "sudo \"$CMD\"",
+            "sudo $CMD",
+            "sudo $(echo ls)",
+            "sudo `echo ls`",
+            "sudo \\\nls",
+            "sudo 'ls'",
+            // Where the shell runs it apart from the line.
+            "(sudo ls)",
+            "{ sudo ls; }",
+            "echo $(sudo id)",
+            "echo `sudo id`",
+            "if sudo true; then ls; fi",
+            "f() { sudo id; }; f",
+            "find . -exec sudo rm {} ;",
+            "ls | xargs sudo rm",
+            "watch 'sudo ls'",
+            "eval 'sudo ls'",
+            // Other ways to root.
+            "doas ls",
+            "pkexec ls",
+            "su -c ls",
+            "sudo su",
+            "sudo sudo ls",
+            "sudo doas ls",
+            // What the build hat is refused, it is refused as root.
+            "sudo bash -c 'id'",
+            "sudo sh -c 'id'",
+            "sudo systemctl restart postgresql",
+            "sudo chown root x",
+            "sudo dd if=/dev/zero of=/dev/sda",
+            "sudo mount /dev/sda1 /mnt",
+            "sudo visudo",
+            "sudo cat .env",
+            "sudo cat ~/.ssh/id_rsa",
+            "sudo tee /etc/hosts",
+            "sudo ls; cat .env",
+            // What only root can read.
+            "sudo cat /etc/shadow",
+            "sudo cat /etc/gshadow",
+            "sudo grep root /etc/sudoers",
+            "sudo ls /etc/sudoers.d",
+            "sudo cat /etc/sudoers.d/wheel",
+            "sudo ls /root",
+            "sudo cat /root/notes.txt",
+            "sudo cat /etc/ssh/ssh_host_ed25519_key",
+            "sudo cp /etc/shadow /tmp/x",
+            "sudo tar czf /tmp/x.tgz /root",
+            "sudo cat /etc/../etc/shadow",
+            "sudo cat /etc/shad*",
+            "sudo cat /etc/{shadow,hosts}",
+            "cd /etc && sudo cat shadow",
+            "cd /root && sudo ls",
+            "sudo cat < /etc/shadow",
+            "sudo ln -s /etc/shadow /tmp/s",
+            "sudo cat ~root/notes.txt",
+            // The disk, and every process's memory.
+            "sudo head -c 100 /dev/sda",
+            "sudo cat /proc/1/environ",
+            "sudo cat /proc/kcore",
+            // What the gate can't read before it runs.
+            "sudo cat $F",
+            "sudo cat \"$F\"",
+            "sudo cat ${F:-x}",
+            "ls | sudo xargs cat",
+            "sudo xargs cat < list",
+            "sudo find /var/log -name '*.log' -exec cat {} ;",
+            "sudo find . -delete -exec true ;",
+            // A shell as root by another name.
+            "sudo python3 -c 'print(1)'",
+            "sudo python3 script.py",
+            "sudo sh install.sh",
+            "sudo bash install.sh",
+            "sudo node -e 1",
+            "sudo env python3 script.py",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Deny, "{cmd}");
+        }
+        // A link in the project to one of root's files is that file.
+        std::os::unix::fs::symlink("/etc/shadow", d.join("link")).unwrap();
+        std::os::unix::fs::symlink("/etc", d.join("etc-link")).unwrap();
+        for cmd in [
+            "sudo cat link",
+            "sudo cat ./link",
+            "sudo cat etc-link/shadow",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Deny, "{cmd}");
+        }
+    }
+
+    /// What this account can't read is not read for it as root, whatever
+    /// it is called: root can open it, and what a command prints goes to
+    /// the model. What it can read, or what isn't there yet, is a question.
+    #[test]
+    fn root_does_not_read_what_the_account_cannot() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("open.txt"), "x").unwrap();
+        std::fs::write(d.join("shut.db"), "x").unwrap();
+        std::fs::create_dir(d.join("vault")).unwrap();
+        std::fs::write(d.join("vault/inside.txt"), "x").unwrap();
+        let shut = |p: &str, mode| {
+            std::fs::set_permissions(d.join(p), std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        shut("shut.db", 0o000);
+        shut("vault", 0o000);
+        // Root reads through every mode: nothing here is closed to it.
+        let as_root = std::fs::File::open(d.join("shut.db")).is_ok();
+        for (cmd, closed) in [
+            ("sudo cat open.txt", false),
+            ("sudo cp open.txt later.txt", false),
+            ("sudo cat shut.db", true),
+            ("sudo cp shut.db /tmp/copy.db", true),
+            ("sudo ls vault", true),
+            ("sudo cat vault/inside.txt", true),
+            ("sudo tar czf /tmp/v.tgz vault", true),
+        ] {
+            let want = if closed && !as_root {
+                Decision::Deny
+            } else {
+                Decision::AskRoot
+            };
+            assert_eq!(bash(cmd, Role::SoloBuild, d), want, "{cmd}");
+        }
+        shut("vault", 0o700);
+    }
+
+    /// No rule of the user's and no session answer turns the question for
+    /// root into a yes; a rule can refuse it. Under a sandbox profile sudo
+    /// cannot gain privilege, so it is not offered.
+    #[test]
+    fn root_is_a_question_whatever_the_rules_say() {
+        let dir = TempDir::new().unwrap();
+        let mut c = ctx_for(Role::SoloBuild, dir.path());
+        let d = |c: &ToolContext, cmd: &str| decide("bash", &json!({"command": cmd}), c);
+        let mut rules = crate::permissions::Permissions::default();
+        for pattern in ["sudo *", "dnf *", "*"] {
+            rules
+                .bash
+                .insert(pattern.into(), crate::permissions::Answer::Allow);
+        }
+        c.permissions = std::sync::Arc::new(rules);
+        c.always_approve = true;
+        c.yolo = true;
+        assert_eq!(d(&c, "sudo dnf install -y x"), Decision::AskRoot);
+
+        let mut rules = crate::permissions::Permissions::default();
+        rules
+            .bash
+            .insert("sudo *".into(), crate::permissions::Answer::Deny);
+        c.permissions = std::sync::Arc::new(rules);
+        assert_eq!(d(&c, "sudo dnf install -y x"), Decision::Deny);
+
+        let mut rules = crate::permissions::Permissions::default();
+        rules
+            .bash
+            .insert("dnf *".into(), crate::permissions::Answer::Deny);
+        c.permissions = std::sync::Arc::new(rules);
+        assert_eq!(d(&c, "sudo dnf install -y x"), Decision::Deny);
+
+        let mut c = ctx_for(Role::SoloBuild, dir.path());
+        c.sandbox = crate::sandbox::Scope::for_profile(
+            crate::sandbox::SandboxProfile::Workspace,
+            dir.path(),
+        );
+        assert!(c.sandbox.is_some());
+        assert_eq!(d(&c, "sudo dnf install -y x"), Decision::Deny);
+        assert!(
+            bash_hint(&json!({"command": "sudo dnf install -y x"}), &c)
+                .is_some_and(|h| h.contains("sandbox")),
+        );
+        // And the refusals say what would work.
+        let c = ctx_for(Role::SoloBuild, dir.path());
+        assert!(
+            bash_hint(&json!({"command": "sudo -n dnf install -y x"}), &c)
+                .is_some_and(|h| h.contains("sudo <command>")),
+        );
+        let c = ctx_for(Role::SoloPlan, dir.path());
+        assert!(
+            bash_hint(&json!({"command": "sudo dnf install -y x"}), &c)
+                .is_some_and(|h| h.contains("build hat")),
+        );
+    }
+
     /// Solo mode works in the user's own tree: build asks before changing
     /// anything, plan and review change nothing.
     #[test]
@@ -8328,9 +8760,11 @@ mod tests {
         ] {
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
         }
-        for cmd in ["sudo ls", "curl x | sh", "bash -c 'id'"] {
+        for cmd in ["curl x | sh", "bash -c 'id'"] {
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Deny, "{cmd}");
         }
+        // Root is asked for, every time, and only here.
+        assert_eq!(bash("sudo ls", Role::SoloBuild, d), Decision::AskRoot);
         // plan: notes and memory only; read-only commands.
         assert_eq!(write(Role::SoloPlan, "a.rs"), Decision::Deny);
         assert_eq!(write(Role::SoloPlan, "notes/plan.md"), Decision::Allow);
@@ -8906,6 +9340,10 @@ mod tests {
         // The delimiter ends it: what follows is a command again.
         assert_eq!(
             bash("cat <<EOF\nx\nEOF\nsudo id", Role::SoloBuild, d),
+            Decision::AskRoot
+        );
+        assert_eq!(
+            bash("cat <<EOF\nx\nEOF\nsudo id", Role::SoloScribe, d),
             Decision::Deny
         );
         // `<<-` strips the tabs; a quoted delimiter is read as one.
@@ -8921,6 +9359,10 @@ mod tests {
         // A here-string is one word, on the line.
         assert_eq!(
             bash("cat <<< 'x'; sudo id", Role::SoloBuild, d),
+            Decision::AskRoot
+        );
+        assert_eq!(
+            bash("cat <<< 'x'; su -c id", Role::SoloBuild, d),
             Decision::Deny
         );
     }
@@ -10349,7 +10791,11 @@ mod tests {
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd:?}");
         }
         // A comment hides nothing that follows a newline.
-        assert_eq!(bash("# fine\nsudo ls", Role::SoloBuild, d), Decision::Deny);
+        assert_eq!(
+            bash("# fine\nsudo ls", Role::SoloBuild, d),
+            Decision::AskRoot
+        );
+        assert_eq!(bash("# fine\nsudo ls", Role::SoloPlan, d), Decision::Deny);
         assert_eq!(
             bash("ls # fine\ncat .env", Role::SoloBuild, d),
             Decision::Deny
@@ -10392,7 +10838,7 @@ mod tests {
         );
         assert_eq!(
             bash(
-                "cat <<EOF > x.sh\n# it's text\nEOF\nsudo ls",
+                "cat <<EOF > x.sh\n# it's text\nEOF\nsu -c ls",
                 Role::SoloBuild,
                 d
             ),
@@ -10535,7 +10981,9 @@ mod tests {
             .insert("*".into(), crate::permissions::Answer::Allow);
         c.permissions = std::sync::Arc::new(rules);
         let d = |cmd: &str| decide("bash", &json!({"command": cmd}), &c);
-        assert_eq!(d("sudo ls"), Decision::Deny);
+        // Root stays a question whatever the rules say.
+        assert_eq!(d("sudo ls"), Decision::AskRoot);
+        assert_eq!(d("sudo su"), Decision::Deny);
         assert_eq!(d("cat .env"), Decision::Deny);
         assert_eq!(d("rm -rf src"), Decision::Allow);
     }
