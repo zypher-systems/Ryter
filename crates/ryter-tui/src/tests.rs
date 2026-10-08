@@ -3738,7 +3738,7 @@ fn a_password_is_typed_into_its_own_field() {
             Action::None
         );
     }
-    crate::run::paste_handle(&mut v, "-pasted\n");
+    crate::run::paste_handle(&mut v, "-pasted\nand a second line\n");
     crate::run::keys::handle(&mut v, key(KeyCode::Char('x')));
     crate::run::keys::handle(&mut v, key(KeyCode::Backspace));
     assert!(v.composer.is_empty(), "nothing reaches the composer");

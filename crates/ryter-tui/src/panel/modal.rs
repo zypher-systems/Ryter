@@ -728,7 +728,10 @@ impl Panel for PasswordModal {
     }
 
     fn paste(&mut self, text: &str) -> bool {
-        self.typed.push_str(text.trim_end_matches(['\n', '\r']));
+        // One line: the helper hands sudo the password as a line, and a
+        // second line pasted with it would be read as something else.
+        self.typed
+            .push_str(text.split(['\n', '\r']).next().unwrap_or_default());
         true
     }
 

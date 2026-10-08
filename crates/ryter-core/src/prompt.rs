@@ -177,7 +177,7 @@ pub fn machine((docker, podman): (bool, bool), sandbox: crate::sandbox::SandboxP
         lines.push(
             "- Root: when the work needs a system package or another command as root, the \
              build hat runs `sudo <command>`, written plainly with no options to sudo itself \
-             (`sudo dnf install -y alsa-lib-devel`). The user is asked, and types their \
+             and in a call of its own (`sudo dnf install -y alsa-lib-devel`). The user is asked, and types their \
              password in Ryter; you never see it. Ask once for what is needed instead of \
              building around a missing package. The other hats, and a run with nobody at \
              the screen, can't: name the command for the user."
