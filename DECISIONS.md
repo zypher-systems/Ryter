@@ -2,6 +2,13 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-08 — A model chosen for "All hats" is every hat's
+- **By:** the user ("If an all hats model is selected should that not automatically change all the hats to default so they use that?"), after setting each hat its own model and then finding that a new choice for *All hats* changed nothing that ran until each hat was put back to `default` by hand.
+- **Decision:** choosing a model for *All hats* in `/models`, or with `/model <id>`, removes every hat's own model (`View::hats_follow`), saves `hats.toml`, and says which hats had one: "model · X · all hats follow it (plan and audit had models of their own)". On that seat the panel's key reads "enter set for all hats". The order to work in is therefore *All hats* first, then the hats that should differ, which is the order the cursor already moves in.
+- **Chosen vs rejected:** rejected keeping the old meaning (the model for hats without their own): with every hat set it is a model nothing uses, under a seat named "All hats". Rejected asking on the spot whether to reset: one more question for a choice that is undone by setting a hat again. Rejected leaving `/model <id>` with the old meaning: one setting would then mean two things depending on how it was reached.
+- **Where:** `crates/ryter-tui/src/view/mod.rs` (`hats_follow`, `followed`), `run/actions.rs` (`set_model`), `panel/models.rs` (the key's label), `docs/guide.md`.
+- **Residual risk:** a hat's own model is dropped without a question; the line in the chat names what was dropped, and nothing else records it. Someone who used `/model <id>` to change only the hats that follow now changes all of them.
+
 ### 2026-10-08 — An audit's verdict and its findings agree
 - **By:** the user, taking it from the roadmap after the tunes run of 2026-10-07, where the audit filed `verdict: pass` with one finding failed and one not reached: `.ryter/audit.md` was headed PASS, the card read "✗ 1 of 5 failed", and since a passed audit offers no repair, the failed finding (a stale entry in `decisions.md`) was never fixed.
 - **Decision:** `Audit::from_args` refuses a verdict of pass when any finding's result is fail, and tells the auditor the two ways to make them agree: the verdict is fail if the finding needs repair, or the finding is a pass with what was seen kept in its detail. A verdict of fail needs no failed finding, and `not_reached` does not fail an audit: what could not be checked is said, and the headline counts it.

@@ -19,7 +19,9 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-Nothing in `dev` is waiting on a release. The last release is 0.24.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.24.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+
+- **In `dev`, unreleased: a model chosen for "All hats" is every hat's.** In `/models` (and with `/model <id>`) it puts each hat that had its own model back to following, and says which. Reported by the user from their own use. `DECISIONS.md` 2026-10-08.
 
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
