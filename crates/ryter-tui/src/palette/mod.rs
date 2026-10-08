@@ -344,6 +344,7 @@ pub fn draw(frame: &mut Frame, chat: Rect, composer_top: u16, view: &View, theme
     let q = filter(view);
     let rows = body_rows(view, &ms, &q);
     let area = rect(chat, composer_top, rows.len());
+    view.covers.borrow_mut().push(area);
     let total = entries(view).len();
     let chrome = Chrome {
         title: "commands".into(),

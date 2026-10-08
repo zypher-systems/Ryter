@@ -3114,14 +3114,32 @@ fn a_click_on_the_status_row_toggles_the_pane() {
             "{layout}: the row is a target: {:?}",
             hit.activity
         );
-        let click = |row: u16, col: u16| MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
+        let event = |kind: MouseEventKind, row: u16, col: u16| MouseEvent {
+            kind,
             column: col,
             row,
             modifiers: KeyModifiers::NONE,
         };
-        let _ =
-            crate::run_mouse_handle_with(&mut v, click(hit.activity.y, hit.activity.x + 3), &hit);
+        // A click is a press and a release in one cell; the press alone
+        // does nothing, since it may be the start of a drag.
+        let click = |v: &mut View, hit: &crate::draw::Hit, row: u16, col: u16| {
+            let left = MouseButton::Left;
+            let _ =
+                crate::run_mouse_handle_with(v, event(MouseEventKind::Down(left), row, col), hit);
+            crate::run_mouse_handle_with(v, event(MouseEventKind::Up(left), row, col), hit)
+        };
+        let down = event(
+            MouseEventKind::Down(MouseButton::Left),
+            hit.activity.y,
+            hit.activity.x + 3,
+        );
+        let _ = crate::run_mouse_handle_with(&mut v, down, &hit);
+        assert_eq!(
+            v.activity.mode,
+            ActivityMode::Collapsed,
+            "{layout}: not yet"
+        );
+        let _ = click(&mut v, &hit, hit.activity.y, hit.activity.x + 3);
         assert_eq!(v.activity.mode, ActivityMode::Expanded, "{layout}");
         let hit = crate::draw::render_hit(&v, 160, 42);
         assert!(
@@ -3130,14 +3148,10 @@ fn a_click_on_the_status_row_toggles_the_pane() {
             hit.activity
         );
         // The header, one row below the status row.
-        let _ = crate::run_mouse_handle_with(
-            &mut v,
-            click(hit.activity.y + 1, hit.activity.x + 3),
-            &hit,
-        );
+        let _ = click(&mut v, &hit, hit.activity.y + 1, hit.activity.x + 3);
         assert_eq!(v.activity.mode, ActivityMode::Collapsed, "{layout}");
         // A click elsewhere in the chat does nothing to it.
-        let _ = crate::run_mouse_handle_with(&mut v, click(hit.chat.y, hit.chat.x + 3), &hit);
+        let _ = click(&mut v, &hit, hit.chat.y, hit.chat.x + 3);
         assert_eq!(v.activity.mode, ActivityMode::Collapsed, "{layout}");
     }
 }
@@ -3927,10 +3941,18 @@ fn a_click_selects_nothing() {
     let up = mouse(MouseEventKind::Up(MouseButton::Left), at, none);
     assert_eq!(crate::run_mouse_handle_with(&mut v, up, &hit), Action::None);
     assert!(v.selection.is_none());
-    // The status row still opens the pane.
+    // The status row still opens the pane: on the release, in the cell
+    // it was pressed in.
     let row = (hit.activity.x + 3, hit.activity.y);
     let down = mouse(MouseEventKind::Down(MouseButton::Left), row, none);
     let _ = crate::run_mouse_handle_with(&mut v, down, &hit);
+    assert_eq!(
+        v.activity.mode,
+        ActivityMode::Collapsed,
+        "a press is not yet a click"
+    );
+    let up = mouse(MouseEventKind::Up(MouseButton::Left), row, none);
+    assert_eq!(crate::run_mouse_handle_with(&mut v, up, &hit), Action::None);
     assert_eq!(v.activity.mode, ActivityMode::Expanded);
     assert!(v.selection.is_none());
 }
@@ -4221,4 +4243,380 @@ fn a_panels_field_opens_on_what_it_holds() {
         let _ = crate::run_keys_handle(&mut v, down());
     }
     assert_eq!(opened.as_deref(), Some("dusty"));
+}
+
+// -- after the 0.24.0 reviews ------------------------------------------------
+
+/// With the workbench open the conversation is its middle pane, and that
+/// is where it is selected: reported as the whole workbench, a drag over
+/// the text copied a different row, and a press on the changes began a
+/// selection of the conversation.
+#[test]
+fn the_workbench_selects_the_conversation_where_it_is() {
+    let theme = Theme::truecolor_dark();
+    let mut v = talking("ledger", PROSE);
+    let root = tempfile::tempdir().unwrap();
+    v.workbench = Some(crate::workbench::Workbench::open(
+        &v,
+        root.path().to_path_buf(),
+    ));
+    let size = (160, 44);
+    let plain = render_buffer(&v, size.0, size.1, theme);
+    let hit = crate::draw::render_hit(&v, size.0, size.1);
+    let from = find_on(&plain, "beta");
+    assert!(
+        hit.chat.x > 20 && from.0 >= hit.chat_text.x,
+        "the text is in the pane reported: {:?} {from:?}",
+        hit.chat_text
+    );
+    let (x, y) = find_on(&plain, "paragraph");
+    let (held, a) = drag(&mut v, size, from, (x + 8, y), KeyModifiers::NONE);
+    assert!(held[(from.0, from.1)].bg == theme.selection_bg);
+    assert_eq!(copied(&v, &held, a), "beta gamma\n\nsecond paragraph");
+    // A press left of the conversation is not a selection of it.
+    use crossterm::event::{MouseButton, MouseEventKind};
+    let at = (hit.chat.x.saturating_sub(6), hit.chat.y + 3);
+    let down = mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        at,
+        KeyModifiers::NONE,
+    );
+    let _ = crate::run_mouse_handle_with(&mut v, down, &hit);
+    assert!(v.selection.as_ref().is_some_and(|s| s.chat.is_none()));
+}
+
+/// A long reply with the question pinned over the pane's first rows.
+fn pinned() -> View {
+    let mut v = many_lines();
+    let _ = render_buffer(&v, 100, 30, Theme::truecolor_dark());
+    v.scroll.scroll_by(-40, true);
+    v
+}
+
+/// What is drawn over the conversation is not the conversation. A press
+/// on the pinned question selects what is drawn there; a drag from the
+/// text up onto it stops at the last row of text in sight and is not
+/// painted across it. The copy was rows nobody could see.
+#[test]
+fn what_is_drawn_over_the_conversation_is_not_selected_as_it() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    let theme = Theme::truecolor_dark();
+    let size = (100, 30);
+    let none = KeyModifiers::NONE;
+    let left = MouseButton::Left;
+    let mut v = pinned();
+    let plain = render_buffer(&v, size.0, size.1, theme);
+    let hit = crate::draw::render_hit(&v, size.0, size.1);
+    let pin = hit.covers.first().copied().expect("the question is pinned");
+    assert_eq!((pin.y, pin.height), (hit.chat.y, 2));
+    let shown = find_on(&plain, "summarise");
+    assert_eq!(
+        shown.1, pin.y,
+        "the pinned question is on the pane's first row"
+    );
+    // A press on the pin, dragged down into the text: the pin's own cells.
+    let (held, a) = drag(&mut v, size, shown, (shown.0 + 30, pin.y + 9), none);
+    let text = copied(&v, &held, a);
+    assert!(text.starts_with("summarise"), "{text:?}");
+    assert!(!text.contains("line "), "nothing from under it: {text:?}");
+    assert!(held[(shown.0, shown.1)].bg == theme.selection_bg);
+    assert!(held[(shown.0, pin.y + 5)].bg != theme.selection_bg);
+    // From the text up onto the pin: it ends at the first row under the
+    // pin, pulls the pane up, and leaves the pin unpainted.
+    let below = (pin.y + pin.height, pin.y + pin.height + 6);
+    let first_row: String = (hit.chat_text.x..hit.chat_text.x + 12)
+        .map(|x| plain[(x, below.0)].symbol().to_string())
+        .collect();
+    let (x, y) = (hit.chat_text.x + 10, below.1);
+    let _ = crate::run_mouse_handle_with(
+        &mut v,
+        mouse(MouseEventKind::Down(left), (x, y), none),
+        &hit,
+    );
+    let onto = (hit.chat_text.x + 2, pin.y);
+    let _ =
+        crate::run_mouse_handle_with(&mut v, mouse(MouseEventKind::Drag(left), onto, none), &hit);
+    assert_eq!(
+        v.selection.as_ref().map(|s| (s.pull, s.pull_at)),
+        Some((-1, 2))
+    );
+    let held = render_buffer(&v, size.0, size.1, theme);
+    assert!(
+        held[(onto.0 + 3, pin.y)].bg != theme.selection_bg,
+        "the pin is not text"
+    );
+    assert!(held[(onto.0 + 3, pin.y + 1)].bg != theme.selection_bg);
+    assert!(held[(onto.0 + 3, below.0)].bg == theme.selection_bg);
+    let a = crate::run_mouse_handle_with(&mut v, mouse(MouseEventKind::Up(left), onto, none), &hit);
+    let text = copied(&v, &held, a);
+    assert_eq!(text.lines().count(), 7, "{text:?}");
+    assert!(
+        first_row
+            .trim_end()
+            .ends_with(text.lines().next().unwrap_or("?")),
+        "it starts at the first row in sight: {first_row:?} {text:?}"
+    );
+}
+
+/// The command palette is a pane of its own: a press on it selects its
+/// rows, not the conversation it is drawn over.
+#[test]
+fn the_palette_is_selected_as_itself() {
+    let theme = Theme::truecolor_dark();
+    let mut v = talking("ledger", PROSE);
+    v.busy = false;
+    crate::run::keys::handle(&mut v, key(KeyCode::Char('/')));
+    assert!(v.palette.is_some());
+    let size = (120, 40);
+    let plain = render_buffer(&v, size.0, size.1, theme);
+    let hit = crate::draw::render_hit(&v, size.0, size.1);
+    let palette = hit.covers.last().copied().expect("the palette is drawn");
+    // A command's name on one of its rows.
+    let (x, y, name) = (palette.y..palette.y + palette.height)
+        .find_map(|y| {
+            let row: String = (palette.x..palette.x + palette.width)
+                .map(|x| plain[(x, y)].symbol().to_string())
+                .collect();
+            let at = row.find('/')?;
+            let name: String = row[at..]
+                .chars()
+                .take_while(|c| !c.is_whitespace())
+                .collect();
+            let x = palette.x + row[..at].chars().count() as u16;
+            Some((x, y, name))
+        })
+        .expect("a command in the palette");
+    assert!(name.len() > 2, "{name}");
+    let end = x + name.chars().count() as u16 - 1;
+    // Dragged out of the palette, into the conversation above it: the
+    // selection stays the palette's, and nothing of the reply is in it.
+    let (held, a) = drag(&mut v, size, (x, y), (end, y), KeyModifiers::NONE);
+    assert_eq!(copied(&v, &held, a), name);
+    let (_, a) = drag(
+        &mut v,
+        size,
+        (x, y),
+        (end, palette.y.saturating_sub(4)),
+        KeyModifiers::NONE,
+    );
+    match a {
+        Action::CopySelection(sel) => assert!(sel.chat.is_none() && sel.area == palette),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A drag that begins on a card or on the status row is a selection, and
+/// a click there does what it did: the click waits for the release.
+#[test]
+fn a_drag_from_a_card_selects_and_a_click_still_opens_it() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    let theme = Theme::truecolor_dark();
+    let mut v = talking("classic", PROSE);
+    v.panel_visible = true;
+    let size = (160, 44);
+    let hit = crate::draw::render_hit(&v, size.0, size.1);
+    let (card, rect) = hit
+        .cards
+        .iter()
+        .find(|(c, _)| c.opens().is_some())
+        .cloned()
+        .expect("a card that opens a panel");
+    let plain = render_buffer(&v, size.0, size.1, theme);
+    // Some text of the card, and a drag across it.
+    let row = (rect.y..rect.y + rect.height)
+        .find(|y| (rect.x..rect.x + rect.width).any(|x| plain[(x, *y)].symbol().trim() != ""))
+        .expect("a row with text");
+    let whole: String = (rect.x..rect.x + rect.width)
+        .map(|x| plain[(x, row)].symbol().to_string())
+        .collect();
+    let (held, a) = drag(
+        &mut v,
+        size,
+        (rect.x, row),
+        (rect.x + rect.width - 1, row),
+        KeyModifiers::NONE,
+    );
+    assert_eq!(copied(&v, &held, a), whole.trim());
+    assert!(v.panels.is_empty(), "a drag opens nothing");
+    // A click: press and release in one cell.
+    let none = KeyModifiers::NONE;
+    let at = (rect.x + 1, row);
+    let down = mouse(MouseEventKind::Down(MouseButton::Left), at, none);
+    assert_eq!(
+        crate::run_mouse_handle_with(&mut v, down, &hit),
+        Action::None
+    );
+    let up = mouse(MouseEventKind::Up(MouseButton::Left), at, none);
+    assert_eq!(
+        crate::run_mouse_handle_with(&mut v, up, &hit),
+        Action::OpenPanel(card.opens().unwrap())
+    );
+}
+
+/// Only the frame is left out of a code block. A line that is only a
+/// number, drawn as dim as the frame (a diff's context line), is code.
+#[test]
+fn a_dim_line_of_code_is_not_taken_for_the_frame() {
+    let theme = Theme::truecolor_dark();
+    let diff = "@@ -1,4 +1,4 @@\n 42\n-old line\n+new line\n    0\n 7 7\n";
+    for numbers in [true, false] {
+        let mut v = talking("ledger", &format!("```diff\n{diff}```\n\nAfter.\n"));
+        v.ui.line_numbers = numbers;
+        let plain = render_buffer(&v, 120, 40, theme);
+        let from = find_on(&plain, "@@ -1,4");
+        let (_, y) = find_on(&plain, "After.");
+        let (held, a) = drag(
+            &mut v,
+            (120, 40),
+            from,
+            (from.0 + 40, y - 3),
+            KeyModifiers::NONE,
+        );
+        assert_eq!(copied(&v, &held, a), diff.trim_end(), "numbers: {numbers}");
+    }
+}
+
+/// Code keeps every space of its own: the body of a function, selected
+/// without the line that opens it, is not moved to the margin.
+#[test]
+fn the_body_of_a_function_keeps_its_indentation() {
+    let theme = Theme::truecolor_dark();
+    let code = "fn main() {\n    let n = 2;\n    println!(\"{n}\");\n}\n";
+    let mut v = talking("ledger", &format!("```rust\n{code}```\n"));
+    let plain = render_buffer(&v, 120, 40, theme);
+    let hit = crate::draw::render_hit(&v, 120, 40);
+    let (_, y) = find_on(&plain, "let n = 2;");
+    // From the row's left edge, through the frame, to the next line's end.
+    let (x, _) = find_on(&plain, "println!");
+    let (held, a) = drag(
+        &mut v,
+        (120, 40),
+        (hit.chat_text.x, y),
+        (x + 15, y + 1),
+        KeyModifiers::NONE,
+    );
+    assert_eq!(
+        copied(&v, &held, a),
+        "    let n = 2;\n    println!(\"{n}\");"
+    );
+}
+
+/// The composer's caret is drawn in an empty cell, and is not text.
+#[test]
+fn the_caret_is_not_copied() {
+    let theme = Theme::truecolor_dark();
+    let mut v = talking("ledger", PROSE);
+    for c in "hello".chars() {
+        crate::run::keys::handle(&mut v, key(KeyCode::Char(c)));
+    }
+    let plain = render_buffer(&v, 120, 40, theme);
+    let (x, y) = find_on(&plain, "hello");
+    assert_eq!(
+        plain[(x + 5, y)].symbol(),
+        "█",
+        "the caret follows the text"
+    );
+    let (held, a) = drag(&mut v, (120, 40), (x, y), (x + 12, y), KeyModifiers::NONE);
+    assert_eq!(copied(&v, &held, a), "hello");
+}
+
+/// A panel that opens over the conversation while the button is down ends
+/// the selection: it is not painted across the panel, and the release
+/// copies nothing.
+#[test]
+fn a_panel_opening_ends_a_selection_of_the_conversation() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    let theme = Theme::truecolor_dark();
+    let mut v = talking("ledger", PROSE);
+    let size = (120, 40);
+    let hit = crate::draw::render_hit(&v, size.0, size.1);
+    let plain = render_buffer(&v, size.0, size.1, theme);
+    let from = find_on(&plain, "beta");
+    let (x, y) = find_on(&plain, "paragraph");
+    let none = KeyModifiers::NONE;
+    let left = MouseButton::Left;
+    let _ =
+        crate::run_mouse_handle_with(&mut v, mouse(MouseEventKind::Down(left), from, none), &hit);
+    let _ = crate::run_mouse_handle_with(
+        &mut v,
+        mouse(MouseEventKind::Drag(left), (x, y), none),
+        &hit,
+    );
+    v.panels.push(Box::new(PermissionModal::new(
+        "bash".into(),
+        "rm -rf target".into(),
+    )));
+    let held = render_buffer(&v, size.0, size.1, theme);
+    for yy in 0..size.1 {
+        for xx in 0..size.0 {
+            assert!(
+                held[(xx, yy)].bg != theme.selection_bg,
+                "painted at {xx},{yy}"
+            );
+        }
+    }
+    let up = mouse(MouseEventKind::Up(left), (x, y), none);
+    assert_eq!(crate::run_mouse_handle_with(&mut v, up, &hit), Action::None);
+    assert!(v.selection.is_none());
+}
+
+/// A selection being pulled ends at a row of the pane, so a report from
+/// the pointer while it is held there changes nothing, and at the top of
+/// the document it stays at the first row.
+#[test]
+fn a_pulled_selection_ends_at_the_panes_edge() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    let theme = Theme::truecolor_dark();
+    let mut v = many_lines();
+    let size = (100, 30);
+    let hit = crate::draw::render_hit(&v, size.0, size.1);
+    let plain = render_buffer(&v, size.0, size.1, theme);
+    let (x, y) = find_on(&plain, "line 115");
+    let none = KeyModifiers::NONE;
+    let left = MouseButton::Left;
+    let _ = crate::run_mouse_handle_with(
+        &mut v,
+        mouse(MouseEventKind::Down(left), (x + 7, y), none),
+        &hit,
+    );
+    let above = (x, hit.chat.y.saturating_sub(1));
+    let wiggle = (x + 1, hit.chat.y.saturating_sub(1));
+    let mut lines = 0;
+    for step in 0..200u64 {
+        if step % 7 == 3 {
+            let at = if step % 2 == 0 { above } else { wiggle };
+            let hit = crate::draw::render_hit(&v, size.0, size.1);
+            let _ = crate::run_mouse_handle_with(
+                &mut v,
+                mouse(MouseEventKind::Drag(left), at, none),
+                &hit,
+            );
+        } else if step == 0 {
+            let _ = crate::run_mouse_handle_with(
+                &mut v,
+                mouse(MouseEventKind::Drag(left), above, none),
+                &hit,
+            );
+        }
+        v.tick(v.now_ms + 50);
+        let held = render_buffer(&v, size.0, size.1, theme);
+        let sel = v.selection.clone().expect("still held");
+        let now = sel.text(&v, &held, theme).lines().count();
+        assert!(
+            now >= lines,
+            "step {step}: {now} after {lines}: rows were dropped"
+        );
+        lines = now;
+    }
+    assert_eq!(v.scroll.effective.get(), 0, "pulled to the top");
+    let held = render_buffer(&v, size.0, size.1, theme);
+    let a =
+        crate::run_mouse_handle_with(&mut v, mouse(MouseEventKind::Up(left), above, none), &hit);
+    let text = copied(&v, &held, a);
+    assert!(
+        text.ends_with("line 115"),
+        "{}",
+        &text[text.len().saturating_sub(40)..]
+    );
+    assert!(text.contains("line 0\nline 1\nline 2"), "the whole reply");
 }

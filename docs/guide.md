@@ -189,12 +189,13 @@ Inside a panel: `↑↓` move, `PgUp`/`PgDn` page, `Enter` activate, `Tab` next 
 
 Mouse: wheel scrolls the chat, clicking a card opens its panel, clicking the status row under the model, or the reasoning pane's header, toggles the pane.
 
-**Selecting text.** Hold the left button and drag: what you drag over is highlighted, and letting go copies it to the clipboard. The last row says so for a moment (`copied 9 lines`). A click without a drag copies nothing.
+**Selecting text.** Hold the left button and drag: what you drag over is highlighted, and letting go copies it to the clipboard. The last row says so for a moment (`copied 9 lines`). A click without a drag copies nothing, and does what a click did: it acts when you let go, in the cell you pressed, since a press may be the start of a drag.
 
 - **In the conversation** the selection is the text, not the screen: the timeline beside it is never in it, and the highlight stays on the words while a reply streams in or the pane scrolls. Hold the pointer above or below the pane with the button down and it scrolls that way and selects on, so more than a screenful can be copied.
-- **A code block is copied as code:** without the box drawn around it or its line numbers, and with its own indentation.
+- **A code block is copied as code:** without the box drawn around it or its line numbers, and with every space of its own, so the body of a function keeps its indentation.
+- **What is drawn over the conversation is selected as itself:** the question pinned at the top while you are scrolled up, and the command palette. A drag from the text onto either stops at the last row of text in sight and scrolls toward it, as at the pane's edge. What is highlighted is what is copied.
 - **`Alt` held while dragging** selects a rectangle instead of lines.
-- **Elsewhere** (the message box, a card on the right, anything on the screen while a panel is open) the selection is the cells you drag over, kept to the part of the screen it began in.
+- **Elsewhere** (the message box, a card on the right, the panes beside the conversation in the workbench, anything on the screen while a panel is open) the selection is the cells you drag over, kept to the part of the screen it began in. A panel that opens over the conversation while you are dragging ends the selection.
 - **Where the copy goes:** your terminal is asked to put it on the clipboard (OSC 52, which also works over `ssh`), and your desktop's own tool is run as well when one is installed: `wl-copy` on Wayland, `xclip` or `xsel` on X11, `pbcopy` on a Mac. A terminal that ignores OSC 52 on a machine with none of those tools leaves the clipboard as it was; inside `tmux`, OSC 52 needs `set -g set-clipboard on`.
 - **Lines that wrapped on the screen are copied as the rows you saw,** one line each.
 - **Your terminal's own selection** is still there with its modifier (Shift+drag on most), and `[ui] mouse = false` turns capture off entirely.

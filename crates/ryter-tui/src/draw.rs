@@ -21,6 +21,9 @@ pub struct Hit {
     pub chat: Rect,
     /// The part of the chat pane its text is in: right of the timeline.
     pub chat_text: Rect,
+    /// What was drawn over the chat pane: the pinned question, the "new
+    /// rows" mark, the palette.
+    pub covers: Vec<Rect>,
     /// Info panel cards.
     pub cards: Vec<(CardId, Rect)>,
     /// Activity strip.
@@ -31,7 +34,9 @@ pub struct Hit {
 
 /// Paint one frame.
 pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
+    view.covers.borrow_mut().clear();
     let mut hit = draw_screen(frame, view, theme);
+    hit.covers = view.covers.borrow().clone();
     // The conversation's text starts after the pane's margin and, on the
     // ledger, its timeline; its last column is the pane's margin too.
     let lead = 1 + if view.ui.classic() {
@@ -45,10 +50,15 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         ..hit.chat
     };
     let full = frame.area();
-    if let Some(sel) = &view.selection {
+    // A panel over the conversation is not the conversation: a selection
+    // begun before it opened is not painted across it.
+    let hidden = |sel: &crate::select::Selection| sel.chat.is_some() && !view.panels.is_empty();
+    if let Some(sel) = view.selection.as_ref().filter(|s| !hidden(s)) {
         sel.paint(
             frame.buffer_mut(),
             view.scroll.effective.get(),
+            view.scroll.doc_rows.get(),
+            &hit.covers,
             theme.selection_bg,
         );
     }
@@ -177,6 +187,7 @@ fn draw_screen(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     Hit {
         chat,
         chat_text: Rect::default(),
+        covers: Vec::new(),
         cards,
         activity: status_hit(chat, &cf),
         composer: comp,
@@ -262,16 +273,24 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         ..r
     };
     let mut chat = column(body);
+    let mut chat_pane = chat;
     if let Some(w) = &view.workbench {
         let area = Rect {
             x: body.x + 1,
             width: body.width.saturating_sub(2),
             ..body
         };
+        // The conversation is the middle of the three panes, and that is
+        // where a press on it lands: reported as the whole workbench, a
+        // drag over the changes selected the conversation, in the wrong
+        // columns.
+        let mut middle = area;
         w.draw(frame, area, view, theme, |f, r| {
+            middle = r;
             draw_chat(f, r, view, theme);
         });
         chat = area;
+        chat_pane = middle;
     } else {
         let gutter = Rect {
             x: col_x + col_w,
@@ -304,8 +323,9 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         composer::draw::paint_cursor(frame, cursor, theme);
     }
     Hit {
-        chat,
+        chat: chat_pane,
         chat_text: Rect::default(),
+        covers: Vec::new(),
         cards: Vec::new(),
         activity: act,
         composer: comp,
@@ -472,6 +492,7 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     Hit {
         chat,
         chat_text: Rect::default(),
+        covers: Vec::new(),
         cards: Vec::new(),
         activity: status_hit(chat, &cf),
         composer: comp,
@@ -1206,7 +1227,9 @@ fn draw_chat(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> layout
                 Line::from(spans)
             })
             .collect();
-        frame.render_widget(Paragraph::new(lines), Rect { height: 2, ..area });
+        let pinned = Rect { height: 2, ..area };
+        frame.render_widget(Paragraph::new(lines), pinned);
+        view.covers.borrow_mut().push(pinned);
     }
     // `↓ N new` pill (R-SCROLL-08).
     if cf.resolved.new_rows > 0 && !view.scroll.follow {
@@ -1229,6 +1252,7 @@ fn draw_chat(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> layout
                 )),
                 r,
             );
+            view.covers.borrow_mut().push(r);
         }
     }
     cf

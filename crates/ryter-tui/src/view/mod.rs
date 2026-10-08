@@ -319,6 +319,10 @@ pub struct View {
     pub selection: Option<crate::select::Selection>,
     /// A word on the screen's last row, and when it goes: `copied 3 lines`.
     pub flash: Option<(String, u64)>,
+    /// What the last frame drew over the conversation: the pinned
+    /// question, the "new rows" mark, the palette. A selection of the
+    /// conversation is not painted there, and a press there is not one.
+    pub covers: RefCell<Vec<ratatui::layout::Rect>>,
     /// Render cache (derived; clones start empty).
     pub cache: RefCell<RenderCache>,
     /// Startup warnings not yet shown.
@@ -499,6 +503,7 @@ impl View {
             quit_armed_until: None,
             selection: None,
             flash: None,
+            covers: RefCell::new(Vec::new()),
             cache: RefCell::new(RenderCache::new()),
             pending_warnings: Vec::new(),
             starting_product: None,
@@ -558,17 +563,9 @@ impl View {
             return;
         }
         sel.pulled_at = now_ms;
-        let before = self.scroll.effective.get();
+        // The selection ends at a row of the pane, so it takes in whatever
+        // the scroll brings there; at the document's end nothing moves.
         self.scroll.scroll_by(isize::from(sel.pull), self.busy);
-        // At the document's end there is nothing more to bring into view.
-        let at_end = if sel.pull < 0 {
-            before == 0
-        } else {
-            before + self.scroll.viewport.get() >= self.scroll.doc_rows.get()
-        };
-        if !at_end {
-            sel.pulled(self.scroll.doc_rows.get());
-        }
     }
 
     // -- messages -------------------------------------------------------------

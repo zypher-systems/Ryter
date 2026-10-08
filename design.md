@@ -341,17 +341,24 @@ two distinct guarantees.
   entirely.
 - **R-SEL-01** A press of the left button followed by a drag highlights text
   (`theme.selection_bg`); the release copies it and clears the highlight. A press and release
-  in one cell is a click and copies nothing.
+  in one cell is a click, copies nothing, and acts on the release (the status row, a card).
 - **R-SEL-02** A selection stays in the pane the press landed in: the conversation's text
-  column (never the ledger's timeline), the composer's text rows, a card, or the whole screen
-  while a panel is open.
+  column (never the ledger's timeline; with the workbench open, its middle pane), the
+  composer's text rows, a card, whatever is drawn over the conversation (the pinned
+  question, the palette, the "new rows" mark), or the whole screen while a panel is open.
+- **R-SEL-07** What is highlighted is what is copied. A conversation's selection is painted
+  only on cells that show the document: not on what is drawn over the pane, not below the
+  document's end, and not under a panel. A drag from the text onto something drawn over the
+  pane ends at the nearest row of text in sight and pulls the pane as its edge does.
 - **R-SEL-03** In the conversation a selection is in document rows: it stays on its text
   when the pane scrolls or the reply grows, and its text is read from the document, so rows
   out of sight are copied. The pointer held past the pane's top or bottom edge scrolls one
   row per 40 ms and extends the selection.
 - **R-SEL-04** A code block's frame (box, line numbers, wrap mark) is not copied, and its
-  rules are not rows of the copy. The margin every selected row shares is left out. A wide
-  character is copied once.
+  rules are not rows of the copy. The frame is what the renderer marks as one
+  (`markdown::FRAME`), not what looks like one. A row of code is copied from the end of its
+  frame with every space of its own; rows that are not code lose the margin they share. A
+  wide character is copied once, and the composer's caret is not text.
 - **R-SEL-05** `Alt` at the press makes the selection a rectangle.
 - **R-SEL-06** The copy is sent by OSC 52 and, when installed, through the desktop's tool
   (`wl-copy`, `xclip`/`xsel`, `pbcopy`), fed off the UI thread. The last row says

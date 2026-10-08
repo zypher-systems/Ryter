@@ -810,6 +810,7 @@ pub(crate) fn mouse_handle(view: &mut View, m: MouseEvent) -> Action {
     let hit = Hit {
         chat: Rect::default(),
         chat_text: Rect::default(),
+        covers: Vec::new(),
         cards: Vec::new(),
         activity: Rect::default(),
         composer: Rect::default(),
@@ -875,26 +876,33 @@ fn on_mouse(view: &mut View, m: MouseEvent, hit: &Hit) -> Action {
         }
         MouseEventKind::Down(MouseButton::Left) => {
             view.selection = None;
-            if view.panels.is_empty() {
-                if inside(hit.activity) && hit.activity.height > 0 {
-                    view.activity.toggle();
-                    return Action::None;
-                }
-                for (card, rect) in &hit.cards {
-                    if inside(*rect) {
-                        if let Some(id) = card.opens() {
-                            return Action::OpenPanel(id);
-                        }
-                    }
-                }
-            }
+            // What the press does if it turns out to be a click: decided
+            // on the release, since a press is also how a drag begins. Done
+            // on the press, a drag that began on a card or the status row
+            // opened the panel and never selected.
+            let click = if !view.panels.is_empty() {
+                None
+            } else if inside(hit.activity) && hit.activity.height > 0 {
+                Some(crate::select::Click::Pane)
+            } else {
+                hit.cards
+                    .iter()
+                    .find(|(_, rect)| inside(*rect))
+                    .and_then(|(card, _)| card.opens())
+                    .map(crate::select::Click::Open)
+            };
             // The press may be the start of a selection: it is one once the
             // pointer leaves this cell with the button down. It stays in
             // the pane it began in; with a panel open, that is the screen.
+            // Something drawn over the conversation is a pane of its own:
+            // a press on the pinned question or the palette selects what
+            // is drawn there, not the conversation under it.
             let (w, h) = view.screen.get();
             let screen = Rect::new(0, 0, w, h);
             let (area, chat) = if !view.panels.is_empty() {
                 (screen, None)
+            } else if let Some(cover) = hit.covers.iter().find(|c| inside(**c)) {
+                (*cover, None)
             } else if inside(hit.chat_text) {
                 (hit.chat_text, Some(hit.chat))
             } else if inside(hit.composer) {
@@ -912,28 +920,53 @@ fn on_mouse(view: &mut View, m: MouseEvent, hit: &Hit) -> Action {
                 (screen, None)
             };
             if area.width > 0 && area.height > 0 {
-                view.selection = Some(crate::select::Selection::begin(
+                let mut sel = crate::select::Selection::begin(
                     area,
                     chat,
                     m.modifiers.contains(crossterm::event::KeyModifiers::ALT),
                     m.column,
                     m.row,
                     view.scroll.effective.get(),
-                ));
+                );
+                sel.click = click;
+                view.selection = Some(sel);
             }
             Action::None
         }
         MouseEventKind::Drag(MouseButton::Left) => {
             let top = view.scroll.effective.get();
+            // A panel has opened over the conversation since the press:
+            // what was being selected is no longer what is on the screen.
+            if !view.panels.is_empty() && view.selection.as_ref().is_some_and(|s| s.chat.is_some())
+            {
+                view.selection = None;
+            }
             if let Some(sel) = &mut view.selection {
-                sel.drag(m.column, m.row, top);
+                match hit.covers.iter().find(|c| inside(**c)) {
+                    Some(cover) if sel.chat.is_some() => sel.drag_onto(m.column, *cover, top),
+                    _ => sel.drag(m.column, m.row, top),
+                }
             }
             Action::None
         }
-        MouseEventKind::Up(MouseButton::Left) => match view.selection.take() {
-            Some(sel) if sel.moved => Action::CopySelection(sel),
-            _ => Action::None,
-        },
+        MouseEventKind::Up(MouseButton::Left) => {
+            let sel = view.selection.take();
+            let over_a_panel =
+                !view.panels.is_empty() && sel.as_ref().is_some_and(|s| s.chat.is_some());
+            match sel {
+                Some(_) if over_a_panel => Action::None,
+                Some(sel) if sel.moved => Action::CopySelection(sel),
+                Some(sel) => match sel.click {
+                    Some(crate::select::Click::Pane) => {
+                        view.activity.toggle();
+                        Action::None
+                    }
+                    Some(crate::select::Click::Open(id)) => Action::OpenPanel(id),
+                    None => Action::None,
+                },
+                None => Action::None,
+            }
+        }
         _ => Action::None,
     }
 }
