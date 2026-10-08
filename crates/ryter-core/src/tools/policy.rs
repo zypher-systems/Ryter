@@ -2283,6 +2283,39 @@ fn closed_to_this_account(path: &Path) -> bool {
     }
 }
 
+/// Where `path` leads when every link along it is followed, whether or
+/// not anything is there at the end. Asking the system for the real path
+/// fails when the target is missing or can't be reached, which is the case
+/// that matters: a link to `/etc/shadow` on a machine without one, or into
+/// a folder this account can't enter, still names that place.
+fn where_it_leads(path: &Path) -> PathBuf {
+    let parts = |p: &Path| -> Vec<std::ffi::OsString> {
+        p.components()
+            .rev()
+            .map(|c| c.as_os_str().to_os_string())
+            .collect()
+    };
+    let mut led = PathBuf::new();
+    let mut hops = 0;
+    let mut left = parts(path);
+    while let Some(part) = left.pop() {
+        led.push(&part);
+        let Ok(target) = std::fs::read_link(&led) else {
+            continue;
+        };
+        hops += 1;
+        if hops > 40 {
+            break;
+        }
+        led.pop();
+        if target.is_absolute() {
+            led = PathBuf::new();
+        }
+        left.extend(parts(&target));
+    }
+    normalize(&led)
+}
+
 /// `sudo <command>`, with `rest` the command ([`after_sudo`]): the build
 /// hat may ask to run it as root, and a person answers every time.
 ///
@@ -2316,6 +2349,23 @@ fn decide_as_root(seg: &str, rest: &str, ctx: &ToolContext) -> Decision {
     if decide_segment(rest, ctx) == Decision::Deny {
         return Decision::Deny;
     }
+    // Where it runs is what it reads when it names nothing: `cd /root &&
+    // sudo ls`. A folder the gate can't read (`cd "$DIR"`) is one it
+    // can't vouch for.
+    let somewhere_closed = match &ctx.cwd {
+        Cwd::Project => false,
+        Cwd::Unknown => true,
+        Cwd::At(at) => {
+            let led = where_it_leads(at);
+            roots_own(at)
+                || roots_own(&led)
+                || closed_to_this_account(at)
+                || closed_to_this_account(&led)
+        }
+    };
+    if somewhere_closed {
+        return Decision::Deny;
+    }
     let words = command_words(rest, ctx);
     let parsed = parse(&words);
     let Some(prog) = parsed.prog else {
@@ -2337,7 +2387,13 @@ fn decide_as_root(seg: &str, rest: &str, ctx: &ToolContext) -> Decision {
     let closed = |w: &String| {
         resolve(ctx, w)
             .or_else(|| resolve_outside(ctx, w))
-            .is_some_and(|p| roots_own(&p) || closed_to_this_account(&p))
+            .is_some_and(|p| {
+                let led = where_it_leads(&p);
+                roots_own(&p)
+                    || roots_own(&led)
+                    || closed_to_this_account(&p)
+                    || closed_to_this_account(&led)
+            })
     };
     if seen.iter().any(|w| unread(w) || closed(w)) {
         return Decision::Deny;
@@ -8558,6 +8614,9 @@ mod tests {
             "sudo cat /etc/{shadow,hosts}",
             "cd /etc && sudo cat shadow",
             "cd /root && sudo ls",
+            "cd /root/sub; sudo ls",
+            "cd /etc/sudoers.d && sudo cat wheel",
+            "cd \"$SOMEWHERE\" && sudo ls",
             "sudo cat < /etc/shadow",
             "sudo ln -s /etc/shadow /tmp/s",
             "sudo cat ~root/notes.txt",
@@ -8583,15 +8642,34 @@ mod tests {
         ] {
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Deny, "{cmd}");
         }
-        // A link in the project to one of root's files is that file.
-        std::os::unix::fs::symlink("/etc/shadow", d.join("link")).unwrap();
-        std::os::unix::fs::symlink("/etc", d.join("etc-link")).unwrap();
+        // A link in the project to one of root's files is that file,
+        // whether or not this machine has it: the link is read, not the
+        // file asked for.
+        let link = |to: &str, at: &str| std::os::unix::fs::symlink(to, d.join(at)).unwrap();
+        std::fs::create_dir(d.join("sub")).unwrap();
+        link("/etc/shadow", "link");
+        link("/etc", "etc-link");
+        link("/root/not-there/x", "gone");
+        link("link", "again");
+        link("../etc-link/sudoers.d", "sub/up");
+        link("loop-b", "loop-a");
+        link("loop-a", "loop-b");
+        link("/opt/not-there/x", "plain");
         for cmd in [
             "sudo cat link",
             "sudo cat ./link",
             "sudo cat etc-link/shadow",
+            "sudo cat gone",
+            "sudo cat again",
+            "sudo ls sub/up",
+            "sudo cat sub/up/wheel",
         ] {
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Deny, "{cmd}");
+        }
+        // A link to nothing of root's is a question like any other, and a
+        // loop of links ends.
+        for cmd in ["sudo cat plain", "sudo cat loop-a"] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::AskRoot, "{cmd}");
         }
     }
 
