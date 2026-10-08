@@ -189,6 +189,11 @@ impl Panel for Sessions {
         })
     }
 
+    /// `/rename` opens on the title as it is, to be edited.
+    fn prefill(&self, view: &View) -> Option<String> {
+        (self.mode == Mode::Rename).then(|| view.session_title.clone())
+    }
+
     fn size(&self, _view: &View) -> (u16, u16) {
         (86, (self.rows.len() + 3).clamp(5, 20) as u16)
     }

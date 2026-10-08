@@ -73,6 +73,11 @@ pub struct Ctx {
     /// Bells the loop still has to ring: one per question opened while
     /// `[ui] bell` is on.
     pub bells: u32,
+    /// The screen as last drawn, kept while the mouse is captured: what a
+    /// selection outside the conversation reads its text from.
+    pub frame: Option<ratatui::buffer::Buffer>,
+    /// Text the loop still has to put on the clipboard.
+    pub clip: Option<String>,
 }
 
 impl Ctx {
@@ -158,9 +163,11 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             cx.mouse_grabbed = !cx.mouse_grabbed;
             if cx.mouse_grabbed {
                 let _ = out.execute(EnableMouseCapture);
-                view.system("mouse grabbed — wheel scroll and card clicks active");
+                view.system("mouse grabbed — wheel scroll, card clicks and drag to copy active");
             } else {
                 let _ = out.execute(DisableMouseCapture);
+                view.selection = None;
+                cx.frame = None;
                 view.system("mouse released — select and copy with the terminal; ^g to grab");
             }
             cx.want_redraw = true;
@@ -410,6 +417,17 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             });
         }
         Action::SaveSettings => save_settings(view, cx),
+        Action::CopySelection(sel) => {
+            let text = cx
+                .frame
+                .as_ref()
+                .map(|frame| sel.text(view, frame, cx.theme))
+                .unwrap_or_default();
+            if !text.trim().is_empty() {
+                view.flash(crate::select::describe(&text));
+                cx.clip = Some(text);
+            }
+        }
         Action::PermissionReply(p) => {
             if let Some(tx) = cx.perm_reply.take() {
                 let _ = tx.send(p);

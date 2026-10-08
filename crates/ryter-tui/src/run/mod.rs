@@ -411,6 +411,8 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         stop_reply: None,
         want_edit: None,
         bells: 0,
+        frame: None,
+        clip: None,
     };
     // The trust prompt opened before the loop: its bell, if one is wanted.
     if view.panels.has_modal() {
@@ -638,7 +640,7 @@ fn loop_ui(
             panel::on_notice(view, &n);
             dirty = true;
         }
-        if drain_user_prompts(view, cx, prompt_rx) {
+        if drain_user_prompts(view, cx, prompt_rx, ev_rx) {
             dirty = true;
         }
         if !view.busy {
@@ -677,7 +679,10 @@ fn loop_ui(
         }
 
         let now = Instant::now();
-        let animating = view.busy || view.quit_armed_until.is_some();
+        let animating = view.busy
+            || view.quit_armed_until.is_some()
+            || view.flash.is_some()
+            || view.selection.as_ref().is_some_and(|s| s.pull != 0);
         let since = now.duration_since(last_draw);
         // Draw when something changed or a spinner is running, but never more
         // than once per FRAME; idle screens still repaint every 500 ms for the clock.
@@ -692,14 +697,24 @@ fn loop_ui(
             let n = std::mem::take(&mut cx.bells);
             let _ = ring(terminal.backend_mut(), n);
         }
+        if let Some(text) = cx.clip.take() {
+            let _ = crate::clipboard::copy(terminal.backend_mut(), &text);
+        }
         if due {
             paint_now = false;
             view.tick(now.duration_since(epoch).as_millis() as u64);
             let theme = cx.theme;
             let mut painted = Hit::default();
-            terminal
+            let drawn = terminal
                 .draw(|f| painted = draw(f, view, theme))
                 .map_err(io_err)?;
+            // A selection reads its text from what was on the screen.
+            if cx.mouse_grabbed {
+                match &mut cx.frame {
+                    Some(kept) => kept.clone_from(drawn.buffer),
+                    None => cx.frame = Some(drawn.buffer.clone()),
+                }
+            }
             hit = painted;
             last_draw = Instant::now();
             dirty = false;
@@ -731,7 +746,11 @@ fn loop_ui(
                     Action::None
                 }
                 Event::Mouse(m) => on_mouse(view, m, &hit),
-                Event::Resize(_, _) => Action::None,
+                Event::Resize(_, _) => {
+                    // The text is laid out again: the rows it named are gone.
+                    view.selection = None;
+                    Action::None
+                }
                 Event::FocusGained | Event::FocusLost => Action::None,
             };
             actions::perform(view, cx, action);
@@ -790,6 +809,8 @@ pub(crate) fn paste_handle(view: &mut View, text: &str) {
 pub(crate) fn mouse_handle(view: &mut View, m: MouseEvent) -> Action {
     let hit = Hit {
         chat: Rect::default(),
+        chat_text: Rect::default(),
+        covers: Vec::new(),
         cards: Vec::new(),
         activity: Rect::default(),
         composer: Rect::default(),
@@ -854,21 +875,97 @@ fn on_mouse(view: &mut View, m: MouseEvent, hit: &Hit) -> Action {
             Action::None
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            if !view.panels.is_empty() {
-                return Action::None;
+            view.selection = None;
+            // What the press does if it turns out to be a click: decided
+            // on the release, since a press is also how a drag begins. Done
+            // on the press, a drag that began on a card or the status row
+            // opened the panel and never selected.
+            let click = if !view.panels.is_empty() {
+                None
+            } else if inside(hit.activity) && hit.activity.height > 0 {
+                Some(crate::select::Click::Pane)
+            } else {
+                hit.cards
+                    .iter()
+                    .find(|(_, rect)| inside(*rect))
+                    .and_then(|(card, _)| card.opens())
+                    .map(crate::select::Click::Open)
+            };
+            // The press may be the start of a selection: it is one once the
+            // pointer leaves this cell with the button down. It stays in
+            // the pane it began in; with a panel open, that is the screen.
+            // Something drawn over the conversation is a pane of its own:
+            // a press on the pinned question or the palette selects what
+            // is drawn there, not the conversation under it.
+            let (w, h) = view.screen.get();
+            let screen = Rect::new(0, 0, w, h);
+            let (area, chat) = if !view.panels.is_empty() {
+                (screen, None)
+            } else if let Some(cover) = hit.covers.iter().find(|c| inside(**c)) {
+                (*cover, None)
+            } else if inside(hit.chat_text) {
+                (hit.chat_text, Some(hit.chat))
+            } else if inside(hit.composer) {
+                // Its text, not the rule drawn above it.
+                let rule = u16::from(hit.composer.height > 1);
+                let text = Rect {
+                    y: hit.composer.y + rule,
+                    height: hit.composer.height - rule,
+                    ..hit.composer
+                };
+                (text, None)
+            } else if let Some((_, card)) = hit.cards.iter().find(|(_, r)| inside(*r)) {
+                (*card, None)
+            } else {
+                (screen, None)
+            };
+            if area.width > 0 && area.height > 0 {
+                let mut sel = crate::select::Selection::begin(
+                    area,
+                    chat,
+                    m.modifiers.contains(crossterm::event::KeyModifiers::ALT),
+                    m.column,
+                    m.row,
+                    view.scroll.effective.get(),
+                );
+                sel.click = click;
+                view.selection = Some(sel);
             }
-            if inside(hit.activity) && hit.activity.height > 0 {
-                view.activity.toggle();
-                return Action::None;
+            Action::None
+        }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            let top = view.scroll.effective.get();
+            // A panel has opened over the conversation since the press:
+            // what was being selected is no longer what is on the screen.
+            if !view.panels.is_empty() && view.selection.as_ref().is_some_and(|s| s.chat.is_some())
+            {
+                view.selection = None;
             }
-            for (card, rect) in &hit.cards {
-                if inside(*rect) {
-                    if let Some(id) = card.opens() {
-                        return Action::OpenPanel(id);
-                    }
+            if let Some(sel) = &mut view.selection {
+                match hit.covers.iter().find(|c| inside(**c)) {
+                    Some(cover) if sel.chat.is_some() => sel.drag_onto(m.column, *cover, top),
+                    _ => sel.drag(m.column, m.row, top),
                 }
             }
             Action::None
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            let sel = view.selection.take();
+            let over_a_panel =
+                !view.panels.is_empty() && sel.as_ref().is_some_and(|s| s.chat.is_some());
+            match sel {
+                Some(_) if over_a_panel => Action::None,
+                Some(sel) if sel.moved => Action::CopySelection(sel),
+                Some(sel) => match sel.click {
+                    Some(crate::select::Click::Pane) => {
+                        view.activity.toggle();
+                        Action::None
+                    }
+                    Some(crate::select::Click::Open(id)) => Action::OpenPanel(id),
+                    None => Action::None,
+                },
+                None => Action::None,
+            }
         }
         _ => Action::None,
     }
@@ -879,6 +976,7 @@ fn drain_user_prompts(
     view: &mut View,
     cx: &mut Ctx,
     prompt_rx: &mpsc::Receiver<UserRequest>,
+    ev_rx: &mpsc::Receiver<AgentEvent>,
 ) -> bool {
     if view.panels.has_modal() {
         return false;
@@ -886,6 +984,13 @@ fn drain_user_prompts(
     let Ok(req) = prompt_rx.try_recv() else {
         return false;
     };
+    // Everything the agent said before it asked is on its way or here:
+    // apply it first. The events are paced for painting ([`drain_events`]),
+    // so a question could open on a screen a response behind, and its card
+    // gave as the model's reason what it had said two messages earlier.
+    while let Ok(ev) = ev_rx.try_recv() {
+        events::apply(view, ev);
+    }
     let ask = ask_for(&req);
     match req {
         UserRequest::Permission {

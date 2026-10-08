@@ -245,6 +245,8 @@ pub enum Action {
     SaveSettings,
     /// Reply to a permission prompt.
     PermissionReply(Permission),
+    /// The mouse button came up over a selection: copy what it covers.
+    CopySelection(crate::select::Selection),
     /// Reply to a plan.
     PlanReply(ryter_core::user_io::PlanAnswer),
     /// Reply to `ask_user`.

@@ -870,7 +870,10 @@ fn render_code(
     out: &mut Vec<Line<'static>>,
 ) {
     let width = opts.width.max(8);
-    let border = Style::default().fg(theme.dim).bg(theme.code_bg);
+    let border = Style::default()
+        .fg(theme.dim)
+        .bg(theme.code_bg)
+        .remove_modifier(FRAME);
     let code = theme.code();
     let expanded: Vec<String> = lines.iter().map(|l| wrap::expand_tabs(l)).collect();
     let hl = highlight::highlight(lang, opts.lang_hint.as_deref(), &expanded, theme);
@@ -941,6 +944,18 @@ fn render_code(
         Span::styled(tail.repeat(width.saturating_sub(2)), border),
         Span::styled("╯", border),
     ]));
+}
+
+/// The mark on every span of a code block's frame: its box, its line
+/// numbers, the mark of a wrapped line. It asks for a modifier nothing here
+/// sets to be taken off, so it changes nothing on the screen, and a
+/// selection can tell the frame from the code inside it whatever their
+/// colors: a comment, or a diff's context line, is drawn as dim as the box.
+pub const FRAME: Modifier = Modifier::RAPID_BLINK;
+
+/// Whether a span is part of a code block's frame.
+pub fn is_frame(span: &Span<'_>) -> bool {
+    span.style.sub_modifier.contains(FRAME)
 }
 
 /// Byte-slice a row of chunks to `[start, end)` of its concatenated text.

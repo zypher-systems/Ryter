@@ -18,6 +18,12 @@ use crate::panel::PanelStack;
 use history::History;
 use scroll::ChatScroll;
 
+/// How long a word on the last row stays (`copied 3 lines`).
+const FLASH_MS: u64 = 1800;
+/// How often the conversation scrolls a row while a selection is held past
+/// its edge.
+const PULL_MS: u64 = 40;
+
 /// One configured connection for `/provider` and the info panel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnRow {
@@ -309,6 +315,14 @@ pub struct View {
     pub now_ms: u64,
     /// `Ctrl+C` armed for quit until this time (`R-COMP-14`).
     pub quit_armed_until: Option<u64>,
+    /// Text being selected with the mouse: the button is down.
+    pub selection: Option<crate::select::Selection>,
+    /// A word on the screen's last row, and when it goes: `copied 3 lines`.
+    pub flash: Option<(String, u64)>,
+    /// What the last frame drew over the conversation: the pinned
+    /// question, the "new rows" mark, the palette. A selection of the
+    /// conversation is not painted there, and a press there is not one.
+    pub covers: RefCell<Vec<ratatui::layout::Rect>>,
     /// Render cache (derived; clones start empty).
     pub cache: RefCell<RenderCache>,
     /// Startup warnings not yet shown.
@@ -487,6 +501,9 @@ impl View {
             last_export: None,
             now_ms: 0,
             quit_armed_until: None,
+            selection: None,
+            flash: None,
+            covers: RefCell::new(Vec::new()),
             cache: RefCell::new(RenderCache::new()),
             pending_warnings: Vec::new(),
             starting_product: None,
@@ -521,6 +538,34 @@ impl View {
         if self.quit_armed_until.is_some_and(|t| now_ms > t) {
             self.quit_armed_until = None;
         }
+        if self
+            .flash
+            .as_ref()
+            .is_some_and(|(_, until)| now_ms > *until)
+        {
+            self.flash = None;
+        }
+        self.pull_selection(now_ms);
+    }
+
+    /// Say `text` on the screen's last row for a moment.
+    pub fn flash(&mut self, text: impl Into<String>) {
+        self.flash = Some((text.into(), self.now_ms + FLASH_MS));
+    }
+
+    /// While the pointer is held past the conversation's edge with the
+    /// button down, scroll that way a row at a time and select on.
+    fn pull_selection(&mut self, now_ms: u64) {
+        let Some(sel) = &mut self.selection else {
+            return;
+        };
+        if sel.pull == 0 || now_ms < sel.pulled_at + PULL_MS {
+            return;
+        }
+        sel.pulled_at = now_ms;
+        // The selection ends at a row of the pane, so it takes in whatever
+        // the scroll brings there; at the document's end nothing moves.
+        self.scroll.scroll_by(isize::from(sel.pull), self.busy);
     }
 
     // -- messages -------------------------------------------------------------

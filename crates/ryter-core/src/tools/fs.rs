@@ -319,6 +319,7 @@ pub fn list_dir(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     };
     let mut names = std::collections::BTreeSet::new();
     let mut limited = false;
+    let mut hidden = 0usize;
     let rd = fs::read_dir(&path).map_err(|e| Error::Config(e.to_string()))?;
     for ent in rd.flatten() {
         if ctx.cancel.is_cancelled() {
@@ -326,6 +327,7 @@ pub fn list_dir(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         }
         let name = ent.file_name().to_string_lossy().into_owned();
         if name.starts_with('.') {
+            hidden += 1;
             continue;
         }
         let suffix = if ent.path().is_dir() { "/" } else { "" };
@@ -334,6 +336,16 @@ pub fn list_dir(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
             names.pop_last();
             limited = true;
         }
+    }
+    // Nothing listed is said, not left blank: a model handed an empty
+    // answer for a new project's folder took it for a listing that had
+    // failed, and went looking another way.
+    if names.is_empty() {
+        return Ok(ToolOutput::ok(match hidden {
+            0 => "(empty folder)".to_string(),
+            1 => "(empty but for 1 hidden entry, whose name starts with `.`)".to_string(),
+            n => format!("(empty but for {n} hidden entries, whose names start with `.`)"),
+        }));
     }
     let mut out = names.into_iter().collect::<Vec<_>>().join("\n");
     if limited {
@@ -481,6 +493,9 @@ pub fn glob_files(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         }
     }
     out.sort();
+    if out.is_empty() {
+        return Ok(ToolOutput::ok(format!("(no file matches `{pattern}`)")));
+    }
     Ok(ToolOutput::ok(out.join("\n")))
 }
 
