@@ -19,9 +19,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.24.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
-
-- **0.24.1 — a model chosen for "All hats" is every hat's.** In `/models` (and with `/model <id>`) it puts each hat that had its own model back to following, and says which. Reported by the user from their own use. `DECISIONS.md` 2026-10-08.
+Nothing in `dev` is waiting on a release. The last release is 0.24.1. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
@@ -80,9 +78,11 @@ After 1.0, by the user's decision then:
 
 ## Done
 
-### 0.19.0 to 0.24.0 — the gate after a real run, package checks, web search, root by `sudo`, and selecting with the mouse (2026-10-04 to 2026-10-08)
+### 0.19.0 to 0.24.1 — the gate after a real run, package checks, web search, root by `sudo`, and selecting with the mouse (2026-10-04 to 2026-10-08)
 
 Released. The notes are under `docs/releases/`.
+
+- **0.24.1 — a model chosen for "All hats" is every hat's.** In `/models` (and with `/model <id>`) it puts each hat that had its own model back to following, and says which. Reported by the user from their own use. `DECISIONS.md` 2026-10-08.
 
 - **0.24.0 — text is selected with the mouse.** Hold the left button and drag to highlight; letting go copies to the clipboard (OSC 52 and the desktop's tool). In the conversation the selection is the text: it stays on it through scrolling and streaming, scrolls when held past the pane's edge, and copies a code block without its frame. `Alt` selects a rectangle. `DECISIONS.md` 2026-10-07, `design.md` R-SEL-01 to 06, guide "Selecting text". The release PR's reviews found four ways the highlight and the copy disagreed (the workbench's pane, what is drawn over the conversation, a dim line of code taken for the frame, a drag from a card) and one more in the second round; all fixed before the merge.
 

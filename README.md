@@ -6,7 +6,7 @@ One model works in your project, with you, and `Tab` switches between its two wo
 
 ![Ryter in the build hat. The hat rack lists plan on grok-4.6, build on deepseek-pro-latest, audit on claude-opus-5.5, and scribe not worn yet. The conversation shows a diff of app/server.js and a new test. The side panel shows the model, a context gauge at 38%, session spend of $0.065, and uncommitted changes.](docs/screenshots/build.png)
 
-Linux first. The current release is 0.24.0. Apache-2.0.
+Linux first. The current release is 0.24.1. Apache-2.0.
 
 ## Install
 
