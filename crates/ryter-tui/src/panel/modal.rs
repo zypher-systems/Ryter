@@ -164,9 +164,14 @@ impl PermissionModal {
         self.tool.ends_with(ryter_core::tools::SECRET)
     }
 
+    /// A command run as root: asked every time, so no `a`.
+    fn is_root(&self) -> bool {
+        self.tool.ends_with(ryter_core::tools::AS_ROOT)
+    }
+
     /// Only `y` answers yes.
     fn y_only(&self) -> bool {
-        self.strict || self.is_outside() || self.is_secret()
+        self.strict || self.is_outside() || self.is_secret() || self.is_root()
     }
 
     fn can_allow_session(&self) -> bool {
@@ -177,6 +182,7 @@ impl PermissionModal {
         self.tool
             .strip_suffix(ryter_core::tools::OUTSIDE)
             .or_else(|| self.tool.strip_suffix(ryter_core::tools::SECRET))
+            .or_else(|| self.tool.strip_suffix(ryter_core::tools::AS_ROOT))
             .map_or(self.tool.as_str(), str::trim)
     }
 
@@ -202,6 +208,7 @@ impl PermissionModal {
             "write" => "rewrite",
             "search_replace" => "edit",
             "propose_edit" => "proposed edit",
+            "bash" if self.is_root() => "run as root",
             "bash" => "run",
             other => other,
         };
@@ -212,6 +219,12 @@ impl PermissionModal {
     fn risk(&self) -> (String, bool) {
         if self.is_outside() {
             return ("writes outside the project · asked every time".into(), true);
+        }
+        if self.is_root() {
+            return (
+                "as root · /undo can't reach it · your password is asked next".into(),
+                true,
+            );
         }
         if self.is_secret() {
             return (
@@ -614,6 +627,199 @@ impl Panel for PermissionModal {
             // card, in one press. It used to allow everything, and needed
             // a second press because of it.
             KeyCode::Char('a' | 'A') if self.can_allow_session() => reply(Permission::Always),
+            _ => Outcome::Stay,
+        }
+    }
+
+    fn box_clone(&self) -> Box<dyn Panel> {
+        Box::new(self.clone())
+    }
+}
+
+/// sudo's question for the user's password, for a command they approved
+/// to run as root. What is typed is held here, shown as dots, and handed
+/// to sudo's askpass over the reply channel: it is never in the composer,
+/// the chat, an action, or the session's log.
+#[derive(Clone)]
+pub struct PasswordModal {
+    /// What sudo asks, in its words.
+    prompt: String,
+    /// sudo did not accept the last answer.
+    again: bool,
+    typed: String,
+    /// Keep it in memory for a few minutes.
+    remember: bool,
+    reply: std::sync::mpsc::Sender<Option<(String, bool)>>,
+    opened_ms: u64,
+}
+
+impl std::fmt::Debug for PasswordModal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PasswordModal")
+            .field("prompt", &self.prompt)
+            .field("typed", &self.typed.chars().count())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PasswordModal {
+    /// Build. An answer sent on `reply` goes to sudo; dropping it refuses.
+    pub fn new(
+        prompt: String,
+        again: bool,
+        reply: std::sync::mpsc::Sender<Option<(String, bool)>>,
+        opened_ms: u64,
+    ) -> Self {
+        Self {
+            prompt,
+            again,
+            typed: String::new(),
+            remember: true,
+            reply,
+            opened_ms,
+        }
+    }
+
+    fn answer(&mut self, view: &mut View, answer: Option<(String, bool)>) -> Outcome {
+        let _ = self.reply.send(answer);
+        self.typed.clear();
+        if view.activity.busy() {
+            let now = view.now_ms;
+            view.activity.note_reply(now);
+        }
+        Outcome::Close
+    }
+}
+
+impl Panel for PasswordModal {
+    fn kind(&self) -> &'static str {
+        "password"
+    }
+
+    fn title(&self, _view: &View) -> String {
+        "sudo asks · your password".into()
+    }
+
+    fn legend(&self, _view: &View) -> String {
+        format!(
+            "type it · ⏎ send · tab {} · esc cancel",
+            if self.remember {
+                "ask every time"
+            } else {
+                "keep 5 min"
+            }
+        )
+    }
+
+    fn size(&self, _view: &View) -> (u16, u16) {
+        (110, if self.again { 5 } else { 4 })
+    }
+
+    fn modal(&self) -> Option<ModalKind> {
+        Some(ModalKind::Permission)
+    }
+
+    fn docked(&self) -> bool {
+        true
+    }
+
+    fn takes_text(&self) -> bool {
+        true
+    }
+
+    fn paste(&mut self, text: &str) -> bool {
+        // One line: the helper hands sudo the password as a line, and a
+        // second line pasted with it would be read as something else.
+        self.typed
+            .push_str(text.split(['\n', '\r']).next().unwrap_or_default());
+        true
+    }
+
+    fn render(&self, _view: &View, width: u16, _height: u16, theme: Theme) -> Body {
+        let w = usize::from(width).saturating_sub(12);
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        if self.again {
+            lines.push(widgets::colored(
+                " sudo did not accept that one · try again",
+                theme.warn,
+                theme,
+            ));
+        }
+        let asks: String = self.prompt.trim().chars().take(w).collect();
+        lines.push(PermissionModal::row(
+            "sudo",
+            vec![Span::styled(asks, theme.panel())],
+            theme,
+        ));
+        let dots = "•".repeat(self.typed.chars().count().min(w.saturating_sub(1)));
+        lines.push(PermissionModal::row(
+            "typed",
+            vec![
+                Span::styled(dots, theme.panel()),
+                Span::styled("▏", theme.panel().fg(theme.warn)),
+            ],
+            theme,
+        ));
+        lines.push(PermissionModal::row(
+            "kept",
+            vec![Span::styled(
+                if self.remember {
+                    "5 minutes, in memory only · tab: ask every time"
+                } else {
+                    "not at all · tab: keep it 5 minutes"
+                },
+                theme.panel_muted(),
+            )],
+            theme,
+        ));
+        lines.push(PermissionModal::row(
+            "goes to",
+            vec![Span::styled(
+                "sudo only: not the model, the session's log or disk",
+                theme.panel_muted(),
+            )],
+            theme,
+        ));
+        Body {
+            lines,
+            scroll: None,
+        }
+    }
+
+    fn key(&mut self, key: KeyEvent, view: &mut View) -> Outcome {
+        use crossterm::event::KeyModifiers;
+        let chord = key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        match key.code {
+            KeyCode::Esc => self.answer(view, None),
+            // An Enter meant for a message being typed as the panel came
+            // up must not send sudo a wrong password: each one counts.
+            KeyCode::Enter
+                if self.typed.is_empty() || view.now_ms < self.opened_ms + ENTER_GUARD_MS =>
+            {
+                Outcome::Stay
+            }
+            KeyCode::Enter => {
+                let typed = std::mem::take(&mut self.typed);
+                self.answer(view, Some((typed, self.remember)))
+            }
+            KeyCode::Tab => {
+                self.remember = !self.remember;
+                Outcome::Stay
+            }
+            KeyCode::Backspace => {
+                self.typed.pop();
+                Outcome::Stay
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.typed.clear();
+                Outcome::Stay
+            }
+            KeyCode::Char(c) if !chord => {
+                self.typed.push(c);
+                Outcome::Stay
+            }
             _ => Outcome::Stay,
         }
     }

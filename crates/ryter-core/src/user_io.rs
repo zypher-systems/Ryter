@@ -89,6 +89,17 @@ pub enum UserRequest {
         /// Reply channel.
         reply: mpsc::Sender<String>,
     },
+    /// sudo wants the user's password, for a command they approved to run
+    /// as root. What is typed goes to sudo and nowhere else.
+    Password {
+        /// What sudo asks, in its words.
+        prompt: String,
+        /// sudo is asking again at once: the last answer was not accepted.
+        again: bool,
+        /// Reply channel: the password and whether to keep it for a few
+        /// minutes, or `None` to refuse.
+        reply: mpsc::Sender<Option<(String, bool)>>,
+    },
 }
 
 /// A tool call to ask about, and how the prompt may be answered.
@@ -119,6 +130,34 @@ pub struct UserIo {
     /// The permission cards shown since the agent last took them, for the
     /// session's log.
     asked: Arc<Mutex<Vec<Asked>>>,
+    /// Where sudo gets its password, started with the first root command
+    /// the user approves. `Err` inside: why it could not be set up.
+    #[cfg(unix)]
+    askpass: Arc<std::sync::OnceLock<Result<Arc<crate::sudo::Askpass>, String>>>,
+}
+
+/// The TUI's password panel, as sudo's askpass reaches it.
+#[cfg(unix)]
+struct PasswordPanel(Arc<Mutex<mpsc::Sender<UserRequest>>>);
+
+#[cfg(unix)]
+impl crate::sudo::PasswordSource for PasswordPanel {
+    fn password(&self, prompt: &str, again: bool) -> Option<crate::sudo::Typed> {
+        let (reply, answer) = mpsc::channel();
+        self.0
+            .lock()
+            .ok()?
+            .send(UserRequest::Password {
+                prompt: prompt.to_string(),
+                again,
+                reply,
+            })
+            .ok()?;
+        // No turn to cancel it from here: a cancelled turn ends the command,
+        // and the TUI closes the panel, which ends this wait.
+        let (password, remember) = wait(&answer, &Cancel::new())??;
+        Some(crate::sudo::Typed { password, remember })
+    }
 }
 
 /// A permission card and what came of it. The agent turns each into an
@@ -153,9 +192,31 @@ impl UserIo {
             Self {
                 tx: Arc::new(Mutex::new(tx)),
                 asked: Arc::default(),
+                #[cfg(unix)]
+                askpass: Arc::default(),
             },
             rx,
         )
+    }
+
+    /// Where sudo gets its password for a root command the user approved:
+    /// set up under `home` the first time one runs. `Err`: why it could
+    /// not be (no sudo here, a folder that can't be made).
+    #[cfg(unix)]
+    pub fn askpass(&self, home: &std::path::Path) -> Result<Arc<crate::sudo::Askpass>, String> {
+        self.askpass
+            .get_or_init(|| {
+                crate::sudo::Askpass::start(home, Arc::new(PasswordPanel(self.tx.clone())))
+                    .map(Arc::new)
+                    .map_err(|e| e.to_string())
+            })
+            .clone()
+    }
+
+    /// Use `askpass` for root commands instead of setting one up.
+    #[cfg(unix)]
+    pub fn set_askpass(&self, askpass: Arc<crate::sudo::Askpass>) {
+        let _ = self.askpass.set(Ok(askpass));
     }
 
     /// The cards shown since the last call, oldest first.

@@ -1837,7 +1837,12 @@ impl Agent {
         };
         for cmd in run.commands() {
             let args = serde_json::json!({ "command": cmd });
-            if crate::tools::decide("bash", &args, &as_builder) == crate::tools::Decision::Deny {
+            // `sudo` asks for a password in the TUI as a tool call; a run
+            // file's command has nobody to ask.
+            if matches!(
+                crate::tools::decide("bash", &args, &as_builder),
+                crate::tools::Decision::Deny | crate::tools::Decision::AskRoot
+            ) {
                 return Some(format!(
                     "`{cmd}` is a command Ryter runs for nobody (sudo, inline code, a write \
                      to a protected place, …). Use a command without it."

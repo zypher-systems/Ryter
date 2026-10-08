@@ -132,6 +132,15 @@ pub trait Panel {
     fn input_indent(&self, _width: u16) -> u16 {
         0
     }
+    /// Every character typed is the panel's own text, `?` included: it
+    /// holds a field the composer never sees (a password).
+    fn takes_text(&self) -> bool {
+        false
+    }
+    /// Pasted text, for a panel that [`Self::takes_text`]. `true`: taken.
+    fn paste(&mut self, _text: &str) -> bool {
+        false
+    }
     /// The panel draws its key hints in its own body, one set per pane; the
     /// legend still lists them in the bottom bar.
     fn keys_in_body(&self) -> bool {
@@ -228,6 +237,11 @@ impl PanelStack {
         self.stack.iter().any(|p| p.modal().is_some())
     }
 
+    /// Hand pasted text to the focused panel, if it keeps its own field.
+    pub fn paste(&mut self, text: &str) -> bool {
+        self.stack.last_mut().is_some_and(|p| p.paste(text))
+    }
+
     /// True when the focused panel owns the composer.
     pub fn wants_input(&self, view: &View) -> Option<String> {
         self.top().and_then(|p| p.input(view))
@@ -250,7 +264,7 @@ pub fn handle_key(view: &mut View, key: KeyEvent) -> Action {
     let Some(mut top) = view.panels.stack.pop() else {
         return Action::None;
     };
-    if key.code == KeyCode::Char('?') && top.input(view).is_none() {
+    if key.code == KeyCode::Char('?') && top.input(view).is_none() && !top.takes_text() {
         view.panels.stack.push(top);
         view.panels.show_keys = !view.panels.show_keys;
         return Action::None;

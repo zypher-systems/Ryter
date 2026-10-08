@@ -19,9 +19,11 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-Nothing in `dev` is waiting on a release. The last release is 0.22.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.22.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
-- **The first real run on the hats as they are (1.0 item 1): half done.** The service half is the fiscus run, released in 0.20.0. Still owed: a desktop or terminal app through the same four hats, driven by the user with real models, so the asks it hits are new ones. What breaks or asks goes into the next polish patch.
+- **0.23.0 — the build hat may ask to run a command as root.** `sudo <command>` asks on a card of its own (`y` only, every time, yolo included) and sudo's question for the password is answered in a panel in Ryter; the password goes to sudo alone. Every refusal holds as root, and only the plain spelling is read. From the tunes run below. `DECISIONS.md` 2026-10-07, guide "As root". Still to do by the user: one real `sudo` with their own password.
+
+- **The first real run on the hats as they are (1.0 item 1): half done.** The service half is the fiscus run, released in 0.20.0. The terminal half was run on 2026-10-07 on 0.22.0 ("tunes", a Rust TUI music player, $1.62): the four hats handed off, but a missing system package (`alsa-lib-devel`) had no path, so Ryter never built or ran the product, and the audit filed PASS with a failed finding beside it. Root by `sudo`, above, is the fix for the first. Open from that run, not yet taken: the audit's verdict is the model's word alone and can disagree with its findings; reads of `/etc` and `/usr` ask (four times, each answered "always", which on a compound command covers only that command); `rm -rf` of a folder the write tool made this turn asks; `cp` and `ln -s` from `/usr` are refused while `cat … >` asks; the plan hat is refused `cargo --version`; an empty folder lists as an empty string; a decision was recorded before it was tried. Whether this run closes the item is the user's call; the audit has still not driven a terminal app.
 
 ## Next
 
