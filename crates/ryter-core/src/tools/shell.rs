@@ -193,7 +193,7 @@ pub(crate) fn command(cmd: &str, cwd: &std::path::Path) -> Command {
         .env_remove("GREP_OPTIONS")
         // sudo's password is asked for in Ryter, for a command the user
         // approved as root ([`bash_as_root`]), and by nothing else: not a
-        // desktop's own askpass, popping up for a `make install`.
+        // desktop's own askpass, for a script that calls `sudo -A` itself.
         .env_remove("SUDO_ASKPASS")
         .env_remove("RYTER_ASKPASS_SOCK")
         .env_remove("RYTER_ASKPASS_TOKEN")
