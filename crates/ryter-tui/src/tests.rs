@@ -2816,6 +2816,35 @@ fn tab_moves_within_a_row_and_shift_tab_between_rows() {
     assert!(!matches!(press(&mut v, true), Action::SetMode(_)));
 }
 
+/// Choosing a specialist opens the composer on its line, so the hat and
+/// Enter are the whole request. The line follows the hat and leaves with
+/// it; what the user typed, or made of the line, is theirs and stays.
+#[test]
+fn choosing_a_specialist_opens_the_composer_on_its_line() {
+    use ryter_core::Role;
+    let mut v = idle();
+    v.open_composer_on(Role::SoloAudit);
+    assert_eq!(v.composer.text(), "Audit this project");
+    assert_eq!(v.composer.cursor(), v.composer.text().len());
+    v.open_composer_on(Role::SoloScribe);
+    assert_eq!(v.composer.text(), "Document this project");
+    v.open_composer_on(Role::SoloBuild);
+    assert!(v.composer.is_empty());
+    for typed in ["fix the seek", "Audit this project, the seek most of all"] {
+        v.composer.set_text(typed);
+        for hat in [Role::SoloAudit, Role::SoloScribe, Role::SoloPlan] {
+            v.open_composer_on(hat);
+            assert_eq!(v.composer.text(), typed, "{hat}");
+        }
+    }
+    // A panel that is open owns the composer.
+    v.composer.clear();
+    v.panels
+        .push(Box::new(PermissionModal::new("bash".into(), "ls".into())));
+    v.open_composer_on(Role::SoloAudit);
+    assert!(v.composer.is_empty());
+}
+
 /// The bar shows both rows with a dot between them; narrower, the row the
 /// user is not in folds to its name and a count; narrower still, the
 /// current row alone (`R-TOP-01`, `R-TOP-02`).

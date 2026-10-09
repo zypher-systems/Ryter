@@ -57,6 +57,7 @@ Why: the first real sessions on three hats showed that a hat earns its place by 
 - **R-AUD-07** The offer of a review after a build turn is removed, and so is `offer_audit`; an old settings file with it loads silently. The one automatic hat change is §9.
 - **R-AUD-08** The spend limit `review_usd` applies to an audit turn under the name `audit_usd`, with `review_usd` read as an alias.
 - **R-AUD-09** The builder's prompt says: when `.ryter/audit.md` exists and is newer than the plan's approval, read it before changing anything, and say which findings the work addresses.
+- **R-AUD-10** An audit is asked for in the hat: `Enter` on the line the composer opens on (`R-COMP-18`), or any message whose first word is "audit" (`gate::asks_for_audit`). It asks first, on the card `/audit` shows: the model, what it reads, a cost range, and from the second audit what the user's last ones with that model cost. A no sends nothing, says "audit not run", and closes the turn. Any other message in the hat runs without a card, after a line in the chat with the same range. What an audit cost is kept (`reviews.jsonl`) when it closes with a verdict, however it was asked for.
 
 ## 9. The plan file
 

@@ -755,6 +755,29 @@ impl View {
         }
     }
 
+    /// Open the composer on the line of the hat just chosen
+    /// ([`ryter_core::Role::opening`]): "Audit this project", "Document
+    /// this project". Choosing a specialist and pressing Enter is the
+    /// whole request. What the user has typed is theirs and stays; a line
+    /// Ryter put there and nobody touched goes with the hat it was for.
+    pub fn open_composer_on(&mut self, role: ryter_core::Role) {
+        use ryter_core::Role;
+        if self.composer.mode != crate::composer::Mode::Normal || !self.panels.is_empty() {
+            return;
+        }
+        let typed = self.composer.text();
+        let ours = [Role::SoloAudit, Role::SoloScribe]
+            .iter()
+            .any(|hat| hat.opening() == Some(typed));
+        if !typed.is_empty() && !ours {
+            return;
+        }
+        match role.opening() {
+            Some(line) => self.composer.set_text(line),
+            None => self.composer.clear(),
+        }
+    }
+
     /// The hat `Shift+Tab` puts on: the last worn in the other row, or that
     /// row's default when none was.
     pub fn other_row_hat(&self) -> ryter_core::Role {

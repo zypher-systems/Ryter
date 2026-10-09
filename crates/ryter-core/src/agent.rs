@@ -270,20 +270,43 @@ impl Agent {
         })?;
         // A card shown between turns (the audit offer) is this turn's.
         self.emit_asked(None)?;
-        // An audit changes nothing: a checkpoint before, the tree put back
-        // after. Without a repository there is no checkpoint, and the hat
-        // is held to looking for the turn.
-        if self.role == Role::SoloAudit {
-            self.audit_live = Some(AuditLive {
-                checkpoint: self.audit_checkpoint(),
-                from: self.session.transcript.len(),
-                spent_from: self.session.spend_log().map_or(0, |l| l.len()),
-                asked: user.starts_with("[Ryter] Audit"),
-                started,
-                used_product: false,
-            });
-        }
-        let out = self.turn_inner(user, &mut tools).await;
+        // An audit asked for in the hat asks first, as `/audit` does: who
+        // audits and what it should cost, yes or no. The hat is how an
+        // audit is asked for; the first real ones run from it spent
+        // thirteen times the only figure they had been given. Asked inside
+        // the turn: the screen showed the message when it was sent, and a
+        // no has to close what that opened.
+        let requested = self.role == Role::SoloAudit && crate::gate::asks_for_audit(user);
+        let agreed = if requested {
+            self.agree_to_hat_audit()
+        } else {
+            Ok(true)
+        };
+        // The card is this turn's own, not its first tool call's.
+        let _ = self.emit_asked(None);
+        let out = match agreed {
+            Err(e) => Err(e),
+            Ok(false) => Ok(TurnResult {
+                reason: StopReason::Cancelled,
+                text: String::new(),
+            }),
+            Ok(true) => {
+                // An audit changes nothing: a checkpoint before, the tree
+                // put back after. Without a repository there is no
+                // checkpoint, and the hat is held to looking for the turn.
+                if self.role == Role::SoloAudit {
+                    self.audit_live = Some(AuditLive {
+                        checkpoint: self.audit_checkpoint(),
+                        from: self.session.transcript.len(),
+                        spent_from: self.session.spend_log().map_or(0, |l| l.len()),
+                        asked: requested || user.starts_with("[Ryter] Audit"),
+                        started,
+                        used_product: false,
+                    });
+                }
+                self.turn_inner(user, &mut tools).await
+            }
+        };
         // An audit phase still open closes first: its rollback has to be
         // done before the turn's end is recorded, or what it put back
         // would read as the user's edits since the turn and `/undo` would
@@ -443,6 +466,16 @@ impl Agent {
             }
             if self.role == Role::SoloAudit {
                 let spent = self.session.meta.spend_usd_total.unwrap_or(0.0);
+                // Anything else said in the hat is answered without a
+                // question, with what an audit should cost said first: the
+                // model may take it for one. An audit that was asked for
+                // has said it already, on the card the user answered.
+                let said = self.audit_live.as_ref().is_none_or(|live| live.asked);
+                if reviewing.is_none() && !said {
+                    if let Some(message) = self.audit_cost_notice(&model, &connection, &system) {
+                        self.emit(AgentEvent::Notice { message })?;
+                    }
+                }
                 let (from, told) = *reviewing.get_or_insert((spent, false));
                 match self.review_fit(&model, &connection, &system, from) {
                     crate::gate::Fit::Yes => {}
@@ -1625,6 +1658,14 @@ impl Agent {
             .map(|r| if r.incomplete { None } else { r.total_usd })
             .sum::<Option<f64>>()
             .filter(|_| !audits.is_empty());
+        // What it cost, for the next one's estimate, whichever way it was
+        // asked for. Only an audit that reached a verdict: one stopped
+        // halfway would read as a cheap one.
+        if let Some(first) = audits.first() {
+            if filed.is_some() || said.is_some() {
+                crate::gate::remember_audit(&self.home, &model, first.input_tokens, total_usd);
+            }
+        }
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let event = match filed {
             Some(audit) => {
@@ -4649,7 +4690,12 @@ mod tests {
             result.contains("recorded from the plan and build hats, not the audit hat"),
             "{result}"
         );
-        assert!(notices.is_empty(), "{notices:?}");
+        // The hat's own line, what an audit should cost, and nothing of a
+        // decision.
+        assert!(
+            matches!(&notices[..], [one] if one.starts_with("audit hat · an audit with ")),
+            "{notices:?}"
+        );
         // The plan hat may: the user can change their mind while planning
         // the next step.
         let (file, _, _) = decision_recorded(Role::SoloPlan, Some(CMS_PLAN), "user").await;
@@ -5531,6 +5577,99 @@ mod tests {
         assert_eq!(agent.last_audit_verdict, Some(true));
     }
 
+    /// The audit hat's composer opens on "Audit this project", and Enter
+    /// on it asks first: who audits, what it reads and what it should cost.
+    /// A no spends nothing and starts no turn. A yes is the audit, and what
+    /// it cost is kept for the next card. Anything else said in the hat is
+    /// answered without a question, with the cost said in the chat first.
+    /// The first real audits asked for in the hat were told only what the
+    /// hat's model would re-read, a thirteenth of what one came to.
+    #[tokio::test]
+    async fn an_audit_asked_for_in_the_hat_asks_first_with_its_cost() {
+        // Replies that say what they used, so an audit has a cost.
+        let counted = |mut reply: Vec<StreamDelta>| {
+            let done = reply.len() - 1;
+            reply.insert(
+                done,
+                StreamDelta::Usage(Usage {
+                    input_tokens: 4_000,
+                    output_tokens: 200,
+                    cached_tokens: 0,
+                    cache_write_tokens: 0,
+                }),
+            );
+            reply
+        };
+        let (home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![
+            counted(file_audit_call("fail")),
+            counted(say("filed")),
+            counted(say("it says hi")),
+        ]));
+        std::fs::write(cwd.path().join("hello.txt"), "hi\n").unwrap();
+        agent.put_on(Role::SoloAudit).unwrap();
+        let (_, model, _) = agent.stack_for(Role::SoloAudit);
+        let opening = Role::SoloAudit.opening().unwrap();
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+
+        // No: nothing runs, and it is said.
+        let asked = answering(&mut agent, crate::user_io::Permission::Deny);
+        let out = agent.turn(opening).await.unwrap();
+        agent.ctx.user_io = None;
+        let asked = asked.join().unwrap();
+        assert_eq!(out.reason, StopReason::Cancelled);
+        let [card] = &asked[..] else {
+            panic!("one card: {asked:?}");
+        };
+        assert!(card.starts_with("audit: "), "{card}");
+        assert!(
+            card.contains("\naudits 1 file, +1 −1, read-only\nabout $"),
+            "{card}"
+        );
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        assert!(noticed(&evs, "audit not run"), "{evs:?}");
+        // The turn the screen opened for the message is closed, with
+        // nothing sent and nothing left in the conversation.
+        assert!(
+            matches!(evs.last(), Some(AgentEvent::TurnFinished { tools: 0, .. })),
+            "{evs:?}"
+        );
+        assert!(agent.session.spend_log().unwrap().is_empty());
+        assert!(agent.session.transcript.is_empty());
+        assert!(!cwd.path().join(".ryter/audit.md").exists());
+
+        // Yes: the audit, with nothing more said about its cost.
+        let asked = answering(&mut agent, crate::user_io::Permission::Allow);
+        agent.turn(opening).await.unwrap();
+        agent.ctx.user_io = None;
+        assert_eq!(asked.join().unwrap().len(), 1);
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        assert!(!noticed(&evs, "audit hat · an audit with"), "{evs:?}");
+        assert!(matches!(
+            audited(&evs)[..],
+            [AgentEvent::Audited { filed: true, .. }]
+        ));
+        assert_eq!(crate::gate::history(home.path(), &model).len(), 1);
+
+        // A question in the hat: no card, and the cost said before the
+        // model is sent anything.
+        let asked = answering(&mut agent, crate::user_io::Permission::Deny);
+        agent.turn("what does hello.txt say?").await.unwrap();
+        agent.ctx.user_io = None;
+        assert!(asked.join().unwrap().is_empty());
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        let line = evs.iter().position(|e| {
+            matches!(e, AgentEvent::Notice { message }
+                if message.starts_with("audit hat · an audit with ") && message.contains(": about $"))
+        });
+        let spent = evs
+            .iter()
+            .position(|e| matches!(e, AgentEvent::Spend { .. }));
+        assert!(line.is_some() && line < spent, "{evs:?}");
+        // A chat is not an audit: nothing new is kept.
+        assert_eq!(crate::gate::history(home.path(), &model).len(), 1);
+    }
+
     /// The user's yes to a plan in an audit turn closes the audit before
     /// the build hat comes on, as `request_hat` does: the build's work in
     /// the rest of the turn stays, the audit's changes go.
@@ -6022,6 +6161,9 @@ mod tests {
         );
         assert_eq!(said[1], ("assistant", review));
         assert_eq!(reviewed(&events), [Some(true)]);
+        // The card said what it should cost; the hat's line doesn't repeat it.
+        assert!(asked[0].contains("\nabout $"), "{asked:?}");
+        assert!(!noticed(&events, "audit hat · an audit with"), "{events:?}");
         // A review leaves nothing in the project.
         for f in ["ROADMAP.md", "DECISIONS.md", "notes"] {
             assert!(!cwd.path().join(f).exists(), "{f} was created");

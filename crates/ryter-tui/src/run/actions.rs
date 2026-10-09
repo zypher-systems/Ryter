@@ -903,6 +903,7 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
 /// Switch hats. A switch while a turn runs applies to the next message.
 fn set_mode(view: &mut View, cx: &mut Ctx, role: ryter_core::Role) {
     view.set_mode(role);
+    view.open_composer_on(role);
     view.hats_pending += 1;
     cx.send(Work::SetRole(role));
 }

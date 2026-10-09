@@ -598,6 +598,13 @@ Replaces `draw_composer` and the key handling at `run.rs:933-997`.
 - **R-COMP-16** Submitting while busy queues the message and shows `queued` in the
   composer border; it is sent when the turn completes. `Esc` clears the queue.
 
+- **R-COMP-18** Choosing a specialist hat (`Tab`, `Shift+Tab`, `/scribe`) opens the
+  composer on that hat's request, the cursor at its end: "Audit this project" for audit,
+  "Document this project" for scribe (`Role::opening`). `Enter` sends it. The line is put
+  only into an empty composer, or over another hat's line that nobody touched, and it is
+  cleared when the user moves to a hat that has none; text the user typed or edited is never
+  replaced. Nothing is put there while a panel owns the composer (`R-COMP-17`).
+
 ### 7.3 Composer as panel input
 
 - **R-COMP-17** Panels that need text (filters, new names, values) take over the composer
