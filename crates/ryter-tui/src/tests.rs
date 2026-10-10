@@ -2926,6 +2926,77 @@ fn a_specialists_line_typed_by_hand_is_the_users() {
     assert_eq!(v.composer.text(), "Audit this project");
 }
 
+/// A session resumed from inside Ryter (`/resume`, the sessions list) in
+/// a specialist's hat opens on its line, as one resumed from the command
+/// line does (`R-COMP-18`).
+#[test]
+fn an_in_tui_resume_opens_on_the_specialists_line() {
+    use ryter_core::Role;
+    let home = tempfile::TempDir::new().unwrap();
+    let cwd = tempfile::TempDir::new().unwrap();
+    let mut s =
+        ryter_core::Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+    for (hat, line) in [
+        (Role::SoloAudit, "Audit this project"),
+        (Role::SoloScribe, "Document this project"),
+        (Role::SoloBuild, ""),
+    ] {
+        s.set_mode(hat).unwrap();
+        let mut v = idle();
+        crate::run::fill_view_from_session(&mut v, &s);
+        assert_eq!(v.mode, hat);
+        assert_eq!(v.composer.text(), line, "{hat}");
+    }
+}
+
+/// Ryter's line is its own only while it stands untouched. A panel that
+/// takes the prompt (the sessions list) lets it go, so the same words
+/// typed afterwards are the user's; so are the words typed back after an
+/// edit (`R-COMP-18`).
+#[test]
+fn a_panel_that_takes_the_prompt_lets_ryters_line_go() {
+    use ryter_core::Role;
+    let key = |c: KeyCode| KeyEvent::new(c, KeyModifiers::NONE);
+    let mut v = idle();
+    v.open_composer_on(Role::SoloAudit);
+    assert_eq!(v.seeded.as_deref(), Some("Audit this project"));
+    // The sessions list empties the prompt, and the line goes with it.
+    let _ = panel::open(
+        &mut v,
+        PanelId::Sessions(crate::action::SessionsMode::Browse),
+        &env(),
+    );
+    panel::sync_composer(&mut v);
+    assert!(v.seeded.is_none(), "the line went with the prompt");
+    let _ = crate::run_keys_handle(&mut v, key(KeyCode::Esc));
+    assert!(v.panels.is_empty() && v.composer.is_empty());
+    for c in "Audit this project".chars() {
+        let _ = crate::run_keys_handle(&mut v, key(KeyCode::Char(c)));
+    }
+    assert_eq!(v.composer.text(), "Audit this project");
+    v.open_composer_on(Role::SoloScribe);
+    assert_eq!(
+        v.composer.text(),
+        "Audit this project",
+        "typed by hand, the words stay"
+    );
+    // Put there by Ryter, edited, and put back: the user's.
+    v.composer.clear();
+    v.seeded = None;
+    v.open_composer_on(Role::SoloAudit);
+    let _ = crate::run_keys_handle(&mut v, key(KeyCode::Char('!')));
+    let _ = crate::run_keys_handle(&mut v, key(KeyCode::Backspace));
+    assert_eq!(v.composer.text(), "Audit this project");
+    v.open_composer_on(Role::SoloScribe);
+    assert_eq!(v.composer.text(), "Audit this project");
+    // Untouched, it still goes with the hat.
+    v.composer.clear();
+    v.open_composer_on(Role::SoloAudit);
+    let _ = crate::run_keys_handle(&mut v, key(KeyCode::Tab));
+    v.open_composer_on(Role::SoloScribe);
+    assert_eq!(v.composer.text(), "Document this project");
+}
+
 /// A follow-up queued while a turn runs is what the composer's `queued`
 /// badge is about: a hat chosen then puts nothing in the composer, and
 /// the follow-up is what goes out when the turn ends. An empty composer

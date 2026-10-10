@@ -807,6 +807,17 @@ impl View {
         }
     }
 
+    /// The prompt's text has been touched by something other than
+    /// [`View::open_composer_on`]: a key, a paste, a panel taking the
+    /// prompt. Ryter's line is its own only while it stands untouched, so
+    /// once the words differ the line is let go, and the same words typed
+    /// again later are the user's.
+    pub fn note_composer_edited(&mut self) {
+        if self.seeded.as_deref() != Some(self.composer.text()) {
+            self.seeded = None;
+        }
+    }
+
     /// The hat `Shift+Tab` puts on: the last worn in the other row, or that
     /// row's default when none was.
     pub fn other_row_hat(&self) -> ryter_core::Role {

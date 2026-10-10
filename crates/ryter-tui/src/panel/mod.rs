@@ -324,8 +324,10 @@ pub fn on_notice(view: &mut View, n: &Notice) {
     view.panels.stack = stack;
 }
 
-/// Keep the composer's field mode in step with the focused panel.
+/// Keep the composer's field mode in step with the focused panel. A panel
+/// that takes the prompt takes Ryter's line with it.
 pub fn sync_composer(view: &mut View) {
+    view.note_composer_edited();
     let want = view.panels.wants_input(view);
     match (&view.composer.mode, want) {
         (crate::composer::Mode::Field { label }, Some(l)) if *label == l => {}

@@ -33,8 +33,15 @@ fn toggle_side(view: &mut View) {
     panel::sync_composer(view);
 }
 
-/// Route one key press.
+/// Route one key press. Whatever it did to the prompt, a line Ryter put
+/// there is its own only while the words stand as they were.
 pub fn handle(view: &mut View, key: KeyEvent) -> Action {
+    let action = route(view, key);
+    view.note_composer_edited();
+    action
+}
+
+fn route(view: &mut View, key: KeyEvent) -> Action {
     // Global bindings win everywhere, except `Esc` which panels interpret
     // themselves (wizard step back, confirm cancel), and `Ctrl+D`/`Ctrl+P`
     // which are composer-only conveniences.

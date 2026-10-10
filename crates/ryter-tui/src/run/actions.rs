@@ -647,6 +647,10 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
     view.turn = view.turn.max(1);
     view.scroll.to_bottom();
     view.agent_hat = view.mode;
+    // A session resumed in a specialist's hat opens on its line, from
+    // `/resume` and the sessions list as from the command line
+    // (`R-COMP-18`).
+    view.open_composer_on(view.mode);
     // The chat was rebuilt through the live path, which counted its tool
     // calls again without their hats: the log has what really happened.
     view.rack = ryter_core::rack::Rack::from_log(&session.dir.join("events.jsonl"));

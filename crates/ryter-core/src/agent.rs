@@ -5580,8 +5580,6 @@ mod tests {
     /// A no spends nothing and starts no turn. A yes is the audit, and what
     /// it cost is kept for the next card. Anything else said in the hat is
     /// answered without a question, with the cost said in the chat first.
-    /// The first real audits asked for in the hat were told only what the
-    /// hat's model would re-read, a thirteenth of what one came to.
     #[tokio::test]
     async fn an_audit_asked_for_in_the_hat_asks_first_with_its_cost() {
         // Replies that say what they used, so an audit has a cost.

@@ -746,6 +746,7 @@ fn loop_ui(
                 Event::Key(_) => Action::None,
                 Event::Paste(text) => {
                     on_paste(view, &text);
+                    view.note_composer_edited();
                     Action::None
                 }
                 Event::Mouse(m) => on_mouse(view, m, &hit),
