@@ -1447,12 +1447,13 @@ fn the_sidebar_gives_way_to_the_conversation() {
 fn the_name_and_the_place_head_the_sidebar() {
     let text = render_to_string(&racked(), 160, 50);
     let rows: Vec<&str> = text.lines().collect();
-    let chat: String = rows[0].chars().take(130).collect();
+    // At 160 columns the sidebar has grown to 40: its text starts at 122.
+    let chat: String = rows[0].chars().take(120).collect();
     assert!(!chat.contains("RYTER"), "{chat}");
     let col = |y: usize| {
         rows[y]
             .chars()
-            .skip(132)
+            .skip(122)
             .collect::<String>()
             .trim()
             .to_string()
@@ -1470,6 +1471,51 @@ fn the_name_and_the_place_head_the_sidebar() {
     .filter(|w| text.contains(w))
     .collect();
     assert!(caps.is_empty(), "{caps:?}");
+}
+
+/// The conversation's column sits at the left, a cell in, however wide
+/// the screen, and the sidebar grows from 30 to 40 columns once the
+/// column has the width it reads well at: the spare width is between
+/// them, not a hole before the text.
+#[test]
+fn the_chat_sits_left_and_the_sidebar_grows_with_the_screen() {
+    for (w, side) in [
+        (100, 30),
+        (120, 30),
+        (146, 30),
+        (150, 34),
+        (156, 40),
+        (220, 40),
+    ] {
+        assert_eq!(crate::sidebar::width_for(w), side, "{w}");
+        let text = render_to_string(&racked(), w, 50);
+        let rows: Vec<&str> = text.lines().collect();
+        let hairline = usize::from(w - side);
+        assert_eq!(
+            rows[5].chars().nth(hairline),
+            Some('│'),
+            "{w}: the hairline"
+        );
+        assert_eq!(
+            rows[0]
+                .chars()
+                .skip(hairline + 2)
+                .take(5)
+                .collect::<String>(),
+            "RYTER",
+            "{w}"
+        );
+        let dusty = rows.iter().find(|r| r.contains("●  dusty")).unwrap();
+        assert_eq!(
+            dusty.len() - dusty.trim_start().len(),
+            9,
+            "{w}: the column is a cell in"
+        );
+        // The ledger uses the room: at 40 columns a long model name fits.
+        if side == 40 {
+            assert!(text.contains("deepseek-pro-latest"), "{w}:\n{text}");
+        }
+    }
 }
 
 /// `R-COLOR-02`, `R-COLOR-03`, `R-TEST-02`: the hat on colors its chip,
@@ -2796,63 +2842,13 @@ fn tab_moves_within_a_row_and_shift_tab_between_rows() {
         press(&mut v, false),
         Action::SetMode(Role::SoloPlan)
     ));
-    // From a primary hat, Shift+Tab opens the specialists to choose from,
-    // on the one last worn: nothing worn yet, so audit. Enter chooses.
+    // Nothing worn in the specialist row yet: audit, straight to it. No
+    // box to choose from: with two specialists, Tab round them is enough.
     assert!(matches!(
         press(&mut v, true),
-        Action::OpenPanel(PanelId::Specialists)
-    ));
-    let _ = panel::open(&mut v, PanelId::Specialists, &env());
-    assert_eq!(v.panels.kinds(), ["specialists"]);
-    assert_eq!(v.picker_hover, Some(Role::SoloAudit));
-    let text = render_to_string(&v, 120, 40);
-    for want in [
-        "specialists",
-        "audit",
-        "checks the work, may run it",
-        "checkpoint",
-        "scribe",
-        "docs only",
-        "enter choose",
-    ] {
-        assert!(text.contains(want), "missing {want:?}:\n{text}");
-    }
-    let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-    assert!(matches!(
-        crate::run_keys_handle(&mut v, enter),
         Action::SetMode(Role::SoloAudit)
     ));
-    assert!(v.panels.is_empty() && v.picker_hover.is_none());
-    // Typing filters it; Esc leaves the hat as it was.
-    let _ = panel::open(&mut v, PanelId::Specialists, &env());
-    for c in "scr".chars() {
-        let _ = crate::run_keys_handle(&mut v, KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
-    }
-    assert_eq!(v.picker_hover, Some(Role::SoloScribe));
-    let text = render_to_string(&v, 120, 40);
-    assert!(
-        text.contains("scribe") && !text.contains("checks the work"),
-        "{text}"
-    );
-    let _ = crate::run_keys_handle(&mut v, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    assert!(v.panels.is_empty() && v.mode == Role::SoloBuild);
-    // `^c` clears the picker too, and the sidebar stops marking the row
-    // it had under the cursor.
-    let _ = panel::open(&mut v, PanelId::Specialists, &env());
-    let _ = crate::run_keys_handle(
-        &mut v,
-        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-    );
     assert!(v.panels.is_empty());
-    v.ui.layout = "ledger".into();
-    v.panel_visible = true;
-    let theme = Theme::truecolor_dark();
-    let buf = render_buffer(&v, 120, 40, theme);
-    let marked = (0..40u16)
-        .flat_map(|y| (92..120u16).map(move |x| (x, y)))
-        .filter(|&at| buf[at].bg == theme.selection_bg)
-        .count();
-    assert_eq!(marked, 0, "no row is marked once the picker is gone");
     v.set_mode(Role::SoloAudit);
     // The specialists go round: audit, scribe, audit.
     assert!(matches!(
@@ -2875,14 +2871,13 @@ fn tab_moves_within_a_row_and_shift_tab_between_rows() {
         press(&mut v, true),
         Action::SetMode(Role::SoloPlan)
     ));
-    // The specialist last worn is remembered: scribe, and the picker
-    // opens on it.
+    // The specialist last worn is remembered: scribe, then back to it.
     v.set_mode(Role::SoloScribe);
     v.set_mode(Role::SoloBuild);
-    let _ = panel::open(&mut v, PanelId::Specialists, &env());
-    assert_eq!(v.picker_hover, Some(Role::SoloScribe));
-    v.panels.clear();
-    v.picker_hover = None;
+    assert!(matches!(
+        press(&mut v, true),
+        Action::SetMode(Role::SoloScribe)
+    ));
     // The hints say where each key goes.
     v.set_mode(Role::SoloBuild);
     let foot = render_to_string(&v, 160, 50);

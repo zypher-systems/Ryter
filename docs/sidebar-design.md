@@ -30,8 +30,8 @@ What stays: the transcript as 0.25.0 left it (space-led rows, a folded turn endi
 
 | Region | Size | Content |
 | --- | --- | --- |
-| Transcript | the rest, from row 0 | the ledger's reading column, unchanged |
-| Sidebar | 30 columns, right: a hairline, a pad, 28 of text | §4 |
+| Transcript | the rest, from row 0, at the left | the ledger's reading column, unchanged, at most 112 columns wide |
+| Sidebar | 30 columns, right, growing to 40 with the screen (§17): a hairline, a pad, the rest text | §4 |
 | Composer | 1 hairline + 1 to 8 text rows + 1 blank | the hat chip and the message box, the width of the transcript |
 | Hint bar | 1 row | keys for the current state; the status line below 100 columns |
 
@@ -208,7 +208,7 @@ now
 ## 6. Keys
 
 - **R-KEY-01** `Tab` is unchanged: the next hat in the row the user is in.
-- **R-KEY-02** `Shift+Tab` in the primary row opens the **specialists picker** above the composer, where the command palette opens: one row per specialist, `name · what it does · what it may do · its model`, `›` on the specialist last worn (audit when none), typing filters, `↑↓` move, `Enter` puts the hat on and opens the composer on its request (R-COMP-18), `Esc` closes. In the specialist row `Shift+Tab` returns to the primary last worn, build when none, as today. `Tab` in the specialist row cycles the specialists as today. The sidebar's hats block highlights the row under the picker's cursor.
+- **R-KEY-02** `Shift+Tab` moves to the other row, onto the hat last worn there: the specialist last worn (audit when none) from a primary hat, the primary last worn (build when none) from a specialist. `Tab` in the specialist row cycles the specialists. No picker: the user's decision after running 0.25.0 (§17), even for three or four specialists. The hat put on opens the composer on its request (R-COMP-18).
 - **R-KEY-03** `Ctrl+B` is R-LAYOUT-05. The hint bar names it `^b sidebar`. `/plan`, `/build`, `/scribe` and `/audit` are unchanged.
 - **R-KEY-04** No other binding changes.
 
@@ -351,7 +351,7 @@ Built on `sidebar-screen-patch` (2026-10-10). Where the build differs from the c
 | The `permissions` block is two rows when the sandbox profile's name would not fit beside what the hat may do (R-PERM-01) | A profile's name is not cut. |
 | The hat on's `▸` spins while its model works, as the top bar's chip did | The user's rule that a thinking model must look alive where the eye is; the bar that carried the spinner is gone. |
 | The `^b` panel on a narrow screen is the sidebar's rows without its `RYTER` row (R-LAYOUT-05) | The panel's title says where this is. |
-| The specialists picker's `Tab` moves down the list; `Shift+Tab` in the specialist row still returns to the primary hat last worn (R-KEY-02) | As the contract says; noted because the picker swallows `Tab` while it is open. |
-| The picker shows what a hat may do in the sidebar's words (`checkpoint`, `asks first`) and the model's short name | Room: 84 columns for four columns of text. |
+| The specialists picker (R-KEY-02 as first written) shipped in 0.25.0 and was removed the same day | The user, running 0.25.0: a box on the way into the specialists and none on the way back "is a little bit conflictive", and Shift+Tab then Tab round them "is still ok" even at three or four. R-KEY-02 is rewritten above. |
+| The conversation's column sits at the left, a cell in, and the sidebar grows from 30 to 40 columns once the column has its 112 (`sidebar::width_for`) | The user, running 0.25.0 on a wide terminal: the column centred in what was left of the sidebar left "a massive blank spot on the left side of the screen" where the rack had been. Left-aligned, the spare width is between the column and the sidebar; the sidebar takes up to ten of it for names and paths. |
 | The sixteen-colour theme is not held to the contrast test's hat and chip pairs (R-COLOR-06) | Its sixteen are the terminal's own, only approximated by the test's table; plan is `LightBlue`, build `Green`, the specialists `Yellow`, the user `White`. |
 | The `review offer` permission card no longer exists (it went with the offer after a build) and its test case went with it | Its border was the audit colour by coincidence: the old theme's `warn` and `audit` were the same value. |

@@ -52,8 +52,6 @@ pub enum PanelId {
     Changes,
     /// `/commit`.
     Commit,
-    /// `Shift+Tab` from a primary hat: the specialists to choose from.
-    Specialists,
 }
 
 /// Everything the loop knows how to do.

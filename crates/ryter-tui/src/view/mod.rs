@@ -374,8 +374,6 @@ pub struct View {
     pub pulse: Pulse,
     /// Saved sessions this project has, for the opening screen's count.
     pub sessions_count: usize,
-    /// The specialist under the picker's cursor, for the sidebar to mark.
-    pub picker_hover: Option<ryter_core::Role>,
 }
 
 /// Aggregated spend row for `/spend`.
@@ -566,7 +564,6 @@ impl View {
             screen: std::cell::Cell::new((0, 0)),
             pulse: Pulse::default(),
             sessions_count: 0,
-            picker_hover: None,
         }
     }
 

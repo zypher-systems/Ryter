@@ -17,8 +17,12 @@ use crate::chat::{fmt_elapsed, humanize, short_model, turn_usd, wrap};
 use crate::theme::Theme;
 use crate::view::View;
 
-/// Columns the sidebar takes: the hairline, a pad, and 28 of text.
-pub const WIDTH: u16 = 30;
+/// Columns the sidebar takes on the narrowest screen that holds it: the
+/// hairline, a pad, and 27 of text.
+pub const MIN_WIDTH: u16 = 30;
+/// Columns it grows to on a wide screen, once the conversation's column
+/// has all the width it reads well at.
+pub const MAX_WIDTH: u16 = 40;
 /// Narrowest screen that shows it beside the conversation.
 pub const MIN_SCREEN: u16 = 100;
 /// The hats, in the order the sidebar lists them: the primary hats, then
@@ -49,6 +53,15 @@ pub enum Tier {
     Sidebar,
     /// None: a status line at the foot.
     Narrow,
+}
+
+/// Columns the sidebar takes beside the conversation on a screen `width`
+/// wide: the least on a narrow screen, growing with the screen once the
+/// conversation's column has the width it reads well at, up to the most.
+pub fn width_for(width: u16) -> u16 {
+    width
+        .saturating_sub(crate::draw::LEDGER_COLUMN + 4)
+        .clamp(MIN_WIDTH, MAX_WIDTH)
 }
 
 /// The tier a screen `width` columns wide is in.
@@ -244,15 +257,6 @@ fn hat_row(view: &View, theme: Theme, hat: Role, bg: Color, w: usize) -> Line<'s
     };
     let dim = Style::default().fg(theme.dim).bg(bg);
     let body = Style::default().fg(theme.fg).bg(bg);
-    // The row under the picker's cursor is marked as the picker marks it,
-    // while the picker is open.
-    let picking = view.panels.top().is_some_and(|p| p.kind() == "specialists");
-    let bg = if picking && view.picker_hover == Some(hat) {
-        theme.selection_bg
-    } else {
-        bg
-    };
-    let name_style = name_style.bg(bg);
     // The hat that is on is marked, and its mark spins while its model
     // works: the screen says it is alive where the eye is.
     let mark = if on && view.busy {
@@ -655,12 +659,13 @@ pub fn panel_lines(view: &View, theme: Theme, w: usize) -> Vec<Line<'static>> {
         .collect()
 }
 
-/// Whether the sidebar has room in a column `height` rows tall.
-pub fn fits(view: &View, theme: Theme, height: u16) -> bool {
+/// Whether the sidebar has room in a column `width` wide and `height`
+/// rows tall.
+pub fn fits(view: &View, theme: Theme, width: u16, height: u16) -> bool {
     lines(
         view,
         theme,
-        usize::from(WIDTH.saturating_sub(3)),
+        usize::from(width.saturating_sub(3)),
         usize::from(height),
     )
     .is_some()

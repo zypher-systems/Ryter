@@ -222,8 +222,7 @@ pub fn chat_column(view: &View, theme: Theme, width: u16, height: u16) -> (u16, 
     let side_w = sidebar_width(view, theme, width, body_height(height));
     let main_w = width.saturating_sub(side_w);
     let col_w = main_w.saturating_sub(4).min(LEDGER_COLUMN);
-    let col_x = (main_w.saturating_sub(col_w + 1)) / 2;
-    (col_x, col_w)
+    (1, col_w)
 }
 
 /// Widest the ledger's reading column gets: the timeline gutter plus about
@@ -341,7 +340,12 @@ pub fn body_height(height: u16) -> u16 {
 /// does not depend on the theme.
 pub fn sidebar_fits(view: &View, width: u16, height: u16) -> bool {
     crate::sidebar::tier(width) == crate::sidebar::Tier::Sidebar
-        && crate::sidebar::fits(view, Theme::truecolor_dark(), body_height(height))
+        && crate::sidebar::fits(
+            view,
+            Theme::truecolor_dark(),
+            crate::sidebar::width_for(width),
+            body_height(height),
+        )
 }
 
 /// Columns the sidebar takes beside the conversation: its width, or none
@@ -350,9 +354,10 @@ pub fn sidebar_width(view: &View, theme: Theme, width: u16, body_h: u16) -> u16 
     if !view.panel_visible {
         return 0;
     }
+    let side_w = crate::sidebar::width_for(width);
     match crate::sidebar::tier(width) {
-        crate::sidebar::Tier::Sidebar if crate::sidebar::fits(view, theme, body_h) => {
-            crate::sidebar::WIDTH
+        crate::sidebar::Tier::Sidebar if crate::sidebar::fits(view, theme, side_w, body_h) => {
+            side_w
         }
         _ => 0,
     }
@@ -410,8 +415,10 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     }
     let comp_h =
         composer::draw::solo_height(view, main.width).min(main.height.saturating_sub(6).max(2));
+    // The column sits at the left, a cell in, however wide the screen: the
+    // spare width is between it and the sidebar, not a hole before it.
     let col_w = main.width.saturating_sub(4).min(LEDGER_COLUMN);
-    let col_x = main.x + (main.width.saturating_sub(col_w + 1)) / 2;
+    let col_x = main.x + 1;
     let column = |r: Rect| Rect {
         x: col_x,
         width: col_w,

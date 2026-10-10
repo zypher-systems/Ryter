@@ -22,7 +22,6 @@ pub mod sessions;
 pub mod settings;
 pub mod sidebar;
 pub mod skills;
-pub mod specialists;
 pub mod spend;
 pub mod spend_drawer;
 pub mod theme;
@@ -377,7 +376,6 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
         PanelId::Help => Box::new(help::Help::default()),
         PanelId::Doctor => Box::new(doctor::Doctor::new(env)),
         PanelId::Changes => Box::new(changes::Changes::new(view, env)),
-        PanelId::Specialists => Box::new(specialists::Specialists::new(view)),
         PanelId::Commit => {
             let (p, act) = commit::Commit::new(view, env);
             view.panels.push(Box::new(p));
