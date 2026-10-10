@@ -1,30 +1,30 @@
  RYTER │ ● PLAN 1    ◆ BUILD 2    ·   specialists ·1      empty-query fix       shop · search-patch
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-         ●  search returns eve… ···· ✓ answered · 1.2s · $0.004  ▸    │
-         ●  build the plan ········ ✓ answered · 2 files (1 ne…  ▸    │ MODEL
-         ●  review it ·············· ✓ answered · 1.2s · $0.040  ▸    │ build   deepseek-pro-latest
+         ●  search returns everything for an emp…    ✓ answered  ▸    │
+         ●  build the plan          ✓ answered · 2 files (1 ne…  ▸    │ MODEL
+         ●  review it                                ✓ answered  ▸    │ build   deepseek-pro-latest
                                                                       │
          ●  dusty                                                     │ CONTEXT
          │  fix the blocking finding                                  │ ━━━━━━━━━────────────── 38%
          │                                                            │ 97k / 256k tokens
-         ├─ write  app/server.js ····················· +1 −1  0.0s    │
-         │    1   app.get('/search', (req, res) => {                  │ PULSE
-         │    2 -   const q = (req.query.q || '').trim()              │ ▁▁▁▁▁▁▁▁               idle
-         │    2 +   const q = String(req.query.q ?? '').trim()        │
-         │    3     if (!q) return res.json([])                       │ SPEND
-         │    4     res.json(find(q))                                 │ session              $0.065
-         ├─ write  test/search.test.js ··············· +4 −0  0.0s    │ project               $4.82
-         │     5     assert.deepEqual(await search(''), [])           │ budget                  off
-         │     6   })                                                 │
-         │     7 +                                                    │ GUARD
-         │     8 + test('a missing query finds nothing', async ()     │ sandbox           workspace
-         │         => {                                               │ this hat         asks first
-         │     9 +   assert.deepEqual(await search(), [])             │ plan.md                none
-         │    10 + })                                                 │ audit.md               none
+         ├─ write  app/server.js                             +1 −1    │
+         │    1   app.get('/search', (req, res) => {                  │ SPEND
+         │    2 -   const q = (req.query.q || '').trim()              │ session              $0.065
+         │    2 +   const q = String(req.query.q ?? '').trim()        │ project               $4.82
+         │    3     if (!q) return res.json([])                       │ budget                  off
+         │    4     res.json(find(q))                                 │
+         ├─ write  test/search.test.js                       +4 −0    │ GUARD
+         │     5     assert.deepEqual(await search(''), [])           │ sandbox           workspace
+         │     6   })                                                 │ this hat         asks first
+         │     7 +                                                    │ plan.md                none
+         │     8 + test('a missing query finds nothing', async ()     │ audit.md               none
+         │         => {                                               │
+         │     9 +   assert.deepEqual(await search(), [])             │ CHANGES
+         │    10 + })                                                 │ 2 files              +12 −1
          └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.0…    │
-                     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                     │ CHANGES
-                                                                      │ 2 files              +12 −1
+                                                                      │
+                                                                      │
 ──────────────────────────────────────────────────────────────────────│
-  BUILD  › what should change? · Tab: plan · ⇧Tab: specialists · / …  │
+  BUILD  › what should change?                                        │
 
  $ spend    enter send    tab plan    ⇧tab specialists    / commands    ^b hat rack    ^c quit

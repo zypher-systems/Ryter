@@ -1044,9 +1044,9 @@ fn snapshot_solo() {
 fn the_rack_shows_each_hats_own_figures() {
     let text = squash(&render_to_string(&racked(), 160, 50));
     for want in [
-        "HAT RACK",
+        "HATS",
         "● PLAN grok-4.6 1 turn $0.004 plans 1 approved",
-        "◆ BUILD deepseek-pro-latest 2 turns $0.021 files 2 lines +13 −2 success 14 warning 0 failure 0",
+        "◆ BUILD deepseek-pro-latest 2 turns $0.021 files 2 lines +13 −2 success 14",
         "● AUDIT claude-opus-5.5 1 turn $0.040 audits ✗ 1 fail",
     ] {
         // Each block's rows are a row apart on screen, the conversation
@@ -1080,7 +1080,7 @@ fn the_rack_shows_each_hats_own_figures() {
         rows(&v),
         [
             "",
-            "HAT RACK",
+            "HATS",
             "",
             "● PLAN",
             "grok-4.6",
@@ -1093,8 +1093,6 @@ fn the_rack_shows_each_hats_own_figures() {
             "files 2",
             "lines +13 −2",
             "success 14",
-            "warning 0",
-            "failure 0",
             "",
             "─────────────── specialists",
             "",
@@ -1105,7 +1103,7 @@ fn the_rack_shows_each_hats_own_figures() {
             "",
             "○ SCRIBE",
             "grok-4.6",
-            "not worn yet",
+            "no turns yet",
         ]
     );
     // A second review that passed, and a rejected plan.
@@ -1140,9 +1138,9 @@ fn the_rack_shows_each_hats_own_figures() {
     ] {
         assert!(got.iter().any(|r| r == want), "missing {want:?}: {got:#?}");
     }
-    // Only the scribe, which had no turn here, is not worn yet.
+    // Only the scribe, which had no turn here, has had no turn.
     assert_eq!(
-        got.iter().filter(|r| *r == "not worn yet").count(),
+        got.iter().filter(|r| *r == "no turns yet").count(),
         1,
         "{got:#?}"
     );
@@ -1223,7 +1221,9 @@ fn the_rack_is_the_same_height_whatever_the_turns() {
     assert_eq!(many.rack.of(Role::SoloBuild).turns, 38);
     let height = |v: &View| crate::rail::lines(v, theme, 27, 100).unwrap().len();
     assert_eq!(height(&few), height(&many));
-    assert_eq!(height(&few), 27);
+    // The heading, four blocks and the separator, with the build block's
+    // one check row: a count of nothing is not a row.
+    assert_eq!(height(&few), 25);
     let text = squash(&render_to_string(&many, 160, 50));
     assert!(text.contains("38 turns"), "{text}");
 }
@@ -1244,7 +1244,7 @@ fn the_side_columns_give_way_to_the_conversation() {
     ] {
         let text = render_to_string(&racked(), w, h);
         let top = text.lines().next().unwrap();
-        assert_eq!(text.contains("HAT RACK"), rack, "{w}x{h}:\n{text}");
+        assert_eq!(text.contains("HATS"), rack, "{w}x{h}:\n{text}");
         assert_eq!(text.contains("CONTEXT"), instruments, "{w}x{h}:\n{text}");
         assert!(text.contains("what should change?"), "{w}x{h}:\n{text}");
         assert!(top.contains("RYTER") && top.contains("◆ BUILD"), "{top}");
@@ -1265,23 +1265,17 @@ fn the_side_columns_give_way_to_the_conversation() {
     // from every block at once; shorter still, the rack folds away.
     // Four blocks without their figures take twenty rows.
     let text = render_to_string(&racked(), 160, 28);
-    assert!(
-        text.contains("HAT RACK") && text.contains("2 turns"),
-        "{text}"
-    );
+    assert!(text.contains("HATS") && text.contains("2 turns"), "{text}");
     assert!(!squash(&text).contains("lines +13"), "{text}");
     let text = render_to_string(&racked(), 160, 15);
-    assert!(
-        !text.contains("HAT RACK") && text.contains("CONTEXT"),
-        "{text}"
-    );
+    assert!(!text.contains("HATS") && text.contains("CONTEXT"), "{text}");
     assert!(text.contains("what should change?"), "{text}");
     // Hidden with `^b`, or `[ui] panel = false`.
     let mut v = racked();
     v.panel_visible = false;
     let text = render_to_string(&v, 160, 50);
     assert!(
-        !text.contains("HAT RACK") && !text.contains("CONTEXT"),
+        !text.contains("HATS") && !text.contains("CONTEXT"),
         "{text}"
     );
     assert!(text.lines().next().unwrap().contains("BUILD 2"), "{text}");
@@ -1356,9 +1350,6 @@ fn the_instruments_say_what_is_true_of_the_whole_session() {
             "━━━━━━━━━━───────────────── 38%",
             "97k / 256k tokens",
             "",
-            "PULSE",
-            "▁▁▁▁▁▁▁▁ idle",
-            "",
             "SPEND",
             "session $0.065",
             "project $4.82",
@@ -1386,9 +1377,6 @@ fn the_instruments_say_what_is_true_of_the_whole_session() {
             "━━━━━━━━━────────────── 38%",
             "97k / 256k tokens",
             "",
-            "PULSE",
-            "▁▁▁▁▁▁▁▁ idle",
-            "",
             "SPEND",
             "session $0.065",
             "project $4.82",
@@ -1405,8 +1393,10 @@ fn the_instruments_say_what_is_true_of_the_whole_session() {
         ]
     );
     // The pulse: tokens a second over the last two seconds, and eight
-    // seconds of bars, in the hat's color while the model writes.
+    // seconds of bars, in the hat's color while the model writes. It is
+    // the last card, and on screen only while a turn runs.
     v.mode = Role::SoloBuild;
+    v.busy = true;
     v.now_ms = 80_000;
     for (t, n) in [
         (72_000, 60),
@@ -1418,9 +1408,15 @@ fn the_instruments_say_what_is_true_of_the_whole_session() {
         v.pulse.push(t, n);
     }
     let got = rows(&v, false);
-    assert!(got.iter().any(|r| r == "▁█▅▁▁▁█▇ 75 tok/s"), "{got:#?}");
+    assert_eq!(
+        got.last().map(String::as_str),
+        Some("▁█▅▁▁▁█▇ 75 tok/s"),
+        "{got:#?}"
+    );
     v.now_ms = 83_000;
-    assert!(rows(&v, false).iter().any(|r| r == "▁▁▁██▁▁▁ idle"));
+    assert!(rows(&v, false).iter().any(|r| r == "▁▁▁██▁▁▁ waiting"));
+    v.busy = false;
+    assert!(!rows(&v, false).iter().any(|r| r == "PULSE"));
     // A project total that leaves unpriced calls out says so; a budget is
     // named; nothing uncommitted is said, and so is no repository.
     if let Some(p) = &mut v.project_spend {
@@ -1498,14 +1494,12 @@ fn the_hat_colors_the_screen() {
             "│",
             "{hat}: the rack goes on"
         );
-        // The active block's tint in the rack, and the watermark.
+        // The active block's tint in the rack. The watermark is off unless
+        // asked for; its own test turns it on.
         assert!(
             cells().any(|at| at.0 < 29 && buf[at].bg == theme.rack_tint(hat)),
             "{hat}: no tinted block"
         );
-        let (mark, band) = theme.watermark(hat).unwrap();
-        assert!(cells().any(|at| buf[at].bg == mark), "{hat}: no watermark");
-        assert!(cells().any(|at| buf[at].bg == band), "{hat}: no band");
         // The model's name and the gauge, in the instruments.
         let inst = |want: &str| {
             cells()
@@ -1526,12 +1520,13 @@ fn the_hat_colors_the_screen() {
             None => chrome = Some(neutral),
             Some(c) => assert_eq!(c, neutral, "{hat}: the chrome changed"),
         }
-        // Each hat's own mark keeps its own color, whichever is on.
+        // A worn hat that is not on is marked in the body's color: the hat
+        // on is the one accent.
         let top: String = (0..160).map(|x| buf[(x, 0)].symbol().to_string()).collect();
         let plan = top.find("PLAN").unwrap();
         let x = top[..plan].chars().count() as u16 - 2;
         if hat != Role::SoloPlan {
-            assert_eq!(buf[(x, 0)].fg, theme.plan, "{hat}: plan's mark");
+            assert_eq!(buf[(x, 0)].fg, theme.fg, "{hat}: plan's mark");
         }
     }
 }
@@ -1596,9 +1591,9 @@ fn the_hat_is_told_apart_without_color() {
 #[test]
 fn the_watermark_is_behind_the_text_and_never_in_it() {
     let theme = Theme::truecolor_dark();
-    let on = racked();
-    let mut off = racked();
-    off.ui.watermark = false;
+    let mut on = racked();
+    on.ui.watermark = true;
+    let off = racked();
     let (a, b) = (
         render_buffer(&on, 160, 50, theme),
         render_buffer(&off, 160, 50, theme),
@@ -1663,7 +1658,7 @@ fn ctrl_b_hides_the_columns_or_opens_them_as_a_panel() {
     let _ = render_to_string(&v, 160, 50);
     let _ = crate::run_keys_handle(&mut v, ctrl_b);
     assert!(!v.panel_visible && v.panels.is_empty());
-    assert!(!render_to_string(&v, 160, 50).contains("HAT RACK"));
+    assert!(!render_to_string(&v, 160, 50).contains("HATS"));
     let _ = crate::run_keys_handle(&mut v, ctrl_b);
     assert!(v.panel_visible);
     for (w, h) in [(120, 40), (80, 24)] {
@@ -2053,8 +2048,7 @@ fn ledger_folds_finished_turns_and_closes_each() {
     check_snapshot("ledger-whole-120x60", &text);
     assert!(text.contains("·  welcome · /help for keys"), "{text}");
     assert!(
-        text.contains("why does load() ignore a missing file?")
-            && text.contains("✓ answered · 1.8s · $0.002  ▸"),
+        text.contains("why does load() ignore a missing file?") && text.contains("✓ answered  ▸"),
         "the first turn folds to one line:\n{text}"
     );
     assert!(
@@ -4769,4 +4763,105 @@ fn a_model_for_all_hats_is_every_hats() {
         said(&["plan", "audit", "scribe"]),
         " · all hats follow it (plan, audit and scribe had models of their own)"
     );
+}
+
+// -- The screen as HTML, for looking at a change beside what was ----------------
+
+/// A frame as HTML: each cell's glyph in its colors and weight, so a change
+/// to the screen can be looked at with its colors, which the text snapshots
+/// leave out.
+fn buffer_to_html(buf: &ratatui::buffer::Buffer, theme: Theme) -> String {
+    use ratatui::style::{Color, Modifier};
+    fn hex(c: Color, fallback: Color) -> String {
+        match c {
+            Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+            Color::Reset => hex(fallback, Color::Black),
+            Color::Black => "#000000".into(),
+            Color::White => "#ffffff".into(),
+            _ => "#808080".into(),
+        }
+    }
+    let esc = |s: &str| {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    };
+    let mut out = format!(
+        "<pre class=\"screen\" style=\"background:{};color:{}\">",
+        hex(theme.bg, theme.bg),
+        hex(theme.fg, theme.fg)
+    );
+    for y in 0..buf.area.height {
+        let mut run_style = String::new();
+        let mut run = String::new();
+        let flush = |out: &mut String, style: &str, run: &mut String| {
+            if !run.is_empty() {
+                out.push_str(&format!("<span style=\"{style}\">{run}</span>"));
+                run.clear();
+            }
+        };
+        for x in 0..buf.area.width {
+            let c = &buf[(x, y)];
+            let sym = c.symbol();
+            if sym.is_empty() {
+                continue;
+            }
+            let (mut fg, mut bg) = (hex(c.fg, theme.fg), hex(c.bg, theme.bg));
+            if c.modifier.contains(Modifier::REVERSED) {
+                std::mem::swap(&mut fg, &mut bg);
+            }
+            let mut style = format!("color:{fg};background:{bg}");
+            if c.modifier.contains(Modifier::BOLD) {
+                style.push_str(";font-weight:700");
+            }
+            if c.modifier.contains(Modifier::DIM) {
+                style.push_str(";opacity:.6");
+            }
+            if c.modifier.contains(Modifier::ITALIC) {
+                style.push_str(";font-style:italic");
+            }
+            if c.modifier.contains(Modifier::UNDERLINED) {
+                style.push_str(";text-decoration:underline");
+            }
+            if style != run_style {
+                flush(&mut out, &run_style, &mut run);
+                run_style = style;
+            }
+            run.push_str(&esc(sym));
+        }
+        flush(&mut out, &run_style, &mut run);
+        out.push('\n');
+    }
+    out.push_str("</pre>\n");
+    out
+}
+
+/// `RYTER_HTML_DIR=<dir> cargo test -p ryter-tui html_gallery` writes the
+/// solo screen in each hat, and at the narrower tiers, as HTML files with
+/// their colors. It does nothing without the variable.
+#[test]
+fn html_gallery() {
+    let Some(dir) = std::env::var_os("RYTER_HTML_DIR") else {
+        return;
+    };
+    let dir = PathBuf::from(dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let theme = Theme::truecolor_dark();
+    let mut shots: Vec<(String, View, u16, u16)> = Vec::new();
+    for hat in crate::rail::HATS {
+        let mut v = racked();
+        v.mode = hat;
+        shots.push((format!("solo-{hat}-160x50"), v, 160, 50));
+    }
+    shots.push(("solo-132x40".into(), racked(), 132, 40));
+    shots.push(("solo-100x30".into(), racked(), 100, 30));
+    shots.push(("solo-80x24".into(), racked(), 80, 24));
+    for (name, v, w, h) in shots {
+        let buf = render_buffer(&v, w, h, theme);
+        std::fs::write(
+            dir.join(format!("{name}.html")),
+            buffer_to_html(&buf, theme),
+        )
+        .unwrap();
+    }
 }

@@ -198,7 +198,8 @@ pub struct UiConfig {
     /// The hat a new session opens in: `plan` | `build` | `review` | `last`
     /// (the hat this project's latest session ended in).
     pub start_hat: String,
-    /// The fedora behind the conversation, in the hat's color.
+    /// A fedora behind the conversation, in the hat's color. Off unless
+    /// asked for: the conversation sits on the plain background.
     pub watermark: bool,
     /// Ring the terminal's bell when a question opens (a permission, a
     /// plan, an `ask_user`, the trust prompt). Off: the screen says it.
@@ -227,7 +228,7 @@ impl Default for UiConfig {
             layout: "ledger".into(),
             open_pages: true,
             start_hat: "plan".into(),
-            watermark: true,
+            watermark: false,
             bell: false,
         }
     }
@@ -2158,14 +2159,14 @@ mod tests {
         };
         let cfg = load("");
         assert_eq!(cfg.ui.start_hat, "plan");
-        assert!(cfg.ui.watermark);
+        assert!(!cfg.ui.watermark);
         assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
         for hat in ["build", "audit", "review", "last", "plan"] {
-            let cfg = load(&format!("[ui]\nstart_hat = \"{hat}\"\nwatermark = false\n"));
+            let cfg = load(&format!("[ui]\nstart_hat = \"{hat}\"\nwatermark = true\n"));
             // The audit hat's old name loads as its new one.
             let want = if hat == "review" { "audit" } else { hat };
             assert_eq!(cfg.ui.start_hat, want);
-            assert!(!cfg.ui.watermark);
+            assert!(cfg.ui.watermark);
             assert!(cfg.warnings.is_empty(), "{hat}: {:?}", cfg.warnings);
         }
         // Test is no hat any more; a typo is not a hat.
@@ -2178,7 +2179,7 @@ mod tests {
         // The shipped example names both keys, so neither is a stranger.
         let example = include_str!("../../../config.example.toml");
         assert!(unknown_ui_keys(example).is_empty());
-        assert!(example.contains("start_hat = \"plan\"") && example.contains("watermark = true"));
+        assert!(example.contains("start_hat = \"plan\"") && example.contains("watermark = false"));
     }
 
     #[test]

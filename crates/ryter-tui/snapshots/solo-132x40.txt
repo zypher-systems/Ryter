@@ -1,32 +1,32 @@
  RYTER │ ● PLAN    ◆ BUILD    ·   ● AUDIT   ○ SCRIBE                empty-query fix                 ~/workspace/shop · search-patch
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-                             │         ●  search returns e… ···· ✓ answered · 1.2s · $0.004  ▸    │
- HAT RACK                    │         ●  build the plan ······· ✓ answered · 2 files (1 n…  ▸    │ MODEL
-                             │         ●  review it ············ ✓ answered · 1.2s · $0.040  ▸    │ deepseek-pro-latest
+                             │         ●  search returns everything for an e…    ✓ answered  ▸    │
+ HATS                        │         ●  build the plan         ✓ answered · 2 files (1 n…  ▸    │ MODEL
+                             │         ●  review it                              ✓ answered  ▸    │ deepseek-pro-latest
  ● PLAN                      │                                                                    │ connection         openrouter ●
    grok-4.6                  │         ●  dusty                                                   │ reasoning                  auto
    1 turn             $0.004 │         │  fix the blocking finding                                │
    plans          1 approved │         │                                                          │ CONTEXT
-                             │         ├─ write  app/server.js ··················· +1 −1  0.0s    │ ━━━━━━━━━━───────────────── 38%
+                             │         ├─ write  app/server.js                           +1 −1    │ ━━━━━━━━━━───────────────── 38%
  ◆ BUILD                     │         │    1   app.get('/search', (req, res) => {                │ 97k / 256k tokens
    deepseek-pro-latest       │         │    2 -   const q = (req.query.q || '').trim()            │
-   2 turns            $0.021 │         │    2 +   const q = String(req.query.q ?? '').trim()      │ PULSE
-   files                   2 │         │    3     if (!q) return res.json([])                     │ ▁▁▁▁▁▁▁▁                   idle
-   lines              +13 −2 │         │    4     res.json(find(q))                               │
-   success                14 │         ├─ write  test/search.test.js ············· +4 −0  0.0s    │ SPEND
-   warning                 0 │         │     5     assert.deepEqual(await search(''), [])         │ session                  $0.065
-   failure                 0 │         │     6   })                                               │ project                   $4.82
-                             │         │     7 +                                                  │ budget                      off
- ─────────────── specialists │         │     8 + test('a missing query finds nothing', async (    │
-                             │         │         ) => {                                           │ GUARD
- ● AUDIT                     │         │     9 +   assert.deepEqual(await search(), [])           │ sandbox               workspace
-   claude-opus-5.5           │         │    10 + })                                               │ this hat        edits ask first
-   1 turn             $0.040 │         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0…    │ plan.md                    none
-   audits           ✗ 1 fail │  ▄▄                                                            ▄▄  │ audit.md                   none
-                             │  ▀                                                              ▀  │
- ○ SCRIBE                    │      ▀▀▀▀▀▀                                            ▀▀▀▀▀▀      │ CHANGES             uncommitted
-   grok-4.6                  │                    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                    │ app/server.js             +2 −1
-   not worn yet              │                                                                    │ test/search.test.js         new
+   2 turns            $0.021 │         │    2 +   const q = String(req.query.q ?? '').trim()      │ SPEND
+   files                   2 │         │    3     if (!q) return res.json([])                     │ session                  $0.065
+   lines              +13 −2 │         │    4     res.json(find(q))                               │ project                   $4.82
+   success                14 │         ├─ write  test/search.test.js                     +4 −0    │ budget                      off
+                             │         │     5     assert.deepEqual(await search(''), [])         │
+ ─────────────── specialists │         │     6   })                                               │ GUARD
+                             │         │     7 +                                                  │ sandbox               workspace
+ ● AUDIT                     │         │     8 + test('a missing query finds nothing', async (    │ this hat        edits ask first
+   claude-opus-5.5           │         │         ) => {                                           │ plan.md                    none
+   1 turn             $0.040 │         │     9 +   assert.deepEqual(await search(), [])           │ audit.md                   none
+   audits           ✗ 1 fail │         │    10 + })                                               │
+                             │         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0…    │ CHANGES             uncommitted
+ ○ SCRIBE                    │                                                                    │ app/server.js             +2 −1
+   grok-4.6                  │                                                                    │ test/search.test.js         new
+   no turns yet              │                                                                    │
+                             │                                                                    │
+                             │                                                                    │
                              │                                                                    │
                              │                                                                    │
                              │                                                                    │
@@ -35,6 +35,6 @@
                              │                                                                    │
                              │                                                                    │
                              │────────────────────────────────────────────────────────────────────│
-                             │  BUILD  › what should change? · Tab: plan · ⇧Tab: specialists · …  │
+                             │  BUILD  › what should change?                                      │
 
  $ spend    enter send    tab plan    ⇧tab specialists    / commands    ^t changes    ^o expand    ^b panels    ^c quit

@@ -576,10 +576,8 @@ fn draw_top_bar(frame: &mut Frame, area: Rect, view: &View, theme: Theme, counts
                 theme.chip(color),
             ));
         } else if view.rack.worn(hat) {
-            left.push(Span::styled(
-                format!("{mark} "),
-                Style::default().fg(color).bg(bg),
-            ));
+            // Worn, not on: the body's color. The chip is the one accent.
+            left.push(Span::styled(format!("{mark} "), body));
             left.push(Span::styled(name, body));
             left.push(Span::styled(count, dim));
         } else {

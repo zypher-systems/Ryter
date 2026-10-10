@@ -8,21 +8,21 @@
          │  now implement step one                                    │ ━─────────────────────── 5%
          │                                                            │ 12k / 256k tokens
          ├─ read   crates/ryter-tui/src/run/mod.rs                    │
-         │                                                            │ PULSE
-         ◆  grok-4.6                                                  │ ▁▁▁▁▁▁▁█           18 tok/s
-         │  Reading the loop now. The event loop drains reply         │
-         │  line 0 reply line 1 reply line 2 reply line 3 reply       │ SPEND
-         │  line 4 reply line 5 reply line 6 reply line 7             │ session                  $0
-         │  ⠼ waiting for you · allow? · 0:12 · 85 tokens             │ budget                  off
-       ▀▀▀▀▀▀                                            ▀▀▀▀▀▀       │
-                     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                     │ GUARD
-                                                                      │ sandbox                 off
-   ┏━ allow? · run as root  sudo dnf install -y alsa-lib-de…   ━┓     │ this hat         asks first
-   │ what    run as root  sudo dnf install -y alsa-lib-devel p… │     │ plan.md                none
-   │ risk    as root · /undo can't reach it · your password is a│     │ audit.md               none
+         │                                                            │ SPEND
+         ◆  grok-4.6                                                  │ session                  $0
+         │  Reading the loop now. The event loop drains reply         │ budget                  off
+         │  line 0 reply line 1 reply line 2 reply line 3 reply       │
+         │  line 4 reply line 5 reply line 6 reply line 7             │ GUARD
+         │  ⠼ waiting for you · allow? · 0:12 · 85 tokens             │ sandbox                 off
+                                                                      │ this hat         asks first
+                                                                      │ plan.md                none
+                                                                      │ audit.md               none
+   ┏━ allow? · run as root  sudo dnf install -y alsa-lib-de…   ━┓     │
+   │ what    run as root  sudo dnf install -y alsa-lib-devel p… │     │ CHANGES
+   │ risk    as root · /undo can't reach it · your password is a│     │ no repository here
    │   sudo dnf install -y alsa-lib-devel pkgconf               │     │
-   │                                                            │     │ CHANGES
-   │ y allow once   n deny                                      │     │ no repository here
+   │                                                            │     │ PULSE
+   │ y allow once   n deny                                      │     │ ▁▁▁▁▁▁▁█           18 tok/s
    ╰────────────────────────────────────────────────────────────╯     │
 ──────────────────────────────────────────────────────────────────────│
   BUILD  › type to queue the next message, / for commands             │

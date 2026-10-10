@@ -170,28 +170,24 @@ pub fn check_counts(summary: &str) -> Option<(u32, u32, u32)> {
     any.then_some((ok, warn, bad))
 }
 
-/// The three rows a block's checks take: how many went well, how many are
-/// a warning (skipped, not reached), how many failed. A count of nothing
-/// is dim, so the eye lands on the one that isn't.
+/// The rows a block's checks take: how many went well, how many are a
+/// warning (skipped, not reached), how many failed. A count of nothing is
+/// left out, so the eye lands on the ones that happened.
 fn check_rows(
     (ok, warn, bad): (u32, u32, u32),
     theme: Theme,
     bg: Color,
     w: usize,
 ) -> Vec<Line<'static>> {
-    let dim = Style::default().fg(theme.dim).bg(bg);
     [
         ("success", ok, theme.success),
         ("warning", warn, theme.warn),
         ("failure", bad, theme.error),
     ]
     .into_iter()
+    .filter(|(_, n, _)| *n > 0)
     .map(|(label, n, color)| {
-        let style = if n == 0 {
-            dim
-        } else {
-            Style::default().fg(color).bg(bg)
-        };
+        let style = Style::default().fg(color).bg(bg);
         ends(
             vec![Span::styled(format!("  {label}"), style)],
             vec![Span::styled(n.to_string(), style)],
@@ -224,8 +220,12 @@ fn block(view: &View, theme: Theme, hat: Role, w: usize, figures: bool) -> Vec<L
             bg,
         )
     };
-    let mark_style = if on || worn {
+    // The hat that is on is the screen's one accent. A worn hat's mark is
+    // the body's color and an unworn one's is dim: told apart, not colored.
+    let mark_style = if on {
         Style::default().fg(color).bg(bg)
+    } else if worn {
+        body
     } else {
         dim
     };
@@ -257,7 +257,7 @@ fn block(view: &View, theme: Theme, hat: Role, w: usize, figures: bool) -> Vec<L
     ];
     let totals = view.rack.of(hat);
     if !worn {
-        lines.push(pad(vec![Span::styled("  not worn yet", dim)]));
+        lines.push(pad(vec![Span::styled("  no turns yet", dim)]));
         return lines;
     }
     lines.push(row(
@@ -437,7 +437,7 @@ fn separator(theme: Theme, w: usize) -> Line<'static> {
 pub fn lines(view: &View, theme: Theme, w: usize, room: usize) -> Option<Vec<Line<'static>>> {
     let bg = theme.sidebar_bg;
     let build = |figures: bool| {
-        let mut v = vec![Line::from(""), Line::from(heading("HAT RACK", theme, bg))];
+        let mut v = vec![Line::from(""), Line::from(heading("HATS", theme, bg))];
         for hat in PRIMARY {
             v.push(Line::from(""));
             v.extend(block(view, theme, hat, w, figures));

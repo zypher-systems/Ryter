@@ -60,20 +60,13 @@ fn glyph(view: &View) -> &'static str {
 fn placeholder(view: &View) -> String {
     match &view.composer.mode {
         Mode::Normal if view.busy => "type to queue the next message, / for commands".into(),
+        // The keys are on the hint bar; the prompt asks its question and
+        // no more.
         Mode::Normal => match view.mode {
-            ryter_core::Role::SoloBuild | ryter_core::Role::Crew => {
-                "what should change? · Tab: plan · ⇧Tab: specialists · / for commands".into()
-            }
-            ryter_core::Role::SoloPlan => {
-                "what should we plan? · Tab: build · ⇧Tab: specialists · / for commands".into()
-            }
-            ryter_core::Role::SoloAudit => {
-                "ask about the audit · Tab: scribe · ⇧Tab: plan · build · / for commands".into()
-            }
-            ryter_core::Role::SoloScribe => {
-                "what should be documented? · Tab: audit · ⇧Tab: plan · build · / for commands"
-                    .into()
-            }
+            ryter_core::Role::SoloBuild | ryter_core::Role::Crew => "what should change?".into(),
+            ryter_core::Role::SoloPlan => "what should we plan?".into(),
+            ryter_core::Role::SoloAudit => "ask about the audit".into(),
+            ryter_core::Role::SoloScribe => "what should be documented?".into(),
         },
         Mode::Secret { connection } => format!("paste the API key for {connection}"),
         Mode::Field { label } => format!("type {label}…"),

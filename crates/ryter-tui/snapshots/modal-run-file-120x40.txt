@@ -8,21 +8,21 @@
          │  now implement step one                                                        │ ━─────────────────────── 5%
          │                                                                                │ 12k / 256k tokens
          ├─ read   crates/ryter-tui/src/run/mod.rs                                        │
-         │                     ▄                          ▄                               │ PULSE
-         ◆  grok-4.6                                                                      │ ▁▁▁▁▁▁▁█           18 tok/s
-         │  Reading the loop now. The event loop drains reply line 0 reply line 1         │
-         │  reply line 2 reply line 3 reply line 4 reply line 5 reply line 6 reply        │ SPEND
-         │  line 7                                                                        │ session                  $0
-         │  ⠼ waiting for you · run? · 0:12 · 85 tokens                                   │ budget                  off
+         │                                                                                │ SPEND
+         ◆  grok-4.6                                                                      │ session                  $0
+         │  Reading the loop now. The event loop drains reply line 0 reply line 1         │ budget                  off
+         │  reply line 2 reply line 3 reply line 4 reply line 5 reply line 6 reply        │
+         │  line 7                                                                        │ GUARD
+         │  ⠼ waiting for you · run? · 0:12 · 85 tokens                                   │ sandbox                 off
+                                                                                          │ this hat         asks first
+                                                                                          │ plan.md                none
+                                                                                          │ audit.md               none
                                                                                           │
-                                                                                          │ GUARD
-                                                                                          │ sandbox                 off
-                   ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄                   │ this hat         asks first
-             ▄▄                                                            ▄▄             │ plan.md                none
-             ▀                                                              ▀             │ audit.md               none
-                 ▀▀▀▀▀▀                                            ▀▀▀▀▀▀                 │
-                               ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                               │ CHANGES
+                                                                                          │ CHANGES
                                                                                           │ no repository here
+                                                                                          │
+                                                                                          │ PULSE
+                                                                                          │ ▁▁▁▁▁▁▁█           18 tok/s
    ┏━ how this project runs ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓     │
    │ start  docker compose up -d --wait                                             │     │
    │ ready  http://localhost:8000/healthz                                           │     │

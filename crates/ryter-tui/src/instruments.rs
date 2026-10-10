@@ -197,7 +197,7 @@ fn sparkline(history: &[u64]) -> String {
 }
 
 /// How fast the model is writing: tokens a second now, and the last
-/// eight seconds as bars. Idle between turns.
+/// eight seconds as bars. On screen while a turn runs.
 fn pulse(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>> {
     let dim = Style::default().fg(theme.dim).bg(bg);
     let now = view.now_ms;
@@ -428,11 +428,15 @@ pub fn lines(
     let mut cards = vec![
         model(view, theme, bg, w, condensed),
         context(view, theme, bg, w),
-        pulse(view, theme, bg, w),
         spend(view, theme, bg, w),
         guard(view, theme, bg, w, condensed),
         changes(view, theme, bg, w, condensed),
     ];
+    // The pulse has something to say while a turn runs, and comes last so
+    // nothing above it moves when it comes and goes.
+    if view.busy {
+        cards.push(pulse(view, theme, bg, w));
+    }
     let height = |cards: &[Vec<Line<'static>>]| cards.iter().map(|c| c.len() + 1).sum::<usize>();
     while height(&cards) > room && cards.len() > 1 {
         cards.pop();

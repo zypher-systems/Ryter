@@ -19,6 +19,6 @@
                                                    ┃╰──────────────────────────╯
  ─── 2 files (1 new, 1 changed, +8 −1) · 2.1s ──── ┃
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
-│› what should change? · Tab: plan · ⇧Tab: specialists · / for commands        │
+│› what should change?                                                         │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  enter send    tab plan    ⇧tab specialists    / commands    ^b panel    ^c quit

@@ -1,31 +1,31 @@
  RYTER │ ○ PLAN    ⠼ BUILD    ·   ○ AUDIT   ○ SCRIBE                                                                            ~/workspace/ryter · 0.2.0-patch
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                              │         │                                                                                      │
- HAT RACK                    │         │  1. wire the loop                                                                    │ MODEL
+ HATS                        │         │  1. wire the loop                                                                    │ MODEL
                              │         │  2. write tests                                                                      │ grok-4.6
  ○ PLAN                      │                                                                                                │ connection           spacexai ●
    grok-4.6                  │         ●  dusty                                                                               │ reasoning                  auto
-   not worn yet              │         │  now implement step one                                                              │
+   no turns yet              │         │  now implement step one                                                              │
                              │         │                                                                                      │ CONTEXT
  ◆ BUILD                     │         ├─ read   crates/ryter-tui/src/run/mod.rs                                              │ ━─────────────────────────── 5%
    grok-4.6                  │         │                                                                                      │ 12k / 256k tokens
-   not worn yet              │         ◆  grok-4.6                                                                            │
-                             │         │  Reading the loop now. The event loop drains reply line 0 reply line 1 reply         │ PULSE
- ─────────────── specialists │         │  line 2 reply line 3 reply line 4 reply line 5 reply line 6 reply line 7             │ ▁▁▁▁▁▁▁█               18 tok/s
-                             │         │  ⠼ waiting for you · run? · 0:12 · 85 tokens                                         │
- ○ AUDIT                     │                                                                                                │ SPEND
-   grok-4.6                  │                                                                                                │ session                      $0
-   not worn yet              │                               ▄                                ▄                               │ budget                      off
+   no turns yet              │         ◆  grok-4.6                                                                            │
+                             │         │  Reading the loop now. The event loop drains reply line 0 reply line 1 reply         │ SPEND
+ ─────────────── specialists │         │  line 2 reply line 3 reply line 4 reply line 5 reply line 6 reply line 7             │ session                      $0
+                             │         │  ⠼ waiting for you · run? · 0:12 · 85 tokens                                         │ budget                      off
+ ○ AUDIT                     │                                                                                                │
+   grok-4.6                  │                                                                                                │ GUARD
+   no turns yet              │                                                                                                │ sandbox                     off
+                             │                                                                                                │ this hat        edits ask first
+ ○ SCRIBE                    │                                                                                                │ plan.md                    none
+   grok-4.6                  │                                                                                                │ audit.md                   none
+   no turns yet              │                                                                                                │
+                             │                                                                                                │ CHANGES             uncommitted
+                             │                                                                                                │ no repository here
                              │                                                                                                │
- ○ SCRIBE                    │                                                                                                │ GUARD
-   grok-4.6                  │                                                                                                │ sandbox                     off
-   not worn yet              │                                                                                                │ this hat        edits ask first
-                             │                                                                                                │ plan.md                    none
-                             │                      ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄                      │ audit.md                   none
-                             │                ▄▄                                                            ▄▄                │
-                             │                ▀                                                              ▀                │ CHANGES             uncommitted
-                             │                    ▀▀▀▀▀▀                                            ▀▀▀▀▀▀                    │ no repository here
-                             │                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                  │
+                             │                                                                                                │ PULSE
+                             │                                                                                                │ ▁▁▁▁▁▁▁█               18 tok/s
+                             │                                                                                                │
                              │                                                                                                │
                              │                                                                                                │
                              │                                                                                                │

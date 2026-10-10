@@ -19,6 +19,6 @@
 
 
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
-│› what should change? · Tab: plan · ⇧Tab: specialists · / for commands        │
+│› what should change?                                                         │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ↑↓ move    enter details    c copy/save report    esc

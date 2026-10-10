@@ -4,13 +4,13 @@
          ●  dusty
          │  fix the blocking finding                                         ┃
          │                                                                   ┃
-         ├─ write  app/server.js ······························· +1 −1  0.0s ┃
+         ├─ write  app/server.js                                       +1 −1 ┃
          │    1   app.get('/search', (req, res) => {                         ┃
          │    2 -   const q = (req.query.q || '').trim()                     ┃
          │    2 +   const q = String(req.query.q ?? '').trim()               ┃
          │    3     if (!q) return res.json([])                              ┃
          │    4     res.json(find(q))                                        ┃
-         ├─ write  test/search.test.js ························· +4 −0  0.0s ┃
+         ├─ write  test/search.test.js                                 +4 −0 ┃
          │     5     assert.deepEqual(await search(''), [])                  ┃
          │     6   })                                                        ┃
          │     7 +                                                           ┃
@@ -19,6 +19,6 @@
          │    10 + })                                                        ┃
          └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009          ┃
 ────────────────────────────────────────────────────────────────────────────────
-  BUILD  › what should change? · Tab: plan · ⇧Tab: specialists · / for comman…
+  BUILD  › what should change?
 
  deepseek-pro-la…  ctx ━━━───── 38% │ $0.065 · budget off  ^b hat rack  ^c quit
