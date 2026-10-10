@@ -183,7 +183,7 @@ pub fn spend(view: &View, w: usize, theme: Theme) -> Card {
     if let Some(p) = &view.project_spend {
         rows.push(kv("project", &project_label(p), w, theme, theme.side()));
         if let Some(root) = &view.project_root {
-            let root = crate::rail::tail(root, w.saturating_sub(5));
+            let root = crate::sidebar::tail(root, w.saturating_sub(5));
             rows.push(kv("  in", &root, w, theme, theme.side_muted()));
         }
     }

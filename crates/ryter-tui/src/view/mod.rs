@@ -372,6 +372,10 @@ pub struct View {
     pub screen: std::cell::Cell<(u16, u16)>,
     /// How fast the model is writing.
     pub pulse: Pulse,
+    /// Saved sessions this project has, for the opening screen's count.
+    pub sessions_count: usize,
+    /// The specialist under the picker's cursor, for the sidebar to mark.
+    pub picker_hover: Option<ryter_core::Role>,
 }
 
 /// Aggregated spend row for `/spend`.
@@ -561,6 +565,8 @@ impl View {
             audit_writing: false,
             screen: std::cell::Cell::new((0, 0)),
             pulse: Pulse::default(),
+            sessions_count: 0,
+            picker_hover: None,
         }
     }
 
@@ -717,6 +723,12 @@ impl View {
             .find(|p| !p.is_empty())?;
         let flat = para.split_whitespace().collect::<Vec<_>>().join(" ");
         Some(crate::chat::wrap::truncate(&flat, 160))
+    }
+
+    /// Whether the session has a turn on screen: before the first one the
+    /// transcript shows the opening block instead.
+    pub fn has_turns(&self) -> bool {
+        self.has_content() || self.busy
     }
 
     /// Anything in the transcript worth confirming before `/new`.

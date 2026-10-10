@@ -1,11 +1,11 @@
- RYTER │ ● AUDIT 1   ◆ SCRIBE 1                                    search-patch
-         ●  dusty  fix the blocking finding                             ↑ 8
+         ●  dusty  fix the blocking finding                             ↑ 7
   ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
+         │    2 -   const q = (req.query.q || '').trim()
          │    2 +   const q = String(req.query.q ?? '').trim()
          │    3     if (!q) return res.json([])
          │    4     res.json(find(q))
-         ├─ write  test/search.test.js                                 +4 −0
-         │     5     assert.deepEqual(await search(''), [])
+         ├─ write  test/search.test.js                                 +4 −0 ┃
+         │     5     assert.deepEqual(await search(''), [])                  ┃
          │     6   })                                                        ┃
          │     7 +                                                           ┃
          │     8 + test('a missing query finds nothing', async () => {       ┃
@@ -19,6 +19,6 @@
          │    too large to show here · /changes has the diff                 ┃
          └─ ✓ 2 tools · 2 files (1 new, 1 changed, +23 −1) · 0.9s · $0       ┃
 ────────────────────────────────────────────────────────────────────────────────
-  SCRIBE  › what should be documented?
+  scribe  › what should be documented?
 
- grok-4.6  ctx ━━━───── 38% │ $0.065 · budget off          ^b hat rack  ^c quit
+ scribe · grok-4.6  ━━━───── 38%  $0.065 · no cap           ^b sidebar  ^c quit

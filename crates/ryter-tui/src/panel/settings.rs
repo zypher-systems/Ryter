@@ -193,8 +193,6 @@ impl Settings {
                 .origin(origin(&view.ui.mouse, &d.mouse)),
             Field::new("panel", "side columns", Kind::Toggle(view.ui.panel))
                 .origin(origin(&view.ui.panel, &d.panel)),
-            Field::new("watermark", "watermark", Kind::Toggle(view.ui.watermark))
-                .origin(origin(&view.ui.watermark, &d.watermark)),
             Field::new("bell", "bell on a question", Kind::Toggle(view.ui.bell))
                 .origin(origin(&view.ui.bell, &d.bell)),
             Field::new("timestamps", "timestamps", Kind::Toggle(view.ui.timestamps))
@@ -296,9 +294,6 @@ impl Settings {
         }
         if let Some(v) = toggle("bell") {
             view.ui.bell = v;
-        }
-        if let Some(v) = toggle("watermark") {
-            view.ui.watermark = v;
         }
         if let Some(v) = sel("start_hat") {
             view.ui.start_hat = v;

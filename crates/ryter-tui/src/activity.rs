@@ -135,6 +135,9 @@ pub struct Activity {
     tail: String,
     /// What the open question asks, while one is open: `allow?`, `plan?`.
     pub ask: Option<String>,
+    /// What it is about, in a few words: `edit app/server.js`, a plan's
+    /// title. For the sidebar's row under the verb.
+    pub ask_about: Option<String>,
 }
 
 impl Default for Activity {
@@ -164,6 +167,7 @@ impl Activity {
             last_delta_ms: None,
             tail: String::new(),
             ask: None,
+            ask_about: None,
             tool_in_flight: None,
         }
     }
@@ -225,6 +229,7 @@ impl Activity {
     pub fn note_delta(&mut self, now_ms: u64) {
         self.last_delta_ms = Some(now_ms);
         self.ask = None;
+        self.ask_about = None;
     }
 
     /// A question for the user is open: what it asks, in a word or two
@@ -232,6 +237,14 @@ impl Activity {
     pub fn note_ask(&mut self, ask: &str) {
         self.verb = Verb::Waiting;
         self.ask = Some(ask.to_string());
+        self.ask_about = None;
+    }
+
+    /// The same, with what the question is about for the sidebar.
+    pub fn note_ask_about(&mut self, ask: &str, about: &str) {
+        self.note_ask(ask);
+        let about = about.split_whitespace().collect::<Vec<_>>().join(" ");
+        self.ask_about = (!about.is_empty()).then_some(about);
     }
 
     /// The user answered a card. The quiet clock starts again from here,
@@ -240,6 +253,7 @@ impl Activity {
     pub fn note_reply(&mut self, now_ms: u64) {
         self.last_delta_ms = Some(now_ms);
         self.ask = None;
+        self.ask_about = None;
         self.verb = match &self.tool_in_flight {
             Some(t) => Verb::Tool(t.clone()),
             None => Verb::Thinking,
@@ -270,16 +284,21 @@ impl Activity {
         self.current = wrap::truncate(label, 48);
     }
 
+    /// The verb alone, as the status row and the sidebar both say it:
+    /// `thinking`, `running <tool>`, `waiting for you · allow?`.
+    pub fn verb_text(&self) -> String {
+        match (&self.verb, &self.ask) {
+            (Verb::Tool(t), _) => format!("running {t}"),
+            (Verb::Waiting, Some(ask)) => format!("waiting for you · {ask}"),
+            (v, _) => v.label(),
+        }
+    }
+
     /// The status row's words for a busy turn: what it is doing, for how
     /// long, and how much it has produced. Narrow, the tokens go first,
     /// then the time.
     pub fn status(&self, width: usize) -> String {
-        let label = match (&self.verb, &self.ask) {
-            (Verb::Tool(t), _) => format!("running {t}"),
-            (Verb::Waiting, Some(ask)) => format!("waiting for you · {ask}"),
-            (v, _) => v.label(),
-        };
-        let mut parts = vec![label];
+        let mut parts = vec![self.verb_text()];
         if width >= 32 {
             parts.push(fmt_elapsed(self.elapsed_ms / 1000));
         }

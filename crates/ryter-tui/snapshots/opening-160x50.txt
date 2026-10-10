@@ -1,0 +1,50 @@
+                                                                                                                                  │ RYTER
+          RYTER  ·  shop  ·  main  ·  nothing uncommitted                                                                         │ new session
+                                                                                                                                  │ shop · main
+          plan     reads and proposes, changes nothing                                                        ◆ on                │
+          build    makes the changes                                                                           tab                │ hats
+          2 specialists: audit · scribe                                                                       ⇧tab                │ ▸ plan
+                                                                                                                                  │   build
+          /sessions to resume one of 12 · /help for keys                                                                          │   ──────────── specialists
+                                                                                                                                  │   audit
+                                                                                                                                  │   scribe
+                                                                                                                                  │
+                                                                                                                                  │ now
+                                                                                                                                  │   grok-4.6
+                                                                                                                                  │   idle
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │ context
+                                                                                                                                  │   ━───────────────────   5%
+                                                                                                                                  │   12k of 256k
+                                                                                                                                  │
+                                                                                                                                  │ spend
+                                                                                                                                  │   session    $0  no cap
+                                                                                                                                  │
+                                                                                                                                  │ changes
+                                                                                                                                  │   nothing uncommitted
+                                                                                                                                  │
+                                                                                                                                  │ permissions
+                                                                                                                                  │   read only · sandbox off
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+  plan  › what should we plan?                                                                                                    │
+
+ $ spend    enter send    tab build    ⇧tab specialists    ⇧enter newline    / commands    ^t changes    ^b sidebar    ^c quit

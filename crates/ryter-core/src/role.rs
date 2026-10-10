@@ -155,6 +155,16 @@ impl Role {
         }
     }
 
+    /// What the hat does, in a few words, for the screen's lists.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::SoloPlan => "reads and proposes, changes nothing",
+            Self::SoloBuild | Self::Crew => "makes the changes",
+            Self::SoloAudit => "checks the work, may run it",
+            Self::SoloScribe => "writes the docs, changes no code",
+        }
+    }
+
     /// Stable lowercase name.
     pub fn as_str(self) -> &'static str {
         match self {

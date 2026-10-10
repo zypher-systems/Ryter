@@ -502,8 +502,16 @@ fn on_tool_call(
         view.lookups = None;
     }
     if view.activity.busy() && role.is_solo() {
-        view.activity.verb = Verb::Tool(name.to_string());
-        view.activity.tool_in_flight = Some(name.to_string());
+        // `running cargo test`, `running write app.py`: the tool row's
+        // own words, so the status row and the sidebar name the step.
+        let step = match (name, target.trim()) {
+            ("bash", cmd) if !cmd.is_empty() => cmd.to_string(),
+            (_, "") => toolview::verb(name).to_string(),
+            (_, t) => format!("{} {t}", toolview::verb(name)),
+        };
+        let step = wrap::truncate(&step, 40);
+        view.activity.verb = Verb::Tool(step.clone());
+        view.activity.tool_in_flight = Some(step);
         view.activity.note_tool(&label);
         view.activity.tools += 1;
         let now = view.now_ms;

@@ -1,40 +1,40 @@
- RYTER │ ● PLAN 1    ◆ BUILD 2    ·   specialists ·1                empty-query fix                 shop · search-patch
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-         ●  search returns everything for an empty query                 ✓ answered  ▸    │
-         ●  build the plan                    ✓ answered · 2 files (1 new, 1 chang…  ▸    │ MODEL
-         ●  review it                                                    ✓ answered  ▸    │ build   deepseek-pro-latest
+         ●  search returns everything for an empty query                 ✓ answered  ▸    │ RYTER
+         ●  build the plan                    ✓ answered · 2 files (1 new, 1 chang…  ▸    │ empty-query fix
+         ●  review it                                                    ✓ answered  ▸    │ shop · search-patch
                                                                                           │
-         ●  dusty                                                                         │ CONTEXT
-         │  fix the blocking finding                                                      │ ━━━━━━━━━────────────── 38%
-         │                                                                                │ 97k / 256k tokens
-         ├─ write  app/server.js                                                 +1 −1    │
-         │    1   app.get('/search', (req, res) => {                                      │ SPEND
-         │    2 -   const q = (req.query.q || '').trim()                                  │ session              $0.065
-         │    2 +   const q = String(req.query.q ?? '').trim()                            │ project               $4.82
-         │    3     if (!q) return res.json([])                                           │ budget                  off
-         │    4     res.json(find(q))                                                     │
-         ├─ write  test/search.test.js                                           +4 −0    │ GUARD
-         │     5     assert.deepEqual(await search(''), [])                               │ sandbox           workspace
-         │     6   })                                                                     │ this hat         asks first
-         │     7 +                                                                        │ plan.md                none
-         │     8 + test('a missing query finds nothing', async () => {                    │ audit.md               none
-         │     9 +   assert.deepEqual(await search(), [])                                 │
-         │    10 + })                                                                     │ CHANGES
-         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009                       │ 2 files              +12 −1
+         ●  dusty                                                                         │ hats
+         │  fix the blocking finding                                                      │   plan       1 turn  $0.004
+         │                                                                                │ ▸ build      2 turns $0.021
+         ├─ write  app/server.js                                                 +1 −1    │   ──────────── specialists
+         │    1   app.get('/search', (req, res) => {                                      │   audit ✗    1 turn  $0.040
+         │    2 -   const q = (req.query.q || '').trim()                                  │   scribe
+         │    2 +   const q = String(req.query.q ?? '').trim()                            │   turns      ●●●●
+         │    3     if (!q) return res.json([])                                           │
+         │    4     res.json(find(q))                                                     │ now
+         ├─ write  test/search.test.js                                           +4 −0    │   deepseek-pro-latest
+         │     5     assert.deepEqual(await search(''), [])                               │   idle
+         │     6   })                                                                     │
+         │     7 +                                                                        │
+         │     8 + test('a missing query finds nothing', async () => {                    │ context
+         │     9 +   assert.deepEqual(await search(), [])                                 │   ━━━━━━━────────────   38%
+         │    10 + })                                                                     │   97k of 256k
+         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009                       │
+                                                                                          │ spend
+                                                                                          │   session    $0.065  no cap
+                                                                                          │   project    $4.82
                                                                                           │
+                                                                                          │ changes
+                                                                                          │   app/server.js       +2 −1
+                                                                                          │   test/search.test.js   new
+                                                                                          │   2 files uncommitted
                                                                                           │
-                                                                                          │
-                                                                                          │
-                                                                                          │
-                                                                                          │
-                                                                                          │
-                                                                                          │
-                                                                                          │
-                                                                                          │
+                                                                                          │ permissions
+                                                                                          │   asks first
+                                                                                          │   sandbox workspace
                                                                                           │
                                                                                           │
                                                                                           │
 ──────────────────────────────────────────────────────────────────────────────────────────│
-  BUILD  › what should change?                                                            │
+  build  › what should change?                                                            │
 
- $ spend    enter send    tab plan    ⇧tab specialists    / commands    ^t changes    ^b hat rack    ^c quit
+ $ spend    enter send    tab plan    ⇧tab specialists    / commands    ^t changes    ^o expand    ^c quit

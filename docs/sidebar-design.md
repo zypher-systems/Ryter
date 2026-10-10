@@ -340,4 +340,18 @@ By the user, 2026-10-10, over five rounds of mockups:
 
 ## 17. What changed in the building
 
-Nothing yet.
+Built on `sidebar-screen-patch` (2026-10-10). Where the build differs from the contract above:
+
+| Change | Why |
+| --- | --- |
+| The `plan.md` and `audit.md` rows are one row each (`plan.md <day> <heading>`, `audit.md writing…`), present only for a file that exists, instead of one row naming both (R-HATS-06) | Two names, two times and the dots don't fit 28 columns; the old guard card's rule is kept: when the day and the heading don't both fit, the heading. |
+| A specialist's verdict mark is the latest verdict its turns ended in, kept on the ledger (`HatTotals::last_verdict`) rather than the view's `last_review`, which the next edit clears (R-HATS-04) | The ledger says what the hat did; whether the verdict still describes the tree is the commit receipt's question. |
+| The `now` block's third row says the rate and this turn's output tokens (`18 tok/s · 300 tokens`), not tokens in and out (R-NOW-01) | A turn's input tokens are not counted per turn anywhere; the status row says the same figure. |
+| The verb row keeps the status row's words whole and drops the elapsed time when the two don't fit side by side (R-NOW-01) | `waiting for the model` is 21 columns; cutting the words would break R-PRIN-05. |
+| The `permissions` block is two rows when the sandbox profile's name would not fit beside what the hat may do (R-PERM-01) | A profile's name is not cut. |
+| The hat on's `▸` spins while its model works, as the top bar's chip did | The user's rule that a thinking model must look alive where the eye is; the bar that carried the spinner is gone. |
+| The `^b` panel on a narrow screen is the sidebar's rows without its `RYTER` row (R-LAYOUT-05) | The panel's title says where this is. |
+| The specialists picker's `Tab` moves down the list; `Shift+Tab` in the specialist row still returns to the primary hat last worn (R-KEY-02) | As the contract says; noted because the picker swallows `Tab` while it is open. |
+| The picker shows what a hat may do in the sidebar's words (`checkpoint`, `asks first`) and the model's short name | Room: 84 columns for four columns of text. |
+| The sixteen-colour theme is not held to the contrast test's hat and chip pairs (R-COLOR-06) | Its sixteen are the terminal's own, only approximated by the test's table; plan is `LightBlue`, build `Green`, the specialists `Yellow`, the user `White`. |
+| The `review offer` permission card no longer exists (it went with the offer after a build) and its test case went with it | Its border was the audit colour by coincidence: the old theme's `warn` and `audit` were the same value. |

@@ -123,13 +123,6 @@ pub struct Theme {
     pub rule: Color,
     /// Timeline strokes and dividers: between `rule` and `dim`.
     pub faint: Color,
-    /// The watermark's tint behind the conversation, a hat each (plan,
-    /// build, review, test). Equal to `bg` where a tint can't show.
-    pub mark: [Color; 4],
-    /// The watermark's hat band: the same, a little stronger.
-    pub mark_band: [Color; 4],
-    /// The tint behind the active hat's block in the rack, a hat each.
-    pub rack: [Color; 4],
     /// Syntax: comments (italic).
     pub syn_comment: Color,
     /// Syntax: strings.
@@ -211,10 +204,10 @@ impl Theme {
             fg: Color::White,
             dim: Color::Gray,
             prompt: Color::White,
-            user: Color::LightBlue,
+            user: Color::White,
             tool: Color::Gray,
             warn: Color::Yellow,
-            plan: Color::Cyan,
+            plan: Color::LightBlue,
             architect: Color::Magenta,
             build: Color::Green,
             audit: Color::Yellow,
@@ -243,13 +236,21 @@ impl Theme {
         t
     }
 
-    /// Shipped truecolor dark theme. This is what the TUI starts with.
+    /// Shipped truecolor dark theme. This is what the TUI starts with:
+    /// the values of `docs/sidebar-design.md` §8.2, one background, muted
+    /// hat colors, the hairlines a step apart.
     pub fn truecolor_dark() -> Self {
         let mut t = derive(dark_base(), &ThemeFile::default()).unwrap_or_else(|_| unreachable());
         // A softer red than the one derived from the warning color: it is
         // a removed line's text as well as an error's.
-        t.error = rgb(0xff, 0x8a, 0x80);
+        t.error = rgb(0xd6, 0x90, 0x8a);
         t.diff_del_bg = tint(t.bg, t.error, 0.18);
+        t.panel_bg = rgb(0x0e, 0x10, 0x13);
+        t.rule = rgb(0x22, 0x26, 0x2d);
+        t.faint = rgb(0x43, 0x49, 0x55);
+        t.code_bg = rgb(0x13, 0x15, 0x1a);
+        t.sticky_bg = rgb(0x13, 0x15, 0x1a);
+        t.selection_bg = rgb(0x18, 0x1b, 0x21);
         t
     }
 
@@ -264,11 +265,11 @@ impl Theme {
             prompt: rgb(0x00, 0x00, 0x00),
             user: rgb(0x0b, 0x5c, 0xad),
             tool: rgb(0x5c, 0x5c, 0x5c),
-            warn: rgb(0x9a, 0x6b, 0x00),
+            warn: rgb(0x8f, 0x63, 0x00),
             plan: rgb(0x00, 0x6e, 0x8a),
             architect: rgb(0x7a, 0x3d, 0xa8),
             build: rgb(0x1f, 0x7a, 0x2e),
-            audit: rgb(0x9a, 0x6b, 0x00),
+            audit: rgb(0x8f, 0x63, 0x00),
         };
         let mut t = derive(base, &ThemeFile::default()).unwrap_or_else(|_| unreachable());
         t.error = rgb(0xb3, 0x1d, 0x1d);
@@ -402,9 +403,6 @@ impl Theme {
             gauge_track: f(self.gauge_track),
             rule: f(self.rule),
             faint: f(self.faint),
-            mark: self.mark.map(&f),
-            mark_band: self.mark_band.map(&f),
-            rack: self.rack.map(&f),
             syn_comment: f(self.syn_comment),
             syn_string: f(self.syn_string),
             syn_number: f(self.syn_number),
@@ -470,42 +468,11 @@ impl Theme {
         match mode {
             ryter_core::Role::SoloBuild => self.build,
             ryter_core::Role::SoloPlan => self.plan,
-            ryter_core::Role::SoloAudit => self.audit,
-            // The scribe's violet: the slot the test hat left.
-            ryter_core::Role::SoloScribe => self.architect,
+            // Every specialist is the one specialist color: a new hat
+            // needs no new color (`docs/sidebar-design.md` R-COLOR-01).
+            ryter_core::Role::SoloAudit | ryter_core::Role::SoloScribe => self.audit,
             ryter_core::Role::Crew => self.build,
         }
-    }
-
-    /// Where a hat's tints sit in `mark`, `mark_band` and `rack`.
-    fn hat_slot(hat: ryter_core::Role) -> usize {
-        match hat {
-            ryter_core::Role::SoloPlan => 0,
-            ryter_core::Role::SoloBuild | ryter_core::Role::Crew => 1,
-            ryter_core::Role::SoloAudit => 2,
-            ryter_core::Role::SoloScribe => 3,
-        }
-    }
-
-    /// The watermark's two tints in `hat`'s color, hat then band, or
-    /// `None` where the terminal can't show a tint apart from the
-    /// background.
-    pub fn watermark(self, hat: ryter_core::Role) -> Option<(Color, Color)> {
-        if matches!(self.mode, ColorMode::Ansi16 | ColorMode::Mono) {
-            return None;
-        }
-        let i = Self::hat_slot(hat);
-        (self.mark[i] != self.bg && self.mark_band[i] != self.bg)
-            .then_some((self.mark[i], self.mark_band[i]))
-    }
-
-    /// The tint behind `hat`'s block in the rack while it is the active
-    /// one: the panel's own background where a tint can't show.
-    pub fn rack_tint(self, hat: ryter_core::Role) -> Color {
-        if matches!(self.mode, ColorMode::Ansi16 | ColorMode::Mono) {
-            return self.sidebar_bg;
-        }
-        self.rack[Self::hat_slot(hat)]
     }
 
     /// A filled chip in `color`: a hat's name where it is the one on.
@@ -523,10 +490,10 @@ impl Theme {
     pub fn role(self, role: &str) -> Color {
         match role {
             "plan" | "planner" => self.plan,
-            "review" | "auditor" | "audit" => self.audit,
-            // The scribe's slot; a project's total from crew mode names
-            // its roles.
-            "scribe" | "architect" => self.architect,
+            // The scribe wears the specialists' color; a project's total
+            // from crew mode still names the architect.
+            "review" | "auditor" | "audit" | "scribe" => self.audit,
+            "architect" => self.architect,
             _ => self.build,
         }
     }
@@ -613,19 +580,22 @@ struct Base {
 
 fn dark_base() -> Base {
     Base {
-        bg: rgb(0x0a, 0x0b, 0x0e),
-        sidebar_bg: rgb(0x0f, 0x11, 0x15),
-        composer_bg: rgb(0x12, 0x14, 0x19),
-        fg: rgb(0xe1, 0xe4, 0xea),
-        dim: rgb(0x8c, 0x93, 0xa1),
+        bg: rgb(0x0b, 0x0c, 0x0f),
+        sidebar_bg: rgb(0x0b, 0x0c, 0x0f),
+        composer_bg: rgb(0x0b, 0x0c, 0x0f),
+        fg: rgb(0xd6, 0xd9, 0xdf),
+        dim: rgb(0x84, 0x8b, 0x97),
         prompt: rgb(0xff, 0xff, 0xff),
-        user: rgb(0x7c, 0xa7, 0xff),
-        tool: rgb(0x8c, 0x93, 0xa1),
-        warn: rgb(0xff, 0xb4, 0x54),
-        plan: rgb(0x4f, 0xd8, 0xff),
-        architect: rgb(0xc7, 0x9b, 0xff),
-        build: rgb(0x7c, 0xf2, 0x9a),
-        audit: rgb(0xff, 0xb4, 0x54),
+        // A neutral grey-blue, so the user's mark is not read as the plan
+        // hat now that plan is blue.
+        user: rgb(0xae, 0xb7, 0xc6),
+        tool: rgb(0x84, 0x8b, 0x97),
+        warn: rgb(0xd9, 0xa8, 0x66),
+        plan: rgb(0x7f, 0xa7, 0xdb),
+        // Syntax and user theme files only: no hat wears it.
+        architect: rgb(0xb3, 0x9d, 0xdb),
+        build: rgb(0x8d, 0xc2, 0x9b),
+        audit: rgb(0xd0, 0xb0, 0x77),
     }
 }
 
@@ -659,10 +629,6 @@ fn derive(base: Base, file: &ThemeFile) -> Result<Theme, String> {
     let gauge_track = pick(&file.gauge_track, base.dim)?;
     let rule = pick(&file.rule, soften(base.bg, base.dim, 0.19))?;
     let faint = pick(&file.faint, soften(base.bg, base.dim, 0.39))?;
-    // A tint has to stay under the text on it: lighter on a light theme.
-    let light = luminance(base.bg).is_some_and(|l| l > 0.5);
-    let (hat_t, band_t) = if light { (0.06, 0.12) } else { (0.07, 0.14) };
-    let hats = [base.plan, base.build, base.audit, base.architect];
     Ok(Theme {
         bg: base.bg,
         sidebar_bg: base.sidebar_bg,
@@ -694,9 +660,6 @@ fn derive(base: Base, file: &ThemeFile) -> Result<Theme, String> {
         gauge_track,
         rule,
         faint,
-        mark: hats.map(|c| tint(base.bg, c, hat_t)),
-        mark_band: hats.map(|c| tint(base.bg, c, band_t)),
-        rack: hats.map(|c| tint(base.sidebar_bg, c, 0.08)),
         syn_comment: pick(&file.syn_comment, base.dim)?,
         syn_string: pick(&file.syn_string, base.build)?,
         syn_number: pick(&file.syn_number, base.architect)?,
@@ -1003,18 +966,32 @@ mod tests {
             }
             let ratio = contrast_ratio(t.fg, t.panel_bg).unwrap();
             assert!(ratio >= 4.5, "{name}: fg on panel_bg is {ratio:.2}:1");
-            // The watermark sits under the conversation and the rack's
-            // tint under a hat's figures: both stay readable through them.
-            for (what, tints) in [("mark", t.mark), ("band", t.mark_band), ("rack", t.rack)] {
-                for (hat, bg) in ["plan", "build", "audit", "scribe"].iter().zip(tints) {
-                    for (label, fg) in [("fg", t.fg), ("dim", t.dim)] {
-                        let ratio = contrast_ratio(fg, bg).unwrap();
-                        assert!(
-                            ratio >= 4.5,
-                            "{name}: {label} on the {hat} {what} tint is {ratio:.2}:1"
-                        );
-                    }
-                }
+            // Every color that names a thing is read as text on the
+            // background, and the composer's chip puts the background's
+            // color on each hat's (`docs/sidebar-design.md` R-COLOR-06).
+            // The sixteen are the terminal's own, and only approximated
+            // here.
+            if t.mode == ColorMode::Ansi16 {
+                continue;
+            }
+            for (label, fg) in [
+                ("plan", t.plan),
+                ("build", t.build),
+                ("audit", t.audit),
+                ("user", t.user),
+                ("warn", t.warn),
+                ("error", t.error),
+                ("success", t.success),
+            ] {
+                let ratio = contrast_ratio(fg, t.bg).unwrap();
+                assert!(ratio >= 4.5, "{name}: {label} on bg is {ratio:.2}:1");
+            }
+            for (hat, fill) in [("plan", t.plan), ("build", t.build), ("audit", t.audit)] {
+                let ratio = contrast_ratio(t.bg, fill).unwrap();
+                assert!(
+                    ratio >= 4.5,
+                    "{name}: the chip's text on {hat} is {ratio:.2}:1"
+                );
             }
             for (label, bg) in [
                 ("diff_add_bg", t.diff_add_bg),

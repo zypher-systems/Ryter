@@ -57,7 +57,6 @@ username = ""              # speaker name for your messages; "" → git user.nam
 theme = "dark"             # dark | light | default-16 | <name> from ~/.ryter/themes/<name>.toml
 layout = "ledger"          # ledger (the hat rack, the conversation, the instruments) | classic (chat beside the info cards, as in 0.5)
 start_hat = "plan"         # the hat a new session opens in: plan | build | audit | last (the hat this project's last session ended in)
-watermark = false          # a fedora behind the conversation, in the hat's color (truecolor and 256-color terminals); off, the conversation sits on the plain background
 bell = false               # ring the terminal bell when a question opens (a permission, a plan, ask_user)
 reasoning = "collapsed"    # collapsed | expanded | off — startup state of the thinking strip
 mouse = true               # false disables mouse capture (use the terminal's own selection)

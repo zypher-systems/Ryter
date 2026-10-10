@@ -99,11 +99,11 @@ fn edge_notes(view: &View, theme: Theme) -> Vec<Span<'static>> {
     right
 }
 
-/// The hat's chip at the head of the solo screen's prompt: ` BUILD `. None
+/// The hat's chip at the head of the solo screen's prompt: ` build `. None
 /// while the prompt is taking something other than a message.
 fn chip(view: &View) -> Option<String> {
     matches!(view.composer.mode, Mode::Normal)
-        .then(|| format!(" {} ", crate::rail::hat_name(view.mode)))
+        .then(|| format!(" {} ", crate::sidebar::hat_name(view.mode)))
 }
 
 /// Columns the prompt's text has on the solo screen, `width` wide.

@@ -12,22 +12,23 @@ use crate::view::View;
 /// Window for the second `Ctrl+C` (`R-COMP-14`).
 pub const QUIT_ARM_MS: u64 = 2000;
 
-/// `^b`: the info panel on the classic screen, the side columns on the
-/// solo one. A screen too narrow to hold both columns beside the
-/// conversation opens them as a panel instead, and `^b` again closes it.
+/// `^b`: the info panel on the classic screen, the sidebar on the solo
+/// one. A screen too narrow to hold the sidebar beside the conversation
+/// opens it as a panel instead, and `^b` again closes it.
 fn toggle_side(view: &mut View) {
     let folded = !view.ui.classic()
         && view.workbench.is_none()
-        && view.screen.get().0 < crate::rail::BOTH_MIN;
+        && view.screen.get().0 < crate::sidebar::MIN_SCREEN;
     if !folded {
         view.panel_visible = !view.panel_visible;
         return;
     }
-    if view.panels.top().is_some_and(|p| p.kind() == "rack") {
+    if view.panels.top().is_some_and(|p| p.kind() == "sidebar") {
         view.panels.pop();
     } else if !view.panels.has_modal() {
         view.palette = None;
-        view.panels.push(Box::new(panel::rack::Rack::default()));
+        view.panels
+            .push(Box::new(panel::sidebar::Sidebar::default()));
     }
     panel::sync_composer(view);
 }
@@ -265,16 +266,22 @@ fn reasoning_scroll(view: &mut View, dir: i32) {
 
 /// Composer editing and submit (`R-COMP-09..13`).
 fn composer_key(view: &mut View, key: KeyEvent) -> Action {
-    // Tab moves within the row of the rack the hat is in; Shift+Tab moves
-    // to the other row, onto the hat last worn there.
+    // Tab moves within the row the hat is in. Shift+Tab from a primary
+    // hat opens the specialists to choose from, and from a specialist
+    // returns to the primary hat last worn (`docs/sidebar-design.md`
+    // R-KEY-02).
     if matches!(view.composer.mode, crate::composer::Mode::Normal)
         && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
     {
-        return Action::SetMode(if key.code == KeyCode::BackTab {
-            view.other_row_hat()
-        } else {
-            view.mode.next_in_row()
-        });
+        return match (key.code, view.mode.row()) {
+            (KeyCode::BackTab, ryter_core::role::Row::Primary) => {
+                Action::OpenPanel(PanelId::Specialists)
+            }
+            (KeyCode::BackTab, ryter_core::role::Row::Specialist) => {
+                Action::SetMode(view.other_row_hat())
+            }
+            _ => Action::SetMode(view.mode.next_in_row()),
+        };
     }
     let action = keymap::lookup(Ctx::Composer, key);
     let mut edited = true;

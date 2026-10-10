@@ -1,5 +1,3 @@
- RYTER │ ○ PLAN    ◆ BUILD 1    ·   specialists                                                            muzak · main
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
            ·  welcome · /help for keys
            ●  why does load() ignore a missing file?                                                 ✓ answered  ▸
 
@@ -34,7 +32,9 @@
 
 
 
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  BUILD  › what should change?
 
- $ spend    enter send    tab plan    ⇧tab specialists    / commands    ^t changes    ^b hat rack    ^c quit
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  build  › what should change?
+
+ $ spend    enter send    tab plan    ⇧tab specialists    / commands    ^t changes    ^o expand    ^c quit

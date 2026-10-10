@@ -1,0 +1,24 @@
+
+   RYTER  ·  shop  ·  main  ·  nothing uncommitted
+
+   plan     reads and proposes, changes nothing                    ◆ on
+   build    makes the changes                                       tab
+   2 specialists: audit · scribe                                   ⇧tab
+
+   /sessions to resume one of 12 · /help for keys
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+  plan  › what should we plan?
+
+ plan · grok-4.6  ──────── 5%  $0 · no cap      enter send  ^b sidebar  ^c quit
