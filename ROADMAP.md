@@ -19,9 +19,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.25.0. 0.25.1 is in review from `dev`: the two fixes from the user's first run. Notes for a release collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
-
-- **After the user's first run on 0.25.0 (0.25.1, in review).** The conversation's column sits at the left and the sidebar grows from 30 to 40 columns with the screen, so a wide terminal no longer has a blank left margin where the rack was; `Shift+Tab` is the direct switch again both ways and the specialists picker is gone, by the user's choice even for three or four specialists. `DECISIONS.md` 2026-10-10 (third entry), `docs/sidebar-design.md` §17. The note is `docs/releases/v0.25.1.md`.
+The last release is 0.25.1. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
@@ -80,6 +78,12 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.25.1 — the column at the left, the sidebar grows with the screen, Shift+Tab is the direct switch again (2026-10-10)
+
+Released 2026-10-10 (PR #73, both reviews approved first round). The note is `docs/releases/v0.25.1.md`.
+
+- **After the user's first run on 0.25.0 (0.25.1).** The conversation's column sits at the left and the sidebar grows from 30 to 40 columns with the screen, so a wide terminal no longer has a blank left margin where the rack was; `Shift+Tab` is the direct switch again both ways and the specialists picker is gone, by the user's choice even for three or four specialists. `DECISIONS.md` 2026-10-10 (third entry), `docs/sidebar-design.md` §17. The note is `docs/releases/v0.25.1.md`.
 
 ### 0.25.0 — the sidebar screen, and a specialist's prompt opens on its request (2026-10-09 to 2026-10-10)
 

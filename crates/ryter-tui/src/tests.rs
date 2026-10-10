@@ -3570,8 +3570,8 @@ fn snapshot_allow_card_on_the_rack() {
 fn the_allow_card_is_inset_in_the_conversation_column() {
     let v = asking(8);
     let theme = Theme::truecolor_dark();
-    // The margins follow the column's width, not the screen's: at 160
-    // columns the conversation's column is in the nineties, so two each
+    // The margins follow the column's width, not the screen's: at 110
+    // columns the conversation's column is in the seventies, so two each
     // side; the fourteen-and-two shape needs a column of a hundred.
     for (w, h) in [(220u16, 50u16), (160, 50), (110, 40), (80, 24), (50, 24)] {
         let (col_x, col_w) = crate::draw::chat_column(&v, theme, w, h);

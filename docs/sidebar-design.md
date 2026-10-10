@@ -43,13 +43,13 @@ What stays: the transcript as 0.25.0 left it (space-led rows, a folded turn endi
 
 | Terminal width | Sidebar | Hint bar |
 | --- | --- | --- |
-| `>= 100` | shown, 30 columns | keys |
+| `>= 100` | shown, 30 columns, growing to 40 with the screen (§17) | keys |
 | `< 100` | hidden | status line (§9) |
 
 - **R-LAYOUT-04** Two tiers, decided by width alone. `rail::Tier::Wide` (the rack) goes; `Mid` is the sidebar and `Narrow` is none. `BOTH_MIN` and `RACK_W` go with it.
 - **R-LAYOUT-05** `Ctrl+B` keeps its binding. At 100 columns and wider it hides and shows the sidebar. Below that it opens the sidebar as a popout panel over the transcript, the same blocks stacked, `↑↓` scrolling it on a screen too short to show it whole; `Esc` or `Ctrl+B` closes it. `[ui] panel = false` starts with the sidebar hidden.
 - **R-LAYOUT-06** When the body is shorter than the sidebar needs, blocks give up rows in this order until it fits: `changes` to its summary row alone, the `turns` row, the third row of `now`, `permissions`, the `project` row of `spend`. If it still does not fit, the sidebar is hidden as it is below 100 columns, and `Ctrl+B` opens it as the panel.
-- **R-LAYOUT-07** A popout wider than the transcript (`/models`, `/settings`) takes the whole body and the sidebar is not drawn under it. One that fits the transcript (a plan to approve, a permission card, the specialists picker) leaves the sidebar in sight.
+- **R-LAYOUT-07** A popout wider than the transcript (`/models`, `/settings`) takes the whole body and the sidebar is not drawn under it. One that fits the transcript (a plan to approve, a permission card) leaves the sidebar in sight.
 
 ### 3.3 Wireframe: 120×40, build hat, a command running
 
@@ -274,7 +274,7 @@ now
 - **R-TUI-01** `rail.rs` becomes `sidebar.rs` and absorbs `instruments.rs` and `info/`'s solo-screen cards: the tiers, `HATS`, `PRIMARY`, `SPECIALISTS`, `SEPARATOR_LABEL`, `hat_name`, `hat_mark`, `hat_model`, `hat_spend`, `hat_may`, `gauge_color`, `session_spend` and `budget` stay as functions of it. `watermark.rs` is removed. `draw_top_bar` is removed, and `draw_solo` lays out transcript, sidebar, composer and hint bar.
 - **R-TUI-02** The `^b` panel below 100 columns draws the sidebar's blocks with the same functions, stacked, scrolling.
 - **R-TUI-03** The `now` block reads `activity::Activity` (the verb, its detail, the elapsed time, the rate, the turn's tokens), the same object the status row reads.
-- **R-TUI-04** The specialists picker is a `Panel` like the command palette, listing `SPECIALISTS` with `Role::describe` (new, one line each: "checks the work, may run it", "writes the docs, changes no code"), `hat_may` and `hat_model`.
+- **R-TUI-04** `Role::describe` (new) gives each hat one line, "checks the work, may run it", "writes the docs, changes no code", for the opening screen. (It was written for the specialists picker, which shipped in 0.25.0 and went in 0.25.1; §17.)
 - **R-TUI-05** `/settings` drops the *watermark* row. The `STARTUP` section and `start in` stay.
 
 ## 11. Testing contract
@@ -288,7 +288,7 @@ now
 - **R-TEST-07** No watermark: `watermark.rs` is gone, no cell in any frame carries the old tints, and a config with `watermark = true` or `false` loads with no warning.
 - **R-TEST-08** Contrast: `shipped_themes_meet_wcag_aa` covers every text colour over `bg` and the chip's text over each hat colour, in dark and light.
 - **R-TEST-09** The opening block: present with no turn, with `◆ on` following `start_hat` and `--hat`; gone after the first turn; the sessions count with and without earlier sessions.
-- **R-TEST-10** The picker: `Shift+Tab` opens it in the primary row and returns to a primary in the specialist row; typing filters; `Enter` puts the hat on and the composer opens on its request; `Esc` leaves the hat as it was.
+- **R-TEST-10** `Shift+Tab` puts on the hat last worn in the other row from either row, `Tab` cycles a row, and the hat put on opens the composer on its request. (The picker's test until 0.25.1; §17.)
 - **R-TEST-11** No test depends on the machine: no real home folder, no real terminal size, no network.
 - **R-TEST-12** Before the patch is called ready, the real TUI is driven against the simulated provider and used end to end in a truecolor terminal and a 16-colour one, through all four hats, with a question open in each place R-NOW-02 names.
 

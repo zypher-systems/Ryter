@@ -415,8 +415,8 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     }
     let comp_h =
         composer::draw::solo_height(view, main.width).min(main.height.saturating_sub(6).max(2));
-    // The column sits at the left, a cell in, however wide the screen: the
-    // spare width is between it and the sidebar, not a hole before it.
+    // However wide the screen, the spare width is between the column and
+    // the sidebar, not a hole before the text.
     let col_w = main.width.saturating_sub(4).min(LEDGER_COLUMN);
     let col_x = main.x + 1;
     let column = |r: Rect| Rect {
