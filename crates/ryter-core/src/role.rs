@@ -144,6 +144,27 @@ impl Role {
         }
     }
 
+    /// The line a specialist's composer opens on when the hat is chosen:
+    /// choosing the hat and pressing Enter is the whole request. The hats
+    /// above the line are told what to do in the user's own words.
+    pub fn opening(self) -> Option<&'static str> {
+        match self {
+            Self::SoloAudit => Some("Audit this project"),
+            Self::SoloScribe => Some("Document this project"),
+            Self::SoloPlan | Self::SoloBuild | Self::Crew => None,
+        }
+    }
+
+    /// What the hat does, in a few words, for the screen's lists.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::SoloPlan => "reads and proposes, changes nothing",
+            Self::SoloBuild | Self::Crew => "makes the changes",
+            Self::SoloAudit => "checks the work, may run it",
+            Self::SoloScribe => "writes the docs, changes no code",
+        }
+    }
+
     /// Stable lowercase name.
     pub fn as_str(self) -> &'static str {
         match self {

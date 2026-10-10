@@ -1,6 +1,6 @@
- RYTER │ ○ PLAN   ⠼ BUILD                                           0.2.0-patch
-         ●  dusty  now implement step one                               ↑ 1
-  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
+         │
+         │  1. wire the loop
+         │  2. write tests
 
          ●  dusty
          │  now implement step one
@@ -19,6 +19,6 @@
    │ ⏎ allow   a allow edits this session   n deny                        │
    ╰──────────────────────────────────────────────────────────────────────╯
 ────────────────────────────────────────────────────────────────────────────────
-  BUILD  › type to queue the next message, / for commands
+  build  › type to queue the next message, / for commands
 
- grok-4.6  ctx ──────── 5% │ $0     ⏎ allow  a allow edits this session  n deny
+ build · grok-4.6  ──────── 5%  $0  ⏎ allow  a allow edits this session  n deny

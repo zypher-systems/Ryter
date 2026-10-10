@@ -1,30 +1,30 @@
- RYTER │ plan · build ·2   ·   ● AUDIT 1    ◆ SCRIBE 1      empty-query fix     shop · search-patch
-────────────────────────────────────────────────────────────────────────────────────────────────────
-         ●  dusty  fix the blocking finding                   ↑ 4     │
-  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥    │ MODEL
-         │                                                            │ scribe             grok-4.6
-         ├─ write  app/server.js ····················· +1 −1  0.0s    │
-         │    1   app.get('/search', (req, res) => {                  │ CONTEXT
-         │    2 -   const q = (req.query.q || '').trim()           ┃  │ ━━━━━━━━━────────────── 38%
-         │    2 +   const q = String(req.query.q ?? '').trim()     ┃  │ 97k / 256k tokens
-         │    3     if (!q) return res.json([])                    ┃  │
-         │    4     res.json(find(q))                              ┃  │ PULSE
-         ├─ write  test/search.test.js ··············· +4 −0  0.0s ┃  │ ▁▁▁▁▁▁▁▁               idle
-         │     5     assert.deepEqual(await search(''), [])        ┃  │
-         │     6   })                                              ┃  │ SPEND
-         │     7 +                                                 ┃  │ session              $0.065
-         │     8 + test('a missing query finds nothing', async ()  ┃  │ project               $4.82
-         │         => {                                            ┃  │ budget                  off
-         │     9 +   assert.deepEqual(await search(), [])          ┃  │
-         │    10 + })                                              ┃  │ GUARD
-         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.0… ┃  │ sandbox           workspace
-         │                                                         ┃  │ this hat          docs only
-         ├─ write  docs/install.md ·········· new · 20 lines  0.0s ┃  │ plan.md                none
-         │    too large to show here · /changes has the diff       ┃  │ audit.md               none
-         ├─ edit   README.md ························· +3 −1  0.0s ┃  │
-         │    too large to show here · /changes has the diff       ┃  │ CHANGES
-         └─ ✓ 2 tools · 2 files (1 new, 1 changed, +23 −1) · 0.9s… ┃  │ 2 files              +12 −1
+         ●  dusty  fix the blocking finding                   ↑ 2     │ RYTER
+  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥    │ empty-query fix
+         ●  dusty                                                     │ shop · search-patch
+         │  fix the blocking finding                               ┃  │
+         │                                                         ┃  │ hats
+         ├─ write  app/server.js                             +1 −1 ┃  │   plan       1 turn  $0.004
+         │    1   app.get('/search', (req, res) => {               ┃  │   build      2 turns $0.021
+         │    2 -   const q = (req.query.q || '').trim()           ┃  │   ──────────── specialists
+         │    2 +   const q = String(req.query.q ?? '').trim()     ┃  │   audit ✗    1 turn  $0.040
+         │    3     if (!q) return res.json([])                    ┃  │ ▸ scribe     1 turn      $0
+         │    4     res.json(find(q))                              ┃  │
+         ├─ write  test/search.test.js                       +4 −0 ┃  │ now
+         │     5     assert.deepEqual(await search(''), [])        ┃  │   grok-4.6
+         │     6   })                                              ┃  │   idle
+         │     7 +                                                 ┃  │
+         │     8 + test('a missing query finds nothing', async ()  ┃  │ context
+         │         => {                                            ┃  │   ━━━━━━━────────────   38%
+         │     9 +   assert.deepEqual(await search(), [])          ┃  │   97k of 256k
+         │    10 + })                                              ┃  │
+         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.0… ┃  │ spend
+         │                                                         ┃  │   session    $0.065  no cap
+         ├─ write  docs/install.md                  new · 20 lines ┃  │   project    $4.82
+         │    too large to show here · /changes has the diff       ┃  │
+         ├─ edit   README.md                                 +3 −1 ┃  │ changes
+         │    too large to show here · /changes has the diff       ┃  │   2 files uncommitted
+         └─ ✓ 2 tools · 2 files (1 new, 1 changed, +23 −1) · 0.9s… ┃  │
 ──────────────────────────────────────────────────────────────────────│
-  SCRIBE  › what should be documented? · Tab: audit · ⇧Tab: plan · …  │
+  scribe  › what should be documented?                                │
 
- $ spend    enter send    tab audit    ⇧tab plan · build    / commands    ^b hat rack    ^c quit
+ $ spend    enter send    tab audit    ⇧tab plan · build    / commands    ^t changes    ^c quit

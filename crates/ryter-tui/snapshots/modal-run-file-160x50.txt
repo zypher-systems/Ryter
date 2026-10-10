@@ -1,50 +1,50 @@
- RYTER │ ○ PLAN    ⠼ BUILD    ·   ○ AUDIT   ○ SCRIBE                                                                            ~/workspace/ryter · 0.2.0-patch
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-                             │         │                                                                                      │
- HAT RACK                    │         │  1. wire the loop                                                                    │ MODEL
-                             │         │  2. write tests                                                                      │ grok-4.6
- ○ PLAN                      │                                                                                                │ connection           spacexai ●
-   grok-4.6                  │         ●  dusty                                                                               │ reasoning                  auto
-   not worn yet              │         │  now implement step one                                                              │
-                             │         │                                                                                      │ CONTEXT
- ◆ BUILD                     │         ├─ read   crates/ryter-tui/src/run/mod.rs                                              │ ━─────────────────────────── 5%
-   grok-4.6                  │         │                                                                                      │ 12k / 256k tokens
-   not worn yet              │         ◆  grok-4.6                                                                            │
-                             │         │  Reading the loop now. The event loop drains reply line 0 reply line 1 reply         │ PULSE
- ─────────────── specialists │         │  line 2 reply line 3 reply line 4 reply line 5 reply line 6 reply line 7             │ ▁▁▁▁▁▁▁█               18 tok/s
-                             │         │  ⠼ waiting for you · run? · 0:12 · 85 tokens                                         │
- ○ AUDIT                     │                                                                                                │ SPEND
-   grok-4.6                  │                                                                                                │ session                      $0
-   not worn yet              │                               ▄                                ▄                               │ budget                      off
-                             │                                                                                                │
- ○ SCRIBE                    │                                                                                                │ GUARD
-   grok-4.6                  │                                                                                                │ sandbox                     off
-   not worn yet              │                                                                                                │ this hat        edits ask first
-                             │                                                                                                │ plan.md                    none
-                             │                      ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄                      │ audit.md                   none
-                             │                ▄▄                                                            ▄▄                │
-                             │                ▀                                                              ▀                │ CHANGES             uncommitted
-                             │                    ▀▀▀▀▀▀                                            ▀▀▀▀▀▀                    │ no repository here
-                             │                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                  │
-                             │                                                                                                │
-                             │                                                                                                │
-                             │                                                                                                │
-                             │                                                                                                │
-                             │                                                                                                │
-                             │                                                                                                │
-                             │                                                                                                │
-                             │   ┏━ how this project runs ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓     │
-                             │   │ start  docker compose up -d --wait                                                   │     │
-                             │   │ ready  http://localhost:8000/healthz                                                 │     │
-                             │   │ test   docker compose run --rm web pytest -q                                         │     │
-                             │   │ stop   docker compose down                                                           │     │
-                             │   │                                                                                      │     │
-                             │   │ saved to .ryter/run.toml                                                             │     │
-                             │   │ ryter runs these without asking                                                      │     │
-                             │   │                                                                                      │     │
-                             │   │ y approve   e adjust   n reject                                                      │     │
-                             │   ╰──────────────────────────────────────────────────────────────────────────────────────╯     │
-                             │────────────────────────────────────────────────────────────────────────────────────────────────│
-                             │  BUILD  › type to queue the next message, / for commands                                       │
+                │                                                                                                                 │ RYTER
+                │  1. wire the loop                                                                                               │ new session
+                │  2. write tests                                                                                                 │ ryter · 0.2.0-patch
+                                                                                                                                  │
+                ●  dusty                                                                                                          │ hats
+                │  now implement step one                                                                                         │   plan
+                │                                                                                                                 │ ⠼ build
+                ├─ read   crates/ryter-tui/src/run/mod.rs                                                                         │   ──────────── specialists
+                │                                                                                                                 │   audit
+                ◆  grok-4.6                                                                                                       │   scribe
+                │  Reading the loop now. The event loop drains reply line 0 reply line 1 reply line 2 reply line 3                │
+                │  reply line 4 reply line 5 reply line 6 reply line 7                                                            │ now
+                │  ⠼ waiting for you · run? · 0:12 · 85 tokens                                                                    │   grok-4.6
+                                                                                                                                  │   waiting for you · run?
+                                                                                                                                  │   run?
+                                                                                                                                  │
+                                                                                                                                  │ context
+                                                                                                                                  │   ━───────────────────   5%
+                                                                                                                                  │   12k of 256k
+                                                                                                                                  │
+                                                                                                                                  │ spend
+                                                                                                                                  │   session    $0  no cap
+                                                                                                                                  │
+                                                                                                                                  │ changes
+                                                                                                                                  │   no repository here
+                                                                                                                                  │
+                                                                                                                                  │ permissions
+                                                                                                                                  │   asks first · sandbox off
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                                                                                                                                  │
+                      ┏━ how this project runs ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓            │
+                      │ start  docker compose up -d --wait                                                           │            │
+                      │ ready  http://localhost:8000/healthz                                                         │            │
+                      │ test   docker compose run --rm web pytest -q                                                 │            │
+                      │ stop   docker compose down                                                                   │            │
+                      │                                                                                              │            │
+                      │ saved to .ryter/run.toml                                                                     │            │
+                      │ ryter runs these without asking                                                              │            │
+                      │                                                                                              │            │
+                      │ y approve   e adjust   n reject                                                              │            │
+                      ╰──────────────────────────────────────────────────────────────────────────────────────────────╯            │
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+  build  › type to queue the next message, / for commands                                                                         │
 
  y approve    e adjust    n reject    esc reject    ^c stop the turn

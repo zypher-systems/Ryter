@@ -122,7 +122,25 @@ fn folds(view: &View, turn: u64, latest: u64) -> bool {
         })
 }
 
-/// A folded turn: what was asked, led by dots to what it came to.
+/// A receipt without its clock and its cost: what a folded turn came to.
+/// The time and the money are on the closing line `^o` opens.
+fn brief(receipt: &str) -> String {
+    let clock = |p: &str| {
+        let secs = p.trim_end_matches('s');
+        (p.ends_with('s')
+            && !secs.is_empty()
+            && secs.chars().all(|c| c.is_ascii_digit() || c == '.'))
+            || (p.contains(':') && p.chars().all(|c| c.is_ascii_digit() || c == ':'))
+    };
+    let cost = |p: &str| p.trim_start_matches(['≥', '<']).starts_with('$');
+    receipt
+        .split(" · ")
+        .filter(|p| !clock(p) && !cost(p))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// A folded turn: what was asked, and at the row's end what it came to.
 fn fold_line(view: &View, turn: u64, width: usize, theme: Theme) -> Line<'static> {
     let asked = view
         .messages
@@ -145,16 +163,13 @@ fn fold_line(view: &View, turn: u64, width: usize, theme: Theme) -> Line<'static
         })
         .map(|m| m.body.trim().to_string())
         .unwrap_or_default();
-    let came = format!("{}  ▸", wrap::truncate(&came, width / 2));
+    let came = format!("{}  ▸", wrap::truncate(&brief(&came), width / 2));
     let came_w = wrap::width(&came);
-    let asked = wrap::truncate(&asked, width.saturating_sub(came_w + 6));
-    let dots = width.saturating_sub(wrap::width(&asked) + came_w + 2);
+    let asked = wrap::truncate(&asked, width.saturating_sub(came_w + 4));
+    let gap = width.saturating_sub(wrap::width(&asked) + came_w);
     Line::from(vec![
         Span::styled(asked, theme.muted()),
-        Span::styled(
-            format!(" {} ", "·".repeat(dots)),
-            Style::default().fg(theme.dim).bg(theme.bg),
-        ),
+        Span::styled(" ".repeat(gap), theme.body()),
         Span::styled(came, theme.muted()),
     ])
 }
@@ -191,15 +206,9 @@ fn place(view: &View, width: usize, theme: Theme, pane_cap: usize) -> Laid {
                 start: row,
                 separator: false,
                 spine: false,
-                // In the color of the hat the turn ran in.
-                gutter: Gutter::Folded(
-                    time,
-                    view.messages
-                        .iter()
-                        .find(|m| m.turn == msg.turn && !matches!(m.kind, MessageKind::User))
-                        .and_then(|m| m.meta.hat)
-                        .map_or(theme.dim, |h| theme.mode(h)),
-                ),
+                // Quiet: the turn that is open keeps the user's color, and
+                // the ones behind it are the history.
+                gutter: Gutter::Folded(time, theme.dim),
                 entry: Rc::new(Entry {
                     lines: vec![fold_line(view, msg.turn, width, theme)],
                     bytes: 0,
@@ -638,6 +647,26 @@ mod tests {
                 .finish(crate::activity::Verb::Done, Some(0), Some(0));
         }
         v
+    }
+
+    /// A folded turn's outcome keeps what the turn did and leaves its
+    /// clock and its cost to the closing line.
+    #[test]
+    fn a_folded_turn_leaves_out_the_clock_and_the_cost() {
+        for (receipt, want) in [
+            (
+                "✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s · $0.004",
+                "✓ 2 tools · 2 files (1 new, 1 changed, +8 −1)",
+            ),
+            ("✓ answered · 1:40 · <$0.001", "✓ answered"),
+            (
+                "✓ 1 tool · 1 command (1 ok) · 12s · ≥$0.02",
+                "✓ 1 tool · 1 command (1 ok)",
+            ),
+            ("⊘ stopped", "⊘ stopped"),
+        ] {
+            assert_eq!(brief(receipt), want);
+        }
     }
 
     #[test]

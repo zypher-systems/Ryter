@@ -17,11 +17,12 @@ pub mod modal;
 pub mod models;
 pub mod plan;
 pub mod providers;
-pub mod rack;
 pub mod rules;
 pub mod sessions;
 pub mod settings;
+pub mod sidebar;
 pub mod skills;
+pub mod specialists;
 pub mod spend;
 pub mod spend_drawer;
 pub mod theme;
@@ -323,8 +324,10 @@ pub fn on_notice(view: &mut View, n: &Notice) {
     view.panels.stack = stack;
 }
 
-/// Keep the composer's field mode in step with the focused panel.
+/// Keep the composer's field mode in step with the focused panel. A panel
+/// that takes the prompt takes Ryter's line with it.
 pub fn sync_composer(view: &mut View) {
+    view.note_composer_edited();
     let want = view.panels.wants_input(view);
     match (&view.composer.mode, want) {
         (crate::composer::Mode::Field { label }, Some(l)) if *label == l => {}
@@ -374,6 +377,7 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
         PanelId::Help => Box::new(help::Help::default()),
         PanelId::Doctor => Box::new(doctor::Doctor::new(env)),
         PanelId::Changes => Box::new(changes::Changes::new(view, env)),
+        PanelId::Specialists => Box::new(specialists::Specialists::new(view)),
         PanelId::Commit => {
             let (p, act) = commit::Commit::new(view, env);
             view.panels.push(Box::new(p));

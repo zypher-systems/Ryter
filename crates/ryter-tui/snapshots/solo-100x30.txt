@@ -1,30 +1,30 @@
- RYTER │ ● PLAN 1    ◆ BUILD 2    ·   specialists ·1      empty-query fix       shop · search-patch
-────────────────────────────────────────────────────────────────────────────────────────────────────
-         ●  search returns eve… ···· ✓ answered · 1.2s · $0.004  ▸    │
-         ●  build the plan ········ ✓ answered · 2 files (1 ne…  ▸    │ MODEL
-         ●  review it ·············· ✓ answered · 1.2s · $0.040  ▸    │ build   deepseek-pro-latest
+         ●  search returns everything for an emp…    ✓ answered  ▸    │ RYTER
+         ●  build the plan          ✓ answered · 2 files (1 ne…  ▸    │ empty-query fix
+         ●  review it                                ✓ answered  ▸    │ shop · search-patch
                                                                       │
-         ●  dusty                                                     │ CONTEXT
-         │  fix the blocking finding                                  │ ━━━━━━━━━────────────── 38%
-         │                                                            │ 97k / 256k tokens
-         ├─ write  app/server.js ····················· +1 −1  0.0s    │
-         │    1   app.get('/search', (req, res) => {                  │ PULSE
-         │    2 -   const q = (req.query.q || '').trim()              │ ▁▁▁▁▁▁▁▁               idle
+         ●  dusty                                                     │ hats
+         │  fix the blocking finding                                  │   plan       1 turn  $0.004
+         │                                                            │ ▸ build      2 turns $0.021
+         ├─ write  app/server.js                             +1 −1    │   ──────────── specialists
+         │    1   app.get('/search', (req, res) => {                  │   audit ✗    1 turn  $0.040
+         │    2 -   const q = (req.query.q || '').trim()              │   scribe
          │    2 +   const q = String(req.query.q ?? '').trim()        │
-         │    3     if (!q) return res.json([])                       │ SPEND
-         │    4     res.json(find(q))                                 │ session              $0.065
-         ├─ write  test/search.test.js ··············· +4 −0  0.0s    │ project               $4.82
-         │     5     assert.deepEqual(await search(''), [])           │ budget                  off
-         │     6   })                                                 │
-         │     7 +                                                    │ GUARD
-         │     8 + test('a missing query finds nothing', async ()     │ sandbox           workspace
-         │         => {                                               │ this hat         asks first
-         │     9 +   assert.deepEqual(await search(), [])             │ plan.md                none
-         │    10 + })                                                 │ audit.md               none
-         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.0…    │
-                     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                     │ CHANGES
-                                                                      │ 2 files              +12 −1
+         │    3     if (!q) return res.json([])                       │ now
+         │    4     res.json(find(q))                                 │   deepseek-pro-latest
+         ├─ write  test/search.test.js                       +4 −0    │   idle
+         │     5     assert.deepEqual(await search(''), [])           │
+         │     6   })                                                 │ context
+         │     7 +                                                    │   ━━━━━━━────────────   38%
+         │     8 + test('a missing query finds nothing', async ()     │   97k of 256k
+         │         => {                                               │
+         │     9 +   assert.deepEqual(await search(), [])             │ spend
+         │    10 + })                                                 │   session    $0.065  no cap
+         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.0…    │   project    $4.82
+                                                                      │
+                                                                      │ changes
+                                                                      │   2 files uncommitted
+                                                                      │
 ──────────────────────────────────────────────────────────────────────│
-  BUILD  › what should change? · Tab: plan · ⇧Tab: specialists · / …  │
+  build  › what should change?                                        │
 
- $ spend    enter send    tab plan    ⇧tab specialists    / commands    ^b hat rack    ^c quit
+ $ spend    enter send    tab plan    ⇧tab specialists    / commands    ^t changes    ^c quit

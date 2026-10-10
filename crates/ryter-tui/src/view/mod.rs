@@ -184,6 +184,10 @@ pub struct View {
     pub panel_visible: bool,
     /// Message queued while busy (`R-COMP-16`).
     pub queued_prompt: Option<String>,
+    /// The line Ryter put in the composer for a specialist, while the
+    /// user has not touched it. What is in the composer is Ryter's only
+    /// while it is still this line (`R-COMP-18`).
+    pub seeded: Option<String>,
     /// Resolved speaker name (`R-CHAT-11`).
     pub username: String,
     /// Local UTC offset in seconds.
@@ -368,6 +372,10 @@ pub struct View {
     pub screen: std::cell::Cell<(u16, u16)>,
     /// How fast the model is writing.
     pub pulse: Pulse,
+    /// Saved sessions this project has, for the opening screen's count.
+    pub sessions_count: usize,
+    /// The specialist under the picker's cursor, for the sidebar to mark.
+    pub picker_hover: Option<ryter_core::Role>,
 }
 
 /// Aggregated spend row for `/spend`.
@@ -460,6 +468,7 @@ impl View {
             history: History::default(),
             panel_visible: true,
             queued_prompt: None,
+            seeded: None,
             username: "you".into(),
             tz_offset: 0,
             busy: false,
@@ -556,6 +565,8 @@ impl View {
             audit_writing: false,
             screen: std::cell::Cell::new((0, 0)),
             pulse: Pulse::default(),
+            sessions_count: 0,
+            picker_hover: None,
         }
     }
 
@@ -677,6 +688,7 @@ impl View {
 
     /// Start a turn from user text: push the message, anchor, mark busy.
     pub fn submit_user(&mut self, shown: String, expanded: String) -> Action {
+        self.seeded = None;
         if self.busy {
             self.queued_prompt = Some(expanded);
             self.system("queued · sent when the current turn completes");
@@ -711,6 +723,12 @@ impl View {
             .find(|p| !p.is_empty())?;
         let flat = para.split_whitespace().collect::<Vec<_>>().join(" ");
         Some(crate::chat::wrap::truncate(&flat, 160))
+    }
+
+    /// Whether the session has a turn on screen: before the first one the
+    /// transcript shows the opening block instead.
+    pub fn has_turns(&self) -> bool {
+        self.has_content() || self.busy
     }
 
     /// Anything in the transcript worth confirming before `/new`.
@@ -752,6 +770,51 @@ impl View {
         match role.row() {
             ryter_core::role::Row::Primary => self.last_primary = role.hat(),
             ryter_core::role::Row::Specialist => self.last_specialist = role,
+        }
+    }
+
+    /// Open the composer on the line of the hat just chosen
+    /// ([`ryter_core::Role::opening`]): "Audit this project", "Document
+    /// this project". Choosing a specialist and pressing Enter is the
+    /// whole request. What the user has typed is theirs and stays; a line
+    /// Ryter put there and nobody touched goes with the hat it was for.
+    /// Nothing is put there while a follow-up is queued: the composer's
+    /// `queued` badge is about that message, and Enter would replace it.
+    pub fn open_composer_on(&mut self, role: ryter_core::Role) {
+        if self.composer.mode != crate::composer::Mode::Normal
+            || !self.panels.is_empty()
+            || self.queued_prompt.is_some()
+        {
+            return;
+        }
+        let typed = self.composer.text();
+        // Ryter's line is the one it put there, still as it was: the same
+        // words typed by hand are the user's.
+        let ours = self.seeded.as_deref() == Some(typed);
+        if !typed.is_empty() && !ours {
+            self.seeded = None;
+            return;
+        }
+        match role.opening() {
+            Some(line) => {
+                self.composer.set_text(line);
+                self.seeded = Some(line.to_string());
+            }
+            None => {
+                self.composer.clear();
+                self.seeded = None;
+            }
+        }
+    }
+
+    /// The prompt's text has been touched by something other than
+    /// [`View::open_composer_on`]: a key, a paste, a panel taking the
+    /// prompt. Ryter's line is its own only while it stands untouched, so
+    /// once the words differ the line is let go, and the same words typed
+    /// again later are the user's.
+    pub fn note_composer_edited(&mut self) {
+        if self.seeded.as_deref() != Some(self.composer.text()) {
+            self.seeded = None;
         }
     }
 

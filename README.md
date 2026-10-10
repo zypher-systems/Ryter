@@ -4,9 +4,9 @@ Ryter is Zypher Systems’ terminal AI coding harness.
 
 One model works in your project, with you, and `Tab` switches between its two working hats, **plan** and **build**; `Shift+Tab` reaches the specialists, **audit** and **scribe**. Each hat can run on a model of its own: a strong one to plan, a cheaper one to build, a different one to audit, a small one to write the docs. Bring your own keys: **SpaceXAI** and **OpenRouter** are built in, and local model servers (Ollama, LM Studio, llama.cpp) work without one.
 
-![Ryter in the build hat. The hat rack lists plan on grok-4.6, build on deepseek-pro-latest, audit on claude-opus-5.5, and scribe not worn yet. The conversation shows a diff of app/server.js and a new test. The side panel shows the model, a context gauge at 38%, session spend of $0.065, and uncommitted changes.](docs/screenshots/build.png)
+![Ryter in the build hat, before the sidebar screen: a screenshot from 0.24.1, owed a new one. The conversation shows a diff of app/server.js and a new test, with the hats and the instruments beside it.](docs/screenshots/build.png)
 
-Linux first. The current release is 0.24.0. Apache-2.0.
+Linux first. The current release is 0.25.0. Apache-2.0.
 
 ## Install
 

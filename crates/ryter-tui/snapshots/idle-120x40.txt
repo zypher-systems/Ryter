@@ -35,6 +35,6 @@
 
 
 ╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│› what should change? · Tab: plan · ⇧Tab: specialists · / for commands                                                │
+│› what should change?                                                                                                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  enter send    tab plan    ⇧tab specialists    ⇧enter newline    / commands    ^b panel    ^c quit

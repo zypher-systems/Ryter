@@ -10,6 +10,8 @@ Designed with the user on 2026-10-02, from mockups reviewed over three rounds.
 Applies to: `crates/ryter-tui`, with small listed additions to `crates/ryter-core` and `crates/ryter-cli`.
 Work branch: `hat-rack-patch`, cut from `dev`.
 
+Superseded in part on 2026-10-10 by `docs/sidebar-design.md`: the top bar, the hat rack column, the watermark, the `PULSE` and `GUARD` cards and the 132-column tier go; the transcript as §18 left it, the composer, the hint bar, the panels and the starting hat stay as written here.
+
 This document is a **contract**. Every requirement is numbered (`R-<AREA>-<NN>`). The work
 is done when every requirement is met and the tests in §13 pass. Where it conflicts with
 the current ledger screen, this document wins. It does not change the classic layout, the
@@ -215,8 +217,9 @@ At this size the top bar has no hairline under it, and offers are one line, not 
 - **R-TOP-01** Left: `RYTER` in bold, a divider, then the hats in `Tab` order: plan,
   build, review. (Four until 2026-10-03, when the test hat was removed; §18.)
 - **R-TOP-02** The active hat is a filled chip in its color with dark text, marked `◆`.
-- **R-TOP-03** A hat that has had at least one turn this session shows `●` in its own
-  color and its name in the body color. A hat with no turns shows `○` and its name dim.
+- **R-TOP-03** A hat that has had at least one turn this session shows `●` and its name
+  in the body color. A hat with no turns shows `○` and its name dim. (The mark was in the
+  hat's own color until 2026-10-10; §18.)
 - **R-TOP-04** The bar states which hats have been worn. It does not imply an order: no
   connectors, arrows or step numbers between hats, and no check marks.
 - **R-TOP-05** When the hat rack is not on screen (below 132 columns, or hidden), each
@@ -248,14 +251,16 @@ It never lists turns.
    tests         ✓ 14 passed
 ```
 
-- **R-RACK-01** The column is headed `HAT RACK`, dim and letter-spaced.
+- **R-RACK-01** The column is headed `HATS`, dim and letter-spaced. (`HAT RACK` until
+  2026-10-10; §18.)
 - **R-RACK-02** Every block shows the marker and name, the hat's model, its turn count and
   its spend. The marker follows the top bar: `◆` active, `●` worn, `○` not worn.
 - **R-RACK-03** The active block has a faint background tint of its hat's color across
-  the column's full width, and its name is in that color. Other blocks have no tint.
+  the column's full width, and its name and mark are in that color. Other blocks have no
+  tint and no color: a worn hat's mark is the body color, an unworn hat's is dim.
 - **R-RACK-04** The model line is the model that hat would run on now: its own if one is
   set in `/models`, otherwise the one every hat shares.
-- **R-RACK-05** A hat with no turns shows its model and the line `not worn yet`, and no
+- **R-RACK-05** A hat with no turns shows its model and the line `no turns yet`, and no
   figures.
 - **R-RACK-06** All figures cover the current session only, including turns restored by
   `ryter resume`.
@@ -273,11 +278,11 @@ No rules between blocks. The tint on the active block is the only background.
 | Hat | Rows | Source |
 | --- | --- | --- |
 | plan | `plans  N approved` (and `· N rejected` when any) | plan panel outcomes |
-| build | `files  N`, `lines  +A −D`, then `success N` / `warning N` / `failure N` for the latest run of the project's tests (skipped and ignored tests are warnings) | checkpoints, the last test run's summary line |
+| build | `files  N`, `lines  +A −D`, then `success N` / `warning N` / `failure N` for the latest run of the project's tests (skipped and ignored tests are warnings); a count of zero is not a row | checkpoints, the last test run's summary line |
 | review | `verdicts  ✓ N pass` or `✗ N fail`; `✓ N  ✗ N` when both occurred | review verdicts |
 
 A count of
-zero is dim. A test run whose summary line has no counts to read (`Ran 5 tests`) shows one
+zero is left out (dim until 2026-10-10; §18). A test run whose summary line has no counts to read (`Ran 5 tests`) shows one
 row, `checks`, with the line as the tool printed it.
 
 - **R-RACK-09** `files` and `lines` in the build block are gross for the session: every
@@ -299,7 +304,6 @@ row, `checks`, with the line as the tool printed it.
 | --- | --- |
 | `MODEL` | the active hat's model in the hat color; `connection  <name> ●` (green `●` when the connection has a key, a red `○` when it has none); `reasoning  <effort>` |
 | `CONTEXT` | a one-row gauge in the hat color with the percentage; `<used> / <window> tokens` |
-| `PULSE` | eight bars, one a second, oldest first, and the rate: `▁▂▃▅▇▆▃▁  42 tok/s` while the model writes, `idle` three seconds after its last token |
 | `SPEND` | `session`, `project`, `budget` |
 | `GUARD` | `sandbox  <profile>`; `this hat  <what it may do>` |
 | `CHANGES` | header right-aligned `uncommitted`; one row per changed file with `+A −D` or `new` |
@@ -319,10 +323,14 @@ row, `checks`, with the line as the tool printed it.
   startup and when a turn ends, a file is reverted or a commit is made.
 - **R-INST-07** The context gauge turns to the warning color at the threshold the current
   gauge uses.
-- **R-INST-10** The pulse counts the model's streamed text and reasoning, four characters
-  to a token, as the activity strip does. The rate is tokens over the last two seconds.
-  The bars are in the hat color while the model writes and dim when idle. The last test
-  run is not in this column: it is the build block's.
+- **R-INST-10** A `PULSE` card, eight bars one a second, oldest first, and the rate
+  (`▁▂▃▅▇▆▃▁  42 tok/s`; `waiting` while nothing has arrived), is the last card while a
+  turn runs and is not shown between turns, so nothing above it moves. It counts the
+  model's streamed text and reasoning, four characters to a token, as the activity strip
+  does. The rate is tokens over the last two seconds. The bars are in the hat color
+  while the model writes. The last test run is not in this column: it is the build
+  block's. (A card between `CONTEXT` and `SPEND` at all times, `idle` between turns, until
+  2026-10-10; §18.)
 
 ### 6.2 Condensed (100 to 131 columns)
 
@@ -401,8 +409,9 @@ is the band. This bitmap is the source of truth.
   theme test that checks shipped themes covers both tints for every hat color.
 - **R-MARK-07** It is drawn only when the transcript area is at least 66 columns by 17
   rows. Otherwise it is omitted; it is never scaled or cropped.
-- **R-MARK-08** It is omitted in 16-color and no-color modes, while the workbench is
-  open, and when `[ui] watermark = false`.
+- **R-MARK-08** It is drawn only when `[ui] watermark = true`; the default is off
+  (on, until 2026-10-10; §18). It is omitted in 16-color and no-color modes and while the
+  workbench is open.
 - **R-MARK-09** On a hat switch the watermark changes color with everything else, in the
   same frame.
 
@@ -421,8 +430,9 @@ is the band. This bitmap is the source of truth.
   text are neutral and do not change with the hat.
 - **R-COLOR-03** Colors that carry their own meaning keep it under every hat: success and
   added lines green, failure and removed lines red, the user's speaker color, warnings.
-  Each hat's dot in the top bar, the rack and the transcript's folded turns stays in that
-  hat's own color.
+  The other hats' dots in the top bar and the rack are the body color, and a folded
+  turn's dot is dim: the hat that is on is the one colored thing. (In each hat's own
+  color until 2026-10-10; §18.)
 - **R-COLOR-04** An offer to switch hats (the review offer after a build, the test offer
   after a review) is bordered in the color of the hat it offers.
 
@@ -477,9 +487,10 @@ working.
   first row starts with the hat chip, then `›` in the hat color, then the text.
 - **R-COMP-02** The speaker name is no longer shown beside the chip. The user's name is
   on their turns in the transcript.
-- **R-COMP-03** Placeholder text is per hat and names the next `Tab` stop: plan `what
-  should we plan?`, build `what should change?`, review `ask about the review`, test
-  `what should be tried?`.
+- **R-COMP-03** Placeholder text is per hat and is the hat's question alone: plan `what
+  should we plan?`, build `what should change?`, audit `ask about the audit`, scribe `what
+  should be documented?`. The keys are the hint bar's. (It named the `Tab` stops too, until
+  2026-10-10; §18.)
 - **R-COMP-04** Growth, scrolling and editing keys are unchanged.
 - **R-COMP-05** The hint bar lists keys for the current state, dropping the least needed
   until they fit, as `prompt_keys` does today.
@@ -674,3 +685,20 @@ On 2026-10-03 the user removed the test hat:
 | --- | --- |
 | The allow card is inset in the conversation's column (fourteen in and two short of the right edge at a hundred columns, two each side down to sixty, the whole column under that), the chat is laid out above it rather than painted over, it is capped at a third of the column and scrolls inside, and it is announced in the status row, the bar's spinner and a warn-colored foot line; `[ui] bell` rings once, off by default (2026-10-04) | The user: "full width at the bottom is a bit much, sometimes you don't look down and see it, and it cuts the bottom of the AI response off". A card is a card; the chat is what is being approved, so it stays readable. |
 | Three hats: plan, build, review. The top bar, the rack and `Tab` lose the test hat (R-TOP-01, §5, R-INST-04, R-INST-05) | The test hat's one distinction, never writing the project, was what made it fail in use, and it fit only a product with an address. `run_project` moved to the build and review hats. See `DECISIONS.md`, 2026-10-03. |
+
+On 2026-10-10 the user, after showing the screen to a few people who each said it "looks
+like a toy", asked for a pass that makes it read as a tool. The product's hats stay; the
+screen stops performing them:
+
+| Change | Why |
+| --- | --- |
+| The watermark is off unless `[ui] watermark = true` (R-MARK-08) | A mascot in the work area is the strongest "toy" signal there is, and in the README's own screenshot it read as a smear, not a hat. The drawing is kept for anyone who asks for it. |
+| The hat that is on is the one colored thing. Other hats' marks in the top bar and the rack are the body color, a folded turn's dot is dim, and the model's name in the transcript is neutral (R-TOP-03, R-RACK-03, R-COLOR-03) | Four hat colors on every row of the bar, the rack and the transcript, on top of green, red and amber, made the screen a dashboard. The principle was already "one accent"; the screen now keeps it. |
+| Transcript rows are led by space, not dots: a folded turn ends in what it came to without its time and cost, and a tool row shows its time only once it is a second or more (§3.3, the guide) | Dot leaders on every row are decoration, and `0.0s` beside every edit says nothing. The time and the cost are still on the turn's closing line, which `^o` opens. |
+| The prompt's placeholder is the hat's question alone (R-COMP-03) | The `Tab` stops were on the hint bar directly beneath it. Help said twice, always, reads as a tutorial. |
+| The rack is headed `HATS`, a hat with no turns says `no turns yet`, and a check count of zero is not a row (R-RACK-01, R-RACK-05, §5.3) | "Hat rack" and "not worn yet" are the metaphor as copy. Rows of zeros are instruments that say nothing. |
+| The `PULSE` card is shown only while a turn runs, as the last card (R-INST-10) | A sparkline that reads `idle` most of the day is a prop. Last, so nothing above it moves when it comes and goes. |
+
+The HTML gallery test (`RYTER_HTML_DIR=<dir> cargo test -p ryter-tui html_gallery`) renders
+the solo screen with its colors, which the text snapshots leave out, for looking at a pass
+like this one beside what it changed.

@@ -31,6 +31,8 @@ pub struct HatTotals {
     /// What the latest audit left in the tree: `Some(0)` changed nothing,
     /// `Some(n)` had n files put back; `None` before any audit.
     pub last_restored: Option<u32>,
+    /// The verdict the latest audit ended in; `None` before any.
+    pub last_verdict: Option<bool>,
 }
 
 /// The four hats' totals.
@@ -49,6 +51,9 @@ pub struct Rack {
     /// This turn's audit was counted from its `Audited` event; the
     /// `Reviewed` that `/audit` adds after it is the same verdict.
     audited: bool,
+    /// The hat each turn started in, oldest first: the session's shape,
+    /// for the sidebar's row of dots.
+    turn_hats: Vec<Role>,
 }
 
 impl Rack {
@@ -76,10 +81,17 @@ impl Rack {
         self.of(role).turns > 0
     }
 
+    /// The hat of each turn this session, oldest first. A hat put on
+    /// mid-turn that did something counts as a turn of its own here too.
+    pub fn turn_hats(&self) -> &[Role] {
+        &self.turn_hats
+    }
+
     /// A hat put on mid-turn has started to work: that is a turn of its.
     fn step(&mut self) {
         if let Some(role) = self.switched.take() {
             self.of_mut(role).turns += 1;
+            self.turn_hats.push(role);
         }
     }
 
@@ -91,6 +103,7 @@ impl Rack {
                 self.switched = None;
                 self.audited = false;
                 self.of_mut(*role).turns += 1;
+                self.turn_hats.push(*role);
             }
             AgentEvent::ModeChanged { role } => {
                 if self.hat != Some(*role) {
@@ -126,11 +139,16 @@ impl Rack {
                 }
             }
             // An old log's reviews; a new audit is counted from `Audited`.
-            AgentEvent::Reviewed { verdict, .. } if !self.audited => match verdict {
-                Some(true) => self.review.verdicts_passed += 1,
-                Some(false) => self.review.verdicts_failed += 1,
-                None => {}
-            },
+            AgentEvent::Reviewed { verdict, .. } if !self.audited => {
+                match verdict {
+                    Some(true) => self.review.verdicts_passed += 1,
+                    Some(false) => self.review.verdicts_failed += 1,
+                    None => {}
+                }
+                if verdict.is_some() {
+                    self.review.last_verdict = *verdict;
+                }
+            }
             AgentEvent::Audited {
                 verdict, restored, ..
             } => {
@@ -139,6 +157,9 @@ impl Rack {
                     Some(true) => self.review.verdicts_passed += 1,
                     Some(false) => self.review.verdicts_failed += 1,
                     None => {}
+                }
+                if verdict.is_some() {
+                    self.review.last_verdict = *verdict;
                 }
                 self.review.last_restored = Some(restored.len() as u32);
             }

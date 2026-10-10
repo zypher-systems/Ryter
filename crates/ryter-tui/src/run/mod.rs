@@ -285,12 +285,10 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         view.set_mode(hat);
         view.agent_hat = hat;
     }
-    if !resumed {
-        view.system(format!(
-            "starting in the {hat} hat · Tab to change it · /help for keys",
-            hat = view.mode
-        ));
-    }
+    // A session that opens in a specialist's hat (`[ui] start_hat`,
+    // `--hat`, or resumed there) opens on its line, as choosing the hat
+    // does (`R-COMP-18`).
+    view.open_composer_on(view.mode);
     for w in cfg.warnings.clone() {
         view.warn(w);
     }
@@ -460,9 +458,14 @@ fn populate_view(
     opts: &TuiOpts,
 ) {
     view.ui = cfg.ui.clone();
-    // `[ui] panel`: the info cards on the classic screen, the rail on the
-    // ledger's solo screen. ^b shows and hides either.
+    // `[ui] panel`: the info cards on the classic screen, the sidebar on
+    // the ledger's solo screen. ^b shows and hides either.
     view.panel_visible = cfg.ui.panel;
+    // How many earlier sessions this project has, for the opening screen:
+    // the one just created is not one to go back to.
+    view.sessions_count = Session::list(home, cwd).map_or(0, |v| {
+        v.iter().filter(|s| s.meta.id != session.meta.id).count()
+    });
     view.activity = crate::activity::Activity::new(ActivityMode::parse(&cfg.ui.reasoning));
     view.username = resolve_username(
         &cfg.ui.username,
@@ -743,6 +746,7 @@ fn loop_ui(
                 Event::Key(_) => Action::None,
                 Event::Paste(text) => {
                     on_paste(view, &text);
+                    view.note_composer_edited();
                     Action::None
                 }
                 Event::Mouse(m) => on_mouse(view, m, &hit),
@@ -992,6 +996,17 @@ fn drain_user_prompts(
         events::apply(view, ev);
     }
     let ask = ask_for(&req);
+    // What the question is about, for the sidebar's row under the verb:
+    // a card's own words for what it asks.
+    let mut about = match &req {
+        UserRequest::Permission { .. } => String::new(),
+        UserRequest::Plan { title, .. } => title.clone(),
+        UserRequest::Run { note, .. } => note.clone().unwrap_or_default(),
+        UserRequest::Question {
+            title, question, ..
+        } => title.clone().unwrap_or_else(|| question.clone()),
+        UserRequest::Password { prompt, .. } => prompt.clone(),
+    };
     match req {
         UserRequest::Permission {
             tool,
@@ -1006,14 +1021,14 @@ fn drain_user_prompts(
             cx.perm_reply = Some(reply);
             let why = view.last_words();
             let opened = view.now_ms;
-            view.panels.push(Box::new(
-                PermissionModal::new(tool, summary)
-                    .with_preview(preview)
-                    .with_answers(strict, scope)
-                    .showing_whole(whole)
-                    .asking(asks)
-                    .with_context(why, opened),
-            ));
+            let card = PermissionModal::new(tool, summary)
+                .with_preview(preview)
+                .with_answers(strict, scope)
+                .showing_whole(whole)
+                .asking(asks)
+                .with_context(why, opened);
+            about = card.what();
+            view.panels.push(Box::new(card));
         }
         UserRequest::Plan { title, plan, reply } => {
             cx.plan_reply = Some(reply);
@@ -1055,7 +1070,7 @@ fn drain_user_prompts(
     }
     panel::sync_composer(view);
     if view.activity.busy() {
-        view.activity.note_ask(ask);
+        view.activity.note_ask_about(ask, &about);
     }
     cx.bells += bells_for(view.ui.bell);
     true

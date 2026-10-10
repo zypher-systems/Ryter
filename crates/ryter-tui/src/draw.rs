@@ -5,7 +5,6 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
-use ryter_core::Role;
 
 use crate::chat::{layout, wrap};
 use crate::composer::Mode as ComposerMode;
@@ -215,20 +214,15 @@ fn status_hit(area: Rect, cf: &layout::ChatFrame) -> Rect {
     }
 }
 
-/// Where the conversation's column sits on the rack screen at `width ×
+/// Where the conversation's column sits on the solo screen at `width ×
 /// height`: its left edge and its width, as `draw_solo` lays it out. For
 /// tests of what is placed within it.
 #[cfg(test)]
 pub fn chat_column(view: &View, theme: Theme, width: u16, height: u16) -> (u16, u16) {
-    let tier = crate::rail::tier(width);
-    let narrow = tier == crate::rail::Tier::Narrow;
-    let gap = u16::from(height >= 24);
-    let rule_h = u16::from(!narrow);
-    let body_h = height.saturating_sub(1 + rule_h + gap + 1);
-    let (rack_w, inst_w) = side_columns(view, theme, width, body_h);
-    let main_w = width.saturating_sub(rack_w + inst_w);
+    let side_w = sidebar_width(view, theme, width, body_height(height));
+    let main_w = width.saturating_sub(side_w);
     let col_w = main_w.saturating_sub(4).min(LEDGER_COLUMN);
-    let col_x = rack_w + (main_w.saturating_sub(col_w + 1)) / 2;
+    let col_x = (main_w.saturating_sub(col_w + 1)) / 2;
     (col_x, col_w)
 }
 
@@ -332,102 +326,86 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     }
 }
 
-/// The side columns a screen has: the rack's width and the instruments'.
-/// Both give way to the conversation: the rack first, as the screen
-/// narrows or shortens, then the instruments. `^b` hides them.
-pub fn side_columns(view: &View, theme: Theme, width: u16, body_h: u16) -> (u16, u16) {
-    use crate::rail::Tier;
+/// Rows the solo screen's body has on a screen `height` tall: the keys
+/// take the last row, and from 24 rows up a blank row sits above them.
+/// The sidebar runs the body's height.
+pub fn body_height(height: u16) -> u16 {
+    let gap = u16::from(height >= 24);
+    height.saturating_sub(gap + 1)
+}
+
+/// Whether a screen `width` by `height` holds the sidebar beside the
+/// conversation at all: wide enough, and tall enough for the column with
+/// every cut made. Where it doesn't, the sidebar is folded away and `^b`
+/// opens it as a panel (`R-LAYOUT-05`, `R-LAYOUT-06`). The count of rows
+/// does not depend on the theme.
+pub fn sidebar_fits(view: &View, width: u16, height: u16) -> bool {
+    crate::sidebar::tier(width) == crate::sidebar::Tier::Sidebar
+        && crate::sidebar::fits(view, Theme::truecolor_dark(), body_height(height))
+}
+
+/// Columns the sidebar takes beside the conversation: its width, or none
+/// on a screen too narrow or too short for it, or with it hidden by `^b`.
+pub fn sidebar_width(view: &View, theme: Theme, width: u16, body_h: u16) -> u16 {
     if !view.panel_visible {
-        return (0, 0);
+        return 0;
     }
-    match crate::rail::tier(width) {
-        Tier::Wide if crate::rail::fits(view, theme, body_h) => {
-            (crate::rail::RACK_W, crate::instruments::WIDE_W)
+    match crate::sidebar::tier(width) {
+        crate::sidebar::Tier::Sidebar if crate::sidebar::fits(view, theme, body_h) => {
+            crate::sidebar::WIDTH
         }
-        Tier::Wide => (0, crate::instruments::WIDE_W),
-        Tier::Mid => (0, crate::instruments::MID_W),
-        Tier::Narrow => (0, 0),
+        _ => 0,
     }
 }
 
-/// The solo screen (`docs/hat-rack-design.md`): a bar naming the four
-/// hats; the hat rack, the conversation and the instruments side by side;
-/// the prompt under a rule in the hat's color; and the keys at the foot.
-/// The hat on sets the one accent, and a fedora in that color sits behind
-/// the conversation.
+/// The solo screen (`docs/sidebar-design.md`): the conversation with the
+/// sidebar beside it, the prompt under a rule in the hat's color, and
+/// the keys at the foot. No bar across the top: the name, the session and
+/// where this is are the sidebar's first rows.
 fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     let full = frame.area();
-    let tier = crate::rail::tier(full.width);
-    let narrow = tier == crate::rail::Tier::Narrow;
+    // Where the sidebar is folded away, too narrow or too short for it, the
+    // foot is the status line, so its facts are still on screen.
+    let narrow = !sidebar_fits(view, full.width, full.height);
     // A blank row between the prompt and the keys, where there is height
     // for it.
     let gap = u16::from(full.height >= 24);
-    let rule_h = u16::from(!narrow);
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
-            Constraint::Length(rule_h),
             Constraint::Min(4),
             Constraint::Length(gap),
             Constraint::Length(1),
         ])
         .split(full);
-    let (top, rule, body, foot) = (rows[0], rows[1], rows[2], rows[4]);
-    // The side columns run the body's height, the prompt included: the
-    // prompt is the conversation's, the width of its column.
-    let (rack_w, inst_w) = side_columns(view, theme, full.width, body.height);
-    draw_top_bar(frame, top, view, theme, rack_w == 0);
-    if rule_h > 0 {
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                "─".repeat(usize::from(rule.width)),
-                Style::default().fg(theme.rule).bg(theme.bg),
-            ))),
-            rule,
-        );
-    }
+    let (body, foot) = (rows[0], rows[2]);
+    // The sidebar runs the body's height, the prompt included: the prompt
+    // is the conversation's, the width of its column.
+    let side_w = sidebar_width(view, theme, full.width, body.height);
     let main = Rect {
-        x: body.x + rack_w,
-        width: body.width.saturating_sub(rack_w + inst_w),
+        width: body.width.saturating_sub(side_w),
         ..body
     };
     // A popout wider than the conversation's column takes the whole body,
-    // and the side columns are left out from under it: half a column
-    // showing past a panel's edge reads as a broken screen. One that fits
-    // (a plan to approve, a permission) leaves them in sight.
+    // and the sidebar is left out from under it: half a column showing
+    // past a panel's edge reads as a broken screen. One that fits (a plan
+    // to approve, a permission) leaves it in sight.
     let panel_owns_body = view
         .panels
         .stack
         .iter()
         .any(|p| !p.docked() && p.size(view).0 > main.width);
-    let (rack_w, inst_w) = if panel_owns_body {
-        (0, 0)
-    } else {
-        (rack_w, inst_w)
-    };
-    if rack_w > 0 {
-        crate::rail::draw(
+    let side_w = if panel_owns_body { 0 } else { side_w };
+    if side_w > 0 {
+        crate::sidebar::draw(
             frame,
             Rect {
-                width: rack_w,
+                x: body.x + body.width - side_w,
+                width: side_w,
                 ..body
             },
             view,
             theme,
-        );
-    }
-    if inst_w > 0 {
-        crate::instruments::draw(
-            frame,
-            Rect {
-                x: body.x + body.width - inst_w,
-                width: inst_w,
-                ..body
-            },
-            view,
-            theme,
-            tier != crate::rail::Tier::Wide,
         );
     }
     let comp_h =
@@ -457,11 +435,18 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         .split(main);
     let comp = parts[3];
     let slot = (prompt_h > 0).then(|| column(parts[1]));
-    let chat = column(parts[0]);
-    let cf = draw_chat(frame, chat, view, theme);
-    if view.ui.watermark {
-        crate::watermark::draw(frame, parts[0], view.mode, theme);
+    let mut chat = column(parts[0]);
+    // Before the first turn, the opening block (`R-OPEN-*`) heads the
+    // column and the conversation starts under it.
+    if !view.has_turns() {
+        let used = draw_opening(frame, chat, view, theme);
+        chat = Rect {
+            y: chat.y + used,
+            height: chat.height.saturating_sub(used),
+            ..chat
+        };
     }
+    let cf = draw_chat(frame, chat, view, theme);
     if view.panels.is_empty() {
         // The gutter runs beside the chat, the rows the thumb measures.
         let gutter = Rect {
@@ -499,147 +484,135 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     }
 }
 
-/// The bar across the top (`docs/hat-rack-design.md` §4): the name, then
-/// the four hats in the order `Tab` goes round them, then where this is.
-/// It says which hats have been worn, not an order to wear them in: no
-/// arrows, steps or ticks. `counts` adds each worn hat's turns, for when
-/// the rack isn't on screen to say them.
-fn draw_top_bar(frame: &mut Frame, area: Rect, view: &View, theme: Theme, counts: bool) {
+/// The opening block (`docs/sidebar-design.md` §5): what a session with
+/// no turn shows at the head of the conversation. The name, where this
+/// is, each hat and the key that reaches it, how to resume. Drawn, not
+/// sent: it is not a turn and is gone once there is one. Returns the rows
+/// it took.
+fn draw_opening(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> u16 {
+    use ryter_core::role::Row;
     let w = usize::from(area.width);
-    let bg = theme.panel_bg;
+    if w < 40 || area.height < 8 {
+        return 0;
+    }
+    let bg = theme.bg;
     let dim = Style::default().fg(theme.dim).bg(bg);
     let body = Style::default().fg(theme.fg).bg(bg);
-    let gap = if w >= 100 { "   " } else { "  " };
-    let mut left = vec![
-        Span::styled(" RYTER", body.add_modifier(Modifier::BOLD)),
-        Span::styled(" │ ", Style::default().fg(theme.faint).bg(bg)),
+    let bold = body.add_modifier(Modifier::BOLD);
+    let folder = std::path::Path::new(&view.cwd)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| view.cwd.clone());
+    let changes = match &view.uncommitted {
+        None => "no repository here".to_string(),
+        Some(f) if f.is_empty() => "nothing uncommitted".to_string(),
+        Some(f) => format!(
+            "{} file{} uncommitted",
+            f.len(),
+            if f.len() == 1 { "" } else { "s" }
+        ),
+    };
+    let mut first = vec![
+        Span::styled("  RYTER", bold),
+        Span::styled(format!("  ·  {folder}"), dim),
     ];
-    // The two rows of the rack, a dot between them. Narrower, the row the
-    // user is not in folds to its name and how many of its hats were worn;
-    // narrower still, only the row the user is in.
-    let row_of = |hats: &[Role]| hats.contains(&view.mode);
-    let fold = |hats: &[Role], name: &str| -> Vec<Span<'static>> {
-        let worn = hats.iter().filter(|h| view.rack.worn(**h)).count();
-        let mut v = vec![Span::styled(name.to_string(), dim)];
-        if worn > 0 {
-            v.push(Span::styled(format!(" ·{worn}"), dim));
+    if let Some(b) = &view.git_branch {
+        first.push(Span::styled(format!("  ·  {b}"), dim));
+    }
+    first.push(Span::styled(format!("  ·  {changes}"), dim));
+    // The hat on carries `◆ on`; the others the key that reaches them.
+    let on = view.mode;
+    let key_to = |row: Row| -> String {
+        if row == on.row() {
+            "tab".into()
+        } else {
+            "⇧tab".into()
+        }
+    };
+    let hat_line = |hat: ryter_core::Role| -> Line<'static> {
+        let color = Style::default().fg(theme.mode(hat)).bg(bg);
+        let name = format!("  {:<9}", crate::sidebar::hat_name(hat));
+        let left = vec![
+            Span::styled(
+                name,
+                if hat == on {
+                    color.add_modifier(Modifier::BOLD)
+                } else {
+                    color
+                },
+            ),
+            Span::styled(hat.describe().to_string(), dim),
+        ];
+        let right = if hat == on {
+            vec![
+                Span::styled("◆ on".to_string(), color),
+                Span::styled("      ", dim),
+            ]
+        } else {
+            vec![
+                Span::styled(key_to(hat.row()), bold),
+                Span::styled("      ", dim),
+            ]
+        };
+        crate::sidebar::ends(left, right, w, bg)
+    };
+    let specialists: Vec<Span<'static>> = {
+        let n = crate::sidebar::SPECIALISTS.len();
+        let mut v = vec![Span::styled(format!("  {n} specialists: "), dim)];
+        for (i, hat) in crate::sidebar::SPECIALISTS.iter().enumerate() {
+            if i > 0 {
+                v.push(Span::styled(" · ", dim));
+            }
+            v.push(Span::styled(
+                hat.as_str().to_string(),
+                Style::default().fg(theme.mode(*hat)).bg(bg),
+            ));
         }
         v
     };
-    let primary: &[Role] = &crate::rail::PRIMARY;
-    let specialists: &[Role] = &crate::rail::SPECIALISTS;
-    let in_primary = row_of(primary);
-    let (shown, folded): (Vec<Role>, Option<Vec<Span<'static>>>) =
-        if w >= usize::from(crate::rail::BOTH_MIN) {
-            (crate::rail::HATS.to_vec(), None)
-        } else if w >= usize::from(crate::rail::INSTRUMENTS_MIN) {
-            if in_primary {
-                (
-                    primary.to_vec(),
-                    Some(fold(specialists, crate::rail::SEPARATOR_LABEL)),
-                )
-            } else {
-                (specialists.to_vec(), Some(fold(primary, "plan · build")))
-            }
-        } else if in_primary {
-            (primary.to_vec(), None)
-        } else {
-            (specialists.to_vec(), None)
-        };
-    let dot = Span::styled(
-        format!("{gap}·{gap}"),
-        Style::default().fg(theme.faint).bg(bg),
-    );
-    for (i, hat) in shown.iter().copied().enumerate() {
-        if i > 0 && shown[i - 1].row() != hat.row() {
-            left.push(dot.clone());
-        } else if i > 0 {
-            left.push(Span::styled(gap, dim));
-        }
-        let name = crate::rail::hat_name(hat);
-        // The hat that is on spins while its model works.
-        let mark = if view.mode == hat && view.busy {
-            crate::activity::SPINNER[view.activity.frame % crate::activity::SPINNER.len()]
-        } else {
-            crate::rail::hat_mark(view, hat)
-        };
-        let turns = view.rack.of(hat).turns;
-        let count = if counts && turns > 0 {
-            format!(" {turns}")
-        } else {
-            String::new()
-        };
-        let color = theme.mode(hat);
-        if view.mode == hat {
-            left.push(Span::styled(
-                format!(" {mark} {name}{count} "),
-                theme.chip(color),
-            ));
-        } else if view.rack.worn(hat) {
-            left.push(Span::styled(
-                format!("{mark} "),
-                Style::default().fg(color).bg(bg),
-            ));
-            left.push(Span::styled(name, body));
-            left.push(Span::styled(count, dim));
-        } else {
-            left.push(Span::styled(format!("{mark} {name}"), dim));
-        }
-    }
-    if let Some(other) = folded {
-        if in_primary {
-            left.push(dot.clone());
-            left.extend(other);
-        } else {
-            // The primary row comes first on the bar, folded or not.
-            let mut front = other;
-            front.push(dot.clone());
-            let tail: Vec<Span<'static>> = left.drain(2..).collect();
-            left.extend(front);
-            left.extend(tail);
-        }
-    }
-    let left_w: usize = left.iter().map(|s| wrap::width(&s.content)).sum();
-    // Where this is: the folder and the branch, less of it as the screen
-    // narrows.
-    let folder = if w >= usize::from(crate::rail::BOTH_MIN) {
-        view.cwd.clone()
-    } else if w >= usize::from(crate::rail::INSTRUMENTS_MIN) {
-        std::path::Path::new(&view.cwd)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| view.cwd.clone())
+    let spec_right = if on.row() == Row::Specialist {
+        vec![
+            Span::styled(
+                "◆ on".to_string(),
+                Style::default().fg(theme.mode(on)).bg(bg),
+            ),
+            Span::styled("      ", dim),
+        ]
     } else {
-        String::new()
+        vec![
+            Span::styled("⇧tab".to_string(), bold),
+            Span::styled("      ", dim),
+        ]
     };
-    let place = match (&view.git_branch, folder.is_empty()) {
-        (Some(b), false) => format!("{folder} · {b}"),
-        (Some(b), true) => b.clone(),
-        (None, _) => folder,
-    };
-    // A long path keeps its end, and leaves the bar to the hats.
-    let place = crate::rail::tail(&place, w.saturating_sub(left_w + 3).min(48));
-    let place_w = wrap::width(&place) + 1;
-    let mut spans = left;
-    let middle = w.saturating_sub(left_w + place_w);
-    // The session's title in the room between, where there is some.
-    let title = view.session_title.trim();
-    if w >= 100 && !title.is_empty() && middle > 16 {
-        let t = wrap::truncate(title, middle - 6);
-        let tw = wrap::width(&t);
-        let lpad = (middle - tw) / 2;
-        spans.push(Span::styled(" ".repeat(lpad), dim));
-        spans.push(Span::styled(t, dim));
-        spans.push(Span::styled(" ".repeat(middle - tw - lpad), dim));
+    let resume = if view.sessions_count > 0 {
+        vec![
+            Span::styled("  ", dim),
+            Span::styled("/sessions", bold),
+            Span::styled(format!(" to resume one of {} · ", view.sessions_count), dim),
+            Span::styled("/help", bold),
+            Span::styled(" for keys", dim),
+        ]
     } else {
-        spans.push(Span::styled(" ".repeat(middle), dim));
-    }
-    spans.push(Span::styled(place, dim));
-    spans.push(Span::styled(" ", dim));
+        vec![
+            Span::styled("  ", dim),
+            Span::styled("/help", bold),
+            Span::styled(" for keys", dim),
+        ]
+    };
+    let mut lines = vec![Line::from(""), Line::from(first), Line::from("")];
+    lines.extend(crate::sidebar::PRIMARY.into_iter().map(hat_line));
+    lines.push(crate::sidebar::ends(specialists, spec_right, w, bg));
+    lines.push(Line::from(""));
+    lines.push(Line::from(resume));
+    let rows = lines.len() as u16;
     frame.render_widget(
-        Paragraph::new(Line::from(spans)).style(Style::default().bg(bg)),
-        area,
+        Paragraph::new(lines).style(Style::default().bg(bg)),
+        Rect {
+            height: rows.min(area.height),
+            ..area
+        },
     );
+    rows
 }
 
 /// The keys that matter now, as ranked hints: an open panel's own, or the
@@ -760,7 +733,7 @@ fn esc_does(keys: &[(String, String, Hint)]) -> String {
 }
 
 fn draw_keys(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
-    let bg = theme.panel_bg;
+    let bg = theme.bg;
     // A question's keys are in the warn color, where the eye lands when
     // the card above has not been seen; the ways out stay dim after them.
     let asking = view
@@ -791,36 +764,37 @@ fn draw_keys(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     );
 }
 
-/// The foot of a screen too narrow for the instruments: the model, how
-/// full its context is, what the session has cost and the budget, then as
-/// many keys as fit. The project's cost is in the `^b` panel.
+/// The foot of a screen too narrow for the sidebar: the hat, its model,
+/// how full the context is, what the session has cost against its cap,
+/// then as many keys as fit. The rest is in the `^b` panel.
 fn draw_status_line(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let w = usize::from(area.width);
-    let bg = theme.panel_bg;
+    let bg = theme.bg;
     let on = |fg| Style::default().fg(fg).bg(bg);
     let frac = view.ctx_frac();
     const CELLS: usize = 8;
     let filled = ((frac * CELLS as f64).round() as usize).min(CELLS);
-    let (session, color) = crate::instruments::session_spend(view, theme);
+    let (session, color) = crate::sidebar::session_spend(view, theme);
     let model = wrap::truncate(
-        crate::chat::short_model(crate::rail::hat_model(view, view.mode)),
+        crate::chat::short_model(crate::sidebar::hat_model(view, view.mode)),
         16,
     );
     let mut left = vec![
-        Span::styled(format!(" {model}"), on(theme.mode(view.mode))),
-        Span::styled("  ctx ", on(theme.dim)),
+        Span::styled(
+            format!(" {}", crate::sidebar::hat_name(view.mode)),
+            on(theme.mode(view.mode)).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!(" · {model}"), on(theme.dim)),
+        Span::styled("  ", on(theme.dim)),
         Span::styled(
             "━".repeat(filled),
-            on(crate::instruments::gauge_color(view, theme)),
+            on(crate::sidebar::gauge_color(view, theme)),
         ),
         Span::styled("─".repeat(CELLS - filled), on(theme.rule)),
         Span::styled(format!(" {}%", (frac * 100.0).round() as u32), on(theme.fg)),
-        Span::styled(" │ ", on(theme.faint)),
+        Span::styled("  ", on(theme.dim)),
         Span::styled(session, on(color)),
-        Span::styled(
-            format!(" · budget {}", crate::instruments::budget(view)),
-            on(theme.dim),
-        ),
+        Span::styled(format!(" · {}", crate::sidebar::cap(view)), on(theme.dim)),
     ];
     let left_w: usize = left.iter().map(|s| wrap::width(&s.content)).sum();
     // The keys take what is left; cancel and quit are never dropped, so on
@@ -1320,9 +1294,15 @@ pub fn hints_ranked(view: &View) -> Vec<(String, String, Hint)> {
             let rank = match k.as_str() {
                 // Getting out: cancel, quit, and the permission answers.
                 "^c" | "esc" | "^d" | "y" | "n" | "a" | "⏎" => Hint::Essential,
-                // The only way to the hat rack on a screen that has folded
+                // The only way to the sidebar on a screen that has folded
                 // it away.
-                "^b" if l == "hat rack" => Hint::Essential,
+                "^b" if l == "sidebar" && {
+                    let (w, h) = view.screen.get();
+                    !sidebar_fits(view, w, h)
+                } =>
+                {
+                    Hint::Essential
+                }
                 // The lanes' reasoning switch is on the board alone.
                 "^r" if l.ends_with(" reasoning") => Hint::Useful,
                 // Discoverable without the bar, so first to go.
@@ -1346,7 +1326,7 @@ pub fn hints(view: &View) -> Vec<(String, String)> {
 /// the primary row, `plan · build` from the specialists.
 pub fn other_row_label(view: &View) -> String {
     match view.mode.row() {
-        ryter_core::role::Row::Primary => crate::rail::SEPARATOR_LABEL.to_string(),
+        ryter_core::role::Row::Primary => crate::sidebar::SEPARATOR_LABEL.to_string(),
         ryter_core::role::Row::Specialist => "plan · build".to_string(),
     }
 }
@@ -1393,14 +1373,12 @@ fn hints_static(view: &View) -> Vec<(&'static str, String)> {
         v.push(("^r", "reasoning".into()));
     }
     // `^b` shows and hides the info panel on the classic screen and the
-    // side columns on the solo one; on a screen too narrow to hold both
-    // columns it opens them as a panel.
+    // sidebar on the solo one; on a screen too narrow to hold the sidebar
+    // it opens it as a panel.
     if view.ui.classic() {
         v.push(("^b", "panel".into()));
-    } else if view.screen.get().0 >= crate::rail::BOTH_MIN {
-        v.push(("^b", "panels".into()));
     } else {
-        v.push(("^b", "hat rack".into()));
+        v.push(("^b", "sidebar".into()));
     }
     if view.busy {
         v.push(("esc", "cancel".into()));

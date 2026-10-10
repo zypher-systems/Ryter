@@ -229,10 +229,9 @@ impl Message {
     pub fn accent(&self, theme: Theme) -> Color {
         match &self.kind {
             MessageKind::User => theme.user,
-            // In the color of the hat it spoke in, where that is known.
-            MessageKind::Assistant { .. } => {
-                self.meta.hat.map_or(theme.assistant, |h| theme.mode(h))
-            }
+            // Neutral under every hat: the hat that is on is the screen's
+            // one accent, and the conversation keeps out of it.
+            MessageKind::Assistant { .. } => theme.assistant,
             MessageKind::Tool { status, .. } => match status {
                 ToolStatus::Error => theme.error,
                 _ => theme.tool,
@@ -510,8 +509,8 @@ fn header_row(msg: &Message, opts: &RenderOpts, theme: Theme, width: usize) -> L
 
 /// A header on the ledger. The gutter holds the time and the mark (`●`, `◆`,
 /// `├─`), so a user header is just the name, a model header its name and
-/// cost, and a tool row `edit   src/config.rs ········ +9 −1`: the verb in a
-/// fixed column, then what it touched, led by dots to what came of it.
+/// cost, and a tool row `edit   src/config.rs          +9 −1`: the verb in a
+/// fixed column, then what it touched, and what came of it at the row's end.
 fn ledger_header(msg: &Message, opts: &RenderOpts, theme: Theme, width: usize) -> Line<'static> {
     let accent = msg.accent(theme);
     let bold = Style::default()
@@ -525,7 +524,16 @@ fn ledger_header(msg: &Message, opts: &RenderOpts, theme: Theme, width: usize) -
                 _ => theme.muted(),
             };
             let verb = format!("{:<7}", wrap::truncate(name, 7));
-            let meta = msg.meta_text(false);
+            // What came of it, and how long it took when that was long
+            // enough to notice: `0.0s` on every edit says nothing.
+            let mut meta: Vec<String> = Vec::new();
+            if let Some(d) = msg.meta.detail.as_ref().filter(|d| !d.is_empty()) {
+                meta.push(d.clone());
+            }
+            if let Some(ms) = msg.meta.duration_ms.filter(|ms| *ms >= 1000) {
+                meta.push(fmt_duration(ms));
+            }
+            let meta = meta.join("  ");
             let meta_w = wrap::width(&meta);
             // The label repeats the verb (`read src/a.rs`); the column shows it.
             let label = msg.meta.label.clone().unwrap_or_default();
@@ -542,10 +550,9 @@ fn ledger_header(msg: &Message, opts: &RenderOpts, theme: Theme, width: usize) -
                 Span::styled(label, theme.body()),
             ];
             if meta_w > 0 && used + meta_w + 2 <= width {
-                let dots = width - used - meta_w - 2;
                 spans.push(Span::styled(
-                    format!(" {} ", "·".repeat(dots)),
-                    theme.muted(),
+                    " ".repeat(width - used - meta_w),
+                    theme.body(),
                 ));
                 let meta_style = if meta.starts_with('✓') {
                     theme.on_bg(theme.success)

@@ -1,31 +1,31 @@
- RYTER │ ○ PLAN    ⠼ BUILD    ·   specialists                                                       ryter · 0.2.0-patch
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-         │                                                                                │
-         │  1. wire the loop                                                              │ MODEL
-         │  2. write tests                                                                │ build              grok-4.6
+         │                                                                                │ RYTER
+         │  1. wire the loop                                                              │ new session
+         │  2. write tests                                                                │ ryter · 0.2.0-patch
                                                                                           │
-         ●  dusty                                                                         │ CONTEXT
-         │  now implement step one                                                        │ ━─────────────────────── 5%
-         │                                                                                │ 12k / 256k tokens
-         ├─ read   crates/ryter-tui/src/run/mod.rs                                        │
-         │                     ▄                          ▄                               │ PULSE
-         ◆  grok-4.6                                                                      │ ▁▁▁▁▁▁▁█           18 tok/s
+         ●  dusty                                                                         │ hats
+         │  now implement step one                                                        │   plan
+         │                                                                                │ ⠼ build
+         ├─ read   crates/ryter-tui/src/run/mod.rs                                        │   ──────────── specialists
+         │                                                                                │   audit
+         ◆  grok-4.6                                                                      │   scribe
          │  Reading the loop now. The event loop drains reply line 0 reply line 1         │
-         │  reply line 2 reply line 3 reply line 4 reply line 5 reply line 6 reply        │ SPEND
-         │  line 7                                                                        │ session                  $0
-         │  ⠼ waiting for you · run? · 0:12 · 85 tokens                                   │ budget                  off
+         │  reply line 2 reply line 3 reply line 4 reply line 5 reply line 6 reply        │ now
+         │  line 7                                                                        │   grok-4.6
+         │  ⠼ waiting for you · run? · 0:12 · 85 tokens                                   │   waiting for you · run?
+                                                                                          │   run?
                                                                                           │
-                                                                                          │ GUARD
-                                                                                          │ sandbox                 off
-                   ▄▄▄▄▄▄▄                                      ▄▄▄▄▄▄▄                   │ this hat         asks first
-             ▄▄                                                            ▄▄             │ plan.md                none
-             ▀                                                              ▀             │ audit.md               none
-                 ▀▀▀▀▀▀                                            ▀▀▀▀▀▀                 │
-                               ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                               │ CHANGES
-                                                                                          │ no repository here
+                                                                                          │ context
+                                                                                          │   ━───────────────────   5%
+                                                                                          │   12k of 256k
+                                                                                          │
+                                                                                          │ spend
+                                                                                          │   session    $0  no cap
+                                                                                          │
+                                                                                          │ changes
+                                                                                          │   no repository here
    ┏━ how this project runs ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓     │
-   │ start  docker compose up -d --wait                                             │     │
-   │ ready  http://localhost:8000/healthz                                           │     │
+   │ start  docker compose up -d --wait                                             │     │ permissions
+   │ ready  http://localhost:8000/healthz                                           │     │   asks first · sandbox off
    │ test   docker compose run --rm web pytest -q                                   │     │
    │ stop   docker compose down                                                     │     │
    │                                                                                │     │
@@ -35,6 +35,6 @@
    │ y approve   e adjust   n reject                                                │     │
    ╰────────────────────────────────────────────────────────────────────────────────╯     │
 ──────────────────────────────────────────────────────────────────────────────────────────│
-  BUILD  › type to queue the next message, / for commands                                 │
+  build  › type to queue the next message, / for commands                                 │
 
  y approve    e adjust    n reject    ↑↓ scroll    esc reject    ^c stop the turn

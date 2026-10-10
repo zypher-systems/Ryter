@@ -195,7 +195,7 @@ impl PermissionModal {
     }
 
     /// `edit app/server.js`, `run cargo test`.
-    fn what(&self) -> String {
+    pub fn what(&self) -> String {
         let target = self
             .asks
             .as_deref()
