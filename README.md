@@ -6,7 +6,7 @@ One model works in your project, with you, and `Tab` switches between its two wo
 
 ![Ryter in the build hat, before the sidebar screen: a screenshot from 0.24.1, owed a new one. The conversation shows a diff of app/server.js and a new test, with the hats and the instruments beside it.](docs/screenshots/build.png)
 
-Linux first. The current release is 0.25.0. Apache-2.0.
+Linux first. The current release is 0.25.1. Apache-2.0.
 
 ## Install
 
