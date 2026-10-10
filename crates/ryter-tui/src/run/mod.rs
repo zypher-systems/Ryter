@@ -285,6 +285,10 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         view.set_mode(hat);
         view.agent_hat = hat;
     }
+    // A session that opens in a specialist's hat (`[ui] start_hat`,
+    // `--hat`, or resumed there) opens on its line, as choosing the hat
+    // does (`R-COMP-18`).
+    view.open_composer_on(view.mode);
     if !resumed {
         view.system(format!(
             "starting in the {hat} hat · Tab to change it · /help for keys",

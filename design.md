@@ -606,6 +606,8 @@ Replaces `draw_composer` and the key handling at `run.rs:933-997`.
   replaced, and the same words typed by hand are the user's (`View::seeded` remembers the
   line Ryter put there). Nothing is put there while a panel owns the composer (`R-COMP-17`)
   or while a follow-up is queued (`R-COMP-16`): the `queued` badge is about that message.
+  A session that opens in a specialist's hat (`[ui] start_hat`, `--hat`, or resumed there)
+  opens on its line the same way.
 
 ### 7.3 Composer as panel input
 

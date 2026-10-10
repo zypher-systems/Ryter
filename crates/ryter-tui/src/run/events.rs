@@ -13,7 +13,9 @@ const TOOL_ERROR_CHARS: usize = 600;
 /// Apply one event to the view and notify open panels.
 /// A turn's closing line on the ledger: `✓ 4 tools · 1 file (1 changed, +9
 /// −1) · 1 command (1 ok) · 12s · $0.004`. Measured by Ryter, not reported by
-/// the model.
+/// the model. A folded turn shows it without the clock and the cost, which
+/// `chat::layout::brief` finds by their shape: a new part shaped like either
+/// (digits and `s` or `:`, or a leading `$`) would be folded away with them.
 fn receipt(view: &mut View, verb: &Verb, tools: u32, duration_ms: u64) -> String {
     let mut parts = vec![match verb {
         Verb::Stopped => "⊘ stopped".to_string(),
