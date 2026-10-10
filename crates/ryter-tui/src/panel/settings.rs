@@ -191,7 +191,7 @@ impl Settings {
             ),
             Field::new("mouse", "mouse", Kind::Toggle(view.ui.mouse))
                 .origin(origin(&view.ui.mouse, &d.mouse)),
-            Field::new("panel", "side columns", Kind::Toggle(view.ui.panel))
+            Field::new("panel", "sidebar", Kind::Toggle(view.ui.panel))
                 .origin(origin(&view.ui.panel, &d.panel)),
             Field::new("bell", "bell on a question", Kind::Toggle(view.ui.bell))
                 .origin(origin(&view.ui.bell, &d.bell)),

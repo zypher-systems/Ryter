@@ -13,12 +13,13 @@ use crate::view::View;
 pub const QUIT_ARM_MS: u64 = 2000;
 
 /// `^b`: the info panel on the classic screen, the sidebar on the solo
-/// one. A screen too narrow to hold the sidebar beside the conversation
-/// opens it as a panel instead, and `^b` again closes it.
+/// one. A screen too narrow or too short to hold the sidebar beside the
+/// conversation opens it as a panel instead, and `^b` again closes it;
+/// the sidebar itself is left to come back when there is room for it.
 fn toggle_side(view: &mut View) {
-    let folded = !view.ui.classic()
-        && view.workbench.is_none()
-        && view.screen.get().0 < crate::sidebar::MIN_SCREEN;
+    let (w, h) = view.screen.get();
+    let folded =
+        !view.ui.classic() && view.workbench.is_none() && !crate::draw::sidebar_fits(view, w, h);
     if !folded {
         view.panel_visible = !view.panel_visible;
         return;

@@ -1646,6 +1646,33 @@ fn ctrl_b_hides_the_sidebar_or_opens_it_as_a_panel() {
         let _ = crate::run_keys_handle(&mut v, ctrl_b);
         assert!(v.panel_visible, "{w}x{h}");
     }
+    // Wide but short: the column does not fit the body even with every
+    // cut made, so it is folded away as it is below 100 columns, `^b`
+    // opens the panel, and the sidebar is left to come back when there is
+    // room for it.
+    for (w, h) in [(120, 24), (100, 20)] {
+        let mut v = racked();
+        let before = render_to_string(&v, w, h);
+        assert!(
+            !before.contains("hats") && before.contains("^b sidebar"),
+            "{w}x{h}:\n{before}"
+        );
+        // Folded by height as by width: the foot is the status line.
+        assert!(
+            before.lines().last().unwrap().contains("$0.065 · no cap"),
+            "{w}x{h}:\n{before}"
+        );
+        let _ = crate::run_keys_handle(&mut v, ctrl_b);
+        assert_eq!(v.panels.kinds(), ["sidebar"], "{w}x{h}");
+        assert!(v.panel_visible, "{w}x{h}: folded, not hidden");
+        assert!(render_to_string(&v, w, h).contains("2 turns"), "{w}x{h}");
+        let _ = crate::run_keys_handle(&mut v, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(v.panels.is_empty(), "{w}x{h}");
+        assert!(
+            render_to_string(&v, w, 40).contains("hats"),
+            "{w}x{h}: taller again"
+        );
+    }
     let (w, h) = (80, 24);
     let mut v = racked();
     let before = render_to_string(&v, w, h);
@@ -2809,6 +2836,23 @@ fn tab_moves_within_a_row_and_shift_tab_between_rows() {
     );
     let _ = crate::run_keys_handle(&mut v, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(v.panels.is_empty() && v.mode == Role::SoloBuild);
+    // `^c` clears the picker too, and the sidebar stops marking the row
+    // it had under the cursor.
+    let _ = panel::open(&mut v, PanelId::Specialists, &env());
+    let _ = crate::run_keys_handle(
+        &mut v,
+        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+    );
+    assert!(v.panels.is_empty());
+    v.ui.layout = "ledger".into();
+    v.panel_visible = true;
+    let theme = Theme::truecolor_dark();
+    let buf = render_buffer(&v, 120, 40, theme);
+    let marked = (0..40u16)
+        .flat_map(|y| (92..120u16).map(move |x| (x, y)))
+        .filter(|&at| buf[at].bg == theme.selection_bg)
+        .count();
+    assert_eq!(marked, 0, "no row is marked once the picker is gone");
     v.set_mode(Role::SoloAudit);
     // The specialists go round: audit, scribe, audit.
     assert!(matches!(

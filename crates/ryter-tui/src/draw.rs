@@ -219,9 +219,7 @@ fn status_hit(area: Rect, cf: &layout::ChatFrame) -> Rect {
 /// tests of what is placed within it.
 #[cfg(test)]
 pub fn chat_column(view: &View, theme: Theme, width: u16, height: u16) -> (u16, u16) {
-    let gap = u16::from(height >= 24);
-    let body_h = height.saturating_sub(gap + 1);
-    let side_w = sidebar_width(view, theme, width, body_h);
+    let side_w = sidebar_width(view, theme, width, body_height(height));
     let main_w = width.saturating_sub(side_w);
     let col_w = main_w.saturating_sub(4).min(LEDGER_COLUMN);
     let col_x = (main_w.saturating_sub(col_w + 1)) / 2;
@@ -328,6 +326,24 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     }
 }
 
+/// Rows the solo screen's body has on a screen `height` tall: the keys
+/// take the last row, and from 24 rows up a blank row sits above them.
+/// The sidebar runs the body's height.
+pub fn body_height(height: u16) -> u16 {
+    let gap = u16::from(height >= 24);
+    height.saturating_sub(gap + 1)
+}
+
+/// Whether a screen `width` by `height` holds the sidebar beside the
+/// conversation at all: wide enough, and tall enough for the column with
+/// every cut made. Where it doesn't, the sidebar is folded away and `^b`
+/// opens it as a panel (`R-LAYOUT-05`, `R-LAYOUT-06`). The count of rows
+/// does not depend on the theme.
+pub fn sidebar_fits(view: &View, width: u16, height: u16) -> bool {
+    crate::sidebar::tier(width) == crate::sidebar::Tier::Sidebar
+        && crate::sidebar::fits(view, Theme::truecolor_dark(), body_height(height))
+}
+
 /// Columns the sidebar takes beside the conversation: its width, or none
 /// on a screen too narrow or too short for it, or with it hidden by `^b`.
 pub fn sidebar_width(view: &View, theme: Theme, width: u16, body_h: u16) -> u16 {
@@ -348,7 +364,9 @@ pub fn sidebar_width(view: &View, theme: Theme, width: u16, body_h: u16) -> u16 
 /// where this is are the sidebar's first rows.
 fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     let full = frame.area();
-    let narrow = crate::sidebar::tier(full.width) == crate::sidebar::Tier::Narrow;
+    // Where the sidebar is folded away, too narrow or too short for it, the
+    // foot is the status line, so its facts are still on screen.
+    let narrow = !sidebar_fits(view, full.width, full.height);
     // A blank row between the prompt and the keys, where there is height
     // for it.
     let gap = u16::from(full.height >= 24);
@@ -1278,7 +1296,11 @@ pub fn hints_ranked(view: &View) -> Vec<(String, String, Hint)> {
                 "^c" | "esc" | "^d" | "y" | "n" | "a" | "⏎" => Hint::Essential,
                 // The only way to the sidebar on a screen that has folded
                 // it away.
-                "^b" if l == "sidebar" && view.screen.get().0 < crate::sidebar::MIN_SCREEN => {
+                "^b" if l == "sidebar" && {
+                    let (w, h) = view.screen.get();
+                    !sidebar_fits(view, w, h)
+                } =>
+                {
                     Hint::Essential
                 }
                 // The lanes' reasoning switch is on the board alone.

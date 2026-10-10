@@ -244,8 +244,10 @@ fn hat_row(view: &View, theme: Theme, hat: Role, bg: Color, w: usize) -> Line<'s
     };
     let dim = Style::default().fg(theme.dim).bg(bg);
     let body = Style::default().fg(theme.fg).bg(bg);
-    // The row under the picker's cursor is marked as the picker marks it.
-    let bg = if view.picker_hover == Some(hat) {
+    // The row under the picker's cursor is marked as the picker marks it,
+    // while the picker is open.
+    let picking = view.panels.top().is_some_and(|p| p.kind() == "specialists");
+    let bg = if picking && view.picker_hover == Some(hat) {
         theme.selection_bg
     } else {
         bg
@@ -471,7 +473,7 @@ fn context(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>>
     ]
 }
 
-fn spend(view: &View, theme: Theme, bg: Color, w: usize, project_row: bool) -> Vec<Line<'static>> {
+fn spend(view: &View, theme: Theme, bg: Color, project_row: bool) -> Vec<Line<'static>> {
     let dim = Style::default().fg(theme.dim).bg(bg);
     let body = Style::default().fg(theme.fg).bg(bg);
     let (session, color) = session_spend(view, theme);
@@ -509,7 +511,6 @@ fn spend(view: &View, theme: Theme, bg: Color, w: usize, project_row: bool) -> V
             ),
         ]));
     }
-    let _ = w;
     lines
 }
 
@@ -615,7 +616,7 @@ fn assemble(view: &View, theme: Theme, w: usize, cuts: &[Cut]) -> Vec<Line<'stat
         hats(view, theme, bg, w, !cut(Cut::TurnsRow)),
         now(view, theme, bg, w, !cut(Cut::NowRate)),
         context(view, theme, bg, w),
-        spend(view, theme, bg, w, !cut(Cut::ProjectRow)),
+        spend(view, theme, bg, !cut(Cut::ProjectRow)),
         changes(view, theme, bg, w, !cut(Cut::FilesList)),
     ];
     if !cut(Cut::Permissions) {
