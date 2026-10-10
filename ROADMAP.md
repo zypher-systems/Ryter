@@ -21,6 +21,8 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 The last release is 0.25.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
+- **After the user's first run on 0.25.0 (in `dev`).** The conversation's column sits at the left and the sidebar grows from 30 to 40 columns with the screen, so a wide terminal no longer has a blank left margin where the rack was; `Shift+Tab` is the direct switch again both ways and the specialists picker is gone, by the user's choice even for three or four specialists. `DECISIONS.md` 2026-10-10 (third entry), `docs/sidebar-design.md` §17.
+
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
 

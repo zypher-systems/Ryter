@@ -1,50 +1,50 @@
-                │                                                                                                                 │ RYTER
-                │  1. wire the loop                                                                                               │ new session
-                │  2. write tests                                                                                                 │ ryter · 0.2.0-patch
-                                                                                                                                  │
-                ●  dusty                                                                                                          │ hats
-                │  now implement step one                                                                                         │   plan
-                │                                                                                                                 │ ⠼ build
-                ├─ read   crates/ryter-tui/src/run/mod.rs                                                                         │   ──────────── specialists
-                │                                                                                                                 │   audit
-                ◆  grok-4.6                                                                                                       │   scribe
-                │  Reading the loop now. The event loop drains reply line 0 reply line 1 reply line 2 reply line 3                │
-                │  reply line 4 reply line 5 reply line 6 reply line 7                                                            │ now
-                │  ⠼ waiting for you · allow? · 0:12 · 85 tokens                                                                  │   grok-4.6
-                                                                                                                                  │   waiting for you · allow?
-                                                                                                                                  │   allow?
-                                                                                                                                  │
-                                                                                                                                  │ context
-                                                                                                                                  │   ━───────────────────   5%
-                                                                                                                                  │   12k of 256k
-                                                                                                                                  │
-                                                                                                                                  │ spend
-                                                                                                                                  │   session    $0  no cap
-                                                                                                                                  │
-                                                                                                                                  │ changes
-                                                                                                                                  │   no repository here
-                                                                                                                                  │
-                                                                                                                                  │ permissions
-                                                                                                                                  │   asks first · sandbox off
-                                                                                                                                  │
-                                                                                                                                  │
-                                                                                                                                  │
-                                                                                                                                  │
-                                                                                                                                  │
-                      ┏━ allow? · edit  app/server.js ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ build ━┓            │
-                      │ what    edit  app/server.js                                                                  │            │
-                      │ why     Next the form text                                                                   │            │
-                      │ risk    changes a file in your project · /undo puts it back                                  │            │
-                      │ change  app/server.js  +1 −1                                                                 │            │
-                      │ 29   row 28                                                                                  │            │
-                      │ 30   row 29                                                                                  │            │
-                      │ 31 - row 30                                                                                  │            │
-                      │ 31 + row thirty                                                                              │            │
-                      │ 32   row 31                                                                                  │            │
-                      │ 33   row 32                                                                                  │            │
-                      │ ⏎ allow   a allow edits this session   n deny                                                │            │
-                      ╰──────────────────────────────────────────────────────────────────────────────────────────────╯            │
-──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
-  build  › type to queue the next message, / for commands                                                                         │
+         │                                                                                                              │ RYTER
+         │  1. wire the loop                                                                                            │ new session
+         │  2. write tests                                                                                              │ ryter · 0.2.0-patch
+                                                                                                                        │
+         ●  dusty                                                                                                       │ hats
+         │  now implement step one                                                                                      │   plan
+         │                                                                                                              │ ⠼ build
+         ├─ read   crates/ryter-tui/src/run/mod.rs                                                                      │   ──────────── specialists
+         │                                                                                                              │   audit
+         ◆  grok-4.6                                                                                                    │   scribe
+         │  Reading the loop now. The event loop drains reply line 0 reply line 1 reply line 2 reply line 3             │
+         │  reply line 4 reply line 5 reply line 6 reply line 7                                                         │ now
+         │  ⠼ waiting for you · allow? · 0:12 · 85 tokens                                                               │   grok-4.6
+                                                                                                                        │   waiting for you · allow?       0:12
+                                                                                                                        │   allow?
+                                                                                                                        │
+                                                                                                                        │ context
+                                                                                                                        │   ━─────────────────────────────   5%
+                                                                                                                        │   12k of 256k
+                                                                                                                        │
+                                                                                                                        │ spend
+                                                                                                                        │   session    $0  no cap
+                                                                                                                        │
+                                                                                                                        │ changes
+                                                                                                                        │   no repository here
+                                                                                                                        │
+                                                                                                                        │ permissions
+                                                                                                                        │   asks first · sandbox off
+                                                                                                                        │
+                                                                                                                        │
+                                                                                                                        │
+                                                                                                                        │
+                                                                                                                        │
+               ┏━ allow? · edit  app/server.js ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ build ━┓         │
+               │ what    edit  app/server.js                                                                  │         │
+               │ why     Next the form text                                                                   │         │
+               │ risk    changes a file in your project · /undo puts it back                                  │         │
+               │ change  app/server.js  +1 −1                                                                 │         │
+               │ 29   row 28                                                                                  │         │
+               │ 30   row 29                                                                                  │         │
+               │ 31 - row 30                                                                                  │         │
+               │ 31 + row thirty                                                                              │         │
+               │ 32   row 31                                                                                  │         │
+               │ 33   row 32                                                                                  │         │
+               │ ⏎ allow   a allow edits this session   n deny                                                │         │
+               ╰──────────────────────────────────────────────────────────────────────────────────────────────╯         │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+  build  › type to queue the next message, / for commands                                                               │
 
  ⏎ allow    a allow edits this session    n deny    ↑↓ wheel more of the change    esc deny    ^c stop the turn
