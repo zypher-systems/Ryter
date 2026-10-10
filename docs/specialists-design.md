@@ -2,6 +2,8 @@
 
 Status: approved 2026-10-03 (mockup: https://claude.ai/artifact/QzpLi5PFs6mPrbMk3rd5zs). Built in patches; §15 records where the build differs.
 
+Superseded in part on 2026-10-10 by `docs/sidebar-design.md`: the rack blocks (§5), the top bar (§4), the instruments rows (§6) and the colours (§7) are replaced there; the hats, the keys between rows, the audit, the plan file and the scribe stand.
+
 This contract extends `docs/hat-rack-design.md`. Where the two disagree, this one wins.
 
 ## 1. What changes, and why

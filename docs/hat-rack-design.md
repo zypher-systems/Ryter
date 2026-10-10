@@ -10,6 +10,8 @@ Designed with the user on 2026-10-02, from mockups reviewed over three rounds.
 Applies to: `crates/ryter-tui`, with small listed additions to `crates/ryter-core` and `crates/ryter-cli`.
 Work branch: `hat-rack-patch`, cut from `dev`.
 
+Superseded in part on 2026-10-10 by `docs/sidebar-design.md`: the top bar, the hat rack column, the watermark, the `PULSE` and `GUARD` cards and the 132-column tier go; the transcript as §18 left it, the composer, the hint bar, the panels and the starting hat stay as written here.
+
 This document is a **contract**. Every requirement is numbered (`R-<AREA>-<NN>`). The work
 is done when every requirement is met and the tests in §13 pass. Where it conflicts with
 the current ledger screen, this document wins. It does not change the classic layout, the
