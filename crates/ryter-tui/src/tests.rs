@@ -1417,6 +1417,27 @@ fn the_instruments_say_what_is_true_of_the_whole_session() {
     assert!(rows(&v, false).iter().any(|r| r == "▁▁▁██▁▁▁ waiting"));
     v.busy = false;
     assert!(!rows(&v, false).iter().any(|r| r == "PULSE"));
+    // A short column keeps the pulse's rows and gives up the changes
+    // first: the condensed stack is 21 rows, the pulse 3.
+    let short = |v: &View| -> Vec<String> {
+        crate::instruments::lines(v, theme, 27, 22, true)
+            .iter()
+            .map(|l| {
+                squash(
+                    &l.spans
+                        .iter()
+                        .map(|s| s.content.as_ref())
+                        .collect::<String>(),
+                )
+            })
+            .collect()
+    };
+    assert!(short(&v).iter().any(|r| r == "CHANGES"), "{:#?}", short(&v));
+    v.busy = true;
+    let got = short(&v);
+    assert!(got.iter().any(|r| r == "PULSE"), "{got:#?}");
+    assert!(!got.iter().any(|r| r == "CHANGES"), "{got:#?}");
+    v.busy = false;
     // A project total that leaves unpriced calls out says so; a budget is
     // named; nothing uncommitted is said, and so is no repository.
     if let Some(p) = &mut v.project_spend {
@@ -2836,6 +2857,62 @@ fn choosing_a_specialist_opens_the_composer_on_its_line() {
     v.panels
         .push(Box::new(PermissionModal::new("bash".into(), "ls".into())));
     v.open_composer_on(Role::SoloAudit);
+    assert!(v.composer.is_empty());
+}
+
+/// Ryter's line is the one it put there, untouched. The same words typed
+/// by hand are the user's and survive a hat switch; a line Ryter put there
+/// and the user edited back to the words is theirs too once they typed
+/// something else over it.
+#[test]
+fn a_specialists_line_typed_by_hand_is_the_users() {
+    use ryter_core::Role;
+    let mut v = idle();
+    v.composer.set_text("Audit this project");
+    for hat in [Role::SoloScribe, Role::SoloBuild, Role::SoloAudit] {
+        v.open_composer_on(hat);
+        assert_eq!(v.composer.text(), "Audit this project", "{hat}");
+    }
+    // Put there by Ryter, it goes with the hat.
+    v.composer.clear();
+    v.open_composer_on(Role::SoloAudit);
+    v.open_composer_on(Role::SoloScribe);
+    assert_eq!(v.composer.text(), "Document this project");
+    v.open_composer_on(Role::SoloPlan);
+    assert!(v.composer.is_empty());
+    // Sent, the line is no longer Ryter's: the next one typed is the user's.
+    v.open_composer_on(Role::SoloAudit);
+    let _ = v.submit_user("Audit this project".into(), "Audit this project".into());
+    v.busy = false;
+    v.composer.set_text("Audit this project");
+    v.open_composer_on(Role::SoloScribe);
+    assert_eq!(v.composer.text(), "Audit this project");
+}
+
+/// A follow-up queued while a turn runs is what the composer's `queued`
+/// badge is about: a hat chosen then puts nothing in the composer, and
+/// the follow-up is what goes out when the turn ends. An empty composer
+/// with nothing queued still takes the line, for the next message.
+#[test]
+fn a_queued_follow_up_is_not_replaced_by_a_specialists_line() {
+    use ryter_core::Role;
+    let mut v = idle();
+    let _ = v.submit_user("start".into(), "start".into());
+    assert!(v.busy);
+    v.open_composer_on(Role::SoloAudit);
+    assert_eq!(v.composer.text(), "Audit this project");
+    v.composer.clear();
+    let _ = v.submit_user("then fix the seek".into(), "then fix the seek".into());
+    assert_eq!(v.queued_prompt.as_deref(), Some("then fix the seek"));
+    for hat in [Role::SoloAudit, Role::SoloScribe] {
+        v.open_composer_on(hat);
+        assert!(v.composer.is_empty(), "{hat}");
+        assert_eq!(v.queued_prompt.as_deref(), Some("then fix the seek"));
+    }
+    // The turn ends and the follow-up goes out, as the loop sends it.
+    v.busy = false;
+    let q = v.queued_prompt.take().unwrap();
+    assert!(matches!(v.submit_user(q.clone(), q), Action::Submit(s) if s == "then fix the seek"));
     assert!(v.composer.is_empty());
 }
 

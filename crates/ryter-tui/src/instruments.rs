@@ -416,7 +416,8 @@ fn changes(view: &View, theme: Theme, bg: Color, w: usize, condensed: bool) -> V
 }
 
 /// The column's rows for `w` columns and `room` rows. A short screen
-/// loses cards from the end: the changes, then the guard.
+/// loses cards from the end: the changes, then the guard. The pulse,
+/// shown while a turn runs, has its rows kept before those are given up.
 pub fn lines(
     view: &View,
     theme: Theme,
@@ -433,14 +434,15 @@ pub fn lines(
         changes(view, theme, bg, w, condensed),
     ];
     // The pulse has something to say while a turn runs, and comes last so
-    // nothing above it moves when it comes and goes.
-    if view.busy {
-        cards.push(pulse(view, theme, bg, w));
-    }
+    // nothing above it moves when it comes and goes. Its rows are reserved
+    // first: a short column gives up the changes before the pulse.
+    let pulse = view.busy.then(|| pulse(view, theme, bg, w));
     let height = |cards: &[Vec<Line<'static>>]| cards.iter().map(|c| c.len() + 1).sum::<usize>();
-    while height(&cards) > room && cards.len() > 1 {
+    let reserved = pulse.as_ref().map_or(0, |p| p.len() + 1);
+    while height(&cards) + reserved > room && cards.len() > 1 {
         cards.pop();
     }
+    cards.extend(pulse);
     let mut lines = Vec::new();
     for card in cards {
         lines.push(Line::from(""));

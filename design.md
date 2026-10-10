@@ -603,7 +603,9 @@ Replaces `draw_composer` and the key handling at `run.rs:933-997`.
   "Document this project" for scribe (`Role::opening`). `Enter` sends it. The line is put
   only into an empty composer, or over another hat's line that nobody touched, and it is
   cleared when the user moves to a hat that has none; text the user typed or edited is never
-  replaced. Nothing is put there while a panel owns the composer (`R-COMP-17`).
+  replaced, and the same words typed by hand are the user's (`View::seeded` remembers the
+  line Ryter put there). Nothing is put there while a panel owns the composer (`R-COMP-17`)
+  or while a follow-up is queued (`R-COMP-16`): the `queued` badge is about that message.
 
 ### 7.3 Composer as panel input
 

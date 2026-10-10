@@ -271,11 +271,9 @@ impl Agent {
         // A card shown between turns (the audit offer) is this turn's.
         self.emit_asked(None)?;
         // An audit asked for in the hat asks first, as `/audit` does: who
-        // audits and what it should cost, yes or no. The hat is how an
-        // audit is asked for; the first real ones run from it spent
-        // thirteen times the only figure they had been given. Asked inside
-        // the turn: the screen showed the message when it was sent, and a
-        // no has to close what that opened.
+        // audits and what it should cost, yes or no. Asked inside the
+        // turn: the screen showed the message when it was sent, and a no
+        // has to close what that opened.
         let requested = self.role == Role::SoloAudit && crate::gate::asks_for_audit(user);
         let agreed = if requested {
             self.agree_to_hat_audit()

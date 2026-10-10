@@ -184,6 +184,10 @@ pub struct View {
     pub panel_visible: bool,
     /// Message queued while busy (`R-COMP-16`).
     pub queued_prompt: Option<String>,
+    /// The line Ryter put in the composer for a specialist, while the
+    /// user has not touched it. What is in the composer is Ryter's only
+    /// while it is still this line (`R-COMP-18`).
+    pub seeded: Option<String>,
     /// Resolved speaker name (`R-CHAT-11`).
     pub username: String,
     /// Local UTC offset in seconds.
@@ -460,6 +464,7 @@ impl View {
             history: History::default(),
             panel_visible: true,
             queued_prompt: None,
+            seeded: None,
             username: "you".into(),
             tz_offset: 0,
             busy: false,
@@ -677,6 +682,7 @@ impl View {
 
     /// Start a turn from user text: push the message, anchor, mark busy.
     pub fn submit_user(&mut self, shown: String, expanded: String) -> Action {
+        self.seeded = None;
         if self.busy {
             self.queued_prompt = Some(expanded);
             self.system("queued · sent when the current turn completes");
@@ -760,21 +766,32 @@ impl View {
     /// this project". Choosing a specialist and pressing Enter is the
     /// whole request. What the user has typed is theirs and stays; a line
     /// Ryter put there and nobody touched goes with the hat it was for.
+    /// Nothing is put there while a follow-up is queued: the composer's
+    /// `queued` badge is about that message, and Enter would replace it.
     pub fn open_composer_on(&mut self, role: ryter_core::Role) {
-        use ryter_core::Role;
-        if self.composer.mode != crate::composer::Mode::Normal || !self.panels.is_empty() {
+        if self.composer.mode != crate::composer::Mode::Normal
+            || !self.panels.is_empty()
+            || self.queued_prompt.is_some()
+        {
             return;
         }
         let typed = self.composer.text();
-        let ours = [Role::SoloAudit, Role::SoloScribe]
-            .iter()
-            .any(|hat| hat.opening() == Some(typed));
+        // Ryter's line is the one it put there, still as it was: the same
+        // words typed by hand are the user's.
+        let ours = self.seeded.as_deref() == Some(typed);
         if !typed.is_empty() && !ours {
+            self.seeded = None;
             return;
         }
         match role.opening() {
-            Some(line) => self.composer.set_text(line),
-            None => self.composer.clear(),
+            Some(line) => {
+                self.composer.set_text(line);
+                self.seeded = Some(line.to_string());
+            }
+            None => {
+                self.composer.clear();
+                self.seeded = None;
+            }
         }
     }
 
