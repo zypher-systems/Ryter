@@ -19,11 +19,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.24.1. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
-
-- **Next — the screen reads as a tool, not a toy.** After a few people who saw it said so: the fedora watermark is off unless asked for, the hat that is on is the one colored thing, the transcript's rows are led by space rather than dots and keep a turn's time and cost on its closing line, the prompt asks its question without repeating the hint bar, the rack is headed `HATS` and shows no rows of zeros, and the pulse card is there only while a turn runs. The README's screenshots are from before this pass and are owed new ones. `DECISIONS.md` 2026-10-10, `docs/hat-rack-design.md` §18.
-
-- **A specialist's prompt opens on its request, and an audit asked for in the hat asks first (in `dev`).** Choosing the audit hat puts "Audit this project" in the prompt and choosing the scribe puts "Document this project"; `Enter` sends it. In the audit hat that, or any message beginning "audit", shows the card with the model and a cost range before anything is spent; a no spends nothing. Anything else said in the hat runs with the range said in the chat first. The range is now what audits have really taken (6 to 30 requests, the cache counted, each request priced on its own), and what an audit cost is kept however it was asked for. From the terminal-app run of 2026-10-09, where two audits cost $2.05 after "about $0.10" and "about $0.17" had been said. Open from it: a declined audit's turn closes as "✓ answered"; whether `/audit` should stay now that the hat asks.
+The last release is 0.25.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
@@ -82,6 +78,14 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.25.0 — the screen reads as a tool, and a specialist's prompt opens on its request (2026-10-09 to 2026-10-10)
+
+Released. The note is `docs/releases/v0.25.0.md`.
+
+- **0.25.0 — the screen reads as a tool, not a toy.** After a few people who saw it said so: the fedora watermark is off unless asked for, the hat that is on is the one colored thing, the transcript's rows are led by space rather than dots and keep a turn's time and cost on its closing line, the prompt asks its question without repeating the hint bar, the rack is headed `HATS` and shows no rows of zeros, and the pulse card is there only while a turn runs. The README's screenshots are from before this pass and are owed new ones. `DECISIONS.md` 2026-10-10, `docs/hat-rack-design.md` §18.
+
+- **0.25.0 — a specialist's prompt opens on its request, and an audit asked for in the hat asks first.** Choosing the audit hat puts "Audit this project" in the prompt and choosing the scribe puts "Document this project"; `Enter` sends it. In the audit hat that, or any message beginning "audit", shows the card with the model and a cost range before anything is spent; a no spends nothing. Anything else said in the hat runs with the range said in the chat first. The range is now what audits have really taken (6 to 30 requests, the cache counted, each request priced on its own), and what an audit cost is kept however it was asked for. From the terminal-app run of 2026-10-09, where two audits cost $2.05 after "about $0.10" and "about $0.17" had been said. Open from it: a declined audit's turn closes as "✓ answered"; whether `/audit` should stay now that the hat asks.
 
 ### 0.19.0 to 0.24.1 — the gate after a real run, package checks, web search, root by `sudo`, and selecting with the mouse (2026-10-04 to 2026-10-08)
 
