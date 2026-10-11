@@ -177,7 +177,7 @@ fn draw_screen(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     if view.panels.is_empty() {
         palette::draw(frame, chat, comp.y, view, theme);
     }
-    let panel_cursor = panel::draw(frame, full, body, slot, view, theme);
+    let panel_cursor = panel::draw(frame, full, body, body, slot, view, theme);
     if panel_cursor.is_some() {
         composer::draw::paint_cursor(frame, panel_cursor, theme);
     } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
@@ -323,7 +323,7 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     if view.panels.is_empty() {
         palette::draw(frame, chat, comp.y, view, theme);
     }
-    let panel_cursor = panel::draw(frame, full, body, None, view, theme);
+    let panel_cursor = panel::draw(frame, full, body, body, None, view, theme);
     if panel_cursor.is_some() {
         composer::draw::paint_cursor(frame, panel_cursor, theme);
     } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
@@ -515,7 +515,14 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         palette::draw(frame, chat, comp.y, view, theme);
     }
     let panel_body = if panel_owns_body { body } else { main };
-    let panel_cursor = panel::draw(frame, full, panel_body, slot, view, theme);
+    // The spend drawer sits on the prompt and is its width, so between
+    // three panes it is the column and a cell each side, as the prompt is.
+    let dock = Rect {
+        x: comp_x,
+        width: comp_w,
+        ..panel_body
+    };
+    let panel_cursor = panel::draw(frame, full, panel_body, dock, slot, view, theme);
     if panel_cursor.is_some() {
         composer::draw::paint_cursor(frame, panel_cursor, theme);
     } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {

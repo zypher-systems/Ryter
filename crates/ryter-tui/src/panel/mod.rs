@@ -456,7 +456,6 @@ pub fn shadow(frame: &mut Frame, area: Rect, theme: Theme) {
     }
 }
 
-/// Where a docked panel sits: the bottom of `body`, full width.
 /// A docked question's inset within the conversation's column: a card,
 /// not a bar. Fourteen columns in from the left and two from the right
 /// when the column is a hundred wide or more; two on each side down to
@@ -497,24 +496,28 @@ pub fn prompt_height(view: &View, column_h: u16) -> u16 {
         .min(column_h.saturating_sub(4).max(3))
 }
 
-fn docked_rect(body: Rect, content_rows: u16) -> Rect {
-    let max_h = body.height.saturating_sub(2).max(6);
+/// Where a docked panel sits: the bottom of `dock`, its full width.
+fn docked_rect(dock: Rect, content_rows: u16) -> Rect {
+    let max_h = dock.height.saturating_sub(2).max(6);
     let h = (content_rows + 2).clamp(6, max_h);
     Rect {
-        x: body.x,
-        y: body.y + body.height.saturating_sub(h),
-        width: body.width,
+        x: dock.x,
+        y: dock.y + dock.height.saturating_sub(h),
+        width: dock.width,
         height: h,
     }
 }
 
 /// Draw the focused panel (and the ones beneath it, dimmed) over `body`.
-/// Returns where the terminal cursor goes when the panel draws its own
-/// input row.
+/// A docked panel sits at the foot of `dock`: the prompt's columns, which
+/// are the body's unless the conversation is centred between three panes
+/// (`docs/sidebar-design.md` §17). Returns where the terminal cursor goes
+/// when the panel draws its own input row.
 pub fn draw(
     frame: &mut Frame,
     full: Rect,
     body: Rect,
+    dock: Rect,
     slot: Option<Rect>,
     view: &View,
     theme: Theme,
@@ -541,10 +544,10 @@ pub fn draw(
             // foot, inset the same.
             match slot.filter(|s| focused && s.height >= 3) {
                 Some(s) => inset(s),
-                None => inset(docked_rect(body, rows + extra)),
+                None => inset(docked_rect(dock, rows + extra)),
             }
         } else if p.docked() {
-            docked_rect(body, rows + extra)
+            docked_rect(dock, rows + extra)
         } else {
             rect(full, body, pw, rows + extra, modal.is_some())
         };

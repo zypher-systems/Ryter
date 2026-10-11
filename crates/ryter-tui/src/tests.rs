@@ -1606,6 +1606,34 @@ fn the_prompt_is_the_conversations_width() {
     }
 }
 
+/// The spend drawer sits on the prompt and is its width: the middle
+/// beside the one sidebar, the column and a cell each side between three
+/// panes, where from 197 columns the middle is wider than the prompt.
+#[test]
+fn the_spend_drawer_is_the_prompts_width() {
+    for w in [120, 150, 197, 220] {
+        let mut v = racked();
+        let e = env();
+        let _ = panel::open(&mut v, PanelId::SpendDrawer, &e);
+        let hit = crate::draw::render_hit(&v, w, 50);
+        let text = render_to_string(&v, w, 50);
+        let top = text
+            .lines()
+            .find(|r| r.contains("╭─ spend"))
+            .unwrap_or_else(|| panic!("{w}: no drawer\n{text}"));
+        let left = top.chars().position(|c| c == '╭');
+        let right = top.chars().position(|c| c == '╮');
+        assert_eq!(
+            (left, right),
+            (
+                Some(usize::from(hit.composer.x)),
+                Some(usize::from(hit.composer.x + hit.composer.width) - 1)
+            ),
+            "{w}: the drawer's edges\n{top}"
+        );
+    }
+}
+
 /// The wheel over the rail leaves the conversation alone: the wheel
 /// scrolls the chat over its column and its gutter, not left of it,
 /// where the rail is between three panes.
