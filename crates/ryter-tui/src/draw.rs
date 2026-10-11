@@ -438,8 +438,6 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
             },
         );
     }
-    let comp_h =
-        composer::draw::solo_height(view, main.width).min(main.height.saturating_sub(6).max(2));
     // Between three panes the column is centred; beside the one sidebar
     // it is a cell in from the left, the spare width between it and the
     // sidebar (`place_column`).
@@ -450,6 +448,18 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         width: col_w,
         ..r
     };
+    // The prompt is the conversation's width (`R-LAYOUT-02`). Between
+    // three panes, where the column is centred, it is the column and the
+    // cell each side of it, so its chip starts where the messages do;
+    // otherwise the column is at the left and the prompt is the middle,
+    // as it was.
+    let (comp_x, comp_w) = if rail_w > 0 {
+        (col_x - 1, (col_w + 4).min(main.width))
+    } else {
+        (main.x, main.width)
+    };
+    let comp_h =
+        composer::draw::solo_height(view, comp_w).min(main.height.saturating_sub(6).max(2));
     let below = main.height.saturating_sub(comp_h);
     // One spinner: the status row in the conversation. The strip's rows
     // are gone from this screen; the reasoning pane opens under the row.
@@ -466,7 +476,11 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
             Constraint::Length(comp_h),
         ])
         .split(main);
-    let comp = parts[3];
+    let comp = Rect {
+        x: comp_x,
+        width: comp_w,
+        ..parts[3]
+    };
     let slot = (prompt_h > 0).then(|| column(parts[1]));
     let mut chat = column(parts[0]);
     // Before the first turn, the opening block (`R-OPEN-*`) heads the

@@ -1552,6 +1552,99 @@ fn the_screen_is_three_panes_from_150_columns() {
     }
 }
 
+/// `R-LAYOUT-02`: the prompt is the conversation's width, wherever the
+/// column sits. Its chip starts where the messages do, and its rule is
+/// the column and the cell each side, not the whole middle: from 177
+/// columns the column is centred with air each side, and the prompt
+/// goes with it.
+#[test]
+fn the_prompt_is_the_conversations_width() {
+    let theme = Theme::truecolor_dark();
+    for w in [100, 120, 149, 150, 176, 177, 196, 220] {
+        let v = racked();
+        let (col_x, col_w) = crate::draw::chat_column(&v, theme, w, 50);
+        let (rail_w, side_w) = crate::sidebar::arrange(&v, theme, w, crate::draw::body_height(50));
+        let hit = crate::draw::render_hit(&v, w, 50);
+        // Beside the one sidebar the prompt is the middle, as it was.
+        let want = if rail_w > 0 {
+            (col_x - 1, col_w + 4)
+        } else {
+            (0, w - side_w)
+        };
+        assert_eq!(
+            (hit.composer.x, hit.composer.width),
+            want,
+            "{w}: the prompt's place"
+        );
+        let text = render_to_string(&v, w, 50);
+        let rows: Vec<&str> = text.lines().collect();
+        let chip = rows
+            .iter()
+            .position(|r| r.contains("›"))
+            .unwrap_or_else(|| panic!("{w}: no prompt"));
+        let at = |y: usize, x: u16, n: usize| {
+            rows[y]
+                .chars()
+                .skip(usize::from(x))
+                .take(n)
+                .collect::<String>()
+        };
+        assert_eq!(at(chip, col_x, 7), " build ", "{w}: the chip");
+        // The rule above it begins a cell before the column and runs its
+        // width; between three panes the air outside it is bare.
+        assert_eq!(at(chip - 1, col_x - 1, 3), "───", "{w}: the rule");
+        if hit.composer.x > rail_w {
+            assert_eq!(
+                at(chip - 1, hit.composer.x - 1, 1),
+                " ",
+                "{w}: air before the rule"
+            );
+        }
+        let dusty = rows.iter().find(|r| r.contains("●  dusty")).unwrap();
+        let x = dusty.find("●  dusty").map(|i| dusty[..i].chars().count());
+        assert_eq!(x, Some(usize::from(col_x) + 8), "{w}: the messages");
+    }
+}
+
+/// The wheel over the rail leaves the conversation alone: the wheel
+/// scrolls the chat over its column and its gutter, not left of it,
+/// where the rail is between three panes.
+#[test]
+fn the_wheel_over_the_rail_leaves_the_conversation() {
+    use crossterm::event::{MouseEvent, MouseEventKind};
+    let theme = Theme::truecolor_dark();
+    let (w, h) = (220, 20);
+    let mut v = racked();
+    let (col_x, col_w) = crate::draw::chat_column(&v, theme, w, h);
+    assert!(col_x > 30, "three panes");
+    let hit = crate::draw::render_hit(&v, w, h);
+    let wheel = |v: &mut View, column: u16| {
+        let _ = render_to_string(v, w, h);
+        crate::run_mouse_handle_with(
+            v,
+            MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column,
+                row: 6,
+                modifiers: KeyModifiers::NONE,
+            },
+            &hit,
+        )
+    };
+    // The rail: the hats are there, and the title. The air before the
+    // column is nobody's either.
+    for x in [1, 5, 20, col_x - 2] {
+        let _ = wheel(&mut v, x);
+        assert!(v.scroll.follow, "a wheel at {x} moved the conversation");
+    }
+    // The column and its gutter scroll it.
+    let _ = wheel(&mut v, col_x + 3);
+    assert!(!v.scroll.follow, "the column");
+    v.scroll.to_bottom();
+    let _ = wheel(&mut v, col_x + col_w);
+    assert!(!v.scroll.follow, "the gutter");
+}
+
 /// `R-KEY-05`, `R-TEST-13`: a hat switch while a turn runs is the next
 /// message's. The prompt's chip and the ledger's `▸` go to the hat chosen
 /// at once; the hat working keeps the spinner, its model in the `now`

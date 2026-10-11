@@ -837,10 +837,13 @@ fn on_mouse(view: &mut View, m: MouseEvent, hit: &Hit) -> Action {
     };
     // Wheel anywhere over the chat column (pane or its gutter) scrolls the chat;
     // over the composer it is ignored so a wheel flick never moves the transcript
-    // out from under the cursor while typing.
+    // out from under the cursor while typing. Not left of the column: the rail
+    // is there between three panes, and a wheel over the hats is not a wheel
+    // over the conversation.
     let over_chat = inside(hit.chat)
         || (m.row >= hit.chat.y
             && m.row < hit.chat.y + hit.chat.height
+            && m.column >= hit.chat.x
             && m.column < hit.chat.x + hit.chat.width + 1);
     let over_composer = inside(hit.composer);
     // A panel that is open owns the wheel: three rows a notch, as `↑`/`↓`

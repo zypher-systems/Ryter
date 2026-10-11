@@ -116,7 +116,7 @@ There is no bar across the top: the conversation starts on the first row and is 
 
 The rest of the screen:
 
-- **One reading column on a timeline**, at the left, at most 112 columns wide. Each question starts with its time and `●`. The model's text hangs off `◆`, each tool step off `├─` (`edit   src/config.rs        +9 −1`, `run    npm test        ✓ 4 passed  2.1s`; a step's time is shown once it is a second or more), and edits show as full-row green and red diffs.
+- **One reading column on a timeline**, at most 112 columns wide, at the left beside the one sidebar and centred between three panes. Each question starts with its time and `●`. The model's text hangs off `◆`, each tool step off `├─` (`edit   src/config.rs        +9 −1`, `run    npm test        ✓ 4 passed  2.1s`; a step's time is shown once it is a second or more), and edits show as full-row green and red diffs.
 - **Every turn closes with what it came to**, measured by Ryter: `└─ ✓ 5 tools · 2 files (2 changed, +3 −0) · 1 command (1 ok) · 7.9s · $0.001`.
 - **Finished turns fold to one line:** what was asked, and at the row's end what it came to, without the time and the cost, ending in `▸`. The newest turn stays open. `^o` opens every turn and every edit whole, and folds them again.
 - **`$`** on an empty composer opens the **spend drawer** above it. It shows this turn, the session, and the project side by side, with spend by hat for the session and the project, and the budget and warning level. `b` sets a budget, `⏎` opens the full `/spend` table.
