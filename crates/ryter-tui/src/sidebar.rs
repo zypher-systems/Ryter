@@ -1,9 +1,10 @@
-//! The sidebar (`docs/sidebar-design.md` §4): the solo screen's one column
-//! beside the conversation. Every row on it is a measurement, an event or
-//! a name: the hats as a ledger, what the model is doing now, the context
-//! gauge, what the session and the project have cost, the files touched,
-//! and what the hat may do. Nothing on it reads `off`, `none` or `idle`
-//! as a steady state.
+//! The columns beside the conversation (`docs/sidebar-design.md` §3, §4):
+//! the sidebar at the right, and on a wide screen the rail at the left
+//! that takes its header and its hats. Every row on them is a
+//! measurement, an event or a name: the hats as a ledger, what the model
+//! is doing now, the context gauge, what the session and the project have
+//! cost, the files touched, and what the hat may do. Nothing on them
+//! reads `off`, `none` or `idle` as a steady state.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -25,6 +26,9 @@ pub const MIN_WIDTH: u16 = 30;
 pub const MAX_WIDTH: u16 = 40;
 /// Narrowest screen that shows it beside the conversation.
 pub const MIN_SCREEN: u16 = 100;
+/// Narrowest screen that shows three panes: the rail with the hats at the
+/// left, the conversation, the sidebar at the right.
+pub const PANES_SCREEN: u16 = 150;
 /// The hats, in the order the sidebar lists them: the primary hats, then
 /// the specialists (`docs/specialists-design.md` §2).
 pub const HATS: [Role; 4] = [
@@ -49,24 +53,34 @@ const FIGURES_AT: usize = 13;
 /// What a screen of some width has room for beside the conversation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tier {
-    /// The sidebar.
+    /// Three panes: the rail at the left with the header and the hats,
+    /// the conversation centred, the sidebar at the right with the rest.
+    Panes,
+    /// The sidebar alone, every block on it, the conversation at the left.
     Sidebar,
     /// None: a status line at the foot.
     Narrow,
 }
 
-/// Columns the sidebar takes beside the conversation on a screen `width`
-/// wide: the least on a narrow screen, growing with the screen once the
-/// conversation's column has the width it reads well at, up to the most.
+/// Columns each column beside the conversation takes on a screen `width`
+/// wide: the least, until the conversation's column has the width it
+/// reads well at between them, then growing with the screen up to the
+/// most, so the spare width goes to names and paths before it is air
+/// around the text.
 pub fn width_for(width: u16) -> u16 {
-    width
-        .saturating_sub(crate::draw::LEDGER_COLUMN + 4)
-        .clamp(MIN_WIDTH, MAX_WIDTH)
+    match tier(width) {
+        Tier::Panes => {
+            (width.saturating_sub(crate::draw::LEDGER_COLUMN + 4) / 2).clamp(MIN_WIDTH, MAX_WIDTH)
+        }
+        Tier::Sidebar | Tier::Narrow => MIN_WIDTH,
+    }
 }
 
 /// The tier a screen `width` columns wide is in.
 pub fn tier(width: u16) -> Tier {
-    if width >= MIN_SCREEN {
+    if width >= PANES_SCREEN {
+        Tier::Panes
+    } else if width >= MIN_SCREEN {
         Tier::Sidebar
     } else {
         Tier::Narrow
@@ -76,16 +90,6 @@ pub fn tier(width: u16) -> Tier {
 /// A hat's name as the screen says it: lowercase everywhere.
 pub fn hat_name(hat: Role) -> &'static str {
     hat.hat().as_str()
-}
-
-/// The model `hat`'s next message goes to: its own where it has one,
-/// otherwise the one every hat uses.
-pub fn hat_model(view: &View, hat: Role) -> &str {
-    view.specialists
-        .get(hat.as_str())
-        .filter(|r| r.is_override())
-        .and_then(|r| r.model.as_deref())
-        .unwrap_or(&view.model)
 }
 
 /// What `hat` has cost this session. A call with no price is `$?.??`, and
@@ -246,6 +250,9 @@ fn header(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'static>> 
 /// it is on, its verdict mark, then its turns and spend when it has any.
 fn hat_row(view: &View, theme: Theme, hat: Role, bg: Color, w: usize) -> Line<'static> {
     let on = view.mode == hat;
+    // The hat whose model is working: the hat on, unless a Tab during the
+    // turn has chosen another for the next message (`R-KEY-05`).
+    let working = view.busy && view.agent_hat == hat;
     let color = theme.mode(hat);
     let name_style = if on {
         Style::default()
@@ -257,9 +264,10 @@ fn hat_row(view: &View, theme: Theme, hat: Role, bg: Color, w: usize) -> Line<'s
     };
     let dim = Style::default().fg(theme.dim).bg(bg);
     let body = Style::default().fg(theme.fg).bg(bg);
-    // The hat that is on is marked, and its mark spins while its model
-    // works: the screen says it is alive where the eye is.
-    let mark = if on && view.busy {
+    // The hat that is on is marked, and the mark spins on the hat whose
+    // model works: the screen says it is alive where the eye is, and
+    // which hat that is when it is not the hat on.
+    let mark = if working {
         format!(
             "{} ",
             crate::activity::SPINNER[view.activity.frame % crate::activity::SPINNER.len()]
@@ -377,7 +385,10 @@ fn hats(view: &View, theme: Theme, bg: Color, w: usize, turns_row: bool) -> Vec<
 fn now(view: &View, theme: Theme, bg: Color, w: usize, rate_row: bool) -> Vec<Line<'static>> {
     let dim = Style::default().fg(theme.dim).bg(bg);
     let body = Style::default().fg(theme.fg).bg(bg);
-    let hat = Style::default().fg(theme.mode(view.mode)).bg(bg);
+    // The hat whose model this is: the one working, or the one the next
+    // message goes to.
+    let working = view.working_hat();
+    let hat = Style::default().fg(theme.mode(working)).bg(bg);
     let warn = Style::default().fg(theme.warn).bg(bg);
     let asking = view.busy && view.activity.ask.is_some();
     let mut lines = vec![
@@ -385,7 +396,7 @@ fn now(view: &View, theme: Theme, bg: Color, w: usize, rate_row: bool) -> Vec<Li
         Line::from(Span::styled(
             format!(
                 "  {}",
-                wrap::truncate(short_model(hat_model(view, view.mode)), w.saturating_sub(2))
+                wrap::truncate(short_model(view.model_of(working)), w.saturating_sub(2))
             ),
             body,
         )),
@@ -611,36 +622,69 @@ fn permissions(view: &View, theme: Theme, bg: Color, w: usize) -> Vec<Line<'stat
     lines
 }
 
-/// The column's rows for `w` columns of text, with the cuts in `cuts`
-/// made. The header first, then each block after a blank row.
-fn assemble(view: &View, theme: Theme, w: usize, cuts: &[Cut]) -> Vec<Line<'static>> {
+/// Which of the columns' blocks: all of them on the one sidebar, the
+/// header and the hats on the rail, the rest on the sidebar beside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Part {
+    /// The one sidebar: every block.
+    All,
+    /// The rail at the left of three panes: the header and the hats.
+    Rail,
+    /// The sidebar at the right of three panes: now, context, spend,
+    /// changes, permissions.
+    Side,
+}
+
+/// The rows of `part` for `w` columns of text, with the cuts in `cuts`
+/// made. The header first where the part has it, then each block after
+/// a blank row.
+fn assemble(view: &View, theme: Theme, w: usize, cuts: &[Cut], part: Part) -> Vec<Line<'static>> {
     let bg = theme.sidebar_bg;
     let cut = |c: Cut| cuts.contains(&c);
-    let mut blocks = vec![
-        hats(view, theme, bg, w, !cut(Cut::TurnsRow)),
-        now(view, theme, bg, w, !cut(Cut::NowRate)),
-        context(view, theme, bg, w),
-        spend(view, theme, bg, !cut(Cut::ProjectRow)),
-        changes(view, theme, bg, w, !cut(Cut::FilesList)),
-    ];
-    if !cut(Cut::Permissions) {
-        blocks.push(permissions(view, theme, bg, w));
+    let mut lines = Vec::new();
+    let mut blocks = Vec::new();
+    if part != Part::Side {
+        lines = header(view, theme, bg, w);
+        blocks.push(hats(view, theme, bg, w, !cut(Cut::TurnsRow)));
     }
-    let mut lines = header(view, theme, bg, w);
+    if part != Part::Rail {
+        blocks.push(now(view, theme, bg, w, !cut(Cut::NowRate)));
+        blocks.push(context(view, theme, bg, w));
+        blocks.push(spend(view, theme, bg, !cut(Cut::ProjectRow)));
+        blocks.push(changes(view, theme, bg, w, !cut(Cut::FilesList)));
+        if !cut(Cut::Permissions) {
+            blocks.push(permissions(view, theme, bg, w));
+        }
+    }
     for block in blocks {
-        lines.push(Line::from(""));
+        if !lines.is_empty() {
+            lines.push(Line::from(""));
+        }
         lines.extend(block);
     }
     lines
 }
 
-/// The column's rows for a column `w` wide with `room` rows: whole, or
+/// The rows of `part` for a column `w` wide with `room` rows: whole, or
 /// with as many of the cuts as it takes to fit. `None` when even that
-/// doesn't: the sidebar folds away.
-pub fn lines(view: &View, theme: Theme, w: usize, room: usize) -> Option<Vec<Line<'static>>> {
+/// doesn't: the column folds away.
+pub fn part_lines(
+    view: &View,
+    theme: Theme,
+    w: usize,
+    room: usize,
+    part: Part,
+) -> Option<Vec<Line<'static>>> {
     (0..=CUTS.len())
-        .map(|n| assemble(view, theme, w, &CUTS[..n]))
+        .map(|n| assemble(view, theme, w, &CUTS[..n], part))
         .find(|v| v.len() <= room)
+}
+
+/// The one sidebar's rows, every block, for a column `w` wide with `room`
+/// rows: `part_lines` for `Part::All`.
+#[cfg(test)]
+pub fn lines(view: &View, theme: Theme, w: usize, room: usize) -> Option<Vec<Line<'static>>> {
+    part_lines(view, theme, w, room, Part::All)
 }
 
 /// Every row, uncut, for the `^b` panel.
@@ -648,7 +692,7 @@ pub fn panel_lines(view: &View, theme: Theme, w: usize) -> Vec<Line<'static>> {
     // The panel's title says where this is; the name's row is left to it.
     // A cell of pad inside the border, as the column has beside the
     // hairline.
-    assemble(view, theme, w.saturating_sub(1), &[])
+    assemble(view, theme, w.saturating_sub(1), &[], Part::All)
         .into_iter()
         .skip(1)
         .map(|l| {
@@ -659,45 +703,57 @@ pub fn panel_lines(view: &View, theme: Theme, w: usize) -> Vec<Line<'static>> {
         .collect()
 }
 
-/// Whether the sidebar has room in a column `width` wide and `height`
-/// rows tall.
-pub fn fits(view: &View, theme: Theme, width: u16, height: u16) -> bool {
-    lines(
-        view,
-        theme,
-        usize::from(width.saturating_sub(3)),
-        usize::from(height),
-    )
-    .is_some()
+/// The columns beside the conversation on a screen `width` wide whose
+/// body is `body_h` rows: the rail's width and the sidebar's, 0 for one
+/// that is not there. Three panes need the room for both; the one
+/// sidebar needs it for every block; short of that there is none, and
+/// the foot is the status line (`R-LAYOUT-04`, `R-LAYOUT-06`).
+pub fn arrange(view: &View, theme: Theme, width: u16, body_h: u16) -> (u16, u16) {
+    let w = width_for(width);
+    let text = usize::from(w.saturating_sub(3));
+    let room = usize::from(body_h);
+    let has = |part| part_lines(view, theme, text, room, part).is_some();
+    match tier(width) {
+        Tier::Panes if has(Part::Rail) && has(Part::Side) => (w, w),
+        Tier::Sidebar if has(Part::All) => (0, w),
+        _ => (0, 0),
+    }
 }
 
-/// Paint the sidebar into `area`: its full height, the hairline on its
-/// left edge included.
-pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
+/// Paint `part` into `area`, its full height: the hairline on the
+/// conversation's side, a cell of pad, the text, a cell of pad.
+pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme, part: Part) {
     let bg = theme.sidebar_bg;
+    let rail = part == Part::Rail;
+    let line_x = if rail {
+        area.x + area.width.saturating_sub(1)
+    } else {
+        area.x
+    };
     let panel = Rect {
-        x: area.x + 1,
+        x: if rail { area.x } else { area.x + 1 },
         width: area.width.saturating_sub(1),
         ..area
     };
     frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), panel);
     let body = Rect {
-        x: area.x + 2,
+        x: if rail { area.x + 1 } else { area.x + 2 },
         width: area.width.saturating_sub(3),
         ..area
     };
-    if let Some(rows) = lines(
+    if let Some(rows) = part_lines(
         view,
         theme,
         usize::from(body.width),
         usize::from(body.height),
+        part,
     ) {
         frame.render_widget(
             Paragraph::new(rows).style(Style::default().fg(theme.fg).bg(bg)),
             body,
         );
     }
-    vline(frame, area.x, area, theme);
+    vline(frame, line_x, area, theme);
 }
 
 /// A hairline down the column at `x`, for the height of `area`.

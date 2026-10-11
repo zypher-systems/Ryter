@@ -423,11 +423,24 @@ impl View {
     /// The model the next message goes to: this hat's own where it has
     /// one, otherwise the one every hat uses.
     pub fn hat_model(&self) -> &str {
+        self.model_of(self.mode)
+    }
+
+    /// The model `hat` runs on: its own where the user gave it one,
+    /// otherwise the one every hat uses.
+    pub fn model_of(&self, hat: ryter_core::Role) -> &str {
         self.specialists
-            .get(self.mode.as_str())
+            .get(hat.as_str())
             .filter(|r| r.is_override())
             .and_then(|r| r.model.as_deref())
             .unwrap_or(&self.model)
+    }
+
+    /// The hat whose model is working: the agent's own while a turn runs,
+    /// since a Tab during the turn chooses the hat for the next message
+    /// and not for this one (`R-KEY-05`); the hat on otherwise.
+    pub fn working_hat(&self) -> ryter_core::Role {
+        if self.busy { self.agent_hat } else { self.mode }
     }
 
     /// `build`, `plan`, `review`, or `test`.
@@ -665,8 +678,9 @@ impl View {
 
     /// Streamed assistant delta (`R-CHAT-03`).
     pub fn on_token(&mut self, text: &str) {
-        // The model that is answering: this hat's.
-        let model = self.hat_model().to_string();
+        // The model that is answering: the one of the hat the agent is in,
+        // which a Tab during the turn does not change.
+        let model = self.model_of(self.agent_hat).to_string();
         match self.messages.last_mut() {
             Some(m) if matches!(m.kind, MessageKind::Assistant { .. }) => m.append(text),
             _ => {

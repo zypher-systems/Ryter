@@ -287,7 +287,13 @@ impl Panel for PermissionModal {
     /// Top right: the hat that is asking, and, while an Enter pressed
     /// with the card's opening would be ignored, that it is.
     fn status(&self, view: &View) -> String {
-        let hat = self.offers().unwrap_or(view.mode).as_str().to_string();
+        // A card is the running turn's: the hat working asks, whichever
+        // hat a Tab has since chosen for the next message.
+        let hat = self
+            .offers()
+            .unwrap_or(view.working_hat())
+            .as_str()
+            .to_string();
         let guarded = self.question().is_none()
             && !self.y_only()
             && view.now_ms < self.opened_ms + ENTER_GUARD_MS;

@@ -1136,8 +1136,19 @@ fn the_sidebar_rows_are_measurements_events_and_names() {
         crate::run_events_apply(&mut v, ev);
     }
     let got = sidebar_rows(&v, 100);
+    // The audit's model is working (`/audit` from the build hat, which
+    // stays on): its row carries the spinner, build's the `▸`.
     assert!(
-        got.iter().any(|r| r == "audit ✓ 2 turns $0.040"),
+        got.iter().any(|r| {
+            r.ends_with(" audit ✓ 2 turns $0.040")
+                && r.chars()
+                    .next()
+                    .is_some_and(|c| crate::activity::SPINNER.contains(&c.to_string().as_str()))
+        }),
+        "{got:#?}"
+    );
+    assert!(
+        got.iter().any(|r| r == "▸ build 2 turns $0.021"),
         "{got:#?}"
     );
     assert!(got.iter().any(|r| r == "turns ●●●●●"), "{got:#?}");
@@ -1429,7 +1440,11 @@ fn the_sidebar_gives_way_to_the_conversation() {
         room = rows.len() - 1;
     }
     assert!(crate::sidebar::lines(&v, Theme::truecolor_dark(), 28, room).is_none());
-    let text = render_to_string(&racked(), 160, 15);
+    // Three panes: the rail needs its eleven rows and the sidebar its
+    // thirteen with every cut made; a body short of that folds both away.
+    let text = render_to_string(&racked(), 160, 14);
+    assert!(text.contains("hats") && text.contains("now"), "{text}");
+    let text = render_to_string(&racked(), 160, 13);
     assert!(
         !text.contains("hats") && text.contains("what should change?"),
         "{text}"
@@ -1442,80 +1457,204 @@ fn the_sidebar_gives_way_to_the_conversation() {
 }
 
 /// `R-LAYOUT-01`, `R-HEAD-*`: no bar across the top. The name, the
-/// session's title and where this is are the sidebar's first rows.
+/// session's title and where this is are the first rows beside the
+/// conversation: the sidebar's beside the one sidebar, the rail's where
+/// the screen is three panes (R-LAYOUT-04).
 #[test]
 fn the_name_and_the_place_head_the_sidebar() {
-    let text = render_to_string(&racked(), 160, 50);
-    let rows: Vec<&str> = text.lines().collect();
-    // At 160 columns the sidebar has grown to 40: its text starts at 122.
-    let chat: String = rows[0].chars().take(120).collect();
-    assert!(!chat.contains("RYTER"), "{chat}");
-    let col = |y: usize| {
-        rows[y]
-            .chars()
-            .skip(122)
-            .collect::<String>()
-            .trim()
-            .to_string()
-    };
-    assert_eq!(col(0), "RYTER");
-    assert_eq!(col(1), "empty-query fix");
-    assert_eq!(col(2), "shop · search-patch");
-    assert_eq!(col(3), "");
-    assert_eq!(col(4), "hats");
-    // The only capitals on the screen are the name's.
-    let caps: Vec<&str> = [
-        "PLAN", "BUILD", "AUDIT", "SCRIBE", "HATS", "MODEL", "CONTEXT", "SPEND", "GUARD", "CHANGES",
-    ]
-    .into_iter()
-    .filter(|w| text.contains(w))
-    .collect();
-    assert!(caps.is_empty(), "{caps:?}");
-}
-
-/// The conversation's column sits at the left, a cell in, however wide
-/// the screen, and the sidebar grows from 30 to 40 columns once the
-/// column has the width it reads well at: the spare width is between
-/// them, not a hole before the text.
-#[test]
-fn the_chat_sits_left_and_the_sidebar_grows_with_the_screen() {
-    for (w, side) in [
-        (100, 30),
-        (120, 30),
-        (146, 30),
-        (150, 34),
-        (156, 40),
-        (220, 40),
-    ] {
-        assert_eq!(crate::sidebar::width_for(w), side, "{w}");
+    // The screen's width, the column the rows' text starts in, and one
+    // inside the conversation.
+    for (w, at, chat) in [(120, 92, 40), (160, 1, 60)] {
         let text = render_to_string(&racked(), w, 50);
         let rows: Vec<&str> = text.lines().collect();
-        let hairline = usize::from(w - side);
-        assert_eq!(
-            rows[5].chars().nth(hairline),
-            Some('│'),
-            "{w}: the hairline"
-        );
-        assert_eq!(
-            rows[0]
+        let col = |y: usize, from: usize| {
+            rows[y]
                 .chars()
-                .skip(hairline + 2)
-                .take(5)
-                .collect::<String>(),
-            "RYTER",
-            "{w}"
-        );
-        let dusty = rows.iter().find(|r| r.contains("●  dusty")).unwrap();
+                .skip(from)
+                .take(27)
+                .collect::<String>()
+                .trim()
+                .to_string()
+        };
+        assert!(!col(0, chat).contains("RYTER"), "{w}: {}", col(0, chat));
+        assert_eq!(col(0, at), "RYTER", "{w}");
+        assert_eq!(col(1, at), "empty-query fix", "{w}");
+        assert_eq!(col(2, at), "shop · search-patch", "{w}");
+        assert_eq!(col(3, at), "", "{w}");
+        assert_eq!(col(4, at), "hats", "{w}");
+        // The only capitals on the screen are the name's.
+        let caps: Vec<&str> = [
+            "PLAN", "BUILD", "AUDIT", "SCRIBE", "HATS", "MODEL", "CONTEXT", "SPEND", "GUARD",
+            "CHANGES",
+        ]
+        .into_iter()
+        .filter(|c| text.contains(c))
+        .collect();
+        assert!(caps.is_empty(), "{w}: {caps:?}");
+    }
+}
+
+/// `R-LAYOUT-04`: beside the one sidebar (100 to 149 columns) the
+/// conversation's column sits at the left, a cell in, and the sidebar is
+/// 30 columns, the spare width between them. From 150 columns the screen
+/// is three panes: the rail with the header and the hats at the left,
+/// the conversation centred, the sidebar with the rest at the right, both
+/// columns growing from 30 to 40 once the conversation has the width it
+/// reads well at, so the spare width goes to names and paths before it
+/// is air, and the air there is sits inside a frame on both sides.
+#[test]
+fn the_screen_is_three_panes_from_150_columns() {
+    let theme = Theme::truecolor_dark();
+    for (w, rail, side, col_x, col_w) in [
+        (100, 0, 30, 1, 66),
+        (120, 0, 30, 1, 86),
+        (149, 0, 30, 1, 112),
+        (150, 30, 30, 31, 86),
+        (176, 30, 30, 31, 112),
+        (180, 32, 32, 33, 112),
+        (196, 40, 40, 41, 112),
+        (220, 40, 40, 53, 112),
+    ] {
+        assert_eq!(crate::sidebar::width_for(w), side, "{w}");
+        let v = racked();
         assert_eq!(
-            dusty.len() - dusty.trim_start().len(),
-            9,
-            "{w}: the column is a cell in"
+            crate::draw::chat_column(&v, theme, w, 50),
+            (col_x, col_w),
+            "{w}: the column"
         );
-        // The ledger uses the room: at 40 columns a long model name fits.
+        let text = render_to_string(&v, w, 50);
+        let rows: Vec<&str> = text.lines().collect();
+        let at = |y: usize, x: u16| rows[y].chars().nth(usize::from(x));
+        let from = |y: usize, x: u16, n: usize| {
+            rows[y]
+                .chars()
+                .skip(usize::from(x))
+                .take(n)
+                .collect::<String>()
+        };
+        assert_eq!(at(5, w - side), Some('│'), "{w}: the sidebar's hairline");
+        if rail > 0 {
+            assert_eq!(at(5, rail - 1), Some('│'), "{w}: the rail's hairline");
+            assert_eq!(from(0, 1, 5), "RYTER", "{w}: the rail's head");
+            assert_eq!(from(0, w - side + 2, 3), "now", "{w}: the sidebar's head");
+            assert!(text.contains("▸ build"), "{w}");
+        } else {
+            assert_eq!(from(0, w - side + 2, 5), "RYTER", "{w}: the sidebar's head");
+        }
+        // The user's row is at the column's edge, the timeline gutter in.
+        let dusty = rows.iter().find(|r| r.contains("●  dusty")).unwrap();
+        let x = dusty.find("●  dusty").map(|i| dusty[..i].chars().count());
+        assert_eq!(x, Some(usize::from(col_x) + 8), "{w}: the column's place");
+        // The columns use the room: at 40 a long model name fits whole.
         if side == 40 {
             assert!(text.contains("deepseek-pro-latest"), "{w}:\n{text}");
         }
     }
+}
+
+/// `R-KEY-05`, `R-TEST-13`: a hat switch while a turn runs is the next
+/// message's. The prompt's chip and the ledger's `▸` go to the hat chosen
+/// at once; the hat working keeps the spinner, its model in the `now`
+/// block and on the status line, its colour on the status row, and its
+/// name over what it writes. The agent takes the switch when the turn
+/// ends, and the next turn is the new hat's.
+#[test]
+fn a_hat_switch_during_a_turn_is_the_next_messages() {
+    use ryter_core::Role;
+    let theme = Theme::truecolor_dark();
+    let spins = |r: &String| {
+        r.chars()
+            .next()
+            .is_some_and(|c| crate::activity::SPINNER.contains(&c.to_string().as_str()))
+    };
+    // Build has a model of its own; plan runs on the one every hat uses.
+    let mut v = racked();
+    v.set_mode(Role::SoloPlan);
+    v.agent_hat = Role::SoloPlan;
+    let _ = v.submit_user("plan the login".into(), "plan the login".into());
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnStarted {
+            turn: 7,
+            role: Role::SoloPlan,
+            at: 0,
+        },
+    );
+    let tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
+    assert!(matches!(
+        crate::run_keys_handle(&mut v, tab),
+        Action::SetMode(Role::SoloBuild)
+    ));
+    // As `actions::set_mode` does; the agent's word comes after the turn.
+    v.set_mode(Role::SoloBuild);
+    v.hats_pending += 1;
+    assert_eq!(v.working_hat(), Role::SoloPlan);
+    v.on_token("Step one.");
+    let rows = sidebar_rows(&v, 100);
+    let row = |name: &str| rows.iter().find(|r| r.contains(name)).cloned().unwrap();
+    assert!(spins(&row("plan")), "{rows:#?}");
+    assert!(row("build").starts_with("▸ build"), "{rows:#?}");
+    let now = rows.iter().position(|r| r == "now").unwrap();
+    assert_eq!(rows[now + 1], "grok-4.6", "{rows:#?}");
+    // What the model writes is headed by the model writing it.
+    let head = v.messages.iter().rev().find_map(|m| match &m.kind {
+        crate::chat::MessageKind::Assistant { model } => Some(model.clone()),
+        _ => None,
+    });
+    assert_eq!(head.as_deref(), Some("grok-4.6"));
+    // The prompt's chip is build's; the status row's spinner is plan's.
+    let buf = render_buffer(&v, 120, 40, theme);
+    let rule_row = (0..40u16)
+        .rev()
+        .find(|&y| buf[(1, y)].symbol() == "─" && buf[(90, y)].symbol() == "│")
+        .unwrap();
+    assert_eq!(
+        buf[(3, rule_row + 1)].bg,
+        theme.mode(Role::SoloBuild),
+        "the chip"
+    );
+    let spinner = (0..rule_row)
+        .flat_map(|y| (0..90u16).map(move |x| (x, y)))
+        .find(|&at| crate::activity::SPINNER.contains(&buf[at].symbol()))
+        .expect("the status row");
+    assert_eq!(
+        buf[spinner].fg,
+        theme.mode(Role::SoloPlan),
+        "the status row"
+    );
+    // Folded away, the status line names the hat working.
+    let foot = render_to_string(&v, 80, 24);
+    assert!(
+        foot.lines().last().unwrap().starts_with(" plan · grok-4.6"),
+        "{foot}"
+    );
+    // The turn ends and the agent puts build on: the next turn is its.
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::TurnFinished {
+            turn: 7,
+            tools: 0,
+            duration_ms: 10,
+        },
+    );
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::HatSet {
+            role: Role::SoloBuild,
+        },
+    );
+    assert_eq!((v.working_hat(), v.hats_pending), (Role::SoloBuild, 0));
+    let rows = sidebar_rows(&v, 100);
+    assert!(rows.iter().any(|r| r.starts_with("▸ build")), "{rows:#?}");
+    assert!(!rows.iter().any(spins), "{rows:#?}");
+    let foot = render_to_string(&v, 80, 24);
+    assert!(
+        foot.lines()
+            .last()
+            .unwrap()
+            .starts_with(" build · deepseek"),
+        "{foot}"
+    );
 }
 
 /// `R-COLOR-02`, `R-COLOR-03`, `R-TEST-02`: the hat on colors its chip,
@@ -2230,13 +2369,14 @@ fn reviewed(verdict: Option<bool>) -> View {
             "- **note** `app/server.js:6`: an empty query returns `[]`; the test covers it.\n\nVERDICT: PASS"
         }
     };
+    // As `/audit` does it: the audit hat worn, then the turn in it.
     for ev in [
         AgentEvent::ModeChanged {
             role: ryter_core::Role::SoloAudit,
         },
         AgentEvent::TurnStarted {
             turn: 2,
-            role: Role::SoloBuild,
+            role: Role::SoloAudit,
             at: 0,
         },
         AgentEvent::Token { text: body.into() },

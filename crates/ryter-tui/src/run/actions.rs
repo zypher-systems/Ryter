@@ -904,7 +904,11 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
     }
 }
 
-/// Switch hats. A switch while a turn runs applies to the next message.
+/// Switch hats: the hat the next message goes to, now. The agent takes
+/// the switch when it is idle, so one made during a turn is held until
+/// the turn ends: the hat working finishes on its own model, and the
+/// screen marks it apart from the hat on (`docs/sidebar-design.md`
+/// R-KEY-05).
 fn set_mode(view: &mut View, cx: &mut Ctx, role: ryter_core::Role) {
     view.set_mode(role);
     view.open_composer_on(role);

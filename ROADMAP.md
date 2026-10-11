@@ -21,6 +21,8 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 The last release is 0.25.1. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
+- **In dev, unreleased: three panes on a wide screen, and a hat switch during a turn is the next message's.** From 150 columns the hats are back at the left on a rail, the conversation centred, the measurements at the right, both columns growing 30 to 40; the one sidebar stays between 100 and 149. A `Tab` while a hat works chooses the hat for the next message only, and the screen draws the hat working (spinner, `now`, the reply's name) apart from the hat on (the chip, `▸`). Both from the user's run of 0.25.1 on a wide terminal with a model per hat (`DECISIONS.md` 2026-10-11). Still owed from 0.25.0: the README screenshot and a look at the light theme.
+
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
 
