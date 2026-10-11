@@ -30,8 +30,9 @@ What stays: the transcript as 0.25.0 left it (space-led rows, a folded turn endi
 
 | Region | Size | Content |
 | --- | --- | --- |
-| Transcript | the rest, from row 0, at the left | the ledger's reading column, unchanged, at most 112 columns wide |
-| Sidebar | 30 columns, right, growing to 40 with the screen (§17): a hairline, a pad, the rest text | §4 |
+| Transcript | the rest, from row 0: at the left beside the one sidebar, centred between three panes (§17) | the ledger's reading column, unchanged, at most 112 columns wide |
+| Sidebar | 30 columns, right, growing to 40 with the screen (§17): a hairline, a pad, the rest text | §4; between three panes, §4.3 onward |
+| Rail | from 150 columns only (§17): 30 columns, left, growing to 40 with the sidebar; the text, a pad, a hairline | §4.1 and §4.2: the header and the hats |
 | Composer | 1 hairline + 1 to 8 text rows + 1 blank | the hat chip and the message box, the width of the transcript |
 | Hint bar | 1 row | keys for the current state; the status line below 100 columns |
 
@@ -41,15 +42,16 @@ What stays: the transcript as 0.25.0 left it (space-led rows, a folded turn endi
 
 ### 3.2 Width tiers
 
-| Terminal width | Sidebar | Hint bar |
+| Terminal width | Beside the transcript | Hint bar |
 | --- | --- | --- |
-| `>= 100` | shown, 30 columns | keys |
-| `< 100` | hidden | status line (§9) |
+| `>= 150` | three panes (§17): the rail at the left with the header and the hats, the sidebar at the right with the rest, each 30 columns growing to 40 once the transcript has its 112 between them, the transcript centred | keys |
+| `100` to `149` | the one sidebar, 30 columns, every block on it; the transcript at the left, a cell in | keys |
+| `< 100` | nothing | status line (§9) |
 
-- **R-LAYOUT-04** Two tiers, decided by width alone. `rail::Tier::Wide` (the rack) goes; `Mid` is the sidebar and `Narrow` is none. `BOTH_MIN` and `RACK_W` go with it.
-- **R-LAYOUT-05** `Ctrl+B` keeps its binding. At 100 columns and wider it hides and shows the sidebar. Below that it opens the sidebar as a popout panel over the transcript, the same blocks stacked, `↑↓` scrolling it on a screen too short to show it whole; `Esc` or `Ctrl+B` closes it. `[ui] panel = false` starts with the sidebar hidden.
-- **R-LAYOUT-06** When the body is shorter than the sidebar needs, blocks give up rows in this order until it fits: `changes` to its summary row alone, the `turns` row, the third row of `now`, `permissions`, the `project` row of `spend`. If it still does not fit, the sidebar is hidden as it is below 100 columns, and `Ctrl+B` opens it as the panel.
-- **R-LAYOUT-07** A popout wider than the transcript (`/models`, `/settings`) takes the whole body and the sidebar is not drawn under it. One that fits the transcript (a plan to approve, a permission card, the specialists picker) leaves the sidebar in sight.
+- **R-LAYOUT-04** Three tiers, decided by width alone (`sidebar::Tier`): `Panes` from 150 columns, `Sidebar` from 100, `Narrow` below. As first written there were two; the user, running 0.25.1 on a wide terminal, had the rail back (§17). `BOTH_MIN` and `RACK_W` of the rack stay gone; the rail is the sidebar's own header and hats blocks drawn at the left, from the same functions.
+- **R-LAYOUT-05** `Ctrl+B` keeps its binding. At 100 columns and wider it hides and shows the columns beside the transcript, both at once between three panes. Below that it opens the sidebar, every block, as a popout panel over the transcript, the same blocks stacked, `↑↓` scrolling it on a screen too short to show it whole; `Esc` or `Ctrl+B` closes it. `[ui] panel = false` starts with them hidden.
+- **R-LAYOUT-06** When the body is shorter than a column needs, its blocks give up rows in this order until it fits: `changes` to its summary row alone, the `turns` row, the third row of `now`, `permissions`, the `project` row of `spend`. If it still does not fit, the columns are hidden as they are below 100 columns, and `Ctrl+B` opens the panel. Between three panes each column must fit on its own: the rail with its eleven rows (thirteen with `plan.md` and `audit.md`), the sidebar with every cut made.
+- **R-LAYOUT-07** A popout wider than the transcript (`/models`, `/settings`) takes the whole body and neither column is drawn under it. One that fits the transcript (a plan to approve, a permission card) leaves them in sight.
 
 ### 3.3 Wireframe: 120×40, build hat, a command running
 
@@ -129,7 +131,7 @@ What stays: the transcript as 0.25.0 left it (space-led rows, a folded turn endi
 
 ## 4. The sidebar
 
-Blocks in order, each a dim lowercase heading and its rows, one blank row between blocks, no boxes. Text is 28 columns wide; values are right-aligned where the row is a figure.
+Blocks in order, each a dim lowercase heading and its rows, one blank row between blocks, no boxes. Text is 27 columns wide at 30, 37 at 40; values are right-aligned where the row is a figure. Between three panes (R-LAYOUT-04) the header (§4.1) and the hats (§4.2) are the rail's, at the left, and the sidebar at the right begins at `now` (§4.3); the blocks themselves do not change.
 
 ### 4.1 Header
 
@@ -155,7 +157,7 @@ hats
 ```
 
 - **R-HATS-01** Every hat, in `rail::HATS` order: the primary hats, a separator row, the specialists. The separator is a hairline of twelve cells and the word `specialists`, both in the hairline colour. The block replaces the hat rack and the top bar's hat strip.
-- **R-HATS-02** The hat on is marked `▸` and its name is bold, in the hat's colour. Every other hat is two spaces and its name in its colour. A hat with no turns this session shows its name and nothing else: no `no turns yet`, no `—`.
+- **R-HATS-02** The hat on is marked `▸` and its name is bold, in the hat's colour. Every other hat is two spaces and its name in its colour. A hat with no turns this session shows its name and nothing else: no `no turns yet`, no `—`. While a turn runs the mark on the hat whose model is working is the spinner (§17): in place of `▸` when that is the hat on, beside it on another row when a switch during the turn has chosen a different hat for the next message (R-KEY-05).
 - **R-HATS-03** A hat with turns shows `N turn` or `N turns` and its spend, from `rail::hat_spend` (`$?.??` when a model on it is unpriced), right-aligned.
 - **R-HATS-04** A specialist whose latest turn ended in a verdict carries the verdict after its name: `✓` in the success colour for a pass, `✗` in the error colour for a fail. The audit's rack rows (`audits  N fail  N pass`, `changed nothing`, `docs  N written`) are retired; the folded turns in the transcript carry them.
 - **R-HATS-05** `turns`: one dot per turn this session in the colour of the hat the turn started in, oldest first. The row shows the newest fifteen; older ones drop off the left. Absent while the session has no turn.
@@ -171,7 +173,7 @@ now
   18 tok/s  in 1.2k  out 0.3k
 ```
 
-- **R-NOW-01** Row 1: the hat's model, cut from the right to fit. Row 2: the turn's live verb from `activity::Verb`, the same text as the status row under the user's message: `thinking · 1:40`, `writing`, `running <command or tool>`, `waiting for the model`, `waiting for you · allow?`, and `idle`, dim, when no turn is in flight. The verb is in the hat colour. Row 3, dim: the rate over the last two seconds (counted as the pulse counted it, four characters to a token) and this turn's tokens in and out. Row 3 is blank while idle. The `PULSE` card (since 0.25.0 shown only while a turn runs) and its sparkline are retired; this block is what it was for.
+- **R-NOW-01** Row 1: the model working, which is the hat on's unless a switch during the turn has chosen another hat for the next message (R-KEY-05), cut from the right to fit. Row 2: the turn's live verb from `activity::Verb`, the same text as the status row under the user's message: `thinking · 1:40`, `writing`, `running <command or tool>`, `waiting for the model`, `waiting for you · allow?`, and `idle`, dim, when no turn is in flight. The verb is in the hat colour. Row 3, dim: the rate over the last two seconds (counted as the pulse counted it, four characters to a token) and this turn's tokens in and out. Row 3 is blank while idle. The `PULSE` card (since 0.25.0 shown only while a turn runs) and its sparkline are retired; this block is what it was for.
 - **R-NOW-02** While a question is open (a permission, a plan, an `ask_user`, the trust prompt, a `sudo` password), rows 2 and 3 are in the warning colour and row 3 names the question: `allow?  run git push`, `plan?  approve or reject`, `question`, `trust?`, `password`. The `waiting for you` row in the transcript and the hint bar are in the warning colour at the same time, as today.
 
 ### 4.4 Context
@@ -211,6 +213,7 @@ now
 - **R-KEY-02** `Shift+Tab` moves to the other row, onto the hat last worn there: the specialist last worn (audit when none) from a primary hat, the primary last worn (build when none) from a specialist. `Tab` in the specialist row cycles the specialists. No picker: the user's decision after running 0.25.0 (§17), even for three or four specialists. The hat put on opens the composer on its request (R-COMP-18).
 - **R-KEY-03** `Ctrl+B` is R-LAYOUT-05. The hint bar names it `^b sidebar`. `/plan`, `/build`, `/scribe` and `/audit` are unchanged.
 - **R-KEY-04** No other binding changes.
+- **R-KEY-05** A hat switch while a turn runs (`Tab`, `Shift+Tab`, `/plan`, `/build`, `/scribe`) chooses the hat for the next message and nothing else. The agent takes the switch when the turn ends, so the hat whose model started the turn finishes it, on that model, with that hat's tools. The screen says which is which: the prompt's chip, its rule and the ledger's `▸` are the hat chosen; the spinner, the `now` block's model and verb, the status row's colour, the status line on a narrow screen, a card's hat and the name over what the model writes are the hat working. The user's decision after running 0.25.1 with a model per hat (§17): what plan is doing is not handed to build's model by a key press. Two hats working at once is a separate decision, not taken.
 
 ## 7. Composer and hint bar
 
@@ -257,7 +260,8 @@ now
 | 256 colours | Colours quantise as today. |
 | 16 colours | Plan blue, build green, specialists yellow, in the terminal's own colours. The chip is reverse video in the hat's colour. |
 | No colour | The hat on is `▸` and bold in the hats block; the chip is reverse video; the verdict marks and the dots keep their glyphs. |
-| `< 100` columns | The sidebar folds away (R-LAYOUT-05). The hint bar becomes the status line: the hat, the model's last component, the gauge and percentage, the session's spend and cap, then as many keys as fit, `^b sidebar` first. |
+| `100` to `149` columns | The one sidebar: the rail's blocks are the sidebar's first (R-LAYOUT-04). |
+| `< 100` columns | The columns fold away (R-LAYOUT-05). The hint bar becomes the status line: the hat working, the model's last component, the gauge and percentage, the session's spend and cap, then as many keys as fit, `^b sidebar` first. |
 | Too short for the sidebar | R-LAYOUT-06. |
 
 - **R-DEGRADE-01** In every mode the hat on can be told from the others without colour, by `▸` and weight, and a question open can be told by its text.
@@ -274,12 +278,12 @@ now
 - **R-TUI-01** `rail.rs` becomes `sidebar.rs` and absorbs `instruments.rs` and `info/`'s solo-screen cards: the tiers, `HATS`, `PRIMARY`, `SPECIALISTS`, `SEPARATOR_LABEL`, `hat_name`, `hat_mark`, `hat_model`, `hat_spend`, `hat_may`, `gauge_color`, `session_spend` and `budget` stay as functions of it. `watermark.rs` is removed. `draw_top_bar` is removed, and `draw_solo` lays out transcript, sidebar, composer and hint bar.
 - **R-TUI-02** The `^b` panel below 100 columns draws the sidebar's blocks with the same functions, stacked, scrolling.
 - **R-TUI-03** The `now` block reads `activity::Activity` (the verb, its detail, the elapsed time, the rate, the turn's tokens), the same object the status row reads.
-- **R-TUI-04** The specialists picker is a `Panel` like the command palette, listing `SPECIALISTS` with `Role::describe` (new, one line each: "checks the work, may run it", "writes the docs, changes no code"), `hat_may` and `hat_model`.
+- **R-TUI-04** `Role::describe` (new) gives each hat one line, "checks the work, may run it", "writes the docs, changes no code", for the opening screen. (It was written for the specialists picker, which shipped in 0.25.0 and went in 0.25.1; §17.)
 - **R-TUI-05** `/settings` drops the *watermark* row. The `STARTUP` section and `start in` stay.
 
 ## 11. Testing contract
 
-- **R-TEST-01** Golden snapshots are regenerated at 80×24 (no sidebar, status line), 100×30, 120×40 and 160×50 (sidebar). `solo-132x40.txt` is removed with its tier. The `html_gallery` test from 0.25.0 is kept and is how the pass is looked at in colour beside what it changed.
+- **R-TEST-01** Golden snapshots are regenerated at 80×24 (no sidebar, status line), 100×30 and 120×40 (the one sidebar) and 160×50 (three panes). `solo-132x40.txt` is removed with its tier. The `html_gallery` test from 0.25.0 is kept and is how the pass is looked at in colour beside what it changed.
 - **R-TEST-02** Each hat has a snapshot at 120×40 with a turn in flight, and a styled-buffer test asserts the cells listed in R-COLOR-02 carry that hat's colour and nothing outside the list changes with the hat.
 - **R-TEST-03** The hats block, table-driven: no turns (name only, no other text on the row); turns and spend; `$?.??`; a verdict mark after a pass and a fail; the separator row's text and colour; the `turns` dots in order; sixteen turns show fifteen dots, the oldest gone; the `plan.md · audit.md` row present with the files and absent without them.
 - **R-TEST-04** The `now` block and the status row say the same verb for thinking, writing, running, waiting for the model, waiting for you and idle, from one `Activity`; both are in the warning colour while a question is open, and row 3 names the question.
@@ -288,9 +292,10 @@ now
 - **R-TEST-07** No watermark: `watermark.rs` is gone, no cell in any frame carries the old tints, and a config with `watermark = true` or `false` loads with no warning.
 - **R-TEST-08** Contrast: `shipped_themes_meet_wcag_aa` covers every text colour over `bg` and the chip's text over each hat colour, in dark and light.
 - **R-TEST-09** The opening block: present with no turn, with `◆ on` following `start_hat` and `--hat`; gone after the first turn; the sessions count with and without earlier sessions.
-- **R-TEST-10** The picker: `Shift+Tab` opens it in the primary row and returns to a primary in the specialist row; typing filters; `Enter` puts the hat on and the composer opens on its request; `Esc` leaves the hat as it was.
+- **R-TEST-10** `Shift+Tab` puts on the hat last worn in the other row from either row, `Tab` cycles a row, and the hat put on opens the composer on its request. (The picker's test until 0.25.1; §17.)
 - **R-TEST-11** No test depends on the machine: no real home folder, no real terminal size, no network.
 - **R-TEST-12** Before the patch is called ready, the real TUI is driven against the simulated provider and used end to end in a truecolor terminal and a 16-colour one, through all four hats, with a question open in each place R-NOW-02 names.
+- **R-TEST-13** The tiers at 100, 120, 149, 150, 176, 180, 196 and 220 columns: the columns' widths, the hairlines, which head each column, and where the transcript's column sits. A hat switch during a turn (R-KEY-05): the chip and `▸` move, the spinner, the `now` model, the status row's colour, the status line and the reply's name stay the working hat's, and the agent's word after the turn ends it.
 
 ## 12. Non-goals
 
@@ -353,5 +358,10 @@ Built on `sidebar-screen-patch` (2026-10-10). Where the build differs from the c
 | The `^b` panel on a narrow screen is the sidebar's rows without its `RYTER` row (R-LAYOUT-05) | The panel's title says where this is. |
 | The specialists picker (R-KEY-02 as first written) shipped in 0.25.0 and was removed the same day | The user, running 0.25.0: a box on the way into the specialists and none on the way back "is a little bit conflictive", and Shift+Tab then Tab round them "is still ok" even at three or four. R-KEY-02 is rewritten above. |
 | The conversation's column sits at the left, a cell in, and the sidebar grows from 30 to 40 columns once the column has its 112 (`sidebar::width_for`) | The user, running 0.25.0 on a wide terminal: the column centred in what was left of the sidebar left "a massive blank spot on the left side of the screen" where the rack had been. Left-aligned, the spare width is between the column and the sidebar; the sidebar takes up to ten of it for names and paths. |
+| Three panes from 150 columns (R-LAYOUT-04, `sidebar::PANES_SCREEN`): the rail at the left with the header and the hats, the transcript centred, the sidebar at the right from `now` on; both columns `width_for` wide, 30 until the transcript has its 112 between them, then up to 40 | The user, running 0.25.1 on a wide terminal: with the column at the left "there is a huge blank space between the right edge of the chat and the right panel", and the screen "is designed and laid out for left and right panel unless it's a narrow screen". A capped reading column needs a frame on both sides; one bar leaves a hole on whichever side the column is not. Between 100 and 149 columns the one sidebar stays, and the transcript at the left. |
+| A hat switch during a turn is the next message's (R-KEY-05) | The user, running 0.25.1 with a model per hat: Tab while the plan hat worked "switches to build mode and continues the plan with a different model". The agent already took the switch only when the turn ended; the screen flipped at once, marked build as working, named build's model in `now`, and signed the plan's reply with it. Now the hat working and the hat on are drawn apart. The user's words: "hold the switch till after the turn is finished"; two hats at once is "later on". |
+| Between three panes the prompt is the column and a cell each side of it, so its chip starts where the messages do; beside the one sidebar it is the middle, as it was (R-LAYOUT-02) | The release PR's review: from 177 columns the column is centred with air each side, and a prompt that spanned the middle put its chip left of the messages. |
+| The wheel scrolls the conversation over its column and its gutter only, not left of it (R-SCROLL-11 as the mouse code has it) | The same review: the chat's wheel had no left bound, which was a cell of inset beside the one sidebar and became the rail between three panes. |
+| The spend drawer sits on the prompt and is its width between three panes, as beside the one sidebar it always was (R-LAYOUT-02) | The release PR's second round: the drawer was still the whole middle, and from 197 columns overhung the column-aligned prompt by the framing air on each side. |
 | The sixteen-colour theme is not held to the contrast test's hat and chip pairs (R-COLOR-06) | Its sixteen are the terminal's own, only approximated by the test's table; plan is `LightBlue`, build `Green`, the specialists `Yellow`, the user `White`. |
 | The `review offer` permission card no longer exists (it went with the offer after a build) and its test case went with it | Its border was the audit colour by coincidence: the old theme's `warn` and `audit` were the same value. |

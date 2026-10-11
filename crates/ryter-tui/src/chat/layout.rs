@@ -424,8 +424,10 @@ fn reasoning_pane(view: &View, width: usize, cap: usize, theme: Theme) -> Vec<Li
 fn status_row(view: &View, width: usize, theme: Theme) -> Line<'static> {
     let a = &view.activity;
     let spinner = crate::activity::SPINNER[a.frame % crate::activity::SPINNER.len()];
+    // The hat working colours the row: the hat on, unless a Tab during
+    // the turn has chosen another for the next message.
     let accent = Style::default()
-        .fg(theme.mode(view.mode))
+        .fg(theme.mode(view.working_hat()))
         .bg(theme.bg)
         .add_modifier(Modifier::BOLD);
     let text = a.status(width.saturating_sub(3));

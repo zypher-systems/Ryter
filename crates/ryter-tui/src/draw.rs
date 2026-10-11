@@ -177,7 +177,7 @@ fn draw_screen(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     if view.panels.is_empty() {
         palette::draw(frame, chat, comp.y, view, theme);
     }
-    let panel_cursor = panel::draw(frame, full, body, slot, view, theme);
+    let panel_cursor = panel::draw(frame, full, body, body, slot, view, theme);
     if panel_cursor.is_some() {
         composer::draw::paint_cursor(frame, panel_cursor, theme);
     } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
@@ -219,10 +219,24 @@ fn status_hit(area: Rect, cf: &layout::ChatFrame) -> Rect {
 /// tests of what is placed within it.
 #[cfg(test)]
 pub fn chat_column(view: &View, theme: Theme, width: u16, height: u16) -> (u16, u16) {
-    let side_w = sidebar_width(view, theme, width, body_height(height));
-    let main_w = width.saturating_sub(side_w);
+    let (rail_w, side_w) = side_columns(view, theme, width, body_height(height));
+    place_column(width, rail_w, side_w)
+}
+
+/// Where the conversation's column sits on a screen `width` wide with a
+/// rail `rail_w` and a sidebar `side_w` beside it (0 for one that is not
+/// there): its left edge and its width. Between three panes it is
+/// centred; beside the one sidebar it is a cell in from the left, so the
+/// spare width is between it and the sidebar, not a hole before the text.
+pub fn place_column(width: u16, rail_w: u16, side_w: u16) -> (u16, u16) {
+    let main_w = width.saturating_sub(rail_w + side_w);
     let col_w = main_w.saturating_sub(4).min(LEDGER_COLUMN);
-    (1, col_w)
+    let col_x = if rail_w > 0 {
+        rail_w + main_w.saturating_sub(col_w + 1) / 2
+    } else {
+        1
+    };
+    (col_x, col_w)
 }
 
 /// Widest the ledger's reading column gets: the timeline gutter plus about
@@ -309,7 +323,7 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     if view.panels.is_empty() {
         palette::draw(frame, chat, comp.y, view, theme);
     }
-    let panel_cursor = panel::draw(frame, full, body, None, view, theme);
+    let panel_cursor = panel::draw(frame, full, body, body, None, view, theme);
     if panel_cursor.is_some() {
         composer::draw::paint_cursor(frame, panel_cursor, theme);
     } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
@@ -334,33 +348,22 @@ pub fn body_height(height: u16) -> u16 {
 }
 
 /// Whether a screen `width` by `height` holds the sidebar beside the
-/// conversation at all: wide enough, and tall enough for the column with
-/// every cut made. Where it doesn't, the sidebar is folded away and `^b`
-/// opens it as a panel (`R-LAYOUT-05`, `R-LAYOUT-06`). The count of rows
-/// does not depend on the theme.
+/// conversation at all (three panes or the one sidebar): wide enough, and
+/// tall enough for the columns with every cut made. Where it doesn't, the
+/// sidebar is folded away and `^b` opens it as a panel (`R-LAYOUT-05`,
+/// `R-LAYOUT-06`). The count of rows does not depend on the theme.
 pub fn sidebar_fits(view: &View, width: u16, height: u16) -> bool {
-    crate::sidebar::tier(width) == crate::sidebar::Tier::Sidebar
-        && crate::sidebar::fits(
-            view,
-            Theme::truecolor_dark(),
-            crate::sidebar::width_for(width),
-            body_height(height),
-        )
+    crate::sidebar::arrange(view, Theme::truecolor_dark(), width, body_height(height)) != (0, 0)
 }
 
-/// Columns the sidebar takes beside the conversation: its width, or none
-/// on a screen too narrow or too short for it, or with it hidden by `^b`.
-pub fn sidebar_width(view: &View, theme: Theme, width: u16, body_h: u16) -> u16 {
+/// Columns the rail and the sidebar take beside the conversation: their
+/// widths, 0 for one that is not there, on a screen too narrow or too
+/// short for it, or with them hidden by `^b`.
+pub fn side_columns(view: &View, theme: Theme, width: u16, body_h: u16) -> (u16, u16) {
     if !view.panel_visible {
-        return 0;
+        return (0, 0);
     }
-    let side_w = crate::sidebar::width_for(width);
-    match crate::sidebar::tier(width) {
-        crate::sidebar::Tier::Sidebar if crate::sidebar::fits(view, theme, side_w, body_h) => {
-            side_w
-        }
-        _ => 0,
-    }
+    crate::sidebar::arrange(view, theme, width, body_h)
 }
 
 /// The solo screen (`docs/sidebar-design.md`): the conversation with the
@@ -386,21 +389,38 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     let (body, foot) = (rows[0], rows[2]);
     // The sidebar runs the body's height, the prompt included: the prompt
     // is the conversation's, the width of its column.
-    let side_w = sidebar_width(view, theme, full.width, body.height);
+    let (rail_w, side_w) = side_columns(view, theme, full.width, body.height);
     let main = Rect {
-        width: body.width.saturating_sub(side_w),
+        x: body.x + rail_w,
+        width: body.width.saturating_sub(rail_w + side_w),
         ..body
     };
     // A popout wider than the conversation's column takes the whole body,
-    // and the sidebar is left out from under it: half a column showing
-    // past a panel's edge reads as a broken screen. One that fits (a plan
-    // to approve, a permission) leaves it in sight.
+    // and the columns beside it are left out from under it: half a column
+    // showing past a panel's edge reads as a broken screen. One that fits
+    // (a plan to approve, a permission) leaves them in sight.
     let panel_owns_body = view
         .panels
         .stack
         .iter()
         .any(|p| !p.docked() && p.size(view).0 > main.width);
-    let side_w = if panel_owns_body { 0 } else { side_w };
+    let (rail_w, side_w, main) = if panel_owns_body {
+        (0, 0, body)
+    } else {
+        (rail_w, side_w, main)
+    };
+    if rail_w > 0 {
+        crate::sidebar::draw(
+            frame,
+            Rect {
+                width: rail_w,
+                ..body
+            },
+            view,
+            theme,
+            crate::sidebar::Part::Rail,
+        );
+    }
     if side_w > 0 {
         crate::sidebar::draw(
             frame,
@@ -411,19 +431,35 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
             },
             view,
             theme,
+            if rail_w > 0 {
+                crate::sidebar::Part::Side
+            } else {
+                crate::sidebar::Part::All
+            },
         );
     }
-    let comp_h =
-        composer::draw::solo_height(view, main.width).min(main.height.saturating_sub(6).max(2));
-    // The column sits at the left, a cell in, however wide the screen: the
-    // spare width is between it and the sidebar, not a hole before it.
-    let col_w = main.width.saturating_sub(4).min(LEDGER_COLUMN);
-    let col_x = main.x + 1;
+    // Between three panes the column is centred; beside the one sidebar
+    // it is a cell in from the left, the spare width between it and the
+    // sidebar (`place_column`).
+    let (col_x, col_w) = place_column(full.width, rail_w, side_w);
+    let col_x = body.x + col_x;
     let column = |r: Rect| Rect {
         x: col_x,
         width: col_w,
         ..r
     };
+    // The prompt is the conversation's width (`R-LAYOUT-02`). Between
+    // three panes, where the column is centred, it is the column and the
+    // cell each side of it, so its chip starts where the messages do;
+    // otherwise the column is at the left and the prompt is the middle,
+    // as it was.
+    let (comp_x, comp_w) = if rail_w > 0 {
+        (col_x - 1, (col_w + 4).min(main.width))
+    } else {
+        (main.x, main.width)
+    };
+    let comp_h =
+        composer::draw::solo_height(view, comp_w).min(main.height.saturating_sub(6).max(2));
     let below = main.height.saturating_sub(comp_h);
     // One spinner: the status row in the conversation. The strip's rows
     // are gone from this screen; the reasoning pane opens under the row.
@@ -440,7 +476,11 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
             Constraint::Length(comp_h),
         ])
         .split(main);
-    let comp = parts[3];
+    let comp = Rect {
+        x: comp_x,
+        width: comp_w,
+        ..parts[3]
+    };
     let slot = (prompt_h > 0).then(|| column(parts[1]));
     let mut chat = column(parts[0]);
     // Before the first turn, the opening block (`R-OPEN-*`) heads the
@@ -475,7 +515,14 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         palette::draw(frame, chat, comp.y, view, theme);
     }
     let panel_body = if panel_owns_body { body } else { main };
-    let panel_cursor = panel::draw(frame, full, panel_body, slot, view, theme);
+    // The spend drawer sits on the prompt and is its width, so between
+    // three panes it is the column and a cell each side, as the prompt is.
+    let dock = Rect {
+        x: comp_x,
+        width: comp_w,
+        ..panel_body
+    };
+    let panel_cursor = panel::draw(frame, full, panel_body, dock, slot, view, theme);
     if panel_cursor.is_some() {
         composer::draw::paint_cursor(frame, panel_cursor, theme);
     } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
@@ -771,9 +818,10 @@ fn draw_keys(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     );
 }
 
-/// The foot of a screen too narrow for the sidebar: the hat, its model,
-/// how full the context is, what the session has cost against its cap,
-/// then as many keys as fit. The rest is in the `^b` panel.
+/// The foot of a screen too narrow for the sidebar: the hat (the one
+/// working, as the `now` block has it), its model, how full the context
+/// is, what the session has cost against its cap, then as many keys as
+/// fit. The rest is in the `^b` panel.
 fn draw_status_line(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let w = usize::from(area.width);
     let bg = theme.bg;
@@ -782,14 +830,12 @@ fn draw_status_line(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     const CELLS: usize = 8;
     let filled = ((frac * CELLS as f64).round() as usize).min(CELLS);
     let (session, color) = crate::sidebar::session_spend(view, theme);
-    let model = wrap::truncate(
-        crate::chat::short_model(crate::sidebar::hat_model(view, view.mode)),
-        16,
-    );
+    let hat = view.working_hat();
+    let model = wrap::truncate(crate::chat::short_model(view.model_of(hat)), 16);
     let mut left = vec![
         Span::styled(
-            format!(" {}", crate::sidebar::hat_name(view.mode)),
-            on(theme.mode(view.mode)).add_modifier(Modifier::BOLD),
+            format!(" {}", crate::sidebar::hat_name(hat)),
+            on(theme.mode(hat)).add_modifier(Modifier::BOLD),
         ),
         Span::styled(format!(" · {model}"), on(theme.dim)),
         Span::styled("  ", on(theme.dim)),
