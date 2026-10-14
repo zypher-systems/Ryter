@@ -452,6 +452,10 @@ async fn run_prompt(
         let mut open_line = false;
         while let Ok(ev) = rx.recv() {
             if json {
+                // Ephemeral: several a second while a command runs.
+                if matches!(ev, AgentEvent::ToolLive { .. }) {
+                    continue;
+                }
                 if let Ok(line) = serde_json::to_string(&ev) {
                     println!("{line}");
                 }

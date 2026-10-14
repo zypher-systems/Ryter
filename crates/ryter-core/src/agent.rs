@@ -758,6 +758,9 @@ impl Agent {
                 } else {
                     crate::tools::Effects::default()
                 };
+                // A long `bash` (or `run_project` shell step) looks alive:
+                // newest lines go to the screen while it runs.
+                self.listen_for_live(&call.id, &call.name);
                 let out = match &parsed {
                     // Run with `null` arguments, the call was refused as
                     // "outside policy" and the model resent the same JSON.
@@ -796,6 +799,7 @@ impl Agent {
                     }
                     Ok(_) => gated_execute(&call.name, &args, &self.ctx),
                 };
+                self.ctx.live = None;
                 // Whatever the call came to, the cards it put up are logged
                 // under it, a cancelled one included.
                 self.emit_asked(Some(&call.id))?;
@@ -3207,6 +3211,28 @@ impl Agent {
         }
         Ok(())
     }
+
+    /// Pass a running command's newest lines to the screen. Sink only — not
+    /// the session log (several a second is noise; finished calls still log).
+    fn listen_for_live(&mut self, id: &str, name: &str) {
+        if !matches!(name, "bash" | "run_project") {
+            self.ctx.live = None;
+            return;
+        }
+        let Some(sink) = self.sink.clone() else {
+            self.ctx.live = None;
+            return;
+        };
+        let id = id.to_string();
+        self.ctx.live = Some(crate::tools::LiveOutput(std::sync::Arc::new(
+            move |tail: &[String]| {
+                let _ = sink.send(AgentEvent::ToolLive {
+                    id: id.clone(),
+                    tail: tail.to_vec(),
+                });
+            },
+        )));
+    }
 }
 
 #[cfg(test)]
@@ -3615,6 +3641,50 @@ mod tests {
         assert!(
             log.lines()
                 .any(|l| l.starts_with(r#"{"kind":"turn_started"#) && l.contains(r#""at":"#))
+        );
+    }
+
+    /// A slow bash passes its newest lines to the sink while it runs, and
+    /// those updates are not written to the session log.
+    #[tokio::test]
+    async fn a_running_bash_sends_live_output_to_the_sink() {
+        let p = ReplayProvider::scripted(vec![
+            call(
+                "bash",
+                serde_json::json!({
+                    "command": "for i in 1 2 3 4; do echo line $i; sleep 0.3; done"
+                }),
+            ),
+            say("done"),
+        ]);
+        let (_home, _cwd, mut agent) = repo_setup(p);
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("run it").await.unwrap();
+        let events: Vec<AgentEvent> = events.try_iter().collect();
+        let live: Vec<&AgentEvent> = events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::ToolLive { .. }))
+            .collect();
+        assert!(
+            live.len() >= 2,
+            "expected several live updates, got {live:?} from {events:?}"
+        );
+        let AgentEvent::ToolLive { id, tail } = live[0] else {
+            unreachable!()
+        };
+        assert_eq!(id, "bash-1");
+        assert!(!tail.is_empty());
+        assert!(tail.iter().all(|l| l.len() <= 200), "{tail:?}");
+        // First update should not already be the last line (command still running).
+        assert!(
+            !tail.iter().any(|l| l.contains("line 4")),
+            "first live update already finished: {live:?}"
+        );
+        let log = std::fs::read_to_string(agent.session.dir.join("events.jsonl")).unwrap();
+        assert!(
+            !log.contains(r#""kind":"tool_live""#),
+            "live updates stay off the log:\n{log}"
         );
     }
 
