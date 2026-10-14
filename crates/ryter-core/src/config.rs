@@ -189,8 +189,9 @@ pub struct UiConfig {
     pub line_numbers: bool,
     /// `/commit` adds a `Ryter:` trailer: model, cost, tests.
     pub receipts: bool,
-    /// `ledger` (one reading column on a timeline, status in the bottom
-    /// bar) | `classic` (chat beside the info cards, as before 0.6.0).
+    /// `workspace` (hat rack, three views, instruments) | `ledger` (the
+    /// 0.25 reading column) | `classic` (chat beside the info cards, as
+    /// before 0.6.0).
     pub layout: String,
     /// Open a page the model shows (`show_page`) in the browser. Off, the
     /// chat gives its link only.
@@ -201,12 +202,21 @@ pub struct UiConfig {
     /// Ring the terminal's bell when a question opens (a permission, a
     /// plan, an `ask_user`, the trust prompt). Off: the screen says it.
     pub bell: bool,
+    /// Nerd Font icons for hats, files, git, and status. Off: plain
+    /// Unicode. A terminal does not report its font. `RYTER_NERD_FONT=1`
+    /// turns this on when the key is absent.
+    pub nerd_font: bool,
 }
 
 impl UiConfig {
     /// The 0.5 layout: chat beside the info cards.
     pub fn classic(&self) -> bool {
         self.layout == "classic"
+    }
+
+    /// The workspace: hat rack, conversation / hats / sessions, instruments.
+    pub fn workspace(&self) -> bool {
+        self.layout == "workspace"
     }
 }
 
@@ -222,12 +232,22 @@ impl Default for UiConfig {
             timestamps: true,
             line_numbers: true,
             receipts: true,
-            layout: "ledger".into(),
+            layout: "workspace".into(),
             open_pages: true,
             start_hat: "plan".into(),
             bell: false,
+            nerd_font: crate::config::nerd_font_default(),
         }
     }
+}
+
+/// Nerd Font icons when `RYTER_NERD_FONT` is set. The key in the file wins.
+pub(crate) fn nerd_font_default() -> bool {
+    nerd_font_flag(std::env::var("RYTER_NERD_FONT").ok().as_deref())
+}
+
+fn nerd_font_flag(value: Option<&str>) -> bool {
+    matches!(value, Some("1" | "true" | "yes" | "on"))
 }
 
 /// Known `[ui]` keys, for the unknown-key warning.
@@ -252,6 +272,7 @@ pub const UI_KEYS: &[&str] = &[
     // conversation. A settings file that still sets it loads.
     "watermark",
     "bell",
+    "nerd_font",
 ];
 
 /// Unknown keys under `[ui]` in a TOML document (empty when none).
@@ -1340,6 +1361,8 @@ struct UiFile {
     start_hat: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     bell: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nerd_font: Option<bool>,
 }
 
 impl From<&UiConfig> for UiFile {
@@ -1358,6 +1381,7 @@ impl From<&UiConfig> for UiFile {
             open_pages: Some(ui.open_pages),
             start_hat: Some(ui.start_hat.clone()),
             bell: Some(ui.bell),
+            nerd_font: Some(ui.nerd_font),
         }
     }
 }
@@ -1402,6 +1426,9 @@ impl UiFile {
         }
         if let Some(v) = self.bell {
             ui.bell = v;
+        }
+        if let Some(v) = self.nerd_font {
+            ui.nerd_font = v;
         }
     }
 }
@@ -2138,6 +2165,19 @@ mod tests {
         let again = load_at(home.path(), None, false).unwrap();
         assert_eq!(again.ui.theme, "light");
         assert_eq!(again.ui.username, "Dusty");
+    }
+
+    #[test]
+    fn nerd_font_is_a_ui_key() {
+        let home = TempDir::new().unwrap();
+        fs::write(home.path().join("config.toml"), "[ui]\nnerd_font = true\n").unwrap();
+        let cfg = load_at(home.path(), None, false).unwrap();
+        assert!(cfg.ui.nerd_font);
+        assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+        assert!(nerd_font_flag(Some("1")));
+        assert!(nerd_font_flag(Some("true")));
+        assert!(!nerd_font_flag(None));
+        assert!(!nerd_font_flag(Some("0")));
     }
 
     /// `[ui] start_hat`: plan unless it says otherwise, and a value that is

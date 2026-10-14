@@ -5,8 +5,7 @@
         │ GLOBAL                                                                           ┃
         │  ^c         clear composer → cancel turn → quit (double-press)                   ┃
         │  ^d         quit when the composer is empty                                      ┃
-        │  ^p         open the command palette                                             ┃
-        │  ^r         toggle the reasoning pane                                            │
+        │  ^r         toggle the reasoning pane                                            ┃
         │  ^b         toggle the info panel                                                │
         │  ^o         show every edit, audit, and folded turn whole, or folded             │
         │  ^t         the workbench: what changed beside the chat, one change at a time    │
@@ -20,6 +19,7 @@
         │  pgdn       scroll one viewport down                                             │
         │  ⇧↑         scroll one row up                                                    │
         │  ⇧↓         scroll one row down                                                  │
+        │  ^home      top of the transcript                                                │
         │ ←→ section   ↑↓ scroll   pgup pgdn page   esc close                              │
         ╰──────────────────────────────────────────────────────────────────────────────────╯
 

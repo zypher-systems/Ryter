@@ -97,7 +97,7 @@ ryter models [connection]
 
 ## Talking to Ryter
 
-`ryter` on a tty opens the TUI in the **ledger** layout (`[ui] layout = "ledger"`, the default since 0.6.0).
+`ryter` on a tty opens the TUI in the **workspace** layout (`[ui] layout = "workspace"`, the default). `ledger` is the 0.6 reading column; `classic` is the 0.5 screen. Switch with `/settings` → layout.
 
 The hat that is on sets the screen's one accent color: plan is blue, build green, and every specialist the one specialist color, amber. Everything else stays the same under every hat. The sidebar names each hat in its own color; on the conversation the hat that is on is the one colored thing.
 

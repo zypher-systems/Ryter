@@ -29,6 +29,8 @@ pub struct Hit {
     pub activity: Rect,
     /// Composer.
     pub composer: Rect,
+    /// Workspace chrome that a click activates.
+    pub clicks: Vec<(crate::select::WorkspaceClick, Rect)>,
 }
 
 /// Paint one frame.
@@ -92,6 +94,9 @@ fn draw_screen(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     frame.render_widget(Block::default().style(theme.body()), full);
     if full.height < 6 || full.width < 20 {
         return Hit::default();
+    }
+    if view.ui.workspace() {
+        return crate::workspace::draw(frame, view, theme);
     }
     if !view.ui.classic() {
         return draw_ledger(frame, view, theme);
@@ -190,6 +195,7 @@ fn draw_screen(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         cards,
         activity: status_hit(chat, &cf),
         composer: comp,
+        clicks: Vec::new(),
     }
 }
 
@@ -243,10 +249,10 @@ pub fn place_column(width: u16, rail_w: u16, side_w: u16) -> (u16, u16) {
 /// a hundred columns of text. Wider lines are harder to read, not better.
 pub const LEDGER_COLUMN: u16 = 112;
 
-/// The ledger (`[ui] layout = "ledger"`, the default): the solo screen,
+/// The ledger (`[ui] layout = "ledger"`): the solo screen,
 /// or the workbench when it is open, which keeps the ledger's own frame: a
 /// strip of views across the top and one bar at the foot.
-fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
+pub(crate) fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     let full = frame.area();
     if view.workbench.is_none() {
         return draw_solo(frame, view, theme);
@@ -336,6 +342,7 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         cards: Vec::new(),
         activity: act,
         composer: comp,
+        clicks: Vec::new(),
     }
 }
 
@@ -535,6 +542,7 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         cards: Vec::new(),
         activity: status_hit(chat, &cf),
         composer: comp,
+        clicks: Vec::new(),
     }
 }
 
@@ -1231,7 +1239,12 @@ fn draw_header(frame: &mut Frame, area: Rect, view: &View, theme: Theme, compact
     frame.render_widget(Paragraph::new(Line::from(spans)).style(theme.body()), area);
 }
 
-fn draw_chat(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> layout::ChatFrame {
+pub(crate) fn draw_chat(
+    frame: &mut Frame,
+    area: Rect,
+    view: &View,
+    theme: Theme,
+) -> layout::ChatFrame {
     let width = usize::from(area.width).saturating_sub(2).max(12);
     let cf = layout::frame(view, width, usize::from(area.height), theme);
     let lines: Vec<Line<'static>> = cf
