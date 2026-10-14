@@ -405,17 +405,19 @@ fn runs_or_edits(prog: &str, words: &[String]) -> bool {
 /// On the read-only list, and not in a form that writes a file or runs one.
 fn read_only(prog: &str, words: &[String]) -> bool {
     (READ_ONLY.contains(&prog) && !writes_output_file(prog, words) && !runs_or_edits(prog, words))
-        || (prog == "sed" && sed_only_prints(words))
+        || (matches!(prog, "sed" | "gsed") && sed_looks(words))
+        || (matches!(prog, "awk" | "gawk" | "mawk" | "nawk") && awk_looks(words))
 }
 
-/// `sed` used to pick lines out: `sed -n '1,40p' file`, `sed -n '1p;$p'`,
-/// `sed -n '/^location/p'`, `sed 5q`. Its script is nothing but addresses
-/// with `p` or `q`: no editing in place, no file written or read, no
-/// command run.
-fn sed_only_prints(words: &[String]) -> bool {
+/// `sed` that only prints: pick lines out (`sed -n '1,40p'`, `sed 5q`),
+/// drop them (`sed -e '/\.pem/d'`), or rewrite on the way to stdout
+/// (`sed 's/a/b/' f`). No `-i`, no `r`/`w`/`e` that open another file or
+/// run a command. A script with a `/` used to read as a path and refuse
+/// the looking hats.
+fn sed_looks(words: &[String]) -> bool {
     let args: Vec<&str> = words
         .iter()
-        .skip_while(|w| w.rsplit('/').next() != Some("sed"))
+        .skip_while(|w| !matches!(w.rsplit('/').next(), Some("sed" | "gsed")))
         .skip(1)
         .map(String::as_str)
         .collect();
@@ -431,6 +433,11 @@ fn sed_only_prints(words: &[String]) -> bool {
                 i += 1;
                 first_plain = false;
             }
+            // In-place edit, or a script file the gate would have to open.
+            "-i" | "--in-place" => return false,
+            a if a.starts_with("-i") || a.starts_with("--in-place=") => return false,
+            "-f" | "--file" => return false,
+            a if a.starts_with("--file=") || (a.starts_with("-f") && a.len() > 2) => return false,
             a if a.starts_with('-') && a.len() > 1 => return false,
             a if first_plain => {
                 scripts.push(a);
@@ -439,15 +446,179 @@ fn sed_only_prints(words: &[String]) -> bool {
             _ => {}
         }
     }
-    static PRINTS: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let prints = PRINTS.get_or_init(|| {
-        let address = r"(\d+|\$|/[^/;]*/)";
-        regex::Regex::new(&format!(
-            r"^(\s*{address}?(\s*,\s*{address})?\s*[pq]?\s*(;|$))+$"
-        ))
-        .expect("a fixed pattern")
-    });
-    !scripts.is_empty() && scripts.iter().all(|s| prints.is_match(s))
+    !scripts.is_empty() && scripts.iter().all(|s| sed_script_looks(s))
+}
+
+/// One `sed` script (after `-e` or as the first plain word): only stream
+/// commands `p`/`q`/`d` and `s///` without write/exec flags.
+fn sed_script_looks(script: &str) -> bool {
+    let mut rest = script.trim();
+    if rest.is_empty() {
+        return false;
+    }
+    while !rest.is_empty() {
+        rest = rest.trim_start();
+        if rest.is_empty() {
+            break;
+        }
+        rest = match sed_skip_address(rest) {
+            Some(r) => r.trim_start(),
+            None => return false,
+        };
+        if rest.is_empty() || rest.starts_with(';') {
+            rest = rest.trim_start_matches(';');
+            continue;
+        }
+        match rest.as_bytes()[0] {
+            b'p' | b'q' | b'd' | b'P' | b'D' => {
+                rest = rest[1..].trim_start();
+            }
+            b's' => {
+                rest = match sed_skip_subst(&rest[1..]) {
+                    Some(r) => r.trim_start(),
+                    None => return false,
+                };
+            }
+            _ => return false,
+        }
+        if rest.is_empty() {
+            break;
+        }
+        if let Some(r) = rest.strip_prefix(';') {
+            rest = r;
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+/// Skip one sed address (`12`, `$`, `/pat/`, or `a,b`).
+fn sed_skip_address(s: &str) -> Option<&str> {
+    let s = sed_skip_one_address(s)?;
+    let s = s.trim_start();
+    if let Some(rest) = s.strip_prefix(',') {
+        sed_skip_one_address(rest)
+    } else {
+        Some(s)
+    }
+}
+
+fn sed_skip_one_address(s: &str) -> Option<&str> {
+    let s = s.trim_start();
+    if s.is_empty() {
+        return Some(s);
+    }
+    if let Some(rest) = s.strip_prefix('$') {
+        return Some(rest);
+    }
+    if s.as_bytes()[0].is_ascii_digit() {
+        let n = s.bytes().take_while(u8::is_ascii_digit).count();
+        return Some(&s[n..]);
+    }
+    if s.starts_with('/') {
+        return sed_skip_delim_field(s, '/');
+    }
+    // No address.
+    Some(s)
+}
+
+/// Skip `s` pattern, replacement, and flags. Delimiter is the first char
+/// of `s` (the text after the command letter). Flags may be `g`/`p`/`i`/`m`
+/// or digits only — not `w`/`e`/`f`.
+fn sed_skip_subst(s: &str) -> Option<&str> {
+    let mut chars = s.chars();
+    let delim = chars.next()?;
+    if delim.is_whitespace() || delim == '\\' || delim == ';' {
+        return None;
+    }
+    let after_pat = skip_until_unescaped(chars.as_str(), delim)?;
+    let after_rep = skip_until_unescaped(after_pat, delim)?;
+    let n = after_rep
+        .chars()
+        .take_while(|c| matches!(c, '0'..='9' | 'g' | 'p' | 'i' | 'I' | 'm' | 'M'))
+        .map(char::len_utf8)
+        .sum();
+    Some(&after_rep[n..])
+}
+
+/// Skip a leading `/…/` (or other delimiter) address field.
+fn sed_skip_delim_field(s: &str, delim: char) -> Option<&str> {
+    let mut chars = s.chars();
+    if chars.next() != Some(delim) {
+        return None;
+    }
+    skip_until_unescaped(chars.as_str(), delim)
+}
+
+/// Rest of `s` after the next unescaped `delim`.
+fn skip_until_unescaped(s: &str, delim: char) -> Option<&str> {
+    let mut escaped = false;
+    for (i, c) in s.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if c == '\\' {
+            escaped = true;
+            continue;
+        }
+        if c == delim {
+            return Some(&s[i + c.len_utf8()..]);
+        }
+    }
+    None
+}
+
+/// `awk` that only prints: `awk '{print}' f`, `awk '/x/ {print}'`. No
+/// `system`, no `getline`, no `>` redirects. A script with braces or a
+/// `/pattern/` used to read as a path and refuse the looking hats.
+fn awk_looks(words: &[String]) -> bool {
+    let args: Vec<&str> = words
+        .iter()
+        .skip_while(|w| !matches!(w.rsplit('/').next(), Some("awk" | "gawk" | "mawk" | "nawk")))
+        .skip(1)
+        .map(String::as_str)
+        .collect();
+    let mut scripts: Vec<&str> = Vec::new();
+    let mut i = 0;
+    let mut first_plain = true;
+    while let Some(a) = args.get(i) {
+        i += 1;
+        match *a {
+            "-F" | "-v" | "-W" => {
+                i += 1;
+            }
+            a if a.starts_with("-F") || a.starts_with("-v") || a.starts_with("-W") => {}
+            "-e" | "--source" => {
+                scripts.extend(args.get(i));
+                i += 1;
+                first_plain = false;
+            }
+            a if a.starts_with("--source=") => {
+                scripts.push(&a[9..]);
+                first_plain = false;
+            }
+            // A program file: the path is judged on its own; this is not a
+            // look until the file is one the hat may read.
+            "-f" | "--file" => return false,
+            a if a.starts_with("--file=") || (a.starts_with("-f") && a.len() > 2) => return false,
+            a if a.starts_with('-') && a.len() > 1 => return false,
+            a if first_plain => {
+                scripts.push(a);
+                first_plain = false;
+            }
+            _ => {}
+        }
+    }
+    !scripts.is_empty()
+        && scripts.iter().all(|s| {
+            let lower = s.to_ascii_lowercase();
+            !lower.contains("system")
+                && !lower.contains("getline")
+                && !s.contains('>')
+                && !s.contains("|&")
+        })
 }
 
 /// Commands whose file arguments must not be a secret: they print contents.
@@ -457,8 +628,8 @@ fn sed_only_prints(words: &[String]) -> bool {
 /// `.env` in any hat. A test holds the two lists together.
 const READERS: &[&str] = &[
     "cat", "head", "tail", "less", "more", "strings", "xxd", "od", "hexdump", "base64", "grep",
-    "egrep", "fgrep", "rg", "nl", "tac", "rev", "cut", "awk", "sed", "sort", "uniq", "diff", "cmp",
-    "comm", "paste", "column", "jq", "yq",
+    "egrep", "fgrep", "rg", "nl", "tac", "rev", "cut", "awk", "gawk", "mawk", "nawk", "sed",
+    "gsed", "sort", "uniq", "diff", "cmp", "comm", "paste", "column", "jq", "yq",
 ];
 
 /// What the review hat may run: the forms of build, test, and lint tools
@@ -490,7 +661,7 @@ fn checks_only(prog: &str, args: &[String], ctx: &ToolContext) -> bool {
             Some(
                 "test" | "t" | "check" | "c" | "build" | "b" | "bench" | "doc" | "d" | "nextest"
                 | "tree" | "metadata" | "verify-project" | "locate-project" | "pkgid" | "help"
-                | "run" | "r",
+                | "version" | "run" | "r",
             ) => true,
             Some("clippy") => !any_of(&["--fix"]),
             Some("fmt") => has("--check"),
@@ -3415,12 +3586,14 @@ fn judge(
         // program of the project's says of itself with `--help` or
         // `--version`. The scribe documenting a service was refused
         // `curl -s localhost:8765/docs`, and `tasks --help` for a CLI, as
-        // commands that change things.
+        // commands that change things. A toolchain asked only its version
+        // (`cargo --version`) is a look too: refusing it forced a hat hop.
         Role::SoloPlan | Role::SoloScribe => {
             let as_written = from_prog.first().map_or("", String::as_str);
             let looks = (read_only(prog, words) && !path_escapes(&seen, ctx))
                 || (own_request(prog, args, ctx) && looks_only_request(args))
-                || (!in_container && project_program_speaks(as_written, args, ctx));
+                || (!in_container && project_program_speaks(as_written, args, ctx))
+                || (!in_container && toolchain_looks(prog, args));
             if looks {
                 Decision::Allow
             } else {
@@ -3504,6 +3677,43 @@ fn project_program_speaks(prog: &str, args: &[String], ctx: &ToolContext) -> boo
     }
     let workspace = real_path(&ctx.workspace);
     resolve(ctx, prog).is_some_and(|p| is_under(&p, &workspace) && !is_secret(&p, ctx))
+}
+
+/// A toolchain asked only what it is: `--version` / `--help` / `-V` / `-h`,
+/// or a lone `version`/`help` word. Looking hats stay looking-tools-only;
+/// they may not build or test, but refusing `cargo --version` stopped a
+/// real plan mid-research.
+fn toolchain_looks(prog: &str, args: &[String]) -> bool {
+    let has = |f: &str| {
+        args.iter()
+            .any(|a| a == f || a.starts_with(&format!("{f}=")))
+    };
+    let any_of = |fs: &[&str]| fs.iter().any(|f| has(f));
+    let plain: Vec<&str> = args
+        .iter()
+        .map(String::as_str)
+        .filter(|a| !a.starts_with('-') && !a.starts_with('+') && !a.contains('='))
+        .collect();
+    let asks = any_of(&["--version", "-V", "--help", "-h"]);
+    // `rustc -vV` is the long version dump; `go version` / `cargo version`
+    // are the verb form of the same probe.
+    let rustc_vv = prog == "rustc" && any_of(&["-vV", "-Vv"]);
+    let version_word = matches!(plain.as_slice(), ["version"] | ["help"]);
+    if !(asks || rustc_vv || version_word) {
+        return false;
+    }
+    match prog {
+        "cargo" | "rustc" | "rustfmt" | "rustup" | "npm" | "pnpm" | "yarn" | "bun" | "node"
+        | "nodejs" | "deno" | "tsx" | "python" | "python3" | "pip" | "pip3" | "uv" | "poetry"
+        | "go" | "gofmt" | "ruby" | "gem" | "bundle" | "java" | "javac" | "dotnet" | "gcc"
+        | "g++" | "clang" | "clang++" | "cc" | "c++" | "make" | "gmake" | "cmake" | "zig"
+        | "php" | "perl" | "lua" | "elixir" | "swift" | "tsc" | "eslint" | "prettier" | "ruff"
+        | "black" | "mypy" | "docker" | "podman" | "git" => {
+            // No work subcommand: only the version/help probe itself.
+            plain.is_empty() || version_word
+        }
+        _ => false,
+    }
 }
 
 /// Whether `host` is this machine: where a project under test is served.
@@ -4408,6 +4618,16 @@ fn decide_git(words: &[String], ctx: &ToolContext) -> Decision {
     }
     let sub = words.get(i).map(String::as_str).unwrap_or("");
     let rest = &words[i.min(words.len())..];
+    // `git --version` / `git --help` carry no verb: a look, as `git version`.
+    if sub.is_empty()
+        && words[1..i].iter().any(|w| {
+            matches!(w.as_str(), "--version" | "-v" | "--help" | "-h")
+                || w.starts_with("--version=")
+                || w.starts_with("--help=")
+        })
+    {
+        return Decision::Allow;
+    }
     // `git remote`, `remote -v`, `remote show` and `remote get-url` print
     // the remotes; the rest of the verb changes them. A real session's
     // `git remote -v` asked in the build hat and was refused in the audit,
@@ -5568,17 +5788,17 @@ fn path_escapes(words: &[String], ctx: &ToolContext) -> bool {
     // `echo $(…)` prints what the substitution printed, and that command
     // was judged on its own. Everywhere else a substitution may be a path.
     let prints = matches!(program(words), Some("echo" | "printf"));
-    // `sed -n '1p;$p'`: the `$` is the last line, in a script that only
-    // prints ([`sed_only_prints`]).
-    let mut sed_script = program(words) == Some("sed") && sed_only_prints(words);
     let p = parse(words);
-    let mut texts = text_words(
-        p.prog.unwrap_or(""),
-        &words[p.args.saturating_sub(1).min(words.len())..],
-    );
+    let prog = p.prog.unwrap_or("");
+    let from_prog = &words[p.args.saturating_sub(1).min(words.len())..];
+    // A `sed`/`awk`/`grep` script is not a path: `sed 's/a/b/' f` and
+    // `awk '{print}' f` used to refuse the looking hats because `/` or a
+    // brace looked like a file.
+    let mut patterns = pattern_words(prog, from_prog);
+    let mut texts = text_words(prog, from_prog);
     for w in words.iter().skip(1) {
-        if sed_script && !w.starts_with('-') {
-            sed_script = false;
+        if let Some(k) = patterns.iter().position(|t| t == w) {
+            patterns.remove(k);
             continue;
         }
         // What `curl` sends as text opens nothing.
@@ -10627,6 +10847,71 @@ mod tests {
         assert_eq!(bash(line, Role::SoloBuild, d), Decision::Allow);
     }
 
+    /// Looking hats may ask a toolchain what it is, and run `sed`/`awk`
+    /// that only print. `cargo --version` and a script with a `/` or a
+    /// brace used to refuse the plan hat and force a hop to build. They
+    /// still may not build, edit in place, or run a script that opens
+    /// another file.
+    #[test]
+    fn looking_hats_allow_toolchain_probes_and_stream_edits() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("f"), "a\nb\n").unwrap();
+        std::fs::write(d.join(".gitignore"), ".env\n*.pem\n").unwrap();
+        let looking = [Role::SoloPlan, Role::SoloScribe, Role::SoloAudit];
+        for cmd in [
+            "cargo --version",
+            "cargo -V",
+            "cargo version",
+            "rustc --version",
+            "rustc -vV",
+            "python3 --version",
+            "node --version",
+            "go version",
+            "npm --version",
+            "docker --version",
+            "git --version",
+            "sed -n p f",
+            "sed -n '1p;$p' f",
+            "sed -n '/^a/p' f",
+            "sed 's/a/b/' f",
+            "sed -e 's/a/b/' f",
+            r"sed 's/^/gitignore:/' .gitignore",
+            r"sed -e '/\.pem/d' .gitignore",
+            "awk '{print}' f",
+            r"awk '/a/ {print}' f",
+            r"awk -F: '/\.pem/' .gitignore",
+        ] {
+            for role in looking {
+                assert_eq!(bash(cmd, role, d), Decision::Allow, "{role:?}: {cmd}");
+            }
+        }
+        // Still looking-tools-only: no build, no in-place edit, no script
+        // that reads or writes another file, no awk that runs a command.
+        for cmd in [
+            "cargo test",
+            "cargo build",
+            "cargo check",
+            "npm test",
+            "python3 -c 'print(1)'",
+            "sed -i s/a/b/ f",
+            "sed -i.bak s/a/b/ f",
+            "sed 'r /etc/hosts' f",
+            "sed 'w out.txt' f",
+            "sed 's/a/b/w out.txt' f",
+            r#"awk 'BEGIN{system("id")}' f"#,
+            r#"awk '{print > "out"}' f"#,
+            r#"awk '{getline < "/etc/hosts"; print}' f"#,
+        ] {
+            for role in [Role::SoloPlan, Role::SoloScribe] {
+                assert_eq!(bash(cmd, role, d), Decision::Deny, "{role:?}: {cmd}");
+            }
+        }
+        // Looking audit may still run checks (`cargo test`); not edits.
+        assert_eq!(bash("cargo test", Role::SoloAudit, d), Decision::Allow);
+        assert_eq!(bash("sed -i s/a/b/ f", Role::SoloAudit, d), Decision::Deny);
+    }
+
     /// `export NAME=value` sets the variable as `NAME=value` does, so what
     /// uses it later is judged the same: a deletion in scratch space is the
     /// ask for the place it is, not a path the gate can't read. The
@@ -10965,9 +11250,8 @@ mod tests {
             }
             assert_eq!(audit(cmd), Decision::Allow, "audit: {cmd}");
         }
-        // The hats that work run `sed` and `awk` scripts; the looking hats
-        // are refused a script with a `/` in it, which is older than this
-        // rule and noted in the roadmap.
+        // Stream edits that only print: every hat, including the looking
+        // ones (a `/` or a brace in the script is not a path).
         for cmd in [
             r"grep -E '\*\.pem|\*\.key' .gitignore | sed 's/^/gitignore:/'",
             r"sed -n '/\.env/p' .gitignore",
@@ -10975,7 +11259,9 @@ mod tests {
             r"awk '/\.env/ {print}' .gitignore",
             r"awk -F: '/\.key/' .gitignore",
         ] {
-            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+            for role in [Role::SoloBuild, Role::SoloPlan, Role::SoloScribe] {
+                assert_eq!(bash(cmd, role, d), Decision::Allow, "{role:?}: {cmd}");
+            }
             assert_eq!(audit(cmd), Decision::Allow, "audit: {cmd}");
         }
         // The file named is still the file read.
