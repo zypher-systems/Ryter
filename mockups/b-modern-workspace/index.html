@@ -420,7 +420,15 @@
     flex: none;
   }
   .state-pill i {
-    width: 6px; height: 6px; border-radius: 99px; background: var(--warn);
+    width: 6px; height: 6px; border-radius: 99px; background: currentColor;
+  }
+  .state-pill.ok {
+    background: color-mix(in srgb, var(--ok) 14%, transparent);
+    color: var(--ok);
+  }
+  .state-pill.idle {
+    background: var(--soft);
+    color: var(--fg-2);
   }
 
   .thread {
@@ -536,7 +544,7 @@
   /* Permission + composer */
   .dock {
     flex: none;
-    padding: 0 28px 14px;
+    padding: 0 28px 8px;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -778,7 +786,7 @@
   }
   .sessions th.num, .sessions td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .sessions td {
-    padding: 13px 12px;
+    padding: 9px 12px;
     border-bottom: 1px solid var(--line);
     vertical-align: middle;
   }
@@ -801,9 +809,133 @@
     height: 5px; border-radius: 99px; background: var(--line-strong); overflow: hidden;
   }
   .bar span { display: block; height: 100%; border-radius: inherit; background: var(--hat); }
+  .bar.cap span { background: var(--accent); width: 1.3%; min-width: 3px; }
+
+  .app { position: relative; }
+  body[data-instruments="off"] .inspector { display: none; }
+  .app[data-focus="sidebar"] .sidebar { box-shadow: inset -2px 0 0 var(--accent); }
+  .app[data-focus="inspector"] .inspector { box-shadow: inset 2px 0 0 var(--accent); }
+  .is-cursor { box-shadow: inset 0 0 0 1px var(--line-strong); }
+
+  .nav-kbd { margin-left: auto; }
+  .nav-count { margin-left: 6px; }
+  .h-name kbd, .seat-top kbd, .btn kbd, .nav-kbd {
+    font-size: 10px;
+    padding: 2px 4px;
+    margin-right: 6px;
+  }
+  .btn.primary kbd, .btn.danger-text kbd {
+    background: transparent;
+    border-color: transparent;
+    color: inherit;
+    box-shadow: none;
+    margin: 0 0 0 6px;
+  }
+  .h-name kbd { margin-right: 6px; }
+  .seat-top kbd { margin-left: auto; margin-right: 8px; }
+  .seat .tag { margin-left: 0; }
+
+  .steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+  .steps li { display: flex; gap: 8px; align-items: baseline; }
+  .steps .mk { width: 12px; flex: none; font-family: var(--mono); font-size: 11px; letter-spacing: 0; }
+  .steps .done .mk { color: var(--ok); }
+  .steps .now { font-weight: 600; }
+  .steps .now .mk { color: var(--warn); }
+  .steps .todo { color: var(--fg-3); }
+
+  .hintbar {
+    height: 30px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 14px;
+    background: var(--sidebar);
+    border-top: 1px solid var(--line);
+    color: var(--fg-3);
+    font-size: 12px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .hintbar span { display: inline-flex; align-items: center; gap: 6px; }
+  .hintbar .hint-focus { margin-left: auto; color: var(--fg-2); }
+
+  .ask-result {
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--elev);
+    padding: 10px 12px;
+    font-weight: 600;
+  }
+
+  .palette {
+    position: absolute;
+    left: 0; right: 0; top: 48px; bottom: 30px;
+    background: rgba(6, 7, 9, 0.55);
+    display: flex;
+    justify-content: center;
+    padding-top: 10vh;
+    z-index: 5;
+  }
+  [data-theme="light"] .palette { background: rgba(22, 24, 28, 0.28); }
+  .palette-card {
+    width: min(560px, calc(100% - 48px));
+    height: fit-content;
+    max-height: calc(100% - 48px);
+    display: flex;
+    flex-direction: column;
+    background: var(--elev);
+    border: 1px solid var(--line-strong);
+    border-radius: 14px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+  }
+  [data-theme="light"] .palette-card { box-shadow: 0 18px 50px rgba(22, 24, 28, 0.18); }
+  .palette-input {
+    height: 48px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--line);
+    font-size: 15px;
+    letter-spacing: -0.015em;
+    outline: none;
+  }
+  .palette-input::placeholder { color: var(--fg-3); }
+  .palette-list { overflow: auto; padding: 6px; }
+  .pal-group {
+    margin: 8px 8px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg-3);
+  }
+  .pal-row {
+    width: 100%;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 8px;
+    border-radius: 8px;
+    text-align: left;
+    color: var(--fg);
+  }
+  .pal-row kbd { margin-left: auto; }
+  .pal-row.is-on {
+    background: var(--soft);
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+  .pal-empty { padding: 16px; color: var(--fg-3); }
+  .palette-foot {
+    display: flex;
+    gap: 14px;
+    padding: 8px 14px;
+    border-top: 1px solid var(--line);
+    color: var(--fg-3);
+    font-size: 12px;
+  }
+  .palette-foot span { display: inline-flex; align-items: center; gap: 6px; }
 </style>
 </head>
-<body data-hat="build">
+<body data-hat="build" data-instruments="on">
 <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
   <symbol id="i-branch" viewBox="0 0 16 16">
     <circle cx="4" cy="3.5" r="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
@@ -839,14 +971,14 @@
   </symbol>
 </svg>
 
-<div class="app">
+<div class="app" data-focus="stage">
   <header class="topbar">
     <div class="brand">
       <span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>
       <span class="word">Ryter</span>
       <span class="mock-tag">Mockup</span>
     </div>
-    <button class="cmd" type="button" aria-label="Search commands">
+    <button class="cmd" id="cmd-btn" type="button" aria-label="Search commands">
       <svg class="ico sm"><use href="#i-search"/></svg>
       <span>Search commands</span>
       <kbd>/</kbd>
@@ -869,14 +1001,17 @@
         <button class="nav-btn is-on" type="button" data-nav="session" aria-current="page">
           <svg class="ico nav-ico"><use href="#i-chat"/></svg>
           Conversation
+          <kbd class="nav-kbd">^1</kbd>
         </button>
         <button class="nav-btn" type="button" data-nav="hats">
           <svg class="ico nav-ico"><use href="#i-hat"/></svg>
           Hats
+          <kbd class="nav-kbd">^2</kbd>
         </button>
         <button class="nav-btn" type="button" data-nav="sessions">
           <svg class="ico nav-ico"><use href="#i-list"/></svg>
           Sessions
+          <kbd class="nav-kbd">^3</kbd>
           <span class="nav-count">12</span>
         </button>
       </nav>
@@ -885,7 +1020,7 @@
       <div class="hats" role="list">
         <button class="hat-row" type="button" data-goto-seat="plan" style="--hat: var(--plan)" role="listitem">
           <i class="pip" aria-hidden="true"></i>
-          <span class="h-name">plan</span>
+          <span class="h-name"><kbd>1</kbd> plan</span>
           <span class="h-spend">$0.004</span>
           <span class="h-model">grok-4.6</span>
           <span class="h-meta">1 turn</span>
@@ -893,7 +1028,7 @@
         </button>
         <button class="hat-row is-wearing" type="button" data-goto-seat="build" style="--hat: var(--build)" role="listitem">
           <i class="pip" aria-hidden="true"></i>
-          <span class="h-name">build</span>
+          <span class="h-name"><kbd>2</kbd> build</span>
           <span class="h-spend">$0.021</span>
           <span class="h-model">deepseek-pro-latest</span>
           <span class="h-meta">2 turns</span>
@@ -902,7 +1037,7 @@
         <div class="spec-rule">Specialists</div>
         <button class="hat-row" type="button" data-goto-seat="audit" style="--hat: var(--spec)" role="listitem">
           <i class="pip" aria-hidden="true"></i>
-          <span class="h-name">audit <span class="verdict-fail">✗</span></span>
+          <span class="h-name"><kbd>3</kbd> audit <span class="verdict-fail">✗</span></span>
           <span class="h-spend">$0.040</span>
           <span class="h-model">claude-opus-5.5</span>
           <span class="h-meta">1 turn</span>
@@ -910,7 +1045,7 @@
         </button>
         <button class="hat-row" type="button" data-goto-seat="scribe" style="--hat: var(--spec)" role="listitem">
           <i class="pip" aria-hidden="true"></i>
-          <span class="h-name">scribe</span>
+          <span class="h-name"><kbd>4</kbd> scribe</span>
           <span class="h-spend"></span>
           <span class="h-model">follows all hats</span>
           <span class="h-meta"></span>
@@ -943,7 +1078,7 @@
               <span>2 files uncommitted</span>
             </div>
           </div>
-          <div class="state-pill"><i></i> Waiting for you · allow edit</div>
+          <div class="state-pill" id="state-pill"><i></i> Waiting for you · allow edit</div>
         </div>
 
         <div class="thread">
@@ -1066,24 +1201,19 @@
                 <div class="diff-line add"><span class="ln">7</span><span class="g">+</span><code>const rows = await searchCatalog(q)</code></div>
               </div>
               <div class="ask-actions">
-                <button class="btn primary" type="button">Allow</button>
-                <button class="btn" type="button">Allow edits this session</button>
-                <button class="btn danger-text" type="button">Deny</button>
+                <button class="btn primary" type="button" data-ask="allowed">Allow <kbd>y</kbd></button>
+                <button class="btn" type="button" data-ask="session">Allow edits <kbd>a</kbd></button>
+                <button class="btn danger-text" type="button" data-ask="denied">Deny <kbd>n</kbd></button>
               </div>
             </div>
           </section>
+          <div class="ask-result" id="ask-result" hidden></div>
           <form class="composer" action="javascript:void(0)">
             <div class="composer-box">
-              <span class="chip chip-build">build</span>
+              <span class="chip chip-build" id="wear-chip">build</span>
               <span class="caret" aria-hidden="true">›</span>
-              <span class="placeholder">Type to queue the next message</span>
+              <span class="placeholder" id="wear-placeholder">Type to queue the next message</span>
               <kbd>/</kbd>
-            </div>
-            <div class="hints">
-              <span><kbd>Tab</kbd> plan</span>
-              <span><kbd>⇧Tab</kbd> specialists</span>
-              <span><kbd>⌘↵</kbd> send</span>
-              <span><kbd>⌘B</kbd> sidebar</span>
             </div>
           </form>
         </div>
@@ -1115,7 +1245,8 @@
             <button class="seat" type="button" data-seat-btn="plan" style="--hat: var(--plan)">
               <div class="seat-top">
                 <span class="h-name">plan</span>
-                <span class="tag">Tab</span>
+                <kbd>1</kbd>
+                <span class="tag wear-tag" hidden>Wearing</span>
               </div>
               <p class="job">Reads the project and proposes a plan to approve. Changes nothing.</p>
               <p class="maynot">May not edit source, or run anything that changes the tree.</p>
@@ -1127,7 +1258,8 @@
             <button class="seat is-on" type="button" data-seat-btn="build" style="--hat: var(--build)">
               <div class="seat-top">
                 <span class="h-name">build</span>
-                <span class="tag">Wearing</span>
+                <kbd>2</kbd>
+                <span class="tag wear-tag">Wearing</span>
               </div>
               <p class="job">Makes the change in your tree. Edits and ordinary commands run. What /undo cannot put back still asks.</p>
               <p class="maynot">Deleting, publishing, and leaving the machine ask. A checkpoint lands before the turn.</p>
@@ -1140,6 +1272,8 @@
             <button class="seat" type="button" data-seat-btn="audit" style="--hat: var(--spec)">
               <div class="seat-top">
                 <span class="h-name">audit</span>
+                <kbd>3</kbd>
+                <span class="tag wear-tag" hidden>Wearing</span>
                 <span class="tag tag-fail">✗ 1 blocking</span>
               </div>
               <p class="job">Runs the tests, the product, and the plan, then files findings on a card.</p>
@@ -1152,7 +1286,8 @@
             <button class="seat" type="button" data-seat-btn="scribe" style="--hat: var(--spec)">
               <div class="seat-top">
                 <span class="h-name">scribe</span>
-                <span class="tag">⇧Tab</span>
+                <kbd>4</kbd>
+                <span class="tag wear-tag" hidden>Wearing</span>
               </div>
               <p class="job">Writes the documentation, and nothing else. Give it a small model when you want one.</p>
               <p class="maynot">May not write code, configuration, or Ryter’s own files.</p>
@@ -1319,13 +1454,11 @@
     <aside class="inspector">
       <div class="insp" data-view="session">
         <section class="block">
-          <h3>Now</h3>
-          <div class="kv">
-            <div class="now-model">deepseek-pro-latest</div>
-            <div class="muted">OpenRouter · reasoning medium</div>
-            <div class="now-verb warn">Waiting for you · allow?</div>
-            <div class="mono warn">allow? · edit app/server.js</div>
-          </div>
+          <h3>Activity</h3>
+          <div class="now-model" id="act-model">deepseek-pro-latest</div>
+          <div class="now-verb warn" id="act-verb">Waiting for you</div>
+          <div class="mono warn" id="act-detail">edit app/server.js</div>
+          <div class="muted" id="act-next" hidden></div>
         </section>
         <hr class="hair">
         <section class="block">
@@ -1335,34 +1468,37 @@
         </section>
         <hr class="hair">
         <section class="block">
-          <h3>Spend</h3>
-          <div class="kv">
-            <div class="spend-row"><span>Session</span><span class="mono"><b>$0.065</b> <span class="muted">of $5.00</span></span></div>
-            <div class="spend-row"><span>Project</span><span class="mono">$4.82</span></div>
+          <h3>Spend · of $5.00</h3>
+          <div class="spend-row" style="margin-bottom:6px"><span class="mono"><b>$0.065</b></span><span class="muted mono">1.3% of cap</span></div>
+          <div class="gauge bar cap" role="img" aria-label="1.3 percent of the five dollar cap"><span></span></div>
+          <div class="mini-bars" style="margin-top:10px">
+            <div class="bar-row"><span style="color:var(--plan)">plan</span><div class="bar"><span style="width:6%; background:var(--plan)"></span></div><span class="mono">$0.004</span></div>
+            <div class="bar-row"><span style="color:var(--build)">build</span><div class="bar"><span style="width:32%; background:var(--build)"></span></div><span class="mono">$0.021</span></div>
+            <div class="bar-row"><span style="color:var(--spec)">audit</span><div class="bar"><span style="width:62%; background:var(--spec)"></span></div><span class="mono">$0.040</span></div>
           </div>
+          <div class="muted" style="margin-top:8px">Project $4.82</div>
         </section>
         <hr class="hair">
         <section class="block">
-          <h3>Changes</h3>
+          <h3>Uncommitted · 2</h3>
           <div class="kv">
             <div class="file-row"><span class="path">app/server.js</span><span class="stat"><span class="add">+1</span> <span class="del">−1</span></span></div>
             <div class="file-row"><span class="path">test/search.test.js</span><span class="stat"><span class="add">+3</span></span></div>
-            <div class="muted">2 files uncommitted</div>
-            <div>tests <span class="run-ok">✓ 14 passed</span></div>
           </div>
         </section>
         <hr class="hair">
         <section class="block">
-          <h3>This hat</h3>
-          <div class="kv">
-            <div class="accent" style="font-weight:600">Asks first</div>
-            <div class="muted">Sandbox · workspace</div>
-            <div class="muted">Checkpoint before the turn</div>
-          </div>
+          <h3>Plan · 2 of 3</h3>
+          <ol class="steps">
+            <li class="done"><span class="mk">✓</span> Tighten the query read</li>
+            <li class="done"><span class="mk">✓</span> Test a missing query</li>
+            <li class="now" id="plan-now"><span class="mk">●</span> Blank query misses</li>
+          </ol>
         </section>
       </div>
 
       <div class="insp" data-view="hats" hidden>
+        <p class="note" id="wear-line">Wearing build. The turn in flight stays on its model.</p>
         <section class="block" data-seat-panel="plan" hidden>
           <h3>Seat</h3>
           <p class="detail-title" style="color:var(--plan)">plan</p>
@@ -1371,7 +1507,7 @@
         <section class="block" data-seat-panel="build">
           <h3>Seat</h3>
           <p class="detail-title" style="color:var(--build)">build</p>
-          <p class="note">This is the hat on. The turn in flight finishes on this model.</p>
+          <p class="note">Own model. A turn already running finishes on the model that started it.</p>
         </section>
         <section class="block" data-seat-panel="audit" hidden>
           <h3>Seat</h3>
@@ -1408,6 +1544,20 @@
         <div id="session-detail"></div>
       </div>
     </aside>
+  </div>
+
+  <footer class="hintbar" id="hintbar" aria-label="Keys"></footer>
+
+  <div class="palette" id="palette" hidden>
+    <div class="palette-card" role="dialog" aria-label="Commands">
+      <input class="palette-input" id="palette-input" type="text" placeholder="Type a command" autocomplete="off" spellcheck="false">
+      <div class="palette-list" id="palette-list"></div>
+      <div class="palette-foot">
+        <span><kbd>↑↓</kbd> move</span>
+        <span><kbd>enter</kbd> run</span>
+        <span><kbd>esc</kbd> close</span>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1461,6 +1611,31 @@ const seats = {
 
 let seat = "build";
 let sessionId = "empty";
+let wearing = "build";
+let lastPrimary = "build";
+let lastSpecial = "audit";
+let ask = "open";
+let instruments = true;
+let focus = "stage";
+let sideIndex = 1;
+let paletteOpen = false;
+let paletteQuery = "";
+let paletteIndex = 0;
+let booted = false;
+const PRIMARY = ["plan", "build"];
+const SPECIAL = ["audit", "scribe"];
+const HAT_MODEL = {
+  plan: "grok-4.6",
+  build: "deepseek-pro-latest",
+  audit: "claude-opus-5.5",
+  scribe: "grok-4.6"
+};
+const PLACEHOLDER = {
+  plan: "What should we figure out?",
+  build: "What should change?",
+  audit: "Audit this project",
+  scribe: "Document this project"
+};
 
 function theme() {
   return new URLSearchParams(location.search).get("theme") === "light" ? "light" : "dark";
@@ -1493,6 +1668,12 @@ function render() {
   });
   paintSeat();
   paintSession();
+  paintWearing();
+  if (!booted) {
+    booted = true;
+    if (new URLSearchParams(location.search).get("palette") === "1") openPalette();
+  }
+  paintFocus();
 }
 function paintSeat() {
   document.querySelectorAll("[data-seat-btn]").forEach((el) => {
@@ -1503,8 +1684,7 @@ function paintSeat() {
   });
   document.querySelectorAll(".hat-row").forEach((el) => {
     const id = el.dataset.gotoSeat;
-    el.classList.toggle("is-wearing", id === "build");
-    el.classList.toggle("is-picked", view() === "hats" && id === seat && id !== "build");
+    el.classList.toggle("is-picked", view() === "hats" && id === seat && id !== wearing);
   });
   const spec = seats[seat];
   const list = document.getElementById("model-list");
@@ -1569,6 +1749,307 @@ function paintSession() {
     </section>`;
 }
 
+function chipClass(hat) {
+  return hat === "audit" || hat === "scribe" ? "chip chip-spec" : "chip chip-" + hat;
+}
+function paintWearing() {
+  document.body.dataset.hat = wearing;
+  const chip = document.getElementById("wear-chip");
+  chip.textContent = wearing;
+  chip.className = chipClass(wearing);
+  const queued = ask === "open" && wearing === "build";
+  document.getElementById("wear-placeholder").textContent = queued
+    ? "Type to queue the next message"
+    : PLACEHOLDER[wearing];
+  document.querySelectorAll(".hat-row").forEach((el) => {
+    el.classList.toggle("is-wearing", el.dataset.gotoSeat === wearing);
+  });
+  document.querySelectorAll(".wear-tag").forEach((el) => {
+    el.hidden = el.closest("[data-seat-btn]").dataset.seatBtn !== wearing;
+  });
+  const line = document.getElementById("wear-line");
+  line.textContent = ask === "open" && wearing !== "build"
+    ? `Wearing ${wearing} for the next message. Build’s turn is still in flight.`
+    : `Wearing ${wearing}.`;
+  const next = document.getElementById("act-next");
+  if (ask === "open" && wearing !== "build") {
+    next.hidden = false;
+    next.textContent = "Next message · " + wearing;
+  } else {
+    next.hidden = true;
+  }
+}
+function wear(hat) {
+  wearing = hat;
+  if (PRIMARY.includes(hat)) lastPrimary = hat;
+  else lastSpecial = hat;
+  seat = hat;
+  paintWearing();
+  paintSeat();
+  paintHints();
+}
+function cycleHat(step) {
+  const row = PRIMARY.includes(wearing) ? PRIMARY : SPECIAL;
+  const i = row.indexOf(wearing);
+  wear(row[(i + step + row.length) % row.length]);
+}
+function swapRow() {
+  wear(PRIMARY.includes(wearing) ? lastSpecial : lastPrimary);
+}
+function sideNodes() {
+  return [...document.querySelectorAll(".nav-btn, .hat-row")];
+}
+function paintFocus() {
+  document.querySelector(".app").dataset.focus = focus;
+  document.querySelectorAll(".is-cursor").forEach((el) => el.classList.remove("is-cursor"));
+  if (focus === "sidebar") {
+    const nodes = sideNodes();
+    if (sideIndex >= nodes.length) sideIndex = 0;
+    nodes[sideIndex].classList.add("is-cursor");
+  }
+  paintHints();
+}
+function moveFocus(dir) {
+  const list = ["sidebar", "stage"];
+  if (instruments) list.push("inspector");
+  let i = list.indexOf(focus);
+  if (i < 0) i = 0;
+  focus = list[(i + dir + list.length) % list.length];
+  if (focus === "sidebar") {
+    const nodes = sideNodes();
+    const at = nodes.findIndex((n) => n.dataset.gotoSeat === wearing);
+    sideIndex = at >= 0 ? at : 0;
+  }
+  paintFocus();
+}
+function toggleInstruments() {
+  instruments = !instruments;
+  document.body.dataset.instruments = instruments ? "on" : "off";
+  if (!instruments && focus === "inspector") focus = "stage";
+  paintFocus();
+}
+function resolveAsk(kind) {
+  if (ask !== "open") return;
+  ask = kind;
+  document.querySelector(".ask").hidden = true;
+  const result = document.getElementById("ask-result");
+  result.hidden = false;
+  const verb = document.getElementById("act-verb");
+  const detail = document.getElementById("act-detail");
+  const pill = document.getElementById("state-pill");
+  verb.classList.remove("warn");
+  detail.classList.remove("warn");
+  pill.classList.remove("ok", "idle");
+  if (kind === "denied") {
+    result.textContent = "Denied · the edit was not made";
+    verb.textContent = "Idle";
+    detail.textContent = "denied · edit app/server.js";
+    pill.classList.add("idle");
+    pill.innerHTML = "<i></i> Denied";
+  } else if (kind === "session") {
+    result.textContent = "Edits allowed for this session";
+    document.getElementById("act-model").textContent = HAT_MODEL[wearing];
+    verb.textContent = "Editing";
+    verb.style.color = "var(--accent)";
+    detail.textContent = "edit app/server.js";
+    pill.classList.add("ok");
+    pill.innerHTML = "<i></i> Edits allowed this session";
+  } else {
+    result.textContent = "Allowed · edit app/server.js";
+    document.getElementById("act-model").textContent = HAT_MODEL[wearing];
+    verb.textContent = "Editing";
+    verb.style.color = "var(--accent)";
+    detail.textContent = "edit app/server.js";
+    pill.classList.add("ok");
+    pill.innerHTML = "<i></i> Allowed · editing";
+  }
+  const step = document.getElementById("plan-now");
+  step.classList.toggle("done", kind !== "denied");
+  step.classList.toggle("now", kind === "denied");
+  if (kind !== "denied") step.querySelector(".mk").textContent = "✓";
+  document.getElementById("act-next").hidden = true;
+  paintWearing();
+  paintHints();
+}
+function hint(key, label) {
+  return `<span><kbd>${key}</kbd> ${label}</span>`;
+}
+function paintHints() {
+  const names = { sidebar: "sidebar", stage: "conversation", inspector: "instruments" };
+  let parts;
+  if (paletteOpen) parts = [hint("↑↓", "move"), hint("enter", "run"), hint("esc", "close")];
+  else if (ask === "open") parts = [hint("y", "allow"), hint("a", "edits"), hint("n", "deny"), hint("tab", "hat"), hint("⇧tab", "row"), hint("^k", "commands"), hint("^b", "instruments"), hint("alt ← →", "panes")];
+  else parts = [hint("1–4", "hats"), hint("tab", "row"), hint("⇧tab", "row"), hint("^k", "commands"), hint("^1–3", "views"), hint("^b", "instruments"), hint("alt ← →", "panes")];
+  document.getElementById("hintbar").innerHTML = parts.join("") + `<span class="hint-focus">focus · ${names[focus]}</span>`;
+}
+function commandList() {
+  const list = [
+    { group: "Hats", label: "Plan", keys: "1", q: "plan hat", run: () => wear("plan") },
+    { group: "Hats", label: "Build", keys: "2", q: "build hat", run: () => wear("build") },
+    { group: "Hats", label: "Audit", keys: "3", q: "audit hat", run: () => wear("audit") },
+    { group: "Hats", label: "Scribe", keys: "4", q: "scribe hat", run: () => wear("scribe") },
+    { group: "Views", label: "Conversation", keys: "^1", q: "conversation session", run: () => go("session") },
+    { group: "Views", label: "Hats", keys: "^2", q: "hats manager", run: () => go("hats") },
+    { group: "Views", label: "Sessions", keys: "^3", q: "sessions list", run: () => go("sessions") },
+    { group: "Workspace", label: instruments ? "Hide instruments" : "Show instruments", keys: "^b", q: "instruments panel toggle", run: () => toggleInstruments() },
+    { group: "Workspace", label: "Focus the sidebar", keys: "alt ←", q: "focus pane sidebar", run: () => { focus = "sidebar"; paintFocus(); } },
+    { group: "Workspace", label: "Focus the conversation", keys: "alt →", q: "focus pane conversation", run: () => { focus = "stage"; paintFocus(); } },
+    { group: "Workspace", label: "Focus instruments", keys: "alt →", q: "focus instruments panel", run: () => { if (!instruments) toggleInstruments(); focus = "inspector"; paintFocus(); } }
+  ];
+  if (ask === "open") {
+    list.push(
+      { group: "Permission", label: "Allow this edit", keys: "y", q: "allow yes approve", run: () => resolveAsk("allowed") },
+      { group: "Permission", label: "Allow edits this session", keys: "a", q: "allow edits session", run: () => resolveAsk("session") },
+      { group: "Permission", label: "Deny", keys: "n", q: "deny no", run: () => resolveAsk("denied") }
+    );
+  }
+  return list;
+}
+function visibleCommands() {
+  const q = paletteQuery.trim().toLowerCase();
+  return commandList().filter((c) => !q || (c.label + " " + c.q).toLowerCase().includes(q));
+}
+function paintPalette() {
+  const items = visibleCommands();
+  if (paletteIndex >= items.length) paletteIndex = Math.max(0, items.length - 1);
+  const list = document.getElementById("palette-list");
+  if (!items.length) {
+    list.innerHTML = `<div class="pal-empty">No matching command</div>`;
+    return;
+  }
+  let html = "";
+  let group = "";
+  items.forEach((c, i) => {
+    if (c.group !== group) {
+      group = c.group;
+      html += `<div class="pal-group">${group}</div>`;
+    }
+    html += `<button type="button" class="pal-row${i === paletteIndex ? " is-on" : ""}" data-pal="${i}"><span>${c.label}</span><kbd>${c.keys}</kbd></button>`;
+  });
+  list.innerHTML = html;
+  list.querySelectorAll("[data-pal]").forEach((btn) => {
+    btn.addEventListener("click", () => runPalette(Number(btn.dataset.pal)));
+  });
+}
+function openPalette() {
+  paletteOpen = true;
+  paletteQuery = "";
+  paletteIndex = 0;
+  const input = document.getElementById("palette-input");
+  input.value = "";
+  document.getElementById("palette").hidden = false;
+  paintPalette();
+  input.focus();
+  paintHints();
+}
+function closePalette() {
+  paletteOpen = false;
+  document.getElementById("palette").hidden = true;
+  document.getElementById("palette-input").blur();
+  paintHints();
+}
+function runPalette(i) {
+  const cmd = visibleCommands()[i];
+  if (!cmd) return;
+  closePalette();
+  cmd.run();
+}
+function moveCursor(dir) {
+  if (focus === "sidebar") {
+    const nodes = sideNodes();
+    sideIndex = (sideIndex + dir + nodes.length) % nodes.length;
+    paintFocus();
+    return;
+  }
+  if (focus === "stage" && view() === "sessions") {
+    const rows = [...document.querySelectorAll(".sessions tbody tr")].filter((tr) => !tr.hidden);
+    let i = rows.findIndex((tr) => tr.dataset.session === sessionId);
+    i = (i + dir + rows.length) % rows.length;
+    sessionId = rows[i].dataset.session;
+    paintSession();
+    return;
+  }
+  if (focus === "stage" && view() === "hats") {
+    const order = ["plan", "build", "audit", "scribe"];
+    const i = order.indexOf(seat);
+    seat = order[(i + dir + order.length) % order.length];
+    paintSeat();
+    return;
+  }
+  if (focus === "stage") document.querySelector(".thread").scrollBy({ top: dir * 72 });
+}
+function activateFocus() {
+  if (focus !== "sidebar") return;
+  const node = sideNodes()[sideIndex];
+  if (!node) return;
+  if (node.dataset.nav) go(node.dataset.nav);
+  if (node.dataset.gotoSeat) {
+    wear(node.dataset.gotoSeat);
+    go("hats");
+  }
+}
+function onKey(e) {
+  const key = e.key;
+  const ctrl = e.ctrlKey || e.metaKey;
+  if (ctrl && key.toLowerCase() === "k") {
+    e.preventDefault();
+    paletteOpen ? closePalette() : openPalette();
+    return;
+  }
+  if (paletteOpen) {
+    if (key === "Escape") { e.preventDefault(); closePalette(); return; }
+    if (key === "ArrowDown") { e.preventDefault(); paletteIndex = Math.min(paletteIndex + 1, Math.max(0, visibleCommands().length - 1)); paintPalette(); return; }
+    if (key === "ArrowUp") { e.preventDefault(); paletteIndex = Math.max(paletteIndex - 1, 0); paintPalette(); return; }
+    if (key === "Enter") { e.preventDefault(); runPalette(paletteIndex); return; }
+    if (key === "Tab") { e.preventDefault(); return; }
+    return;
+  }
+  if (key === "Tab") {
+    e.preventDefault();
+    e.shiftKey ? swapRow() : cycleHat(1);
+    return;
+  }
+  if (key === "/" && e.target.tagName !== "INPUT") {
+    e.preventDefault();
+    openPalette();
+    return;
+  }
+  if (ctrl && key >= "1" && key <= "3") {
+    e.preventDefault();
+    go(["session", "hats", "sessions"][Number(key) - 1]);
+    return;
+  }
+  if (ctrl && key.toLowerCase() === "b") {
+    e.preventDefault();
+    toggleInstruments();
+    return;
+  }
+  if (e.altKey && (key === "ArrowLeft" || key === "ArrowRight")) {
+    e.preventDefault();
+    moveFocus(key === "ArrowRight" ? 1 : -1);
+    return;
+  }
+  if (ask === "open" && !ctrl && !e.altKey) {
+    if (key === "y" || key === "Y" || key === "Enter") { e.preventDefault(); resolveAsk("allowed"); return; }
+    if (key === "a" || key === "A") { e.preventDefault(); resolveAsk("session"); return; }
+    if (key === "n" || key === "N" || key === "Escape") { e.preventDefault(); resolveAsk("denied"); return; }
+  }
+  if (!ctrl && !e.altKey && key >= "1" && key <= "4") {
+    e.preventDefault();
+    wear(["plan", "build", "audit", "scribe"][Number(key) - 1]);
+    return;
+  }
+  if (key === "ArrowDown" || key === "ArrowUp") {
+    e.preventDefault();
+    moveCursor(key === "ArrowDown" ? 1 : -1);
+    return;
+  }
+  if (key === "Enter") {
+    e.preventDefault();
+    activateFocus();
+  }
+}
+
 document.querySelectorAll("[data-nav]").forEach((el) => {
   el.addEventListener("click", () => go(el.dataset.nav));
 });
@@ -1577,7 +2058,7 @@ document.querySelector(".theme-btn").addEventListener("click", () => {
 });
 document.querySelectorAll("[data-goto-seat]").forEach((el) => {
   el.addEventListener("click", () => {
-    seat = el.dataset.gotoSeat;
+    wear(el.dataset.gotoSeat);
     go("hats");
   });
 });
@@ -1603,6 +2084,19 @@ document.querySelectorAll(".filter").forEach((btn) => {
     });
   });
 });
+document.getElementById("cmd-btn").addEventListener("click", () => openPalette());
+document.querySelectorAll("[data-ask]").forEach((btn) => {
+  btn.addEventListener("click", () => resolveAsk(btn.dataset.ask));
+});
+document.getElementById("palette").addEventListener("click", (e) => {
+  if (e.target.id === "palette") closePalette();
+});
+document.getElementById("palette-input").addEventListener("input", (e) => {
+  paletteQuery = e.target.value;
+  paletteIndex = 0;
+  paintPalette();
+});
+window.addEventListener("keydown", onKey, true);
 window.addEventListener("hashchange", render);
 render();
 </script>
