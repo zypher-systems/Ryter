@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Ryter — hats</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="mode">
+      <div class="mode-inner">
+        <div class="mode-left">
+          <div class="brand">RYTER</div>
+          <div class="hatline" aria-label="Hats">
+            <span class="hat plan">plan</span>
+            <span class="hat build on">build</span>
+            <span class="rowdot">·</span>
+            <span class="hat audit">audit <span class="mark">✗</span></span>
+            <span class="hat scribe">scribe</span>
+          </div>
+        </div>
+        <div class="mid">hats</div>
+        <div class="where">shop · search-patch</div>
+      </div>
+    </header>
+
+    <main class="stage">
+      <div class="col">
+        <div class="split">
+          <section class="pane" aria-label="Hats">
+            <p class="kicker">work</p>
+
+            <article class="seat plan">
+              <header>
+                <span class="arrow">▸</span>
+                <span class="name">plan</span>
+                <span class="bind">tab</span>
+                <span class="stat">1 turn · $0.018</span>
+              </header>
+              <p class="duty">Reads and proposes. Changes nothing.</p>
+              <p class="via">grok-4.6 · spacexai · high</p>
+            </article>
+
+            <article class="seat build is-wearing">
+              <header>
+                <span class="arrow">▸</span>
+                <span class="name">build</span>
+                <span class="bind"><span class="wear">wearing</span> tab</span>
+                <span class="stat">2 turns · $0.041</span>
+              </header>
+              <p class="duty">Changes your files. A checkpoint before the first edit.</p>
+              <p class="via">deepseek-pro-latest · openrouter · medium</p>
+            </article>
+
+            <div class="sep"><i></i>specialists</div>
+
+            <article class="seat audit is-cursor">
+              <header>
+                <span class="arrow">▸</span>
+                <span class="name">audit</span>
+                <span class="bind">⇧tab</span>
+                <span class="stat">1 turn · $0.040</span>
+              </header>
+              <p class="duty">Runs the project against the plan you approved. A checkpoint puts the tree back.</p>
+              <p class="via">claude-opus-5.5 · openrouter · medium</p>
+              <p class="may">may run tests and the product · may not commit, push, or keep a change</p>
+              <p class="came"><span class="bad">✗</span> 1 fail · tree changed nothing · audit.md 14 Oct</p>
+            </article>
+
+            <article class="seat scribe">
+              <header>
+                <span class="arrow">▸</span>
+                <span class="name">scribe</span>
+                <span class="bind">tab</span>
+                <span class="stat">no turns yet</span>
+              </header>
+              <p class="duty">Writes documentation, and nothing else.</p>
+              <p class="via">gemini-2.5-flash · openrouter · low</p>
+            </article>
+          </section>
+
+          <section class="pane detail" aria-label="Model for audit">
+            <p class="kicker">model for audit</p>
+            <div class="models-head">
+              <span></span>
+              <span>model</span>
+              <span class="num">ctx</span>
+              <span class="num">in /M</span>
+              <span class="num">out /M</span>
+              <span>via</span>
+            </div>
+            <div class="mrow">
+              <span class="arr">▸</span>
+              <span>default</span>
+              <span class="num"></span>
+              <span class="num"></span>
+              <span class="num"></span>
+              <span class="tag">follows all hats · grok-4.6</span>
+            </div>
+            <div class="mrow">
+              <span class="arr">▸</span>
+              <span>grok-4.6</span>
+              <span class="num">256k</span>
+              <span class="num">$2.00</span>
+              <span class="num">$6.00</span>
+              <span class="tag">spacexai · all hats</span>
+            </div>
+            <div class="mrow">
+              <span class="arr">▸</span>
+              <span>deepseek-pro-latest</span>
+              <span class="num">256k</span>
+              <span class="num">$0.50</span>
+              <span class="num">$1.50</span>
+              <span class="tag">openrouter · build</span>
+            </div>
+            <div class="mrow is-current">
+              <span class="arr">▸</span>
+              <span>claude-opus-5.5</span>
+              <span class="num">200k</span>
+              <span class="num">$5.00</span>
+              <span class="num">$25.00</span>
+              <span class="tag">openrouter</span>
+            </div>
+            <div class="mrow">
+              <span class="arr">▸</span>
+              <span>gemini-2.5-flash</span>
+              <span class="num">1.0M</span>
+              <span class="num">$0.15</span>
+              <span class="num">$0.60</span>
+              <span class="tag">openrouter · scribe</span>
+            </div>
+
+            <p class="note"><strong>claude-opus-5.5</strong> has read this conversation. Another model re-reads 97k tokens once, at its input price. Audit stays a different model from build, so it is not marking its own work.</p>
+          </section>
+        </div>
+
+        <div class="composer" style="border-top-color: var(--rule);">
+          <span class="prompt" style="color: var(--spec);">›</span>
+          <span class="caret" style="background: var(--spec);"></span>
+          <span class="ghost">filter models</span>
+        </div>
+      </div>
+    </main>
+
+    <footer class="keys">
+      <div class="col keys-inner">
+        <span><kbd>↑↓</kbd> hat</span>
+        <span><kbd>⏎</kbd> assign</span>
+        <span><kbd>tab</kbd> reasoning · medium</span>
+        <span><kbd>r</kbd> reset to all hats</span>
+        <span><kbd>esc</kbd> session</span>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

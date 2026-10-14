@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Ryter — empty-query search</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="mode">
+      <div class="mode-inner">
+        <div class="mode-left">
+          <div class="brand">RYTER</div>
+          <div class="hatline" aria-label="Hats">
+            <span class="hat plan">plan</span>
+            <span class="hat build on">build</span>
+            <span class="rowdot">·</span>
+            <span class="hat audit">audit <span class="mark">✗</span></span>
+            <span class="hat scribe">scribe</span>
+          </div>
+        </div>
+        <div class="mid">empty-query search</div>
+        <div class="where">shop · search-patch</div>
+      </div>
+    </header>
+
+    <main class="stage">
+      <div class="col">
+        <div class="transcript">
+          <div class="row folded">
+            <span class="time">12:41</span>
+            <span class="gutter dim">● </span>
+            <span class="body">search returns every product when q is missing</span>
+            <span class="meta">plan approved<span class="chev">▸</span></span>
+          </div>
+          <div class="row folded">
+            <span class="time">12:44</span>
+            <span class="gutter dim">● </span>
+            <span class="body">build the plan</span>
+            <span class="meta">2 files · +8 −1<span class="chev">▸</span></span>
+          </div>
+          <div class="row folded">
+            <span class="time">12:51</span>
+            <span class="gutter dim">● </span>
+            <span class="body">audit this project</span>
+            <span class="meta"><span class="bad">✗</span> 1 blocking<span class="chev">▸</span></span>
+          </div>
+
+          <div class="gap"></div>
+
+          <div class="row">
+            <span class="time">12:58</span>
+            <span class="gutter user">● </span>
+            <span class="body who">dusty</span>
+          </div>
+          <div class="row">
+            <span class="time"></span>
+            <span class="gutter">│ </span>
+            <span class="body">fix the blocking finding</span>
+          </div>
+
+          <div class="gap"></div>
+
+          <div class="row">
+            <span class="time"></span>
+            <span class="gutter hat">◆ </span>
+            <span class="body model">deepseek-pro-latest</span>
+            <span class="meta">$0.009</span>
+          </div>
+          <div class="row">
+            <span class="time"></span>
+            <span class="gutter">│ </span>
+            <span class="body prose">The audit failed on a missing query. An empty string still matches every name, because <code>includes('')</code> is true. I'll treat a missing query as no search, and add the test it named.</span>
+          </div>
+
+          <div class="gap"></div>
+
+          <div class="row">
+            <span class="time"></span>
+            <span class="gutter">├─</span>
+            <span class="body"><span class="verb">read</span><span class="path">app/server.js</span></span>
+          </div>
+
+          <div class="row">
+            <span class="time"></span>
+            <span class="gutter">├─</span>
+            <span class="body"><span class="verb">edit</span><span class="path">app/server.js</span></span>
+            <span class="meta"><span class="add">+2</span> <span class="del">−1</span></span>
+          </div>
+          <div class="row hunk ctx"><span class="time"></span><span class="gutter">│ </span><span class="hunk-line"><span class="n">12</span><span class="sg"> </span><span class="c">  <span class="kw">function</span> <span class="fn">search</span>(req) {</span></span></div>
+          <div class="row hunk minus"><span class="time"></span><span class="gutter">│ </span><span class="hunk-line"><span class="n">13</span><span class="sg">-</span><span class="c">    <span class="kw">const</span> q = (req.query.q || <span class="str">''</span>).trim()</span></span></div>
+          <div class="row hunk plus"><span class="time"></span><span class="gutter">│ </span><span class="hunk-line"><span class="n">13</span><span class="sg">+</span><span class="c">    <span class="kw">const</span> q = String(req.query.q ?? <span class="str">''</span>).trim()</span></span></div>
+          <div class="row hunk plus"><span class="time"></span><span class="gutter">│ </span><span class="hunk-line"><span class="n">14</span><span class="sg">+</span><span class="c">    <span class="kw">if</span> (!q) <span class="kw">return</span> []</span></span></div>
+          <div class="row hunk ctx"><span class="time"></span><span class="gutter">│ </span><span class="hunk-line"><span class="n">15</span><span class="sg"> </span><span class="c">    <span class="kw">return</span> catalog.filter((p) =&gt; p.name.includes(q))</span></span></div>
+          <div class="row hunk ctx"><span class="time"></span><span class="gutter">│ </span><span class="hunk-line"><span class="n">16</span><span class="sg"> </span><span class="c">  }</span></span></div>
+
+          <div class="row">
+            <span class="time"></span>
+            <span class="gutter">├─</span>
+            <span class="body"><span class="verb">edit</span><span class="path">test/search.test.js</span></span>
+            <span class="meta"><span class="add">+4</span></span>
+          </div>
+          <div class="row hunk ctx"><span class="time"></span><span class="gutter">│ </span><span class="hunk-line"><span class="n">6</span><span class="sg"> </span><span class="c">  test(<span class="str">'a name matches'</span>, <span class="kw">async</span> () =&gt; {</span></span></div>
+          <div class="row hunk ctx"><span class="time"></span><span class="gutter">│ </span><span class="hunk-line"><span class="n">7</span><span class="sg"> </span><span class="c">    assert.equal((<span class="kw">await</span> search({ query: { q: <span class="str">'mug'</span> } })).length, 1)</span></span></div>
+          <div class="row hunk ctx"><span class="time"></span><span class="gutter">│ </span><span class="hunk-line"><span class="n">8</span><span class="sg"> </span><span class="c">  })</span></span></div>
+          <div class="row hunk plus"><span class="time"></span><span class="gutter">│ </span><span class="hunk-line"><span class="n">9</span><span class="sg">+</span><span class="c"></span></span></div>
+          <div class="row hunk plus"><span class="time"></span><span class="gutter">│ </span><span class="hunk-line"><span class="n">10</span><span class="sg">+</span><span class="c">  test(<span class="str">'a missing query finds nothing'</span>, <span class="kw">async</span> () =&gt; {</span></span></div>
+          <div class="row hunk plus"><span class="time"></span><span class="gutter">│ </span><span class="hunk-line"><span class="n">11</span><span class="sg">+</span><span class="c">    assert.deepEqual(<span class="kw">await</span> search(), [])</span></span></div>
+          <div class="row hunk plus"><span class="time"></span><span class="gutter">│ </span><span class="hunk-line"><span class="n">12</span><span class="sg">+</span><span class="c">  })</span></span></div>
+
+          <div class="row">
+            <span class="time"></span>
+            <span class="gutter">├─</span>
+            <span class="body"><span class="verb">run</span><span class="path">npm test</span></span>
+            <span class="meta"><span class="ok">✓ 14 passed</span>  2.1s</span>
+          </div>
+          <div class="row">
+            <span class="time"></span>
+            <span class="gutter">└─</span>
+            <span class="body close"><span class="ok">✓</span> 3 tools · 2 files · +6 −1 · 4.4s · $0.009</span>
+          </div>
+        </div>
+
+        <div class="composer">
+          <span class="prompt">›</span>
+          <span class="caret" aria-hidden="true"></span>
+          <span class="ghost">what should change?</span>
+        </div>
+      </div>
+    </main>
+
+    <footer class="facts">
+      <div class="col facts-inner">
+        <span class="seg"><strong>deepseek-pro-latest</strong> openrouter <span class="dot">●</span></span>
+        <span class="seg"><span class="meter" aria-label="context 38 percent"><i></i></span> 38% <span>97k / 256k</span></span>
+        <span class="seg"><strong>$0.099</strong> no cap</span>
+        <span class="seg"><span class="add">+6</span> <span class="del">−1</span> · 2 files</span>
+        <span class="seg"><span class="perm">asks first</span> · workspace</span>
+      </div>
+    </footer>
+    <footer class="keys">
+      <div class="col keys-inner">
+        <span><kbd>enter</kbd> send</span>
+        <span><kbd>tab</kbd> plan</span>
+        <span><kbd>⇧tab</kbd> specialists</span>
+        <span><kbd>/</kbd> commands</span>
+        <span><kbd>^t</kbd> changes</span>
+        <span><kbd>$</kbd> spend</span>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

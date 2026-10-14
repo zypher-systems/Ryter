@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Ryter — sessions</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="mode">
+      <div class="mode-inner">
+        <div class="mode-left">
+          <div class="brand">RYTER</div>
+          <div class="hatline" aria-label="Hats">
+            <span class="hat plan">plan</span>
+            <span class="hat build on">build</span>
+            <span class="rowdot">·</span>
+            <span class="hat audit">audit <span class="mark">✗</span></span>
+            <span class="hat scribe">scribe</span>
+          </div>
+        </div>
+        <div class="mid">sessions</div>
+        <div class="where">shop</div>
+      </div>
+    </header>
+
+    <main class="stage">
+      <div class="col">
+        <div class="split">
+          <section class="pane" aria-label="Sessions">
+            <p class="kicker">this project</p>
+            <div class="shead">
+              <span></span>
+              <span>session</span>
+              <span>branch</span>
+              <span style="text-align:right">hat</span>
+              <span style="text-align:right">spend</span>
+              <span style="text-align:right">age</span>
+            </div>
+
+            <div class="srow is-cursor">
+              <span class="arr">▸</span>
+              <span>empty-query search</span>
+              <span class="branch">search-patch</span>
+              <span class="hbuild" style="text-align:right">build</span>
+              <span class="money">$0.099</span>
+              <span class="age">12m</span>
+            </div>
+            <div class="srow">
+              <span class="arr">▸</span>
+              <span>greet helper</span>
+              <span class="branch">main</span>
+              <span class="hscribe" style="text-align:right">scribe</span>
+              <span class="money">$0.012</span>
+              <span class="age">1d</span>
+            </div>
+            <div class="srow">
+              <span class="arr">▸</span>
+              <span>checkout tax</span>
+              <span class="branch">tax-notes</span>
+              <span class="hplan" style="text-align:right">plan</span>
+              <span class="money">$0.031</span>
+              <span class="age">2d</span>
+            </div>
+            <div class="srow">
+              <span class="arr">▸</span>
+              <span>cart audit</span>
+              <span class="branch">main</span>
+              <span class="haudit" style="text-align:right">audit</span>
+              <span class="money">$0.084</span>
+              <span class="age">6d</span>
+            </div>
+            <div class="srow">
+              <span class="arr">▸</span>
+              <span>readme pass</span>
+              <span class="branch">main</span>
+              <span class="hscribe" style="text-align:right">scribe</span>
+              <span class="money">$0.008</span>
+              <span class="age">11d</span>
+            </div>
+
+            <p class="project-sum"><strong>5</strong> sessions · project <strong>$4.82</strong> · resume opens in the hat it closed in</p>
+          </section>
+
+          <section class="pane detail" aria-label="Selected session">
+            <p class="kicker">now</p>
+            <h2>empty-query search</h2>
+            <p class="sub">s_8f21c4 · 14 Oct · 4 turns · resumes in <span class="resumes">build</span></p>
+
+            <div class="ledger">
+              <span class="h">hat</span>
+              <span class="h" style="text-align:right">turns</span>
+              <span class="h" style="text-align:right">spend</span>
+              <span class="h">came to</span>
+
+              <span class="hplan">plan</span>
+              <span class="dim" style="text-align:right">1</span>
+              <span class="dim" style="text-align:right">$0.018</span>
+              <span class="soft">approved · empty query returns nothing</span>
+
+              <span class="hbuild">build</span>
+              <span class="dim" style="text-align:right">2</span>
+              <span class="dim" style="text-align:right">$0.041</span>
+              <span class="soft">tests <span class="ok">✓</span> 14 passed</span>
+
+              <span class="haudit">audit</span>
+              <span class="dim" style="text-align:right">1</span>
+              <span class="dim" style="text-align:right">$0.040</span>
+              <span class="soft"><span class="bad">✗</span> 1 blocking · changed nothing</span>
+
+              <span class="hscribe">scribe</span>
+              <span class="dim" style="text-align:right">—</span>
+              <span class="dim" style="text-align:right">—</span>
+              <span class="dim">not worn</span>
+            </div>
+
+            <dl class="files">
+              <dt>plan.md</dt>
+              <dd>14 Oct · empty query returns nothing</dd>
+              <dt>audit.md</dt>
+              <dd>14 Oct · missing query still matches all</dd>
+              <dt>uncommitted</dt>
+              <dd>app/server.js <span class="add">+2</span> <span class="del">−1</span> · test/search.test.js <span class="add">+4</span></dd>
+            </dl>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    <footer class="keys">
+      <div class="col keys-inner">
+        <span><kbd>↑↓</kbd> move</span>
+        <span><kbd>⏎</kbd> resume</span>
+        <span><kbd>r</kbd> rename</span>
+        <span><kbd>d</kbd> delete</span>
+        <span><kbd>n</kbd> new</span>
+        <span><kbd>esc</kbd> session</span>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>
