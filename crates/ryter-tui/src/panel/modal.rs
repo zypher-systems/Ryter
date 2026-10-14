@@ -649,10 +649,8 @@ impl Panel for PermissionModal {
             // `r` stacks `/permissions` with a draft; the card stays until
             // answered. Outside / .env / root do not offer this.
             KeyCode::Char('r' | 'R') if self.can_add_rule() => {
-                let draft = ryter_core::permissions::suggest_pattern(
-                    self.asks.as_deref(),
-                    &self.summary,
-                );
+                let draft =
+                    ryter_core::permissions::suggest_pattern(self.asks.as_deref(), &self.summary);
                 Outcome::Push(Box::new(super::permissions::Permissions::new(
                     view,
                     Some(draft),

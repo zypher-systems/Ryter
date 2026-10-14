@@ -142,18 +142,13 @@ impl Panel for Permissions {
         if n == 0 {
             format!("edit {edit}")
         } else {
-            format!(
-                "edit {edit} · {n} rule{}",
-                if n == 1 { "" } else { "s" }
-            )
+            format!("edit {edit} · {n} rule{}", if n == 1 { "" } else { "s" })
         }
     }
 
     fn legend(&self, _view: &View) -> String {
         match self.pane {
-            Pane::Home => {
-                "↑↓ move · ←→/space answer · a add · d remove · esc close".into()
-            }
+            Pane::Home => "↑↓ move · ←→/space answer · a add · d remove · esc close".into(),
             Pane::Add => "type pattern [= allow|ask|deny] · enter save · esc back".into(),
             Pane::ConfirmRemove(_) => "y remove · n keep".into(),
         }

@@ -2449,9 +2449,7 @@ mod tests {
             Some(Answer::Allow)
         );
         let mut rules = Permissions::default();
-        rules
-            .bash
-            .insert("git push*".into(), Answer::Allow);
+        rules.bash.insert("git push*".into(), Answer::Allow);
         save_permissions(dir.path(), &rules).unwrap();
         let live = load_at(dir.path(), None, false).unwrap();
         assert_eq!(
