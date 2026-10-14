@@ -407,6 +407,10 @@ impl Agent {
         match answer {
             crate::user_io::Permission::Allow | crate::user_io::Permission::Always => Ok(true),
             crate::user_io::Permission::Deny if offered => Ok(false),
+            crate::user_io::Permission::TimedOut if offered => Ok(false),
+            crate::user_io::Permission::TimedOut => self
+                .say("audit not run · no answer (5m) — not a denial")
+                .map(|_| false),
             crate::user_io::Permission::Deny => self.say("audit not run").map(|_| false),
         }
     }

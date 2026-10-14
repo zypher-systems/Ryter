@@ -9,9 +9,24 @@ use serde_json::Value;
 use crate::cancel::Cancel;
 use crate::tools::Decision;
 
-const TIMEOUT: Duration = Duration::from_secs(300);
+/// How long a permission card waits for a person before giving up.
+pub const PERMISSION_WAIT: Duration = Duration::from_secs(300);
 /// How often a waiting prompt checks whether the turn was cancelled.
 const POLL: Duration = Duration::from_millis(100);
+
+#[cfg(test)]
+thread_local! {
+    /// Tests shrink the wait so a silence is not five minutes.
+    static WAIT_OVERRIDE: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
+}
+
+fn wait_limit() -> Duration {
+    #[cfg(test)]
+    if let Some(d) = WAIT_OVERRIDE.with(|c| c.get()) {
+        return d;
+    }
+    PERMISSION_WAIT
+}
 
 /// Reply to a destructive-tool prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +37,8 @@ pub enum Permission {
     Deny,
     /// Run, and treat further Ask as Allow this session.
     Always,
+    /// Nobody answered before the wait ended — not a denial.
+    TimedOut,
 }
 
 /// What the user said to a plan.
@@ -155,7 +172,9 @@ impl crate::sudo::PasswordSource for PasswordPanel {
             .ok()?;
         // No turn to cancel it from here: a cancelled turn ends the command,
         // and the TUI closes the panel, which ends this wait.
-        let (password, remember) = wait(&answer, &Cancel::new())??;
+        let WaitOutcome::Ready(Some((password, remember))) = wait(&answer, &Cancel::new()) else {
+            return None;
+        };
         Some(crate::sudo::Typed { password, remember })
     }
 }
@@ -170,7 +189,8 @@ pub struct Asked {
     pub what: String,
     /// Only `y` would do.
     pub strict: bool,
-    /// `allow`, `always`, `deny`, or `none` when nobody answered.
+    /// `allow`, `always`, `deny`, `timeout` when the wait ended with no
+    /// answer, or `none` when the turn was cancelled or the screen went away.
     pub answer: String,
     /// How long the person took.
     pub waited_ms: u64,
@@ -227,8 +247,9 @@ impl UserIo {
             .unwrap_or_default()
     }
 
-    /// Ask the TUI about a tool. Disconnected, timeout, or a cancelled turn
-    /// → Deny. The caller checks `cancel` to tell a cancel from a no.
+    /// Ask the TUI about a tool. A cancelled turn → Deny (caller checks
+    /// `cancel`). A wait that expires → [`Permission::TimedOut`]. A dropped
+    /// screen → Deny with answer `none`.
     pub fn permission(&self, tool: &str, summary: &str, cancel: &Cancel) -> Permission {
         self.permission_with(tool, summary, None, cancel)
     }
@@ -280,23 +301,43 @@ impl UserIo {
             asks: ask.asks,
             reply: reply_tx,
         };
-        let answer = if self.send(req).is_err() {
-            None
+        let outcome = if self.send(req).is_err() {
+            WaitOutcome::Gone
         } else {
             wait(&reply_rx, cancel)
         };
         record.waited_ms = u64::try_from(opened.elapsed().as_millis()).unwrap_or(u64::MAX);
-        record.answer = match answer {
-            Some(Permission::Allow) => "allow",
-            Some(Permission::Always) => "always",
-            Some(Permission::Deny) => "deny",
-            None => "none",
-        }
-        .into();
+        let answer = match outcome {
+            WaitOutcome::Ready(Permission::Allow) => {
+                record.answer = "allow".into();
+                Permission::Allow
+            }
+            WaitOutcome::Ready(Permission::Always) => {
+                record.answer = "always".into();
+                Permission::Always
+            }
+            WaitOutcome::Ready(Permission::Deny) => {
+                record.answer = "deny".into();
+                Permission::Deny
+            }
+            // TimedOut is never sent on the reply channel.
+            WaitOutcome::Ready(Permission::TimedOut) => {
+                record.answer = "timeout".into();
+                Permission::TimedOut
+            }
+            WaitOutcome::TimedOut => {
+                record.answer = "timeout".into();
+                Permission::TimedOut
+            }
+            WaitOutcome::Cancelled | WaitOutcome::Gone => {
+                record.answer = "none".into();
+                Permission::Deny
+            }
+        };
         if let Ok(mut a) = self.asked.lock() {
             a.push(record);
         }
-        answer.unwrap_or(Permission::Deny)
+        answer
     }
 
     /// Ask the human. Empty string on timeout, disconnect, or cancel.
@@ -322,7 +363,10 @@ impl UserIo {
         if self.send(req).is_err() {
             return String::new();
         }
-        wait(&reply_rx, cancel).unwrap_or_default()
+        match wait(&reply_rx, cancel) {
+            WaitOutcome::Ready(v) => v,
+            WaitOutcome::TimedOut | WaitOutcome::Cancelled | WaitOutcome::Gone => String::new(),
+        }
     }
 
     /// Show the user a plan and wait for their answer. A plan takes reading,
@@ -387,23 +431,31 @@ impl UserIo {
     }
 }
 
+/// How a wait for the TUI ended.
+enum WaitOutcome<T> {
+    Ready(T),
+    TimedOut,
+    Cancelled,
+    Gone,
+}
+
 /// Wait for a reply, giving up at the timeout or as soon as the turn is
 /// cancelled. Esc used to leave the agent blocked here for five minutes
 /// while the screen said "cancelling…".
-fn wait<T>(rx: &mpsc::Receiver<T>, cancel: &Cancel) -> Option<T> {
-    let deadline = std::time::Instant::now() + TIMEOUT;
+fn wait<T>(rx: &mpsc::Receiver<T>, cancel: &Cancel) -> WaitOutcome<T> {
+    let deadline = std::time::Instant::now() + wait_limit();
     loop {
         if cancel.is_cancelled() {
-            return None;
+            return WaitOutcome::Cancelled;
         }
         let left = deadline.saturating_duration_since(std::time::Instant::now());
         if left.is_zero() {
-            return None;
+            return WaitOutcome::TimedOut;
         }
         match rx.recv_timeout(left.min(POLL)) {
-            Ok(v) => return Some(v),
+            Ok(v) => return WaitOutcome::Ready(v),
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return None,
+            Err(RecvTimeoutError::Disconnected) => return WaitOutcome::Gone,
         }
     }
 }
@@ -456,8 +508,37 @@ impl From<Permission> for Decision {
     fn from(p: Permission) -> Self {
         match p {
             Permission::Allow | Permission::Always => Decision::Allow,
-            Permission::Deny => Decision::Deny,
+            Permission::Deny | Permission::TimedOut => Decision::Deny,
         }
+    }
+}
+
+/// Words for a permission wait that expired: distinct from a real `n`.
+pub fn timed_out_waiting(tool: &str, summary: &str) -> String {
+    let mins = PERMISSION_WAIT.as_secs() / 60;
+    format!(
+        "timed out waiting for user ({mins}m) — not a denial: {tool} {summary}. Do not treat \
+         silence as a no: carry on without it, or ask again when they are back"
+    )
+}
+
+/// Shrink the permission wait on this thread until dropped (tests only).
+#[cfg(test)]
+pub(crate) struct ShortWait(Option<Duration>);
+
+#[cfg(test)]
+impl ShortWait {
+    /// Wait this many milliseconds before a silence is a timeout.
+    pub(crate) fn ms(ms: u64) -> Self {
+        let prev = WAIT_OVERRIDE.with(|c| c.replace(Some(Duration::from_millis(ms))));
+        Self(prev)
+    }
+}
+
+#[cfg(test)]
+impl Drop for ShortWait {
+    fn drop(&mut self) {
+        WAIT_OVERRIDE.with(|c| c.set(self.0));
     }
 }
 
@@ -473,6 +554,31 @@ mod tests {
             io.permission("bash", "rm -rf x", &Cancel::new()),
             Permission::Deny
         );
+        let asked = io.take_asked();
+        assert_eq!(asked[0].answer, "none");
+    }
+
+    /// Five minutes of silence used to look like `n`. It is a timeout.
+    #[test]
+    fn silence_is_timed_out_not_deny() {
+        let (io, rx) = UserIo::pair();
+        let worker = std::thread::spawn(move || {
+            // The wait runs on this thread; shrink it here.
+            let _short = ShortWait::ms(80);
+            let answer = io.permission("bash", "rm probe.sh", &Cancel::new());
+            let asked = io.take_asked();
+            (answer, asked)
+        });
+        // Hold the card open; never answer.
+        let held = rx.recv().unwrap();
+        let (answer, asked) = worker.join().unwrap();
+        drop(held);
+        assert_eq!(answer, Permission::TimedOut);
+        assert_eq!(asked[0].answer, "timeout");
+        let words = timed_out_waiting("bash", "rm probe.sh");
+        assert!(words.contains("timed out waiting for user"));
+        assert!(words.contains("not a denial"));
+        assert!(!words.contains("denied by user"));
     }
 
     /// Esc while a prompt is open: the tool thread stops waiting at once.
