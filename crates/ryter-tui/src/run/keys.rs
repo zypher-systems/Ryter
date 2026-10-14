@@ -44,8 +44,8 @@ pub fn handle(view: &mut View, key: KeyEvent) -> Action {
 
 fn route(view: &mut View, key: KeyEvent) -> Action {
     // Global bindings win everywhere, except `Esc` which panels interpret
-    // themselves (wizard step back, confirm cancel), and `Ctrl+D`/`Ctrl+P`
-    // which are composer-only conveniences.
+    // themselves (wizard step back, confirm cancel). `Ctrl+D` quits from
+    // an empty composer. The palette is `/`, not a chord.
     if let Some(a) = keymap::lookup(Ctx::Global, key) {
         match a {
             KeyAction::CtrlC => return ctrl_c(view),
@@ -83,12 +83,6 @@ fn route(view: &mut View, key: KeyEvent) -> Action {
             }
             KeyAction::QuitIfEmpty if view.panels.is_empty() && view.composer.is_empty() => {
                 return Action::Quit;
-            }
-            KeyAction::OpenPalette if view.panels.is_empty() => {
-                if matches!(view.composer.mode, ComposerMode::Normal) {
-                    palette::open(view);
-                }
-                return Action::None;
             }
             // Esc leaves the workbench (a `y`/`n` confirm in it takes Esc too).
             KeyAction::Back if view.panels.is_empty() && view.workbench.is_some() => {

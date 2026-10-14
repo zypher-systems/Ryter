@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{COUNTER_AT, MAX_ROWS, Mode, group_thousands};
@@ -168,6 +168,123 @@ pub fn draw_solo(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Op
         inner.width = inner.width.saturating_sub(w + 1);
     }
     body(frame, inner, view, theme, theme.bg, color)
+}
+
+/// Rows the workspace prompt needs: the rounded box, the text, and the
+/// shadow row under it.
+pub fn workspace_height(view: &View, width: u16) -> u16 {
+    let rows = view
+        .composer
+        .rows(workspace_text_width(view, width))
+        .clamp(1, MAX_ROWS);
+    u16::try_from(rows).unwrap_or(1) + 3
+}
+
+fn workspace_text_width(view: &View, width: u16) -> usize {
+    let chip_w = chip(view).map_or(0, |c| wrap::width(&c) + 2);
+    usize::from(width).saturating_sub(6 + chip_w)
+}
+
+/// The workspace prompt: a rounded card, a hat-colored top edge, the hat
+/// as a pill, and a half-block shadow. Returns the cursor cell.
+pub fn draw_workspace(
+    frame: &mut Frame,
+    area: Rect,
+    view: &View,
+    theme: Theme,
+) -> Option<(u16, u16)> {
+    if area.height < 4 || area.width < 16 {
+        return None;
+    }
+    let box_area = Rect {
+        x: area.x + 1,
+        y: area.y,
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(1),
+    };
+    let bg = theme.composer_bg;
+    let accent = border_color(view, theme);
+    let edge = Style::default().fg(theme.rule).bg(bg);
+    let top_edge = Style::default().fg(accent).bg(bg);
+    frame.render_widget(Block::default().style(Style::default().bg(bg)), box_area);
+    let w = usize::from(box_area.width);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("╭", top_edge),
+            Span::styled("─".repeat(w.saturating_sub(2)), top_edge),
+            Span::styled("╮", top_edge),
+        ])),
+        Rect {
+            height: 1,
+            ..box_area
+        },
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("╰", edge),
+            Span::styled("─".repeat(w.saturating_sub(2)), edge),
+            Span::styled("╯", edge),
+        ])),
+        Rect {
+            y: box_area.y + box_area.height - 1,
+            height: 1,
+            ..box_area
+        },
+    );
+    {
+        let buf = frame.buffer_mut();
+        for y in (box_area.y + 1)..(box_area.y + box_area.height - 1) {
+            for x in [box_area.x, box_area.x + box_area.width - 1] {
+                if x < buf.area.width && y < buf.area.height {
+                    let c = &mut buf[(x, y)];
+                    c.set_symbol("│");
+                    c.set_style(edge);
+                }
+            }
+        }
+    }
+    let mut inner = Rect {
+        x: box_area.x + 1,
+        y: box_area.y + 1,
+        width: box_area.width.saturating_sub(2),
+        height: box_area.height.saturating_sub(2),
+    };
+    if let Some(c) = chip(view) {
+        let label = c.trim().to_string();
+        let fill = theme.mode(view.mode);
+        let on = theme.bg;
+        let spans = pill(&label, on, fill, bg);
+        let span_w: u16 = spans.iter().map(|s| wrap::width(&s.content) as u16).sum();
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)),
+            Rect {
+                width: span_w.min(inner.width),
+                height: 1,
+                ..inner
+            },
+        );
+        let step = span_w.saturating_add(1).min(inner.width);
+        inner.x += step;
+        inner.width = inner.width.saturating_sub(step);
+    }
+    let cursor = body(frame, inner, view, theme, bg, accent);
+    crate::panel::drop_shadow(frame, box_area, theme);
+    cursor
+}
+
+/// A one-row pill: half-block caps around a filled label.
+fn pill(label: &str, fg: Color, fill: Color, outer: Color) -> Vec<Span<'static>> {
+    vec![
+        Span::styled("▐", Style::default().fg(fill).bg(outer)),
+        Span::styled(
+            format!(" {label} "),
+            Style::default()
+                .fg(fg)
+                .bg(fill)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("▌", Style::default().fg(fill).bg(outer)),
+    ]
 }
 
 fn ledger_frame(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Rect {

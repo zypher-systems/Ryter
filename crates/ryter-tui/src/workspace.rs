@@ -9,7 +9,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use ryter_core::Role;
@@ -100,8 +100,8 @@ pub fn chrome_key(view: &mut View, key: KeyEvent) -> Option<Action> {
     if !view.ui.workspace() || view.workbench.is_some() {
         return None;
     }
-    let alt = key.modifiers.contains(KeyModifiers::ALT)
-        && !key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt =
+        key.modifiers.contains(KeyModifiers::ALT) && !key.modifiers.contains(KeyModifiers::CONTROL);
     let plain = key.modifiers.is_empty();
     let chrome = match key.code {
         KeyCode::F(2 | 6 | 7) if plain => true,
@@ -314,9 +314,7 @@ fn step_hat(seat: Role, dir: i32) -> Role {
 }
 
 fn hat_index(role: Role) -> usize {
-    HATS.iter()
-        .position(|h| *h == role.hat())
-        .unwrap_or(0)
+    HATS.iter().position(|h| *h == role.hat()).unwrap_or(0)
 }
 
 fn columns(width: u16, instruments: bool) -> (u16, u16) {
@@ -342,7 +340,7 @@ fn draw_top(
     theme: Theme,
     clicks: &mut Vec<(WorkspaceClick, Rect)>,
 ) {
-    let bg = theme.sidebar_bg;
+    let bg = side_bg(theme);
     fill(frame, area, bg);
     let who = format!(" {} ", view.username);
     let who_w = (wrap::width(&who) as u16 + 6).min(area.width / 3);
@@ -359,10 +357,7 @@ fn draw_top(
         Span::styled("●", sty(theme.plan, bg)),
         Span::styled("●", sty(theme.build, bg)),
         Span::styled("●", sty(theme.audit, bg)),
-        Span::styled(
-            " RYTER",
-            sty(theme.fg, bg).add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(" RYTER", sty(theme.fg, bg).add_modifier(Modifier::BOLD)),
     ]);
     frame.render_widget(Paragraph::new(brand), cols[0]);
     let pill_w = cols[1].width.min(42).max(8);
@@ -371,18 +366,36 @@ fn draw_top(
         width: pill_w,
         ..cols[1]
     };
-    let label = wrap::truncate("Search commands", usize::from(pill_w.saturating_sub(8)));
-    let gap = usize::from(pill_w).saturating_sub(wrap::width(&label) + 7);
+    let label = wrap::truncate("Search commands", usize::from(pill_w.saturating_sub(10)));
+    let gap = usize::from(pill_w).saturating_sub(wrap::width(&label) + 9);
+    let border = Style::default().fg(theme.rule).bg(theme.bg);
+    let cap = Style::default().fg(theme.sticky_bg).bg(theme.bg);
     let search = Line::from(vec![
+        Span::styled("╭", border),
         Span::styled(" ⌕ ", sty(theme.dim, theme.bg)),
         Span::styled(label, sty(theme.dim, theme.bg)),
         Span::styled(" ".repeat(gap), sty(theme.dim, theme.bg)),
-        Span::styled("/", sty(theme.fg, theme.bg).add_modifier(Modifier::BOLD)),
-        Span::styled(" ", sty(theme.fg, theme.bg)),
+        Span::styled("▐", cap),
+        Span::styled(
+            "/",
+            Style::default()
+                .fg(theme.fg)
+                .bg(theme.sticky_bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("▌", cap),
+        Span::styled("╮", border),
     ]);
-    frame.render_widget(Paragraph::new(search).style(Style::default().bg(theme.bg)), pill);
+    frame.render_widget(
+        Paragraph::new(search).style(Style::default().bg(theme.bg)),
+        pill,
+    );
     clicks.push((WorkspaceClick::Palette, pill));
-    let icon = if view.theme_name == "light" { "☾" } else { "☀" };
+    let icon = if view.theme_name == "light" {
+        "☾"
+    } else {
+        "☀"
+    };
     let letter: String = view
         .username
         .chars()
@@ -391,10 +404,17 @@ fn draw_top(
         .to_uppercase()
         .collect();
     let right = Line::from(vec![
+        Span::styled("▐", cap),
         Span::styled(
             format!(" {icon} "),
-            sty(theme.fg, bg).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.fg)
+                .bg(theme.sticky_bg)
+                .add_modifier(Modifier::BOLD),
         ),
+        Span::styled("▌", cap),
+        Span::styled(" ", sty(theme.dim, bg)),
+        Span::styled("▐", Style::default().fg(theme.fg).bg(bg)),
         Span::styled(
             format!(" {letter} "),
             Style::default()
@@ -402,6 +422,7 @@ fn draw_top(
                 .bg(theme.fg)
                 .add_modifier(Modifier::BOLD),
         ),
+        Span::styled("▌", Style::default().fg(theme.fg).bg(bg)),
         Span::styled(who, sty(theme.dim, bg)),
     ]);
     frame.render_widget(Paragraph::new(right), cols[2]);
@@ -421,7 +442,7 @@ fn draw_sidebar(
     theme: Theme,
     clicks: &mut Vec<(WorkspaceClick, Rect)>,
 ) {
-    let bg = theme.sidebar_bg;
+    let bg = side_bg(theme);
     fill(frame, area, bg);
     let accent = theme.mode(view.mode);
     if view.focus == Focus::Sidebar && area.width > 0 {
@@ -573,7 +594,7 @@ fn draw_hat(
     let bg = if hat == view.mode {
         theme.selection_bg
     } else {
-        theme.sidebar_bg
+        side_bg(theme)
     };
     let color = theme.mode(hat);
     let w = usize::from(area.width);
@@ -671,7 +692,7 @@ fn draw_hat(
 }
 
 fn draw_side_foot(frame: &mut Frame, area: Rect, mut y: u16, view: &View, theme: Theme) {
-    let bg = theme.sidebar_bg;
+    let bg = side_bg(theme);
     let w = usize::from(area.width);
     if y + 2 >= area.height {
         return;
@@ -755,7 +776,10 @@ fn draw_conversation(
                 format!(" {}", wrap::truncate(&title, w.saturating_sub(24))),
                 sty(theme.fg, theme.bg).add_modifier(Modifier::BOLD),
             )],
-            vec![Span::styled(pill(view), sty(pill_color(view, theme), theme.bg))],
+            vec![Span::styled(
+                pill(view),
+                sty(pill_color(view, theme), theme.bg),
+            )],
             w,
             theme.bg,
         ),
@@ -768,7 +792,7 @@ fn draw_conversation(
     );
     let comp_w = area.width;
     let comp_h = if area.height > 8 {
-        composer::draw::solo_height(view, comp_w).min(area.height.saturating_sub(6))
+        composer::draw::workspace_height(view, comp_w).min(area.height.saturating_sub(6))
     } else {
         0
     };
@@ -794,7 +818,7 @@ fn draw_conversation(
         let _ = draw::draw_chat(frame, chat, view, theme);
     }
     let cursor = if comp.height > 0 {
-        composer::draw::draw_solo(frame, comp, view, theme)
+        composer::draw::draw_workspace(frame, comp, view, theme)
     } else {
         None
     };
@@ -817,7 +841,8 @@ fn draw_hats_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         )),
     );
     y += 1;
-    let lede = "One conversation, four seats. Tab moves inside the row. Shift+Tab steps to the other row.";
+    let lede =
+        "One conversation, four seats. Tab moves inside the row. Shift+Tab steps to the other row.";
     for row in wrap::wrap_plain(lede, w.saturating_sub(2)) {
         if y >= area.height {
             return;
@@ -860,11 +885,14 @@ fn draw_hats_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
             frame,
             area,
             y,
-            Line::from(Span::styled(format!(" {label}"), sty(theme.faint, theme.bg))),
+            Line::from(Span::styled(
+                format!(" {label}"),
+                sty(theme.faint, theme.bg),
+            )),
         );
         y += 1;
         for hat in hats {
-            if y + 3 > area.height {
+            if y + 5 > area.height {
                 return;
             }
             y = draw_seat(frame, area, y, *hat, view, theme);
@@ -874,32 +902,68 @@ fn draw_hats_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
 }
 
 fn draw_seat(frame: &mut Frame, area: Rect, y: u16, hat: Role, view: &View, theme: Theme) -> u16 {
-    let w = usize::from(area.width);
-    let color = theme.mode(hat);
-    let on = view.seat == hat;
-    let bg = if on { theme.selection_bg } else { theme.bg };
-    let bar = if on { "┃" } else { " " };
-    let mut top = vec![
-        Span::styled(format!(" {bar} "), sty(color, bg)),
-        Span::styled(
-            sidebar::hat_name(hat).to_string(),
-            sty(color, bg).add_modifier(Modifier::BOLD),
-        ),
-    ];
-    if hat == view.mode {
-        top.push(Span::styled("  wearing", sty(color, bg)));
+    let inset = Rect {
+        x: area.x + 1,
+        y: area.y + y,
+        width: area.width.saturating_sub(2),
+        height: 4,
+    };
+    if inset.width < 8 {
+        return y + 5;
     }
-    put(frame, area, y, Line::from(top).style(Style::default().bg(bg)));
-    // Fill the rest of the row so the wash reaches the edge.
-    let _ = w;
+    let color = theme.mode(hat);
+    let wearing = hat == view.mode;
+    let on = view.seat == hat || wearing;
+    let bg = if on {
+        theme.selection_bg
+    } else {
+        theme.composer_bg
+    };
+    let border = if wearing { color } else { theme.rule };
+    let edge = Style::default().fg(border).bg(bg);
+    frame.render_widget(Block::default().style(Style::default().bg(bg)), inset);
+    let w = usize::from(inset.width);
+    let name = sidebar::hat_name(hat);
+    let tag = if wearing { " wearing " } else { "" };
+    let fill = w.saturating_sub(4 + wrap::width(name) + wrap::width(tag));
     put(
         frame,
-        area,
-        y + 1,
-        Line::from(Span::styled(
-            format!("    {}", wrap::truncate(hat.describe(), w.saturating_sub(6))),
-            sty(theme.fg, bg),
-        )),
+        inset,
+        0,
+        Line::from(vec![
+            Span::styled("╭", edge),
+            Span::styled("─", edge),
+            Span::styled(
+                format!(" {name}"),
+                sty(color, bg).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(tag.to_string(), sty(color, bg)),
+            Span::styled("─".repeat(fill), edge),
+            Span::styled("╮", edge),
+        ]),
+    );
+    {
+        let buf = frame.buffer_mut();
+        for row in 1..3 {
+            let yy = inset.y + row;
+            for x in [inset.x, inset.x + inset.width - 1] {
+                if x < buf.area.width && yy < buf.area.height {
+                    let c = &mut buf[(x, yy)];
+                    c.set_symbol("│");
+                    c.set_style(edge);
+                }
+            }
+        }
+    }
+    let inner_w = w.saturating_sub(4);
+    put(
+        frame,
+        inset,
+        1,
+        Line::from(vec![
+            Span::styled("│ ", edge),
+            Span::styled(wrap::truncate(hat.describe(), inner_w), sty(theme.fg, bg)),
+        ]),
     );
     let own = view
         .specialists
@@ -907,26 +971,32 @@ fn draw_seat(frame: &mut Frame, area: Rect, y: u16, hat: Role, view: &View, them
         .is_some_and(|m| m.is_override());
     let follows = if own { "own model" } else { "follows all hats" };
     let model = crate::chat::short_model(view.model_of(hat));
-    let turns = view.rack.of(hat).turns;
-    let spend = sidebar::hat_spend(view, hat);
+    let meta = format!(
+        "{model}  ·  {follows}   {} · {}  {}",
+        view.rack.of(hat).turns,
+        sidebar::hat_spend(view, hat),
+        sidebar::hat_may(hat)
+    );
     put(
         frame,
-        area,
-        y + 2,
-        sidebar::ends(
-            vec![Span::styled(
-                format!("    {model}  ·  {follows}"),
-                sty(theme.dim, bg),
-            )],
-            vec![Span::styled(
-                format!("{turns} · {spend}  {}", sidebar::hat_may(hat)),
-                sty(theme.faint, bg),
-            )],
-            w,
-            bg,
-        ),
+        inset,
+        2,
+        Line::from(vec![
+            Span::styled("│ ", edge),
+            Span::styled(wrap::truncate(&meta, inner_w), sty(theme.dim, bg)),
+        ]),
     );
-    y + 4
+    put(
+        frame,
+        inset,
+        3,
+        Line::from(vec![
+            Span::styled("╰", edge),
+            Span::styled("─".repeat(w.saturating_sub(2)), edge),
+            Span::styled("╯", edge),
+        ]),
+    );
+    y + 5
 }
 
 fn draw_sessions_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
@@ -991,7 +1061,11 @@ fn draw_sessions_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) 
         let on = i == sel && view.focus == Focus::Stage;
         let bg = if on { theme.selection_bg } else { theme.bg };
         let hat = hat_from_name(&row.hat);
-        let mark = if row.id == view.session_id { "● " } else { "  " };
+        let mark = if row.id == view.session_id {
+            "● "
+        } else {
+            "  "
+        };
         let cells = [
             format!("{mark}{}", row.title),
             row.hat.clone(),
@@ -1006,7 +1080,10 @@ fn draw_sessions_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) 
             y,
             Line::from(vec![
                 Span::styled(" ", sty(theme.fg, bg)),
-                Span::styled(line, sty(if on { theme.fg } else { hat_color(hat, theme) }, bg)),
+                Span::styled(
+                    line,
+                    sty(if on { theme.fg } else { hat_color(hat, theme) }, bg),
+                ),
             ]),
         );
         y += 1;
@@ -1014,16 +1091,13 @@ fn draw_sessions_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) 
 }
 
 fn draw_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
-    let bg = theme.sidebar_bg;
+    let bg = side_bg(theme);
     fill(frame, area, bg);
     let accent = theme.mode(view.mode);
     if view.focus == Focus::Inspector && area.width > 0 {
         frame.render_widget(
             Paragraph::new("┃".repeat(usize::from(area.height))).style(sty(accent, bg)),
-            Rect {
-                width: 1,
-                ..area
-            },
+            Rect { width: 1, ..area },
         );
     }
     let inner = Rect {
@@ -1039,7 +1113,7 @@ fn draw_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
 }
 
 fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
-    let bg = theme.sidebar_bg;
+    let bg = side_bg(theme);
     let w = usize::from(area.width);
     let mut y = 0u16;
     let section = |frame: &mut Frame, y: &mut u16, title: &str| {
@@ -1105,15 +1179,15 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
     if section(frame, &mut y, "Context") && y < area.height {
         let frac = view.ctx_frac().clamp(0.0, 1.0);
         let gauge_w = w.saturating_sub(2).clamp(4, 24);
-        put(
-            frame,
-            area,
-            y,
-            Line::from(Span::styled(
-                format!(" {}", gauge(frac, gauge_w)),
-                sty(sidebar::gauge_color(view, theme), bg),
-            )),
-        );
+        let mut spans = vec![Span::styled(" ", sty(theme.dim, bg))];
+        spans.extend(gauge_spans(
+            frac,
+            gauge_w,
+            sidebar::gauge_color(view, theme),
+            theme.code_bg,
+            bg,
+        ));
+        put(frame, area, y, Line::from(spans));
         y += 1;
         let (used, window) = match (view.ctx_tokens, view.ctx_window) {
             (Some(u), Some(n)) if n > 0 => (short_count(u), short_count(n)),
@@ -1128,7 +1202,10 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
             area,
             y,
             sidebar::ends(
-                vec![Span::styled(format!(" {used} of {window}"), sty(theme.dim, bg))],
+                vec![Span::styled(
+                    format!(" {used} of {window}"),
+                    sty(theme.dim, bg),
+                )],
                 vec![Span::styled(pct, sty(theme.dim, bg))],
                 w,
                 bg,
@@ -1163,15 +1240,15 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
         y += 1;
         if view.budget_usd > 0.0 && y < area.height {
             let frac = (view.spend.unwrap_or(0.0) / view.budget_usd).clamp(0.0, 1.0);
-            put(
-                frame,
-                area,
-                y,
-                Line::from(Span::styled(
-                    format!(" {}", gauge(frac, w.saturating_sub(2).clamp(4, 24))),
-                    sty(theme.mode(view.mode), bg),
-                )),
-            );
+            let mut spans = vec![Span::styled(" ", sty(theme.dim, bg))];
+            spans.extend(gauge_spans(
+                frac,
+                w.saturating_sub(2).clamp(4, 24),
+                theme.mode(view.mode),
+                theme.code_bg,
+                bg,
+            ));
+            put(frame, area, y, Line::from(spans));
             y += 1;
         }
         let mut most = 0.0f64;
@@ -1193,20 +1270,24 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
                 continue;
             }
             let frac = if most > 0.0 { usd / most } else { 0.0 };
-            let bar = gauge(frac, 8);
+            let mut left = vec![
+                Span::styled(
+                    format!(" {}", sidebar::hat_name(hat)),
+                    sty(theme.mode(hat), bg),
+                ),
+                Span::styled(" ", sty(theme.dim, bg)),
+            ];
+            left.extend(gauge_spans(frac, 8, theme.mode(hat), theme.code_bg, bg));
             put(
                 frame,
                 area,
                 y,
                 sidebar::ends(
-                    vec![
-                        Span::styled(
-                            format!(" {}", sidebar::hat_name(hat)),
-                            sty(theme.mode(hat), bg),
-                        ),
-                        Span::styled(format!(" {bar}"), sty(theme.mode(hat), bg)),
-                    ],
-                    vec![Span::styled(sidebar::hat_spend(view, hat), sty(theme.dim, bg))],
+                    left,
+                    vec![Span::styled(
+                        sidebar::hat_spend(view, hat),
+                        sty(theme.dim, bg),
+                    )],
                     w,
                     bg,
                 ),
@@ -1275,7 +1356,11 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
                     break;
                 }
                 let mark = if *done { "✓" } else { "●" };
-                let color = if *done { theme.dim } else { theme.mode(view.mode) };
+                let color = if *done {
+                    theme.dim
+                } else {
+                    theme.mode(view.mode)
+                };
                 put(
                     frame,
                     area,
@@ -1307,12 +1392,15 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
 }
 
 fn draw_hat_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
-    let bg = theme.sidebar_bg;
+    let bg = side_bg(theme);
     let w = usize::from(area.width);
     let mut y = 0u16;
     let wearing = sidebar::hat_name(view.mode);
     let line = if view.busy && view.mode != view.working_hat() {
-        format!(" Wearing {wearing} for the next message. {} is still in flight.", sidebar::hat_name(view.working_hat()))
+        format!(
+            " Wearing {wearing} for the next message. {} is still in flight.",
+            sidebar::hat_name(view.working_hat())
+        )
     } else {
         format!(" Wearing {wearing}.")
     };
@@ -1390,14 +1478,7 @@ fn draw_hat_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) 
         area,
         y,
         Line::from(Span::styled(
-            format!(
-                " {}",
-                if own {
-                    "own model"
-                } else {
-                    "follows all hats"
-                }
-            ),
+            format!(" {}", if own { "own model" } else { "follows all hats" }),
             sty(theme.dim, bg),
         )),
     );
@@ -1434,16 +1515,13 @@ fn draw_hat_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) 
             frame,
             area,
             y,
-            Line::from(Span::styled(
-                " ~/.ryter/hats.toml",
-                sty(theme.dim, bg),
-            )),
+            Line::from(Span::styled(" ~/.ryter/hats.toml", sty(theme.dim, bg))),
         );
     }
 }
 
 fn draw_session_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
-    let bg = theme.sidebar_bg;
+    let bg = side_bg(theme);
     let w = usize::from(area.width);
     let rows = shown_sessions(view);
     let Some(row) = rows.get(view.session_at.min(rows.len().saturating_sub(1))) else {
@@ -1490,7 +1568,11 @@ fn draw_session_inspector(frame: &mut Frame, area: Rect, view: &View, theme: The
         area,
         y,
         Line::from(Span::styled(
-            if current { " Current" } else { " Enter resumes" },
+            if current {
+                " Current"
+            } else {
+                " Enter resumes"
+            },
             sty(theme.mode(view.mode), bg),
         )),
     );
@@ -1524,7 +1606,8 @@ fn draw_session_inspector(frame: &mut Frame, area: Rect, view: &View, theme: The
 }
 
 fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
-    fill(frame, area, theme.bg);
+    let bg = side_bg(theme);
+    fill(frame, area, bg);
     let asking = view.panels.has_modal();
     let mut items: Vec<(&str, &str)> = Vec::new();
     if view.palette.is_some() {
@@ -1564,18 +1647,20 @@ fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     while items.len() > 1 {
         let mut used = wrap::width(&focus_s) + 2;
         for (k, l) in &items {
-            used += wrap::width(k) + wrap::width(l) + 4;
+            used += wrap::width(k) + wrap::width(l) + 8;
         }
         if used <= w {
             break;
         }
         items.pop();
     }
-    let mut spans = vec![Span::styled(" ", sty(theme.dim, theme.bg))];
+    let cap = Style::default().fg(theme.sticky_bg).bg(bg);
+    let mut spans = vec![Span::styled(" ", sty(theme.dim, bg))];
     for (i, (k, l)) in items.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::styled("  ", sty(theme.dim, theme.bg)));
+            spans.push(Span::styled("  ", sty(theme.dim, bg)));
         }
+        spans.push(Span::styled("▐", cap));
         spans.push(Span::styled(
             format!(" {k} "),
             Style::default()
@@ -1583,12 +1668,13 @@ fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
                 .bg(theme.sticky_bg)
                 .add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::styled(format!(" {l}"), sty(theme.dim, theme.bg)));
+        spans.push(Span::styled("▌", cap));
+        spans.push(Span::styled(format!(" {l}"), sty(theme.dim, bg)));
     }
     let used: usize = spans.iter().map(|s| wrap::width(&s.content)).sum();
     let gap = w.saturating_sub(used + wrap::width(&focus_s) + 1);
-    spans.push(Span::styled(" ".repeat(gap), sty(theme.dim, theme.bg)));
-    spans.push(Span::styled(focus_s, sty(theme.dim, theme.bg)));
+    spans.push(Span::styled(" ".repeat(gap), sty(theme.dim, bg)));
+    spans.push(Span::styled(focus_s, sty(theme.dim, bg)));
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
@@ -1710,10 +1796,22 @@ fn session_cols(cells: &[String], width: usize) -> String {
     let title_w = title_w.max(8);
     let mut out = String::new();
     let cols = [
-        (cells.first().map(String::as_str).unwrap_or(""), title_w, false),
+        (
+            cells.first().map(String::as_str).unwrap_or(""),
+            title_w,
+            false,
+        ),
         (cells.get(1).map(String::as_str).unwrap_or(""), hat_w, false),
-        (cells.get(2).map(String::as_str).unwrap_or(""), turns_w, true),
-        (cells.get(3).map(String::as_str).unwrap_or(""), spend_w, true),
+        (
+            cells.get(2).map(String::as_str).unwrap_or(""),
+            turns_w,
+            true,
+        ),
+        (
+            cells.get(3).map(String::as_str).unwrap_or(""),
+            spend_w,
+            true,
+        ),
         (cells.get(4).map(String::as_str).unwrap_or(""), when_w, true),
     ];
     for (i, (text, n, right)) in cols.iter().enumerate() {
@@ -1733,10 +1831,39 @@ fn session_cols(cells: &[String], width: usize) -> String {
     out
 }
 
-fn gauge(frac: f64, width: usize) -> String {
-    let n = ((frac.clamp(0.0, 1.0)) * width as f64).round() as usize;
-    let n = n.min(width);
-    format!("{}{}", "━".repeat(n), "─".repeat(width - n))
+/// A bar of fractional blocks (`▏`–`█`) on a track.
+fn gauge_spans(
+    frac: f64,
+    width: usize,
+    fill: Color,
+    track: Color,
+    _bg: Color,
+) -> Vec<Span<'static>> {
+    let width = width.max(1);
+    let exact = frac.clamp(0.0, 1.0) * width as f64;
+    let mut full = exact.floor() as usize;
+    let mut eighths = ((exact - full as f64) * 8.0).round() as usize;
+    if eighths >= 8 {
+        full += 1;
+        eighths = 0;
+    }
+    let full = full.min(width);
+    let mut spans = Vec::new();
+    let ink = Style::default().fg(fill).bg(track);
+    let rest = Style::default().fg(track).bg(track);
+    if full > 0 {
+        spans.push(Span::styled("█".repeat(full), ink));
+    }
+    let mut used = full;
+    if eighths > 0 && used < width {
+        let ch = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"][eighths];
+        spans.push(Span::styled(ch.to_string(), ink));
+        used += 1;
+    }
+    if used < width {
+        spans.push(Span::styled(" ".repeat(width - used), rest));
+    }
+    spans
 }
 
 fn short_count(n: u64) -> String {
@@ -1759,16 +1886,39 @@ fn rule(frame: &mut Frame, area: Rect, y: &mut u16, theme: Theme) {
         *y,
         Line::from(Span::styled(
             "─".repeat(usize::from(area.width)),
-            sty(theme.rule, theme.sidebar_bg),
+            sty(theme.rule, side_bg(theme)),
         )),
     );
     *y += 1;
 }
 
+/// Sidebar and instruments, a step off the conversation. In 256-color the
+/// two truecolor tints can quantize to one index; step the gray ramp then.
+fn side_bg(theme: Theme) -> Color {
+    if theme.mode == crate::theme::ColorMode::Ansi256 {
+        let side = crate::theme::quantize_256(theme.sidebar_bg);
+        let stage = crate::theme::quantize_256(theme.bg);
+        if side == stage {
+            return Color::Indexed(237);
+        }
+        return side;
+    }
+    if theme.sidebar_bg == theme.bg {
+        return match theme.bg {
+            Color::Rgb(r, g, b) => Color::Rgb(
+                r.saturating_add(6),
+                g.saturating_add(7),
+                b.saturating_add(10),
+            ),
+            other => other,
+        };
+    }
+    theme.sidebar_bg
+}
+
 fn hairline(frame: &mut Frame, area: Rect, theme: Theme) {
     frame.render_widget(
-        Paragraph::new("─".repeat(usize::from(area.width)))
-            .style(sty(theme.rule, theme.sidebar_bg)),
+        Paragraph::new("─".repeat(usize::from(area.width))).style(sty(theme.rule, side_bg(theme))),
         area,
     );
 }
@@ -1924,6 +2074,8 @@ mod tests {
         let mut v = ws();
         crate::run_keys_handle(&mut v, press(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert!(v.palette.is_none(), "ctrl+k is not a palette key");
+        crate::run_keys_handle(&mut v, press(KeyCode::Char('p'), KeyModifiers::CONTROL));
+        assert!(v.palette.is_none(), "ctrl+p is not a palette key");
         crate::run_keys_handle(&mut v, press(KeyCode::Char('/'), KeyModifiers::NONE));
         assert!(v.palette.is_some(), "/ opens the palette");
         let names: Vec<_> = crate::palette::registry::COMMANDS
@@ -1995,7 +2147,10 @@ mod tests {
         hats.page = Page::Hats;
         let hats_text = crate::draw::render_to_string(&hats, 160, 50);
         assert!(hats_text.contains("wearing"), "{hats_text}");
-        assert!(hats_text.contains("Shift+Tab") || hats_text.contains("four seats"), "{hats_text}");
+        assert!(
+            hats_text.contains("Shift+Tab") || hats_text.contains("four seats"),
+            "{hats_text}"
+        );
         let mut sessions = v.clone();
         sessions.page = Page::Sessions;
         sessions.sessions = vec![
@@ -2011,7 +2166,10 @@ mod tests {
             },
         ];
         let sessions_text = crate::draw::render_to_string(&sessions, 160, 50);
-        assert!(sessions_text.contains("Checkout tax rounding"), "{sessions_text}");
+        assert!(
+            sessions_text.contains("Checkout tax rounding"),
+            "{sessions_text}"
+        );
         let mut pal = v.clone();
         palette::open(&mut pal);
         let pal_text = crate::draw::render_to_string(&pal, 160, 50);
@@ -2042,7 +2200,10 @@ mod tests {
             kind: crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
             ..down
         };
-        assert_eq!(crate::run_mouse_handle_with(&mut v, down, &hit), Action::None);
+        assert_eq!(
+            crate::run_mouse_handle_with(&mut v, down, &hit),
+            Action::None
+        );
         assert_eq!(
             crate::run_mouse_handle_with(&mut v, up, &hit),
             Action::SetMode(Role::SoloPlan)

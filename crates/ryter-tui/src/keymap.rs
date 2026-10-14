@@ -47,7 +47,6 @@ pub enum KeyAction {
     /// Quit when the composer is empty.
     QuitIfEmpty,
     /// Open the command palette.
-    OpenPalette,
     /// Toggle the reasoning pane.
     ToggleReasoning,
     /// Toggle the info panel.
@@ -169,12 +168,7 @@ pub const KEYMAP: &[Binding] = &[
         KeyAction::QuitIfEmpty,
         "quit when the composer is empty",
     ),
-    b(
-        Ctx::Global,
-        "Ctrl+P",
-        KeyAction::OpenPalette,
-        "open the command palette",
-    ),
+    // The palette opens from `/` in the composer. It is not a chord.
     b(
         Ctx::Global,
         "Ctrl+R",

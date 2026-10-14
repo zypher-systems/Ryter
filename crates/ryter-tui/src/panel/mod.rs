@@ -434,6 +434,60 @@ pub fn dim_region(frame: &mut Frame, area: Rect, theme: Theme) {
     }
 }
 
+/// Dim a region so a floating dialog reads as sitting over it.
+pub fn dim_overlay(frame: &mut Frame, area: Rect, theme: Theme) {
+    let buf = frame.buffer_mut();
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            if x >= buf.area.width || y >= buf.area.height {
+                continue;
+            }
+            let cell = &mut buf[(x, y)];
+            let st = cell.style();
+            let bg = st.bg.unwrap_or(theme.bg);
+            let fg = st.fg.unwrap_or(theme.fg);
+            let (fg, bg) = match (fg, bg) {
+                (Color::Rgb(..), Color::Rgb(..)) => (
+                    crate::theme::darken(fg, 0.22),
+                    crate::theme::darken(bg, 0.34),
+                ),
+                _ => (theme.dim, bg),
+            };
+            cell.set_style(Style::default().fg(fg).bg(bg));
+        }
+    }
+}
+
+/// A half-block drop shadow: `▌` down the right edge, `▀` under the box.
+pub fn drop_shadow(frame: &mut Frame, area: Rect, theme: Theme) {
+    let shade = match theme.bg {
+        Color::Rgb(r, _, _) if r > 180 => crate::theme::darken(theme.bg, 0.18),
+        Color::Rgb(..) => crate::theme::darken(theme.bg, 0.78),
+        _ => Color::Black,
+    };
+    let buf = frame.buffer_mut();
+    let (bw, bh) = (buf.area.width, buf.area.height);
+    let right = area.x.saturating_add(area.width);
+    let bottom = area.y.saturating_add(area.height);
+    let paint = |buf: &mut ratatui::buffer::Buffer, x: u16, y: u16, symbol: &str| {
+        if x >= bw || y >= bh {
+            return;
+        }
+        let cell = &mut buf[(x, y)];
+        let under = cell.style().bg.unwrap_or(theme.bg);
+        cell.set_symbol(symbol);
+        cell.set_style(Style::default().fg(shade).bg(under));
+    };
+    for y in (area.y + 1)..bottom.min(bh) {
+        paint(buf, right, y, "▌");
+    }
+    if bottom < bh {
+        for x in (area.x + 1)..=right.min(bw.saturating_sub(1)) {
+            paint(buf, x, bottom, "▀");
+        }
+    }
+}
+
 /// One-column / one-row shadow (`R-POP-05`).
 pub fn shadow(frame: &mut Frame, area: Rect, theme: Theme) {
     let shade = crate::theme::darken(theme.bg, 0.5);
@@ -543,7 +597,15 @@ pub fn draw(
             // the conversation's column; with none freed, over the chat's
             // foot, inset the same.
             match slot.filter(|s| focused && s.height >= 3) {
-                Some(s) => inset(s),
+                Some(s) => {
+                    let mut card = inset(s);
+                    // Leave the slot's last row for the drop shadow, so it
+                    // does not land on the composer's top edge.
+                    if view.ui.workspace() {
+                        card.height = card.height.saturating_sub(1).max(3);
+                    }
+                    card
+                }
                 None => inset(docked_rect(dock, rows + extra)),
             }
         } else if p.docked() {
@@ -559,10 +621,12 @@ pub fn draw(
             dim_region(frame, area, theme);
             continue;
         }
-        if !p.docked() {
+        if view.ui.workspace() {
+            drop_shadow(frame, area, theme);
+        } else if !p.docked() {
             shadow(frame, area, theme);
         }
-        cursor = draw_one(frame, area, p.as_ref(), view, theme, true);
+        cursor = draw_one(frame, area, p.as_ref(), view, theme, focused);
     }
     cursor
 }
@@ -629,7 +693,9 @@ fn draw_one(
         status: p.status(view),
         legend: String::new(),
         border,
-        heavy: p.modal().is_some(),
+        // The workspace uses the rounded frame. Ledger and classic keep
+        // the heavy interrupt border their snapshots name.
+        heavy: p.modal().is_some() && !view.ui.workspace(),
     };
     // Only what is on the screen: a panel taller than a very short terminal
     // must not be told it drew rows that fell off the bottom.
