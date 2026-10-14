@@ -314,16 +314,19 @@ fn draw_top(
     if area.height == 0 {
         return;
     }
-    // Quiet chrome (E): bold RYTER only — no hat-color pips, no avatar cluster.
-    // Pad + RYTER + two-column gap before the tabs (same rhythm as before).
-    let mark_w = 1 + 5 + 2;
+    // Brand mark: three hat-color dots + bold RYTER. Quiet chrome still drops
+    // the top-right avatar/theme cluster and the hairline under the bar.
+    let mark_w = 1 + 3 + 1 + 5 + 2;
     put(
         frame,
         area,
         0,
         Line::from(vec![
             Span::styled(" ", sty(theme.fg, bg)),
-            Span::styled("RYTER", sty(theme.fg, bg).add_modifier(Modifier::BOLD)),
+            Span::styled("●", sty(theme.plan, bg)),
+            Span::styled("●", sty(theme.build, bg)),
+            Span::styled("●", sty(theme.audit, bg)),
+            Span::styled(" RYTER", sty(theme.fg, bg).add_modifier(Modifier::BOLD)),
         ]),
     );
     draw_top_controls(frame, area, view, theme, clicks, mark_w);
@@ -2314,18 +2317,17 @@ mod tests {
     }
 
     #[test]
-    fn quiet_chrome_drops_avatar_pips_and_top_hairline() {
+    fn quiet_chrome_keeps_brand_dots_drops_avatar_and_hairline() {
         let mut v = ws();
         v.username = "dusty".into();
         let text = crate::draw::render_to_string(&v, 160, 50);
         let top = text.lines().next().unwrap();
         assert!(top.contains("RYTER"), "{top}");
         assert!(top.contains("Conversation"), "{top}");
+        // Brand logo: three colored dots before RYTER.
+        assert!(top.contains("●●● RYTER"), "{top}");
         assert!(!top.contains('☀') && !top.contains('☾'), "{top}");
         assert!(!top.contains(" dusty") && !top.contains(" Dusty"), "{top}");
-        // Hat-color pips before RYTER are gone (E).
-        assert!(!top.contains("●●●"), "{top}");
-        assert!(!top.trim_start().starts_with('●'), "{top}");
         // No hairline row under the top bar: row 1 is body, not ─.
         let second = text.lines().nth(1).unwrap();
         assert!(

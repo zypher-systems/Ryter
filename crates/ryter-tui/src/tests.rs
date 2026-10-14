@@ -1060,10 +1060,11 @@ fn snapshot_workspace_be() {
     let text = render_to_string(&workspace_be(), 160, 50);
     let top = text.lines().next().unwrap();
     assert!(
-        top.contains("RYTER") && top.contains("Conversation"),
+        top.contains("●●● RYTER") && top.contains("Conversation"),
         "{top}"
     );
-    assert!(!top.contains('☀') && !top.contains('●'), "{top}");
+    assert!(!top.contains('☀') && !top.contains('☾'), "{top}");
+    assert!(!top.contains(" dusty"), "{top}");
     assert!(
         text.contains("this month") && text.contains("unpriced"),
         "{text}"

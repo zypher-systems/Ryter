@@ -1,4 +1,4 @@
- RYTER   Conversation   1    Hats   2    Sessions   3
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
  shop                                empty-query fix                                                     ● Done · asks first Activity
  ⎇ search-patch                      search-patch  ·  2 files uncommitted                                                    deepseek-pro-latest
                                                                                                                              Done
