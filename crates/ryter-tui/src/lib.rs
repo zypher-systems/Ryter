@@ -8,6 +8,7 @@ mod chat;
 mod clipboard;
 mod composer;
 mod draw;
+mod glyphs;
 mod info;
 mod keymap;
 mod palette;

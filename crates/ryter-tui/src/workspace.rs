@@ -1,10 +1,10 @@
 //! The workspace screen: a hat rack, three views, and the instruments.
 //!
-//! This is the default layout (`[ui] layout = "workspace"`). It follows the
-//! approved mockup: RYTER on the top bar, the rack in the sidebar, the
-//! conversation or the hats or the sessions in the middle, and activity,
-//! context, spend, files, and the plan on the right. The ledger and classic
-//! layouts stay as they are.
+//! This is the default layout (`[ui] layout = "workspace"`). RYTER sits on
+//! the top bar, with Conversation, Hats, and Sessions beside it. The rack
+//! is the sidebar. The conversation, the hats, or the sessions fill the
+//! middle, and activity, context, spend, files, and the plan sit on the
+//! right. The ledger and classic layouts stay as they are.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
@@ -16,14 +16,12 @@ use ryter_core::Role;
 
 use crate::action::Action;
 use crate::chat::wrap;
+use crate::glyphs::{self, Mark};
 use crate::select::WorkspaceClick;
 use crate::sidebar::{self, HATS};
 use crate::theme::Theme;
 use crate::view::{Focus, Page, SavedSession, View};
 use crate::{composer, draw, palette, panel};
-
-/// Sidebar rows that are views, before the four hats.
-const NAV: usize = 3;
 
 /// Paint one frame of the workspace. The workbench keeps the ledger's frame.
 pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
@@ -33,10 +31,11 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
     let full = frame.area();
     let mut clicks = Vec::new();
     let hair = u16::from(full.height >= 16);
+    let brand_h = glyphs::brand_rows(&view.ui, full.height);
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
+            Constraint::Length(brand_h),
             Constraint::Length(hair),
             Constraint::Min(4),
             Constraint::Length(1),
@@ -165,7 +164,7 @@ pub fn nav_key(view: &mut View, key: KeyEvent) -> Option<Action> {
     }
 }
 
-/// A click on the rack, a view, the palette button, or the theme button.
+/// A click on the rack, a view tab, or the theme button.
 pub fn click(view: &mut View, kind: WorkspaceClick) -> Action {
     match kind {
         WorkspaceClick::Page(n) => {
@@ -184,12 +183,6 @@ pub fn click(view: &mut View, kind: WorkspaceClick) -> Action {
             view.page = Page::Hats;
             view.focus = Focus::Stage;
             Action::SetMode(role)
-        }
-        WorkspaceClick::Palette => {
-            if view.panels.is_empty() {
-                palette::open(view);
-            }
-            Action::None
         }
         WorkspaceClick::Theme => {
             let next = if view.theme_name == "light" {
@@ -248,21 +241,9 @@ pub fn reload_sessions(view: &mut View) {
 }
 
 fn sidebar_key(view: &mut View, dir: i32) -> Action {
-    let n = NAV + HATS.len();
+    let n = HATS.len();
     if dir == 0 {
-        if view.side_at < NAV {
-            view.page = match view.side_at {
-                1 => Page::Hats,
-                2 => Page::Sessions,
-                _ => Page::Conversation,
-            };
-            view.focus = Focus::Stage;
-            if view.page == Page::Sessions {
-                reload_sessions(view);
-            }
-            return Action::None;
-        }
-        let hat = HATS[view.side_at - NAV];
+        let hat = HATS[view.side_at.min(n - 1)];
         view.page = Page::Hats;
         view.focus = Focus::Stage;
         return Action::SetMode(hat);
@@ -304,7 +285,7 @@ fn move_focus(view: &mut View, dir: i32) {
     let n = panes.len() as i32;
     view.focus = panes[(i as i32 + dir).rem_euclid(n) as usize];
     if view.focus == Focus::Sidebar {
-        view.side_at = NAV + hat_index(view.mode);
+        view.side_at = hat_index(view.mode);
     }
 }
 
@@ -342,55 +323,60 @@ fn draw_top(
 ) {
     let bg = side_bg(theme);
     fill(frame, area, bg);
-    let who = format!(" {} ", view.username);
-    let who_w = (wrap::width(&who) as u16 + 6).min(area.width / 3);
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(22.min(area.width / 3)),
-            Constraint::Min(8),
-            Constraint::Length(who_w),
-        ])
-        .split(area);
-    let brand = Line::from(vec![
-        Span::styled(" ", sty(theme.fg, bg)),
-        Span::styled("●", sty(theme.plan, bg)),
-        Span::styled("●", sty(theme.build, bg)),
-        Span::styled("●", sty(theme.audit, bg)),
-        Span::styled(" RYTER", sty(theme.fg, bg).add_modifier(Modifier::BOLD)),
-    ]);
-    frame.render_widget(Paragraph::new(brand), cols[0]);
-    let pill_w = cols[1].width.min(42).max(8);
-    let pill = Rect {
-        x: cols[1].x + cols[1].width.saturating_sub(pill_w) / 2,
-        width: pill_w,
-        ..cols[1]
+    let block = area.height >= 2 && view.ui.styled_text;
+    let mark_w = if block {
+        wrap::width(glyphs::WORDMARK[0]) as u16 + 2
+    } else {
+        let line = glyphs::wordmark_line(view.ui.styled_text);
+        // Three hat-colored pips, then the word.
+        1 + 3 + 1 + wrap::width(&line) as u16 + 1
     };
-    let label = wrap::truncate("Search commands", usize::from(pill_w.saturating_sub(10)));
-    let gap = usize::from(pill_w).saturating_sub(wrap::width(&label) + 9);
-    let border = Style::default().fg(theme.rule).bg(theme.bg);
-    let cap = Style::default().fg(theme.sticky_bg).bg(theme.bg);
-    let search = Line::from(vec![
-        Span::styled("╭", border),
-        Span::styled(" ⌕ ", sty(theme.dim, theme.bg)),
-        Span::styled(label, sty(theme.dim, theme.bg)),
-        Span::styled(" ".repeat(gap), sty(theme.dim, theme.bg)),
-        Span::styled("▐", cap),
-        Span::styled(
-            "/",
-            Style::default()
-                .fg(theme.fg)
-                .bg(theme.sticky_bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("▌", cap),
-        Span::styled("╮", border),
-    ]);
-    frame.render_widget(
-        Paragraph::new(search).style(Style::default().bg(theme.bg)),
-        pill,
-    );
-    clicks.push((WorkspaceClick::Palette, pill));
+    if block {
+        for (i, row) in glyphs::WORDMARK.iter().enumerate() {
+            put(
+                frame,
+                area,
+                i as u16,
+                Line::from(Span::styled(format!(" {row}"), sty(theme.fg, bg))),
+            );
+        }
+    } else if area.height > 0 {
+        let line = glyphs::wordmark_line(view.ui.styled_text);
+        put(
+            frame,
+            area,
+            0,
+            Line::from(vec![
+                Span::styled(" ", sty(theme.fg, bg)),
+                Span::styled("●", sty(theme.plan, bg)),
+                Span::styled("●", sty(theme.build, bg)),
+                Span::styled("●", sty(theme.audit, bg)),
+                Span::styled(
+                    format!(" {line}"),
+                    sty(theme.fg, bg).add_modifier(Modifier::BOLD),
+                ),
+            ]),
+        );
+    }
+    let base = Rect {
+        y: area.y + area.height.saturating_sub(1),
+        height: 1,
+        ..area
+    };
+    draw_top_controls(frame, base, view, theme, clicks, mark_w);
+}
+
+/// View tabs and the theme control, on the baseline of the top bar. The
+/// brand occupies the first `skip` columns.
+fn draw_top_controls(
+    frame: &mut Frame,
+    area: Rect,
+    view: &View,
+    theme: Theme,
+    clicks: &mut Vec<(WorkspaceClick, Rect)>,
+    skip: u16,
+) {
+    let bg = side_bg(theme);
     let icon = if view.theme_name == "light" {
         "☾"
     } else {
@@ -403,36 +389,110 @@ fn draw_top(
         .unwrap_or('y')
         .to_uppercase()
         .collect();
-    let right = Line::from(vec![
-        Span::styled("▐", cap),
-        Span::styled(
-            format!(" {icon} "),
-            Style::default()
-                .fg(theme.fg)
-                .bg(theme.sticky_bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("▌", cap),
-        Span::styled(" ", sty(theme.dim, bg)),
-        Span::styled("▐", Style::default().fg(theme.fg).bg(bg)),
-        Span::styled(
-            format!(" {letter} "),
-            Style::default()
-                .fg(theme.bg)
-                .bg(theme.fg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("▌", Style::default().fg(theme.fg).bg(bg)),
-        Span::styled(who, sty(theme.dim, bg)),
-    ]);
-    frame.render_widget(Paragraph::new(right), cols[2]);
+    let who = format!(" {}", view.username);
+    let theme_cap = glyphs::filled(icon, theme.fg, theme.sticky_bg);
+    let avatar = glyphs::filled(&letter, theme.bg, theme.fg);
+    let theme_w = wrap::width(&theme_cap.content) as u16;
+    let avatar_w = wrap::width(&avatar.content) as u16;
+    let who_w = wrap::width(&who) as u16;
+    let right_w = theme_w + 1 + avatar_w + who_w;
+    let tabs = Rect {
+        x: area.x + skip.min(area.width),
+        width: area.width.saturating_sub(skip + right_w),
+        ..area
+    };
+    draw_tabs(frame, tabs, view, theme, clicks);
+    if right_w > area.width {
+        return;
+    }
+    let right_x = area.x + area.width - right_w;
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            theme_cap,
+            Span::styled(" ", sty(theme.dim, bg)),
+            avatar,
+            Span::styled(who, sty(theme.dim, bg)),
+        ])),
+        Rect {
+            x: right_x,
+            width: right_w,
+            ..area
+        },
+    );
     clicks.push((
         WorkspaceClick::Theme,
         Rect {
-            width: 3,
-            ..cols[2]
+            x: right_x,
+            width: theme_w,
+            ..area
         },
     ));
+}
+
+fn draw_tabs(
+    frame: &mut Frame,
+    area: Rect,
+    view: &View,
+    theme: Theme,
+    clicks: &mut Vec<(WorkspaceClick, Rect)>,
+) {
+    if area.width < 8 {
+        return;
+    }
+    let bg = side_bg(theme);
+    let pages = [
+        (Page::Conversation, "Conversation", "1", 1u8),
+        (Page::Hats, "Hats", "2", 2),
+        (Page::Sessions, "Sessions", "3", 3),
+    ];
+    let mut x = area.x;
+    let end = area.x + area.width;
+    for (page, name, key, n) in pages {
+        let mut label = glyphs::face(name, view.ui.styled_text);
+        if page == Page::Sessions && view.sessions_count > 0 {
+            label.push(' ');
+            label.push_str(&view.sessions_count.to_string());
+        }
+        let active = view.page == page;
+        let (fg, fill) = if active {
+            (theme.bg, theme.fg)
+        } else {
+            (theme.dim, bg)
+        };
+        let name_span = if active {
+            glyphs::filled(&label, fg, fill)
+        } else {
+            Span::styled(format!(" {label} "), sty(fg, fill))
+        };
+        let key_span = glyphs::filled(key, theme.fg, theme.sticky_bg);
+        let name_w = wrap::width(&name_span.content) as u16;
+        let key_w = wrap::width(&key_span.content) as u16;
+        let need = name_w + 1 + key_w + 2;
+        if x + need > end {
+            break;
+        }
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                name_span,
+                Span::styled(" ", sty(theme.dim, bg)),
+                key_span,
+            ])),
+            Rect {
+                x,
+                width: name_w + 1 + key_w,
+                ..area
+            },
+        );
+        clicks.push((
+            WorkspaceClick::Page(n),
+            Rect {
+                x,
+                width: name_w + 1 + key_w,
+                ..area
+            },
+        ));
+        x += need;
+    }
 }
 
 fn draw_sidebar(
@@ -465,77 +525,40 @@ fn draw_sidebar(
     let tall = inner.height >= 32;
     let mut y = 0u16;
     let folder = folder_name(view);
+    let folder_icon = glyphs::mark(Mark::Folder, view.ui.nerd_font);
+    let folder_line = if folder_icon.is_empty() {
+        format!(" {}", wrap::truncate(&folder, w.saturating_sub(2)))
+    } else {
+        format!(
+            " {folder_icon} {}",
+            wrap::truncate(&folder, w.saturating_sub(wrap::width(folder_icon) + 3))
+        )
+    };
     put(
         frame,
         inner,
         y,
         Line::from(Span::styled(
-            format!(" {}", wrap::truncate(&folder, w.saturating_sub(2))),
+            folder_line,
             sty(theme.fg, bg).add_modifier(Modifier::BOLD),
         )),
     );
     y += 1;
     let branch = view.git_branch.as_deref().unwrap_or("");
     if !branch.is_empty() && y < inner.height {
+        let branch_icon = glyphs::mark(Mark::Branch, view.ui.nerd_font);
         put(
             frame,
             inner,
             y,
             Line::from(Span::styled(
-                format!(" ⎇ {}", wrap::truncate(branch, w.saturating_sub(4))),
+                format!(
+                    " {branch_icon} {}",
+                    wrap::truncate(branch, w.saturating_sub(wrap::width(branch_icon) + 3))
+                ),
                 sty(theme.dim, bg),
             )),
         );
-        y += 1;
-    }
-    y += 1;
-    let nav = [
-        (Page::Conversation, "Conversation", "alt 1", 1u8),
-        (Page::Hats, "Hats", "alt 2", 2),
-        (Page::Sessions, "Sessions", "alt 3", 3),
-    ];
-    for (i, (page, name, key, n)) in nav.iter().enumerate() {
-        if y >= inner.height {
-            break;
-        }
-        let on = view.page == *page;
-        let cursor = view.focus == Focus::Sidebar && view.side_at == i;
-        let count = if *page == Page::Sessions && view.sessions_count > 0 {
-            format!("{}", view.sessions_count)
-        } else {
-            String::new()
-        };
-        let mark = if cursor { "▸" } else { " " };
-        let name_style = if on {
-            sty(theme.fg, bg).add_modifier(Modifier::BOLD)
-        } else {
-            sty(theme.dim, bg)
-        };
-        let left = format!(" {mark} {name}");
-        let right = if count.is_empty() {
-            key.to_string()
-        } else {
-            format!("{count} {key}")
-        };
-        put(
-            frame,
-            inner,
-            y,
-            sidebar::ends(
-                vec![Span::styled(left, name_style)],
-                vec![Span::styled(right, sty(theme.faint, bg))],
-                w,
-                bg,
-            ),
-        );
-        clicks.push((
-            WorkspaceClick::Page(*n),
-            Rect {
-                y: inner.y + y,
-                height: 1,
-                ..inner
-            },
-        ));
         y += 1;
     }
     if y < inner.height {
@@ -544,7 +567,10 @@ fn draw_sidebar(
             frame,
             inner,
             y,
-            Line::from(Span::styled(" Hats", sty(theme.faint, bg))),
+            Line::from(Span::styled(
+                format!(" {}", glyphs::face("Hats", view.ui.styled_text)),
+                sty(theme.faint, bg),
+            )),
         );
         y += 1;
     }
@@ -555,7 +581,10 @@ fn draw_sidebar(
                 frame,
                 inner,
                 y,
-                Line::from(Span::styled(" ── Specialists ", sty(theme.faint, bg))),
+                Line::from(Span::styled(
+                    format!(" ── {} ", glyphs::face("Specialists", view.ui.styled_text)),
+                    sty(theme.faint, bg),
+                )),
             );
             y += 1;
         }
@@ -599,9 +628,13 @@ fn draw_hat(
     let color = theme.mode(hat);
     let w = usize::from(area.width);
     let wearing = hat == view.mode;
-    let cursor = view.focus == Focus::Sidebar && view.side_at == NAV + hat_index(hat);
-    let pip = if wearing { "┃" } else { "●" };
-    let name = sidebar::hat_name(hat);
+    let cursor = view.focus == Focus::Sidebar && view.side_at == hat_index(hat);
+    let pip = if wearing {
+        "┃"
+    } else {
+        glyphs::hat_icon(hat, view.ui.nerd_font)
+    };
+    let name = glyphs::hat_face(hat, view.ui.styled_text);
     let mut name_spans = vec![
         Span::styled(format!(" {pip} "), sty(color, bg)),
         Span::styled(
@@ -615,7 +648,10 @@ fn draw_hat(
             .as_ref()
             .is_some_and(|(_, _, v)| *v == Some(false))
     {
-        name_spans.push(Span::styled(" ✗", sty(theme.error, bg)));
+        name_spans.push(Span::styled(
+            format!(" {}", glyphs::mark(Mark::Failed, view.ui.nerd_font)),
+            sty(theme.error, bg),
+        ));
     }
     if cursor {
         name_spans.insert(0, Span::styled("▸", sty(color, bg)));
@@ -836,13 +872,12 @@ fn draw_hats_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         area,
         y,
         Line::from(Span::styled(
-            " Hats",
+            format!(" {}", glyphs::face("Hats", view.ui.styled_text)),
             sty(theme.fg, theme.bg).add_modifier(Modifier::BOLD),
         )),
     );
     y += 1;
-    let lede =
-        "One conversation, four seats. Tab moves inside the row. Shift+Tab steps to the other row.";
+    let lede = "One conversation, four seats. Tab cycles within the mode. Shift+Tab switches mode.";
     for row in wrap::wrap_plain(lede, w.saturating_sub(2)) {
         if y >= area.height {
             return;
@@ -874,23 +909,25 @@ fn draw_hats_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         y += 2;
     }
     let groups: [(&str, &[Role]); 2] = [
-        ("Working", &[Role::SoloPlan, Role::SoloBuild]),
+        ("", &[Role::SoloPlan, Role::SoloBuild]),
         ("Specialists", &[Role::SoloAudit, Role::SoloScribe]),
     ];
     for (label, hats) in groups {
         if y >= area.height {
             return;
         }
-        put(
-            frame,
-            area,
-            y,
-            Line::from(Span::styled(
-                format!(" {label}"),
-                sty(theme.faint, theme.bg),
-            )),
-        );
-        y += 1;
+        if !label.is_empty() {
+            put(
+                frame,
+                area,
+                y,
+                Line::from(Span::styled(
+                    format!(" {}", glyphs::face(label, view.ui.styled_text)),
+                    sty(theme.faint, theme.bg),
+                )),
+            );
+            y += 1;
+        }
         for hat in hats {
             if y + 5 > area.height {
                 return;
@@ -923,9 +960,9 @@ fn draw_seat(frame: &mut Frame, area: Rect, y: u16, hat: Role, view: &View, them
     let edge = Style::default().fg(border).bg(bg);
     frame.render_widget(Block::default().style(Style::default().bg(bg)), inset);
     let w = usize::from(inset.width);
-    let name = sidebar::hat_name(hat);
+    let name = glyphs::hat_face(hat, view.ui.styled_text);
     let tag = if wearing { " wearing " } else { "" };
-    let fill = w.saturating_sub(4 + wrap::width(name) + wrap::width(tag));
+    let fill = w.saturating_sub(4 + wrap::width(&name) + wrap::width(tag));
     put(
         frame,
         inset,
@@ -1008,7 +1045,7 @@ fn draw_sessions_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) 
         area,
         y,
         Line::from(Span::styled(
-            " Sessions",
+            format!(" {}", glyphs::face("Sessions", view.ui.styled_text)),
             sty(theme.fg, theme.bg).add_modifier(Modifier::BOLD),
         )),
     );
@@ -1062,13 +1099,13 @@ fn draw_sessions_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) 
         let bg = if on { theme.selection_bg } else { theme.bg };
         let hat = hat_from_name(&row.hat);
         let mark = if row.id == view.session_id {
-            "● "
+            format!("{} ", glyphs::mark(Mark::Status, view.ui.nerd_font))
         } else {
-            "  "
+            "  ".to_string()
         };
         let cells = [
             format!("{mark}{}", row.title),
-            row.hat.clone(),
+            glyphs::hat_face(hat, view.ui.styled_text),
             row.messages.to_string(),
             row.spend.clone(),
             row.updated.clone(),
@@ -1120,6 +1157,7 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
         if *y >= area.height {
             return false;
         }
+        let title = glyphs::face(title, view.ui.styled_text);
         put(
             frame,
             area,
@@ -1159,14 +1197,24 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
         );
         y += 1;
         if !view.activity.current.is_empty() && y < area.height {
+            let tool = if view.ui.nerd_font
+                && matches!(view.activity.verb, crate::activity::Verb::Tool(_))
+            {
+                format!("{} ", glyphs::hat_icon(Role::SoloBuild, true))
+            } else {
+                String::new()
+            };
             put(
                 frame,
                 area,
                 y,
                 Line::from(Span::styled(
                     format!(
-                        " {}",
-                        wrap::truncate(&view.activity.current, w.saturating_sub(2))
+                        " {tool}{}",
+                        wrap::truncate(
+                            &view.activity.current,
+                            w.saturating_sub(2 + wrap::width(&tool))
+                        )
                     ),
                     sty(theme.dim, bg),
                 )),
@@ -1272,7 +1320,7 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
             let frac = if most > 0.0 { usd / most } else { 0.0 };
             let mut left = vec![
                 Span::styled(
-                    format!(" {}", sidebar::hat_name(hat)),
+                    format!(" {}", glyphs::hat_face(hat, view.ui.styled_text)),
                     sty(theme.mode(hat), bg),
                 ),
                 Span::styled(" ", sty(theme.dim, bg)),
@@ -1323,7 +1371,7 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
                     y,
                     sidebar::ends(
                         vec![Span::styled(
-                            format!(" {}", wrap::truncate(&f.path, w.saturating_sub(10))),
+                            file_label(&f.path, w.saturating_sub(10), view.ui.nerd_font),
                             sty(theme.fg, bg),
                         )],
                         vec![
@@ -1395,11 +1443,11 @@ fn draw_hat_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) 
     let bg = side_bg(theme);
     let w = usize::from(area.width);
     let mut y = 0u16;
-    let wearing = sidebar::hat_name(view.mode);
+    let wearing = glyphs::hat_face(view.mode, view.ui.styled_text);
     let line = if view.busy && view.mode != view.working_hat() {
         format!(
             " Wearing {wearing} for the next message. {} is still in flight.",
-            sidebar::hat_name(view.working_hat())
+            glyphs::hat_face(view.working_hat(), view.ui.styled_text)
         )
     } else {
         format!(" Wearing {wearing}.")
@@ -1422,7 +1470,10 @@ fn draw_hat_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) 
         frame,
         area,
         y,
-        Line::from(Span::styled(" Seat", sty(theme.faint, bg))),
+        Line::from(Span::styled(
+            format!(" {}", glyphs::face("Seat", view.ui.styled_text)),
+            sty(theme.faint, bg),
+        )),
     );
     y += 1;
     put(
@@ -1430,7 +1481,7 @@ fn draw_hat_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) 
         area,
         y,
         Line::from(Span::styled(
-            format!(" {}", sidebar::hat_name(hat)),
+            format!(" {}", glyphs::hat_face(hat, view.ui.styled_text)),
             sty(theme.mode(hat), bg).add_modifier(Modifier::BOLD),
         )),
     );
@@ -1455,7 +1506,10 @@ fn draw_hat_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) 
         frame,
         area,
         y,
-        Line::from(Span::styled(" Model", sty(theme.faint, bg))),
+        Line::from(Span::styled(
+            format!(" {}", glyphs::face("Model", view.ui.styled_text)),
+            sty(theme.faint, bg),
+        )),
     );
     y += 1;
     let model = view.model_of(hat);
@@ -1581,7 +1635,10 @@ fn draw_session_inspector(frame: &mut Frame, area: Rect, view: &View, theme: The
         frame,
         area,
         y,
-        Line::from(Span::styled(" Left in", sty(theme.faint, bg))),
+        Line::from(Span::styled(
+            format!(" {}", glyphs::face("Left in", view.ui.styled_text)),
+            sty(theme.faint, bg),
+        )),
     );
     y += 1;
     put(
@@ -1589,7 +1646,11 @@ fn draw_session_inspector(frame: &mut Frame, area: Rect, view: &View, theme: The
         area,
         y,
         Line::from(Span::styled(
-            format!(" ● {}", row.hat),
+            format!(
+                " {} {}",
+                glyphs::mark(Mark::Status, view.ui.nerd_font),
+                glyphs::hat_face(hat, view.ui.styled_text)
+            ),
             sty(theme.mode(hat), bg).add_modifier(Modifier::BOLD),
         )),
     );
@@ -1618,7 +1679,7 @@ fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
             ("a", "edits"),
             ("n", "deny"),
             ("tab", "hat"),
-            ("⇧tab", "row"),
+            ("⇧tab", "mode"),
             ("/", "commands"),
             ("f2", "instruments"),
             ("f6 f7", "panes"),
@@ -1626,7 +1687,7 @@ fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     } else {
         items.extend([
             ("tab", "hat"),
-            ("⇧tab", "row"),
+            ("⇧tab", "mode"),
             ("/", "commands"),
             ("alt 1–3", "views"),
             ("f2", "instruments"),
@@ -1654,21 +1715,12 @@ fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         }
         items.pop();
     }
-    let cap = Style::default().fg(theme.sticky_bg).bg(bg);
     let mut spans = vec![Span::styled(" ", sty(theme.dim, bg))];
     for (i, (k, l)) in items.iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled("  ", sty(theme.dim, bg)));
         }
-        spans.push(Span::styled("▐", cap));
-        spans.push(Span::styled(
-            format!(" {k} "),
-            Style::default()
-                .fg(theme.fg)
-                .bg(theme.sticky_bg)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled("▌", cap));
+        spans.push(glyphs::filled(k, theme.fg, theme.sticky_bg));
         spans.push(Span::styled(format!(" {l}"), sty(theme.dim, bg)));
     }
     let used: usize = spans.iter().map(|s| wrap::width(&s.content)).sum();
@@ -1728,17 +1780,35 @@ fn subline(view: &View) -> String {
 }
 
 fn pill(view: &View) -> String {
-    if view.panels.has_modal() || matches!(view.activity.verb, crate::activity::Verb::Waiting) {
-        return format!("● Waiting for you · {}", perm_word(view));
+    let waiting =
+        view.panels.has_modal() || matches!(view.activity.verb, crate::activity::Verb::Waiting);
+    let dot = glyphs::mark(
+        if waiting { Mark::Waiting } else { Mark::Status },
+        view.ui.nerd_font,
+    );
+    if waiting {
+        return format!("{dot} Waiting for you · {}", perm_word(view));
     }
     let mut s = view.activity.verb.label();
     if let Some(c) = s.chars().next() {
         s.replace_range(..c.len_utf8(), &c.to_uppercase().to_string());
     }
     if view.busy {
-        format!("● {s}")
+        format!("{dot} {s}")
     } else {
-        format!("● {s} · {}", perm_word(view))
+        format!("{dot} {s} · {}", perm_word(view))
+    }
+}
+
+fn file_label(path: &str, width: usize, nerd: bool) -> String {
+    let icon = glyphs::mark(Mark::File, nerd);
+    if icon.is_empty() {
+        format!(" {}", wrap::truncate(path, width.saturating_sub(1)))
+    } else {
+        format!(
+            " {icon} {}",
+            wrap::truncate(path, width.saturating_sub(wrap::width(icon) + 2))
+        )
     }
 }
 
@@ -1966,6 +2036,8 @@ mod tests {
         v.budget_usd = 5.0;
         v.spend = Some(0.065);
         v.set_mode(Role::SoloBuild);
+        v.ui.styled_text = true;
+        v.ui.nerd_font = false;
         v
     }
 
@@ -2011,7 +2083,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_stays_inside_the_row_and_shift_tab_changes_row() {
+    fn tab_cycles_within_the_mode_and_shift_tab_switches_mode() {
         let mut v = ws();
         v.set_mode(Role::SoloPlan);
         assert!(matches!(
@@ -2040,7 +2112,7 @@ mod tests {
     fn sidebar_enter_wears_a_hat_and_sessions_enter_resumes() {
         let mut v = ws();
         v.focus = Focus::Sidebar;
-        v.side_at = NAV; // plan
+        v.side_at = 0; // plan
         assert!(matches!(
             crate::run_keys_handle(&mut v, press(KeyCode::Enter, KeyModifiers::NONE)),
             Action::SetMode(Role::SoloPlan)
@@ -2124,25 +2196,34 @@ mod tests {
     fn the_screen_names_ryter_and_carries_the_hat() {
         let v = ws();
         let text = crate::draw::render_to_string(&v, 160, 50);
-        assert!(text.contains("RYTER"), "{text}");
-        assert!(text.contains("Search commands"), "{text}");
-        assert!(text.contains("Conversation"), "{text}");
-        assert!(text.contains("Specialists"), "{text}");
+        assert!(
+            text.contains(glyphs::WORDMARK[0]) && text.contains(glyphs::WORDMARK[1]),
+            "{text}"
+        );
+        assert!(!text.contains("Search commands"), "{text}");
+        let conversation = glyphs::face("Conversation", true);
+        let specialists = glyphs::face("Specialists", true);
+        assert!(text.contains(&conversation), "{text}");
+        assert!(text.contains(&specialists), "{text}");
         assert!(text.contains("alt 1"), "{text}");
         assert!(text.contains("focus · conversation"), "{text}");
         assert!(text.contains("tab") && text.contains("commands"), "{text}");
+        assert!(text.contains("mode"), "{text}");
+        assert!(!text.contains("row"), "{text}");
         // No number badge on a hat. The view key is "alt 1", not a hat number.
         assert!(!text.contains("1 plan") && !text.contains("[1]"), "{text}");
+        assert!(!text.contains('▐'), "half-block pill caps are gone");
         let theme = Theme::truecolor_dark();
         let buf = crate::draw::render_buffer(&v, 160, 50, theme);
+        let chip_letter = glyphs::face("B", true);
         let chip = (0..50u16)
             .flat_map(|y| (0..160u16).map(move |x| (x, y)))
-            .find(|&at| buf[at].symbol() == "b" && buf[at].bg == theme.build)
+            .find(|&at| buf[at].symbol() == chip_letter && buf[at].bg == theme.build)
             .expect("build chip");
         assert_eq!(buf[chip].bg, theme.build, "the chip is the hat");
         let light = Theme::truecolor_light();
         let light_text = crate::draw::render_with_theme(&v, 160, 50, light);
-        assert!(light_text.contains("RYTER"), "{light_text}");
+        assert!(light_text.contains(glyphs::WORDMARK[0]), "{light_text}");
         let mut hats = v.clone();
         hats.page = Page::Hats;
         let hats_text = crate::draw::render_to_string(&hats, 160, 50);
@@ -2171,7 +2252,7 @@ mod tests {
             "{sessions_text}"
         );
         let mut pal = v.clone();
-        palette::open(&mut pal);
+        crate::run_keys_handle(&mut pal, press(KeyCode::Char('/'), KeyModifiers::NONE));
         let pal_text = crate::draw::render_to_string(&pal, 160, 50);
         assert!(
             pal_text.contains("enter") && pal_text.contains("close"),
@@ -2208,5 +2289,53 @@ mod tests {
             crate::run_mouse_handle_with(&mut v, up, &hit),
             Action::SetMode(Role::SoloPlan)
         );
+    }
+
+    #[test]
+    fn a_click_on_a_view_tab_switches_the_page() {
+        let v = ws();
+        let hit = crate::draw::render_hit(&v, 160, 50);
+        let rect = hit
+            .clicks
+            .iter()
+            .find(|(c, _)| *c == WorkspaceClick::Page(2))
+            .map(|(_, r)| *r)
+            .expect("hats tab");
+        let mut v = v;
+        let down = crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: rect.x + 1,
+            row: rect.y,
+            modifiers: KeyModifiers::NONE,
+        };
+        let up = crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
+            ..down
+        };
+        assert_eq!(
+            crate::run_mouse_handle_with(&mut v, down, &hit),
+            Action::None
+        );
+        assert_eq!(crate::run_mouse_handle_with(&mut v, up, &hit), Action::None);
+        assert_eq!(v.page, Page::Hats);
+    }
+
+    #[test]
+    fn plain_text_is_the_fallback_and_nerd_icons_are_opt_in() {
+        let mut plain = ws();
+        plain.ui.styled_text = false;
+        let text = crate::draw::render_to_string(&plain, 160, 50);
+        assert!(text.contains("RYTER"), "{text}");
+        assert!(text.contains("Conversation"), "{text}");
+        assert!(text.contains("Build"), "{text}");
+        assert!(!text.contains(glyphs::WORDMARK[0]), "{text}");
+        assert!(!text.contains('\u{1D5D4}'), "{text}");
+
+        let mut nerd = ws();
+        nerd.ui.nerd_font = true;
+        let text = crate::draw::render_to_string(&nerd, 160, 50);
+        assert!(text.contains('\u{e0a0}'), "{text}");
+        assert!(!text.contains('⎇'), "{text}");
+        assert!(text.contains('\u{f0eb}'), "plan's icon");
     }
 }

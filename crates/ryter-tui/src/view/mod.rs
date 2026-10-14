@@ -1017,10 +1017,7 @@ pub fn plan_steps(path: &std::path::Path) -> Vec<(bool, String)> {
             .or_else(|| t.strip_prefix("* [X]"))
         {
             (true, rest)
-        } else if let Some(rest) = t
-            .strip_prefix("- [ ]")
-            .or_else(|| t.strip_prefix("* [ ]"))
-        {
+        } else if let Some(rest) = t.strip_prefix("- [ ]").or_else(|| t.strip_prefix("* [ ]")) {
             (false, rest)
         } else {
             continue;

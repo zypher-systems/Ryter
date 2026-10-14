@@ -279,9 +279,8 @@ fn reasoning_scroll(view: &mut View, dir: i32) {
 
 /// Composer editing and submit (`R-COMP-09..13`).
 fn composer_key(view: &mut View, key: KeyEvent) -> Action {
-    // Tab moves within the row the hat is in; Shift+Tab moves to the
-    // other row, onto the hat last worn there (`docs/sidebar-design.md`
-    // R-KEY-02).
+    // Tab cycles within the mode (Plan and Build, or Audit and Scribe).
+    // Shift+Tab switches mode, onto the hat last worn there.
     if matches!(view.composer.mode, crate::composer::Mode::Normal)
         && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
     {

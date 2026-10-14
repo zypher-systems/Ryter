@@ -1239,7 +1239,12 @@ fn draw_header(frame: &mut Frame, area: Rect, view: &View, theme: Theme, compact
     frame.render_widget(Paragraph::new(Line::from(spans)).style(theme.body()), area);
 }
 
-pub(crate) fn draw_chat(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> layout::ChatFrame {
+pub(crate) fn draw_chat(
+    frame: &mut Frame,
+    area: Rect,
+    view: &View,
+    theme: Theme,
+) -> layout::ChatFrame {
     let width = usize::from(area.width).saturating_sub(2).max(12);
     let cf = layout::frame(view, width, usize::from(area.height), theme);
     let lines: Vec<Line<'static>> = cf

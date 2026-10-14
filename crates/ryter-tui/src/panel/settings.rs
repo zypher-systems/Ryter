@@ -195,6 +195,18 @@ impl Settings {
                 .origin(origin(&view.ui.panel, &d.panel)),
             Field::new("bell", "bell on a question", Kind::Toggle(view.ui.bell))
                 .origin(origin(&view.ui.bell, &d.bell)),
+            Field::new(
+                "styled_text",
+                "styled wordmark",
+                Kind::Toggle(view.ui.styled_text),
+            )
+            .origin(origin(&view.ui.styled_text, &d.styled_text)),
+            Field::new(
+                "nerd_font",
+                "nerd font icons",
+                Kind::Toggle(view.ui.nerd_font),
+            )
+            .origin(origin(&view.ui.nerd_font, &d.nerd_font)),
             Field::new("timestamps", "timestamps", Kind::Toggle(view.ui.timestamps))
                 .origin(origin(&view.ui.timestamps, &d.timestamps)),
             Field::new(
@@ -294,6 +306,12 @@ impl Settings {
         }
         if let Some(v) = toggle("bell") {
             view.ui.bell = v;
+        }
+        if let Some(v) = toggle("styled_text") {
+            view.ui.styled_text = v;
+        }
+        if let Some(v) = toggle("nerd_font") {
+            view.ui.nerd_font = v;
         }
         if let Some(v) = sel("start_hat") {
             view.ui.start_hat = v;

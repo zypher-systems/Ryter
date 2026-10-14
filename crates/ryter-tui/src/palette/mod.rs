@@ -195,7 +195,9 @@ pub fn refresh(view: &mut View) {
     }
 }
 
-/// Open from an empty composer (`/`, `R-PAL-15`).
+/// Open from an empty composer. Typing `/` does this by inserting the
+/// character; tests open it directly.
+#[cfg(test)]
 pub fn open(view: &mut View) {
     if !view.composer.text().starts_with('/') {
         view.composer.set_text("/");
@@ -557,15 +559,7 @@ fn kbd_row(items: &[(&str, &str)], width: usize, theme: Theme) -> Line<'static> 
         if i > 0 {
             spans.push(Span::styled("  ", Style::default().bg(bg)));
         }
-        spans.push(Span::styled("▐", Style::default().fg(fill).bg(bg)));
-        spans.push(Span::styled(
-            format!(" {k} "),
-            Style::default()
-                .fg(theme.fg)
-                .bg(fill)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled("▌", Style::default().fg(fill).bg(bg)));
+        spans.push(crate::glyphs::filled(k, theme.fg, fill));
         spans.push(Span::styled(
             format!(" {l}"),
             Style::default().fg(theme.dim).bg(bg),

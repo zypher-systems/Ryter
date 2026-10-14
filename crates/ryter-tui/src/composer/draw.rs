@@ -99,11 +99,19 @@ fn edge_notes(view: &View, theme: Theme) -> Vec<Span<'static>> {
     right
 }
 
-/// The hat's chip at the head of the solo screen's prompt: ` build `. None
-/// while the prompt is taking something other than a message.
+/// The hat's chip at the head of the prompt. The ledger says it in
+/// lowercase (` build `). The workspace capitalizes it, and uses the
+/// heading face when styled text is on. None while the prompt is taking
+/// something other than a message.
 fn chip(view: &View) -> Option<String> {
-    matches!(view.composer.mode, Mode::Normal)
-        .then(|| format!(" {} ", crate::sidebar::hat_name(view.mode)))
+    matches!(view.composer.mode, Mode::Normal).then(|| {
+        let name = if view.ui.workspace() {
+            crate::glyphs::hat_face(view.mode, view.ui.styled_text)
+        } else {
+            crate::sidebar::hat_name(view.mode).to_string()
+        };
+        format!(" {name} ")
+    })
 }
 
 /// Columns the prompt's text has on the solo screen, `width` wide.
@@ -253,7 +261,7 @@ pub fn draw_workspace(
         let label = c.trim().to_string();
         let fill = theme.mode(view.mode);
         let on = theme.bg;
-        let spans = pill(&label, on, fill, bg);
+        let spans = pill(&label, on, fill);
         let span_w: u16 = spans.iter().map(|s| wrap::width(&s.content) as u16).sum();
         frame.render_widget(
             Paragraph::new(Line::from(spans)),
@@ -272,19 +280,15 @@ pub fn draw_workspace(
     cursor
 }
 
-/// A one-row pill: half-block caps around a filled label.
-fn pill(label: &str, fg: Color, fill: Color, outer: Color) -> Vec<Span<'static>> {
-    vec![
-        Span::styled("▐", Style::default().fg(fill).bg(outer)),
-        Span::styled(
-            format!(" {label} "),
-            Style::default()
-                .fg(fg)
-                .bg(fill)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("▌", Style::default().fg(fill).bg(outer)),
-    ]
+/// A solid chip: the label, already padded, on a fill. No half-block caps.
+fn pill(label: &str, fg: Color, fill: Color) -> Vec<Span<'static>> {
+    vec![Span::styled(
+        label.to_string(),
+        Style::default()
+            .fg(fg)
+            .bg(fill)
+            .add_modifier(Modifier::BOLD),
+    )]
 }
 
 fn ledger_frame(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Rect {
