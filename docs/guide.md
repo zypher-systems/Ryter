@@ -99,6 +99,8 @@ ryter models [connection]
 
 `ryter` on a tty opens the TUI in the **workspace** layout (`[ui] layout = "workspace"`, the default). `ledger` is the 0.6 reading column; `classic` is the 0.5 screen. Switch with `/settings` → layout.
 
+**The workspace** puts `RYTER` and three tabs on the top bar: Conversation, Hats, and Sessions (`Alt+1`, `Alt+2`, `Alt+3`, or a click). The hat rack is the sidebar. The chosen view fills the middle. Instruments — activity, context, spend, files, and the plan — sit on the right; `F2` or `^b` hides them. `F6` and `F7` move focus between the sidebar, the view, and the instruments. Hat names on this screen are capitalized. `Tab` moves within the mode you are in (plan and build, or the specialists) and `Shift+Tab` switches mode. `/` opens the command palette. `[ui] nerd_font = true`, or `RYTER_NERD_FONT=1` when that key is absent, draws a few marks as Nerd Font icons. The ledger, below, is what `[ui] layout = "ledger"` still draws.
+
 The hat that is on sets the screen's one accent color: plan is blue, build green, and every specialist the one specialist color, amber. Everything else stays the same under every hat. The sidebar names each hat in its own color; on the conversation the hat that is on is the one colored thing.
 
 - **The sidebar** runs down the right (100 columns and wider), 30 columns, every block on it. From 150 columns the screen is three panes: a **rail** at the left takes the sidebar's head and its hats, the conversation sits centred between them, and the sidebar keeps the rest; both columns grow from 30 to 40 as the screen widens once the conversation has the width it reads well at. The head is `RYTER`, the session's title and where this is (the folder and the branch); then the blocks:
@@ -136,7 +138,7 @@ Every message is a left-aligned block under a speaker header — your name (from
 
 Type a message and press `Enter`. `Shift+Enter` (or `Alt+Enter`) inserts a newline; paste is bracketed so multi-line text lands in one message. While a turn runs, `Enter` queues the next message. `↑`/`↓` on an empty composer walk prompt history.
 
-`/` (or `^p`) opens the **command palette**: fuzzy-matched, grouped by category, with a description and keybinding column. `Enter` runs the command, `→` opens its panel, `Tab` completes. Every configuration command opens a **panel** — a bordered popout with a title, status, and legend line — and panels stack: one opened from another sits on top, and `Esc` closes one level.
+`/` opens the **command palette**: fuzzy-matched, grouped by category, with a description and keybinding column. `Enter` runs the command, `→` opens its panel, `Tab` completes. Every configuration command opens a **panel** — a bordered popout with a title, status, and legend line — and panels stack: one opened from another sits on top, and `Esc` closes one level.
 
 **One spinner.** While a turn runs the conversation ends on a row that moves, under the model's name: the spinner in the hat's color and what the model is doing (`⠙ thinking · 1:40 · 12k tokens`, `running cargo test · 0:03`, `waiting for the model · 0:42`, `waiting for you · allow?`). `^r`, or a click on that row, opens the turn's reasoning as a pane right under it, dim and following its tail (`Alt+PgUp`/`Alt+PgDn` scroll it); after the turn the pane sits under the turn's closing line, and `^r` or a click on its header closes it. While a model has sent nothing yet the pane says so, `waiting for the model · nothing streamed yet`, since some models think on the server and send nothing until they answer. Reasoning is display-only — it is never saved or sent back to a model. `[ui] reasoning` is `collapsed` (the row alone, the default), `expanded` (the pane open) or `off` (closed until `^r`).
 
@@ -175,7 +177,7 @@ The keys are on the card's last row:
 | Key | Does |
 | --- | --- |
 | `Enter` / `Shift+Enter` | send / newline |
-| `/` or `^p` | command palette |
+| `/` | command palette |
 | `Esc` | back one level: close panel → close palette → cancel turn |
 | `^c` | clear composer → cancel turn → quit (press twice within 2 s) |
 | `^d` | quit when the composer is empty |
