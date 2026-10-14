@@ -9,8 +9,8 @@ use std::sync::mpsc::Sender;
 use crate::error::{Error, Result};
 use crate::event::AgentEvent;
 use crate::llm::{
-    AssistantToolCall, CompletionRequest, Message, MessagesBlock, MessagesEchoAccumulator,
-    Provider, StreamDelta, ToolCallAccumulator,
+    AssistantToolCall, CompletionRequest, Message, MessagesEchoAccumulator, Provider, StreamDelta,
+    ToolCallAccumulator,
 };
 use crate::role::Role;
 use crate::session::{Session, spend_record};
@@ -3230,7 +3230,7 @@ impl Agent {
 mod tests {
     mod acceptance;
     use super::*;
-    use crate::llm::ReplayProvider;
+    use crate::llm::{MessagesBlock, ReplayProvider};
     use crate::tools::ToolContext;
     use std::sync::Mutex;
     use tempfile::TempDir;
