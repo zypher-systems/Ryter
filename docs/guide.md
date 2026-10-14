@@ -167,6 +167,7 @@ If nobody answers for five minutes, the call ends with **timed out waiting for u
 **When a turn stops by itself**, the chat says why:
 - the model made the same call and got the same result five times (it is told at the third);
 - it used the rounds one message may have: 150 unless *rounds a turn* in `/settings`, `[limits] rounds` in `config.toml`, or `--rounds N` for one run says otherwise, and `0` lifts the cap (say “continue”);
+- session spend reached the budget: `/budget +N` raises it, `/budget N` sets a new cap, `/budget off` lifts it (say “continue”);
 - the provider sent nothing but keep-alives for 5 minutes (15 for a local server), or reported an error mid-reply;
 - a reply was cut off at the output limit three times in a row.
 
@@ -495,7 +496,7 @@ Prompt caching is priced in parts: cache reads at the cached rate, cache writes 
 
 Cancelled or failed streams keep any reported usage and estimated cost as a lower bound. If the final accounting is missing, the session is marked incomplete. A configured budget then blocks further model calls, including commit-message drafting, even after resume or a model change. Start a separate session or explicitly use `/budget off` to continue with unknown spend.
 
-A session budget is optional. With one, the turn stops when spend reaches it and says so (exit `3` in headless). Raise it and say continue. Without one, nothing stops on cost and you watch the spend card.
+A session budget is optional. With one, the turn stops when spend reaches it and says so in the same voice as the round cap: what stopped, how to raise or lift it (`/budget +N`, `/budget N`, `/budget off`), and that saying “continue” carries on (exit `3` in headless). Without one, nothing stops on cost and you watch the spend card.
 
 | Command | Effect |
 | --- | --- |
@@ -650,7 +651,7 @@ Tool output is bounded while it is read. Shell commands retain the first and las
 
 `/context` shows the active hat’s estimated context use, including tool schemas and an output allowance of up to one quarter of its window (at most 32,768 tokens). Its window comes from `[context_windows]`, a cached provider catalog, or a matching saved route. Without that information, the existing fallback is 500k for `grok-4.6` and 200k otherwise; these are estimates. For a model or local server with a different limit, set its model ID under `[context_windows]` in your config, for example `"your-model-id" = 32768`.
 
-At 85%, compaction keeps older user constraints and assistant notes in an extract, retains the last four user turns, and shortens older bulky tool results when needed. Tool identities and the newest result batch stay intact. `/compact` or `c` in the panel forces a pass; resume reads the rewritten conversation. If the resulting request still exceeds the window, Ryter stops before calling the provider. Choose a larger-window model or start a new session with the remaining task. Counts still use bytes/4 rather than the provider’s tokenizer.
+At 85%, compaction keeps older user constraints and assistant notes in an extract, retains the last four user turns, and shortens older bulky tool results when needed. Tool identities and the newest result batch stay intact. `/compact` or `c` in the panel forces a pass; resume reads the rewritten conversation. If the resulting request still exceeds the window, Ryter stops before calling the provider. Choose a larger-window model or start a new session with the remaining task. The context gauge and `/context` headline use the provider’s last `input_tokens` once a call has reported usage; admission and compaction still use the bytes/4 estimate until the next provider count.
 
 ## Doctor and sandbox
 

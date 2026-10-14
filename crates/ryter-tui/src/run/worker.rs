@@ -820,6 +820,7 @@ fn session_event(a: &Agent) -> AgentEvent {
 
 fn swap_session(a: &mut Agent, s: Session) {
     a.session = s;
+    a.seed_prompt_tokens();
     a.announce_recovery();
     a.ctx.notes_dir = a.session.notes_dir();
 }
@@ -899,6 +900,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
     // The build hat, unless the session was left in another. A session
     // left in crew mode, before it was removed, opens in build too.
     let role = b.session.meta.mode.map_or(Role::SoloBuild, Role::hat);
+    let last_input_tokens = b.session.last_input_tokens();
     Agent {
         provider: Arc::new(provider),
         book: PriceBook::from_config(b.cfg),
@@ -949,5 +951,6 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         audit_live: None,
         last_audit_verdict: None,
         turn: 0,
+        last_input_tokens,
     }
 }

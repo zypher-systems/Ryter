@@ -502,6 +502,17 @@ impl Session {
         read_jsonl(&self.dir.join("spend.jsonl"))
     }
 
+    /// The newest provider `input_tokens` from the spend log, if any.
+    pub fn last_input_tokens(&self) -> Option<u64> {
+        self.spend_log().ok()?.into_iter().rev().find_map(|r| {
+            if r.input_tokens > 0 {
+                Some(r.input_tokens)
+            } else {
+                None
+            }
+        })
+    }
+
     /// The session's notes folder, which the plan hat may write in.
     pub fn notes_dir(&self) -> PathBuf {
         self.dir.join("notes")
