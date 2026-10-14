@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ryter — Modern workspace</title>
+<title>RYTER — Modern workspace</title>
 <style>
   :root {
     color-scheme: dark;
@@ -118,7 +118,7 @@
   .mark i:nth-child(1) { background: var(--plan); }
   .mark i:nth-child(2) { background: var(--build); }
   .mark i:nth-child(3) { background: var(--spec); }
-  .word { font-weight: 600; font-size: 14px; letter-spacing: -0.02em; }
+  .word { font-weight: 600; font-size: 14px; letter-spacing: 0.06em; }
   .mock-tag {
     margin-left: 2px;
     font-size: 11px;
@@ -819,7 +819,7 @@
 
   .nav-kbd { margin-left: auto; }
   .nav-count { margin-left: 6px; }
-  .h-name kbd, .seat-top kbd, .btn kbd, .nav-kbd {
+  .btn kbd, .nav-kbd {
     font-size: 10px;
     padding: 2px 4px;
     margin-right: 6px;
@@ -831,8 +831,7 @@
     box-shadow: none;
     margin: 0 0 0 6px;
   }
-  .h-name kbd { margin-right: 6px; }
-  .seat-top kbd { margin-left: auto; margin-right: 8px; }
+  .seat-top .h-name { margin-right: auto; }
   .seat .tag { margin-left: 0; }
 
   .steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
@@ -975,7 +974,7 @@
   <header class="topbar">
     <div class="brand">
       <span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>
-      <span class="word">Ryter</span>
+      <span class="word">RYTER</span>
       <span class="mock-tag">Mockup</span>
     </div>
     <button class="cmd" id="cmd-btn" type="button" aria-label="Search commands">
@@ -1020,7 +1019,7 @@
       <div class="hats" role="list">
         <button class="hat-row" type="button" data-goto-seat="plan" style="--hat: var(--plan)" role="listitem">
           <i class="pip" aria-hidden="true"></i>
-          <span class="h-name"><kbd>1</kbd> plan</span>
+          <span class="h-name">plan</span>
           <span class="h-spend">$0.004</span>
           <span class="h-model">grok-4.6</span>
           <span class="h-meta">1 turn</span>
@@ -1028,7 +1027,7 @@
         </button>
         <button class="hat-row is-wearing" type="button" data-goto-seat="build" style="--hat: var(--build)" role="listitem">
           <i class="pip" aria-hidden="true"></i>
-          <span class="h-name"><kbd>2</kbd> build</span>
+          <span class="h-name">build</span>
           <span class="h-spend">$0.021</span>
           <span class="h-model">deepseek-pro-latest</span>
           <span class="h-meta">2 turns</span>
@@ -1037,7 +1036,7 @@
         <div class="spec-rule">Specialists</div>
         <button class="hat-row" type="button" data-goto-seat="audit" style="--hat: var(--spec)" role="listitem">
           <i class="pip" aria-hidden="true"></i>
-          <span class="h-name"><kbd>3</kbd> audit <span class="verdict-fail">✗</span></span>
+          <span class="h-name">audit <span class="verdict-fail">✗</span></span>
           <span class="h-spend">$0.040</span>
           <span class="h-model">claude-opus-5.5</span>
           <span class="h-meta">1 turn</span>
@@ -1045,7 +1044,7 @@
         </button>
         <button class="hat-row" type="button" data-goto-seat="scribe" style="--hat: var(--spec)" role="listitem">
           <i class="pip" aria-hidden="true"></i>
-          <span class="h-name"><kbd>4</kbd> scribe</span>
+          <span class="h-name">scribe</span>
           <span class="h-spend"></span>
           <span class="h-model">follows all hats</span>
           <span class="h-meta"></span>
@@ -1238,14 +1237,13 @@
               <span class="muted"> · SpaceXAI · reasoning auto</span>
             </div>
             <span class="chip chip-plan">default</span>
-            <p>Plan and scribe follow this. Build and audit each have a model of their own. The first time a new model reads the conversation, Ryter prices that re-read.</p>
+            <p>Plan and scribe follow this. Build and audit each have a model of their own. The first time a new model reads the conversation, RYTER prices that re-read.</p>
           </div>
           <div class="seat-grid">
             <div class="group-label">Working</div>
             <button class="seat" type="button" data-seat-btn="plan" style="--hat: var(--plan)">
               <div class="seat-top">
                 <span class="h-name">plan</span>
-                <kbd>1</kbd>
                 <span class="tag wear-tag" hidden>Wearing</span>
               </div>
               <p class="job">Reads the project and proposes a plan to approve. Changes nothing.</p>
@@ -1258,7 +1256,6 @@
             <button class="seat is-on" type="button" data-seat-btn="build" style="--hat: var(--build)">
               <div class="seat-top">
                 <span class="h-name">build</span>
-                <kbd>2</kbd>
                 <span class="tag wear-tag">Wearing</span>
               </div>
               <p class="job">Makes the change in your tree. Edits and ordinary commands run. What /undo cannot put back still asks.</p>
@@ -1272,7 +1269,6 @@
             <button class="seat" type="button" data-seat-btn="audit" style="--hat: var(--spec)">
               <div class="seat-top">
                 <span class="h-name">audit</span>
-                <kbd>3</kbd>
                 <span class="tag wear-tag" hidden>Wearing</span>
                 <span class="tag tag-fail">✗ 1 blocking</span>
               </div>
@@ -1286,11 +1282,10 @@
             <button class="seat" type="button" data-seat-btn="scribe" style="--hat: var(--spec)">
               <div class="seat-top">
                 <span class="h-name">scribe</span>
-                <kbd>4</kbd>
                 <span class="tag wear-tag" hidden>Wearing</span>
               </div>
               <p class="job">Writes the documentation, and nothing else. Give it a small model when you want one.</p>
-              <p class="maynot">May not write code, configuration, or Ryter’s own files.</p>
+              <p class="maynot">May not write code, configuration, or RYTER’s own files.</p>
               <div class="seat-meta">
                 <span><b>grok-4.6</b> · follows all hats</span>
                 <span class="mono">docs only</span>
@@ -1879,15 +1874,17 @@ function paintHints() {
   let parts;
   if (paletteOpen) parts = [hint("↑↓", "move"), hint("enter", "run"), hint("esc", "close")];
   else if (ask === "open") parts = [hint("y", "allow"), hint("a", "edits"), hint("n", "deny"), hint("tab", "hat"), hint("⇧tab", "row"), hint("^k", "commands"), hint("^b", "instruments"), hint("alt ← →", "panes")];
-  else parts = [hint("1–4", "hats"), hint("tab", "row"), hint("⇧tab", "row"), hint("^k", "commands"), hint("^1–3", "views"), hint("^b", "instruments"), hint("alt ← →", "panes")];
+  else parts = [hint("tab", "hat"), hint("⇧tab", "row"), hint("^k", "commands"), hint("^1–3", "views"), hint("^b", "instruments"), hint("alt ← →", "panes")];
   document.getElementById("hintbar").innerHTML = parts.join("") + `<span class="hint-focus">focus · ${names[focus]}</span>`;
 }
 function commandList() {
   const list = [
-    { group: "Hats", label: "Plan", keys: "1", q: "plan hat", run: () => wear("plan") },
-    { group: "Hats", label: "Build", keys: "2", q: "build hat", run: () => wear("build") },
-    { group: "Hats", label: "Audit", keys: "3", q: "audit hat", run: () => wear("audit") },
-    { group: "Hats", label: "Scribe", keys: "4", q: "scribe hat", run: () => wear("scribe") },
+    { group: "Hats", label: "Next hat in this row", keys: "tab", q: "tab cycle hat", run: () => cycleHat(1) },
+    { group: "Hats", label: "Other hat row", keys: "⇧tab", q: "shift tab row", run: () => swapRow() },
+    { group: "Hats", label: "Wear plan", keys: "", q: "plan hat", run: () => wear("plan") },
+    { group: "Hats", label: "Wear build", keys: "", q: "build hat", run: () => wear("build") },
+    { group: "Hats", label: "Wear audit", keys: "", q: "audit hat", run: () => wear("audit") },
+    { group: "Hats", label: "Wear scribe", keys: "", q: "scribe hat", run: () => wear("scribe") },
     { group: "Views", label: "Conversation", keys: "^1", q: "conversation session", run: () => go("session") },
     { group: "Views", label: "Hats", keys: "^2", q: "hats manager", run: () => go("hats") },
     { group: "Views", label: "Sessions", keys: "^3", q: "sessions list", run: () => go("sessions") },
@@ -1924,7 +1921,7 @@ function paintPalette() {
       group = c.group;
       html += `<div class="pal-group">${group}</div>`;
     }
-    html += `<button type="button" class="pal-row${i === paletteIndex ? " is-on" : ""}" data-pal="${i}"><span>${c.label}</span><kbd>${c.keys}</kbd></button>`;
+    html += `<button type="button" class="pal-row${i === paletteIndex ? " is-on" : ""}" data-pal="${i}"><span>${c.label}</span>${c.keys ? `<kbd>${c.keys}</kbd>` : ""}</button>`;
   });
   list.innerHTML = html;
   list.querySelectorAll("[data-pal]").forEach((btn) => {
@@ -2033,11 +2030,6 @@ function onKey(e) {
     if (key === "y" || key === "Y" || key === "Enter") { e.preventDefault(); resolveAsk("allowed"); return; }
     if (key === "a" || key === "A") { e.preventDefault(); resolveAsk("session"); return; }
     if (key === "n" || key === "N" || key === "Escape") { e.preventDefault(); resolveAsk("denied"); return; }
-  }
-  if (!ctrl && !e.altKey && key >= "1" && key <= "4") {
-    e.preventDefault();
-    wear(["plan", "build", "audit", "scribe"][Number(key) - 1]);
-    return;
   }
   if (key === "ArrowDown" || key === "ArrowUp") {
     e.preventDefault();
