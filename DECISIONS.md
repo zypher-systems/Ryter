@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-14 — 1.0 item 1 closed; item 3 Linux closed, macOS still open
+
+**Decision.** 1.0 item 1 ("the flow holds on a real project") is closed on the user's call from the fiscus web run (0.20.0) and the tunes terminal run (0.24.1). Item 3's Linux half (setup works first time: install, key, change) is closed the same day. Item 3's macOS hand pass and the model check when a hat's model is chosen in `/models` stay open. Gate and blast findings from the real runs stay under their own items (2, 4, …), not as unfinished halves of item 1.
+
+**Why.** The definition asked for plan → build → audit → repair → scribe on a web service and a terminal/desktop app with real models and no workaround. Those two runs meet that bar; leaving item 1 "half done" forever while the leftover bugs are really items 2 and 4 was misleading the Now list. Linux setup is already the day-one path; inventing a macOS close would paper over an untried hand pass.
+
+**Where.** `ROADMAP.md` (What 1.0 means items 1 and 3; Now).
+
 ### 2026-10-11 — Three panes on a wide screen, and a hat switch during a turn is the next message's
 
 **Decision.** From 150 columns the screen is three panes: a rail at the left with the sidebar's header and its hats, the conversation centred between, the sidebar at the right from `now` on; both columns 30 wide, growing to 40 once the conversation has its 112 between them. Between 100 and 149 columns the one sidebar stays with the conversation at the left; below 100 the status line. `^b` hides and shows both columns. And a hat switch while a turn runs (`Tab`, `Shift+Tab`, the hat commands) chooses the hat for the next message and nothing else: the agent takes it when the turn ends, as it always did, and the screen now draws the hat working apart from the hat on: the spinner, the `now` block's model and verb, the status row's colour, the status line and the name over the reply are the working hat's; the prompt's chip, its rule and the ledger's `▸` are the hat chosen. `docs/sidebar-design.md` R-LAYOUT-04 and R-KEY-05, §17.
