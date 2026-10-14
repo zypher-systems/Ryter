@@ -2036,11 +2036,7 @@ mod allow_tests {
             Some(("bash:ls".into(), "`ls` commands".into()))
         );
         assert_eq!(
-            allow_scope(
-                "bash",
-                &json!({"command": "cat /etc/os-release; echo done"}),
-                &c
-            ),
+            allow_scope("bash", &json!({"command": "cat /etc/hosts; echo done"}), &c),
             Some(("bash:cat".into(), "`cat` commands".into()))
         );
         assert!(strict_prompt("bash", &json!({"command": "git clean -fdx"})));
@@ -2072,18 +2068,21 @@ mod allow_tests {
             }
             asked
         });
+        // Paths that exist on Linux and macOS; the gate asks on the read,
+        // and we only care which cards appeared (not that every host file
+        // is present — `/etc/os-release` is Linux-only).
         let run = |cmd: &str| gated_execute("bash", &json!({"command": cmd}), &c).unwrap();
-        assert!(!run("ls /usr/include && true").is_error);
-        assert!(!run("ls /usr/lib").is_error);
+        assert!(!run("ls /usr && true").is_error);
+        assert!(!run("ls /usr").is_error);
         assert!(!run("ls /usr && pwd").is_error);
-        assert!(!run("cat /etc/os-release").is_error);
+        assert!(!run("cat /etc/hosts").is_error);
         drop(c);
         let asked = answers.join().unwrap();
         let summaries: Vec<&str> = asked.iter().map(|(s, _)| s.as_str()).collect();
         // `ls` once for the session; `cat` is another kind and asks once.
         assert_eq!(
             summaries,
-            vec!["ls /usr/include && true", "cat /etc/os-release"],
+            vec!["ls /usr && true", "cat /etc/hosts"],
             "{asked:?}"
         );
         assert_eq!(asked[0].1.as_deref(), Some("`ls` commands"));
