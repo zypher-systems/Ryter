@@ -509,8 +509,8 @@ fn sed_skip_one_address(s: &str) -> Option<&str> {
     if s.is_empty() {
         return Some(s);
     }
-    if s.starts_with('$') {
-        return Some(&s[1..]);
+    if let Some(rest) = s.strip_prefix('$') {
+        return Some(rest);
     }
     if s.as_bytes()[0].is_ascii_digit() {
         let n = s.bytes().take_while(u8::is_ascii_digit).count();
