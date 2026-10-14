@@ -19,12 +19,12 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.27.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.28.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
-- **1.0 item 1 (flow on a real project): closed 2026-10-14.** User's call on fiscus (web service, 0.20.0) and tunes (terminal app, 0.24.1: plan → build → audit → repair → audit → scribe). Evidence and release notes stay under Done (0.20.0, 0.24.0, 0.24.1). Leftover findings from those runs are tracked under Next as other items (false asks → item 2; `tmux kill-server` → item 4), not as an open half of item 1.
-- **1.0 item 3 Linux setup: closed 2026-10-14.** Install, add a key, make a change on Linux works first time. Still owed under Next: model check when a hat's model is chosen in `/models`; macOS by hand (install, key, change, TUI at three widths).
+- **1.0 item 1 (flow on a real project): closed 2026-10-14** (recorded in 0.28.0). Leftover findings from fiscus/tunes stay under Next (further ask friction → item 2; `tmux kill-server` → item 4).
+- **1.0 item 3 Linux setup: closed 2026-10-14** (recorded in 0.28.0). Still owed under Next: model check when a hat's model is chosen in `/models`; macOS by hand.
 
 ## Next
 
@@ -54,7 +54,6 @@ Everything here serves an item of the 1.0 list; the number says which. The direc
 - Recorded live sessions replayed through the gate after each change to it, as was done for 0.14.0 and the fiscus run. The replay is a throwaway test each time; a kept `#[ignore]` test over a recorded `events.jsonl` would make it one command.
 - `curl`'s body to another host asks (it leaves the machine), but a header, user agent, referer, `-u` or `-w` value carrying `$VAR` to another host runs: `uploads_elsewhere` counts bodies, not headers. Older than 0.20.0 (found by its reviewers); a secret in a header leaves the machine as surely as one in a body.
 - A repository nested *below* a scratch folder the turn deletes freely (`rm -rf /tmp/probe` with someone's repository at `/tmp/probe/sub`) is not protected; the check looks at the path and above it, as `free_place` always has.
-- The looking hats (plan, scribe, the audit without a checkpoint) are refused `sed 's/a/b/' f` and `awk '{print}' f` while `sed -n p f` runs: a script with a `/` or a brace reads as a path. Older than the fiscus patch; found by its tests.
 - Writing a key-named file to scratch space (`touch /tmp/tls_test.key`, to check a `.gitignore`) is refused as naming a secret. Left as the secret rule for now.
 - Selection, from the 0.24.0 reviews, non-blocking: a scrolled message box copies the `↑`/`↓` mark in its corner; where the "new rows" mark meets the palette a press uses the mark's rect; a pulled selection whose start has scrolled off the screen, dragged onto the pinned question, ends a row or two short; a click on a card can open its panel on top of a card that opened between press and release; prose that wrapped is copied with the screen's line breaks.
 - As root, the programs that only list (`ls`, `find`, `du`, `stat`) are not held to the folder rule, so `sudo find / -name x` or `sudo ls -R /` prints the names, not the contents, of what is in root's folders when an ancestor is named. From the 0.23.0 approving review, non-blocking: refuse them a folder that holds one of root's own folders, which `holds_something_closed` nearly computes already.
@@ -77,6 +76,14 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.28.0 — workspace B+E, ask-friction G1–G3, and two 1.0 gates closed (2026-10-14)
+
+Released 2026-10-14 (PRs #79–#83). The note is `docs/releases/v0.28.0.md`.
+
+- **Workspace B+E.** Project cost on the Spend instrument; quieter top bar (brand dots stay). PR #79.
+- **G1–G3 ask friction.** Own-turn/`rm` and scratch copies (#80); looking-hat toolchain probes and safe `sed`/`awk` (#81); permission wait timeout is not a user denial (#82). rustls 0.23.46 for deny CI.
+- **1.0 item 1 closed; item 3 Linux closed.** User call 2026-10-14 from fiscus and tunes; macOS and model-on-choose stay open. PR #83.
 
 ### 0.27.0 — the workspace is the screen Ryter opens on (2026-10-14)
 
