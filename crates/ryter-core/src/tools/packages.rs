@@ -729,7 +729,7 @@ mod tests {
     #[test]
     fn a_bad_ecosystem_or_name_is_refused_before_any_request() {
         let dir = tempfile::TempDir::new().unwrap();
-        let ctx = crate::tools::tests::ctx(crate::Role::SoloPlan, dir.path());
+        let ctx = crate::tools::tests::ctx(crate::Role::Plan, dir.path());
         let out = check_package(&json!({"ecosystem": "maven", "name": "x"}), &ctx).unwrap();
         assert!(
             out.is_error && out.text.contains("unknown ecosystem"),

@@ -492,7 +492,7 @@ fn draw_sidebar(
         );
         y += 1;
     }
-    let spec_at = HATS.iter().position(|h| *h == Role::SoloAudit);
+    let spec_at = HATS.iter().position(|h| *h == Role::Audit);
     for (i, hat) in HATS.iter().enumerate() {
         if spec_at == Some(i) && y < inner.height {
             put(
@@ -556,7 +556,7 @@ fn draw_hat(
         Span::styled(format!("{mark}{pip} "), sty(color, bg)),
         Span::styled(name, sty(color, bg).add_modifier(Modifier::BOLD)),
     ];
-    if hat == Role::SoloAudit
+    if hat == Role::Audit
         && view
             .last_review
             .as_ref()
@@ -603,11 +603,8 @@ fn draw_hat(
         ),
     );
     let model = crate::chat::short_model(view.model_of(hat));
-    let own = view
-        .specialists
-        .get(hat.as_str())
-        .is_some_and(|m| m.is_override());
-    let model = if hat == Role::SoloScribe && !own {
+    let own = view.hats.get(hat.as_str()).is_some_and(|m| m.is_override());
+    let model = if hat == Role::Scribe && !own {
         "follows all hats".to_string()
     } else {
         model.to_string()
@@ -820,8 +817,8 @@ fn draw_hats_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         y += 2;
     }
     let groups: [(&str, &[Role]); 2] = [
-        ("", &[Role::SoloPlan, Role::SoloBuild]),
-        ("Specialists", &[Role::SoloAudit, Role::SoloScribe]),
+        ("", &[Role::Plan, Role::Build]),
+        ("Specialists", &[Role::Audit, Role::Scribe]),
     ];
     for (label, hats) in groups {
         if y >= area.height {
@@ -911,10 +908,7 @@ fn draw_seat(frame: &mut Frame, area: Rect, y: u16, hat: Role, view: &View, them
             Span::styled(wrap::truncate(hat.describe(), inner_w), sty(theme.fg, bg)),
         ]),
     );
-    let own = view
-        .specialists
-        .get(hat.as_str())
-        .is_some_and(|m| m.is_override());
+    let own = view.hats.get(hat.as_str()).is_some_and(|m| m.is_override());
     let follows = if own { "own model" } else { "follows all hats" };
     let model = crate::chat::short_model(view.model_of(hat));
     let meta = format!(
@@ -1111,7 +1105,7 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
             let tool = if view.ui.nerd_font
                 && matches!(view.activity.verb, crate::activity::Verb::Tool(_))
             {
-                format!("{} ", glyphs::hat_icon(Role::SoloBuild, true))
+                format!("{} ", glyphs::hat_icon(Role::Build, true))
             } else {
                 String::new()
             };
@@ -1421,10 +1415,7 @@ fn draw_hat_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) 
         )),
     );
     y += 1;
-    let own = view
-        .specialists
-        .get(hat.as_str())
-        .is_some_and(|m| m.is_override());
+    let own = view.hats.get(hat.as_str()).is_some_and(|m| m.is_override());
     put(
         frame,
         area,
@@ -1740,10 +1731,10 @@ fn folder_name(view: &View) -> String {
 
 fn hat_from_name(name: &str) -> Role {
     match name {
-        "plan" => Role::SoloPlan,
-        "audit" => Role::SoloAudit,
-        "scribe" => Role::SoloScribe,
-        _ => Role::SoloBuild,
+        "plan" => Role::Plan,
+        "audit" => Role::Audit,
+        "scribe" => Role::Scribe,
+        _ => Role::Build,
     }
 }
 
@@ -2013,7 +2004,7 @@ mod tests {
         v.ctx_pct = Some(38);
         v.budget_usd = 5.0;
         v.spend = Some(0.065);
-        v.set_mode(Role::SoloBuild);
+        v.set_mode(Role::Build);
         v.ui.nerd_font = false;
         v
     }
@@ -2062,27 +2053,27 @@ mod tests {
     #[test]
     fn tab_cycles_within_the_mode_and_shift_tab_switches_mode() {
         let mut v = ws();
-        v.set_mode(Role::SoloPlan);
+        v.set_mode(Role::Plan);
         assert!(matches!(
             crate::run_keys_handle(&mut v, press(KeyCode::Tab, KeyModifiers::NONE)),
-            Action::SetMode(Role::SoloBuild)
+            Action::SetMode(Role::Build)
         ));
-        v.set_mode(Role::SoloBuild);
+        v.set_mode(Role::Build);
         assert!(matches!(
             crate::run_keys_handle(&mut v, press(KeyCode::BackTab, KeyModifiers::NONE)),
-            Action::SetMode(Role::SoloAudit)
+            Action::SetMode(Role::Audit)
         ));
-        v.set_mode(Role::SoloAudit);
+        v.set_mode(Role::Audit);
         assert!(matches!(
             crate::run_keys_handle(&mut v, press(KeyCode::Tab, KeyModifiers::NONE)),
-            Action::SetMode(Role::SoloScribe)
+            Action::SetMode(Role::Scribe)
         ));
         // A digit is typed, not a hat.
         v.composer.clear();
         let a = crate::run_keys_handle(&mut v, press(KeyCode::Char('1'), KeyModifiers::NONE));
         assert_eq!(a, Action::None);
         assert_eq!(v.composer.text(), "1");
-        assert_eq!(v.mode, Role::SoloAudit);
+        assert_eq!(v.mode, Role::Audit);
     }
 
     #[test]
@@ -2092,7 +2083,7 @@ mod tests {
         v.side_at = 0; // plan
         assert!(matches!(
             crate::run_keys_handle(&mut v, press(KeyCode::Enter, KeyModifiers::NONE)),
-            Action::SetMode(Role::SoloPlan)
+            Action::SetMode(Role::Plan)
         ));
         assert_eq!(v.page, Page::Hats);
         v.page = Page::Sessions;
@@ -2242,7 +2233,7 @@ mod tests {
         let rect = hit
             .clicks
             .iter()
-            .find(|(c, _)| *c == WorkspaceClick::Wear(Role::SoloPlan))
+            .find(|(c, _)| *c == WorkspaceClick::Wear(Role::Plan))
             .map(|(_, r)| *r)
             .expect("plan row");
         let mut v = v;
@@ -2262,7 +2253,7 @@ mod tests {
         );
         assert_eq!(
             crate::run_mouse_handle_with(&mut v, up, &hit),
-            Action::SetMode(Role::SoloPlan)
+            Action::SetMode(Role::Plan)
         );
     }
 
@@ -2308,7 +2299,7 @@ mod tests {
     fn sample_project_spend() -> ryter_core::project::ProjectSpend {
         let mut p = ryter_core::project::ProjectSpend::default();
         // Seeds this_month via month_of_now, then the glance totals override.
-        p.add(Role::SoloBuild, "m", Some(1.24));
+        p.add(Role::Build, "m", Some(1.24));
         p.total_usd = 4.82;
         p.calls = 40;
         p.unpriced_calls = 3;

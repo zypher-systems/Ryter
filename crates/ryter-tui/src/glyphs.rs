@@ -66,10 +66,10 @@ pub fn hat_icon(hat: Role, nerd: bool) -> &'static str {
         return "●";
     }
     match hat {
-        Role::SoloPlan => "\u{f0eb}",
-        Role::SoloBuild => "\u{f0ad}",
-        Role::SoloAudit => "\u{f002}",
-        Role::SoloScribe => "\u{f040}",
+        Role::Plan => "\u{f0eb}",
+        Role::Build => "\u{f0ad}",
+        Role::Audit => "\u{f002}",
+        Role::Scribe => "\u{f040}",
         Role::Crew => "\u{f0ad}",
     }
 }
@@ -80,10 +80,10 @@ mod tests {
 
     #[test]
     fn hat_labels_are_title_case() {
-        assert_eq!(hat_label(Role::SoloPlan), "Plan");
-        assert_eq!(hat_label(Role::SoloBuild), "Build");
-        assert_eq!(hat_label(Role::SoloAudit), "Audit");
-        assert_eq!(hat_label(Role::SoloScribe), "Scribe");
+        assert_eq!(hat_label(Role::Plan), "Plan");
+        assert_eq!(hat_label(Role::Build), "Build");
+        assert_eq!(hat_label(Role::Audit), "Audit");
+        assert_eq!(hat_label(Role::Scribe), "Scribe");
     }
 
     #[test]
@@ -92,10 +92,7 @@ mod tests {
         assert_ne!(mark(Mark::Branch, true), "⎇");
         assert_eq!(mark(Mark::File, false), "");
         assert!(!mark(Mark::File, true).is_empty());
-        assert_eq!(hat_icon(Role::SoloBuild, false), "●");
-        assert_ne!(
-            hat_icon(Role::SoloPlan, true),
-            hat_icon(Role::SoloAudit, true)
-        );
+        assert_eq!(hat_icon(Role::Build, false), "●");
+        assert_ne!(hat_icon(Role::Plan, true), hat_icon(Role::Audit, true));
     }
 }

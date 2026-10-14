@@ -60,19 +60,19 @@ impl Rack {
     /// A hat's totals. A role from crew mode has none of its own: build's.
     pub fn of(&self, role: Role) -> &HatTotals {
         match role {
-            Role::SoloPlan => &self.plan,
-            Role::SoloAudit => &self.review,
-            Role::SoloScribe => &self.scribe,
-            Role::SoloBuild | Role::Crew => &self.build,
+            Role::Plan => &self.plan,
+            Role::Audit => &self.review,
+            Role::Scribe => &self.scribe,
+            Role::Build | Role::Crew => &self.build,
         }
     }
 
     fn of_mut(&mut self, role: Role) -> &mut HatTotals {
         match role {
-            Role::SoloPlan => &mut self.plan,
-            Role::SoloAudit => &mut self.review,
-            Role::SoloScribe => &mut self.scribe,
-            Role::SoloBuild | Role::Crew => &mut self.build,
+            Role::Plan => &mut self.plan,
+            Role::Audit => &mut self.review,
+            Role::Scribe => &mut self.scribe,
+            Role::Build | Role::Crew => &mut self.build,
         }
     }
 
@@ -119,7 +119,7 @@ impl Rack {
                 if let (false, Some(d)) = (*is_error, diff) {
                     let t = if self.hat.is_none_or(Role::writes_source) {
                         Some(&mut self.build)
-                    } else if self.hat == Some(Role::SoloScribe) {
+                    } else if self.hat == Some(Role::Scribe) {
                         Some(&mut self.scribe)
                     } else {
                         None
@@ -235,45 +235,45 @@ mod tests {
     fn each_hat_counts_its_own() {
         let mut r = Rack::default();
         for ev in [
-            started(Role::SoloPlan),
+            started(Role::Plan),
             AgentEvent::Planned { approved: true },
-            started(Role::SoloBuild),
+            started(Role::Build),
             edit("a.rs", 8, 1),
-            started(Role::SoloAudit),
+            started(Role::Audit),
             reviewed(Some(false)),
-            started(Role::SoloBuild),
+            started(Role::Build),
             edit("a.rs", 5, 1),
             edit("b.rs", 2, 0),
-            started(Role::SoloAudit),
+            started(Role::Audit),
             reviewed(Some(true)),
             reviewed(None),
         ] {
             r.apply(&ev);
         }
-        assert_eq!(r.of(Role::SoloPlan).turns, 1);
-        assert_eq!(r.of(Role::SoloPlan).plans_approved, 1);
-        let b = r.of(Role::SoloBuild);
+        assert_eq!(r.of(Role::Plan).turns, 1);
+        assert_eq!(r.of(Role::Plan).plans_approved, 1);
+        let b = r.of(Role::Build);
         assert_eq!((b.turns, b.files.len(), b.added, b.removed), (2, 2, 15, 2));
-        let v = r.of(Role::SoloAudit);
+        let v = r.of(Role::Audit);
         assert_eq!((v.turns, v.verdicts_passed, v.verdicts_failed), (2, 1, 1));
-        assert!(r.worn(Role::SoloAudit));
+        assert!(r.worn(Role::Audit));
         // A session from before: a turn in the test hat counts as build's.
         r.apply(&AgentEvent::TurnStarted {
             turn: 9,
             role: Role::Crew,
             at: 0,
         });
-        assert_eq!(r.of(Role::SoloBuild).turns, 3);
+        assert_eq!(r.of(Role::Build).turns, 3);
     }
 
     #[test]
     fn an_edit_outside_the_build_hat_is_not_the_builds() {
         let mut r = Rack::default();
-        r.apply(&started(Role::SoloPlan));
+        r.apply(&started(Role::Plan));
         r.apply(&edit("notes/plan.md", 4, 0));
-        assert!(r.of(Role::SoloBuild).files.is_empty());
+        assert!(r.of(Role::Build).files.is_empty());
         // A failed edit changed nothing.
-        r.apply(&started(Role::SoloBuild));
+        r.apply(&started(Role::Build));
         let AgentEvent::ToolResult { diff, .. } = edit("a.rs", 3, 0) else {
             unreachable!()
         };
@@ -284,28 +284,24 @@ mod tests {
             duration_ms: None,
             diff,
         });
-        assert_eq!(r.of(Role::SoloBuild).added, 0);
+        assert_eq!(r.of(Role::Build).added, 0);
     }
 
     #[test]
     fn a_plan_built_in_the_turn_it_was_approved_in_is_a_build_turn() {
         let mut r = Rack::default();
-        r.apply(&started(Role::SoloPlan));
+        r.apply(&started(Role::Plan));
         r.apply(&AgentEvent::Planned { approved: true });
-        r.apply(&AgentEvent::ModeChanged {
-            role: Role::SoloBuild,
-        });
-        assert_eq!(r.of(Role::SoloBuild).turns, 0, "nothing built yet");
+        r.apply(&AgentEvent::ModeChanged { role: Role::Build });
+        assert_eq!(r.of(Role::Build).turns, 0, "nothing built yet");
         r.apply(&edit("a.rs", 1, 0));
         r.apply(&edit("b.rs", 1, 0));
-        assert_eq!(r.of(Role::SoloBuild).turns, 1);
+        assert_eq!(r.of(Role::Build).turns, 1);
         // A hat change that a turn of its own follows is counted once.
-        r.apply(&AgentEvent::ModeChanged {
-            role: Role::SoloAudit,
-        });
-        r.apply(&started(Role::SoloAudit));
+        r.apply(&AgentEvent::ModeChanged { role: Role::Audit });
+        r.apply(&started(Role::Audit));
         r.apply(&edit("c.rs", 1, 0));
-        assert_eq!(r.of(Role::SoloAudit).turns, 1);
+        assert_eq!(r.of(Role::Audit).turns, 1);
     }
 
     #[test]
@@ -313,10 +309,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("events.jsonl");
         let events = [
-            started(Role::SoloBuild),
+            started(Role::Build),
             AgentEvent::Token { text: "hi".into() },
             edit("a.rs", 2, 1),
-            started(Role::SoloAudit),
+            started(Role::Audit),
             reviewed(Some(true)),
         ];
         let mut live = Rack::default();
@@ -329,8 +325,8 @@ mod tests {
         text.push_str("not an event\n");
         std::fs::write(&path, text).unwrap();
         let read = Rack::from_log(&path);
-        assert_eq!(read.of(Role::SoloBuild), live.of(Role::SoloBuild));
-        assert_eq!(read.of(Role::SoloAudit), live.of(Role::SoloAudit));
+        assert_eq!(read.of(Role::Build), live.of(Role::Build));
+        assert_eq!(read.of(Role::Audit), live.of(Role::Audit));
         assert_eq!(Rack::from_log(&dir.path().join("none")), Rack::default());
         // A log from before the rename names the audit hat `review`.
         let old = dir.path().join("old.jsonl");
@@ -339,6 +335,6 @@ mod tests {
             "{\"kind\":\"turn_started\",\"turn\":1,\"role\":\"review\"}\n",
         )
         .unwrap();
-        assert_eq!(Rack::from_log(&old).of(Role::SoloAudit).turns, 1);
+        assert_eq!(Rack::from_log(&old).of(Role::Audit).turns, 1);
     }
 }

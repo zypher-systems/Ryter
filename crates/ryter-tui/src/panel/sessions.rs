@@ -114,7 +114,7 @@ impl Sessions {
                 hat: s
                     .meta
                     .mode
-                    .map_or(ryter_core::Role::SoloBuild, ryter_core::Role::hat)
+                    .map_or(ryter_core::Role::Build, ryter_core::Role::hat)
                     .to_string(),
             })
             .collect();

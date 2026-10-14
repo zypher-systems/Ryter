@@ -178,7 +178,7 @@ enum McpCmd {
 /// continued session was left in, else build. `[ui] start_hat` is for the
 /// TUI: a script that calls `ryter -p` expects the work done.
 fn headless_hat(asked: Option<Role>, left_in: Option<Role>) -> Role {
-    asked.unwrap_or_else(|| left_in.map_or(Role::SoloBuild, Role::hat))
+    asked.unwrap_or_else(|| left_in.map_or(Role::Build, Role::hat))
 }
 
 /// `--hat` for the TUI: the hat to open in, over `[ui] start_hat`.
@@ -412,7 +412,7 @@ async fn run_prompt(
     // An explicit headless route is for this run, including hat switches.
     // Saved per-hat defaults must not silently select a different paid model.
     if cli.connection.is_some() || cli.model.is_some() {
-        cfg.specialists.clear();
+        cfg.hats.clear();
     }
     let conn = cfg
         .connections
@@ -865,7 +865,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
             // Nobody is there to be asked: a message is worked on in the
             // build hat, and what it would ask about inside the project
             // is allowed. Outside the project still needs a person.
-            role: Role::SoloBuild,
+            role: Role::Build,
             always_approve: true,
             yolo: false,
             permissions: Arc::new(cfg.permissions.clone()),
@@ -889,7 +889,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
         },
         connection: conn_name,
         model,
-        role: Role::SoloBuild,
+        role: Role::Build,
         max_turns: ryter_core::config::rounds_cap(cfg.limits.rounds),
         budget_usd: cfg.spend.session_budget_usd,
         sink: None,
@@ -997,7 +997,7 @@ fn serve_host_from_config(
             // Nobody is there to be asked: a message is worked on in the
             // build hat, and what it would ask about inside the project
             // is allowed. Outside the project still needs a person.
-            role: Role::SoloBuild,
+            role: Role::Build,
             always_approve: true,
             yolo: false,
             permissions: Arc::new(cfg.permissions.clone()),
@@ -1021,7 +1021,7 @@ fn serve_host_from_config(
         },
         connection: conn_name,
         model,
-        role: Role::SoloBuild,
+        role: Role::Build,
         max_turns: ryter_core::config::rounds_cap(cfg.limits.rounds),
         budget_usd: cfg.spend.session_budget_usd,
         sink: None,
@@ -1139,7 +1139,7 @@ fn sessions_cmd() -> ryter_core::Result<()> {
         println!(
             "{}  {:<8}  {:<12}  {}  {}",
             s.meta.id,
-            s.meta.mode.map_or(Role::SoloBuild, Role::hat),
+            s.meta.mode.map_or(Role::Build, Role::hat),
             s.meta.model,
             format_usd(s.meta.spend_usd_total),
             s.preview
@@ -1161,12 +1161,12 @@ mod tests {
     #[test]
     fn a_headless_run_is_in_build_unless_told_otherwise() {
         for (asked, left_in, want) in [
-            (None, None, Role::SoloBuild),
-            (None, Some(Role::SoloPlan), Role::SoloPlan),
-            (Some(Role::SoloAudit), Some(Role::SoloPlan), Role::SoloAudit),
-            (Some(Role::SoloPlan), None, Role::SoloPlan),
+            (None, None, Role::Build),
+            (None, Some(Role::Plan), Role::Plan),
+            (Some(Role::Audit), Some(Role::Plan), Role::Audit),
+            (Some(Role::Plan), None, Role::Plan),
             // A session from crew mode continues in build.
-            (None, Some(Role::Crew), Role::SoloBuild),
+            (None, Some(Role::Crew), Role::Build),
         ] {
             assert_eq!(headless_hat(asked, left_in), want, "{asked:?} {left_in:?}");
         }
@@ -1175,8 +1175,8 @@ mod tests {
     #[test]
     fn the_hat_flag_names_a_hat_or_is_refused() {
         assert_eq!(tui_hat(None).unwrap(), None);
-        assert_eq!(tui_hat(Some("plan")).unwrap(), Some(Role::SoloPlan));
-        assert_eq!(tui_hat(Some("scribe")).unwrap(), Some(Role::SoloScribe));
+        assert_eq!(tui_hat(Some("plan")).unwrap(), Some(Role::Plan));
+        assert_eq!(tui_hat(Some("scribe")).unwrap(), Some(Role::Scribe));
         assert!(tui_hat(Some("test")).is_err());
         assert!(tui_hat(Some("crew")).is_err());
         assert!(tui_hat(Some("bulid")).is_err());
