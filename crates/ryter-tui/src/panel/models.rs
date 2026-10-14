@@ -482,6 +482,9 @@ impl Panel for Models {
     }
 
     fn status(&self, view: &View) -> String {
+        if let Some(why) = &self.refusal {
+            return wrap::truncate(why, 48);
+        }
         let n = self.filtered(view).len();
         if let Some(note) = &view.models_note {
             format!("{n} · {note}")
@@ -811,8 +814,19 @@ impl Panel for Models {
     }
 
     fn on_notice(&mut self, n: &Notice, view: &mut View) {
-        if let Notice::Models(models) = n {
-            self.set_models(view, models);
+        match n {
+            Notice::Models(models) => self.set_models(view, models),
+            Notice::ModelChecked {
+                model,
+                result: Err(why),
+                ..
+            } => {
+                self.refusal = Some(format!("{model}: {why}"));
+            }
+            Notice::ModelChecked { result: Ok(()), .. } => {
+                self.refusal = None;
+            }
+            _ => {}
         }
     }
 
@@ -1329,5 +1343,35 @@ mod tests {
             })
             .collect();
         assert!(text.contains("reasoning") && text.contains("low"), "{text}");
+    }
+
+    /// A failed choose-time check lands in the panel's status so the
+    /// refusal is visible before the first message.
+    #[test]
+    fn a_failed_model_check_shows_in_the_status() {
+        let mut v = hats_view();
+        let mut p = Models::new(&mut v, None);
+        p.set_models(&v, &catalog());
+        p.on_notice(
+            &Notice::ModelChecked {
+                seat: "plan".into(),
+                connection: "openrouter".into(),
+                model: "refused/model".into(),
+                result: Err("out of credits".into()),
+            },
+            &mut v,
+        );
+        assert_eq!(p.refusal.as_deref(), Some("refused/model: out of credits"));
+        assert!(p.status(&v).contains("credits"), "{}", p.status(&v));
+        p.on_notice(
+            &Notice::ModelChecked {
+                seat: "plan".into(),
+                connection: "openrouter".into(),
+                model: "ok/model".into(),
+                result: Ok(()),
+            },
+            &mut v,
+        );
+        assert!(p.refusal.is_none());
     }
 }

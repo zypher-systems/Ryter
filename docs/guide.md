@@ -468,7 +468,7 @@ Headless, `ryter -p` runs in build; `--hat plan|audit|scribe` picks another. Hea
 - **Setting a model:** `⏎` sets the highlighted model for the seat and takes you back to the seats, on the next one. On *All hats* it sets it for every hat, and the keys say so (`enter set for all hats`): hats that had their own model follow this one again. You can set every seat in one visit: pick, `⏎`, pick, `⏎`. A `✓` marks each seat you've set.
 - **Other keys:** `←` goes back to the seats without setting anything. `Tab` steps the highlighted model's reasoning, `s` sorts, and `Esc` closes.
 
-A model your account can't use (a data policy that refuses it, no tool support, no credits) fails on its first message, and the chat gives the provider's reason. Pick another in `/models`.
+When you choose a model in `/models`, Ryter sends one tiny request with a tool to check it. A model your account can't use (a data policy that refuses it, no tool support, no credits) fails then, and the chat gives the provider's reason — not on the first real message. Pick another.
 
 ## Spend
 
