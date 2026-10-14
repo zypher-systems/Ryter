@@ -325,8 +325,9 @@ fn draw_top(
     if area.height == 0 {
         return;
     }
-    // One column of pad, three hat-colored pips, a gap, then bold RYTER.
-    let mark_w = 1 + 3 + 1 + 5 + 1;
+    // One column of pad, three hat-colored pips, a gap, bold RYTER, then
+    // the same two-column gap the tabs leave between themselves.
+    let mark_w = 1 + 3 + 1 + 5 + 2;
     put(
         frame,
         area,
@@ -927,8 +928,9 @@ fn draw_seat(frame: &mut Frame, area: Rect, y: u16, hat: Role, view: &View, them
     frame.render_widget(Block::default().style(Style::default().bg(bg)), inset);
     let w = usize::from(inset.width);
     let name = glyphs::hat_label(hat);
-    let tag = if wearing { " wearing " } else { "" };
-    let fill = w.saturating_sub(4 + wrap::width(&name) + wrap::width(tag));
+    let name_text = format!(" {name} ");
+    let tag = if wearing { "wearing " } else { "" };
+    let fill = w.saturating_sub(3 + wrap::width(&name_text) + wrap::width(tag));
     put(
         frame,
         inset,
@@ -936,10 +938,7 @@ fn draw_seat(frame: &mut Frame, area: Rect, y: u16, hat: Role, view: &View, them
         Line::from(vec![
             Span::styled("╭", edge),
             Span::styled("─", edge),
-            Span::styled(
-                format!(" {name}"),
-                sty(color, bg).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(name_text, sty(color, bg).add_modifier(Modifier::BOLD)),
             Span::styled(tag.to_string(), sty(color, bg)),
             Span::styled("─".repeat(fill), edge),
             Span::styled("╮", edge),
@@ -1033,7 +1032,9 @@ fn draw_sessions_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) 
     if y >= area.height {
         return;
     }
-    let head = ["Session", "Left in", "Msgs", "Spend", "Updated"];
+    // Two spaces: the row mark sits in front of the title, and the header
+    // lines up with the title rather than the mark.
+    let head = ["  Session", "Left in", "Msgs", "Spend", "Updated"];
     put(
         frame,
         area,
