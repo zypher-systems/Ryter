@@ -2032,11 +2032,7 @@ mod allow_tests {
         // A compound that asks: `a` names the asking segment's kind, so a
         // later different chain with the same kind is covered.
         assert_eq!(
-            allow_scope(
-                "bash",
-                &json!({"command": "ls /usr/include && true"}),
-                &c
-            ),
+            allow_scope("bash", &json!({"command": "ls /usr/include && true"}), &c),
             Some(("bash:ls".into(), "`ls` commands".into()))
         );
         assert_eq!(
@@ -2085,7 +2081,11 @@ mod allow_tests {
         let asked = answers.join().unwrap();
         let summaries: Vec<&str> = asked.iter().map(|(s, _)| s.as_str()).collect();
         // `ls` once for the session; `cat` is another kind and asks once.
-        assert_eq!(summaries, vec!["ls /usr/include && true", "cat /etc/os-release"], "{asked:?}");
+        assert_eq!(
+            summaries,
+            vec!["ls /usr/include && true", "cat /etc/os-release"],
+            "{asked:?}"
+        );
         assert_eq!(asked[0].1.as_deref(), Some("`ls` commands"));
         assert_eq!(asked[1].1.as_deref(), Some("`cat` commands"));
     }

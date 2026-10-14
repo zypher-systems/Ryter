@@ -3627,10 +3627,7 @@ mod tests {
     async fn a_folder_the_write_tool_made_is_deleted_without_asking() {
         let p = ReplayProvider::scripted(vec![
             write("scratch/probe/out.sh", "echo hi\n"),
-            call(
-                "bash",
-                serde_json::json!({"command": "rm -rf scratch"}),
-            ),
+            call("bash", serde_json::json!({"command": "rm -rf scratch"})),
             say("cleaned"),
         ]);
         let (_home, cwd, mut agent) = repo_setup(p);

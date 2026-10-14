@@ -7281,7 +7281,10 @@ fn segment_makes(seg: &str, ctx: &ToolContext) -> Effects {
             }
         }
         "curl" | "wget" => {
-            named.extend(download_write_paths(prog, &words[args_at.min(words.len())..]));
+            named.extend(download_write_paths(
+                prog,
+                &words[args_at.min(words.len())..],
+            ));
         }
         "mv" => {
             // `mv a b dir`, or the folder named by `-t`/`--target-directory`
@@ -7423,7 +7426,9 @@ fn download_write_paths(prog: &str, args: &[String]) -> Vec<String> {
         } else if let Some(v) = a.strip_prefix("-O").filter(|v| !v.is_empty()) {
             push(&mut out, v);
         } else if prog == "curl"
-            && let Some(v) = a.strip_prefix("-c").filter(|v| !v.is_empty() && !v.starts_with('-'))
+            && let Some(v) = a
+                .strip_prefix("-c")
+                .filter(|v| !v.is_empty() && !v.starts_with('-'))
         {
             push(&mut out, v);
         }
@@ -11188,11 +11193,7 @@ mod tests {
             &wrote,
         );
         assert_eq!(
-            decide(
-                "bash",
-                &json!({"command": "rm -rf scratch"}),
-                &wrote
-            ),
+            decide("bash", &json!({"command": "rm -rf scratch"}), &wrote),
             Decision::Allow
         );
         // curl -o / install / ln in the project: credited for later rm.
@@ -11228,7 +11229,10 @@ mod tests {
         // An outside source copied into scratch is an ordinary read ask,
         // not AskOutside (the write landed in a free place).
         assert_eq!(sh("cp /etc/os-release /tmp/ryter-g1-os.txt"), Decision::Ask);
-        assert_eq!(sh("cp /etc/os-release /opt/ryter-g1.txt"), Decision::AskOutside);
+        assert_eq!(
+            sh("cp /etc/os-release /opt/ryter-g1.txt"),
+            Decision::AskOutside
+        );
         // Real outside writes still ask.
         assert_eq!(sh("echo x > /opt/ryter-g1.txt"), Decision::AskOutside);
         assert_eq!(sh("cp x.rs /opt/ryter-g1.txt"), Decision::AskOutside);
@@ -11294,9 +11298,7 @@ mod tests {
         // G1 false-ask traps: own-turn `rm` of credited paths, and
         // AskOutside for a path under scratch space.
         for (cmd, d) in &asks {
-            if *d == Decision::AskOutside
-                && (cmd.contains("/tmp/") || cmd.contains("/var/tmp/"))
-            {
+            if *d == Decision::AskOutside && (cmd.contains("/tmp/") || cmd.contains("/var/tmp/")) {
                 panic!("scratch write must stay free; got AskOutside for {cmd}");
             }
             if cmd.split_whitespace().any(|w| matches!(w, "rm" | "rmdir")) {
