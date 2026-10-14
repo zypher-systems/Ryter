@@ -642,6 +642,17 @@ fn loop_ui(
             paint_now = true;
         }
         while let Ok(n) = notice_rx.try_recv() {
+            if let Notice::ModelChecked {
+                seat,
+                model,
+                result: Err(why),
+                ..
+            } = &n
+            {
+                // Fail at choose time: the chat says so before a turn spends
+                // on a model the account can't use.
+                view.error(format!("{seat} · {model} · can't use: {why}"));
+            }
             panel::on_notice(view, &n);
             dirty = true;
         }

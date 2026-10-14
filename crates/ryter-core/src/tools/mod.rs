@@ -161,6 +161,9 @@ pub struct ToolContext {
     /// Places this turn moved a file of the user's to (`mv src/x new/`):
     /// never a free deletion, whatever else is known about them.
     pub kept: Vec<std::path::PathBuf>,
+    /// `tmux` session names this turn started (`new-session -s …`): only
+    /// those may be killed without asking. `kill-server` always asks.
+    pub sessions: Vec<String>,
     /// Where `web_search` looks, with its key read once.
     pub search: web::Search,
 }
@@ -1058,6 +1061,7 @@ mod tests {
             read_only: role == Role::SoloAudit,
             created: Vec::new(),
             kept: Vec::new(),
+            sessions: Vec::new(),
             search: Default::default(),
         }
     }

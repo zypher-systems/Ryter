@@ -931,6 +931,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
             read_only: false,
             created: Vec::new(),
             kept: Vec::new(),
+            sessions: Vec::new(),
             search: ryter_core::tools::Search::from_config(&b.cfg.search),
         },
         connection: b.conn_name,

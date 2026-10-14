@@ -265,6 +265,7 @@ impl Agent {
         // checkpoint holds none of it.
         self.ctx.created.clear();
         self.ctx.kept.clear();
+        self.ctx.sessions.clear();
         let started = std::time::Instant::now();
         let mut tools = 0u32;
         self.emit(AgentEvent::TurnStarted {
@@ -349,10 +350,19 @@ impl Agent {
         diff: Option<&crate::diff::FileDiff>,
         effects: crate::tools::Effects,
     ) {
-        let crate::tools::Effects { mut made, kept } = effects;
+        let crate::tools::Effects {
+            mut made,
+            kept,
+            sessions,
+        } = effects;
         for p in kept {
             if !self.ctx.kept.contains(&p) {
                 self.ctx.kept.push(p);
+            }
+        }
+        for s in sessions {
+            if !self.ctx.sessions.contains(&s) {
+                self.ctx.sessions.push(s);
             }
         }
         // Belt and braces: if the pre-scan missed a new write, still credit
@@ -743,6 +753,7 @@ impl Agent {
                     crate::tools::Effects {
                         made: crate::tools::write_makes(&args, &self.ctx),
                         kept: Vec::new(),
+                        sessions: Vec::new(),
                     }
                 } else {
                     crate::tools::Effects::default()
@@ -3379,6 +3390,7 @@ mod tests {
             read_only: false,
             created: Vec::new(),
             kept: Vec::new(),
+            sessions: Vec::new(),
             search: Default::default(),
         };
         let agent = Agent {
