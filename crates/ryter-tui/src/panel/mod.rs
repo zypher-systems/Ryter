@@ -93,6 +93,17 @@ pub enum Notice {
     Exported(String),
     /// Models arrived for the picker (`/models`).
     Models(Vec<ryter_core::ModelInfo>),
+    /// A hat's model was checked after it was chosen in `/models`.
+    ModelChecked {
+        /// Seat label: `all hats`, or a hat name (`plan`, `build`, …).
+        seat: String,
+        /// Connection the check used.
+        connection: String,
+        /// Model id that was checked.
+        model: String,
+        /// Ok, or why the account can't use it.
+        result: Result<(), String>,
+    },
     /// Sessions list refreshed (after rename/delete).
     SessionsChanged,
 }

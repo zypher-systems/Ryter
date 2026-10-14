@@ -31,7 +31,7 @@ The last release is 0.28.0. Notes for the next one collect in `docs/releases/` a
 Everything here serves an item of the 1.0 list; the number says which. The direction that put the hats where they are is in `DECISIONS.md` (2026-10-01 to 2026-10-04) and `docs/specialists-design.md`; this section no longer repeats it.
 
 **Item 3, setup and models**
-- A hat's model is checked when it is chosen in `/models`: one tiny request with a tool, to catch a data policy that refuses it, missing tool support, or no credits. Today such a model fails on its first message.
+- A hat's model is checked when it is chosen in `/models`: one tiny request with a tool, to catch a data policy that refuses it, missing tool support, or no credits.
 - macOS by hand: install, a key, a change, the TUI at three widths. The sandbox is Linux-only and is labelled so.
 
 **Item 5, cost**

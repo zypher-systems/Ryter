@@ -61,7 +61,7 @@ pub use hooks::{HookDecision, HookEvent, HookSet};
 pub use ids::{ConnectionId, SessionId};
 pub use llm::{
     AssistantToolCall, Backend, CompletionRequest, HttpProvider, Message, ModelInfo, Provider,
-    ReplayProvider, StreamDelta, ToolSpec, http_provider,
+    ReplayProvider, StreamDelta, ToolSpec, http_provider, probe_model,
 };
 pub use mcp::{
     EchoHost, InboundHost, McpHub, StatusSnapshot, check_tcp, default_socket_path, serve_echo,
