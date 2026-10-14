@@ -1,0 +1,1610 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ryter — Modern workspace</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0c0d10;
+    --sidebar: #111318;
+    --elev: #171a20;
+    --elev-2: #1d2129;
+    --code: #12141a;
+    --line: rgba(255, 255, 255, 0.07);
+    --line-strong: rgba(255, 255, 255, 0.12);
+    --fg: #e7e9ee;
+    --fg-2: #a7aeb8;
+    --fg-3: #7c8491;
+    --plan: #8eb4e4;
+    --build: #8fc9a2;
+    --spec: #d7b87e;
+    --warn: #e2b56d;
+    --danger: #e3a09a;
+    --ok: #8fc9a2;
+    --on-plan: #122033;
+    --on-build: #102117;
+    --on-spec: #271e0d;
+    --add-bg: rgba(143, 201, 162, 0.13);
+    --del-bg: rgba(227, 160, 154, 0.13);
+    --soft: rgba(255, 255, 255, 0.035);
+    --hover: rgba(255, 255, 255, 0.05);
+    --shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+    --avatar-bg: #222833;
+    --avatar-fg: #d5dbe6;
+    --kbd-bg: #1a1e26;
+    --accent: var(--build);
+    --on-accent: var(--on-build);
+    --sans: Inter, "Noto Sans", sans-serif;
+    --mono: "JetBrains Mono", "Cascadia Mono", ui-monospace, monospace;
+    --sidebar-w: 272px;
+    --inspector-w: 316px;
+  }
+
+  [data-theme="light"] {
+    color-scheme: light;
+    --bg: #f3f3f1;
+    --sidebar: #fafaf8;
+    --elev: #ffffff;
+    --elev-2: #f4f4f2;
+    --code: #f7f7f5;
+    --line: rgba(22, 24, 28, 0.08);
+    --line-strong: rgba(22, 24, 28, 0.14);
+    --fg: #1b1d21;
+    --fg-2: #5d6470;
+    --fg-3: #8a909a;
+    --plan: #2d5d9c;
+    --build: #1d7a44;
+    --spec: #8d6128;
+    --warn: #8f6418;
+    --danger: #a33d38;
+    --ok: #1d7a44;
+    --on-plan: #ffffff;
+    --on-build: #ffffff;
+    --on-spec: #ffffff;
+    --add-bg: #e5f5eb;
+    --del-bg: #fbeceb;
+    --soft: rgba(22, 24, 28, 0.03);
+    --hover: rgba(22, 24, 28, 0.045);
+    --shadow: 0 1px 2px rgba(22, 24, 28, 0.04);
+    --avatar-bg: #e6e8ee;
+    --avatar-fg: #2c3340;
+    --kbd-bg: #ffffff;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--fg);
+    background: var(--bg);
+    letter-spacing: -0.011em;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  button, input { font: inherit; color: inherit; background: none; border: 0; padding: 0; }
+  button { cursor: pointer; }
+  button:focus-visible, .hat-row:focus-visible, .nav-btn:focus-visible {
+    outline: 2px solid var(--plan);
+    outline-offset: 2px;
+  }
+
+  .app {
+    height: 100vh;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Top bar */
+  .topbar {
+    height: 48px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 14px 0 16px;
+    background: var(--sidebar);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; width: calc(var(--sidebar-w) - 16px); flex: none; }
+  .mark { display: flex; flex-direction: column; gap: 2px; width: 14px; }
+  .mark i { display: block; height: 3px; border-radius: 2px; }
+  .mark i:nth-child(1) { background: var(--plan); }
+  .mark i:nth-child(2) { background: var(--build); }
+  .mark i:nth-child(3) { background: var(--spec); }
+  .word { font-weight: 600; font-size: 14px; letter-spacing: -0.02em; }
+  .mock-tag {
+    margin-left: 2px;
+    font-size: 11px;
+    color: var(--fg-3);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 1px 7px;
+    letter-spacing: 0;
+  }
+  .cmd {
+    margin: 0 auto;
+    width: min(420px, 36vw);
+    height: 30px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 8px 0 10px;
+    border-radius: 8px;
+    border: 1px solid var(--line-strong);
+    background: var(--bg);
+    color: var(--fg-3);
+  }
+  .cmd span { flex: 1; text-align: left; }
+  .top-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+  .icon-btn {
+    width: 28px; height: 28px;
+    display: grid; place-items: center;
+    border-radius: 7px;
+    color: var(--fg-2);
+  }
+  .icon-btn:hover { background: var(--hover); color: var(--fg); }
+  .who { display: flex; align-items: center; gap: 8px; color: var(--fg-2); }
+  .avatar {
+    width: 22px; height: 22px; border-radius: 7px;
+    display: grid; place-items: center;
+    background: var(--avatar-bg); color: var(--avatar-fg);
+    font-size: 11px; font-weight: 600; letter-spacing: 0;
+  }
+
+  kbd, .kbd {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1;
+    letter-spacing: 0;
+    color: var(--fg-2);
+    background: var(--kbd-bg);
+    border: 1px solid var(--line-strong);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: 3px 5px;
+    box-shadow: var(--shadow);
+  }
+
+  .ico { width: 15px; height: 15px; display: block; flex: none; }
+  .ico.sm { width: 13px; height: 13px; }
+
+  /* Shell */
+  .shell { flex: 1; min-height: 0; display: flex; }
+
+  .sidebar {
+    width: var(--sidebar-w);
+    flex: none;
+    background: var(--sidebar);
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    padding: 14px 12px 12px;
+    min-height: 0;
+  }
+  .project {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 2px 8px 12px;
+  }
+  .project strong { font-weight: 600; font-size: 13.5px; letter-spacing: -0.015em; }
+  .project .where {
+    display: flex; align-items: center; gap: 6px;
+    color: var(--fg-3); font-size: 12px;
+  }
+
+  .nav { display: flex; flex-direction: column; gap: 2px; }
+  .nav-btn {
+    height: 32px;
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 8px;
+    border-radius: 7px;
+    color: var(--fg-2);
+    text-align: left;
+  }
+  .nav-btn .nav-ico { width: 16px; text-align: center; color: var(--fg-3); }
+  .nav-btn:hover { background: var(--hover); color: var(--fg); }
+  .nav-btn.is-on { background: var(--soft); color: var(--fg); font-weight: 600; }
+  .nav-btn.is-on .nav-ico { color: var(--fg-2); }
+  .nav-count {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    color: var(--fg-3);
+    font-weight: 500;
+  }
+
+  .side-label {
+    margin: 18px 8px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg-3);
+    letter-spacing: 0.01em;
+  }
+  .hats { display: flex; flex-direction: column; gap: 2px; }
+  .hat-row {
+    display: grid;
+    grid-template-columns: 14px 1fr auto;
+    grid-template-rows: auto auto auto;
+    column-gap: 8px;
+    row-gap: 1px;
+    padding: 8px;
+    border-radius: 8px;
+    text-align: left;
+    width: 100%;
+    color: var(--fg);
+  }
+  .hat-row:hover { background: var(--hover); }
+  .hat-row.is-wearing {
+    background: color-mix(in srgb, var(--hat) 12%, transparent);
+    box-shadow: inset 2px 0 0 var(--hat);
+  }
+  .hat-row.is-picked { background: var(--hover); }
+  .hat-row .pip {
+    grid-row: 1 / span 3;
+    align-self: center;
+    width: 7px; height: 7px; border-radius: 99px;
+    background: var(--hat);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--hat) 16%, transparent);
+  }
+  .hat-row .h-name { grid-column: 2; grid-row: 1; font-weight: 600; letter-spacing: -0.01em; color: var(--hat); }
+  .hat-row .h-model {
+    grid-column: 2; grid-row: 2;
+    color: var(--fg-3);
+    font-size: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .hat-row .h-may {
+    grid-column: 2 / span 2; grid-row: 3;
+    color: var(--fg-3);
+    font-size: 12px;
+  }
+  .hat-row.is-wearing .h-may { color: var(--hat); }
+  .hat-row .h-spend { grid-column: 3; grid-row: 1; }
+  .hat-row .h-meta { grid-column: 3; grid-row: 2; }
+  .hat-row .h-meta, .hat-row .h-spend {
+    font-variant-numeric: tabular-nums;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0;
+    color: var(--fg-3);
+    text-align: right;
+  }
+  .hat-row .h-spend { color: var(--fg-2); }
+  .verdict-fail { color: var(--danger); font-weight: 600; letter-spacing: 0; }
+  .spec-rule {
+    display: flex; align-items: center; gap: 8px;
+    margin: 6px 8px;
+    color: var(--fg-3);
+    font-size: 11px;
+  }
+  .spec-rule::before, .spec-rule::after {
+    content: "";
+    height: 1px;
+    background: var(--line-strong);
+    flex: 1;
+  }
+
+  .side-foot { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .turns {
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 8px;
+    color: var(--fg-3);
+    font-size: 12px;
+  }
+  .dots { display: flex; gap: 5px; margin-left: auto; }
+  .dots i { width: 7px; height: 7px; border-radius: 99px; display: block; }
+  .dots .d-plan { background: var(--plan); }
+  .dots .d-build { background: var(--build); }
+  .dots .d-spec { background: var(--spec); }
+  .mem {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--soft);
+  }
+  .mem-row {
+    display: flex; align-items: baseline; gap: 8px;
+    min-width: 0;
+  }
+  .mem-row b {
+    font-weight: 500;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0;
+    color: var(--fg-2);
+    flex: none;
+  }
+  .mem-row span {
+    color: var(--fg-3);
+    font-size: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* Stage + inspector */
+  .stage {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+  }
+  .view {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .inspector {
+    width: var(--inspector-w);
+    flex: none;
+    background: var(--sidebar);
+    border-left: 1px solid var(--line);
+    min-height: 0;
+    overflow: auto;
+  }
+  .insp {
+    padding: 16px 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .block h3 {
+    margin: 0 0 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg-3);
+    letter-spacing: 0.01em;
+  }
+  .kv { display: flex; flex-direction: column; gap: 6px; }
+  .kv-row, .file-row, .spend-row {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  }
+  .muted { color: var(--fg-3); }
+  .dim { color: var(--fg-2); }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: 0; font-size: 12px; }
+  .right { text-align: right; }
+  .add { color: var(--ok); }
+  .del { color: var(--danger); }
+  .warn { color: var(--warn); }
+  .accent { color: var(--accent); }
+
+  .now-model { font-weight: 600; letter-spacing: -0.015em; }
+  .now-verb { font-weight: 600; }
+  .gauge {
+    height: 6px; border-radius: 99px;
+    background: var(--line-strong);
+    overflow: hidden;
+  }
+  .gauge span {
+    display: block; height: 100%; width: 38%;
+    background: var(--accent);
+    border-radius: inherit;
+  }
+  .split { display: flex; justify-content: space-between; gap: 8px; color: var(--fg-3); font-size: 12px; }
+  .file-row .path {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .stat { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0; flex: none; }
+  .hair { height: 1px; background: var(--line); border: 0; margin: 0; }
+
+  /* Conversation */
+  .conv-head {
+    flex: none;
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 16px;
+    padding: 16px 28px 12px;
+  }
+  .conv-head h1 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.022em;
+  }
+  .subline { margin-top: 2px; color: var(--fg-3); font-size: 12px; display: flex; gap: 8px; align-items: center; }
+  .state-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 26px; padding: 0 10px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--warn) 14%, transparent);
+    color: var(--warn);
+    font-weight: 600;
+    font-size: 12px;
+    flex: none;
+  }
+  .state-pill i {
+    width: 6px; height: 6px; border-radius: 99px; background: var(--warn);
+  }
+
+  .thread {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 4px 28px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .fold {
+    display: flex; align-items: center; gap: 10px;
+    height: 32px;
+    padding: 0 10px;
+    border-radius: 8px;
+    color: var(--fg-2);
+    width: 100%;
+    text-align: left;
+  }
+  .fold:hover { background: var(--hover); }
+  .fold time, .when {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0; color: var(--fg-3);
+    flex: none; width: 36px;
+  }
+  .fold .fold-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fold .fold-end { color: var(--fg-3); font-size: 12px; flex: none; }
+  .dot {
+    width: 7px; height: 7px; border-radius: 99px; flex: none;
+    background: var(--fg-3);
+  }
+
+  .msg { display: grid; grid-template-columns: 52px 1fr; gap: 4px 8px; }
+  .msg time {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0; color: var(--fg-3);
+    padding-top: 2px;
+  }
+  .who-line { display: flex; align-items: baseline; gap: 8px; }
+  .who-line strong { font-weight: 600; letter-spacing: -0.012em; }
+  .who-line .role { color: var(--fg-3); font-weight: 450; font-size: 12px; }
+  .prose { margin: 3px 0 0; max-width: 68ch; color: var(--fg); }
+  .prose.quiet { color: var(--fg-2); }
+
+  .tools { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .tool {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--elev);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .tool-h {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 10px;
+    min-height: 32px;
+  }
+  .tool-kind {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0;
+    color: var(--fg-3);
+    width: 36px; flex: none;
+  }
+  .tool-path {
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tool-h .grow { flex: 1; }
+  .tool-time { color: var(--fg-3); font-family: var(--mono); font-size: 11px; letter-spacing: 0; }
+  .diff { border-top: 1px solid var(--line); background: var(--code); }
+  .diff-line {
+    display: grid;
+    grid-template-columns: 40px 14px 1fr;
+    gap: 6px;
+    padding: 0 12px 0 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 20px;
+    letter-spacing: 0;
+    white-space: pre;
+  }
+  .diff-line .ln { color: var(--fg-3); text-align: right; }
+  .diff-line .g { color: var(--fg-3); }
+  .diff-line.add { background: var(--add-bg); }
+  .diff-line.del { background: var(--del-bg); }
+  .diff-line.add .g, .diff-line.add code { color: var(--ok); }
+  .diff-line.del .g, .diff-line.del code { color: var(--danger); }
+  .diff-line code { font: inherit; }
+  .run-ok { color: var(--ok); font-weight: 600; }
+
+  .close-line {
+    display: flex; gap: 8px; align-items: baseline;
+    color: var(--fg-3); font-size: 12px;
+    padding-left: 60px;
+  }
+  .close-line .ok { color: var(--ok); font-weight: 600; }
+
+  .finding {
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--elev);
+    box-shadow: inset 2px 0 0 var(--danger);
+  }
+  .finding p { margin: 4px 0 0; max-width: 70ch; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11.5px; font-weight: 600;
+    color: var(--danger);
+  }
+
+  /* Permission + composer */
+  .dock {
+    flex: none;
+    padding: 0 28px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .ask {
+    border-radius: 12px;
+    border: 1px solid var(--line-strong);
+    background: var(--elev);
+    box-shadow: var(--shadow), 0 10px 28px rgba(0, 0, 0, 0.12);
+    overflow: hidden;
+  }
+  [data-theme="light"] .ask { box-shadow: var(--shadow), 0 8px 24px rgba(22, 24, 28, 0.06); }
+  .ask-top {
+    height: 3px;
+    background: var(--warn);
+  }
+  .ask-body { padding: 12px 14px 12px; display: flex; flex-direction: column; gap: 8px; }
+  .ask-h { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .ask-h strong { font-size: 13.5px; letter-spacing: -0.015em; }
+  .ask dl { margin: 0; display: grid; grid-template-columns: 42px 1fr; gap: 3px 10px; }
+  .ask dt { color: var(--fg-3); }
+  .ask dd { margin: 0; }
+  .ask-actions { display: flex; align-items: center; gap: 8px; padding-top: 2px; }
+  .btn {
+    height: 28px; padding: 0 10px;
+    border-radius: 7px;
+    border: 1px solid var(--line-strong);
+    background: var(--elev-2);
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .btn:hover { background: var(--hover); }
+  .btn.primary {
+    background: var(--fg);
+    color: var(--bg);
+    border-color: transparent;
+  }
+  [data-theme="light"] .btn.primary { background: #1b1d21; color: #fff; }
+  .btn.ghost { background: transparent; color: var(--fg-2); }
+  .btn.danger-text { margin-left: auto; color: var(--fg-2); background: transparent; border-color: transparent; }
+  .btn.danger-text:hover { color: var(--danger); }
+
+  .composer-box {
+    display: flex; align-items: center; gap: 8px;
+    min-height: 42px;
+    padding: 6px 8px 6px 8px;
+    border-radius: 12px;
+    border: 1px solid var(--line-strong);
+    border-top: 2px solid var(--accent);
+    background: var(--elev);
+    box-shadow: var(--shadow);
+  }
+  .chip {
+    height: 22px; padding: 0 8px;
+    border-radius: 6px;
+    display: inline-flex; align-items: center;
+    font-size: 12px; font-weight: 600;
+    letter-spacing: -0.01em;
+    flex: none;
+  }
+  .chip-plan { background: var(--plan); color: var(--on-plan); }
+  .chip-build { background: var(--build); color: var(--on-build); }
+  .chip-spec { background: var(--spec); color: var(--on-spec); }
+  .caret { color: var(--accent); font-weight: 600; }
+  .placeholder { color: var(--fg-3); flex: 1; }
+  .hints {
+    display: flex; gap: 14px; align-items: center;
+    padding: 0 4px;
+    color: var(--fg-3);
+    font-size: 12px;
+  }
+  .hints span { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* Hats manager */
+  .page-head {
+    flex: none;
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 24px;
+    padding: 18px 28px 0;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .lede { margin: 4px 0 0; color: var(--fg-2); max-width: 62ch; }
+  .keys { display: flex; gap: 14px; color: var(--fg-3); font-size: 12px; flex: none; padding-bottom: 2px; }
+  .keys span { display: inline-flex; align-items: center; gap: 6px; }
+
+  .page-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 16px 28px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .all-hats {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px 16px;
+    align-items: center;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: var(--elev);
+  }
+  .all-hats .eyebrow { font-size: 11px; font-weight: 600; color: var(--fg-3); }
+  .all-hats strong { font-weight: 600; letter-spacing: -0.015em; }
+  .all-hats p { margin: 2px 0 0; color: var(--fg-3); grid-column: 1; }
+
+  .seat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .group-label {
+    grid-column: 1 / -1;
+    margin-top: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg-3);
+  }
+  .seat {
+    text-align: left;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: var(--elev);
+    padding: 14px 14px 12px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 168px;
+  }
+  .seat:hover { border-color: var(--line-strong); }
+  .seat.is-on {
+    border-color: color-mix(in srgb, var(--hat) 55%, var(--line-strong));
+    box-shadow: var(--shadow), inset 0 0 0 1px color-mix(in srgb, var(--hat) 35%, transparent);
+  }
+  .seat-top { display: flex; align-items: center; gap: 8px; }
+  .seat-top .h-name { font-weight: 600; font-size: 14px; letter-spacing: -0.02em; color: var(--hat); }
+  .seat .tag {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--hat);
+    background: color-mix(in srgb, var(--hat) 14%, transparent);
+    border-radius: 999px;
+    padding: 2px 8px;
+  }
+  .seat .tag.tag-fail {
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 14%, transparent);
+  }
+  .seat .job { margin: 0; color: var(--fg); }
+  .seat .maynot { margin: 0; color: var(--fg-3); font-size: 12.5px; }
+  .seat-meta {
+    margin-top: auto;
+    display: flex; justify-content: space-between; gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+    color: var(--fg-2);
+    font-size: 12px;
+  }
+  .seat-meta b { font-weight: 600; color: var(--fg); }
+
+  /* Seat editor */
+  .model-list { display: flex; flex-direction: column; gap: 2px; }
+  .model-opt {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%;
+    text-align: left;
+    padding: 6px 8px;
+    border-radius: 7px;
+    color: var(--fg-2);
+  }
+  .model-opt:hover { background: var(--hover); }
+  .model-opt.is-on { background: var(--soft); color: var(--fg); }
+  .model-opt .tick { margin-left: auto; color: var(--accent); font-weight: 700; }
+  .seg {
+    display: flex; padding: 2px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--bg);
+  }
+  .seg button {
+    flex: 1;
+    height: 24px;
+    border-radius: 6px;
+    color: var(--fg-3);
+    font-size: 11.5px;
+  }
+  .seg button.is-on { background: var(--elev); color: var(--fg); font-weight: 600; box-shadow: var(--shadow); }
+  .note {
+    margin: 0;
+    color: var(--fg-2);
+    font-size: 12.5px;
+  }
+  .note + .note { margin-top: -8px; }
+
+  /* Sessions */
+  .filters { display: flex; gap: 6px; align-items: center; }
+  .filter {
+    height: 26px; padding: 0 10px;
+    border-radius: 999px;
+    color: var(--fg-2);
+    border: 1px solid transparent;
+  }
+  .filter.is-on { background: var(--elev); border-color: var(--line); color: var(--fg); font-weight: 600; }
+  .filter:hover { background: var(--hover); }
+  .search {
+    height: 28px; width: 200px;
+    display: flex; align-items: center; gap: 6px;
+    padding: 0 8px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    color: var(--fg-3);
+    background: var(--elev);
+  }
+  table.sessions {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: var(--elev);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .sessions th {
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg-3);
+    padding: 8px 12px;
+    background: var(--elev-2);
+    border-bottom: 1px solid var(--line);
+  }
+  .sessions th.num, .sessions td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .sessions td {
+    padding: 13px 12px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: middle;
+  }
+  .sessions tr:last-child td { border-bottom: 0; }
+  .sessions tbody tr { cursor: pointer; }
+  .sessions tbody tr:hover td { background: var(--hover); }
+  .sessions tbody tr.is-on td { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+  .s-title { font-weight: 600; letter-spacing: -0.012em; display: block; }
+  .s-preview { color: var(--fg-3); font-size: 12px; display: block; margin-top: 1px; }
+  .s-sub { color: var(--fg-3); font-size: 12px; display: block; margin-top: 1px; }
+  .hat-name { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+  .hat-name i { width: 7px; height: 7px; border-radius: 99px; background: var(--hat); }
+  .open-dot { color: var(--build); font-weight: 600; }
+
+  .detail-title { margin: 0; font-size: 15px; letter-spacing: -0.02em; font-weight: 600; }
+  .detail-actions { display: flex; gap: 6px; }
+  .mini-bars { display: flex; flex-direction: column; gap: 6px; }
+  .bar-row { display: grid; grid-template-columns: 52px 1fr auto; gap: 8px; align-items: center; font-size: 12px; }
+  .bar {
+    height: 5px; border-radius: 99px; background: var(--line-strong); overflow: hidden;
+  }
+  .bar span { display: block; height: 100%; border-radius: inherit; background: var(--hat); }
+</style>
+</head>
+<body data-hat="build">
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-branch" viewBox="0 0 16 16">
+    <circle cx="4" cy="3.5" r="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <circle cx="4" cy="12.5" r="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <circle cx="12" cy="6.5" r="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M4 5v6M4 8.2c0-1.6 8-1.6 8-1.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-search" viewBox="0 0 16 16">
+    <circle cx="7" cy="7" r="4.2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <path d="M10.2 10.2L13.2 13.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 16 16">
+    <circle cx="8" cy="8" r="2.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 16 16">
+    <path d="M9.2 2.2a5.2 5.2 0 1 0 4.6 7.6A4.4 4.4 0 0 1 9.2 2.2z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-chat" viewBox="0 0 16 16">
+    <path d="M3 3.5h10v7.2H6.2L3 13V3.5z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-hat" viewBox="0 0 16 16">
+    <circle cx="4.6" cy="4.6" r="1.25" fill="currentColor"/>
+    <circle cx="11.4" cy="4.6" r="1.25" fill="currentColor"/>
+    <circle cx="4.6" cy="11.4" r="1.25" fill="currentColor"/>
+    <circle cx="11.4" cy="11.4" r="1.25" fill="currentColor"/>
+  </symbol>
+  <symbol id="i-list" viewBox="0 0 16 16">
+    <path d="M5 4h8M5 8h8M5 12h8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+    <circle cx="2.8" cy="4" r=".7" fill="currentColor"/>
+    <circle cx="2.8" cy="8" r=".7" fill="currentColor"/>
+    <circle cx="2.8" cy="12" r=".7" fill="currentColor"/>
+  </symbol>
+</svg>
+
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="word">Ryter</span>
+      <span class="mock-tag">Mockup</span>
+    </div>
+    <button class="cmd" type="button" aria-label="Search commands">
+      <svg class="ico sm"><use href="#i-search"/></svg>
+      <span>Search commands</span>
+      <kbd>/</kbd>
+    </button>
+    <div class="top-right">
+      <button class="icon-btn theme-btn" type="button" aria-pressed="false" aria-label="Switch theme">
+        <svg class="ico theme-ico"><use href="#i-sun"/></svg>
+      </button>
+      <div class="who"><span class="avatar" aria-hidden="true">D</span> Dusty</div>
+    </div>
+  </header>
+
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="project">
+        <strong>shop</strong>
+        <div class="where"><svg class="ico sm"><use href="#i-branch"/></svg> search-patch</div>
+      </div>
+      <nav class="nav" aria-label="Workspace">
+        <button class="nav-btn is-on" type="button" data-nav="session" aria-current="page">
+          <svg class="ico nav-ico"><use href="#i-chat"/></svg>
+          Conversation
+        </button>
+        <button class="nav-btn" type="button" data-nav="hats">
+          <svg class="ico nav-ico"><use href="#i-hat"/></svg>
+          Hats
+        </button>
+        <button class="nav-btn" type="button" data-nav="sessions">
+          <svg class="ico nav-ico"><use href="#i-list"/></svg>
+          Sessions
+          <span class="nav-count">12</span>
+        </button>
+      </nav>
+
+      <div class="side-label">Hats</div>
+      <div class="hats" role="list">
+        <button class="hat-row" type="button" data-goto-seat="plan" style="--hat: var(--plan)" role="listitem">
+          <i class="pip" aria-hidden="true"></i>
+          <span class="h-name">plan</span>
+          <span class="h-spend">$0.004</span>
+          <span class="h-model">grok-4.6</span>
+          <span class="h-meta">1 turn</span>
+          <span class="h-may">read only</span>
+        </button>
+        <button class="hat-row is-wearing" type="button" data-goto-seat="build" style="--hat: var(--build)" role="listitem">
+          <i class="pip" aria-hidden="true"></i>
+          <span class="h-name">build</span>
+          <span class="h-spend">$0.021</span>
+          <span class="h-model">deepseek-pro-latest</span>
+          <span class="h-meta">2 turns</span>
+          <span class="h-may">asks first</span>
+        </button>
+        <div class="spec-rule">Specialists</div>
+        <button class="hat-row" type="button" data-goto-seat="audit" style="--hat: var(--spec)" role="listitem">
+          <i class="pip" aria-hidden="true"></i>
+          <span class="h-name">audit <span class="verdict-fail">✗</span></span>
+          <span class="h-spend">$0.040</span>
+          <span class="h-model">claude-opus-5.5</span>
+          <span class="h-meta">1 turn</span>
+          <span class="h-may">checkpoint</span>
+        </button>
+        <button class="hat-row" type="button" data-goto-seat="scribe" style="--hat: var(--spec)" role="listitem">
+          <i class="pip" aria-hidden="true"></i>
+          <span class="h-name">scribe</span>
+          <span class="h-spend"></span>
+          <span class="h-model">follows all hats</span>
+          <span class="h-meta"></span>
+          <span class="h-may">docs only</span>
+        </button>
+      </div>
+
+      <div class="side-foot">
+        <div class="turns">
+          <span>Turns</span>
+          <span class="dots" aria-label="plan, build, audit, build">
+            <i class="d-plan"></i><i class="d-build"></i><i class="d-spec"></i><i class="d-build"></i>
+          </span>
+        </div>
+        <div class="mem">
+          <div class="mem-row"><b>plan.md</b><span>Empty query returns nothing</span></div>
+          <div class="mem-row"><b>audit.md</b><span>1 blocking · today</span></div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="stage">
+      <section class="view view-session" data-view="session" aria-label="Conversation">
+        <div class="conv-head">
+          <div>
+            <h1>Empty-query fix</h1>
+            <div class="subline">
+              <span>search-patch</span>
+              <span aria-hidden="true">·</span>
+              <span>2 files uncommitted</span>
+            </div>
+          </div>
+          <div class="state-pill"><i></i> Waiting for you · allow edit</div>
+        </div>
+
+        <div class="thread">
+          <button class="fold" type="button">
+            <time>12:41</time>
+            <i class="dot" aria-hidden="true"></i>
+            <span class="fold-title">A missing query should find nothing</span>
+            <span class="fold-end">Plan approved · $0.004</span>
+          </button>
+
+          <article class="msg">
+            <time>12:47</time>
+            <div>
+              <div class="who-line"><strong>Dusty</strong></div>
+              <p class="prose">Build the plan.</p>
+            </div>
+          </article>
+
+          <article class="msg">
+            <time>12:47</time>
+            <div>
+              <div class="who-line">
+                <strong>deepseek-pro-latest</strong>
+                <span class="role">build</span>
+              </div>
+              <p class="prose">Missing and blank queries should both return nothing. I’ll match the plan: one line in the route, and a test for the missing query.</p>
+              <div class="tools">
+                <div class="tool">
+                  <div class="tool-h">
+                    <span class="tool-kind">read</span>
+                    <span class="tool-path">app/server.js</span>
+                    <span class="grow"></span>
+                    <span class="tool-time">0.1s</span>
+                  </div>
+                </div>
+                <div class="tool">
+                  <div class="tool-h">
+                    <span class="tool-kind">edit</span>
+                    <span class="tool-path">app/server.js</span>
+                    <span class="grow"></span>
+                    <span class="stat"><span class="add">+1</span> <span class="del">−1</span></span>
+                  </div>
+                  <div class="diff" aria-label="Diff of app/server.js">
+                    <div class="diff-line"><span class="ln">4</span><span class="g"> </span><code>function search(req, res) {</code></div>
+                    <div class="diff-line del"><span class="ln">5</span><span class="g">−</span><code>const q = (req.query.q || '').trim()</code></div>
+                    <div class="diff-line add"><span class="ln">5</span><span class="g">+</span><code>const q = String(req.query.q ?? '').trim()</code></div>
+                    <div class="diff-line"><span class="ln">6</span><span class="g"> </span><code>const rows = await searchCatalog(q)</code></div>
+                  </div>
+                </div>
+                <div class="tool">
+                  <div class="tool-h">
+                    <span class="tool-kind">edit</span>
+                    <span class="tool-path">test/search.test.js</span>
+                    <span class="grow"></span>
+                    <span class="stat"><span class="add">+3</span></span>
+                  </div>
+                  <div class="diff" aria-label="Diff of test/search.test.js">
+                    <div class="diff-line"><span class="ln">7</span><span class="g"> </span><code>})</code></div>
+                    <div class="diff-line add"><span class="ln">8</span><span class="g">+</span><code>test('a missing query finds nothing', async () =&gt; {</code></div>
+                    <div class="diff-line add"><span class="ln">9</span><span class="g">+</span><code>  assert.deepEqual(await search(), [])</code></div>
+                    <div class="diff-line add"><span class="ln">10</span><span class="g">+</span><code>})</code></div>
+                  </div>
+                </div>
+                <div class="tool">
+                  <div class="tool-h">
+                    <span class="tool-kind">run</span>
+                    <span class="tool-path">npm test</span>
+                    <span class="grow"></span>
+                    <span class="run-ok">✓ 14 passed</span>
+                    <span class="tool-time">2.1s</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </article>
+          <div class="close-line"><span class="ok">✓</span> 4 tools · 2 files · +4 −1 · 1 command ok · 4.4s · <span class="mono">$0.009</span></div>
+
+          <article class="finding">
+            <time>12:52</time>
+            <div>
+              <div class="who-line">
+                <strong>claude-opus-5.5</strong>
+                <span class="role">audit</span>
+                <span class="pill">✗ 1 blocking</span>
+                <span class="role mono" style="margin-left:auto">$0.040</span>
+              </div>
+              <p class="prose quiet">A query of only spaces is trimmed to empty and still searched. The missing-query test passes. This case does not. Trim, then reject an empty string, before <span class="mono">searchCatalog</span>.</p>
+            </div>
+          </article>
+
+          <article class="msg">
+            <time>12:54</time>
+            <div>
+              <div class="who-line"><strong>Dusty</strong></div>
+              <p class="prose">Fix the blocking finding.</p>
+            </div>
+          </article>
+        </div>
+
+        <div class="dock">
+          <section class="ask" aria-label="Permission">
+            <div class="ask-top"></div>
+            <div class="ask-body">
+              <div class="ask-h">
+                <strong>Allow this edit?</strong>
+                <span class="muted">build · deepseek-pro-latest</span>
+              </div>
+              <dl>
+                <dt>What</dt>
+                <dd class="mono">edit app/server.js</dd>
+                <dt>Why</dt>
+                <dd>Reject a blank query after trim, so spaces miss the way a missing query does.</dd>
+                <dt>Risk</dt>
+                <dd>One line in the project. <span class="mono">/undo</span> puts it back.</dd>
+              </dl>
+              <div class="diff" aria-label="Proposed diff">
+                <div class="diff-line"><span class="ln">5</span><span class="g"> </span><code>const q = String(req.query.q ?? '').trim()</code></div>
+                <div class="diff-line del"><span class="ln">6</span><span class="g">−</span><code>const rows = await searchCatalog(q)</code></div>
+                <div class="diff-line add"><span class="ln">6</span><span class="g">+</span><code>if (!q) return res.json([])</code></div>
+                <div class="diff-line add"><span class="ln">7</span><span class="g">+</span><code>const rows = await searchCatalog(q)</code></div>
+              </div>
+              <div class="ask-actions">
+                <button class="btn primary" type="button">Allow</button>
+                <button class="btn" type="button">Allow edits this session</button>
+                <button class="btn danger-text" type="button">Deny</button>
+              </div>
+            </div>
+          </section>
+          <form class="composer" action="javascript:void(0)">
+            <div class="composer-box">
+              <span class="chip chip-build">build</span>
+              <span class="caret" aria-hidden="true">›</span>
+              <span class="placeholder">Type to queue the next message</span>
+              <kbd>/</kbd>
+            </div>
+            <div class="hints">
+              <span><kbd>Tab</kbd> plan</span>
+              <span><kbd>⇧Tab</kbd> specialists</span>
+              <span><kbd>⌘↵</kbd> send</span>
+              <span><kbd>⌘B</kbd> sidebar</span>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section class="view" data-view="hats" hidden aria-label="Hats">
+        <div class="page-head">
+          <div>
+            <h1>Hats</h1>
+            <p class="lede">One conversation, four seats. Tab moves between plan and build. Shift+Tab steps to the specialists. A seat can wear its own model.</p>
+          </div>
+          <div class="keys">
+            <span><kbd>Tab</kbd> plan · build</span>
+            <span><kbd>⇧Tab</kbd> audit · scribe</span>
+          </div>
+        </div>
+        <div class="page-body">
+          <div class="all-hats">
+            <div>
+              <div class="eyebrow">All hats</div>
+              <strong>grok-4.6</strong>
+              <span class="muted"> · SpaceXAI · reasoning auto</span>
+            </div>
+            <span class="chip chip-plan">default</span>
+            <p>Plan and scribe follow this. Build and audit each have a model of their own. The first time a new model reads the conversation, Ryter prices that re-read.</p>
+          </div>
+          <div class="seat-grid">
+            <div class="group-label">Working</div>
+            <button class="seat" type="button" data-seat-btn="plan" style="--hat: var(--plan)">
+              <div class="seat-top">
+                <span class="h-name">plan</span>
+                <span class="tag">Tab</span>
+              </div>
+              <p class="job">Reads the project and proposes a plan to approve. Changes nothing.</p>
+              <p class="maynot">May not edit source, or run anything that changes the tree.</p>
+              <div class="seat-meta">
+                <span><b>grok-4.6</b> · follows all hats</span>
+                <span class="mono">1 turn · $0.004</span>
+              </div>
+            </button>
+            <button class="seat is-on" type="button" data-seat-btn="build" style="--hat: var(--build)">
+              <div class="seat-top">
+                <span class="h-name">build</span>
+                <span class="tag">Wearing</span>
+              </div>
+              <p class="job">Makes the change in your tree. Edits and ordinary commands run. What /undo cannot put back still asks.</p>
+              <p class="maynot">Deleting, publishing, and leaving the machine ask. A checkpoint lands before the turn.</p>
+              <div class="seat-meta">
+                <span><b>deepseek-pro-latest</b> · own model</span>
+                <span class="mono">2 turns · $0.021</span>
+              </div>
+            </button>
+            <div class="group-label">Specialists</div>
+            <button class="seat" type="button" data-seat-btn="audit" style="--hat: var(--spec)">
+              <div class="seat-top">
+                <span class="h-name">audit</span>
+                <span class="tag tag-fail">✗ 1 blocking</span>
+              </div>
+              <p class="job">Runs the tests, the product, and the plan, then files findings on a card.</p>
+              <p class="maynot">A checkpoint puts back anything it changed. It does not commit.</p>
+              <div class="seat-meta">
+                <span><b>claude-opus-5.5</b> · own model</span>
+                <span class="mono">1 turn · $0.040</span>
+              </div>
+            </button>
+            <button class="seat" type="button" data-seat-btn="scribe" style="--hat: var(--spec)">
+              <div class="seat-top">
+                <span class="h-name">scribe</span>
+                <span class="tag">⇧Tab</span>
+              </div>
+              <p class="job">Writes the documentation, and nothing else. Give it a small model when you want one.</p>
+              <p class="maynot">May not write code, configuration, or Ryter’s own files.</p>
+              <div class="seat-meta">
+                <span><b>grok-4.6</b> · follows all hats</span>
+                <span class="mono">docs only</span>
+              </div>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" data-view="sessions" hidden aria-label="Sessions">
+        <div class="page-head">
+          <div>
+            <h1>Sessions</h1>
+            <p class="lede">Twelve conversations in shop. Resume keeps the hat the session was left in.</p>
+          </div>
+          <div class="filters">
+            <button class="filter is-on" type="button" data-filter="all">All</button>
+            <button class="filter" type="button" data-filter="uncommitted">Uncommitted</button>
+            <button class="filter" type="button" data-filter="plan">Has a plan</button>
+            <div class="search"><svg class="ico sm"><use href="#i-search"/></svg> Filter</div>
+          </div>
+        </div>
+        <div class="page-body">
+          <table class="sessions">
+            <thead>
+              <tr>
+                <th>Session</th>
+                <th>Left in</th>
+                <th class="num">Turns</th>
+                <th class="num">Spend</th>
+                <th class="num">Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="is-on" data-session="empty" data-flags="uncommitted plan" data-hat="build" data-note="Left in the build hat, waiting on an edit. The plan is approved. Audit filed one blocking finding." data-files="2 files uncommitted · tests ✓ 14 passed" data-bars="plan:8:$0.004,build:32:$0.021,audit:60:$0.040">
+                <td>
+                  <span class="s-title">Empty-query fix</span>
+                  <span class="s-sub">search-patch · waiting on an edit</span>
+                </td>
+                <td><span class="hat-name" style="--hat: var(--build)"><i></i> build</span></td>
+                <td class="num mono">4</td>
+                <td class="num mono">$0.065</td>
+                <td class="num mono">12:54</td>
+              </tr>
+              <tr data-session="tax" data-flags="plan" data-hat="plan" data-note="Plan approved, not built. Resume opens in plan, on grok-4.6." data-files="Nothing uncommitted" data-bars="plan:100:$0.018">
+                <td>
+                  <span class="s-title">Checkout tax rounding</span>
+                  <span class="s-sub">main · plan approved, not built</span>
+                </td>
+                <td><span class="hat-name" style="--hat: var(--plan)"><i></i> plan</span></td>
+                <td class="num mono">2</td>
+                <td class="num mono">$0.018</td>
+                <td class="num mono">Yesterday</td>
+              </tr>
+              <tr data-session="docs" data-hat="scribe" data-note="Scribe wrote README.md and docs/guide.md. No code changed." data-files="Committed" data-bars="scribe:100:$0.003">
+                <td>
+                  <span class="s-title">Document the storefront</span>
+                  <span class="s-sub">main · README and the guide</span>
+                </td>
+                <td><span class="hat-name" style="--hat: var(--spec)"><i></i> scribe</span></td>
+                <td class="num mono">1</td>
+                <td class="num mono">$0.003</td>
+                <td class="num mono">Mon</td>
+              </tr>
+              <tr data-session="release" data-hat="audit" data-note="Audit failed with 2 blocking findings and was handed to build. The repair landed in a later session." data-files="Committed after the repair" data-bars="plan:10:$0.006,build:36:$0.031,audit:70:$0.047">
+                <td>
+                  <span class="s-title">Release audit</span>
+                  <span class="s-sub">release · 2 blocking, handed to build</span>
+                </td>
+                <td><span class="hat-name" style="--hat: var(--spec)"><i></i> audit <span class="verdict-fail">✗</span></span></td>
+                <td class="num mono">3</td>
+                <td class="num mono">$0.084</td>
+                <td class="num mono">Mon</td>
+              </tr>
+              <tr data-session="badge" data-hat="build" data-note="Built and committed. Receipt: deepseek-pro-latest · $0.027 · tests ✓." data-files="Committed" data-bars="build:100:$0.027">
+                <td>
+                  <span class="s-title">Stock badge copy</span>
+                  <span class="s-sub">main · committed</span>
+                </td>
+                <td><span class="hat-name" style="--hat: var(--build)"><i></i> build</span></td>
+                <td class="num mono">3</td>
+                <td class="num mono">$0.027</td>
+                <td class="num mono">Oct 9</td>
+              </tr>
+              <tr data-session="catalog" data-hat="build" data-note="Imported the catalog from CSV. The write outside the usual path asked first." data-files="Committed" data-bars="plan:8:$0.04,build:90:$0.87">
+                <td>
+                  <span class="s-title">Catalog import</span>
+                  <span class="s-sub">main · committed</span>
+                </td>
+                <td><span class="hat-name" style="--hat: var(--build)"><i></i> build</span></td>
+                <td class="num mono">7</td>
+                <td class="num mono">$0.91</td>
+                <td class="num mono">Oct 2</td>
+              </tr>
+              <tr data-session="index" data-flags="plan" data-hat="build" data-note="Rebuilds the search index when a product changes. Plan approved, then built." data-files="Committed" data-bars="plan:12:$0.09,build:100:$1.31">
+                <td>
+                  <span class="s-title">Search index</span>
+                  <span class="s-sub">main · committed</span>
+                </td>
+                <td><span class="hat-name" style="--hat: var(--build)"><i></i> build</span></td>
+                <td class="num mono">9</td>
+                <td class="num mono">$1.40</td>
+                <td class="num mono">Sep 18</td>
+              </tr>
+              <tr data-session="check" data-hat="audit" data-note="A second model signed the checkout path off. No blocking findings." data-files="Committed" data-bars="audit:100:$0.48">
+                <td>
+                  <span class="s-title">Checkout audit</span>
+                  <span class="s-sub">release · passed</span>
+                </td>
+                <td><span class="hat-name" style="--hat: var(--spec)"><i></i> audit</span></td>
+                <td class="num mono">2</td>
+                <td class="num mono">$0.48</td>
+                <td class="num mono">Sep 20</td>
+              </tr>
+              <tr data-session="tokens" data-flags="plan" data-hat="plan" data-note="Plan approved: colors live in one file, and the hats stay on their own accents." data-files="Nothing uncommitted" data-bars="plan:100:$0.21">
+                <td>
+                  <span class="s-title">Theme tokens</span>
+                  <span class="s-sub">main · plan approved</span>
+                </td>
+                <td><span class="hat-name" style="--hat: var(--plan)"><i></i> plan</span></td>
+                <td class="num mono">3</td>
+                <td class="num mono">$0.21</td>
+                <td class="num mono">Sep 26</td>
+              </tr>
+              <tr data-session="ship" data-hat="scribe" data-note="Empty-state and confirmation copy. Documentation only." data-files="Committed" data-bars="scribe:100:$0.04">
+                <td>
+                  <span class="s-title">Shipping copy</span>
+                  <span class="s-sub">main · committed</span>
+                </td>
+                <td><span class="hat-name" style="--hat: var(--spec)"><i></i> scribe</span></td>
+                <td class="num mono">2</td>
+                <td class="num mono">$0.04</td>
+                <td class="num mono">Sep 28</td>
+              </tr>
+              <tr data-session="first" data-hat="build" data-note="The first pass at the catalog and the cart. Committed with tests." data-files="Committed" data-bars="plan:6:$0.08,build:100:$1.28">
+                <td>
+                  <span class="s-title">First storefront</span>
+                  <span class="s-sub">main · committed</span>
+                </td>
+                <td><span class="hat-name" style="--hat: var(--build)"><i></i> build</span></td>
+                <td class="num mono">16</td>
+                <td class="num mono">$1.36</td>
+                <td class="num mono">Sep 12</td>
+              </tr>
+              <tr data-session="refund" data-hat="build" data-note="Refund webhook verified the signature, then wrote the ledger row." data-files="Committed" data-bars="build:100:$0.22">
+                <td>
+                  <span class="s-title">Refund webhook</span>
+                  <span class="s-sub">main · committed</span>
+                </td>
+                <td><span class="hat-name" style="--hat: var(--build)"><i></i> build</span></td>
+                <td class="num mono">5</td>
+                <td class="num mono">$0.22</td>
+                <td class="num mono">Sep 8</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <aside class="inspector">
+      <div class="insp" data-view="session">
+        <section class="block">
+          <h3>Now</h3>
+          <div class="kv">
+            <div class="now-model">deepseek-pro-latest</div>
+            <div class="muted">OpenRouter · reasoning medium</div>
+            <div class="now-verb warn">Waiting for you · allow?</div>
+            <div class="mono warn">allow? · edit app/server.js</div>
+          </div>
+        </section>
+        <hr class="hair">
+        <section class="block">
+          <h3>Context</h3>
+          <div class="gauge" role="img" aria-label="38 percent of the context window"><span></span></div>
+          <div class="split" style="margin-top:6px"><span class="mono">97k of 256k</span><span class="mono">38%</span></div>
+        </section>
+        <hr class="hair">
+        <section class="block">
+          <h3>Spend</h3>
+          <div class="kv">
+            <div class="spend-row"><span>Session</span><span class="mono"><b>$0.065</b> <span class="muted">of $5.00</span></span></div>
+            <div class="spend-row"><span>Project</span><span class="mono">$4.82</span></div>
+          </div>
+        </section>
+        <hr class="hair">
+        <section class="block">
+          <h3>Changes</h3>
+          <div class="kv">
+            <div class="file-row"><span class="path">app/server.js</span><span class="stat"><span class="add">+1</span> <span class="del">−1</span></span></div>
+            <div class="file-row"><span class="path">test/search.test.js</span><span class="stat"><span class="add">+3</span></span></div>
+            <div class="muted">2 files uncommitted</div>
+            <div>tests <span class="run-ok">✓ 14 passed</span></div>
+          </div>
+        </section>
+        <hr class="hair">
+        <section class="block">
+          <h3>This hat</h3>
+          <div class="kv">
+            <div class="accent" style="font-weight:600">Asks first</div>
+            <div class="muted">Sandbox · workspace</div>
+            <div class="muted">Checkpoint before the turn</div>
+          </div>
+        </section>
+      </div>
+
+      <div class="insp" data-view="hats" hidden>
+        <section class="block" data-seat-panel="plan" hidden>
+          <h3>Seat</h3>
+          <p class="detail-title" style="color:var(--plan)">plan</p>
+          <p class="note">Follows all hats. Auto reasoning resolves to high on this seat.</p>
+        </section>
+        <section class="block" data-seat-panel="build">
+          <h3>Seat</h3>
+          <p class="detail-title" style="color:var(--build)">build</p>
+          <p class="note">This is the hat on. The turn in flight finishes on this model.</p>
+        </section>
+        <section class="block" data-seat-panel="audit" hidden>
+          <h3>Seat</h3>
+          <p class="detail-title" style="color:var(--spec)">audit</p>
+          <p class="note">Own model, so the audit is not the builder marking its own work. Last verdict: 1 blocking.</p>
+        </section>
+        <section class="block" data-seat-panel="scribe" hidden>
+          <h3>Seat</h3>
+          <p class="detail-title" style="color:var(--spec)">scribe</p>
+          <p class="note">Follows all hats. Not worn this session. The prompt opens on “Document this project”.</p>
+        </section>
+        <hr class="hair">
+        <section class="block">
+          <h3>Model</h3>
+          <div class="model-list" id="model-list"></div>
+        </section>
+        <section class="block">
+          <h3>Reasoning</h3>
+          <div class="seg" id="reasoning" role="group" aria-label="Reasoning"></div>
+          <p class="note" id="reason-note"></p>
+        </section>
+        <hr class="hair">
+        <section class="block">
+          <h3>Re-read</h3>
+          <p class="note">Audit’s first turn on claude-opus-5.5 re-read 42k tokens, about $0.13. Going back to a model that already read the conversation is free while the provider’s cache holds.</p>
+        </section>
+        <section class="block">
+          <h3>Saved</h3>
+          <p class="note mono">~/.ryter/hats.toml</p>
+        </section>
+      </div>
+
+      <div class="insp" data-view="sessions" hidden>
+        <div id="session-detail"></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+const seats = {
+  plan: {
+    hat: "plan",
+    models: [
+      ["grok-4.6", "All hats · SpaceXAI", true],
+      ["deepseek-pro-latest", "Build’s model", false],
+      ["claude-opus-5.5", "Audit’s model", false],
+      ["default", "Follow all hats", false]
+    ],
+    reasoning: "auto",
+    reasonNote: "Auto is high for plan."
+  },
+  build: {
+    hat: "build",
+    models: [
+      ["deepseek-pro-latest", "OpenRouter · own", true],
+      ["grok-4.6", "All hats · SpaceXAI", false],
+      ["claude-opus-5.5", "Audit’s model", false],
+      ["default", "Follow all hats", false]
+    ],
+    reasoning: "medium",
+    reasonNote: "Saved on the model, so every hat that uses it inherits medium."
+  },
+  audit: {
+    hat: "audit",
+    models: [
+      ["claude-opus-5.5", "OpenRouter · own", true],
+      ["grok-4.6", "All hats · SpaceXAI", false],
+      ["deepseek-pro-latest", "Build’s model", false],
+      ["default", "Follow all hats", false]
+    ],
+    reasoning: "medium",
+    reasonNote: "Auto would be medium for audit. This seat is set to medium."
+  },
+  scribe: {
+    hat: "scribe",
+    models: [
+      ["default", "Follow all hats", true],
+      ["grok-4.6", "All hats · SpaceXAI", false],
+      ["deepseek-pro-latest", "Build’s model", false],
+      ["claude-opus-5.5", "Audit’s model", false]
+    ],
+    reasoning: "auto",
+    reasonNote: "Auto follows the hat that ends up wearing the model."
+  }
+};
+
+let seat = "build";
+let sessionId = "empty";
+
+function theme() {
+  return new URLSearchParams(location.search).get("theme") === "light" ? "light" : "dark";
+}
+function view() {
+  const h = location.hash.replace("#", "");
+  return ["session", "hats", "sessions"].includes(h) ? h : "session";
+}
+function go(nextView, nextTheme) {
+  const t = nextTheme || theme();
+  const v = nextView || view();
+  history.replaceState(null, "", `?theme=${t}#${v}`);
+  render();
+}
+function render() {
+  const t = theme();
+  const v = view();
+  document.documentElement.dataset.theme = t;
+  const ico = document.querySelector(".theme-ico use");
+  ico.setAttribute("href", t === "light" ? "#i-moon" : "#i-sun");
+  document.querySelector(".theme-btn").setAttribute("aria-label", t === "light" ? "Switch to dark" : "Switch to light");
+  document.querySelector(".theme-btn").setAttribute("aria-pressed", String(t === "light"));
+  document.querySelectorAll("[data-view]").forEach((el) => {
+    el.hidden = el.dataset.view !== v;
+  });
+  document.querySelectorAll("[data-nav]").forEach((el) => {
+    const on = el.dataset.nav === v;
+    el.classList.toggle("is-on", on);
+    el.setAttribute("aria-current", on ? "page" : "false");
+  });
+  paintSeat();
+  paintSession();
+}
+function paintSeat() {
+  document.querySelectorAll("[data-seat-btn]").forEach((el) => {
+    el.classList.toggle("is-on", el.dataset.seatBtn === seat);
+  });
+  document.querySelectorAll("[data-seat-panel]").forEach((el) => {
+    el.hidden = el.dataset.seatPanel !== seat;
+  });
+  document.querySelectorAll(".hat-row").forEach((el) => {
+    const id = el.dataset.gotoSeat;
+    el.classList.toggle("is-wearing", id === "build");
+    el.classList.toggle("is-picked", view() === "hats" && id === seat && id !== "build");
+  });
+  const spec = seats[seat];
+  const list = document.getElementById("model-list");
+  list.innerHTML = spec.models.map(([name, sub, on]) =>
+    `<button class="model-opt${on ? " is-on" : ""}" type="button">
+      <span><b>${name}</b><br><span class="muted">${sub}</span></span>
+      ${on ? '<span class="tick">✓</span>' : ""}
+    </button>`
+  ).join("");
+  const levels = ["auto", "low", "medium", "high", "own"];
+  document.getElementById("reasoning").innerHTML = levels.map((level) =>
+    `<button type="button" class="${level === spec.reasoning ? "is-on" : ""}">${level}</button>`
+  ).join("");
+  document.getElementById("reason-note").textContent = spec.reasonNote;
+}
+function hatColor(name) {
+  return name === "audit" || name === "scribe" ? "spec" : name;
+}
+function paintSession() {
+  document.querySelectorAll(".sessions tbody tr").forEach((tr) => {
+    tr.classList.toggle("is-on", tr.dataset.session === sessionId);
+  });
+  const tr = document.querySelector(`.sessions tbody tr[data-session="${sessionId}"]`);
+  if (!tr) return;
+  const title = tr.querySelector(".s-title").textContent;
+  const sub = tr.querySelector(".s-sub").textContent;
+  const hat = tr.dataset.hat;
+  const bars = (tr.dataset.bars || "").split(",").filter(Boolean).map((part) => {
+    const [name, pct, money] = part.split(":");
+    const c = hatColor(name);
+    return `<div class="bar-row">
+      <span style="color:var(--${c})">${name}</span>
+      <div class="bar"><span style="width:${pct}%; background:var(--${c})"></span></div>
+      <span class="mono">${money}</span>
+    </div>`;
+  }).join("");
+  document.getElementById("session-detail").innerHTML = `
+    <section class="block">
+      <h3>Session</h3>
+      <p class="detail-title">${title}</p>
+      <p class="note">${sub}</p>
+    </section>
+    <div class="detail-actions">
+      <button class="btn primary" type="button">${sessionId === "empty" ? "Current" : "Resume"}</button>
+      <button class="btn" type="button">Rename</button>
+    </div>
+    <hr class="hair">
+    <section class="block">
+      <h3>Left in</h3>
+      <div class="hat-name" style="--hat:var(--${hatColor(hat)})"><i></i> ${hat}</div>
+      <p class="note">${tr.dataset.note}</p>
+    </section>
+    <hr class="hair">
+    <section class="block">
+      <h3>Spend by hat</h3>
+      <div class="mini-bars">${bars}</div>
+    </section>
+    <hr class="hair">
+    <section class="block">
+      <h3>Tree</h3>
+      <p class="note">${tr.dataset.files}</p>
+    </section>`;
+}
+
+document.querySelectorAll("[data-nav]").forEach((el) => {
+  el.addEventListener("click", () => go(el.dataset.nav));
+});
+document.querySelector(".theme-btn").addEventListener("click", () => {
+  go(view(), theme() === "light" ? "dark" : "light");
+});
+document.querySelectorAll("[data-goto-seat]").forEach((el) => {
+  el.addEventListener("click", () => {
+    seat = el.dataset.gotoSeat;
+    go("hats");
+  });
+});
+document.querySelectorAll("[data-seat-btn]").forEach((el) => {
+  el.addEventListener("click", () => {
+    seat = el.dataset.seatBtn;
+    paintSeat();
+  });
+});
+document.querySelectorAll(".sessions tbody tr").forEach((tr) => {
+  tr.addEventListener("click", () => {
+    sessionId = tr.dataset.session;
+    paintSession();
+  });
+});
+document.querySelectorAll(".filter").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".filter").forEach((b) => b.classList.toggle("is-on", b === btn));
+    const flag = btn.dataset.filter;
+    document.querySelectorAll(".sessions tbody tr").forEach((tr) => {
+      const flags = (tr.dataset.flags || "").split(" ");
+      tr.hidden = flag !== "all" && !flags.includes(flag);
+    });
+  });
+});
+window.addEventListener("hashchange", render);
+render();
+</script>
+</body>
+</html>
