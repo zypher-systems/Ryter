@@ -1994,7 +1994,8 @@ pub fn asking_segment(cmd: &str, ctx: &ToolContext) -> Option<String> {
 }
 
 /// What a shell command does to the files around it, read before it runs,
-/// for the turn's record ([`ToolContext::created`], [`ToolContext::kept`]).
+/// for the turn's record ([`ToolContext::created`], [`ToolContext::kept`],
+/// [`ToolContext::sessions`]).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Effects {
     /// Files it would make that are not there yet ([`segment_makes`]):
@@ -2003,6 +2004,9 @@ pub struct Effects {
     /// Places it moves a file of the user's to (`mv src/x new/`): never
     /// a free deletion, whatever else is known about them.
     pub kept: Vec<PathBuf>,
+    /// `tmux` session names it starts (`new-session -s …`): only those
+    /// may be killed later in the turn without asking.
+    pub sessions: Vec<String>,
 }
 
 /// The [`Effects`] of the command in `args`.
@@ -2079,6 +2083,7 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
     // when nothing in the command can hide a failed part behind `||`.
     let mut made: Vec<PathBuf> = Vec::new();
     let mut kept: Vec<PathBuf> = Vec::new();
+    let mut sessions: Vec<String> = Vec::new();
     let any_or = segs
         .iter()
         .any(|s| !s.inside && (s.before == Sep::Or || s.after == Sep::Or));
@@ -2151,6 +2156,7 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
                 vars: here,
                 created: [ctx.created.as_slice(), made.as_slice()].concat(),
                 kept: [ctx.kept.as_slice(), kept.as_slice()].concat(),
+                sessions: [ctx.sessions.as_slice(), sessions.as_slice()].concat(),
                 ..ctx.clone()
             };
             let judged = match after_sudo(&s.text) {
@@ -2169,6 +2175,11 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
                 for p in fx.made {
                     if !made.contains(&p) {
                         made.push(p);
+                    }
+                }
+                for name in fx.sessions {
+                    if !sessions.contains(&name) {
+                        sessions.push(name);
                     }
                 }
             }
@@ -2316,7 +2327,11 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
     Judged {
         decision,
         asks,
-        effects: Effects { made, kept },
+        effects: Effects {
+            made,
+            kept,
+            sessions,
+        },
     }
 }
 
@@ -3384,6 +3399,12 @@ fn judge(
         }
         return decide_git(from_prog, ctx).and(outside).and(nested);
     }
+    // `tmux kill-server` ends every session on the machine, not only ones
+    // this turn started (tunes 0.24.1). Scoped kills of sessions this turn
+    // named with `-s` run; the rest ask.
+    if prog == "tmux" {
+        return decide_tmux(from_prog, ctx).and(outside).and(nested);
+    }
     // Printing a secret is denied even when the command itself is read-only,
     // otherwise `cat .env` walks around the `read_file` gate.
     if READERS.contains(&prog) {
@@ -4041,6 +4062,15 @@ pub(crate) fn destructive_command(cmd: &str) -> bool {
         }
         if removes_container_data(prog, args) {
             return true;
+        }
+        if prog == "tmux" {
+            // `args` starts after the program; `tmux_verb` wants `tmux` first.
+            let from_prog = &w[p.args.saturating_sub(1).min(w.len())..];
+            let Some((verb, rest)) = tmux_verb(from_prog) else {
+                return false;
+            };
+            return verb == "kill-server"
+                || (matches!(verb, "kill-session" | "kill-ses") && tmux_kills_all(rest));
         }
         if prog == "git" {
             let sub = args
@@ -6852,6 +6882,232 @@ fn in_a_repository(path: &Path, stop: &Path) -> bool {
         .any(|a| a.join(".git").exists())
 }
 
+/// Whether `path` is a repository or holds one at any depth below it.
+/// [`in_a_repository`] looks only upward; a free delete of `/tmp/probe`
+/// with someone's repository at `/tmp/probe/sub` needs the look down.
+/// A folder too large to look through is not free: the gate can't vouch.
+fn holds_repository_below(path: &Path) -> bool {
+    const MOST: usize = 20_000;
+    if path.join(".git").exists() {
+        return true;
+    }
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_dir()) {
+        return false;
+    }
+    let mut left = MOST;
+    let mut seen: Vec<PathBuf> = Vec::new();
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if seen.contains(&dir) {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return true;
+        };
+        seen.push(dir);
+        for entry in entries {
+            let Ok(entry) = entry else {
+                return true;
+            };
+            if left == 0 {
+                return true;
+            }
+            left -= 1;
+            if entry.file_name() == ".git" {
+                return true;
+            }
+            let p = entry.path();
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                if p.join(".git").exists() {
+                    return true;
+                }
+                stack.push(p);
+            }
+        }
+    }
+    false
+}
+
+/// `tmux` verb and the words after it, past global options (`-L`, `-S`, …).
+fn tmux_verb(words: &[String]) -> Option<(&str, &[String])> {
+    let mut i = 1;
+    while let Some(w) = words.get(i).map(String::as_str) {
+        if w == "--" {
+            i += 1;
+            break;
+        }
+        if !w.starts_with('-') || w == "-" {
+            break;
+        }
+        if let Some(name) = w.strip_prefix("--") {
+            let (flag, attached) = match name.split_once('=') {
+                Some((f, _)) => (f, true),
+                None => (name, false),
+            };
+            let valued = matches!(
+                flag,
+                "socket-name" | "socket-path" | "file" | "command" | "features"
+            );
+            if valued && !attached {
+                i += 1;
+            }
+            i += 1;
+            continue;
+        }
+        let rest = &w[1..];
+        let valued = matches!(rest.chars().next(), Some('L' | 'S' | 'f' | 'c' | 'T'));
+        if valued && rest.len() == 1 {
+            i += 2;
+            continue;
+        }
+        // `-Lname`, or a flag cluster (`-vv`).
+        i += 1;
+    }
+    let verb = words.get(i).map(String::as_str)?;
+    Some((verb, &words[i + 1..]))
+}
+
+/// `tmux kill-session -a` / `--all`: every session but one.
+fn tmux_kills_all(args: &[String]) -> bool {
+    args.iter()
+        .any(|w| matches!(w.as_str(), "-a" | "--all") || w.starts_with("--all="))
+}
+
+/// Session target of a `tmux` command (`-t name`, `--target=name`).
+fn tmux_target(args: &[String]) -> Option<String> {
+    let mut i = 0;
+    while let Some(w) = args.get(i).map(String::as_str) {
+        i += 1;
+        if let Some(v) = w.strip_prefix("--target=") {
+            return Some(v.to_string());
+        }
+        if let Some(v) = w.strip_prefix("-t") {
+            if !v.is_empty() && !v.starts_with('-') {
+                return Some(v.to_string());
+            }
+            if v.is_empty() {
+                return args.get(i).cloned();
+            }
+        }
+        if matches!(w, "-t" | "--target") {
+            return args.get(i).cloned();
+        }
+    }
+    None
+}
+
+/// Session names a `tmux new-session` / `new` starts with `-s` / `--session-name`.
+fn tmux_started_names(args: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(w) = args.get(i).map(String::as_str) {
+        i += 1;
+        if let Some(v) = w.strip_prefix("--session-name=") {
+            if !v.is_empty() {
+                out.push(v.to_string());
+            }
+            continue;
+        }
+        if w == "--session-name" {
+            if let Some(v) = args.get(i) {
+                out.push(v.clone());
+                i += 1;
+            }
+            continue;
+        }
+        if let Some(v) = w.strip_prefix("-s") {
+            if w.starts_with("--") {
+                continue;
+            }
+            if !v.is_empty() {
+                out.push(v.to_string());
+            } else if let Some(next) = args.get(i) {
+                out.push(next.clone());
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Whether `target` names a session this turn started (`name`, `name:0.1`).
+fn owns_tmux_session(ctx: &ToolContext, target: &str) -> bool {
+    let name = target
+        .trim_start_matches('=')
+        .split([':', '.'])
+        .next()
+        .unwrap_or(target);
+    !name.is_empty() && ctx.sessions.iter().any(|s| s == name)
+}
+
+/// Looks a looking hat may take through `tmux` (list, capture, show).
+fn tmux_looks(verb: &str) -> bool {
+    matches!(
+        verb,
+        "list-sessions"
+            | "ls"
+            | "list-windows"
+            | "lsw"
+            | "list-panes"
+            | "lsp"
+            | "list-clients"
+            | "lsc"
+            | "list-commands"
+            | "lscm"
+            | "list-keys"
+            | "lsk"
+            | "list-buffers"
+            | "lsb"
+            | "capture-pane"
+            | "capturep"
+            | "show-options"
+            | "show"
+            | "show-window-options"
+            | "showw"
+            | "show-messages"
+            | "showmsgs"
+            | "display-message"
+            | "display"
+            | "display-panes"
+            | "displayp"
+            | "info"
+            | "has-session"
+            | "has"
+    )
+}
+
+/// What a `tmux` command comes to: kill only sessions this turn started;
+/// `kill-server` and kill-all always ask (item 4 / tunes blast).
+fn decide_tmux(words: &[String], ctx: &ToolContext) -> Decision {
+    let works = works(ctx);
+    let Some((verb, rest)) = tmux_verb(words) else {
+        return if works {
+            Decision::Allow
+        } else {
+            Decision::Deny
+        };
+    };
+    let kills_server = verb == "kill-server";
+    let kills_sessions = matches!(verb, "kill-session" | "kill-ses");
+    if kills_server || kills_sessions {
+        if !works {
+            return Decision::Deny;
+        }
+        if kills_server || tmux_kills_all(rest) {
+            return Decision::Ask;
+        }
+        return match tmux_target(rest) {
+            Some(t) if owns_tmux_session(ctx, &t) => Decision::Allow,
+            _ => Decision::Ask,
+        };
+    }
+    if works || tmux_looks(verb) {
+        Decision::Allow
+    } else {
+        Decision::Deny
+    }
+}
+
 /// Whether `url` is an address on this machine.
 pub(crate) fn on_this_machine(url: &str) -> bool {
     url_host(url).is_some_and(own_host)
@@ -7388,9 +7644,13 @@ fn deletes_freely(seg: &str, prog: &str, from_prog: &[String], ctx: &ToolContext
     let scratch = scratch_dirs();
     let workspace = real_path(&ctx.workspace);
     let free_scratch = |p: &Path| {
-        scratch
-            .iter()
-            .any(|t| p != t && is_under(p, t) && !is_under(&workspace, p) && !in_a_repository(p, t))
+        scratch.iter().any(|t| {
+            p != t
+                && is_under(p, t)
+                && !is_under(&workspace, p)
+                && !in_a_repository(p, t)
+                && !holds_repository_below(p)
+        })
     };
     operands.iter().all(|w| {
         // A value the shell fills in could name anything, and an unquoted
@@ -7607,7 +7867,19 @@ fn segment_makes(seg: &str, ctx: &ToolContext) -> Effects {
             }
         }
     }
-    Effects { made: out, kept }
+    let mut sessions = Vec::new();
+    if prog == "tmux" {
+        if let Some((verb, rest)) = tmux_verb(&words) {
+            if matches!(verb, "new-session" | "new") {
+                sessions = tmux_started_names(rest);
+            }
+        }
+    }
+    Effects {
+        made: out,
+        kept,
+        sessions,
+    }
 }
 
 /// Paths `curl`/`wget` write with `-o`/`-O`/`-c` and their long forms.
@@ -8028,6 +8300,7 @@ mod tests {
             read_only: role == Role::SoloAudit,
             created: Vec::new(),
             kept: Vec::new(),
+            sessions: Vec::new(),
             search: Default::default(),
         }
     }
@@ -9660,6 +9933,7 @@ mod tests {
             "git push",
             "git reset --hard",
             "npm publish",
+            "tmux kill-server",
         ] {
             assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Ask, "{cmd}");
         }
@@ -9906,6 +10180,9 @@ mod tests {
             "git checkout -- .",
             "git branch -D old",
             "cargo test && rm x",
+            "tmux kill-server",
+            "tmux kill-session -a",
+            "tmux kill-session --all -t keep",
         ] {
             assert!(destructive_command(d), "{d}");
         }
@@ -9914,9 +10191,94 @@ mod tests {
             "git commit -m x",
             "git checkout main",
             "npm install",
+            "tmux new-session -d -s probe",
+            "tmux kill-session -t probe",
+            "tmux send-keys -t probe Enter",
         ] {
             assert!(!destructive_command(ok), "{ok}");
         }
+    }
+
+    /// Item 4 / G4: `tmux kill-server` ends every session on the machine.
+    /// Only sessions this turn started with `-s` may be killed without asking.
+    #[test]
+    fn tmux_kills_only_sessions_this_turn_started() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        let audit = |cmd: &str| {
+            decide(
+                "bash",
+                &json!({"command": cmd}),
+                &ToolContext {
+                    read_only: false,
+                    ..ctx_for(Role::SoloAudit, d)
+                },
+            )
+        };
+        for cmd in [
+            "tmux kill-server",
+            "tmux -L default kill-server",
+            "tmux kill-session -a",
+            "tmux kill-session --all",
+            "tmux kill-session -t other",
+            "tmux kill-session",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Ask, "{cmd}");
+            assert_eq!(audit(cmd), Decision::Ask, "audit: {cmd}");
+            assert_eq!(bash(cmd, Role::SoloPlan, d), Decision::Deny, "plan: {cmd}");
+        }
+        assert!(destructive_command("tmux kill-server"));
+        // Same command: start then kill that session.
+        for cmd in [
+            "tmux new-session -d -s ryter-probe; tmux kill-session -t ryter-probe",
+            "tmux new -d -s ryter-probe && tmux kill-session -t ryter-probe",
+            "tmux new-session -d -sryter-probe; tmux kill-session -t ryter-probe:0.0",
+            "tmux new-session -d --session-name=ryter-probe; tmux kill-session -t=ryter-probe",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+            assert_eq!(audit(cmd), Decision::Allow, "audit: {cmd}");
+        }
+        assert_eq!(
+            bash(
+                "tmux new-session -d -s ryter-probe; tmux kill-session -t other",
+                Role::SoloBuild,
+                d
+            ),
+            Decision::Ask
+        );
+        // Across tool calls: sessions the turn recorded.
+        let mut ctx = ctx_for(Role::SoloBuild, d);
+        ctx.sessions = vec!["ryter-probe".into()];
+        assert_eq!(
+            decide(
+                "bash",
+                &json!({"command": "tmux kill-session -t ryter-probe"}),
+                &ctx
+            ),
+            Decision::Allow
+        );
+        assert_eq!(
+            decide("bash", &json!({"command": "tmux kill-server"}), &ctx),
+            Decision::Ask
+        );
+        // Ordinary audit driving stays free.
+        for cmd in [
+            "tmux new-session -d -s tunes 'cargo run'",
+            "tmux send-keys -t tunes Enter",
+            "tmux capture-pane -t tunes -p",
+            "tmux list-sessions",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+            assert_eq!(audit(cmd), Decision::Allow, "audit: {cmd}");
+        }
+        assert_eq!(
+            effects(
+                &json!({"command": "tmux new-session -d -s ryter-a; tmux new -d -s ryter-b"}),
+                &ctx_for(Role::SoloBuild, d),
+            )
+            .sessions,
+            vec!["ryter-a".to_string(), "ryter-b".to_string()]
+        );
     }
 
     /// Every way round the never-run list found in the 2026-09-26 audit, for
@@ -11057,6 +11419,7 @@ mod tests {
                 read_only: false,
                 created: Vec::new(),
                 kept: Vec::new(),
+                sessions: Vec::new(),
                 search: Default::default(),
                 ..ctx_for(role, d)
             };
@@ -11361,7 +11724,8 @@ mod tests {
             assert_eq!(audit(cmd), Decision::Allow, "audit: {cmd}");
         }
         // Not scratch space itself, not everything in it, not a repository
-        // there, not the user's folder, and not the project's own files.
+        // there (at, above, or nested below), not the user's folder, and
+        // not the project's own files.
         for cmd in [
             "rm -rf /tmp",
             "rm -rf /tmp/",
@@ -11389,6 +11753,17 @@ mod tests {
             bash(&format!("rm -rf {repo}/src"), Role::SoloBuild, d),
             Decision::Allow
         );
+        // A repository nested *below* a scratch folder is not free either
+        // (ROADMAP / G4): `rm -rf /tmp/probe` with `.git` at `/tmp/probe/sub`.
+        let nest = scratch.path().join("probe-nest");
+        std::fs::create_dir_all(nest.join("sub/.git")).unwrap();
+        let nest = nest.display().to_string();
+        assert_ne!(
+            bash(&format!("rm -rf {nest}"), Role::SoloBuild, d),
+            Decision::Allow,
+            "nested repo under scratch"
+        );
+        assert_ne!(audit(&format!("rm -rf {nest}")), Decision::Allow);
         // What the turn made, inside the project: the agent keeps the list.
         let mut ctx = ctx_for(Role::SoloBuild, d);
         // As the agent records them: resolved, so a temp folder behind a
