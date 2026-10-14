@@ -1037,6 +1037,44 @@ fn snapshot_solo() {
     }
 }
 
+/// Workspace default with B project-cost glance + E quiet chrome.
+fn workspace_be() -> View {
+    let mut v = racked();
+    v.ui.layout = "workspace".into();
+    v.panel_visible = true;
+    v.budget_usd = 5.0;
+    if let Some(p) = &mut v.project_spend {
+        // Seed this_month, then set the glance totals the board locked.
+        p.add(Role::SoloBuild, "m", Some(1.24));
+        p.total_usd = 4.82;
+        p.calls = 40;
+        p.unpriced_calls = 3;
+        p.sessions = 12;
+    }
+    v
+}
+
+#[test]
+fn snapshot_workspace_be() {
+    all_sizes("workspace-be", &workspace_be());
+    let text = render_to_string(&workspace_be(), 160, 50);
+    let top = text.lines().next().unwrap();
+    assert!(
+        top.contains("●●● RYTER") && top.contains("Conversation"),
+        "{top}"
+    );
+    assert!(!top.contains('☀') && !top.contains('☾'), "{top}");
+    assert!(!top.contains(" dusty"), "{top}");
+    assert!(
+        text.contains("this month") && text.contains("unpriced"),
+        "{text}"
+    );
+    assert!(
+        text.contains("12 sessions") && text.contains("$4.82"),
+        "{text}"
+    );
+}
+
 /// The sidebar's rows, squashed, for a column 28 wide with `room` rows.
 fn sidebar_rows(v: &View, room: usize) -> Vec<String> {
     crate::sidebar::lines(v, Theme::truecolor_dark(), 28, room)
@@ -5303,6 +5341,7 @@ fn html_gallery() {
     shots.push(("solo-120x40".into(), racked(), 120, 40));
     shots.push(("solo-100x30".into(), racked(), 100, 30));
     shots.push(("solo-80x24".into(), racked(), 80, 24));
+    shots.push(("workspace-be-160x50".into(), workspace_be(), 160, 50));
     for (name, v, w, h) in shots {
         let buf = render_buffer(&v, w, h, theme);
         std::fs::write(

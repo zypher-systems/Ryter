@@ -334,9 +334,10 @@ impl Agent {
     }
 
     /// Remember the files a call made this turn: a `write` of a file that
-    /// was not there, and what a shell command made or moved
-    /// ([`crate::tools::effects`]). Deleting one it made later in the turn
-    /// does not ask; a place it moved the user's file to always does.
+    /// was not there (and folders it created on the way), and what a shell
+    /// command made or moved ([`crate::tools::effects`]). Deleting one it
+    /// made later in the turn does not ask; a place it moved the user's
+    /// file to always does.
     fn note_created(
         &mut self,
         name: &str,
@@ -350,13 +351,17 @@ impl Agent {
                 self.ctx.kept.push(p);
             }
         }
+        // Belt and braces: if the pre-scan missed a new write, still credit
+        // the file (parents were scanned before the write ran).
         if name == "write" && diff.is_some_and(|d| d.created) {
             if let Some(p) = args
                 .get("path")
                 .and_then(Value::as_str)
                 .and_then(|p| crate::tools::resolve(&self.ctx, p))
             {
-                made.push(p);
+                if !made.contains(&p) {
+                    made.push(p);
+                }
             }
         }
         for p in made {
@@ -725,9 +730,16 @@ impl Agent {
                 }
                 self.note_product_use(&call.name, &args);
                 // Read before the command runs: what is not there yet is
-                // what it makes.
+                // what it makes. A `write` of a new file also credits the
+                // folders `create_dir_all` will make, so `rm -rf` of that
+                // tree later in the turn does not ask.
                 let effects = if call.name == "bash" && parsed.is_ok() {
                     crate::tools::effects(&args, &self.ctx)
+                } else if call.name == "write" && parsed.is_ok() {
+                    crate::tools::Effects {
+                        made: crate::tools::write_makes(&args, &self.ctx),
+                        kept: Vec::new(),
+                    }
                 } else {
                     crate::tools::Effects::default()
                 };
@@ -3613,6 +3625,39 @@ mod tests {
         assert_eq!(asked.len(), 1, "{asked:?}");
         assert!(asked[0].contains("rm probe2.sh"), "{asked:?}");
         assert!(cwd.path().join("probe2.sh").exists());
+    }
+
+    /// A folder the write tool made this turn is free to `rm -rf`: parents
+    /// created by `create_dir_all` are credited with the file (G1 / tunes).
+    #[tokio::test]
+    async fn a_folder_the_write_tool_made_is_deleted_without_asking() {
+        let p = ReplayProvider::scripted(vec![
+            write("scratch/probe/out.sh", "echo hi\n"),
+            call("bash", serde_json::json!({"command": "rm -rf scratch"})),
+            say("cleaned"),
+        ]);
+        let (_home, cwd, mut agent) = repo_setup(p);
+        agent.role = Role::SoloBuild;
+        agent.ctx.role = Role::SoloBuild;
+        let answerer = answering(&mut agent, crate::user_io::Permission::Deny);
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("probe nested").await.unwrap();
+        assert!(!cwd.path().join("scratch").exists());
+        let first: Vec<AgentEvent> = events.try_iter().collect();
+        assert!(
+            !first.iter().any(|e| matches!(e, AgentEvent::Asked { .. })),
+            "rm -rf of write-made folder asked: {first:?}"
+        );
+        assert!(
+            first
+                .iter()
+                .all(|e| !matches!(e, AgentEvent::ToolResult { is_error: true, .. })),
+            "{first:?}"
+        );
+        agent.ctx.user_io = None;
+        let asked = answerer.join().unwrap();
+        assert!(asked.is_empty(), "expected no asks, got {asked:?}");
     }
 
     /// "Are you there?" is a conversation, not a reason to touch git: a turn

@@ -45,8 +45,6 @@ pub enum WorkspaceClick {
     Page(u8),
     /// Wear this hat and open the hats page.
     Wear(ryter_core::Role),
-    /// Switch between the dark and light themes.
-    Theme,
 }
 
 /// A drag in progress.
