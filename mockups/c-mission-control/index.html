@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ryter — Session · empty query returns nothing</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="word">RYTER</div>
+        <div class="brand-text">
+          <strong>empty query returns nothing</strong>
+          <span>shop · search-patch</span>
+        </div>
+      </div>
+      <nav class="nav" aria-label="Views">
+        <a href="index.html" aria-current="page">Session</a>
+        <a href="hats.html">Hats</a>
+        <a href="sessions.html">Sessions</a>
+      </nav>
+      <div class="top-end">
+        <span>s_8f21c4</span>
+        <span class="live-pill"><i class="dot"></i> build · live</span>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <aside class="rail pane" aria-label="Hats">
+        <div class="block-label">hats</div>
+
+        <div class="hat plan">
+          <i class="mark"></i>
+          <div class="name">plan</div>
+          <div class="spend">$0.004</div>
+          <div class="model">grok-4.6 · spacexai</div>
+          <div class="note">1 turn · approved 12:41</div>
+        </div>
+
+        <div class="hat build on">
+          <i class="mark"></i>
+          <div class="name">build</div>
+          <div class="spend">$0.021</div>
+          <div class="model">deepseek-pro-latest</div>
+          <div class="note">running npm test · 0:04</div>
+        </div>
+
+        <div class="sep">specialists</div>
+
+        <div class="hat audit">
+          <i class="mark"></i>
+          <div class="name">audit</div>
+          <div class="spend">$0.040</div>
+          <div class="model">claude-opus-5.5</div>
+          <div class="note">1 turn · ✗ 1 blocking</div>
+        </div>
+
+        <div class="hat scribe">
+          <i class="mark"></i>
+          <div class="name">scribe</div>
+          <div class="spend"></div>
+          <div class="model">grok-4-fast · spacexai</div>
+          <div class="note">not worn</div>
+        </div>
+
+        <div class="turns-row">
+          <span>turns</span>
+          <span class="pips" aria-label="plan, build, audit, build in flight">
+            <i class="plan"></i>
+            <i class="build"></i>
+            <i class="audit"></i>
+            <i class="live"></i>
+          </span>
+        </div>
+        <div class="files-note">
+          <span>plan.md 12:41</span>
+          <span class="bad">audit.md · ✗</span>
+        </div>
+
+        <section class="plan-block" aria-label="Approved plan">
+          <h2>plan <span>3 of 4</span></h2>
+          <ol class="steps">
+            <li class="done"><i>✓</i><span>Return nothing when blank</span></li>
+            <li class="done"><i>✓</i><span>Cover a missing query</span></li>
+            <li class="done"><i>✓</i><span>Cover a blank query</span></li>
+            <li class="now"><i>4</i><span>Re-run npm test</span></li>
+          </ol>
+        </section>
+
+        <section class="finding">
+          <h2>audit.md · 12:51</h2>
+          <p class="fail">✗ empty query returns the catalog</p>
+          <p>includes('') is true for every name, so a blank query never narrows the scan.</p>
+        </section>
+
+        <div class="gate-line">
+          <span>this hat</span>
+          <b>asks first</b>
+        </div>
+      </aside>
+
+      <main class="stage pane">
+        <div class="transcript">
+          <div class="history">
+            <div class="past">
+              <time>12:41</time>
+              <span class="role plan">plan</span>
+              <span class="ask">Empty query matches every name</span>
+              <span class="result">approved · $0.004</span>
+            </div>
+            <div class="past">
+              <time>12:46</time>
+              <span class="role build">build</span>
+              <span class="ask">Guard the trim, leave the scan</span>
+              <span class="result"><span class="ok">tests ✓ 13</span> · $0.012</span>
+            </div>
+            <div class="past">
+              <time>12:51</time>
+              <span class="role audit">audit</span>
+              <span class="ask">Audit the uncommitted changes</span>
+              <span class="result"><span class="bad">✗ 1 blocking</span> · $0.040</span>
+            </div>
+          </div>
+
+          <div class="said">
+            <div class="who">
+              <span class="name">Dusty</span>
+              <time>12:54</time>
+            </div>
+            <p>Repair what the audit found. A missing or blank query should return nothing, and the tests should cover both.</p>
+          </div>
+
+          <div class="said agent">
+            <div class="who">
+              <span class="name">deepseek-pro-latest</span>
+              <span class="meta">build</span>
+            </div>
+            <p>The audit is right: an empty query hits <span class="mono">includes('')</span>, which is true for every name. I'll return before the scan, and add the two cases.</p>
+          </div>
+
+          <div>
+            <div class="call">
+              <div class="call-h">
+                <span class="verb">read</span>
+                <span class="path">app/server.js</span>
+              </div>
+            </div>
+
+            <div class="call">
+              <div class="call-h">
+                <span class="verb">edit</span>
+                <span class="path">app/server.js</span>
+                <span class="delta"><span class="add">+2</span><span class="del">−1</span></span>
+              </div>
+              <div class="hunk">
+                <div class="code-line ctx"><span class="ln">12</span><span class="sg"> </span><code>function search(req) {</code></div>
+                <div class="code-line del"><span class="ln">13</span><span class="sg">−</span><code>  const q = (req.query.q || <span class="s">''</span>).trim()</code></div>
+                <div class="code-line add"><span class="ln">13</span><span class="sg">+</span><code>  const q = String(req.query.q ?? <span class="s">''</span>).trim()</code></div>
+                <div class="code-line add"><span class="ln">14</span><span class="sg">+</span><code>  <span class="k">if</span> (!q) <span class="k">return</span> []</code></div>
+                <div class="code-line ctx"><span class="ln">15</span><span class="sg"> </span><code>  <span class="k">return</span> catalog.filter((item) =&gt; item.name.includes(q))</code></div>
+              </div>
+            </div>
+
+            <div class="call">
+              <div class="call-h">
+                <span class="verb">edit</span>
+                <span class="path">test/search.test.js</span>
+                <span class="delta"><span class="add">+6</span></span>
+              </div>
+              <div class="hunk">
+                <div class="code-line add"><span class="ln">20</span><span class="sg">+</span><code>test(<span class="s">'a missing query finds nothing'</span>, <span class="k">async</span> () =&gt; {</code></div>
+                <div class="code-line add"><span class="ln">21</span><span class="sg">+</span><code>  assert.deepEqual(<span class="k">await</span> search({ query: {} }), [])</code></div>
+                <div class="code-line add"><span class="ln">22</span><span class="sg">+</span><code>})</code></div>
+                <div class="code-line add"><span class="ln">24</span><span class="sg">+</span><code>test(<span class="s">'a blank query finds nothing'</span>, <span class="k">async</span> () =&gt; {</code></div>
+                <div class="code-line add"><span class="ln">25</span><span class="sg">+</span><code>  assert.deepEqual(<span class="k">await</span> search({ query: { q: <span class="s">'   '</span> } }), [])</code></div>
+                <div class="code-line add"><span class="ln">26</span><span class="sg">+</span><code>})</code></div>
+              </div>
+            </div>
+
+            <div class="call live">
+              <div class="call-h">
+                <span class="verb">run</span>
+                <span class="path">npm test</span>
+                <span class="delta path-status">0:04</span>
+              </div>
+              <div class="tail">
+                <div><span class="ok">✓</span>  search returns matches</div>
+                <div><span class="ok">✓</span>  empty string is not a wildcard</div>
+                <div><span class="run">●</span>  a missing query finds nothing</div>
+                <div>11 passed · 3 left</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <form class="composer" action="#" onsubmit="return false">
+          <span class="chip build">build</span>
+          <div class="prompt"><b>›</b> type to queue the next message</div>
+        </form>
+      </main>
+
+      <aside class="meters pane" aria-label="Instruments">
+        <section class="meter">
+          <h2>now</h2>
+          <div class="now-model">deepseek-pro-latest</div>
+          <div class="now-sub">openrouter · reasoning medium</div>
+          <div class="now-verb">
+            <svg class="spin" viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.7" opacity="0.25"></circle>
+              <path d="M8 2a6 6 0 0 1 6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
+            </svg>
+            running npm test · 0:04
+          </div>
+          <div class="stats">
+            <div><b>22</b><span>tok/s</span></div>
+            <div><b>4.1k</b><span>in</span></div>
+            <div><b>0.6k</b><span>out</span></div>
+          </div>
+        </section>
+
+        <section class="meter">
+          <h2>context</h2>
+          <div class="ctx-top">
+            <b>38%</b>
+            <span>97.2k / 256k</span>
+          </div>
+          <div class="bar" aria-hidden="true"><i style="width: 38%"></i></div>
+          <div class="ctx-foot">
+            <span>deepseek-pro-latest</span>
+            <span>cache 71%</span>
+          </div>
+        </section>
+
+        <section class="meter">
+          <h2>spend</h2>
+          <div class="spend-hero">
+            <b>$0.065</b>
+            <span>of $5.00</span>
+          </div>
+          <div class="bar thin" aria-hidden="true"><i style="width: 1.3%"></i></div>
+          <div class="kv"><span>this turn</span><b>$0.009</b></div>
+          <div class="kv"><span>project</span><b>$4.82</b></div>
+          <div class="hat-spend">
+            <div class="row"><span>plan</span><i style="--w: 10%; --c: var(--plan)"></i><b>$0.004</b></div>
+            <div class="row"><span>build</span><i style="--w: 52%; --c: var(--build)"></i><b>$0.021</b></div>
+            <div class="row"><span>audit</span><i style="--w: 100%; --c: var(--spec)"></i><b>$0.040</b></div>
+          </div>
+        </section>
+
+        <section class="meter">
+          <h2>changes</h2>
+          <div class="file">
+            <span class="path">app/server.js</span>
+            <span class="delta"><span class="add">+2</span><span class="del">−1</span></span>
+          </div>
+          <div class="file">
+            <span class="path">test/search.test.js</span>
+            <span class="delta"><span class="add">+6</span></span>
+          </div>
+          <div class="file-sum">2 files uncommitted · sandbox workspace</div>
+        </section>
+      </aside>
+    </div>
+
+    <footer class="foot">
+      <span><kbd>enter</kbd> send</span>
+      <span><kbd>tab</kbd> plan</span>
+      <span><kbd>⇧tab</kbd> specialists</span>
+      <span><kbd>/</kbd> commands</span>
+      <span><kbd>^t</kbd> changes</span>
+    </footer>
+  </div>
+</body>
+</html>

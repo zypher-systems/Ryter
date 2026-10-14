@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ryter — Hats</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="word">RYTER</div>
+        <div class="brand-text">
+          <strong>Hats</strong>
+          <span>one conversation · four gates</span>
+        </div>
+      </div>
+      <nav class="nav" aria-label="Views">
+        <a href="index.html">Session</a>
+        <a href="hats.html" aria-current="page">Hats</a>
+        <a href="sessions.html">Sessions</a>
+      </nav>
+      <div class="top-end">
+        <span>shop · search-patch</span>
+        <span class="live-pill"><i class="dot"></i> build · live</span>
+      </div>
+    </header>
+
+    <div class="board-wrap">
+      <div class="board">
+        <p class="lede">Each hat keeps its own model. Tab moves between plan and build. Shift+Tab reaches the specialists. The conversation stays; the permission gate changes.</p>
+
+        <div class="group-label">primary</div>
+        <div class="pair">
+          <article class="station plan">
+            <header class="station-h">
+              <h2>plan</h2>
+              <span class="state ok">approved</span>
+            </header>
+            <p class="job">Reads and proposes. Shows a plan to approve, adjust, or reject. Changes nothing.</p>
+            <dl class="seat">
+              <div><dt>model</dt><dd>grok-4.6</dd></div>
+              <div><dt>connection</dt><dd>spacexai</dd></div>
+              <div><dt>reasoning</dt><dd>high</dd></div>
+              <div><dt>gate</dt><dd>read only</dd></div>
+            </dl>
+            <footer class="station-foot">
+              <div><b>1</b><span>turn</span></div>
+              <div><b>$0.004</b><span>spend</span></div>
+              <div><b>12:41</b><span>plan.md</span></div>
+            </footer>
+          </article>
+
+          <article class="station build selected">
+            <header class="station-h">
+              <h2>build</h2>
+              <span class="state on">on</span>
+            </header>
+            <p class="job">Changes the files. Edits ask first. A checkpoint lands before the turn, and /undo puts it back.</p>
+            <dl class="seat">
+              <div><dt>model</dt><dd>deepseek-pro-latest</dd></div>
+              <div><dt>connection</dt><dd>openrouter</dd></div>
+              <div><dt>reasoning</dt><dd>medium</dd></div>
+              <div><dt>gate</dt><dd>asks first</dd></div>
+            </dl>
+            <footer class="station-foot">
+              <div><b>2</b><span>turns</span></div>
+              <div><b>$0.021</b><span>spend</span></div>
+              <div><b>0:04</b><span>npm test</span></div>
+            </footer>
+          </article>
+        </div>
+
+        <div class="group-label">specialists</div>
+        <div class="pair">
+          <article class="station audit">
+            <header class="station-h">
+              <h2>audit</h2>
+              <span class="state bad">✗ 1 blocking</span>
+            </header>
+            <p class="job">Runs the project against the approved plan, product included, and files findings. A checkpoint puts the tree back.</p>
+            <dl class="seat">
+              <div><dt>model</dt><dd>claude-opus-5.5</dd></div>
+              <div><dt>connection</dt><dd>openrouter</dd></div>
+              <div><dt>reasoning</dt><dd>medium</dd></div>
+              <div><dt>gate</dt><dd>checkpoint, restored</dd></div>
+            </dl>
+            <footer class="station-foot">
+              <div><b>1</b><span>turn</span></div>
+              <div><b>$0.040</b><span>spend</span></div>
+              <div><b>12:51</b><span>audit.md</span></div>
+            </footer>
+          </article>
+
+          <article class="station scribe">
+            <header class="station-h">
+              <h2>scribe</h2>
+              <span class="state">ready</span>
+            </header>
+            <p class="job">Writes the documentation and nothing else. Markdown, text, and their kind. A cheap model belongs here.</p>
+            <dl class="seat">
+              <div><dt>model</dt><dd>grok-4-fast</dd></div>
+              <div><dt>connection</dt><dd>spacexai</dd></div>
+              <div><dt>reasoning</dt><dd>low</dd></div>
+              <div><dt>gate</dt><dd>docs only</dd></div>
+            </dl>
+            <footer class="station-foot">
+              <div><b>—</b><span>turns</span></div>
+              <div><b>—</b><span>spend</span></div>
+              <div><b>seat</b><span>not worn</span></div>
+            </footer>
+          </article>
+        </div>
+      </div>
+
+      <aside class="inspector" aria-label="Build hat">
+        <div class="eyebrow">wearing</div>
+        <h2>build</h2>
+        <p class="sub">deepseek-pro-latest · openrouter · medium · 256k</p>
+
+        <section class="insp-sec">
+          <h3>gate</h3>
+          <ul class="may">
+            <li><span class="tag">may</span><span>Read the project, search it, and run the toolchains and containers it already uses.</span></li>
+            <li><span class="tag ask">asks</span><span>Edits and deletions. Allow once, or allow that kind of action for the rest of the session.</span></li>
+            <li><span class="tag">keeps</span><span>A checkpoint before the first edit of the turn. /undo restores it, and only what the turn changed.</span></li>
+            <li><span class="tag no">y only</span><span>Deleting, discarding git history, publishing, and writing outside the project.</span></li>
+          </ul>
+        </section>
+
+        <section class="insp-sec">
+          <h3>this session</h3>
+          <div class="turnlets">
+            <div class="turnlet">
+              <time>12:46</time>
+              <span class="what">Guard the trim</span>
+              <span class="amt">$0.012</span>
+            </div>
+            <div class="turnlet">
+              <time>12:54</time>
+              <span class="what">Repair the audit · npm test</span>
+              <span class="amt">$0.009</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="insp-sec">
+          <h3>why this seat</h3>
+          <ul class="may">
+            <li><span class="tag">plan</span><span>grok-4.6 on SpaceXAI, reasoning high. The expensive think stays on the hat that proposes.</span></li>
+            <li><span class="tag">build</span><span>deepseek-pro-latest. The seat that edits, on a cheaper model, with the same conversation.</span></li>
+            <li><span class="tag">audit</span><span>claude-opus-5.5. A different model from the one that wrote the patch.</span></li>
+          </ul>
+        </section>
+
+        <p class="keys-note"><b>Tab</b> returns to plan. <b>Shift+Tab</b> puts on audit, the specialist last worn. <b>/build</b> jumps here. A switch during a turn applies to the next message; this model finishes the one it started.</p>
+      </aside>
+
+      <div class="live-session">
+        <div>
+          <span class="kicker">this session</span>
+          <strong>empty query returns nothing</strong>
+          <span class="meta">s_8f21c4 · shop · search-patch</span>
+        </div>
+        <div class="runline">
+          <svg class="spin" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.7" opacity="0.25"></circle>
+            <path d="M8 2a6 6 0 0 1 6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
+          </svg>
+          build · running npm test · 0:04
+        </div>
+        <span class="pips" aria-hidden="true">
+          <i class="plan"></i><i class="build"></i><i class="audit"></i><i class="live"></i>
+        </span>
+        <div class="amt">$0.065<span>of $5.00</span></div>
+      </div>
+    </div>
+
+    <footer class="foot">
+      <span><kbd>↑↓</kbd> choose</span>
+      <span><kbd>enter</kbd> wear</span>
+      <span><kbd>m</kbd> model</span>
+      <span><kbd>tab</kbd> plan</span>
+      <span><kbd>⇧tab</kbd> specialists</span>
+      <span><kbd>esc</kbd> session</span>
+    </footer>
+  </div>
+</body>
+</html>
