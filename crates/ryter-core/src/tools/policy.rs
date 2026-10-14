@@ -1842,6 +1842,33 @@ pub fn effects(args: &Value, ctx: &ToolContext) -> Effects {
         .unwrap_or_default()
 }
 
+/// Paths a `write` of a new file would make: the file itself and folders
+/// that are not there yet on the way. Read **before** the write runs, so a
+/// later `rm -rf` of the folder the write made is credited to the turn
+/// (tunes 0.22: `rm -rf` of a folder the write tool made still asked).
+pub fn write_makes(args: &Value, ctx: &ToolContext) -> Vec<PathBuf> {
+    let Some(raw) = arg_path(args) else {
+        return Vec::new();
+    };
+    let Some(p) = resolve(ctx, &raw).or_else(|| resolve_outside(ctx, &raw)) else {
+        return Vec::new();
+    };
+    if p.symlink_metadata().is_ok() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for a in p.ancestors() {
+        if a.symlink_metadata().is_ok() {
+            break;
+        }
+        let next = a.to_path_buf();
+        if !out.contains(&next) {
+            out.push(next);
+        }
+    }
+    out
+}
+
 /// What [`judge_bash`] found.
 struct Judged {
     decision: Decision,
@@ -3762,8 +3789,10 @@ fn exec_commands(prog: &str, words: &[String]) -> Vec<String> {
 }
 
 /// What `a` ("allow for this session") on a prompt for this command would
-/// cover: its program and subcommand (`cargo test`) for one command, the
-/// exact text for a chain. `None` when there is no command.
+/// cover: its program and subcommand (`cargo test`) for one command. For a
+/// chain, callers pass the asking segment ([`asking_segment`]) so the kind
+/// sticks across later compounds; the exact chain text is not a scope.
+/// `None` when there is no command.
 pub(crate) fn command_scope(cmd: &str) -> Option<String> {
     let segs = segments(cmd);
     match segs.as_slice() {
@@ -3780,6 +3809,8 @@ pub(crate) fn command_scope(cmd: &str) -> Option<String> {
                 None => prog.to_string(),
             })
         }
+        // A whole chain with no focused segment: keep the exact text so a
+        // rare whole-script ask does not widen to every program named.
         _ => Some(cmd.trim().to_string()),
     }
 }
@@ -6771,7 +6802,8 @@ fn outside_decision(ctx: &ToolContext, raw: &str) -> Decision {
 
 /// What a build-hat shell segment's outside paths call for: nothing
 /// (`Allow`), a question every time, or a refusal. Reading outside the
-/// project is an ordinary question; writing there always asks.
+/// project is an ordinary question; writing there always asks — except
+/// scratch space and the user's folder, which stay free.
 ///
 /// `words` are the command's words and then the values its options carry
 /// ([`with_values`]); the first `own` are the words themselves.
@@ -6800,6 +6832,11 @@ fn outside_segment(
             || READ_ONLY.contains(&prog)
             || READERS.contains(&prog)
             || matches!(prog, "cd" | "pushd"));
+    // `cp`/`ln`/`install`/`dd`: sources are reads; only the destination is
+    // a write. Without that, `cp /usr/share/x /tmp/y` was AskOutside while
+    // `echo x > /tmp/y` was free (tunes: inconsistent `/tmp` writes).
+    let copy_dests = copy_write_dests(prog, words, args_at);
+    let sources_are_reads = copy_dests.is_some();
     // The program's own word is not one of its files, nor is a wrapper's
     // name before it: `timeout 60 .venv/bin/python x.py` runs the
     // interpreter the link points at, it doesn't write it. What a wrapper
@@ -6874,7 +6911,15 @@ fn outside_segment(
         }
         // A file a wrapper is given before the program (`strace -o f`,
         // `time -o f`) is written, whatever the program then only reads.
-        let read_only = reads && i > program;
+        // For copy-like tools, only the destination is a write.
+        let is_copy_dest = copy_dests
+            .as_ref()
+            .is_some_and(|d| d.iter().any(|dest| dest == w));
+        let read_only = if sources_are_reads {
+            !is_copy_dest
+        } else {
+            reads && i > program
+        };
         // The value of an option, not a file handed to the command.
         let named_only = i >= own;
         match resolve_outside(ctx, w) {
@@ -6883,19 +6928,122 @@ fn outside_segment(
             // `--prefix=/usr/local`, `-I/usr/include`: named, to be read
             // or remembered. The system keeps its own folders from being
             // written.
-            Some(p) if named_only && system_place(&p) => {}
+            Some(p) if named_only && system_place(&p) && !is_copy_dest => {}
             Some(p) if !read_only && forbidden_outside(&p, ctx) => return Decision::Deny,
             Some(p) if !destroys && free_place(&p, ctx, !read_only) => {}
-            _ => outside = true,
+            _ => {
+                if !read_only {
+                    writes_outside = true;
+                } else {
+                    outside = true;
+                }
+            }
         }
     }
-    let read_only = reads;
+    // Copy-like tools read their sources: an outside source is an ordinary
+    // ask, not AskOutside, when every write landed in a free place.
+    let read_only = reads || sources_are_reads;
     if writes_outside || (outside && !read_only) {
         Decision::AskOutside
     } else if outside {
         Decision::Ask
     } else {
         Decision::Allow
+    }
+}
+
+/// Destinations `cp`/`ln`/`install`/`dd` write; `None` when the program is
+/// not one of those. Sources are judged as reads against that list.
+fn copy_write_dests(prog: &str, words: &[String], args_at: usize) -> Option<Vec<String>> {
+    let tail = &words[args_at.min(words.len())..];
+    match prog {
+        "cp" | "ln" | "install" => {
+            let mut dest: Option<String> = None;
+            let mut sources: Vec<String> = Vec::new();
+            let mut past = false;
+            let mut k = 0;
+            while k < tail.len() {
+                let w = tail[k].as_str();
+                match redirect(w, false) {
+                    Redir::Next => {
+                        k += 2;
+                        continue;
+                    }
+                    Redir::To(_) | Redir::Dup => {
+                        k += 1;
+                        continue;
+                    }
+                    Redir::No if w.starts_with("<<") => break,
+                    Redir::No if redirect(w, true) != Redir::No => {
+                        k += 2;
+                        continue;
+                    }
+                    Redir::No => {}
+                }
+                if past || !w.starts_with('-') || w == "-" {
+                    sources.push(w.to_string());
+                } else if w == "--" {
+                    past = true;
+                } else if let Some(v) = w
+                    .strip_prefix("--target-directory=")
+                    .or_else(|| w.strip_prefix("--target="))
+                {
+                    dest = Some(v.to_string());
+                } else if matches!(w, "--target-directory" | "--target" | "-t") {
+                    dest = tail.get(k + 1).cloned();
+                    k += 1;
+                } else if let Some(v) = w.strip_prefix("-t") {
+                    // `-t/tmp/d` or `-t` with the next word.
+                    if v.is_empty() {
+                        dest = tail.get(k + 1).cloned();
+                        k += 1;
+                    } else {
+                        dest = Some(v.to_string());
+                    }
+                } else if w.starts_with("--") {
+                    // Valued long options we do not treat as destinations.
+                    if !w.contains('=')
+                        && matches!(
+                            w,
+                            "--suffix"
+                                | "--backup"
+                                | "--preserve"
+                                | "--no-preserve"
+                                | "--context"
+                                | "--group"
+                                | "--mode"
+                                | "--owner"
+                                | "--preserve-context"
+                        )
+                    {
+                        k += 1;
+                    }
+                } else {
+                    // Clustered short options: `-tDIR` already handled; a
+                    // bare `-t` takes the next word above.
+                }
+                k += 1;
+            }
+            let dest = dest.or_else(|| sources.pop());
+            dest.filter(|_| !sources.is_empty() || prog == "install")
+                .or_else(|| {
+                    // `install -D dest` with one operand still writes it.
+                    if prog == "install" {
+                        sources.pop()
+                    } else {
+                        None
+                    }
+                })
+                .map(|d| vec![d])
+        }
+        "dd" => {
+            let ofs: Vec<String> = words
+                .iter()
+                .filter_map(|w| w.strip_prefix("of=").map(str::to_string))
+                .collect();
+            (!ofs.is_empty()).then_some(ofs)
+        }
+        _ => None,
     }
 }
 
@@ -7125,7 +7273,19 @@ fn segment_makes(seg: &str, ctx: &ToolContext) -> Effects {
     let mut kept: Vec<PathBuf> = Vec::new();
     match prog {
         "tee" | "touch" | "mkdir" => named.extend(operands),
-        "cp" if operands.len() >= 2 => named.extend(operands.pop()),
+        // Destinations these make: credit so a later `rm` of what this turn
+        // made does not ask. Includes `cp -t dest …` and `curl -o`.
+        "cp" | "ln" | "install" | "dd" => {
+            if let Some(dests) = copy_write_dests(prog, &words, args_at) {
+                named.extend(dests);
+            }
+        }
+        "curl" | "wget" => {
+            named.extend(download_write_paths(
+                prog,
+                &words[args_at.min(words.len())..],
+            ));
+        }
         "mv" => {
             // `mv a b dir`, or the folder named by `-t`/`--target-directory`
             // in any spelling. The cluster is walked by mv's own letters:
@@ -7228,6 +7388,52 @@ fn segment_makes(seg: &str, ctx: &ToolContext) -> Effects {
         }
     }
     Effects { made: out, kept }
+}
+
+/// Paths `curl`/`wget` write with `-o`/`-O`/`-c` and their long forms.
+fn download_write_paths(prog: &str, args: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let push = |out: &mut Vec<String>, v: &str| {
+        if v != "-" && v != "/dev/null" && !v.is_empty() {
+            out.push(v.to_string());
+        }
+    };
+    let mut at = 0;
+    while let Some(a) = args.get(at).map(String::as_str) {
+        at += 1;
+        if let Some(v) = a
+            .strip_prefix("--output=")
+            .or_else(|| a.strip_prefix("--output-document="))
+            .or_else(|| a.strip_prefix("--cookie-jar="))
+        {
+            push(&mut out, v);
+            continue;
+        }
+        let takes = matches!(
+            a,
+            "-o" | "--output" | "-O" | "--output-document" | "--cookie-jar"
+        ) || (prog == "curl" && a == "-c");
+        if takes {
+            if let Some(v) = args.get(at) {
+                at += 1;
+                push(&mut out, v);
+            }
+            continue;
+        }
+        // Attached short forms: `curl -o/tmp/x`, `curl -cjar`.
+        if let Some(v) = a.strip_prefix("-o").filter(|v| !v.is_empty()) {
+            push(&mut out, v);
+        } else if let Some(v) = a.strip_prefix("-O").filter(|v| !v.is_empty()) {
+            push(&mut out, v);
+        } else if prog == "curl"
+            && let Some(v) = a
+                .strip_prefix("-c")
+                .filter(|v| !v.is_empty() && !v.starts_with('-'))
+        {
+            push(&mut out, v);
+        }
+    }
+    out
 }
 
 /// The words a searching or editing program reads as its pattern or its
@@ -9465,10 +9671,13 @@ mod tests {
             Some("cargo build")
         );
         assert_eq!(command_scope("ls").as_deref(), Some("ls"));
+        // A whole chain with no focused segment still names itself; `a`
+        // uses [`asking_segment`] so the kind sticks across compounds.
         assert_eq!(
             command_scope("npm ci && npm test").as_deref(),
             Some("npm ci && npm test")
         );
+        assert_eq!(command_scope("ls /usr/include").as_deref(), Some("ls"));
         for d in [
             "rm -rf target",
             "find . -name '*.o' -delete",
@@ -10963,6 +11172,149 @@ mod tests {
         );
         assert!(!made.iter().any(|p| p.ends_with("/x.rs")), "{made:?}");
         assert_eq!(made.len(), 5, "{made:?}");
+        // A folder the write tool would make: credited before the write, so
+        // `rm -rf` of it is free (tunes 0.22 / G1).
+        let nested = write_makes(
+            &json!({"path": "scratch/probe/out.sh", "content": "x\n"}),
+            &ctx_for(Role::SoloBuild, d),
+        );
+        let nested: Vec<String> = nested.iter().map(|p| p.display().to_string()).collect();
+        for p in [
+            real_path(&d.join("scratch")),
+            real_path(&d.join("scratch/probe")),
+            real_path(&d.join("scratch/probe/out.sh")),
+        ] {
+            let p = p.display().to_string();
+            assert!(nested.contains(&p), "{p} in {nested:?}");
+        }
+        let mut wrote = ctx_for(Role::SoloBuild, d);
+        wrote.created = write_makes(
+            &json!({"path": "scratch/probe/out.sh", "content": "x\n"}),
+            &wrote,
+        );
+        assert_eq!(
+            decide("bash", &json!({"command": "rm -rf scratch"}), &wrote),
+            Decision::Allow
+        );
+        // curl -o / install / ln in the project: credited for later rm.
+        for cmd in [
+            "curl -s -o probe.out http://127.0.0.1:9/; rm -f probe.out",
+            "ln -s x.rs link.rs && rm -f link.rs",
+            "install -m 644 x.rs installed.rs && rm -f installed.rs",
+        ] {
+            assert_eq!(bash(cmd, Role::SoloBuild, d), Decision::Allow, "{cmd}");
+        }
+    }
+
+    /// Scratch writes stay free whether by redirect or by copy into `/tmp`.
+    /// `cp` used to treat the source as a write and AskOutside while
+    /// `echo > /tmp/…` ran free (tunes 0.24.1 / G1).
+    #[test]
+    fn scratch_writes_are_free_for_redirect_and_copy_alike() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("x.rs"), "fn main() {}\n").unwrap();
+        let sh = |cmd: &str| bash(cmd, Role::SoloBuild, d);
+        for cmd in [
+            "echo x > /tmp/ryter-g1-a.txt",
+            "cat x.rs > /tmp/ryter-g1-b.txt",
+            "cp x.rs /tmp/ryter-g1-c.txt",
+            "cp -t /tmp x.rs",
+            "install -m 644 x.rs /tmp/ryter-g1-d.txt",
+            "ln -s /tmp/ryter-g1-a.txt /tmp/ryter-g1-link",
+            "curl -s -o /tmp/ryter-g1-f.txt http://127.0.0.1:9/",
+        ] {
+            assert_eq!(sh(cmd), Decision::Allow, "{cmd}");
+        }
+        // An outside source copied into scratch is an ordinary read ask,
+        // not AskOutside (the write landed in a free place).
+        assert_eq!(sh("cp /etc/os-release /tmp/ryter-g1-os.txt"), Decision::Ask);
+        assert_eq!(
+            sh("cp /etc/os-release /opt/ryter-g1.txt"),
+            Decision::AskOutside
+        );
+        // Real outside writes still ask.
+        assert_eq!(sh("echo x > /opt/ryter-g1.txt"), Decision::AskOutside);
+        assert_eq!(sh("cp x.rs /opt/ryter-g1.txt"), Decision::AskOutside);
+    }
+
+    /// Kept replay harness for live-session `events.jsonl` (tunes / fiscus).
+    /// Run with `cargo test -p ryter-core --lib replay_live_session_asks -- --ignored`
+    /// after dropping a recording at the path below (ROADMAP item 2).
+    #[test]
+    #[ignore = "needs a recorded events.jsonl from a live session"]
+    fn replay_live_session_asks_through_the_gate() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/gate-replay/events.jsonl");
+        let log = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "drop a session events.jsonl at {} ({e}); see ROADMAP item 2 / G1",
+                path.display()
+            )
+        });
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("x.rs"), "fn main() {}\n").unwrap();
+        let mut ctx = ctx_for(Role::SoloBuild, d);
+        let mut asks = Vec::new();
+        for line in log.lines() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if v.get("kind").and_then(|k| k.as_str()) != Some("tool_call") {
+                continue;
+            }
+            if v.get("name").and_then(|n| n.as_str()) != Some("bash") {
+                continue;
+            }
+            let Some(cmd) = v
+                .pointer("/args/command")
+                .or_else(|| v.pointer("/arguments/command"))
+                .and_then(|c| c.as_str())
+            else {
+                continue;
+            };
+            // Credit what earlier commands in the recording made, as a live
+            // turn would, so own-turn deletes stay free.
+            let fx = effects(&json!({"command": cmd}), &ctx);
+            let decision = decide("bash", &json!({"command": cmd}), &ctx);
+            for p in fx.made {
+                if !ctx.created.contains(&p) {
+                    ctx.created.push(p);
+                }
+            }
+            for p in fx.kept {
+                if !ctx.kept.contains(&p) {
+                    ctx.kept.push(p);
+                }
+            }
+            if matches!(
+                decision,
+                Decision::Ask | Decision::AskOutside | Decision::AskSecret | Decision::AskRoot
+            ) {
+                asks.push((cmd.to_string(), decision));
+            }
+        }
+        // G1 false-ask traps: own-turn `rm` of credited paths, and
+        // AskOutside for a path under scratch space.
+        for (cmd, d) in &asks {
+            if *d == Decision::AskOutside && (cmd.contains("/tmp/") || cmd.contains("/var/tmp/")) {
+                panic!("scratch write must stay free; got AskOutside for {cmd}");
+            }
+            if cmd.split_whitespace().any(|w| matches!(w, "rm" | "rmdir")) {
+                let credited = ctx.created.iter().any(|p| {
+                    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    !name.is_empty() && cmd.contains(name)
+                });
+                assert!(!credited, "own-turn cleanup asked ({d:?}): {cmd}");
+            }
+        }
+        // A recording that asks only for real destroy/publish/outside/.env
+        // should land near zero here after G1; print for the operator.
+        eprintln!("gate replay asks: {}", asks.len());
+        for (cmd, d) in &asks {
+            eprintln!("  {d:?}: {cmd}");
+        }
     }
 
     /// The review of 0.20.0 found seven ways round the free deletion and the

@@ -17,13 +17,17 @@ use crate::llm::ToolSpec;
 use crate::role::Role;
 
 pub use fs::changed_lines;
-pub(crate) use policy::{Effects, effects, on_this_machine, resolve};
+pub(crate) use policy::{Effects, effects, on_this_machine, resolve, write_makes};
 pub use web::Search;
 pub(crate) use web::TAVILY_KEY_VAR;
 
 /// What `a` ("allow for this session") on this call's prompt would cover:
 /// a key, and the words for it. `None` when the prompt must not offer it.
-pub fn allow_scope(name: &str, args: &Value) -> Option<(String, String)> {
+///
+/// For a shell chain, the kind is the segment that asked — so `a` on
+/// `ls /usr && true` covers later `ls /usr/include`, not only that exact
+/// chain. Destruction still offers no `a`.
+pub fn allow_scope(name: &str, args: &Value, ctx: &ToolContext) -> Option<(String, String)> {
     match name {
         "write" | "search_replace" => Some(("edit".into(), "edits to files in the project".into())),
         "bash" => {
@@ -31,13 +35,16 @@ pub fn allow_scope(name: &str, args: &Value) -> Option<(String, String)> {
             if policy::destructive_command(cmd) {
                 return None;
             }
-            let scope = policy::command_scope(cmd)?;
-            let label = if scope.contains("&&") || scope.contains(';') || scope.contains('|') {
-                "this exact command".to_string()
-            } else {
-                format!("`{scope}` commands")
-            };
-            Some((format!("bash:{scope}"), label))
+            // The card names the asking segment; `a` must stick to that
+            // kind across later compounds, not to one exact chain.
+            let focused = policy::asking_segment(cmd, ctx)
+                .filter(|s| !policy::destructive_command(s))
+                .unwrap_or_else(|| cmd.to_string());
+            if policy::destructive_command(&focused) {
+                return None;
+            }
+            let scope = policy::command_scope(&focused)?;
+            Some((format!("bash:{scope}"), format!("`{scope}` commands")))
         }
         other => Some((other.to_string(), format!("{other} calls"))),
     }
@@ -735,7 +742,7 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
         Decision::AskRoot => run_as_root(name, args, ctx),
         Decision::Ask
             if ctx.always_approve
-                || allow_scope(name, args)
+                || allow_scope(name, args, ctx)
                     .is_some_and(|(key, _)| ctx.allowed.lock().is_ok_and(|a| a.contains(&key))) =>
         {
             run_with_hooks(name, args, ctx)
@@ -852,7 +859,7 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
         Decision::Ask => match &ctx.user_io {
             Some(io) => {
                 let summary = crate::user_io::summary_args(name, args);
-                let scope = allow_scope(name, args);
+                let scope = allow_scope(name, args, ctx);
                 let answer = io.ask_tool(
                     crate::user_io::ToolAsk {
                         tool: name.to_string(),
@@ -2008,19 +2015,77 @@ mod allow_tests {
 
     #[test]
     fn scopes_name_what_a_would_allow() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let c = tests::ctx(Role::SoloBuild, dir.path());
         assert_eq!(
-            allow_scope("bash", &json!({"command": "cargo test --workspace"})),
+            allow_scope("bash", &json!({"command": "cargo test --workspace"}), &c),
             Some(("bash:cargo test".into(), "`cargo test` commands".into()))
         );
         assert_eq!(
-            allow_scope("search_replace", &json!({"path": "a.rs"})).map(|s| s.1),
+            allow_scope("search_replace", &json!({"path": "a.rs"}), &c).map(|s| s.1),
             Some("edits to files in the project".into())
         );
         assert_eq!(
-            allow_scope("bash", &json!({"command": "rm -rf target"})),
+            allow_scope("bash", &json!({"command": "rm -rf target"}), &c),
             None
+        );
+        // A compound that asks: `a` names the asking segment's kind, so a
+        // later different chain with the same kind is covered.
+        assert_eq!(
+            allow_scope("bash", &json!({"command": "ls /usr/include && true"}), &c),
+            Some(("bash:ls".into(), "`ls` commands".into()))
+        );
+        assert_eq!(
+            allow_scope("bash", &json!({"command": "cat /etc/hosts; echo done"}), &c),
+            Some(("bash:cat".into(), "`cat` commands".into()))
         );
         assert!(strict_prompt("bash", &json!({"command": "git clean -fdx"})));
         assert!(!strict_prompt("bash", &json!({"command": "cargo test"})));
+    }
+
+    /// `a` on one compound covers later compounds that ask for the same
+    /// kind — the tunes run pressed always four times for `/usr`/`/etc`
+    /// reads because the key was the exact chain.
+    #[test]
+    fn allow_for_the_session_sticks_across_compound_steps() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut c = tests::ctx(Role::SoloBuild, dir.path());
+        let (io, rx) = crate::user_io::UserIo::pair();
+        c.user_io = Some(io);
+        let answers = std::thread::spawn(move || {
+            let mut asked = Vec::new();
+            while let Ok(req) = rx.recv() {
+                if let crate::user_io::UserRequest::Permission {
+                    summary,
+                    scope,
+                    reply,
+                    ..
+                } = req
+                {
+                    asked.push((summary.clone(), scope.clone()));
+                    let _ = reply.send(crate::user_io::Permission::Always);
+                }
+            }
+            asked
+        });
+        // Paths that exist on Linux and macOS; the gate asks on the read,
+        // and we only care which cards appeared (not that every host file
+        // is present — `/etc/os-release` is Linux-only).
+        let run = |cmd: &str| gated_execute("bash", &json!({"command": cmd}), &c).unwrap();
+        assert!(!run("ls /usr && true").is_error);
+        assert!(!run("ls /usr").is_error);
+        assert!(!run("ls /usr && pwd").is_error);
+        assert!(!run("cat /etc/hosts").is_error);
+        drop(c);
+        let asked = answers.join().unwrap();
+        let summaries: Vec<&str> = asked.iter().map(|(s, _)| s.as_str()).collect();
+        // `ls` once for the session; `cat` is another kind and asks once.
+        assert_eq!(
+            summaries,
+            vec!["ls /usr && true", "cat /etc/hosts"],
+            "{asked:?}"
+        );
+        assert_eq!(asked[0].1.as_deref(), Some("`ls` commands"));
+        assert_eq!(asked[1].1.as_deref(), Some("`cat` commands"));
     }
 }
