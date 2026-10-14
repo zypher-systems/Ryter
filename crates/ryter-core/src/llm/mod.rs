@@ -270,6 +270,8 @@ pub struct ReplayProvider {
     turns: Mutex<VecDeque<Vec<StreamDelta>>>,
     models: Vec<ModelInfo>,
     refused: Vec<String>,
+    /// When set, every [`Provider::stream`] fails with this provider error.
+    stream_err: Option<String>,
     /// When true, the last remaining turn is cloned instead of consumed.
     pub(crate) repeat_last: bool,
 }
@@ -281,6 +283,7 @@ impl ReplayProvider {
             turns: Mutex::new(VecDeque::from([deltas])),
             models: Vec::new(),
             refused: Vec::new(),
+            stream_err: None,
             repeat_last: true,
         }
     }
@@ -296,6 +299,7 @@ impl ReplayProvider {
             turns: Mutex::new(VecDeque::from(turns)),
             models: Vec::new(),
             refused: Vec::new(),
+            stream_err: None,
             repeat_last: false,
         }
     }
@@ -305,11 +309,20 @@ impl ReplayProvider {
         self.refused = models.iter().map(|m| m.to_string()).collect();
         self
     }
+
+    /// Fail every [`Provider::stream`] with a provider error (for choose-time checks).
+    pub fn failing(mut self, err: impl Into<String>) -> Self {
+        self.stream_err = Some(err.into());
+        self
+    }
 }
 
 #[async_trait]
 impl Provider for ReplayProvider {
     async fn stream(&self, _req: CompletionRequest) -> Result<DeltaStream> {
+        if let Some(err) = &self.stream_err {
+            return Err(crate::Error::Provider(err.clone()));
+        }
         let mut q = self.turns.lock().expect("replay mutex");
         let deltas = if self.repeat_last && q.len() == 1 {
             q.front().cloned().unwrap_or_default()
@@ -366,6 +379,49 @@ pub fn explain_error(e: &str) -> Option<String> {
         return Some("out of credits".into());
     }
     None
+}
+
+/// Can this account actually run `model` with tools? One tiny request with
+/// one tool, capped at 16 output tokens: a fraction of a cent. It catches
+/// what no catalog says: a data policy that leaves the model no provider,
+/// missing tool support, no credits, or a model that was retired. Used when
+/// a hat's model is chosen in `/models`, so the failure is at choose time
+/// rather than on the first real message.
+pub async fn probe_model(provider: &dyn Provider, model: &str) -> std::result::Result<(), String> {
+    use futures_util::StreamExt;
+    let req = CompletionRequest {
+        model: model.to_string(),
+        system: None,
+        messages: vec![Message {
+            role: "user".into(),
+            content: "Reply with the single word: ok".into(),
+            tool_call_id: None,
+            tool_calls: None,
+        }],
+        tools: vec![ToolSpec {
+            name: "noop".into(),
+            description: "Does nothing. Do not call it.".into(),
+            parameters: serde_json::json!({"type": "object", "properties": {}}),
+        }],
+        max_tokens: Some(16),
+        reasoning: None,
+    };
+    let run = async {
+        let mut stream = provider.stream(req).await.map_err(|e| e.to_string())?;
+        while let Some(d) = stream.next().await {
+            d.map_err(|e| e.to_string())?;
+        }
+        Ok::<(), String>(())
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(45), run).await {
+        Ok(r) => r.map_err(|e| short_reason(&e)),
+        Err(_) => Err("no answer in 45s".into()),
+    }
+}
+
+/// Provider errors are long JSON; keep the part a person can act on.
+fn short_reason(e: &str) -> String {
+    explain_error(e).unwrap_or_else(|| e.lines().next().unwrap_or(e).chars().take(140).collect())
 }
 
 /// Wire protocol for a connection.
@@ -629,5 +685,54 @@ mod tests {
             n += 1;
         }
         assert!(n >= 3);
+    }
+
+    #[test]
+    fn probe_failures_read_as_reasons() {
+        let cases = [
+            (
+                r#"provider: http 400 Bad Request: {"error":{"message":"nonexistent-vendor/no-such-model is not a valid model ID","code":400}}"#,
+                "renamed or retired",
+            ),
+            (
+                r#"http 404: {"error":{"message":"No endpoints found matching your data policy (Zero data retention)"}}"#,
+                "data policy",
+            ),
+            (
+                r#"http 404: {"error":{"message":"No endpoints found that support tool use"}}"#,
+                "tool use",
+            ),
+            (
+                r#"http 402: {"error":{"message":"Insufficient credits"}}"#,
+                "credits",
+            ),
+            (
+                r#"http 401: {"error":{"message":"User not found."}}"#,
+                "key was refused",
+            ),
+        ];
+        for (raw, want) in cases {
+            let got = short_reason(raw);
+            assert!(got.contains(want), "{raw} -> {got}");
+            assert!(!got.contains('{'), "no JSON left: {got}");
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_passes_a_stream_that_answers() {
+        let p = ReplayProvider::new(vec![StreamDelta::Text("ok".into()), StreamDelta::Done]);
+        probe_model(&p, "test-model").await.expect("usable");
+    }
+
+    #[tokio::test]
+    async fn probe_maps_a_provider_refusal_to_a_short_reason() {
+        let p = ReplayProvider::new(vec![]).failing(
+            r#"http 404: {"error":{"message":"No endpoints found matching your data policy (Zero data retention)"}}"#,
+        );
+        let err = probe_model(&p, "refused-model")
+            .await
+            .expect_err("should fail");
+        assert!(err.contains("data policy"), "{err}");
+        assert!(!err.contains('{'), "{err}");
     }
 }

@@ -345,6 +345,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             if connection == view.connection && model == view.model {
                 view.specialists.remove(&role);
             } else {
+                check_model(cx, connection.clone(), model.clone(), role.clone());
                 view.specialists.insert(
                     role.clone(),
                     ryter_core::RoleModel {
@@ -894,6 +895,12 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
                 save_hats(view, cx);
             }
             view.system(format!("model · {model}{}", crate::view::followed(&own)));
+            check_model(
+                cx,
+                view.connection.clone(),
+                model.clone(),
+                "all hats".into(),
+            );
             cx.send(Work::Reconnect {
                 name: view.connection.clone(),
                 model,
@@ -902,6 +909,38 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
         }
         Err(_) => perform(view, cx, Action::BeginSetKey(view.connection.clone())),
     }
+}
+
+/// One tiny request with a tool: catch a data policy, missing tools, or no
+/// credits when the model is chosen, not on its first message.
+fn check_model(cx: &mut Ctx, connection: String, model: String, seat: String) {
+    let tx = cx.notice_tx.clone();
+    let cfg = cx.cfg.clone();
+    std::thread::spawn(move || {
+        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        let result = match (
+            cfg.connections.get(&connection),
+            resolve_secret(&cfg, &ConnectionId::new(&connection)),
+        ) {
+            (Some(c), Ok(key)) => {
+                let p = ryter_core::http_provider(c, key);
+                rt.block_on(ryter_core::probe_model(&p, &model))
+            }
+            (None, _) => Err(format!("unknown connection {connection}")),
+            (_, Err(_)) => Err(format!("no key for {connection}")),
+        };
+        let _ = tx.send(Notice::ModelChecked {
+            seat,
+            connection,
+            model,
+            result,
+        });
+    });
 }
 
 /// Switch hats: the hat the next message goes to, now. The agent takes
