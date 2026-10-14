@@ -189,8 +189,9 @@ pub struct UiConfig {
     pub line_numbers: bool,
     /// `/commit` adds a `Ryter:` trailer: model, cost, tests.
     pub receipts: bool,
-    /// `ledger` (one reading column on a timeline, status in the bottom
-    /// bar) | `classic` (chat beside the info cards, as before 0.6.0).
+    /// `workspace` (hat rack, three views, instruments) | `ledger` (the
+    /// 0.25 reading column) | `classic` (chat beside the info cards, as
+    /// before 0.6.0).
     pub layout: String,
     /// Open a page the model shows (`show_page`) in the browser. Off, the
     /// chat gives its link only.
@@ -208,6 +209,11 @@ impl UiConfig {
     pub fn classic(&self) -> bool {
         self.layout == "classic"
     }
+
+    /// The workspace: hat rack, conversation / hats / sessions, instruments.
+    pub fn workspace(&self) -> bool {
+        self.layout == "workspace"
+    }
 }
 
 impl Default for UiConfig {
@@ -222,7 +228,7 @@ impl Default for UiConfig {
             timestamps: true,
             line_numbers: true,
             receipts: true,
-            layout: "ledger".into(),
+            layout: "workspace".into(),
             open_pages: true,
             start_hat: "plan".into(),
             bell: false,

@@ -176,7 +176,7 @@ impl Settings {
             select(
                 "layout",
                 "layout",
-                &["ledger", "classic"],
+                &["workspace", "ledger", "classic"],
                 &view.ui.layout,
                 &d.layout,
             ),

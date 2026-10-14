@@ -34,6 +34,21 @@ pub enum Click {
     Pane,
     /// Open a card's panel.
     Open(PanelId),
+    /// A control on the workspace chrome.
+    Workspace(WorkspaceClick),
+}
+
+/// What a click on the workspace chrome does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceClick {
+    /// Conversation, hats, or sessions (`1`, `2`, `3`).
+    Page(u8),
+    /// Wear this hat and open the hats page.
+    Wear(ryter_core::Role),
+    /// Open the command palette.
+    Palette,
+    /// Switch between the dark and light themes.
+    Theme,
 }
 
 /// A drag in progress.

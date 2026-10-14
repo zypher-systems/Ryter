@@ -100,6 +100,13 @@ fn route(view: &mut View, key: KeyEvent) -> Action {
         }
     }
 
+    // Workspace chrome: views, instruments, and which pane has focus.
+    // A palette or the workbench keeps the keys. A permission card does
+    // not: these are not its answers.
+    if let Some(a) = crate::workspace::chrome_key(view, key) {
+        return a;
+    }
+
     // A focused panel (or modal) owns everything else.
     if !view.panels.is_empty() {
         let a = panel::handle_key(view, key);
@@ -165,6 +172,10 @@ fn route(view: &mut View, key: KeyEvent) -> Action {
             _ => {}
         }
         return Action::None;
+    }
+
+    if let Some(a) = crate::workspace::nav_key(view, key) {
+        return a;
     }
 
     // `$` on an empty composer opens the spend drawer (the ledger's bar
