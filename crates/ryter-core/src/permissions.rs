@@ -55,6 +55,19 @@ impl Permissions {
     }
 }
 
+/// A pattern a person can save from an allow card: the asking command, or
+/// the summary when the card names one segment. Long lines keep a usable
+/// head so the panel's field still fits.
+pub fn suggest_pattern(asks: Option<&str>, summary: &str) -> String {
+    let raw = asks.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(summary.trim());
+    let one = raw.lines().next().unwrap_or(raw).trim();
+    if one.chars().count() <= 120 {
+        one.to_string()
+    } else {
+        one.chars().take(120).collect()
+    }
+}
+
 /// How much of a pattern is spelled out: the characters that aren't
 /// wildcards. `git push*` beats `git *`, which beats `*`.
 fn specificity(pattern: &str) -> usize {
@@ -155,5 +168,17 @@ mod tests {
         // `edit` on its own.
         let p: Permissions = toml::from_str("edit = \"ask\"\n").unwrap();
         assert_eq!(p.edit, Some(Answer::Ask));
+    }
+
+    #[test]
+    fn suggest_pattern_prefers_the_asking_segment() {
+        assert_eq!(
+            suggest_pattern(Some("rm -rf target"), "cd x && rm -rf target"),
+            "rm -rf target"
+        );
+        assert_eq!(suggest_pattern(None, "git push origin main"), "git push origin main");
+        assert_eq!(suggest_pattern(Some("  "), "git push"), "git push");
+        let long = "x".repeat(200);
+        assert_eq!(suggest_pattern(None, &long).chars().count(), 120);
     }
 }

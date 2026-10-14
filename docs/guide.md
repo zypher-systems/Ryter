@@ -157,6 +157,7 @@ Type a message and press `Enter`. `Shift+Enter` (or `Alt+Enter`) inserts a newli
 The keys are on the card's last row:
 - **`⏎`** allows this call. An Enter pressed in the first half-second after the card opens is ignored, since it may have been meant to send a message.
 - **`a`** allows the kind of action the card names for the rest of the session: "edits to files in the project", or "`cargo test` commands". Anything else still asks.
+- **`r`** on a bash ask opens `/permissions` with that command as a draft, so you can save a durable allow without yolo. The card stays until you answer. Outside-project writes, the project's `.env`, and root do not offer `r`.
 - **`n`** or **`Esc`** denies.
 - **Commands that delete, move, or discard files** (`rm`, `mv`, `git reset --hard`, `git clean`, deleting a branch) **writes outside the project that ask** (see "Outside the project") and **a command as root** (see "As root") take only **`y`**. Enter says so instead of approving, and there's no `a` for them.
 
@@ -325,7 +326,7 @@ stop  = "docker compose down"
 
 Refused in every hat, whatever is answered: reading a secret or a credential folder (naming one is not reading it: `grep '\.env' .gitignore`, `sed -n '/\.pem/p' .gitignore` and `git check-ignore .env` run, `grep KEY .env` does not), `su`, `doas`, `pkexec` and every spelling of `sudo` but the plain one (see "As root"), a shell handed a command as text (`bash -c`, `sh <<<`, a pipe into `sh`), and rewiring the shell (`alias`, `HOME=`, `IFS=`, a coprocess, a nameref by `declare -n`). A variable that gives a program something else to load (`LD_PRELOAD`, `PATH=/tmp:$PATH`, `NODE_OPTIONS='--require …'`, `RUSTC_WRAPPER`, `DOCKER_HOST`) asks in the build hat and is refused in the others. Ordinary variables run: `NODE_ENV=test`, `DATABASE_URL=…`, `RUST_BACKTRACE=1`, `PATH="$HOME/.cargo/bin:$PATH"`.
 
-**Your own rules.** `[permissions]` in `~/.ryter/config.toml` moves any of the asks above, either way, short of a refusal. It is read from your own file only: a project's `.ryter/config.toml` can set its models and its budget, not what the gate asks about, so a repository can't widen the gate for itself.
+**Your own rules.** `/permissions` edits durable allow/ask/deny patterns without turning on yolo. Saves go to `~/.ryter/permissions.toml` (and apply to the running session). You can still hand-write `[permissions]` in `~/.ryter/config.toml`; once the TUI has saved, `permissions.toml` is the file that counts. A project's `.ryter/config.toml` can set its models and its budget, not what the gate asks about, so a repository can't widen the gate for itself. On an allow card for a bash ask, `r` opens the panel with that command as a draft (not for outside-project writes, the project's `.env`, or root).
 
 ```toml
 [permissions]
@@ -340,7 +341,7 @@ edit = "allow"                      # or "ask": every edit of the project's file
 "mv *" = "ask"
 ```
 
-`*` is any run of characters and `?` one. A rule is matched against each command of a line (`cd src && mv a b` meets `"mv *"`), and the most specific pattern wins, the stricter answer at a tie. A rule can't open what the gate refuses: `"*" = "allow"` leaves `sudo` and `.env` where they were.
+`*` is any run of characters and `?` one. A rule is matched against each command of a line (`cd src && mv a b` meets `"mv *"`), and the most specific pattern wins, the stricter answer at a tie. A rule can't open what the gate refuses: `"*" = "allow"` leaves `sudo` and reading secrets where they were. Root, `.env`, and outside-project writes still ask from the card when those prompts are what the gate raised.
 
 **Three answers for the whole session.** `/tools` shows them. The *tools* row of `/settings` sets the running session's answer too, and is the one the next TUI session starts with; `--always-approve` and `--yolo` win over it, and headless takes its answer from the flags only:
 
@@ -513,7 +514,7 @@ The **budget** card on the right shows the cap, how much is used and left, or `o
 
 ## Slash commands
 
-Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/mcp` `/skills` `/rules` `/hooks` `/sessions` `/spend` `/theme` `/tools` `/context` `/doctor` `/help`. `/changes` and `/commit` open panels too (see [Review and commit](#review-and-commit)). Direct commands act immediately: `/undo [force]` `/redo [force]` `/new` `/rename <title>` `/budget [amount|+amount|off]` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
+Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/mcp` `/skills` `/rules` `/hooks` `/sessions` `/spend` `/theme` `/tools` `/permissions` `/context` `/doctor` `/help`. `/changes` and `/commit` open panels too (see [Review and commit](#review-and-commit)). Direct commands act immediately: `/undo [force]` `/redo [force]` `/new` `/rename <title>` `/budget [amount|+amount|off]` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
 
 User-invocable skills and `~/.ryter/commands/*.md` join the palette under **skills**. Built-ins win on a name clash.
 
@@ -719,7 +720,7 @@ Plans, decisions and audits stored in the project follow the workspace’s acces
 - **Audit:** what the build hat runs, behind a checkpoint that puts the tree back when the turn ends; git stays read-only (`git stash list` and `show` included); its only files are `.ryter/audit.md` and the dated copies. Without a git repository there is no checkpoint, and it is held to reading, tests and linters.
 - **Scribe:** reading, read-only commands, and documentation files. It does not write code or Ryter's own files.
 - Denied in every hat: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files. An example file (`.env.example`, `.env.sample`) is not a secret. One exception: the build hat may **write** the project's own `.env` (or `.env.local`, `config/.env.production`, `local.env`) whole, or copy it from its example (`cp .env.example .env`), with your `y` each time, since a project that needs one can't run without it. The card shows what would be written; nothing reads it back, and an edit in place stays refused, as does every other hat. An approved plan, `a` and `--always-approve` don't cover it; headless refuses it.
-- Shell commands are judged per segment (`a && b` is two commands). Privilege escalation and piping into a shell are denied. `git push` asks. What each hat may write is in [Hats](#hats). In the TUI a card shows the tool and its arguments: `⏎` or `y` allow this call, `n` deny, `a` allow that kind of action for the rest of the session; destructive commands and writes outside the project take only `y` (see [Approving](#talking-to-ryter)). Headless, an ask is refused unless `--always-approve` or `--yolo` is set, and those two still stop at what [Hats](#hats) says they stop at.
+- Shell commands are judged per segment (`a && b` is two commands). Privilege escalation and piping into a shell are denied. `git push` asks. What each hat may write is in [Hats](#hats). In the TUI a card shows the tool and its arguments: `⏎` or `y` allow this call, `n` deny, `a` allow that kind of action for the rest of the session, `r` add a durable rule in `/permissions` for a bash ask; destructive commands and writes outside the project take only `y` (see [Approving](#talking-to-ryter)). Headless, an ask is refused unless `--always-approve` or `--yolo` is set, and those two still stop at what [Hats](#hats) says they stop at.
 - `ask_user` lets the model ask a question; the TUI shows it as a modal (number keys pick a choice, or type free text).
 - `check_package` tells the plan and audit hats a dependency's latest release and its known advisories, from its registry (crates.io, npm, PyPI, the Go module proxy) and OSV.dev: fixed public hosts, read-only, no key, on by default. The build and scribe hats are refused it and told who asks.
 - `[features] web` (on by default) offers `web_fetch` and `web_search` to the plan and audit hats; the build and scribe hats are refused them and told who uses them. `web_fetch` refuses localhost, private, link-local and metadata addresses, and follows no redirect into them. `web_search` goes through the provider in `[search]` and nowhere else (see [Web search](#web-search)); without one it says what to set.

@@ -43,6 +43,11 @@ pub enum Work {
         /// The mode.
         mode: ryter_core::ToolsMode,
     },
+    /// Durable `[permissions]` rules from `/permissions`.
+    SetPermissions {
+        /// The rules.
+        permissions: ryter_core::permissions::Permissions,
+    },
     /// Emit a `Context` event.
     Context,
     /// Compact now.
@@ -434,6 +439,15 @@ pub fn run(init: WorkerInit) {
                 if let Some(a) = &mut agent {
                     a.ctx.always_approve = always_approve;
                     a.ctx.yolo = yolo;
+                }
+            }
+            Ok(Work::SetPermissions { permissions }) => {
+                cfg.permissions = permissions.clone();
+                if let Some(a) = &mut agent {
+                    a.ctx.permissions = Arc::new(permissions.clone());
+                    if let Some(c) = &mut a.cfg {
+                        c.permissions = permissions;
+                    }
                 }
             }
             Ok(Work::New) => {
