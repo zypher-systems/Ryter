@@ -1059,10 +1059,19 @@ fn snapshot_workspace_be() {
     all_sizes("workspace-be", &workspace_be());
     let text = render_to_string(&workspace_be(), 160, 50);
     let top = text.lines().next().unwrap();
-    assert!(top.contains("RYTER") && top.contains("Conversation"), "{top}");
+    assert!(
+        top.contains("RYTER") && top.contains("Conversation"),
+        "{top}"
+    );
     assert!(!top.contains('☀') && !top.contains('●'), "{top}");
-    assert!(text.contains("this month") && text.contains("unpriced"), "{text}");
-    assert!(text.contains("12 sessions") && text.contains("$4.82"), "{text}");
+    assert!(
+        text.contains("this month") && text.contains("unpriced"),
+        "{text}"
+    );
+    assert!(
+        text.contains("12 sessions") && text.contains("$4.82"),
+        "{text}"
+    );
 }
 
 /// The sidebar's rows, squashed, for a column 28 wide with `room` rows.

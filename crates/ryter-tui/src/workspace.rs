@@ -323,10 +323,7 @@ fn draw_top(
         0,
         Line::from(vec![
             Span::styled(" ", sty(theme.fg, bg)),
-            Span::styled(
-                "RYTER",
-                sty(theme.fg, bg).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("RYTER", sty(theme.fg, bg).add_modifier(Modifier::BOLD)),
         ]),
     );
     draw_top_controls(frame, area, view, theme, clicks, mark_w);
@@ -2352,7 +2349,10 @@ mod tests {
         let text = crate::draw::render_to_string(&v, 160, 50);
         let squashed = text.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(squashed.contains("Project"), "{text}");
-        assert!(squashed.contains("$4.82") && squashed.contains("total"), "{text}");
+        assert!(
+            squashed.contains("$4.82") && squashed.contains("total"),
+            "{text}"
+        );
         assert!(
             squashed.contains("$1.24") && squashed.contains("this month"),
             "{text}"
@@ -2377,7 +2377,8 @@ mod tests {
             .filter(|l| l.contains("Spend") || l.contains("Project") || l.contains("$0.00"))
             .collect::<Vec<_>>();
         assert!(
-            insp.iter().all(|l| !l.contains("Project") || !l.contains("$0.00")),
+            insp.iter()
+                .all(|l| !l.contains("Project") || !l.contains("$0.00")),
             "{insp:?}"
         );
     }
