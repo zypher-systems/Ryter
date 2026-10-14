@@ -23,7 +23,7 @@ The last release is 0.28.0. Notes for the next one collect in `docs/releases/` a
 
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
-- **1.0 item 1 (flow on a real project): closed 2026-10-14** (recorded in 0.28.0). Leftover findings from fiscus/tunes stay under Next (further ask friction → item 2; `tmux kill-server` → item 4).
+- **1.0 item 1 (flow on a real project): closed 2026-10-14** (recorded in 0.28.0). Leftover findings from fiscus/tunes stay under Next (further ask friction → item 2; `tmux kill-server` / nested scratch-repo delete → item 4 / G4).
 - **1.0 item 3 Linux setup: closed 2026-10-14** (recorded in 0.28.0). Still owed under Next: model check when a hat's model is chosen in `/models`; macOS by hand.
 
 ## Next
@@ -53,7 +53,7 @@ Everything here serves an item of the 1.0 list; the number says which. The direc
 - Narrow the sandbox's grant on Ryter's own folder to this project's sessions.
 - Recorded live sessions replayed through the gate after each change to it, as was done for 0.14.0 and the fiscus run. The replay is a throwaway test each time; a kept `#[ignore]` test over a recorded `events.jsonl` would make it one command.
 - `curl`'s body to another host asks (it leaves the machine), but a header, user agent, referer, `-u` or `-w` value carrying `$VAR` to another host runs: `uploads_elsewhere` counts bodies, not headers. Older than 0.20.0 (found by its reviewers); a secret in a header leaves the machine as surely as one in a body.
-- A repository nested *below* a scratch folder the turn deletes freely (`rm -rf /tmp/probe` with someone's repository at `/tmp/probe/sub`) is not protected; the check looks at the path and above it, as `free_place` always has.
+- ~~A repository nested *below* a scratch folder the turn deletes freely (`rm -rf /tmp/probe` with someone's repository at `/tmp/probe/sub`) is not protected~~ — closed in G4 (gate looks below the path too).
 - Writing a key-named file to scratch space (`touch /tmp/tls_test.key`, to check a `.gitignore`) is refused as naming a secret. Left as the secret rule for now.
 - Selection, from the 0.24.0 reviews, non-blocking: a scrolled message box copies the `↑`/`↓` mark in its corner; where the "new rows" mark meets the palette a press uses the mark's rect; a pulled selection whose start has scrolled off the screen, dragged onto the pinned question, ends a row or two short; a click on a card can open its panel on top of a card that opened between press and release; prose that wrapped is copied with the screen's line breaks.
 - As root, the programs that only list (`ls`, `find`, `du`, `stat`) are not held to the folder rule, so `sudo find / -name x` or `sudo ls -R /` prints the names, not the contents, of what is in root's folders when an ancestor is named. From the 0.23.0 approving review, non-blocking: refuse them a folder that holds one of root's own folders, which `holds_something_closed` nearly computes already.
