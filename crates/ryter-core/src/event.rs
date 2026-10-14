@@ -57,8 +57,8 @@ pub enum AgentEvent {
         what: String,
         /// Only `y` would do: a deletion, a write outside the project.
         strict: bool,
-        /// `allow`, `always`, `deny`, or `none` when nobody answered: the
-        /// turn was cancelled, the card timed out, or the screen went away.
+        /// `allow`, `always`, `deny`, `timeout` when the wait ended with no
+        /// answer, or `none` when the turn was cancelled or the screen went away.
         answer: String,
         /// How long the person took.
         waited_ms: u64,

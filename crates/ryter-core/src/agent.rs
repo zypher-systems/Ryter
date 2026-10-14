@@ -1103,6 +1103,9 @@ impl Agent {
                      from their next message; follow them now too."
                 )))
             }
+            crate::user_io::Permission::TimedOut => Ok(ToolOutput::err(
+                crate::user_io::timed_out_waiting("update_rules", &format!("change {shown}")),
+            )),
             crate::user_io::Permission::Deny => Ok(ToolOutput::err(
                 "the user said no: their rules are unchanged. Ask what they would like instead",
             )),
@@ -1182,6 +1185,9 @@ impl Agent {
                     diff: None,
                 })
             }
+            crate::user_io::Permission::TimedOut => Ok(ToolOutput::err(
+                crate::user_io::timed_out_waiting("switch hat", &summary),
+            )),
             crate::user_io::Permission::Deny => Ok(ToolOutput::err(format!(
                 "the user said no: stay in the {} hat, and ask what they want instead",
                 self.role

@@ -695,6 +695,9 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                     crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
                         Err(crate::error::Error::Cancelled)
                     }
+                    crate::user_io::Permission::TimedOut => Ok(ToolOutput::err(
+                        crate::user_io::timed_out_waiting(&format!("{name} {OUTSIDE}"), &summary),
+                    )),
                     crate::user_io::Permission::Deny => Ok(ToolOutput::err(format!(
                         "denied by user: {name} {summary} (outside the project). Work inside \
                          the project instead, or ask the user where it should go"
@@ -724,6 +727,9 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                     crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
                         Err(crate::error::Error::Cancelled)
                     }
+                    crate::user_io::Permission::TimedOut => Ok(ToolOutput::err(
+                        crate::user_io::timed_out_waiting(&format!("{name} {SECRET}"), &summary),
+                    )),
                     crate::user_io::Permission::Deny => Ok(ToolOutput::err(format!(
                         "denied by user: {name} {summary} (a secret file). Don't retry it: \
                          tell the user what the file needs and let them write it"
@@ -888,6 +894,9 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                     crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
                         Err(crate::error::Error::Cancelled)
                     }
+                    crate::user_io::Permission::TimedOut => Ok(ToolOutput::err(
+                        crate::user_io::timed_out_waiting(name, &summary),
+                    )),
                     // Said so the model doesn't ask again in other words.
                     crate::user_io::Permission::Deny => Ok(ToolOutput::err(format!(
                         "denied by user: {name} {summary}. Don't retry it or a variant of it: \
@@ -935,6 +944,12 @@ fn run_as_root(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput
         crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {}
         crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
             return Err(crate::error::Error::Cancelled);
+        }
+        crate::user_io::Permission::TimedOut => {
+            return Ok(ToolOutput::err(crate::user_io::timed_out_waiting(
+                &format!("{name} {AS_ROOT}"),
+                &summary,
+            )));
         }
         crate::user_io::Permission::Deny => {
             return Ok(ToolOutput::err(format!(
@@ -1835,6 +1850,36 @@ mod tests {
         }
         let out = worker.join().unwrap();
         assert!(!out.is_error, "{out:?}");
+    }
+
+    /// Silence on the card is not `denied by user`: the model must not
+    /// treat AFK as a no.
+    #[test]
+    fn permission_wait_timeout_is_not_denied_by_user() {
+        let dir = TempDir::new().unwrap();
+        let (io, rx) = crate::user_io::UserIo::pair();
+        let mut c = ctx(Role::SoloBuild, dir.path());
+        c.user_io = Some(io.clone());
+        let worker = std::thread::spawn(move || {
+            let _short = crate::user_io::ShortWait::ms(80);
+            gated_execute(
+                "bash",
+                &json!({"command": "rm -rf /nonexistent-ryter-timeout-fixture"}),
+                &c,
+            )
+            .unwrap()
+        });
+        let held = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        let out = worker.join().unwrap();
+        drop(held);
+        assert!(out.is_error, "{out:?}");
+        assert!(
+            out.text.contains("timed out waiting for user") && out.text.contains("not a denial"),
+            "{out:?}"
+        );
+        assert!(!out.text.contains("denied by user"), "{out:?}");
+        let asked = io.take_asked();
+        assert_eq!(asked[0].answer, "timeout", "{asked:?}");
     }
 
     #[test]

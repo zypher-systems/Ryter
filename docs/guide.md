@@ -160,7 +160,7 @@ The keys are on the card's last row:
 - **`n`** or **`Esc`** denies.
 - **Commands that delete, move, or discard files** (`rm`, `mv`, `git reset --hard`, `git clean`, deleting a branch) **writes outside the project that ask** (see "Outside the project") and **a command as root** (see "As root") take only **`y`**. Enter says so instead of approving, and there's no `a` for them.
 
-`ask_user` questions and the first-run “trust this project?” prompt are modals with a heavy top border. `^c` on a prompt while a turn runs stops the turn.
+If nobody answers for five minutes, the call ends with **timed out waiting for user — not a denial**. That is not the same as pressing `n`: the model is told silence is not a no. `ask_user` questions and the first-run “trust this project?” prompt are modals with a heavy top border. `^c` on a prompt while a turn runs stops the turn.
 
 **Pickers.** In `/models` and `/help`, typing filters the list from a search row at the top of the panel. The model picker opens on the model you're using. On OpenRouter it lists only the models your account can use, with tool support: models your privacy settings (such as zero data retention), provider rules, or guardrails leave with no provider are left out. Change those at [openrouter.ai/settings/privacy](https://openrouter.ai/settings/privacy), and the list follows the next time it refreshes. Model lists also leave out what can't hold a conversation in a terminal: batch routes (`:batch`, which answer hours later without streaming) and models that make images or audio. A model id you type into `config.toml` or `--model` is used as given.
 
