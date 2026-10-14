@@ -100,13 +100,12 @@ fn edge_notes(view: &View, theme: Theme) -> Vec<Span<'static>> {
 }
 
 /// The hat's chip at the head of the prompt. The ledger says it in
-/// lowercase (` build `). The workspace capitalizes it, and uses the
-/// heading face when styled text is on. None while the prompt is taking
-/// something other than a message.
+/// lowercase (` build `). The workspace capitalizes it (` Build `). None
+/// while the prompt is taking something other than a message.
 fn chip(view: &View) -> Option<String> {
     matches!(view.composer.mode, Mode::Normal).then(|| {
         let name = if view.ui.workspace() {
-            crate::glyphs::hat_face(view.mode, view.ui.styled_text)
+            crate::glyphs::hat_label(view.mode)
         } else {
             crate::sidebar::hat_name(view.mode).to_string()
         };
@@ -258,10 +257,9 @@ pub fn draw_workspace(
         height: box_area.height.saturating_sub(2),
     };
     if let Some(c) = chip(view) {
-        let label = c.trim().to_string();
         let fill = theme.mode(view.mode);
         let on = theme.bg;
-        let spans = pill(&label, on, fill);
+        let spans = pill(&c, on, fill);
         let span_w: u16 = spans.iter().map(|s| wrap::width(&s.content) as u16).sum();
         frame.render_widget(
             Paragraph::new(Line::from(spans)),

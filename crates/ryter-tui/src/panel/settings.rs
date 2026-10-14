@@ -196,12 +196,6 @@ impl Settings {
             Field::new("bell", "bell on a question", Kind::Toggle(view.ui.bell))
                 .origin(origin(&view.ui.bell, &d.bell)),
             Field::new(
-                "styled_text",
-                "styled wordmark",
-                Kind::Toggle(view.ui.styled_text),
-            )
-            .origin(origin(&view.ui.styled_text, &d.styled_text)),
-            Field::new(
                 "nerd_font",
                 "nerd font icons",
                 Kind::Toggle(view.ui.nerd_font),
@@ -306,9 +300,6 @@ impl Settings {
         }
         if let Some(v) = toggle("bell") {
             view.ui.bell = v;
-        }
-        if let Some(v) = toggle("styled_text") {
-            view.ui.styled_text = v;
         }
         if let Some(v) = toggle("nerd_font") {
             view.ui.nerd_font = v;

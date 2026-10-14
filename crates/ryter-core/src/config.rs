@@ -202,9 +202,6 @@ pub struct UiConfig {
     /// Ring the terminal's bell when a question opens (a permission, a
     /// plan, an `ask_user`, the trust prompt). Off: the screen says it.
     pub bell: bool,
-    /// Block wordmark and mathematical-sans headings. Off: plain ASCII.
-    /// Defaults off when `TERM` is `dumb` or `linux`.
-    pub styled_text: bool,
     /// Nerd Font icons for hats, files, git, and status. Off: plain
     /// Unicode. A terminal does not report its font. `RYTER_NERD_FONT=1`
     /// turns this on when the key is absent.
@@ -239,19 +236,9 @@ impl Default for UiConfig {
             open_pages: true,
             start_hat: "plan".into(),
             bell: false,
-            styled_text: crate::config::styled_text_default(),
             nerd_font: crate::config::nerd_font_default(),
         }
     }
-}
-
-/// Styled headings, unless this is a console that cannot draw them.
-pub(crate) fn styled_text_default() -> bool {
-    styled_text_default_for(std::env::var("TERM").ok().as_deref())
-}
-
-fn styled_text_default_for(term: Option<&str>) -> bool {
-    !matches!(term, Some("dumb" | "linux"))
 }
 
 /// Nerd Font icons when `RYTER_NERD_FONT` is set. The key in the file wins.
@@ -285,7 +272,6 @@ pub const UI_KEYS: &[&str] = &[
     // conversation. A settings file that still sets it loads.
     "watermark",
     "bell",
-    "styled_text",
     "nerd_font",
 ];
 
@@ -1376,8 +1362,6 @@ struct UiFile {
     #[serde(skip_serializing_if = "Option::is_none")]
     bell: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    styled_text: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     nerd_font: Option<bool>,
 }
 
@@ -1397,7 +1381,6 @@ impl From<&UiConfig> for UiFile {
             open_pages: Some(ui.open_pages),
             start_hat: Some(ui.start_hat.clone()),
             bell: Some(ui.bell),
-            styled_text: Some(ui.styled_text),
             nerd_font: Some(ui.nerd_font),
         }
     }
@@ -1443,9 +1426,6 @@ impl UiFile {
         }
         if let Some(v) = self.bell {
             ui.bell = v;
-        }
-        if let Some(v) = self.styled_text {
-            ui.styled_text = v;
         }
         if let Some(v) = self.nerd_font {
             ui.nerd_font = v;
@@ -2188,22 +2168,14 @@ mod tests {
     }
 
     #[test]
-    fn styled_text_and_nerd_font_are_ui_keys() {
+    fn nerd_font_is_a_ui_key() {
         let home = TempDir::new().unwrap();
-        fs::write(
-            home.path().join("config.toml"),
-            "[ui]\nstyled_text = false\nnerd_font = true\n",
-        )
-        .unwrap();
+        fs::write(home.path().join("config.toml"), "[ui]\nnerd_font = true\n").unwrap();
         let cfg = load_at(home.path(), None, false).unwrap();
-        assert!(!cfg.ui.styled_text);
         assert!(cfg.ui.nerd_font);
         assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
-        assert!(!styled_text_default_for(Some("dumb")));
-        assert!(!styled_text_default_for(Some("linux")));
-        assert!(styled_text_default_for(Some("xterm-256color")));
-        assert!(styled_text_default_for(None));
         assert!(nerd_font_flag(Some("1")));
+        assert!(nerd_font_flag(Some("true")));
         assert!(!nerd_font_flag(None));
         assert!(!nerd_font_flag(Some("0")));
     }

@@ -58,7 +58,6 @@ theme = "dark"             # dark | light | default-16 | <name> from ~/.ryter/th
 layout = "workspace"       # workspace (hat rack, conversation / hats / sessions, instruments) | ledger | classic
 start_hat = "plan"         # the hat a new session opens in: plan | build | audit | last (the hat this project's last session ended in)
 bell = false               # ring the terminal bell when a question opens (a permission, a plan, ask_user)
-styled_text = true         # block RYTER wordmark and sans headings; false keeps plain ASCII (a dumb or linux console defaults this off)
 nerd_font = false          # icons for hats, files, git, and status. Set true when the terminal uses a Nerd Font. RYTER_NERD_FONT=1 does the same when this key is absent
 reasoning = "collapsed"    # collapsed | expanded | off — startup state of the thinking strip
 mouse = true               # false disables mouse capture (use the terminal's own selection)
