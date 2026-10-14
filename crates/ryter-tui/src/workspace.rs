@@ -3,8 +3,9 @@
 //! This is the default layout (`[ui] layout = "workspace"`). RYTER sits on
 //! the top bar, with Conversation, Hats, and Sessions beside it. The rack
 //! is the sidebar. The conversation, the hats, or the sessions fill the
-//! middle, and activity, context, spend, files, and the plan sit on the
-//! right. The ledger and classic layouts stay as they are.
+//! middle, and activity, context, spend (session + project glance), files,
+//! and the plan sit on the right. Ledger and classic remain as legacy
+//! layouts; prefer workspace.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
@@ -30,22 +31,18 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
     }
     let full = frame.area();
     let mut clicks = Vec::new();
-    let hair = u16::from(full.height >= 16);
+    // Quiet chrome (E): no hairline under the top bar — body starts next.
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
-            Constraint::Length(hair),
             Constraint::Min(4),
             Constraint::Length(1),
         ])
         .split(full);
-    let (top, rule, body, hint) = (rows[0], rows[1], rows[2], rows[3]);
+    let (top, body, hint) = (rows[0], rows[1], rows[2]);
     fill(frame, full, theme.bg);
     draw_top(frame, top, view, theme, &mut clicks);
-    if hair > 0 {
-        hairline(frame, rule, theme);
-    }
     let (side_w, insp_w) = columns(full.width, view.panel_visible);
     let side = Rect {
         width: side_w,
@@ -183,14 +180,6 @@ pub fn click(view: &mut View, kind: WorkspaceClick) -> Action {
             view.focus = Focus::Stage;
             Action::SetMode(role)
         }
-        WorkspaceClick::Theme => {
-            let next = if view.theme_name == "light" {
-                "dark"
-            } else {
-                "light"
-            };
-            Action::SetTheme(next.into())
-        }
     }
 }
 
@@ -325,8 +314,8 @@ fn draw_top(
     if area.height == 0 {
         return;
     }
-    // One column of pad, three hat-colored pips, a gap, bold RYTER, then
-    // the same two-column gap the tabs leave between themselves.
+    // Brand mark: three hat-color dots + bold RYTER. Quiet chrome still drops
+    // the top-right avatar/theme cluster and the hairline under the bar.
     let mark_w = 1 + 3 + 1 + 5 + 2;
     put(
         frame,
@@ -343,8 +332,8 @@ fn draw_top(
     draw_top_controls(frame, area, view, theme, clicks, mark_w);
 }
 
-/// View tabs and the theme control, on the baseline of the top bar. The
-/// brand occupies the first `skip` columns.
+/// View tabs on the baseline of the top bar. The brand occupies the first
+/// `skip` columns. Theme switching stays on `/theme` — no top-right cluster.
 fn draw_top_controls(
     frame: &mut Frame,
     area: Rect,
@@ -353,57 +342,12 @@ fn draw_top_controls(
     clicks: &mut Vec<(WorkspaceClick, Rect)>,
     skip: u16,
 ) {
-    let bg = side_bg(theme);
-    let icon = if view.theme_name == "light" {
-        "☾"
-    } else {
-        "☀"
-    };
-    let letter: String = view
-        .username
-        .chars()
-        .next()
-        .unwrap_or('y')
-        .to_uppercase()
-        .collect();
-    let who = format!(" {} ", view.username);
-    let theme_cap = glyphs::filled(icon, theme.fg, theme.sticky_bg);
-    let avatar = glyphs::filled(&letter, theme.bg, theme.fg);
-    let theme_w = wrap::width(&theme_cap.content) as u16;
-    let avatar_w = wrap::width(&avatar.content) as u16;
-    let who_w = wrap::width(&who) as u16;
-    let right_w = theme_w + 1 + avatar_w + who_w;
     let tabs = Rect {
         x: area.x + skip.min(area.width),
-        width: area.width.saturating_sub(skip + right_w),
+        width: area.width.saturating_sub(skip),
         ..area
     };
     draw_tabs(frame, tabs, view, theme, clicks);
-    if right_w > area.width {
-        return;
-    }
-    let right_x = area.x + area.width - right_w;
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            theme_cap,
-            Span::styled(" ", sty(theme.dim, bg)),
-            avatar,
-            Span::styled(who, sty(theme.dim, bg)),
-        ])),
-        Rect {
-            x: right_x,
-            width: right_w,
-            ..area
-        },
-    );
-    clicks.push((
-        WorkspaceClick::Theme,
-        Rect {
-            x: right_x,
-            width: theme_w,
-            ..area
-        },
-    ));
 }
 
 fn draw_tabs(
@@ -1309,18 +1253,11 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
             );
             y += 1;
         }
+        // B — project cost glance when the project has calls or unpriced calls.
+        // Absent when empty; never a fake $0.00 row.
         if let Some(p) = &view.project_spend {
-            if y < area.height {
-                put(
-                    frame,
-                    area,
-                    y,
-                    Line::from(Span::styled(
-                        format!(" Project {}", crate::chat::turn_usd(p.total_usd)),
-                        sty(theme.dim, bg),
-                    )),
-                );
-                y += 1;
+            if p.calls > 0 || p.unpriced_calls > 0 {
+                y = draw_project_spend_glance(frame, area, y, p, theme, bg, w);
             }
         }
         y += 1;
@@ -1947,11 +1884,91 @@ fn side_bg(theme: Theme) -> Color {
     theme.sidebar_bg
 }
 
-fn hairline(frame: &mut Frame, area: Rect, theme: Theme) {
-    frame.render_widget(
-        Paragraph::new("─".repeat(usize::from(area.width))).style(sty(theme.rule, side_bg(theme))),
+/// Inspector Spend block: project total, this month, unpriced, sessions.
+/// Call only when `p` has calls or unpriced calls.
+fn draw_project_spend_glance(
+    frame: &mut Frame,
+    area: Rect,
+    mut y: u16,
+    p: &ryter_core::project::ProjectSpend,
+    theme: Theme,
+    bg: Color,
+    w: usize,
+) -> u16 {
+    if y >= area.height {
+        return y;
+    }
+    put(
+        frame,
         area,
+        y,
+        Line::from(Span::styled(" Project", sty(theme.dim, bg))),
     );
+    y += 1;
+    if y < area.height {
+        let total = if p.calls > 0 && p.calls == p.unpriced_calls {
+            "$?.??".into()
+        } else {
+            ryter_core::format_usd(Some(p.total_usd))
+        };
+        put(
+            frame,
+            area,
+            y,
+            sidebar::ends(
+                vec![Span::styled(
+                    format!(" {total}"),
+                    sty(theme.fg, bg).add_modifier(Modifier::BOLD),
+                )],
+                vec![Span::styled("total", sty(theme.dim, bg))],
+                w,
+                bg,
+            ),
+        );
+        y += 1;
+    }
+    if y < area.height {
+        put(
+            frame,
+            area,
+            y,
+            sidebar::ends(
+                vec![Span::styled(
+                    format!(" {}", ryter_core::format_usd(Some(p.this_month()))),
+                    sty(theme.dim, bg),
+                )],
+                vec![Span::styled("this month", sty(theme.dim, bg))],
+                w,
+                bg,
+            ),
+        );
+        y += 1;
+    }
+    if p.unpriced_calls > 0 && y < area.height {
+        put(
+            frame,
+            area,
+            y,
+            Line::from(Span::styled(
+                format!(" {} unpriced", p.unpriced_calls),
+                sty(theme.warn, bg),
+            )),
+        );
+        y += 1;
+    }
+    if p.sessions > 0 && y < area.height {
+        put(
+            frame,
+            area,
+            y,
+            Line::from(Span::styled(
+                format!(" {} sessions", p.sessions),
+                sty(theme.dim, bg),
+            )),
+        );
+        y += 1;
+    }
+    y
 }
 
 fn fill(frame: &mut Frame, area: Rect, bg: ratatui::style::Color) {
@@ -2286,5 +2303,105 @@ mod tests {
         assert!(text.contains('\u{e0a0}'), "{text}");
         assert!(!text.contains('⎇'), "{text}");
         assert!(text.contains('\u{f0eb}'), "plan's icon");
+    }
+
+    fn sample_project_spend() -> ryter_core::project::ProjectSpend {
+        let mut p = ryter_core::project::ProjectSpend::default();
+        // Seeds this_month via month_of_now, then the glance totals override.
+        p.add(Role::SoloBuild, "m", Some(1.24));
+        p.total_usd = 4.82;
+        p.calls = 40;
+        p.unpriced_calls = 3;
+        p.sessions = 12;
+        p
+    }
+
+    #[test]
+    fn quiet_chrome_keeps_brand_dots_drops_avatar_and_hairline() {
+        let mut v = ws();
+        v.username = "dusty".into();
+        let text = crate::draw::render_to_string(&v, 160, 50);
+        let top = text.lines().next().unwrap();
+        assert!(top.contains("RYTER"), "{top}");
+        assert!(top.contains("Conversation"), "{top}");
+        // Brand logo: three colored dots before RYTER.
+        assert!(top.contains("●●● RYTER"), "{top}");
+        assert!(!top.contains('☀') && !top.contains('☾'), "{top}");
+        assert!(!top.contains(" dusty") && !top.contains(" Dusty"), "{top}");
+        // No hairline row under the top bar: row 1 is body, not ─.
+        let second = text.lines().nth(1).unwrap();
+        assert!(
+            !second.chars().all(|c| c == '─' || c == ' '),
+            "unexpected hairline under top bar: {second}"
+        );
+        let hit = crate::draw::render_hit(&v, 160, 50);
+        assert!(
+            hit.clicks
+                .iter()
+                .all(|(c, _)| matches!(c, WorkspaceClick::Page(_) | WorkspaceClick::Wear(_))),
+            "only page/hat clicks remain: {:?}",
+            hit.clicks
+        );
+    }
+
+    #[test]
+    fn project_spend_glance_shows_total_month_unpriced_sessions() {
+        let mut v = ws();
+        v.project_spend = Some(sample_project_spend());
+        let text = crate::draw::render_to_string(&v, 160, 50);
+        let squashed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(squashed.contains("Project"), "{text}");
+        assert!(
+            squashed.contains("$4.82") && squashed.contains("total"),
+            "{text}"
+        );
+        assert!(
+            squashed.contains("$1.24") && squashed.contains("this month"),
+            "{text}"
+        );
+        assert!(squashed.contains("3 unpriced"), "{text}");
+        assert!(squashed.contains("12 sessions"), "{text}");
+        // Session spend remains.
+        assert!(squashed.contains("$0.065"), "{text}");
+    }
+
+    #[test]
+    fn project_spend_glance_stays_absent_when_empty() {
+        let mut v = ws();
+        v.project_spend = Some(ryter_core::project::ProjectSpend::default());
+        let text = crate::draw::render_to_string(&v, 160, 50);
+        assert!(!text.contains("this month"), "{text}");
+        assert!(!text.contains("unpriced"), "{text}");
+        assert!(!text.contains("sessions"), "{text}");
+        // No fake project $0.00.
+        let insp = text
+            .lines()
+            .filter(|l| l.contains("Spend") || l.contains("Project") || l.contains("$0.00"))
+            .collect::<Vec<_>>();
+        assert!(
+            insp.iter()
+                .all(|l| !l.contains("Project") || !l.contains("$0.00")),
+            "{insp:?}"
+        );
+    }
+
+    #[test]
+    fn project_spend_glance_all_unpriced_is_unknown_not_zero() {
+        let mut p = ryter_core::project::ProjectSpend::default();
+        p.calls = 2;
+        p.unpriced_calls = 2;
+        p.sessions = 1;
+        let mut v = ws();
+        v.project_spend = Some(p);
+        let text = crate::draw::render_to_string(&v, 160, 50);
+        assert!(text.contains("$?.??"), "{text}");
+        assert!(text.contains("2 unpriced"), "{text}");
+        // Total is unknown — never a priced $0.00 on the total row.
+        assert!(
+            !text
+                .lines()
+                .any(|l| l.contains("$0.00") && l.contains("total")),
+            "{text}"
+        );
     }
 }
