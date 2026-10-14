@@ -79,13 +79,32 @@ pub fn estimate_tokens(system: &str, messages: &[Message]) -> u64 {
     let mut n = system.len();
     for m in messages {
         n += m.role.len();
-        n += m.content.len();
         if let Some(id) = &m.tool_call_id {
             n += id.len();
         }
-        if let Some(calls) = &m.tool_calls {
-            for c in calls {
-                n += c.name.len() + c.arguments.len() + c.id.len();
+        // When Messages echo blocks are present they are what goes on the wire
+        // (thinking + text + tool_use); counting content/tool_calls too would
+        // double the assistant turn.
+        if let Some(blocks) = &m.messages_blocks {
+            for b in blocks {
+                n += match b {
+                    crate::llm::MessagesBlock::Thinking {
+                        thinking,
+                        signature,
+                    } => thinking.len() + signature.len(),
+                    crate::llm::MessagesBlock::RedactedThinking { data } => data.len(),
+                    crate::llm::MessagesBlock::Text { text } => text.len(),
+                    crate::llm::MessagesBlock::ToolUse { id, name, input } => {
+                        id.len() + name.len() + input.to_string().len()
+                    }
+                };
+            }
+        } else {
+            n += m.content.len();
+            if let Some(calls) = &m.tool_calls {
+                for c in calls {
+                    n += c.name.len() + c.arguments.len() + c.id.len();
+                }
             }
         }
     }
@@ -233,6 +252,7 @@ pub fn compact(messages: &[Message], note: &str, keep_user_turns: usize) -> Vec<
             content: extract_prefix(&messages[..cut], note),
             tool_call_id: None,
             tool_calls: None,
+            messages_blocks: None,
         }];
         next.extend(messages[cut..].iter().cloned());
         next
@@ -328,6 +348,7 @@ mod tests {
             content: content.into(),
             tool_call_id: None,
             tool_calls: None,
+            messages_blocks: None,
         }
     }
 
@@ -374,12 +395,14 @@ mod tests {
                     name: "read_file".into(),
                     arguments: format!(r#"{{"path":"src/f{i}.rs"}}"#),
                 }]),
+                messages_blocks: None,
             });
             messages.push(Message {
                 role: "tool".into(),
                 content: "x".repeat(8_000),
                 tool_call_id: Some(format!("c{i}")),
                 tool_calls: None,
+                messages_blocks: None,
             });
         }
         let out = compact(&messages, "ship the flag", 2);
@@ -410,6 +433,7 @@ mod tests {
                 content: "x".repeat(400),
                 tool_call_id: Some("c1".into()),
                 tool_calls: None,
+                messages_blocks: None,
             },
         ];
         let rows = breakdown("sys", &messages);
@@ -447,12 +471,14 @@ mod tests {
                     name: "read_file".into(),
                     arguments: "{}".into(),
                 }]),
+                messages_blocks: None,
             });
             messages.push(Message {
                 role: "tool".into(),
                 content: "界".repeat(6000),
                 tool_call_id: Some(format!("c{i}")),
                 tool_calls: None,
+                messages_blocks: None,
             });
         }
         let next = compact(&messages, "", 4);
