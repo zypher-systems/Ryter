@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-14 — Context gauge uses provider `input_tokens`; stop messages share a voice
+
+**Decision.** The context gauge and `/context` headline show the provider's last reported `input_tokens` once a call has returned usage. Admission and auto-compaction still use the bytes/4 estimate. After a compact rewrites the transcript, the provider count is cleared until the next call. A turn that stops for the round cap or the session budget uses the same voice: what stopped, how to raise or lift the limit, and that saying "continue" carries on (`/budget +N` / `/budget N` / `/budget off` for spend; *rounds a turn* / `[limits] rounds` / `--rounds N` for rounds).
+
+**Why.** 1.0 item 5 asks that cost be predictable and that a round-cap or budget stop say how to go on. Bytes/4 made the gauge disagree with the bill the provider just sent; the old `budget exceeded ($x >= $y)` line did not match the round-cap notice or name a way forward.
+
+**Where.** `compact.rs` (`ContextReport::from_provider`), `agent.rs` (`last_input_tokens`, `context_report`, `emit_context`, `compact_now`), `error.rs` (`budget_message`), TUI `run/events.rs` (Spend → gauge), `docs/guide.md`.
+
 ### 2026-10-14 — 1.0 item 1 closed; item 3 Linux closed, macOS still open
 
 **Decision.** 1.0 item 1 ("the flow holds on a real project") is closed on the user's call from the fiscus web run (0.20.0) and the tunes terminal run (0.24.1). Item 3's Linux half (setup works first time: install, key, change) is closed the same day. Item 3's macOS hand pass and the model check when a hat's model is chosen in `/models` stay open. Gate and blast findings from the real runs stay under their own items (2, 4, …), not as unfinished halves of item 1.

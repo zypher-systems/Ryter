@@ -113,6 +113,10 @@ pub struct Agent {
     /// The turn in progress, for the events made during it; `0` between
     /// turns.
     pub turn: u64,
+    /// Provider `input_tokens` from the last completed call, for the context
+    /// gauge. Cleared when compaction rewrites the transcript, so the gauge
+    /// does not keep a pre-compact count.
+    pub last_input_tokens: Option<u64>,
 }
 
 /// Output ceiling per round of the conversation.
@@ -861,8 +865,7 @@ impl Agent {
             message: format!(
                 "stopped after {} rounds, the most one message may use (rounds a turn in \
                  /settings, [limits] rounds in config.toml, or --rounds N for one run; 0 \
-                 lifts it). Say \"continue\" \
-                 to carry on.",
+                 lifts it). Say \"continue\" to carry on.",
                 self.max_turns
             ),
         })?;
@@ -2882,10 +2885,19 @@ impl Agent {
     }
 
     /// `/context` snapshot for the active hat, including schemas and output.
+    ///
+    /// The headline uses the provider's last `input_tokens` when a call has
+    /// reported usage; admission and compaction still use the bytes/4 estimate.
     pub fn context_report(&self) -> Result<crate::compact::ContextReport> {
         let sys = self.system_prompt()?;
         let (_, model, connection) = self.hat_stack();
-        Ok(self.report_for(&sys, &model, &connection))
+        let mut r = self.report_for(&sys, &model, &connection);
+        if let Some(n) = self.last_input_tokens {
+            r.tokens = n;
+            r.pct = (n.saturating_mul(100) / r.window.max(1)).min(100) as u8;
+            r.from_provider = true;
+        }
+        Ok(r)
     }
 
     /// Emit a [`AgentEvent::Context`] for the TUI / `--json`.
@@ -2900,6 +2912,9 @@ impl Agent {
             "output allowance".into(),
             Self::output_allowance(r.window).into(),
         ));
+        if r.from_provider {
+            breakdown.insert(0, ("provider input".into(), r.tokens));
+        }
         self.emit(AgentEvent::Context {
             tokens: r.tokens,
             window: r.window,
@@ -2926,6 +2941,8 @@ impl Agent {
             < crate::compact::estimate_tokens(&sys, &self.session.transcript);
         if changed {
             self.session.replace_transcript(next)?;
+            // The last provider count was for the pre-compact prompt.
+            self.last_input_tokens = None;
         }
         let mut rep = self.report_for(&sys, &model, &connection);
         rep.compacted = changed;
@@ -2935,6 +2952,11 @@ impl Agent {
             window: rep.window,
         })?;
         Ok(rep)
+    }
+
+    /// Seed [`Self::last_input_tokens`] from the session's spend log (resume).
+    pub fn seed_prompt_tokens(&mut self) {
+        self.last_input_tokens = self.session.last_input_tokens();
     }
 
     fn maybe_compact(&mut self, system: &mut String, model: &str, connection: &str) -> Result<()> {
@@ -3139,6 +3161,9 @@ impl Agent {
         record.incomplete = !local && reported_cost.is_none() && (!complete || !saw_usage);
         let incomplete = record.incomplete;
         self.session.record_spend(record)?;
+        if saw_usage && usage.input_tokens > 0 {
+            self.last_input_tokens = Some(usage.input_tokens);
+        }
         self.emit(AgentEvent::Spend {
             connection: connection.into(),
             model: model.into(),
@@ -3378,6 +3403,7 @@ mod tests {
             audit_live: None,
             last_audit_verdict: None,
             turn: 0,
+            last_input_tokens: None,
         };
         (home, cwd, agent)
     }
@@ -5229,7 +5255,9 @@ mod tests {
         let r = agent.turn("look around").await.unwrap();
         assert_eq!(r.reason, StopReason::MaxTurns);
         assert!(events.try_iter().any(
-            |e| matches!(e, AgentEvent::Notice { message } if message.contains("after 3 rounds") && message.contains("[limits] rounds"))
+            |e| matches!(e, AgentEvent::Notice { message } if message.contains("after 3 rounds")
+                && message.contains("[limits] rounds")
+                && message.contains("Say \"continue\""))
         ));
     }
 
@@ -7367,6 +7395,42 @@ mod tests {
         agent.budget_usd = 0.01; // grok-4.6 1M/1M is long-context $16
         let err = agent.turn("go").await.unwrap_err();
         assert!(matches!(err, Error::Budget { .. }), "{err}");
+        let msg = err.to_string();
+        assert!(msg.starts_with("stopped:"), "{msg}");
+        assert!(msg.contains("/budget +N"), "{msg}");
+        assert!(msg.contains("Say \"continue\""), "{msg}");
+    }
+
+    /// The context gauge prefers the provider's `input_tokens` over bytes/4.
+    #[tokio::test]
+    async fn context_gauge_uses_provider_input_tokens() {
+        let p = ReplayProvider::new(vec![
+            StreamDelta::Text("ok".into()),
+            StreamDelta::Usage(Usage {
+                input_tokens: 12_345,
+                output_tokens: 50,
+                cached_tokens: 0,
+                cache_write_tokens: 0,
+            }),
+            StreamDelta::Done,
+        ]);
+        let (_home, _cwd, mut agent) = setup(p);
+        agent.context_window = 200_000;
+        let before = agent.context_report().unwrap();
+        assert!(!before.from_provider);
+        agent.turn("hi").await.unwrap();
+        assert_eq!(agent.last_input_tokens, Some(12_345));
+        let after = agent.context_report().unwrap();
+        assert!(after.from_provider, "{after:?}");
+        assert_eq!(after.tokens, 12_345);
+        assert_eq!(after.pct, ((12_345u64 * 100) / 200_000) as u8);
+        // Without the provider path, the estimate would still be used.
+        let saved = agent.last_input_tokens;
+        agent.last_input_tokens = None;
+        let estimate = agent.context_report().unwrap();
+        agent.last_input_tokens = saved;
+        assert!(!estimate.from_provider);
+        assert_ne!(estimate.tokens, 12_345);
     }
 
     #[tokio::test]

@@ -472,6 +472,7 @@ async fn run_prompt(
     // A session left in crew mode, before it was removed, opens in build.
     let role = headless_hat(hat, session.meta.mode);
     let _ = session.set_mode(role);
+    let last_input_tokens = session.last_input_tokens();
     let mut agent = Agent {
         provider: Arc::new(provider),
         book: PriceBook::from_config(&cfg),
@@ -519,6 +520,7 @@ async fn run_prompt(
         audit_live: None,
         last_audit_verdict: None,
         turn: 0,
+        last_input_tokens,
     };
     agent.fire_session_start()?;
     let result = agent.turn(&prompt).await;
@@ -900,6 +902,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
         audit_live: None,
         last_audit_verdict: None,
         turn: 0,
+        last_input_tokens: None,
     };
     if let Err(e) = agent.fire_session_start() {
         eprintln!("{e}");
@@ -1030,6 +1033,7 @@ fn serve_host_from_config(
         audit_live: None,
         last_audit_verdict: None,
         turn: 0,
+        last_input_tokens: None,
     };
     agent.fire_session_start()?;
     Ok(ServeHost::new(agent, rt))

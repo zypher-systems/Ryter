@@ -702,8 +702,10 @@ fn on_spend(
                 m.touch();
             }
         }
-        let used = input_tokens.saturating_add(output_tokens);
-        view.ctx_tokens = Some(used.max(view.ctx_tokens.unwrap_or(0).min(used)));
+        // Context fill is the prompt the provider counted, not input+output
+        // and not the bytes/4 estimate.
+        let used = input_tokens;
+        view.ctx_tokens = Some(used);
         let window = view.ctx_window_or_default();
         view.ctx_window = Some(window);
         view.ctx_pct = Some(((used.min(window) * 100) / window.max(1)) as u8);
@@ -934,6 +936,8 @@ mod tests {
             },
         );
         assert!(v.busy, "spend alone does not end the turn");
+        assert_eq!(v.ctx_tokens, Some(100), "gauge uses provider input_tokens");
+        assert_ne!(v.ctx_tokens, Some(120), "not input+output");
         apply(
             &mut v,
             AgentEvent::TurnFinished {

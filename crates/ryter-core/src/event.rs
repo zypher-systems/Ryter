@@ -262,7 +262,8 @@ pub enum AgentEvent {
     },
     /// `/context` snapshot.
     Context {
-        /// Heuristic tokens.
+        /// Tokens for the gauge: provider `input_tokens` when known, else the
+        /// bytes/4 estimate.
         tokens: u64,
         /// Window used for the percentage.
         window: u64,

@@ -9,7 +9,8 @@ use crate::llm::Message;
 /// How full the model window is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextReport {
-    /// Heuristic token count (bytes / 4).
+    /// Tokens in use: the provider's last `input_tokens` when known, else the
+    /// bytes/4 estimate used for admission and compaction.
     pub tokens: u64,
     /// Model window used for the percentage.
     pub window: u64,
@@ -19,14 +20,17 @@ pub struct ContextReport {
     pub messages: usize,
     /// True when this report follows a compact pass.
     pub compacted: bool,
+    /// True when [`Self::tokens`] is the provider's reported `input_tokens`.
+    pub from_provider: bool,
 }
 
 impl ContextReport {
     /// One-line `/context` listing.
     pub fn render(&self) -> String {
         let flag = if self.compacted { "  compacted" } else { "" };
+        let approx = if self.from_provider { "" } else { "~" };
         format!(
-            "context  {}%  ~{}/{} tok  {} messages{flag}",
+            "context  {}%  {approx}{}/{} tok  {} messages{flag}",
             self.pct, self.tokens, self.window, self.messages
         )
     }
@@ -155,6 +159,7 @@ pub fn report(
         pct,
         messages: messages.len(),
         compacted: false,
+        from_provider: false,
     }
 }
 
@@ -334,6 +339,25 @@ mod tests {
         assert_eq!(format_tokens(500_000), "500k");
         assert_eq!(format_context_used(0, 500_000), "0/500k");
         assert_eq!(format_context_used(12_000, 500_000), "12k/500k");
+    }
+
+    #[test]
+    fn context_render_marks_estimates_only() {
+        let est = ContextReport {
+            tokens: 1_000,
+            window: 10_000,
+            pct: 10,
+            messages: 2,
+            compacted: false,
+            from_provider: false,
+        };
+        assert!(est.render().contains("~1000/10000"));
+        let exact = ContextReport {
+            from_provider: true,
+            ..est
+        };
+        assert!(exact.render().contains(" 1000/10000"));
+        assert!(!exact.render().contains("~1000"));
     }
 
     #[test]

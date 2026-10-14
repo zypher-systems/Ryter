@@ -44,20 +44,48 @@ pub enum Error {
 }
 
 fn budget_message(spent: f64, cap: f64, unpriced: Option<&str>, incomplete: bool) -> String {
+    // Same voice as the round-cap stop: say what stopped, how to raise or
+    // lift it, and that "continue" carries on.
     if incomplete {
         return format!(
-            "the ${cap:.2} budget cannot account for an earlier request: its usage record is incomplete. Known spend is at least ${spent:.4}. Start a new session, or explicitly turn this session's budget off (`/budget off`) to continue with unknown spend"
+            "stopped: the ${cap:.2} budget cannot account for an earlier request — \
+             its usage record is incomplete (known spend is at least ${spent:.4}). \
+             Start a new session, or `/budget off` to go on with unknown spend."
         );
     }
     match unpriced {
         Some(model) => format!(
-            "the ${cap:.2} budget can't see what {model} costs: it has no price, so \
-             the budget would never stop it. Give it one under [pricing] in \
-             config.toml, or turn the budget off (`/budget off`) to go on without one"
+            "stopped: the ${cap:.2} budget can't see what {model} costs — it has no \
+             price, so the budget would never stop it. Give it one under [pricing] \
+             in config.toml, or `/budget off` to go on without one. Say \"continue\" \
+             once it has a price or the budget is off."
         ),
-        None => format!("budget exceeded (${spent:.4} >= ${cap:.2})"),
+        None => format!(
+            "stopped: session spend ${spent:.4} reached the ${cap:.2} budget \
+             (/budget +N raises it, /budget N sets a new cap, /budget off lifts \
+             it). Say \"continue\" to carry on."
+        ),
     }
 }
 
 /// Result alias for [`Error`].
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn budget_stop_matches_round_cap_voice() {
+        let err = Error::Budget {
+            spent: 5.0,
+            cap: 5.0,
+            unpriced: None,
+            incomplete: false,
+        };
+        let msg = err.to_string();
+        assert!(msg.starts_with("stopped:"), "{msg}");
+        assert!(msg.contains("/budget +N"), "{msg}");
+        assert!(msg.contains("Say \"continue\""), "{msg}");
+    }
+}
