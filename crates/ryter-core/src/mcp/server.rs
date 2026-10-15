@@ -113,6 +113,7 @@ impl InboundHost for EchoHost {
             content: self.last(),
             tool_call_id: None,
             tool_calls: None,
+            messages_blocks: None,
         }])
     }
     fn cancel(&self) {}

@@ -2067,6 +2067,7 @@ fn a_resumed_session_has_the_rack_it_had() {
             content: format!("[hat: {role} — x]\n\n{ask}"),
             tool_call_id: None,
             tool_calls: None,
+            messages_blocks: None,
         })
         .unwrap();
         s.push_message(ryter_core::Message {
@@ -2074,6 +2075,7 @@ fn a_resumed_session_has_the_rack_it_had() {
             content: "done".into(),
             tool_call_id: None,
             tool_calls: None,
+            messages_blocks: None,
         })
         .unwrap();
         let mut all = vec![AgentEvent::TurnStarted { turn, role, at: 0 }];

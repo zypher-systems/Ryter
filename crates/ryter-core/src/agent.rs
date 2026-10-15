@@ -9,7 +9,8 @@ use std::sync::mpsc::Sender;
 use crate::error::{Error, Result};
 use crate::event::AgentEvent;
 use crate::llm::{
-    AssistantToolCall, CompletionRequest, Message, Provider, StreamDelta, ToolCallAccumulator,
+    AssistantToolCall, CompletionRequest, Message, MessagesEchoAccumulator, Provider, StreamDelta,
+    ToolCallAccumulator,
 };
 use crate::role::Role;
 use crate::session::{Session, spend_record};
@@ -437,6 +438,7 @@ impl Agent {
             content,
             tool_call_id: None,
             tool_calls: None,
+            messages_blocks: None,
         })?;
         if self.session.meta.title.is_empty() {
             let t: String = user.chars().take(80).collect();
@@ -504,6 +506,7 @@ impl Agent {
                             content: crate::gate::WRITE_UP.into(),
                             tool_call_id: None,
                             tool_calls: None,
+                            messages_blocks: None,
                         })?;
                     }
                     crate::gate::Fit::No(why) => {
@@ -541,6 +544,7 @@ impl Agent {
             };
             let mut text = String::new();
             let mut calls = ToolCallAccumulator::default();
+            let mut echo = MessagesEchoAccumulator::default();
             let mut usage = Usage::default();
             let mut reported_cost: Option<f64> = None;
             let mut saw_usage = false;
@@ -563,7 +567,11 @@ impl Agent {
                     let Some(delta) = delta else {
                         break;
                     };
-                    match delta? {
+                    let delta = delta?;
+                    // Capture Anthropic thinking blocks (with signatures) so
+                    // the next Messages request can echo them beside tool_use.
+                    echo.push(&delta);
+                    match delta {
                         StreamDelta::Text(t) => {
                             text.push_str(&t);
                             self.emit(AgentEvent::Token { text: t })?;
@@ -571,6 +579,9 @@ impl Agent {
                         StreamDelta::Reasoning(t) => {
                             self.emit(AgentEvent::Reasoning { text: t })?;
                         }
+                        StreamDelta::ThinkingOpen { .. }
+                        | StreamDelta::ThinkingSignature { .. }
+                        | StreamDelta::ThinkingClose { .. } => {}
                         StreamDelta::ToolCall {
                             stream_key,
                             id,
@@ -681,6 +692,7 @@ impl Agent {
                 } else {
                     Some(call_list.clone())
                 },
+                messages_blocks: echo.finish(),
             })?;
 
             if call_list.is_empty() {
@@ -690,6 +702,7 @@ impl Agent {
                         content: n,
                         tool_call_id: None,
                         tool_calls: None,
+                        messages_blocks: None,
                     })?;
                     continue;
                 }
@@ -846,6 +859,7 @@ impl Agent {
                     content: out.text,
                     tool_call_id: Some(call.id.clone()),
                     tool_calls: None,
+                    messages_blocks: None,
                 })?;
                 if stuck {
                     self.answer_unrun(&call_list[i + 1..], "not run: the turn was stopped")?;
@@ -868,6 +882,7 @@ impl Agent {
                     content: n,
                     tool_call_id: None,
                     tool_calls: None,
+                    messages_blocks: None,
                 })?;
             }
         }
@@ -904,6 +919,7 @@ impl Agent {
                 content: why.to_string(),
                 tool_call_id: Some(c.id.clone()),
                 tool_calls: None,
+                messages_blocks: None,
             })?;
         }
         Ok(())
@@ -2788,6 +2804,7 @@ impl Agent {
                 content: user.to_string(),
                 tool_call_id: None,
                 tool_calls: None,
+                messages_blocks: None,
             }],
             tools: Vec::new(),
             max_tokens: Some(max_tokens),
@@ -3235,7 +3252,7 @@ impl Agent {
 mod tests {
     mod acceptance;
     use super::*;
-    use crate::llm::ReplayProvider;
+    use crate::llm::{MessagesBlock, ReplayProvider};
     use crate::tools::ToolContext;
     use std::sync::Mutex;
     use tempfile::TempDir;
@@ -4982,6 +4999,68 @@ mod tests {
             seen,
             vec![Some("high".to_string()), Some("low".to_string()), None],
             "auto (plan = high), the user's low, then the model's own"
+        );
+    }
+
+    /// Anthropic extended thinking with tools: the thinking block (and its
+    /// signature) is kept on the assistant turn so the next Messages request
+    /// can echo it beside `tool_use`. Without that, the API rejects the round.
+    #[tokio::test]
+    async fn anthropic_thinking_blocks_are_kept_for_the_next_tool_round() {
+        let thinking_then_read = vec![
+            StreamDelta::ThinkingOpen {
+                stream_key: Some("0".into()),
+                redacted_data: None,
+            },
+            StreamDelta::Reasoning("need the file".into()),
+            StreamDelta::ThinkingSignature {
+                stream_key: Some("0".into()),
+                signature: "sig_keep".into(),
+            },
+            StreamDelta::ThinkingClose {
+                stream_key: Some("0".into()),
+            },
+            StreamDelta::ToolCall {
+                stream_key: Some("1".into()),
+                id: "toolu_1".into(),
+                name: "read_file".into(),
+                arguments: r#"{"path":"README.md"}"#.into(),
+            },
+            StreamDelta::Done,
+        ];
+        let p = ReplayProvider::scripted(vec![thinking_then_read, say("looks fine")]);
+        let (_home, cwd, mut agent) = repo_setup(p);
+        std::fs::write(cwd.path().join("README.md"), "hi\n").unwrap();
+        agent.ctx.always_approve = true;
+        let r = agent.turn("check readme").await.unwrap();
+        assert_eq!(r.reason, StopReason::Completed);
+        let assistant = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "assistant" && m.messages_blocks.is_some())
+            .expect("the thinking assistant turn is kept");
+        assert_eq!(
+            assistant.messages_blocks.as_ref().unwrap(),
+            &vec![
+                MessagesBlock::Thinking {
+                    thinking: "need the file".into(),
+                    signature: "sig_keep".into(),
+                },
+                MessagesBlock::ToolUse {
+                    id: "toolu_1".into(),
+                    name: "read_file".into(),
+                    input: serde_json::json!({"path": "README.md"}),
+                },
+            ]
+        );
+        // The turn resumed and finished after the tool result.
+        assert!(
+            agent
+                .session
+                .transcript
+                .iter()
+                .any(|m| m.role == "assistant" && m.content == "looks fine")
         );
     }
 
@@ -7662,6 +7741,7 @@ mod tests {
                     content: format!("turn {i} {}", "blob ".repeat(40)),
                     tool_call_id: None,
                     tool_calls: None,
+                    messages_blocks: None,
                 })
                 .unwrap();
             agent
@@ -7675,6 +7755,7 @@ mod tests {
                         name: "read_file".into(),
                         arguments: r#"{"path":"hello.txt"}"#.into(),
                     }]),
+                    messages_blocks: None,
                 })
                 .unwrap();
             agent
@@ -7684,6 +7765,7 @@ mod tests {
                     content: "data".repeat(4000),
                     tool_call_id: Some(format!("c{i}")),
                     tool_calls: None,
+                    messages_blocks: None,
                 })
                 .unwrap();
         }
