@@ -467,11 +467,11 @@ impl Theme {
     /// The color of a hat.
     pub fn mode(self, mode: ryter_core::Role) -> Color {
         match mode {
-            ryter_core::Role::SoloBuild => self.build,
-            ryter_core::Role::SoloPlan => self.plan,
+            ryter_core::Role::Build => self.build,
+            ryter_core::Role::Plan => self.plan,
             // Every specialist is the one specialist color: a new hat
             // needs no new color (`docs/sidebar-design.md` R-COLOR-01).
-            ryter_core::Role::SoloAudit | ryter_core::Role::SoloScribe => self.audit,
+            ryter_core::Role::Audit | ryter_core::Role::Scribe => self.audit,
             ryter_core::Role::Crew => self.build,
         }
     }

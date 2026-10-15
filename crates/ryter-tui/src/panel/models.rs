@@ -233,7 +233,7 @@ impl Models {
             None => (view.model.clone(), Some(view.connection.clone())),
             // A hat that follows the others is on the `default` row.
             Some(role) => view
-                .specialists
+                .hats
                 .get(role)
                 .filter(|r| r.is_override())
                 .map(|r| (r.model.clone().unwrap_or_default(), r.connection.clone()))
@@ -302,7 +302,7 @@ impl Models {
         match role {
             None => (short_model(&view.model).to_string(), false),
             Some(role) => match view
-                .specialists
+                .hats
                 .get(role)
                 .filter(|r| r.is_override())
                 .and_then(|r| r.model.as_deref())
@@ -873,8 +873,8 @@ mod tests {
 
     fn hats_view() -> View {
         let mut v = View::new("openrouter".into(), "x-ai/grok-4.7".into(), "/tmp".into());
-        v.mode = ryter_core::Role::SoloBuild;
-        v.specialists.insert(
+        v.mode = ryter_core::Role::Build;
+        v.hats.insert(
             "audit".into(),
             ryter_core::RoleModel {
                 connection: Some("openrouter".into()),
@@ -899,7 +899,7 @@ mod tests {
     #[test]
     fn the_hats_are_the_seats() {
         let mut v = hats_view();
-        v.specialists.clear();
+        v.hats.clear();
         let mut p = Models::new(&mut v, None);
         p.set_models(&v, &catalog());
         let t = text(&p, &v);
@@ -934,7 +934,7 @@ mod tests {
         assert_eq!((p.focus, p.seat()), (Focus::Seats, 2));
         // As the loop applies it, the seat shows it, and the hat it is on
         // says so wherever the model is named.
-        v.specialists.insert(
+        v.hats.insert(
             "plan".into(),
             ryter_core::RoleModel {
                 connection: Some("openrouter".into()),
@@ -945,7 +945,7 @@ mod tests {
         assert!(t.contains("Plan      qwen3.7-max"), "{t}");
         assert!(t.contains("Build     follows all hats"), "{t}");
         assert_eq!(v.hat_model(), "x-ai/grok-4.7", "the build hat follows");
-        v.mode = ryter_core::Role::SoloPlan;
+        v.mode = ryter_core::Role::Plan;
         assert_eq!(v.hat_model(), "qwen/qwen3.7-max");
     }
 
@@ -1220,7 +1220,7 @@ mod tests {
             Outcome::Act(Action::SetHatModel { connection, .. }) if connection == "spacexai"
         ));
         // Opening on a seat set to the second connection's copy.
-        v.specialists.insert(
+        v.hats.insert(
             "audit".into(),
             ryter_core::RoleModel {
                 connection: Some("spacexai".into()),

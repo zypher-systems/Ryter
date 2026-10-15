@@ -14,7 +14,7 @@ Why: the first real sessions on three hats showed that a hat earns its place by 
 
 ## 2. Hats and rows
 
-- **R-HAT-01** Four hats: `plan`, `build` (the primary row), `audit`, `scribe` (the specialist row). `Role::SoloReview` is renamed `Role::SoloAudit` with `#[serde(alias = "review")]`, so saved sessions, spend records and event logs still load. `Role::SoloScribe` is new.
+- **R-HAT-01** Four hats: `plan`, `build` (the primary row), `audit`, `scribe` (the specialist row). The Rust names are `Role::Plan`, `Build`, `Audit`, `Scribe` (the old `Solo*` names are gone). `Audit` still loads under `review` (`#[serde(alias = "review")]`), so saved sessions, spend records and event logs still load.
 - **R-HAT-02** `Role::row()` is `Row::Primary` or `Row::Specialist`. `Role::next_in_row()` cycles within the row: plan ↔ build; audit → scribe → audit. `Role::Crew` (saved crew sessions, the alias `test`) is build.
 - **R-HAT-03** A hat's permission profile, prompt section, color and model seat are its own; adding a hat touches those four places and the rack. Nothing else enumerates hats.
 
@@ -90,7 +90,7 @@ Why: the first real sessions on three hats showed that a hat earns its place by 
 
 ## 13. Documentation that changes
 
-`docs/guide.md` (hats table, keys, `/audit`, the audit file, the plan file, the scribe), `README.md`, `config.example.toml` (`[specialists.audit]`, `[specialists.scribe]`, `audit_usd`), `prompts/solo.md`, `docs/hat-rack-design.md` §18 (pointer here), `DECISIONS.md`, `ROADMAP.md`.
+`docs/guide.md` (hats table, keys, `/audit`, the audit file, the plan file, the scribe), `README.md`, `config.example.toml` (`[model]`, `[hats.audit]`, `[hats.scribe]`, `audit_usd`; `[orchestrator]` and `[specialists.*]` still load), `prompts/solo.md`, `docs/hat-rack-design.md` §18 (pointer here), `DECISIONS.md`, `ROADMAP.md`.
 
 ## 14. Non-goals
 

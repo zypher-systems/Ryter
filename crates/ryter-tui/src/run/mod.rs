@@ -482,7 +482,7 @@ fn populate_view(
     view.hooks = cfg.hooks.clone();
     view.theme_names = Theme::list(home);
     view.has_key = has_key;
-    view.specialists = cfg.specialists.clone();
+    view.hats = cfg.hats.clone();
     view.budget_usd = cfg.spend.session_budget_usd;
     if view.budget_usd > 0.0 {
         view.budget_last = view.budget_usd;

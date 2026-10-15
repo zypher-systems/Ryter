@@ -333,8 +333,8 @@ impl Agent {
     /// said. `job` is the uncommitted work, when there is some to count.
     fn agree_to_audit(&mut self, job: Option<&Job>, offered: bool) -> Result<bool> {
         let cfg = self.cfg.clone().unwrap_or_default();
-        let (_, model, connection) = self.stack_for(Role::SoloAudit);
-        let (_, builder, _) = self.stack_for(Role::SoloBuild);
+        let (_, model, connection) = self.stack_for(Role::Audit);
+        let (_, builder, _) = self.stack_for(Role::Build);
         let local = cfg
             .connections
             .get(&connection)
@@ -434,20 +434,20 @@ impl Agent {
         if !self.agree_to_audit(Some(&job), offered)? {
             return Ok(None);
         }
-        let (_, model, connection) = self.stack_for(Role::SoloAudit);
+        let (_, model, connection) = self.stack_for(Role::Audit);
 
         // The review is a turn in the review hat. The hat the user was in
         // comes back when it ends, unless the reviewer asked for another
         // (its fixes, in the build hat) and the user said yes.
         let prior = self.role;
-        if prior != Role::SoloAudit {
-            self.wear(Role::SoloAudit)?;
+        if prior != Role::Audit {
+            self.wear(Role::Audit)?;
         }
         let from = self.session.transcript.len();
         let spent_from = self.session.spend_log().map_or(0, |l| l.len());
         let brief = self.review_brief(&job);
         let out = self.turn(&brief).await;
-        if self.role == Role::SoloAudit && prior != Role::SoloAudit {
+        if self.role == Role::Audit && prior != Role::Audit {
             self.wear(prior)?;
         }
         // A turn that failed has said why.
@@ -475,7 +475,7 @@ impl Agent {
             .unwrap_or_default()
             .into_iter()
             .skip(spent_from)
-            .filter(|r| r.role == Role::SoloAudit)
+            .filter(|r| r.role == Role::Audit)
             .collect();
         let total_usd = reviews
             .iter()
