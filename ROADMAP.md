@@ -39,7 +39,7 @@ Everything here serves an item of the 1.0 list; the number says which. The direc
 - The round cap's message and the budget's message read the same way and say how to go on.
 
 **Item 6, the screen**
-- Streamed `bash` output in the conversation (the shell already passes a running command's newest lines to a hook nothing listens on).
+- ~~Streamed `bash` output in the conversation (the shell already passes a running command's newest lines to a hook nothing listens on).~~ — closed in G7: `ToolLive` updates the running tool row; not logged to `events.jsonl`.
 - The light theme on a real terminal, with the watermark, looked at by a person.
 
 **Item 7, correctness and the guide**

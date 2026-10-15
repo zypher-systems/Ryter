@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-14 — Streamed `bash` output in the conversation
+
+**Decision.** While `bash` or a `run_project` shell step runs, the shell's existing live hook (`ToolContext.live`, newest three lines every 250 ms) emits `AgentEvent::ToolLive` to the TUI sink only. The running tool row in the conversation shows those lines; the finished tool result replaces them. Live updates are not written to `events.jsonl` (several a second is noise). Headless `--json` skips them too.
+
+**Why.** 1.0 item 6: the screen never lies — a busy command must look alive. The hook was kept when crew mode was removed and nothing listened; wiring it into the solo conversation closes that gap without reviving lanes.
+
+**Where.** `event.rs` (`ToolLive`), `agent.rs` (`listen_for_live`), `tools/shell.rs` (`run_command_live`), TUI `run/events.rs` (`on_tool_live`); `docs/guide.md`, `ROADMAP.md` Next item 6.
+
 ### 2026-10-14 — One-mode leftovers renamed to hats language
 - **By:** 1.0 item 7 (correctness and the guide): rename what crew / one-mode left behind.
 - **Decision:** On disk, the model every hat uses is `[model]` and a hat's own model in `config.toml` is `[hats.<hat>]`. `[orchestrator]` and `[specialists.*]` still load; when both spellings are present the new one wins. `review` under either table is still audit. In code, `Role::{Plan,Build,Audit,Scribe}` replace `Solo*`; `Config::all_hats` / `Config::hats` replace `orchestrator` / `specialists`; `follows_all_hats` and `Role::is_hat` replace `follows_orchestrator` and `is_solo`. The sidebar's `specialists` row label and the solo screen layout names stay: those are product language for the second row and the ledger layout, not the crew leftovers.
@@ -518,7 +526,7 @@ Why, not what. Non-obvious choices are recorded here, newest first.
   - **`Role`** is the three hats and `Crew`, which stands for every role crew mode had. It exists so saved sessions and spend logs still load (`orchestrator`, `architect`, `planner`, `builder`, `auditor` all read as it). It has no tools, and `Agent::turn` puts a turn in the build hat if it finds one.
   - **Old files load:** `ConfigFile` and `SettingsFile` simply no longer name the crew's keys, so they are ignored; crew rows under `[specialists]` are left behind; `Meta` drops the crew's fields the same way.
   - **`ryter serve` / `mcp serve`** run a message in the build hat with in-project asks allowed, as `ryter -p --always-approve` does. They ran the lead before, which could not write source itself.
-  - **Kept, unused:** the shell's live-output hook (`run_command_live`), for streamed `bash` output later. Kept, by name only: `[orchestrator]` and `[specialists.*]` on disk and the `Solo*` names in the code; renaming them is a mechanical patch of its own.
+  - **Kept, unused then:** the shell's live-output hook (`run_command_live`), for streamed `bash` output later — wired into the conversation in 2026-10-14 (G7 / item 6). Kept, by name only: `[orchestrator]` and `[specialists.*]` on disk and the `Solo*` names in the code; renaming them is a mechanical patch of its own.
 - **Chosen vs rejected:**
   - Rejected switching crew mode off and removing it later (offered to the user). Code that is off still has to compile, be tested and be read around.
   - Rejected keeping the benchmark by rebuilding it on the hats in the same patch (offered to the user): it needs a design of its own and a paid run for its first results.

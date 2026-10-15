@@ -144,6 +144,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 view.activity.note_delta(now);
             }
         }
+        AgentEvent::ToolLive { id, tail } => on_tool_live(view, id, tail),
         AgentEvent::TurnStarted { .. } => {
             view.tally = Default::default();
             view.lookups = None;
@@ -419,6 +420,31 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
     panel::on_event(view, ev);
 }
 
+/// Newest lines from a running command: under the tool row, and the quiet
+/// clock resets so a long `cargo test` is not "waiting for the model".
+fn on_tool_live(view: &mut View, id: &str, tail: &[String]) {
+    let body = tail.join("\n");
+    if let Some(m) = view.messages.iter_mut().rev().find(|m| {
+        m.meta.tool_id.as_deref() == Some(id)
+            && matches!(
+                m.kind,
+                MessageKind::Tool {
+                    status: ToolStatus::Running,
+                    ..
+                }
+            )
+    }) {
+        m.set_body(body);
+    }
+    if view.activity.busy() {
+        let now = view.now_ms;
+        view.activity.note_delta(now);
+        if let Some(line) = tail.last().filter(|l| !l.is_empty()) {
+            view.activity.note_text(line);
+        }
+    }
+}
+
 fn on_tool_call(
     view: &mut View,
     id: &str,
@@ -574,12 +600,21 @@ fn on_tool_result(
             m.meta.diff = Some(Box::new(d.clone()));
             m.set_body(String::new());
         } else if !body.is_empty() {
-            let joined = if m.body.is_empty() {
-                body
+            // Live bash lines were only for the screen while it ran; the
+            // finished output replaces them. An edit keeps its preview.
+            if tool == "bash" || tool == "run_project" {
+                m.set_body(body);
             } else {
-                format!("{}\n{body}", m.body)
-            };
-            m.set_body(joined);
+                let joined = if m.body.is_empty() {
+                    body
+                } else {
+                    format!("{}\n{body}", m.body)
+                };
+                m.set_body(joined);
+            }
+        } else if tool == "bash" || tool == "run_project" {
+            // A quiet success: drop the live tail so the row is the header.
+            m.set_body(String::new());
         } else {
             m.touch();
         }
@@ -853,6 +888,115 @@ mod tests {
         ));
         assert_eq!(tool.meta.duration_ms, Some(1200));
         assert!(v.messages.last().unwrap().body.contains("E0308"));
+    }
+
+    /// A running bash shows its newest lines under the tool row, and those
+    /// lines are replaced by the finished output (not kept beside it).
+    #[test]
+    fn a_running_bash_shows_its_newest_lines() {
+        let mut v = view();
+        apply(
+            &mut v,
+            AgentEvent::TurnStarted {
+                turn: 1,
+                role: Role::Build,
+                at: 0,
+            },
+        );
+        apply(
+            &mut v,
+            AgentEvent::ToolCall {
+                turn: 1,
+                at: 0,
+                id: "b1".into(),
+                name: "bash".into(),
+                args: serde_json::json!({"command": "cargo test"}),
+                role: Role::Build,
+                summary: Some("cargo test".into()),
+            },
+        );
+        v.now_ms = 1_000;
+        apply(
+            &mut v,
+            AgentEvent::ToolLive {
+                id: "b1".into(),
+                tail: vec![
+                    "test a ... ok".into(),
+                    "test b ... ok".into(),
+                    "test c ... ok".into(),
+                ],
+            },
+        );
+        let tool = v
+            .messages
+            .iter()
+            .find(|m| m.meta.tool_id.as_deref() == Some("b1"))
+            .expect("running bash row");
+        assert!(
+            matches!(
+                &tool.kind,
+                MessageKind::Tool {
+                    status: ToolStatus::Running,
+                    ..
+                }
+            ),
+            "{:?}",
+            tool.kind
+        );
+        assert_eq!(tool.body, "test a ... ok\ntest b ... ok\ntest c ... ok");
+        assert_eq!(v.activity.last_delta_ms, Some(1_000));
+        // Still running: quiet clock must not flip to waiting for the model.
+        assert!(
+            matches!(v.activity.verb, Verb::Tool(_)),
+            "{:?}",
+            v.activity.verb
+        );
+        apply(
+            &mut v,
+            AgentEvent::ToolLive {
+                id: "b1".into(),
+                tail: vec!["test c ... ok".into(), "test d ... ok".into()],
+            },
+        );
+        let tool = v
+            .messages
+            .iter()
+            .find(|m| m.meta.tool_id.as_deref() == Some("b1"))
+            .unwrap();
+        assert_eq!(tool.body, "test c ... ok\ntest d ... ok");
+        apply(
+            &mut v,
+            AgentEvent::ToolResult {
+                id: "b1".into(),
+                output: "test result: ok. 4 passed\n".into(),
+                is_error: false,
+                duration_ms: Some(4_000),
+                diff: None,
+            },
+        );
+        let tool = v
+            .messages
+            .iter()
+            .find(|m| m.meta.tool_id.as_deref() == Some("b1"))
+            .unwrap();
+        assert!(
+            !tool.body.contains("test a ... ok"),
+            "live tail must not stay: {}",
+            tool.body
+        );
+        assert!(
+            tool.body.is_empty(),
+            "live tail cleared for a test summary: {}",
+            tool.body
+        );
+        assert!(
+            tool.meta
+                .detail
+                .as_deref()
+                .is_some_and(|d| d.starts_with('✓') && d.contains("4 passed")),
+            "finished detail: {:?}",
+            tool.meta.detail
+        );
     }
 
     #[test]
