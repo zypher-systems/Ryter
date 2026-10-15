@@ -356,7 +356,7 @@ impl Panel for PermissionModal {
     /// hat's color.
     fn offers(&self) -> Option<ryter_core::Role> {
         match self.tool.as_str() {
-            "audit" => Some(ryter_core::Role::SoloAudit),
+            "audit" => Some(ryter_core::Role::Audit),
             _ => None,
         }
     }
@@ -1235,7 +1235,7 @@ mod tests {
         };
         assert!(matches!(press(&mut m, &mut v, 'a'), Outcome::Stay));
         assert!(matches!(press(&mut m, &mut v, 's'), Outcome::Stay));
-        assert_eq!(m.offers(), Some(ryter_core::Role::SoloAudit));
+        assert_eq!(m.offers(), Some(ryter_core::Role::Audit));
     }
     use crossterm::event::KeyModifiers;
 

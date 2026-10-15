@@ -558,7 +558,7 @@ Today a new TUI session starts in the build hat.
 ### 12.3 `ryter-cli`
 
 - **R-CLI-01** The TUI's starting hat comes from `start_hat` (§11). The headless paths
-  keep `Role::SoloBuild`.
+  keep `Role::Build`.
 
 ---
 

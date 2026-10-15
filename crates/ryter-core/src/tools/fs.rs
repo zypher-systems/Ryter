@@ -516,7 +516,7 @@ fn require_resolved(ctx: &ToolContext, raw: &str) -> Result<std::path::PathBuf> 
         // AskOutside).
         .or_else(|| {
             crate::tools::policy::resolve_outside(ctx, raw).filter(|p| {
-                ctx.role == crate::role::Role::SoloBuild
+                ctx.role == crate::role::Role::Build
                     || crate::tools::policy::free_place(p, ctx, false)
             })
         })

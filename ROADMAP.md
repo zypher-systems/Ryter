@@ -46,13 +46,13 @@ Everything here serves an item of the 1.0 list; the number says which. The direc
 - Recorded wire fixtures per provider (tool calls, parallel calls, truncation), replayed in tests, and one live round trip per built-in provider run by hand before a release. Tool calling was once broken on two backends while every test passed.
 - Anthropic extended thinking with tools (thinking blocks echoed back on `messages`).
 - The guide read against the release, screen by screen, before 1.0.
-- Rename what the one-mode world left behind: `[orchestrator]`, `[specialists.*]`, the `Solo*` names.
+- ~~Rename what the one-mode world left behind: `[orchestrator]`, `[specialists.*]`, the `Solo*` names.~~ Done: `[model]` / `[hats.*]` on disk (old tables still load); `Role::{Plan,Build,Audit,Scribe}`; `Config::all_hats` / `hats`.
 
 **Item 2 and item 8, the gate and the lines**
 - Decide with the user what a sandbox profile is for. Under `workspace` or `read-only` the home folder is shut at the system level, so `cargo install` or a tool writing `~/.config/<name>` on first run fails; Landlock cannot grant a folder with exceptions.
 - Narrow the sandbox's grant on Ryter's own folder to this project's sessions.
 - Recorded live sessions replayed through the gate after each change to it, as was done for 0.14.0 and the fiscus run. The replay is a throwaway test each time; a kept `#[ignore]` test over a recorded `events.jsonl` would make it one command.
-- `curl`'s body to another host asks (it leaves the machine), but a header, user agent, referer, `-u` or `-w` value carrying `$VAR` to another host runs: `uploads_elsewhere` counts bodies, not headers. Older than 0.20.0 (found by its reviewers); a secret in a header leaves the machine as surely as one in a body.
+- ~~`curl`'s body to another host asks (it leaves the machine), but a header, user agent, referer, `-u` or `-w` value carrying `$VAR` to another host runs: `uploads_elsewhere` counts bodies, not headers~~ — closed in G5 (`uploads_elsewhere` counts those options too when the value expands a variable or looks like a secret).
 - ~~A repository nested *below* a scratch folder the turn deletes freely (`rm -rf /tmp/probe` with someone's repository at `/tmp/probe/sub`) is not protected~~ — closed in G4 (gate looks below the path too).
 - Writing a key-named file to scratch space (`touch /tmp/tls_test.key`, to check a `.gitignore`) is refused as naming a secret. Left as the secret rule for now.
 - Selection, from the 0.24.0 reviews, non-blocking: a scrolled message box copies the `↑`/`↓` mark in its corner; where the "new rows" mark meets the palette a press uses the mark's rect; a pulled selection whose start has scrolled off the screen, dragged onto the pinned question, ends a row or two short; a click on a card can open its panel on top of a card that opened between press and release; prose that wrapped is copied with the screen's line breaks.

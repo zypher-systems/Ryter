@@ -18,19 +18,19 @@ default_model = "anthropic/claude-sonnet-4.6"
 http_referer = "https://github.com/zypher-systems/ryter"
 x_title = "Ryter"
 
-# The model every hat uses. (The table is called `orchestrator` for a reason
-# that is gone: the name is kept so existing configuration still loads.)
-[orchestrator]
+# The model every hat uses. (`[orchestrator]` still loads under this name.)
+[model]
 connection = "spacexai"
 model = "grok-4.6"
 
 # A hat can have a model of its own: plan, build, audit, scribe. Set them in the
-# TUI (/models), or uncomment (`[specialists.review]` still reads as audit). The
-# scribe writes documentation only: a small, cheap model does.
-# [specialists.audit]
+# TUI (/models), or uncomment (`[specialists.*]` and `[hats.review]` still load;
+# `review` is audit). The scribe writes documentation only: a small, cheap model
+# does. Per-hat choices from /models are kept in ~/.ryter/hats.toml.
+# [hats.audit]
 # connection = "openrouter"
 # model = "anthropic/claude-sonnet-4.6"
-# [specialists.scribe]
+# [hats.scribe]
 # connection = "openrouter"
 # model = "anthropic/claude-haiku-4.5"
 

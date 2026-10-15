@@ -31,16 +31,11 @@ pub const MIN_SCREEN: u16 = 100;
 pub const PANES_SCREEN: u16 = 150;
 /// The hats, in the order the sidebar lists them: the primary hats, then
 /// the specialists (`docs/specialists-design.md` §2).
-pub const HATS: [Role; 4] = [
-    Role::SoloPlan,
-    Role::SoloBuild,
-    Role::SoloAudit,
-    Role::SoloScribe,
-];
+pub const HATS: [Role; 4] = [Role::Plan, Role::Build, Role::Audit, Role::Scribe];
 /// The primary row: the hats the work is done in.
-pub const PRIMARY: [Role; 2] = [Role::SoloPlan, Role::SoloBuild];
+pub const PRIMARY: [Role; 2] = [Role::Plan, Role::Build];
 /// The specialists, below the separator.
-pub const SPECIALISTS: [Role; 2] = [Role::SoloAudit, Role::SoloScribe];
+pub const SPECIALISTS: [Role; 2] = [Role::Audit, Role::Scribe];
 /// The word on the separator between the rows.
 pub const SEPARATOR_LABEL: &str = "specialists";
 /// Dots the `turns` row shows: the newest turns, oldest first.
@@ -106,11 +101,11 @@ pub fn hat_spend(view: &View, hat: Role) -> String {
 /// What the hat may do, in two or three words.
 pub fn hat_may(hat: Role) -> &'static str {
     match hat {
-        Role::SoloPlan => "read only",
+        Role::Plan => "read only",
         // What the audit changes, a checkpoint puts back.
-        Role::SoloAudit => "checkpoint",
-        Role::SoloScribe => "docs only",
-        Role::SoloBuild | Role::Crew => "asks first",
+        Role::Audit => "checkpoint",
+        Role::Scribe => "docs only",
+        Role::Build | Role::Crew => "asks first",
     }
 }
 
