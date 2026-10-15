@@ -31,7 +31,7 @@ async fn approved_plan_build_review_test_resume_undo_and_commit_receipt() {
     agent.ctx.notes_dir = agent.session.notes_dir();
     agent.budget_usd = 1.0;
     agent.cfg = Some(crate::Config::default());
-    agent.put_on(Role::SoloPlan).unwrap();
+    agent.put_on(Role::Plan).unwrap();
     let (io, requests) = crate::user_io::UserIo::pair();
     agent.ctx.user_io = Some(io);
     let approvals = std::thread::spawn(move || {
@@ -78,7 +78,7 @@ async fn approved_plan_build_review_test_resume_undo_and_commit_receipt() {
         .turn("Plan and build the greeting; preserve sibling files.")
         .await
         .unwrap();
-    assert_eq!(agent.role, Role::SoloBuild);
+    assert_eq!(agent.role, Role::Build);
     assert!(agent.session.meta.plan_file.is_some());
     assert_eq!(
         std::fs::read_to_string(app.join("greeting.txt")).unwrap(),
@@ -95,7 +95,7 @@ async fn approved_plan_build_review_test_resume_undo_and_commit_receipt() {
         )),
     ]));
     assert!(agent.review_now().await.unwrap().contains("VERDICT: PASS"));
-    agent.put_on(Role::SoloBuild).unwrap();
+    agent.put_on(Role::Build).unwrap();
     agent.provider = Arc::new(ReplayProvider::scripted(vec![
         billed(call(
             "propose_run",
@@ -136,7 +136,7 @@ async fn approved_plan_build_review_test_resume_undo_and_commit_receipt() {
     assert_eq!(approvals.join().unwrap(), ["plan", "audit", "run"]);
     agent.session = Session::open(&agent.session.dir).unwrap();
     assert_eq!(agent.session.spend_log().unwrap().len(), spend.len());
-    agent.put_on(Role::SoloBuild).unwrap();
+    agent.put_on(Role::Build).unwrap();
     std::fs::write(app.join("user-note.txt"), "keep my later edit\n").unwrap();
     std::fs::write(root.join("sibling.txt"), "later sibling edit\n").unwrap();
     agent.undo().unwrap();

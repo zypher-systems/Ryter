@@ -97,7 +97,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
     // The guard card's `audit.md` row reads `writing…` through an audit turn.
     match ev {
         AgentEvent::TurnStarted { role, .. } => {
-            view.audit_writing = *role == ryter_core::Role::SoloAudit;
+            view.audit_writing = *role == ryter_core::Role::Audit;
         }
         AgentEvent::TurnFinished { .. } | AgentEvent::Audited { .. } => {
             view.audit_writing = false;
@@ -437,7 +437,7 @@ fn on_tool_call(
     if name == "run_project" && args.get("action").and_then(|a| a.as_str()) == Some("start") {
         view.starting_product = Some(id.to_string());
     }
-    let speaker = role.is_solo();
+    let speaker = role.is_hat();
     // Reads and searches fold into one row while they keep coming; the
     // chat is for the work.
     if speaker && toolview::is_lookup(name) {
@@ -501,7 +501,7 @@ fn on_tool_call(
         }
         view.lookups = None;
     }
-    if view.activity.busy() && role.is_solo() {
+    if view.activity.busy() && role.is_hat() {
         // `running cargo test`, `running write app.py`: the tool row's
         // own words, so the status row and the sidebar name the step.
         let step = match (name, target.trim()) {
@@ -682,7 +682,7 @@ fn on_spend(
             view.unpriced_calls += 1;
         }
     }
-    if role.is_solo() {
+    if role.is_hat() {
         // Tokens this turn become exact once accounting lands (`R-ACT-07`).
         view.activity.tokens = output_tokens;
         view.activity.tokens_estimated = incomplete;
@@ -741,7 +741,7 @@ mod tests {
                     id: id.into(),
                     name: "record_decision".into(),
                     args: serde_json::json!({"title": "No export button in this pass"}),
-                    role: Role::SoloBuild,
+                    role: Role::Build,
                     summary: None,
                 },
             );
@@ -824,7 +824,7 @@ mod tests {
                 id: "t1".into(),
                 name: "bash".into(),
                 args: serde_json::json!({"command": "cargo test --all"}),
-                role: Role::SoloBuild,
+                role: Role::Build,
                 summary: None,
             },
         );
@@ -927,7 +927,7 @@ mod tests {
             AgentEvent::Spend {
                 connection: "spacexai".into(),
                 model: "grok-4.6".into(),
-                role: Role::SoloBuild,
+                role: Role::Build,
                 input_tokens: 100,
                 output_tokens: 20,
                 cached_tokens: 0,
@@ -961,7 +961,7 @@ mod tests {
             AgentEvent::Spend {
                 connection: "x".into(),
                 model: "m".into(),
-                role: Role::SoloBuild,
+                role: Role::Build,
                 input_tokens: 1,
                 output_tokens: 1,
                 cached_tokens: 0,
@@ -982,7 +982,7 @@ mod tests {
             AgentEvent::Spend {
                 connection: "fixture".into(),
                 model: "fixture".into(),
-                role: Role::SoloBuild,
+                role: Role::Build,
                 input_tokens: 1_000,
                 output_tokens: 0,
                 cached_tokens: 0,

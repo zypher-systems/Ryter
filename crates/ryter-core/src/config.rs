@@ -20,12 +20,14 @@ pub struct Config {
     pub default_connection: String,
     /// Named inference endpoints.
     pub connections: BTreeMap<String, ConnectionConfig>,
-    /// The model every hat uses. `[orchestrator]` on disk: the name is from
-    /// crew mode, and is kept so existing configuration still loads.
-    pub orchestrator: RoleModel,
-    /// A hat's own model, by hat (`plan`, `build`, `review`): `[specialists.*]`
-    /// on disk, and `~/.ryter/hats.toml`.
-    pub specialists: BTreeMap<String, RoleModel>,
+    /// The model every hat uses. `[model]` on disk; `[orchestrator]` still
+    /// loads (the crew-mode name).
+    #[serde(alias = "orchestrator")]
+    pub all_hats: RoleModel,
+    /// A hat's own model, by hat (`plan`, `build`, `audit`, `scribe`):
+    /// `[hats.*]` on disk, `[specialists.*]` still loads, and `~/.ryter/hats.toml`.
+    #[serde(alias = "specialists")]
+    pub hats: BTreeMap<String, RoleModel>,
     /// Spend accounting.
     pub spend: SpendConfig,
     /// `[limits]`: how far one message may go.
@@ -114,12 +116,9 @@ fn apply_old_review_file(cfg: &mut Config, home: &Path) {
     };
     if !hats_path(home).exists()
         && cfg.connections.contains_key(&old.connection)
-        && !cfg
-            .specialists
-            .get("audit")
-            .is_some_and(RoleModel::is_override)
+        && !cfg.hats.get("audit").is_some_and(RoleModel::is_override)
     {
-        cfg.specialists.insert(
+        cfg.hats.insert(
             "audit".into(),
             RoleModel {
                 connection: Some(old.connection),
@@ -141,11 +140,11 @@ impl Default for Config {
         Self {
             default_connection: "spacexai".into(),
             connections: builtin_connections(),
-            orchestrator: RoleModel {
+            all_hats: RoleModel {
                 connection: Some("spacexai".into()),
                 model: Some("grok-4.6".into()),
             },
-            specialists: BTreeMap::new(),
+            hats: BTreeMap::new(),
             spend: SpendConfig::default(),
             limits: LimitsConfig::default(),
             pricing: BTreeMap::new(),
@@ -729,17 +728,14 @@ impl RoleModel {
 impl Config {
     /// A hat's own row, empty when it follows the model every hat uses.
     fn hat_row(&self, role: crate::role::Role) -> RoleModel {
-        if !role.is_solo() {
+        if !role.is_hat() {
             return RoleModel::default();
         }
-        self.specialists
-            .get(role.as_str())
-            .cloned()
-            .unwrap_or_default()
+        self.hats.get(role.as_str()).cloned().unwrap_or_default()
     }
 
     /// True when this hat runs on the model every hat uses.
-    pub fn follows_orchestrator(&self, role: crate::role::Role) -> bool {
+    pub fn follows_all_hats(&self, role: crate::role::Role) -> bool {
         !self.hat_row(role).is_override()
     }
 
@@ -749,11 +745,11 @@ impl Config {
         let conn = rm
             .connection
             .filter(|c| self.connections.contains_key(c))
-            .or_else(|| self.orchestrator.connection.clone())
+            .or_else(|| self.all_hats.connection.clone())
             .unwrap_or_else(|| self.default_connection.clone());
         let model = rm
             .model
-            .or_else(|| self.orchestrator.model.clone())
+            .or_else(|| self.all_hats.model.clone())
             .or_else(|| {
                 self.connections
                     .get(&conn)
@@ -870,7 +866,7 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
     Ok(cfg)
 }
 
-/// The hats that can have a model of their own, as `specialists` names them.
+/// The hats that can have a model of their own.
 pub const HAT_ROLES: &[&str] = &["plan", "build", "audit", "scribe"];
 
 /// A hat's seat under the name it had before: `review` is `audit`.
@@ -896,20 +892,19 @@ fn apply_hats_file(cfg: &mut Config, path: &Path) {
     for (k, v) in map {
         let k = hat_seat_name(&k).to_string();
         if HAT_ROLES.contains(&k.as_str()) {
-            cfg.specialists.insert(k, v);
+            cfg.hats.insert(k, v);
         }
     }
 }
 
 /// Save the hats' own models (does not rewrite `config.toml`). A hat that
 /// follows the others is left out.
-pub fn save_hats(home: &Path, specialists: &BTreeMap<String, RoleModel>) -> Result<()> {
+pub fn save_hats(home: &Path, hats: &BTreeMap<String, RoleModel>) -> Result<()> {
     fs::create_dir_all(home).map_err(|e| Error::Config(e.to_string()))?;
     let map: BTreeMap<String, RoleModel> = HAT_ROLES
         .iter()
         .filter_map(|role| {
-            specialists
-                .get(*role)
+            hats.get(*role)
                 .filter(|rm| rm.is_override())
                 .map(|rm| ((*role).to_string(), rm.clone()))
         })
@@ -1309,7 +1304,17 @@ where
 struct ConfigFile {
     default_connection: Option<String>,
     connections: BTreeMap<String, ConnectionConfig>,
+    /// `[model]` — the model every hat uses.
+    #[serde(default)]
+    model: Option<RoleModel>,
+    /// Legacy `[orchestrator]`; used when `[model]` is absent.
+    #[serde(default)]
     orchestrator: Option<RoleModel>,
+    /// `[hats.*]` — a hat's own model in config.toml.
+    #[serde(default)]
+    hats: BTreeMap<String, RoleModel>,
+    /// Legacy `[specialists.*]`; merged under [`Self::hats`] when applying.
+    #[serde(default)]
     specialists: BTreeMap<String, RoleModel>,
     // Kept as a raw table and merged field by field: a file that sets one
     // key must not need every other, nor wipe the user's.
@@ -1441,15 +1446,16 @@ impl ConfigFile {
         for (k, v) in self.connections {
             cfg.connections.insert(k, v);
         }
-        if let Some(o) = self.orchestrator {
-            cfg.orchestrator = o;
+        if let Some(o) = self.model.or(self.orchestrator) {
+            cfg.all_hats = o;
         }
-        // Only the hats: a row for a crew role (`[specialists.builder]`,
-        // from before crew mode was removed) is left behind.
-        for (k, v) in self.specialists {
+        // Only the hats: a row for a crew role (`[specialists.builder]` /
+        // `[hats.builder]`, from before crew mode was removed) is left behind.
+        // Old `[specialists.*]` loads first; `[hats.*]` wins on the same seat.
+        for (k, v) in self.specialists.into_iter().chain(self.hats) {
             let k = hat_seat_name(&k).to_string();
             if HAT_ROLES.contains(&k.as_str()) {
-                cfg.specialists.insert(k, v);
+                cfg.hats.insert(k, v);
             }
         }
         for (k, v) in self.reasoning_effort {
@@ -1781,7 +1787,7 @@ pub fn effort_for(
         Some(v @ ("low" | "medium" | "high")) => Some(v.to_string()),
         _ => Some(
             match role {
-                Role::SoloPlan => "high",
+                Role::Plan => "high",
                 _ => "medium",
             }
             .to_string(),
@@ -1881,7 +1887,7 @@ pub fn resolve_route(
                 (l.connection == conn && !l.model.trim().is_empty()).then(|| l.model.clone())
             })
         })
-        .or_else(|| cfg.orchestrator.model.clone())
+        .or_else(|| cfg.all_hats.model.clone())
         .or_else(|| conn_cfg.and_then(|c| c.default_model.clone()))
         .unwrap_or_else(|| "grok-4.6".into());
     (conn, model)
@@ -2237,7 +2243,7 @@ mod tests {
         assert!(cfg.connections.contains_key("openrouter"));
         assert_eq!(cfg.connections["spacexai"].api_backend, "responses");
         assert!(
-            cfg.specialists.is_empty(),
+            cfg.hats.is_empty(),
             "every hat follows one model until the user says otherwise"
         );
     }
@@ -2277,24 +2283,24 @@ mod tests {
         let cfg = load_at(dir.path(), None, false).expect("old configuration must load");
         assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
         assert_eq!(
-            cfg.route_for(Role::SoloBuild),
+            cfg.route_for(Role::Build),
             ("openrouter".into(), "deepseek/deepseek-v4.1-flash".into())
         );
-        assert!(cfg.follows_orchestrator(Role::SoloBuild));
-        assert!(cfg.follows_orchestrator(Role::SoloPlan));
+        assert!(cfg.follows_all_hats(Role::Build));
+        assert!(cfg.follows_all_hats(Role::Plan));
         // A hat's row is kept; the crew's rows are not.
         assert_eq!(
-            cfg.route_for(Role::SoloAudit),
+            cfg.route_for(Role::Audit),
             ("openrouter".into(), "x-ai/grok-4.7".into())
         );
         assert_eq!(
-            cfg.specialists.keys().collect::<Vec<_>>(),
+            cfg.hats.keys().collect::<Vec<_>>(),
             ["audit"],
             "only the hats"
         );
         assert_eq!(cfg.spend.session_budget_usd, 4.0);
         // A role that is gone runs on nothing of its own.
-        assert!(cfg.follows_orchestrator(Role::Crew));
+        assert!(cfg.follows_all_hats(Role::Crew));
     }
 
     #[test]
@@ -2302,23 +2308,97 @@ mod tests {
         use crate::role::Role;
         let mut cfg = Config::default();
         let all: (String, String) = ("spacexai".into(), "grok-4.6".into());
-        for hat in [Role::SoloPlan, Role::SoloBuild, Role::SoloAudit] {
+        for hat in [Role::Plan, Role::Build, Role::Audit] {
             assert_eq!(cfg.route_for(hat), all);
         }
-        cfg.specialists.insert(
+        cfg.hats.insert(
             "plan".into(),
             RoleModel {
                 connection: Some("openrouter".into()),
                 model: Some("anthropic/claude-sonnet-4.6".into()),
             },
         );
-        let (conn, model) = cfg.route_for(Role::SoloPlan);
+        let (conn, model) = cfg.route_for(Role::Plan);
         assert_eq!(conn, "openrouter");
         assert_eq!(model, "anthropic/claude-sonnet-4.6");
         // Giving one hat a model leaves the others where they were.
-        assert_eq!(cfg.route_for(Role::SoloBuild), all);
-        assert!(cfg.follows_orchestrator(Role::SoloBuild));
-        assert!(!cfg.follows_orchestrator(Role::SoloPlan));
+        assert_eq!(cfg.route_for(Role::Build), all);
+        assert!(cfg.follows_all_hats(Role::Build));
+        assert!(!cfg.follows_all_hats(Role::Plan));
+    }
+
+    /// `[model]` and `[hats.*]` are the names on disk; the crew-mode names
+    /// `[orchestrator]` and `[specialists.*]` still load. When both spellings
+    /// name the same thing, the new one wins.
+    #[test]
+    fn model_and_hats_tables_load_and_old_names_still_do() {
+        use crate::role::Role;
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("config.toml"),
+            "[model]\nconnection = \"openrouter\"\nmodel = \"deepseek/deepseek-v4.1-flash\"\n\
+             [hats.plan]\nconnection = \"openrouter\"\nmodel = \"anthropic/claude-sonnet-4.6\"\n\
+             [hats.audit]\nmodel = \"x-ai/grok-4.7\"\n",
+        )
+        .unwrap();
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(
+            cfg.route_for(Role::Build),
+            ("openrouter".into(), "deepseek/deepseek-v4.1-flash".into())
+        );
+        assert_eq!(
+            cfg.route_for(Role::Plan),
+            ("openrouter".into(), "anthropic/claude-sonnet-4.6".into())
+        );
+        assert_eq!(
+            cfg.route_for(Role::Audit),
+            ("openrouter".into(), "x-ai/grok-4.7".into())
+        );
+        assert!(cfg.follows_all_hats(Role::Build));
+        assert!(!cfg.follows_all_hats(Role::Plan));
+
+        // Old tables alone still load (the crew-mode test covers more).
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("config.toml"),
+            "[orchestrator]\nconnection = \"spacexai\"\nmodel = \"grok-4.6\"\n\
+             [specialists.scribe]\nconnection = \"openrouter\"\nmodel = \"small/writer\"\n\
+             [specialists.review]\nmodel = \"old/reviewer\"\n",
+        )
+        .unwrap();
+        let old = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(
+            old.route_for(Role::Build),
+            ("spacexai".into(), "grok-4.6".into())
+        );
+        assert_eq!(
+            old.route_for(Role::Scribe),
+            ("openrouter".into(), "small/writer".into())
+        );
+        assert_eq!(
+            old.route_for(Role::Audit),
+            ("spacexai".into(), "old/reviewer".into())
+        );
+
+        // Both spellings: `[model]` and `[hats.*]` win.
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("config.toml"),
+            "[orchestrator]\nconnection = \"spacexai\"\nmodel = \"old/all\"\n\
+             [model]\nconnection = \"openrouter\"\nmodel = \"new/all\"\n\
+             [specialists.plan]\nmodel = \"old/plan\"\n\
+             [hats.plan]\nconnection = \"openrouter\"\nmodel = \"new/plan\"\n",
+        )
+        .unwrap();
+        let both = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(
+            both.route_for(Role::Build),
+            ("openrouter".into(), "new/all".into())
+        );
+        assert_eq!(
+            both.route_for(Role::Plan),
+            ("openrouter".into(), "new/plan".into())
+        );
     }
 
     #[test]
@@ -2449,7 +2529,7 @@ mod tests {
         .unwrap();
         let cfg = load_at(dir.path(), None, false).unwrap();
         // Built-in [orchestrator] is still grok-4.6; last.toml must win.
-        assert_eq!(cfg.orchestrator.model.as_deref(), Some("grok-4.6"));
+        assert_eq!(cfg.all_hats.model.as_deref(), Some("grok-4.6"));
         let last = load_last_route(dir.path()).unwrap();
         let (conn, model) = resolve_route(&cfg, Some(&last), None, None);
         assert_eq!(conn, "openrouter");
@@ -2734,10 +2814,10 @@ mod tests {
         .unwrap();
         let mut cfg = load_at(dir.path(), None, false).unwrap();
         assert_eq!(
-            cfg.route_for(Role::SoloAudit),
+            cfg.route_for(Role::Audit),
             ("openrouter".into(), "z-ai/glm-5.3".into())
         );
-        assert!(cfg.follows_orchestrator(Role::SoloBuild));
+        assert!(cfg.follows_all_hats(Role::Build));
         assert_eq!(cfg.spend.audit_usd, 2.0);
         // The limit, changed in the settings, is the settings' from then on:
         // even changed to none.
@@ -2748,10 +2828,10 @@ mod tests {
             0.0
         );
         // The hat put back to following the others stays there.
-        cfg.specialists.remove("audit");
-        save_hats(dir.path(), &cfg.specialists).unwrap();
+        cfg.hats.remove("audit");
+        save_hats(dir.path(), &cfg.hats).unwrap();
         let again = load_at(dir.path(), None, false).unwrap();
-        assert!(again.follows_orchestrator(Role::SoloAudit));
+        assert!(again.follows_all_hats(Role::Audit));
         // A connection that is gone carries no model over.
         let dir = TempDir::new().unwrap();
         fs::write(
@@ -2760,11 +2840,11 @@ mod tests {
         )
         .unwrap();
         let cfg = load_at(dir.path(), None, false).unwrap();
-        assert!(cfg.follows_orchestrator(Role::SoloAudit));
+        assert!(cfg.follows_all_hats(Role::Audit));
         assert_eq!(cfg.spend.audit_usd, 1.5);
         // No file: no model of its own, and no limit.
         let cfg = load_at(TempDir::new().unwrap().path(), None, false).unwrap();
-        assert!(cfg.follows_orchestrator(Role::SoloAudit));
+        assert!(cfg.follows_all_hats(Role::Audit));
         assert_eq!(cfg.spend.audit_usd, 0.0);
     }
 
@@ -2776,26 +2856,26 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut cfg = load_at(dir.path(), None, false).unwrap();
         let all: (String, String) = ("spacexai".into(), "grok-4.6".into());
-        for hat in [Role::SoloPlan, Role::SoloBuild, Role::SoloAudit] {
-            assert!(cfg.follows_orchestrator(hat));
+        for hat in [Role::Plan, Role::Build, Role::Audit] {
+            assert!(cfg.follows_all_hats(hat));
             assert_eq!(cfg.route_for(hat), all);
         }
-        cfg.specialists.insert(
+        cfg.hats.insert(
             "audit".into(),
             RoleModel {
                 connection: Some("openrouter".into()),
                 model: Some("x-ai/grok-4.7".into()),
             },
         );
-        assert!(!cfg.follows_orchestrator(Role::SoloAudit));
+        assert!(!cfg.follows_all_hats(Role::Audit));
         assert_eq!(
-            cfg.route_for(Role::SoloAudit),
+            cfg.route_for(Role::Audit),
             ("openrouter".into(), "x-ai/grok-4.7".into())
         );
-        assert_eq!(cfg.route_for(Role::SoloPlan), all);
-        assert_eq!(cfg.route_for(Role::SoloBuild), all);
+        assert_eq!(cfg.route_for(Role::Plan), all);
+        assert_eq!(cfg.route_for(Role::Build), all);
         // Saved and read back.
-        save_hats(dir.path(), &cfg.specialists).unwrap();
+        save_hats(dir.path(), &cfg.hats).unwrap();
         let hats = fs::read_to_string(hats_path(dir.path())).unwrap();
         assert!(hats.contains("[audit]"), "{hats}");
         // The seat's old name in a hats.toml from before 0.16 is the
@@ -2807,11 +2887,11 @@ mod tests {
         .unwrap();
         let aliased = load_at(dir.path(), None, false).unwrap();
         assert_eq!(
-            aliased.route_for(Role::SoloAudit),
+            aliased.route_for(Role::Audit),
             ("openrouter".into(), "old/reviewer".into())
         );
-        assert!(aliased.specialists.contains_key("audit"));
-        assert!(!aliased.specialists.contains_key("review"));
+        assert!(aliased.hats.contains_key("audit"));
+        assert!(!aliased.hats.contains_key("review"));
         // The scribe's seat loads from the same file.
         fs::write(
             hats_path(dir.path()),
@@ -2820,15 +2900,15 @@ mod tests {
         .unwrap();
         let with_scribe = load_at(dir.path(), None, false).unwrap();
         assert_eq!(
-            with_scribe.route_for(Role::SoloScribe),
+            with_scribe.route_for(Role::Scribe),
             ("openrouter".into(), "small/writer".into())
         );
-        assert!(with_scribe.follows_orchestrator(Role::SoloAudit));
+        assert!(with_scribe.follows_all_hats(Role::Audit));
         // Back to the seat as saved, for the rest of the test.
-        save_hats(dir.path(), &cfg.specialists).unwrap();
+        save_hats(dir.path(), &cfg.hats).unwrap();
         let again = load_at(dir.path(), None, false).unwrap();
         assert_eq!(
-            again.route_for(Role::SoloAudit),
+            again.route_for(Role::Audit),
             ("openrouter".into(), "x-ai/grok-4.7".into())
         );
     }
@@ -2913,15 +2993,15 @@ mod tests {
     fn reasoning_effort_by_role_with_overrides() {
         use crate::role::Role;
         assert_eq!(
-            effort_for(None, None, Role::SoloBuild, "m").as_deref(),
+            effort_for(None, None, Role::Build, "m").as_deref(),
             Some("medium")
         );
         assert_eq!(
-            effort_for(None, None, Role::SoloPlan, "m").as_deref(),
+            effort_for(None, None, Role::Plan, "m").as_deref(),
             Some("high")
         );
         assert_eq!(
-            effort_for(None, None, Role::SoloAudit, "m").as_deref(),
+            effort_for(None, None, Role::Audit, "m").as_deref(),
             Some("medium")
         );
         let mut m = BTreeMap::new();
@@ -2929,12 +3009,12 @@ mod tests {
         m.insert("plan".to_string(), "default".to_string());
         m.insert("audit".to_string(), "bogus".to_string());
         assert_eq!(
-            effort_for(Some(&m), None, Role::SoloBuild, "m").as_deref(),
+            effort_for(Some(&m), None, Role::Build, "m").as_deref(),
             Some("low")
         );
-        assert_eq!(effort_for(Some(&m), None, Role::SoloPlan, "m"), None);
+        assert_eq!(effort_for(Some(&m), None, Role::Plan, "m"), None);
         assert_eq!(
-            effort_for(Some(&m), None, Role::SoloAudit, "m").as_deref(),
+            effort_for(Some(&m), None, Role::Audit, "m").as_deref(),
             Some("medium"),
             "an unknown value falls back to the default"
         );
@@ -2950,21 +3030,21 @@ mod tests {
         models.insert("anthropic/claude-opus-5".to_string(), "default".to_string());
         let m = Some(&models);
         assert_eq!(
-            effort_for(None, m, Role::SoloPlan, "z-ai/glm-5.3-flashx").as_deref(),
+            effort_for(None, m, Role::Plan, "z-ai/glm-5.3-flashx").as_deref(),
             Some("low")
         );
         assert_eq!(
-            effort_for(None, m, Role::SoloBuild, "anthropic/claude-opus-5"),
+            effort_for(None, m, Role::Build, "anthropic/claude-opus-5"),
             None
         );
         assert_eq!(
-            effort_for(None, m, Role::SoloPlan, "x-ai/grok-4.6").as_deref(),
+            effort_for(None, m, Role::Plan, "x-ai/grok-4.6").as_deref(),
             Some("high")
         );
         let mut roles = BTreeMap::new();
         roles.insert("build".to_string(), "high".to_string());
         assert_eq!(
-            effort_for(Some(&roles), m, Role::SoloBuild, "z-ai/glm-5.3-flashx").as_deref(),
+            effort_for(Some(&roles), m, Role::Build, "z-ai/glm-5.3-flashx").as_deref(),
             Some("low"),
             "the model's level beats the role override"
         );

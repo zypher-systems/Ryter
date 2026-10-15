@@ -63,10 +63,10 @@ fn placeholder(view: &View) -> String {
         // The keys are on the hint bar; the prompt asks its question and
         // no more.
         Mode::Normal => match view.mode {
-            ryter_core::Role::SoloBuild | ryter_core::Role::Crew => "what should change?".into(),
-            ryter_core::Role::SoloPlan => "what should we plan?".into(),
-            ryter_core::Role::SoloAudit => "ask about the audit".into(),
-            ryter_core::Role::SoloScribe => "what should be documented?".into(),
+            ryter_core::Role::Build | ryter_core::Role::Crew => "what should change?".into(),
+            ryter_core::Role::Plan => "what should we plan?".into(),
+            ryter_core::Role::Audit => "ask about the audit".into(),
+            ryter_core::Role::Scribe => "what should be documented?".into(),
         },
         Mode::Secret { connection } => format!("paste the API key for {connection}"),
         Mode::Field { label } => format!("type {label}…"),

@@ -46,7 +46,7 @@ Everything here serves an item of the 1.0 list; the number says which. The direc
 - Recorded wire fixtures per provider (tool calls, parallel calls, truncation), replayed in tests, and one live round trip per built-in provider run by hand before a release. Tool calling was once broken on two backends while every test passed.
 - Anthropic extended thinking with tools (thinking blocks echoed back on `messages`).
 - The guide read against the release, screen by screen, before 1.0.
-- Rename what the one-mode world left behind: `[orchestrator]`, `[specialists.*]`, the `Solo*` names.
+- ~~Rename what the one-mode world left behind: `[orchestrator]`, `[specialists.*]`, the `Solo*` names.~~ Done: `[model]` / `[hats.*]` on disk (old tables still load); `Role::{Plan,Build,Audit,Scribe}`; `Config::all_hats` / `hats`.
 
 **Item 2 and item 8, the gate and the lines**
 - Decide with the user what a sandbox profile is for. Under `workspace` or `read-only` the home folder is shut at the system level, so `cargo install` or a tool writing `~/.config/<name>` on first run fails; Landlock cannot grant a folder with exceptions.

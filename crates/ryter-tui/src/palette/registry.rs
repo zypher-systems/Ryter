@@ -192,7 +192,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         false,
         None,
         false,
-        |_, _| Action::SetMode(ryter_core::Role::SoloBuild),
+        |_, _| Action::SetMode(ryter_core::Role::Build),
     ),
     spec(
         "plan",
@@ -203,7 +203,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         false,
         None,
         false,
-        |_, _| Action::SetMode(ryter_core::Role::SoloPlan),
+        |_, _| Action::SetMode(ryter_core::Role::Plan),
     ),
     spec(
         "scribe",
@@ -214,7 +214,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         false,
         None,
         false,
-        |_, _| Action::SetMode(ryter_core::Role::SoloScribe),
+        |_, _| Action::SetMode(ryter_core::Role::Scribe),
     ),
     spec(
         "review",

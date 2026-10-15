@@ -2,6 +2,12 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-14 — One-mode leftovers renamed to hats language
+- **By:** 1.0 item 7 (correctness and the guide): rename what crew / one-mode left behind.
+- **Decision:** On disk, the model every hat uses is `[model]` and a hat's own model in `config.toml` is `[hats.<hat>]`. `[orchestrator]` and `[specialists.*]` still load; when both spellings are present the new one wins. `review` under either table is still audit. In code, `Role::{Plan,Build,Audit,Scribe}` replace `Solo*`; `Config::all_hats` / `Config::hats` replace `orchestrator` / `specialists`; `follows_all_hats` and `Role::is_hat` replace `follows_orchestrator` and `is_solo`. The sidebar's `specialists` row label and the solo screen layout names stay: those are product language for the second row and the ledger layout, not the crew leftovers.
+- **Why:** The guide and example config still taught crew-era table names while the product speaks in hats and *All hats*. The 2026-10-01 crew-removal entry left this rename as its own mechanical patch.
+- **Where:** `crates/ryter-core/src/role.rs`, `config.rs` (`ConfigFile` merge), `config.example.toml`, `docs/guide.md`, call sites across core/TUI/CLI; tests cover new tables, old tables, and both together.
+
 ### 2026-10-14 — Context gauge uses provider `input_tokens`; stop messages share a voice
 
 **Decision.** The context gauge and `/context` headline show the provider's last reported `input_tokens` once a call has returned usage. Admission and auto-compaction still use the bytes/4 estimate. After a compact rewrites the transcript, the provider count is cleared until the next call. A turn that stops for the round cap or the session budget uses the same voice: what stopped, how to raise or lift the limit, and that saying "continue" carries on (`/budget +N` / `/budget N` / `/budget off` for spend; *rounds a turn* / `[limits] rounds` / `--rounds N` for rounds).
