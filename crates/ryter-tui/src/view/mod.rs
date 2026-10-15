@@ -245,8 +245,10 @@ pub struct View {
     pub cwd: String,
     /// Current git branch, if any.
     pub git_branch: Option<String>,
-    /// `ask` / `always`.
+    /// `ask` / `always` / `yolo`.
     pub perm_mode: String,
+    /// Durable `[permissions]` rules (`permissions.toml` / config.toml).
+    pub permissions: ryter_core::permissions::Permissions,
     /// Skills + user slash commands.
     pub catalog: SlashCatalog,
     /// Editable hook rows (persisted to `hooks.toml`).
@@ -547,6 +549,7 @@ impl View {
             cwd,
             git_branch: None,
             perm_mode: "ask".into(),
+            permissions: ryter_core::permissions::Permissions::default(),
             catalog: SlashCatalog::default(),
             hooks: Vec::new(),
             theme_name: "dark".into(),

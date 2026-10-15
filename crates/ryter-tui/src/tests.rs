@@ -311,7 +311,7 @@ fn the_provider_panel_offers_web_search() {
 
 #[test]
 fn snapshot_every_panel() {
-    let panels: [(&str, PanelId); 16] = [
+    let panels: [(&str, PanelId); 17] = [
         ("providers", PanelId::Providers),
         ("models", PanelId::Models),
         ("sessions", PanelId::Sessions(SessionsMode::Browse)),
@@ -320,6 +320,7 @@ fn snapshot_every_panel() {
         ("settings", PanelId::Settings),
         ("theme", PanelId::Theme),
         ("tools", PanelId::Tools),
+        ("permissions", PanelId::Permissions),
         ("mcp", PanelId::Mcp),
         ("skills", PanelId::Skills),
         ("hooks", PanelId::Hooks),
@@ -350,6 +351,7 @@ fn every_panel_fits_the_screen_at_every_width() {
         PanelId::Settings,
         PanelId::Theme,
         PanelId::Tools,
+        PanelId::Permissions,
         PanelId::Mcp,
         PanelId::Skills,
         PanelId::Rules,

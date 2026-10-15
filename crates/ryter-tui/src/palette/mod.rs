@@ -726,10 +726,10 @@ mod tests {
         step(&mut v, 1);
         let a = run(&mut v);
         assert!(!matches!(a, Action::None), "{a:?}");
-        // An alias is a name: `/perm` is `/tools`.
+        // A prefix is a name: `/perm` is `/permissions` (was once an alias of `/tools`).
         v.composer.set_text("/perm");
         refresh(&mut v);
-        assert_eq!(current(&v).unwrap().entry.name, "tools");
+        assert_eq!(current(&v).unwrap().entry.name, "permissions");
         let a = run(&mut v);
         assert!(!matches!(a, Action::None), "{a:?}");
         // A new filter starts the highlight over.

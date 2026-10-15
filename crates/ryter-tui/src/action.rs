@@ -34,6 +34,8 @@ pub enum PanelId {
     Theme,
     /// `/tools`.
     Tools,
+    /// `/permissions` — durable `[permissions]` rules.
+    Permissions,
     /// `/mcp`.
     Mcp,
     /// `/skills`.
@@ -241,6 +243,8 @@ pub enum Action {
     EditCatalog(std::path::PathBuf),
     /// Persist hooks and reload the agent set.
     SaveHooks,
+    /// Persist `permissions.toml` and update the live gate.
+    SavePermissions,
     /// Persist settings.toml and apply live knobs.
     SaveSettings,
     /// Reply to a permission prompt.

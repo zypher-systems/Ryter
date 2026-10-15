@@ -417,6 +417,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 hooks: view.hooks.clone(),
             });
         }
+        Action::SavePermissions => save_permissions(view, cx),
         Action::SaveSettings => save_settings(view, cx),
         Action::CopySelection(sel) => {
             let text = cx
@@ -1083,6 +1084,18 @@ fn save_hats(view: &mut View, cx: &mut Ctx) {
     cx.cfg.hats = view.hats.clone();
     cx.send(Work::SetHats {
         hats: view.hats.clone(),
+    });
+}
+
+/// Save durable gate rules, and tell the worker.
+fn save_permissions(view: &mut View, cx: &mut Ctx) {
+    if let Err(e) = config::save_permissions(&cx.home, &view.permissions) {
+        view.error(e.to_string());
+        return;
+    }
+    cx.cfg.permissions = view.permissions.clone();
+    cx.send(Work::SetPermissions {
+        permissions: view.permissions.clone(),
     });
 }
 

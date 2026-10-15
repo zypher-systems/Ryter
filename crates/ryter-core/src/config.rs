@@ -851,6 +851,9 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
     apply_hooks_file(&mut cfg, &home.join("hooks.toml"));
     apply_connections_file(&mut cfg, &home.join("connections.toml"));
     apply_model_reasoning_file(&mut cfg, &model_reasoning_path(home));
+    // TUI `/permissions` writes here; once present it is the gate's rules
+    // (config.toml's `[permissions]` still applies until the first save).
+    apply_permissions_file(&mut cfg, &permissions_path(home));
     apply_old_review_file(&mut cfg, home);
     validate(&cfg)?;
     // A key read from the environment stays out of the commands Ryter runs,
@@ -1250,6 +1253,30 @@ pub fn save_hooks(home: &Path, hooks: &[HookConfig]) -> Result<()> {
     })
     .map_err(|e| Error::Config(e.to_string()))?;
     fs::write(home.join("hooks.toml"), body).map_err(|e| Error::Config(e.to_string()))
+}
+
+/// `~/.ryter/permissions.toml`: the gate rules the TUI edits.
+pub fn permissions_path(home: &Path) -> PathBuf {
+    home.join("permissions.toml")
+}
+
+fn apply_permissions_file(cfg: &mut Config, path: &Path) {
+    let Ok(text) = fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(p) = toml::from_str::<crate::permissions::Permissions>(&text) else {
+        return;
+    };
+    // The sidecar is the whole answer once written: a deleted pattern must
+    // not come back from an older `[permissions]` block in config.toml.
+    cfg.permissions = p;
+}
+
+/// Persist `[permissions]` (does not rewrite `config.toml`).
+pub fn save_permissions(home: &Path, permissions: &crate::permissions::Permissions) -> Result<()> {
+    fs::create_dir_all(home).map_err(|e| Error::Config(e.to_string()))?;
+    let body = toml::to_string(permissions).map_err(|e| Error::Config(e.to_string()))?;
+    fs::write(permissions_path(home), body).map_err(|e| Error::Config(e.to_string()))
 }
 
 fn merge_file(cfg: &mut Config, path: &Path) -> Result<()> {
@@ -2485,6 +2512,33 @@ mod tests {
                 & 0o777;
             assert_eq!(mode, 0o600);
         }
+    }
+
+    #[test]
+    fn permissions_sidecar_replaces_config_rules() {
+        use crate::permissions::{Answer, Permissions};
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("config.toml"),
+            "[permissions.bash]\n\"git push*\" = \"ask\"\n\"rm -rf target\" = \"allow\"\n",
+        )
+        .unwrap();
+        let from_cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(
+            from_cfg.permissions.for_command("rm -rf target"),
+            Some(Answer::Allow)
+        );
+        let mut rules = Permissions::default();
+        rules.bash.insert("git push*".into(), Answer::Allow);
+        save_permissions(dir.path(), &rules).unwrap();
+        let live = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(
+            live.permissions.for_command("git push origin"),
+            Some(Answer::Allow)
+        );
+        // A pattern dropped in the sidecar is gone, even if config.toml still names it.
+        assert_eq!(live.permissions.for_command("rm -rf target"), None);
+        assert_eq!(live.permissions.edit, None);
     }
 
     #[test]
