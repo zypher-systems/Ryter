@@ -15,6 +15,7 @@ pub mod hooks;
 pub mod mcp;
 pub mod modal;
 pub mod models;
+pub mod permissions;
 pub mod plan;
 pub mod providers;
 pub mod rules;
@@ -379,6 +380,7 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
         PanelId::Settings => Box::new(settings::Settings::new(view)),
         PanelId::Theme => Box::new(theme::ThemePicker::new(view)),
         PanelId::Tools => Box::new(toggles::Toggles::tools(view)),
+        PanelId::Permissions => Box::new(permissions::Permissions::new(view, None)),
         PanelId::Mcp => Box::new(mcp::Mcp::default()),
         PanelId::Skills => Box::new(skills::Skills::default()),
         PanelId::Rules => Box::new(rules::Rules::new(view, env)),

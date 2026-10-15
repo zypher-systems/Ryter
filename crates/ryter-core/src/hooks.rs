@@ -369,17 +369,12 @@ mod tests {
             url: None,
             matcher: Some("bash".into()),
         }]);
-        let d = set.pre_tool(
-            "bash",
-            &json!({"command": "ls"}),
-            dir.path(),
-            Role::SoloBuild,
-        );
+        let d = set.pre_tool("bash", &json!({"command": "ls"}), dir.path(), Role::Build);
         assert!(
             matches!(d, HookDecision::Deny(ref s) if s.contains("no-bash")),
             "{d:?}"
         );
-        let allow = set.pre_tool("write", &json!({"path": "x"}), dir.path(), Role::SoloBuild);
+        let allow = set.pre_tool("write", &json!({"path": "x"}), dir.path(), Role::Build);
         assert_eq!(allow, HookDecision::Allow);
     }
 
@@ -394,7 +389,7 @@ mod tests {
             matcher: None,
         }]);
         assert_eq!(
-            set.pre_tool("read_file", &json!({}), dir.path(), Role::SoloPlan),
+            set.pre_tool("read_file", &json!({}), dir.path(), Role::Plan),
             HookDecision::Allow
         );
     }
@@ -409,7 +404,7 @@ mod tests {
             url: None,
             matcher: None,
         }]);
-        set.post_tool("read_file", &json!({}), "ok", dir.path(), Role::SoloPlan);
+        set.post_tool("read_file", &json!({}), "ok", dir.path(), Role::Plan);
     }
 
     #[test]
@@ -437,7 +432,7 @@ mod tests {
             url: Some(format!("http://{addr}/hook")),
             matcher: None,
         }]);
-        let d = set.pre_tool("bash", &json!({}), Path::new("/tmp"), Role::SoloBuild);
+        let d = set.pre_tool("bash", &json!({}), Path::new("/tmp"), Role::Build);
         assert!(
             matches!(d, HookDecision::Deny(ref s) if s.contains("nope")),
             "{d:?}"

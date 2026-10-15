@@ -43,6 +43,11 @@ pub enum Work {
         /// The mode.
         mode: ryter_core::ToolsMode,
     },
+    /// Durable `[permissions]` rules from `/permissions`.
+    SetPermissions {
+        /// The rules.
+        permissions: ryter_core::permissions::Permissions,
+    },
     /// Emit a `Context` event.
     Context,
     /// Compact now.
@@ -54,7 +59,7 @@ pub enum Work {
     /// Replace each hat's own model.
     SetHats {
         /// Assignments.
-        specialists: BTreeMap<String, RoleModel>,
+        hats: BTreeMap<String, RoleModel>,
     },
     /// Reconnect outbound MCP servers.
     SetMcp {
@@ -436,6 +441,15 @@ pub fn run(init: WorkerInit) {
                     a.ctx.yolo = yolo;
                 }
             }
+            Ok(Work::SetPermissions { permissions }) => {
+                cfg.permissions = permissions.clone();
+                if let Some(a) = &mut agent {
+                    a.ctx.permissions = Arc::new(permissions.clone());
+                    if let Some(c) = &mut a.cfg {
+                        c.permissions = permissions;
+                    }
+                }
+            }
             Ok(Work::New) => {
                 if let Some(a) = &mut agent {
                     match Session::create(&home, &cwd, a.connection.clone(), a.model.clone()) {
@@ -456,7 +470,7 @@ pub fn run(init: WorkerInit) {
                         Ok(s) => {
                             // A session left in crew mode, before it was
                             // removed, opens in build.
-                            let role = s.meta.mode.map_or(Role::SoloBuild, Role::hat);
+                            let role = s.meta.mode.map_or(Role::Build, Role::hat);
                             swap_session(a, s);
                             let _ = a.put_on(role);
                             a.model = a.session.meta.model.clone();
@@ -488,12 +502,12 @@ pub fn run(init: WorkerInit) {
                     }
                 }
             }
-            Ok(Work::SetHats { specialists }) => {
+            Ok(Work::SetHats { hats }) => {
                 // The worker's copy too: an agent rebuilt later (a provider
                 // switch) starts from it.
-                cfg.specialists = specialists.clone();
+                cfg.hats = hats.clone();
                 if let Some(c) = agent.as_mut().and_then(|a| a.cfg.as_mut()) {
-                    c.specialists = specialists;
+                    c.hats = hats;
                 }
             }
             Ok(Work::SetMcp { servers }) => {
@@ -899,7 +913,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
     let notes = b.session.notes_dir();
     // The build hat, unless the session was left in another. A session
     // left in crew mode, before it was removed, opens in build too.
-    let role = b.session.meta.mode.map_or(Role::SoloBuild, Role::hat);
+    let role = b.session.meta.mode.map_or(Role::Build, Role::hat);
     let last_input_tokens = b.session.last_input_tokens();
     Agent {
         provider: Arc::new(provider),

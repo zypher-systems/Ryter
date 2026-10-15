@@ -477,11 +477,12 @@ fn populate_view(
     view.tz_offset = ryter_core::clock::local_offset();
     view.git_branch = ryter_core::git::branch(cwd).ok();
     view.perm_mode = start_tools_mode(opts, cfg).as_str().into();
+    view.permissions = cfg.permissions.clone();
     view.catalog = load_catalog(home, Some(cwd), trusted);
     view.hooks = cfg.hooks.clone();
     view.theme_names = Theme::list(home);
     view.has_key = has_key;
-    view.specialists = cfg.specialists.clone();
+    view.hats = cfg.hats.clone();
     view.budget_usd = cfg.spend.session_budget_usd;
     if view.budget_usd > 0.0 {
         view.budget_last = view.budget_usd;

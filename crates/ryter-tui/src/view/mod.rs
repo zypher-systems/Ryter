@@ -245,8 +245,10 @@ pub struct View {
     pub cwd: String,
     /// Current git branch, if any.
     pub git_branch: Option<String>,
-    /// `ask` / `always`.
+    /// `ask` / `always` / `yolo`.
     pub perm_mode: String,
+    /// Durable `[permissions]` rules (`permissions.toml` / config.toml).
+    pub permissions: ryter_core::permissions::Permissions,
     /// Skills + user slash commands.
     pub catalog: SlashCatalog,
     /// Editable hook rows (persisted to `hooks.toml`).
@@ -314,7 +316,7 @@ pub struct View {
     /// `default`); a model not listed is "auto".
     pub model_reasoning: BTreeMap<String, String>,
     /// Each hat's own model, where it has one (set in `/models`).
-    pub specialists: BTreeMap<String, ryter_core::RoleModel>,
+    pub hats: BTreeMap<String, ryter_core::RoleModel>,
     /// Unix socket path if inbound MCP is listening.
     pub mcp_listen: Option<String>,
     /// Current session id.
@@ -471,10 +473,10 @@ impl View {
         let own: Vec<&'static str> = HAT_ROLES
             .iter()
             .copied()
-            .filter(|role| self.specialists.get(*role).is_some_and(|m| m.is_override()))
+            .filter(|role| self.hats.get(*role).is_some_and(|m| m.is_override()))
             .collect();
         for role in HAT_ROLES {
-            self.specialists.remove(*role);
+            self.hats.remove(*role);
         }
         own
     }
@@ -488,7 +490,7 @@ impl View {
     /// The model `hat` runs on: its own where the user gave it one,
     /// otherwise the one every hat uses.
     pub fn model_of(&self, hat: ryter_core::Role) -> &str {
-        self.specialists
+        self.hats
             .get(hat.as_str())
             .filter(|r| r.is_override())
             .and_then(|r| r.model.as_deref())
@@ -520,7 +522,7 @@ impl View {
 
     pub fn new(connection: String, model: String, cwd: String) -> Self {
         Self {
-            mode: ryter_core::Role::SoloBuild,
+            mode: ryter_core::Role::Build,
             connection,
             model,
             spend: None,
@@ -547,6 +549,7 @@ impl View {
             cwd,
             git_branch: None,
             perm_mode: "ask".into(),
+            permissions: ryter_core::permissions::Permissions::default(),
             catalog: SlashCatalog::default(),
             hooks: Vec::new(),
             theme_name: "dark".into(),
@@ -578,7 +581,7 @@ impl View {
             last_review: None,
             model_reasoning: BTreeMap::new(),
             price_out: None,
-            specialists: BTreeMap::new(),
+            hats: BTreeMap::new(),
             mcp_listen: None,
             session_id: String::new(),
             session_title: String::new(),
@@ -622,14 +625,14 @@ impl View {
             pending_warnings: Vec::new(),
             starting_product: None,
             turn_open: false,
-            agent_hat: ryter_core::Role::SoloBuild,
+            agent_hat: ryter_core::Role::Build,
             hats_pending: 0,
             product: None,
             rack: ryter_core::rack::Rack::default(),
             uncommitted: None,
             workspace: None,
-            last_primary: ryter_core::Role::SoloBuild,
-            last_specialist: ryter_core::Role::SoloAudit,
+            last_primary: ryter_core::Role::Build,
+            last_specialist: ryter_core::Role::Audit,
             plan_file: None,
             audit_file: None,
             audit_writing: false,
@@ -639,7 +642,7 @@ impl View {
             page: Page::Conversation,
             focus: Focus::Stage,
             side_at: 0,
-            seat: ryter_core::Role::SoloBuild,
+            seat: ryter_core::Role::Build,
             session_at: 0,
             sessions: Vec::new(),
             ryter_home: None,
