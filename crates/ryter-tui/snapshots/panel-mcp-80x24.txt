@@ -1,7 +1,7 @@
  ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  · system
-   w╭─ mcp ─────────────────────────────────────────────────────── 0/0 up ─╮
+    ╭─ mcp ─────────────────────────────────────────────────────── 0/0 up ─╮
     │›○ inbound  let other agents drive this ses…enabled · restart to bind │
     │                                                                      │
     │ outbound servers                                                     │

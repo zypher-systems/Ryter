@@ -5312,3 +5312,113 @@ fn html_gallery() {
         .unwrap();
     }
 }
+
+/// The prompt's chip stays readable under an open panel: dimming the
+/// screen leaves the text on a hat's colour alone, so ` audit ` is still
+/// the background's colour on amber, not grey on amber (`R-POP-04`).
+#[test]
+fn the_chip_is_readable_under_a_panel() {
+    let theme = Theme::truecolor_dark();
+    for (w, h) in [(176, 50), (120, 40)] {
+        let mut v = racked();
+        v.set_mode(Role::SoloAudit);
+        let e = env();
+        let _ = panel::open(&mut v, PanelId::Spend, &e);
+        let hit = crate::draw::render_hit(&v, w, h);
+        let buf = crate::draw::render_buffer(&v, w, h, theme);
+        let (x, y) = (hit.composer.x + 2, hit.composer.y + 1);
+        let cell = &buf[(x, y)];
+        assert_eq!(cell.symbol(), "a", "{w}x{h}: the chip's first letter");
+        assert_eq!(cell.bg, theme.audit, "{w}x{h}: the chip's fill");
+        assert_eq!(cell.fg, theme.bg, "{w}x{h}: the chip's text under /spend");
+    }
+}
+
+/// A panel's shadow falls inside the body it floats over, never on the
+/// prompt's rule: at 80x24 and 120x40 the rule under /settings is whole.
+#[test]
+fn a_panels_shadow_stays_off_the_prompts_rule() {
+    for (w, h) in [(80, 24), (120, 40)] {
+        let mut v = racked();
+        let e = env();
+        let _ = panel::open(&mut v, PanelId::Settings, &e);
+        let hit = crate::draw::render_hit(&v, w, h);
+        let text = render_to_string(&v, w, h);
+        let rule: String = text
+            .lines()
+            .nth(usize::from(hit.composer.y))
+            .unwrap()
+            .chars()
+            .skip(usize::from(hit.composer.x))
+            .take(usize::from(hit.composer.width))
+            .collect();
+        let hole = rule.split(|c| c != ' ').map(str::len).max().unwrap_or(0);
+        assert!(
+            hole < 4,
+            "{w}x{h}: a hole of {hole} cells in the rule\n{rule}\n{text}"
+        );
+    }
+}
+
+/// A docked card clears the rows it sits on across the prompt's width:
+/// nothing of the conversation shows beside it (`R-POP-04`).
+#[test]
+fn a_docked_card_clears_its_rows() {
+    for (w, h) in [(120, 40), (176, 50)] {
+        let mut v = racked();
+        v.set_mode(Role::SoloAudit);
+        let rows: Vec<String> = (1..=4)
+            .map(|i| format!("✗ {i}\tfinding number {i}\tsrc/f{i}.rs"))
+            .collect();
+        let ev = AgentEvent::Audited {
+            model: "m".into(),
+            verdict: Some(false),
+            headline: "✗ 4 of 4 failed".into(),
+            summary: "short".into(),
+            rows,
+            ran: vec!["cargo test".into()],
+            file: Some(".ryter/audit.md".into()),
+            restored: Vec::new(),
+            checkpointed: true,
+            product_used: false,
+            filed: true,
+            total_usd: Some(0.01),
+            duration_ms: 1000,
+        };
+        v.panels.push(Box::new(
+            crate::panel::audit::AuditModal::from_event(&ev, 0).unwrap(),
+        ));
+        let hit = crate::draw::render_hit(&v, w, h);
+        let (lo, hi) = (
+            usize::from(hit.composer.x),
+            usize::from(hit.composer.x + hit.composer.width),
+        );
+        let text = render_to_string(&v, w, h);
+        let top = text
+            .lines()
+            .position(|r| r.contains("┏━ audit"))
+            .unwrap_or_else(|| panic!("{w}x{h}: no card\n{text}"));
+        let bottom = text
+            .lines()
+            .skip(top)
+            .position(|r| r.contains('╰'))
+            .map(|n| top + n)
+            .unwrap();
+        // Within the prompt's columns (the band a card clears), nothing
+        // but the card: the rail and the sidebar beyond them are theirs.
+        for (i, row) in text.lines().enumerate().take(bottom + 1).skip(top) {
+            let span: String = row.chars().skip(lo).take(hi - lo).collect();
+            let left = span.find(['┏', '╰']).or_else(|| span.find('│')).unwrap();
+            let right = span.rfind(['┓', '╯']).or_else(|| span.rfind('│')).unwrap();
+            let beside: String = span
+                .chars()
+                .take(left)
+                .chain(span.chars().skip(right + 1))
+                .collect();
+            assert!(
+                beside.trim().is_empty(),
+                "{w}x{h} row {i}: something beside the card\n{span}\n{text}"
+            );
+        }
+    }
+}

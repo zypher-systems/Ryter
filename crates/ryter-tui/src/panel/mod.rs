@@ -424,7 +424,12 @@ pub fn dim_region(frame: &mut Frame, area: Rect, theme: Theme) {
             }
             let cell = &mut buf[(x, y)];
             let mut st = cell.style();
-            st.fg = Some(theme.dim);
+            // Text on a hat's colour (the prompt's chip) keeps the colour
+            // it reads by: dim on amber is nothing at all.
+            let on_a_hat = [theme.plan, theme.build, theme.audit].contains(&cell.bg);
+            if !on_a_hat {
+                st.fg = Some(theme.dim);
+            }
             st = st.remove_modifier(Modifier::BOLD | Modifier::UNDERLINED);
             if theme.mode == crate::theme::ColorMode::Mono {
                 st = st.add_modifier(Modifier::DIM);
@@ -434,11 +439,14 @@ pub fn dim_region(frame: &mut Frame, area: Rect, theme: Theme) {
     }
 }
 
-/// One-column / one-row shadow (`R-POP-05`).
-pub fn shadow(frame: &mut Frame, area: Rect, theme: Theme) {
+/// One-column / one-row shadow (`R-POP-05`), never on or below `floor`,
+/// the prompt's first row: a shadow on the prompt's rule read as a hole
+/// in it.
+pub fn shadow(frame: &mut Frame, area: Rect, floor: u16, theme: Theme) {
     let shade = crate::theme::darken(theme.bg, 0.5);
     let buf = frame.buffer_mut();
-    let (bw, bh) = (buf.area.width, buf.area.height);
+    let bw = buf.area.width;
+    let bh = buf.area.height.min(floor);
     let right = area.x.saturating_add(area.width);
     let bottom = area.y.saturating_add(area.height);
     let mut paint = |x: u16, y: u16| {
@@ -508,6 +516,29 @@ fn docked_rect(dock: Rect, content_rows: u16) -> Rect {
     }
 }
 
+/// What a panel is drawn over: the body it floats in, the dock a docked
+/// panel sits at the foot of, the prompt's first row (`floor`), under
+/// which no shadow falls, and the rows freed for a question (`slot`).
+#[derive(Debug, Clone, Copy)]
+pub struct Ground {
+    pub body: Rect,
+    pub dock: Rect,
+    pub floor: u16,
+    pub slot: Option<Rect>,
+}
+
+impl Ground {
+    /// A panel over `body` alone: docked at its foot, the prompt under it.
+    pub fn over(body: Rect, floor: u16, slot: Option<Rect>) -> Self {
+        Self {
+            body,
+            dock: body,
+            floor,
+            slot,
+        }
+    }
+}
+
 /// Draw the focused panel (and the ones beneath it, dimmed) over `body`.
 /// A docked panel sits at the foot of `dock`: the prompt's columns, which
 /// are the body's unless the conversation is centred between three panes
@@ -516,15 +547,19 @@ fn docked_rect(dock: Rect, content_rows: u16) -> Rect {
 pub fn draw(
     frame: &mut Frame,
     full: Rect,
-    body: Rect,
-    dock: Rect,
-    slot: Option<Rect>,
+    ground: Ground,
     view: &View,
     theme: Theme,
 ) -> Option<(u16, u16)> {
     if view.panels.is_empty() {
         return None;
     }
+    let Ground {
+        body,
+        dock,
+        floor,
+        slot,
+    } = ground;
     let n = view.panels.stack.len();
     // A docked prompt leaves the chat readable: it is what's being approved.
     let top_docked = view.panels.top().is_some_and(|p| p.docked());
@@ -559,8 +594,24 @@ pub fn draw(
             dim_region(frame, area, theme);
             continue;
         }
+        // The rows a panel sits on are cleared across the body (a docked
+        // card: across the prompt's width): a panel beside torn text, the
+        // chat's gutter against its left border and the ends of lines
+        // against its right, is not a card (`R-POP-04`).
+        let across = if p.docked() { dock } else { body };
+        let band = Rect {
+            x: across.x,
+            width: across.width,
+            ..area
+        }
+        .intersection(full);
+        frame.render_widget(ratatui::widgets::Clear, band);
+        frame.render_widget(
+            ratatui::widgets::Block::default().style(Style::default().bg(theme.bg)),
+            band,
+        );
         if !p.docked() {
-            shadow(frame, area, theme);
+            shadow(frame, area, floor, theme);
         }
         cursor = draw_one(frame, area, p.as_ref(), view, theme, true);
     }

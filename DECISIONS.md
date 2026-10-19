@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-18 — A panel sits on a cleared band, its shadow stays off the prompt's rule, and a cost is never a fake zero
+
+**Decision.** The rows a focused panel sits on are cleared across the body before it is drawn (a docked card: across the prompt's width), so nothing of the conversation shows beside it. A panel's shadow stops above the prompt's first row. Dimming the screen under a panel leaves text on a hat's colour as it was, so the prompt's chip stays readable. The spend panel's rows and the project's total use the three-place form the rail and the sidebar use (`$0.004`), never `$0.00`. The commit panel's file list says how many files are out of sight when the screen is short.
+
+**Why.** A polish pass before a reviewer tries Ryter (2026-10-18), at 80, 120 and 176 columns, in three themes: beside a panel at 80 and 120 columns the chat's gutter sat against its left border and the ends of lines against its right, which read as torn text; the shadow's bottom row fell on the prompt's rule, which read as a hole in it; the chip under a panel was dim text on amber, a 1.3:1 contrast in the light theme; `/spend` said `$0.00` for a build that cost $0.004 under a total of `$0.01`, against the README's promise that Ryter never shows a fake `$0.00`; and at 80x24 `/commit` listed five of seven files with nothing to say two were below.
+
+**Rejected.** Widening a panel to the body's edges when the slack is small: a threshold nobody would remember, and the torn edge came back at the next width. Leaving the dimmed chat beside a panel as the floating look: the rule stands for `/help` on a wide screen, but every panel is read at 80 and 120 columns too, and the band is one rule for all of them.
+
 ### 2026-10-11 — Three panes on a wide screen, and a hat switch during a turn is the next message's
 
 **Decision.** From 150 columns the screen is three panes: a rail at the left with the sidebar's header and its hats, the conversation centred between, the sidebar at the right from `now` on; both columns 30 wide, growing to 40 once the conversation has its 112 between them. Between 100 and 149 columns the one sidebar stays with the conversation at the left; below 100 the status line. `^b` hides and shows both columns. And a hat switch while a turn runs (`Tab`, `Shift+Tab`, the hat commands) chooses the hat for the next message and nothing else: the agent takes it when the turn ends, as it always did, and the screen now draws the hat working apart from the hat on: the spinner, the `now` block's model and verb, the status row's colour, the status line and the name over the reply are the working hat's; the prompt's chip, its rule and the ledger's `▸` are the hat chosen. `docs/sidebar-design.md` R-LAYOUT-04 and R-KEY-05, §17.

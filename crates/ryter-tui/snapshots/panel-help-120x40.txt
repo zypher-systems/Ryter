@@ -1,7 +1,7 @@
  ryter  ·  build                                                grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system         ╭─ help ───────────────────────────────────────────────────────── [keys] commands ─╮
-   welcome · /help│ ⌕ type to filter                                                                 ┃
+                  ╭─ help ───────────────────────────────────────────────────────── [keys] commands ─╮
+                  │ ⌕ type to filter                                                                 ┃
                   │ GLOBAL                                                                           ┃
                   │  ^c         clear composer → cancel turn → quit (double-press)                   ┃
                   │  ^d         quit when the composer is empty                                      ┃

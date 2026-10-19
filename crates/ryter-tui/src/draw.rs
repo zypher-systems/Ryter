@@ -177,7 +177,13 @@ fn draw_screen(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     if view.panels.is_empty() {
         palette::draw(frame, chat, comp.y, view, theme);
     }
-    let panel_cursor = panel::draw(frame, full, body, body, slot, view, theme);
+    let panel_cursor = panel::draw(
+        frame,
+        full,
+        panel::Ground::over(body, comp.y, slot),
+        view,
+        theme,
+    );
     if panel_cursor.is_some() {
         composer::draw::paint_cursor(frame, panel_cursor, theme);
     } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
@@ -323,7 +329,13 @@ fn draw_ledger(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     if view.panels.is_empty() {
         palette::draw(frame, chat, comp.y, view, theme);
     }
-    let panel_cursor = panel::draw(frame, full, body, body, None, view, theme);
+    let panel_cursor = panel::draw(
+        frame,
+        full,
+        panel::Ground::over(body, comp.y, None),
+        view,
+        theme,
+    );
     if panel_cursor.is_some() {
         composer::draw::paint_cursor(frame, panel_cursor, theme);
     } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {
@@ -522,7 +534,18 @@ fn draw_solo(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
         width: comp_w,
         ..panel_body
     };
-    let panel_cursor = panel::draw(frame, full, panel_body, dock, slot, view, theme);
+    let panel_cursor = panel::draw(
+        frame,
+        full,
+        panel::Ground {
+            body: panel_body,
+            dock,
+            floor: comp.y,
+            slot,
+        },
+        view,
+        theme,
+    );
     if panel_cursor.is_some() {
         composer::draw::paint_cursor(frame, panel_cursor, theme);
     } else if view.panels.is_empty() || view.panels.wants_input(view).is_some() {

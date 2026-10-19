@@ -1,7 +1,7 @@
  ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  · system
-   welc╭─ tool permissions ─────────────────────────────────────────────╮
+       ╭─ tool permissions ─────────────────────────────────────────────╮
        │›● ask     current                                              │
        │    what the gate asks about (deleting, publishing, writing     │
        │    outside the project, the project's .env) pauses for a y/n.  │

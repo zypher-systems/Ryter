@@ -1,7 +1,7 @@
  ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
 ────────────────────────────────────────────────────────────────────────────────
  · system
-   w╭─ spend · session ──────────────────────────────────────────── $?.?? ─╮
+    ╭─ spend · session ──────────────────────────────────────────── $?.?? ─╮
     │ total  $?.??                                                         │
     │ budget off · nothing stops on cost · /budget <amount> sets a cap     │
     │                                                                      │

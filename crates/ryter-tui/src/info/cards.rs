@@ -225,9 +225,11 @@ pub fn project_label(p: &ryter_core::project::ProjectSpend) -> String {
     if p.calls > 0 && p.calls == p.unpriced_calls {
         "$?.??".into()
     } else if p.unpriced_calls > 0 {
-        format!("{}+", format_usd(Some(p.total_usd)))
+        format!("{}+", crate::chat::turn_usd(p.total_usd))
     } else {
-        format_usd(Some(p.total_usd))
+        // As the sidebar says it: three places under a dime, never a
+        // fake `$0.00` for a project that has cost something.
+        crate::chat::turn_usd(p.total_usd)
     }
 }
 
