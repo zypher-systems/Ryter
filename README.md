@@ -6,7 +6,7 @@ One model works in your project, with you, and `Tab` switches between its two wo
 
 ![Ryter in the build hat: the Conversation, Hats and Sessions tabs on the top bar, the hats with their models and costs in the sidebar, the conversation in the middle with the diff of app/server.js and a new test, and the instruments at the right.](docs/screenshots/build.png)
 
-Linux first. The current release is 0.30.0. Apache-2.0.
+Linux first. The current release is 0.31.0. Apache-2.0.
 
 ## Install
 
@@ -14,7 +14,7 @@ Linux first. The current release is 0.30.0. Apache-2.0.
 curl -fsSL https://raw.githubusercontent.com/zypher-systems/ryter/main/install.sh | sh
 ```
 
-This installs a prebuilt binary to `~/.local/bin` for Linux (x86_64 and arm64, static, any distro) or macOS (Apple Silicon and Intel). The download is checked against the release's `SHA256SUMS` first. `RYTER_VERSION=v0.30.0` pins the current release and `RYTER_INSTALL_DIR` picks the folder. Linux gets the full feature set; on macOS everything works except the Landlock sandbox, which is Linux-only.
+This installs a prebuilt binary to `~/.local/bin` for Linux (x86_64 and arm64, static, any distro) or macOS (Apple Silicon and Intel). The download is checked against the release's `SHA256SUMS` first. `RYTER_VERSION=v0.31.0` pins the current release and `RYTER_INSTALL_DIR` picks the folder. Linux gets the full feature set; on macOS everything works except the Landlock sandbox, which is Linux-only.
 
 The installer verifies signed checksums against the same pinned release key as the updater. It requires OpenSSL 3+ with Ed25519 support; set `RYTER_INSTALL_OPENSSL` to its executable if it is not the default `openssl`. Unsigned older releases and invalid signatures are refused before extraction.
 
