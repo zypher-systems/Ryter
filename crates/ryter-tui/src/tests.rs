@@ -5432,3 +5432,32 @@ fn a_docked_card_clears_its_rows() {
         }
     }
 }
+
+/// The session's own label says a few tenths of a cent as the rows do,
+/// never `$0.00` (`/spend`'s title and total row).
+#[test]
+fn the_spend_label_is_never_a_fake_zero() {
+    let mut v = idle();
+    v.spend = Some(0.004);
+    assert_eq!(v.spend_label(), "$0.004");
+    v.spend = Some(0.0);
+    assert_eq!(v.spend_label(), "$0");
+    v.spend = None;
+    assert_eq!(v.spend_label(), "$?.??");
+}
+
+/// The hats have a heading of their own in the slash menu, and the
+/// settings' round cap has its whole label.
+#[test]
+fn the_slash_menu_files_the_hats_together() {
+    use crate::palette::registry::{COMMANDS, Category};
+    for name in ["plan", "build", "audit", "scribe"] {
+        let c = COMMANDS.iter().find(|c| c.name == name).unwrap();
+        assert_eq!(c.category, Category::Hats, "{name}");
+    }
+    let mut v = racked();
+    let e = env();
+    let _ = panel::open(&mut v, PanelId::Settings, &e);
+    let text = render_to_string(&v, 120, 40);
+    assert!(text.contains("rounds a turn (0 = off)"), "{text}");
+}

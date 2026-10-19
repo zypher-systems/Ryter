@@ -972,10 +972,12 @@ impl View {
 
     /// Spend label for the header / cards (`$?.??` when any turn was unpriced).
     pub fn spend_label(&self) -> String {
-        if self.spend_unknown && self.spend.is_none() {
-            format_usd(None)
-        } else {
-            format_usd(self.spend)
+        match self.spend {
+            None if self.spend_unknown => format_usd(None),
+            None => format_usd(None),
+            // Three places under a dime, as every row that names a cost
+            // says it: a session that cost $0.004 is never `$0.00`.
+            Some(usd) => crate::chat::turn_usd(usd),
         }
     }
 

@@ -179,7 +179,7 @@ pub const KEYMAP: &[Binding] = &[
         Ctx::Global,
         "Ctrl+B",
         KeyAction::TogglePanel,
-        "toggle the info panel",
+        "show or hide the instruments (the ledger's sidebar)",
     ),
     b(
         Ctx::Global,
@@ -191,7 +191,7 @@ pub const KEYMAP: &[Binding] = &[
         Ctx::Global,
         "Ctrl+T",
         KeyAction::ToggleWorkbench,
-        "the workbench: what changed beside the chat, one change at a time",
+        "the workbench: what changed, one change at a time (ledger)",
     ),
     b(Ctx::Global, "Ctrl+L", KeyAction::Redraw, "redraw"),
     b(

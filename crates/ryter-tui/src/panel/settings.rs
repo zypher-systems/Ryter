@@ -114,7 +114,7 @@ impl Settings {
             ),
             num(
                 "rounds",
-                "rounds a turn (0 = no cap)",
+                "rounds a turn (0 = off)",
                 f64::from(view.rounds),
                 0.0,
                 100_000.0,

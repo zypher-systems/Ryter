@@ -9,6 +9,8 @@ use crate::view::View;
 pub enum Category {
     /// Session lifecycle.
     Session,
+    /// The hats: a command puts one on.
+    Hats,
     /// Model & providers.
     Model,
     /// Context & spend.
@@ -25,8 +27,9 @@ pub enum Category {
 
 impl Category {
     /// All categories in order.
-    pub const ALL: [Category; 7] = [
+    pub const ALL: [Category; 8] = [
         Category::Session,
+        Category::Hats,
         Category::Model,
         Category::Context,
         Category::Config,
@@ -39,6 +42,7 @@ impl Category {
     pub fn title(self) -> &'static str {
         match self {
             Category::Session => "SESSION",
+            Category::Hats => "HATS",
             Category::Model => "MODEL & PROVIDERS",
             Category::Context => "CONTEXT",
             Category::Config => "CONFIGURATION",
@@ -186,7 +190,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     spec(
         "build",
         &[],
-        Category::Model,
+        Category::Hats,
         "Build hat: make changes in your files",
         None,
         false,
@@ -197,7 +201,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     spec(
         "plan",
         &[],
-        Category::Model,
+        Category::Hats,
         "Plan hat: read and propose, change nothing",
         None,
         false,
@@ -208,7 +212,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     spec(
         "scribe",
         &["docs"],
-        Category::Model,
+        Category::Hats,
         "Scribe hat: write documentation only, change no code",
         None,
         false,
@@ -270,7 +274,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     spec(
         "audit",
         &["second", "second-opinion"],
-        Category::Session,
+        Category::Hats,
         "The audit hat audits your uncommitted changes now, against the approved plan",
         None,
         false,

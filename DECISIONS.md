@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-19 — The hint bar carries the open card's own keys, and the workspace reads in light and in sixteen colours
+
+**Decision.** On the workspace screen the bottom bar's keys while a card is open are the card's own legend (the plan panel's approve, adjust and reject; the audit card's repair; `a edits` only on an allow card), followed by the keys that always apply. The light theme's `faint` is set outright so the section labels read at 4.5:1 or better, and the theme test holds it there. In sixteen colours the hat that is on keeps the sidebar's background and is marked by its bar and bold name, since a hat's colour on the terminal's grey is unreadable. On a Hats page too short for a hat's card the hat gets one line. A session with no message and no price says `$0`; `$?.??` is for a run that had no price. The session's own spend label uses the three-place form. The hats have their own heading in the slash menu, every tool has a short verb, the round cap's label fits, and `doctor` says what its unknown-price check means.
+
+**Why.** A second pass on the workspace screen before a reviewer tries Ryter (2026-10-19). The bar said "y allow · a edits · n deny" under the plan panel, whose `a` does nothing and whose `y` approves; the light theme's labels measured 1.8:1 and the sixteen-colour hat row 1.2:1 in renders; at 80x24 the Hats page showed a "Specialists" heading with nothing under it; a new session read as `$?.??` beside an inspector saying `$0`; `/spend`'s title said `$0.00` over rows of `$0.002`.
+
+**Rejected.** Keying the hint bar on the kind of modal: each card already states its keys, and a second list would drift from them. A highlight colour for sixteen colours: the terminal's eight backgrounds give no pair that reads under every hat's colour.
+
 ### 2026-10-18 — A panel sits on a cleared band, its shadow stays off the prompt's rule, and a cost is never a fake zero
 
 **Decision.** The rows a focused panel sits on are cleared across the body before it is drawn (a docked card: across the prompt's width), so nothing of the conversation shows beside it. A panel's shadow stops above the prompt's first row. Dimming the screen under a panel leaves text on a hat's colour as it was, so the prompt's chip stays readable. The spend panel's rows and the project's total use the three-place form the rail and the sidebar use (`$0.004`), never `$0.00`. The commit panel's file list says how many files are out of sight when the screen is short.

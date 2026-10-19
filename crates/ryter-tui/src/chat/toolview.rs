@@ -29,7 +29,37 @@ pub fn verb(tool: &str) -> &str {
         "web_fetch" => "fetch",
         "web_search" => "web",
         "check_package" => "package",
+        "file_audit" => "audit",
+        "run_project" => "run",
+        "update_rules" => "rules",
+        "show_page" => "page",
+        "load_skill" => "skill",
+        "search_tool" => "tools",
+        "use_tool" => "tool",
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod verbs {
+    /// Every tool the model has gets a word, not its name cut at seven.
+    #[test]
+    fn every_tool_has_a_short_verb() {
+        for tool in [
+            "file_audit",
+            "run_project",
+            "update_rules",
+            "show_page",
+            "load_skill",
+            "search_tool",
+            "use_tool",
+            "search_replace",
+            "present_plan",
+            "check_package",
+        ] {
+            let v = super::verb(tool);
+            assert!(v != tool && v.len() <= 7, "{tool} -> {v}");
+        }
     }
 }
 

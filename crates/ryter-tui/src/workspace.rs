@@ -217,7 +217,7 @@ pub fn reload_sessions(view: &mut View) {
                 .map(|m| m.hat().as_str().to_string())
                 .unwrap_or_else(|| "build".into()),
             messages: s.messages,
-            spend: ryter_core::format_usd(s.meta.spend_usd_total),
+            spend: session_spend(s.meta.spend_usd_total, s.messages),
             updated: panel::sessions::relative(now, s.updated_millis()),
         })
         .collect();
@@ -542,7 +542,7 @@ fn draw_hat(
     tall: bool,
 ) {
     let bg = if hat == view.mode {
-        theme.selection_bg
+        on_bg(theme, side_bg(theme))
     } else {
         side_bg(theme)
     };
@@ -844,12 +844,42 @@ fn draw_hats_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         }
         for hat in hats {
             if y + 5 > area.height {
-                return;
+                // No room for the card: the hat on one line, so a short
+                // screen never hides a hat.
+                if y < area.height {
+                    put(frame, area, y, seat_line(*hat, view, theme, w));
+                    y += 1;
+                }
+                continue;
             }
             y = draw_seat(frame, area, y, *hat, view, theme);
         }
         y += 1;
     }
+}
+
+/// A seat as one line: its name, its model and its standing.
+fn seat_line(hat: Role, view: &View, theme: Theme, w: usize) -> Line<'static> {
+    let color = theme.mode(hat);
+    let wearing = hat == view.mode;
+    let mut title: Vec<char> = hat.hat().as_str().chars().collect();
+    if let Some(c) = title.first_mut() {
+        *c = c.to_ascii_uppercase();
+    }
+    let title: String = title.into_iter().collect();
+    let name = format!(" {} {title}", if wearing { "┃" } else { " " });
+    let rest = format!(
+        "  {}  ·  {}",
+        crate::chat::short_model(view.model_of(hat)),
+        crate::sidebar::hat_may(hat)
+    );
+    Line::from(vec![
+        Span::styled(name, sty(color, theme.bg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            wrap::truncate(&rest, w.saturating_sub(14)),
+            sty(theme.dim, theme.bg),
+        ),
+    ])
 }
 
 fn draw_seat(frame: &mut Frame, area: Rect, y: u16, hat: Role, view: &View, theme: Theme) -> u16 {
@@ -866,7 +896,7 @@ fn draw_seat(frame: &mut Frame, area: Rect, y: u16, hat: Role, view: &View, them
     let wearing = hat == view.mode;
     let on = view.seat == hat || wearing;
     let bg = if on {
-        theme.selection_bg
+        on_bg(theme, theme.composer_bg)
     } else {
         theme.composer_bg
     };
@@ -1562,14 +1592,25 @@ fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let bg = side_bg(theme);
     fill(frame, area, bg);
     let asking = view.panels.has_modal();
+    // A card's keys are its own: the plan panel's y/e/n are approve,
+    // adjust and reject, the audit card's Enter is repair, and only the
+    // allow card has `a edits`. The legend is the panel's.
+    let legend = view
+        .panels
+        .top()
+        .filter(|_| asking)
+        .map(|p| p.legend(view))
+        .unwrap_or_default();
+    let own: Vec<(&str, &str)> = legend
+        .split(" · ")
+        .filter_map(|item| item.split_once(' '))
+        .collect();
     let mut items: Vec<(&str, &str)> = Vec::new();
     if view.palette.is_some() {
         items.extend([("↑↓", "move"), ("enter", "run"), ("esc", "close")]);
     } else if asking {
+        items.extend(own);
         items.extend([
-            ("y", "allow"),
-            ("a", "edits"),
-            ("n", "deny"),
             ("tab", "hat"),
             ("⇧tab", "mode"),
             ("/", "commands"),
@@ -1859,6 +1900,27 @@ fn rule(frame: &mut Frame, area: Rect, y: &mut u16, theme: Theme) {
 
 /// Sidebar and instruments, a step off the conversation. In 256-color the
 /// two truecolor tints can quantize to one index; step the gray ramp then.
+/// The fill under the row that is on. In sixteen colours the fill is the
+/// terminal's dark grey, and a hat's colour on it is nothing to read, so
+/// the row keeps `plain` and is marked by its bar and its bold name.
+fn on_bg(theme: Theme, plain: Color) -> Color {
+    if theme.mode == crate::theme::ColorMode::Ansi16 {
+        plain
+    } else {
+        theme.selection_bg
+    }
+}
+
+/// A session's cost as the list says it: `$0` before anything has run,
+/// `$?.??` only when something ran and had no price.
+fn session_spend(total: Option<f64>, messages: usize) -> String {
+    match total {
+        None if messages == 0 => "$0".into(),
+        None => ryter_core::format_usd(None),
+        Some(usd) => crate::chat::turn_usd(usd),
+    }
+}
+
 fn side_bg(theme: Theme) -> Color {
     if theme.mode == crate::theme::ColorMode::Ansi256 {
         let side = crate::theme::quantize_256(theme.sidebar_bg);
@@ -2402,6 +2464,82 @@ mod tests {
                 .any(|l| l.contains("$0.00") && l.contains("total")),
             "{text}"
         );
+    }
+
+    /// The hint bar carries the open card's own keys: the plan panel's
+    /// approve, adjust and reject; the audit card's repair; `a edits`
+    /// only on an allow card.
+    #[test]
+    fn the_hint_bar_shows_the_open_cards_keys() {
+        let mut v = ws();
+        v.panels.push(Box::new(crate::panel::plan::PlanModal::new(
+            "T".into(),
+            "## Goal\nx\n".into(),
+            0,
+        )));
+        let text = crate::draw::render_to_string(&v, 120, 40);
+        let hint = text.lines().last().unwrap().to_string();
+        assert!(
+            hint.contains("approve") && hint.contains("reject"),
+            "{hint}"
+        );
+        assert!(!hint.contains("allow") && !hint.contains("edits"), "{hint}");
+        let mut v = ws();
+        v.panels
+            .push(Box::new(crate::panel::modal::PermissionModal::new(
+                "bash".into(),
+                "git push".into(),
+            )));
+        let text = crate::draw::render_to_string(&v, 120, 40);
+        let hint = text.lines().last().unwrap().to_string();
+        assert!(hint.contains("allow") && hint.contains("deny"), "{hint}");
+    }
+
+    /// In sixteen colours the hat that is on keeps the sidebar's own
+    /// background: a hat's colour on the terminal's grey was unreadable.
+    #[test]
+    fn sixteen_colours_mark_the_hat_without_a_grey_fill() {
+        let v = ws();
+        let theme = Theme::default_16();
+        let buf = crate::draw::render_buffer(&v, 120, 40, theme);
+        let text = crate::draw::render_with_theme(&v, 120, 40, theme);
+        let mut title: Vec<char> = v.mode.hat().as_str().chars().collect();
+        title[0] = title[0].to_ascii_uppercase();
+        let title: String = title.into_iter().collect();
+        let marked = format!("┃ {title}");
+        let (y, row) = text
+            .lines()
+            .enumerate()
+            .find(|(_, l)| l.contains(&marked))
+            .unwrap_or_else(|| panic!("no {marked}\n{text}"));
+        let x = row.find(&title).unwrap() as u16;
+        let cell = &buf[(x, y as u16)];
+        assert_ne!(
+            cell.bg,
+            theme.selection_bg,
+            "the fill under {:?}",
+            cell.symbol()
+        );
+    }
+
+    /// On a short screen the Hats page still names every hat: a hat
+    /// with no room for its card gets one line.
+    #[test]
+    fn a_short_hats_page_names_every_hat() {
+        let mut v = ws();
+        v.page = Page::Hats;
+        let text = crate::draw::render_to_string(&v, 80, 24);
+        for hat in ["Audit", "Scribe"] {
+            assert!(text.contains(hat), "{hat} missing\n{text}");
+        }
+    }
+
+    /// A new session costs nothing yet; `$?.??` is for a run with no price.
+    #[test]
+    fn a_new_sessions_cost_is_nothing_yet() {
+        assert_eq!(session_spend(None, 0), "$0");
+        assert_eq!(session_spend(None, 3), "$?.??");
+        assert_eq!(session_spend(Some(0.004), 3), "$0.004");
     }
 
     /// A project that has cost a few tenths of a cent says so on the

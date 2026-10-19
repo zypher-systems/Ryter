@@ -6,9 +6,9 @@
                   │  ^c         clear composer → cancel turn → quit (double-press)                   ┃
                   │  ^d         quit when the composer is empty                                      ┃
                   │  ^r         toggle the reasoning pane                                            ┃
-                  │  ^b         toggle the info panel                                                ┃
+                  │  ^b         show or hide the instruments (the ledger's sidebar)                  ┃
                   │  ^o         show every edit, audit, and folded turn whole, or folded             ┃
-                  │  ^t         the workbench: what changed beside the chat, one change at a time    ┃
+                  │  ^t         the workbench: what changed, one change at a time (ledger)           ┃
                   │  ^l         redraw                                                               ┃
                   │  ^g         release/grab the mouse (release it to select and copy text)          ┃
                   │  f1         open /help                                                           ┃

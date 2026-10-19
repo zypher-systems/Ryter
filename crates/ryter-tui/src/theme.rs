@@ -279,6 +279,10 @@ impl Theme {
         t.code_bg = rgb(0xf7, 0xf7, 0xf5);
         t.sticky_bg = rgb(0xe6, 0xe8, 0xee);
         t.selection_bg = rgb(0xd6, 0xe6, 0xf2);
+        // The section labels (`Activity`, `Context`, `Hats`): secondary
+        // text, still read. Softened from `dim` by the ratio the dark
+        // theme uses, it was 1.8:1 on the light background.
+        t.faint = rgb(0x66, 0x6c, 0x77);
         t
     }
 
@@ -969,6 +973,11 @@ mod tests {
             }
             let ratio = contrast_ratio(t.fg, t.panel_bg).unwrap();
             assert!(ratio >= 4.5, "{name}: fg on panel_bg is {ratio:.2}:1");
+            // The section labels are read too (`Activity`, `Hats`).
+            for (label, bg) in [("bg", t.bg), ("sidebar_bg", t.sidebar_bg)] {
+                let ratio = contrast_ratio(t.faint, bg).unwrap();
+                assert!(ratio >= 4.5, "{name}: faint on {label} is {ratio:.2}:1");
+            }
             // Every color that names a thing is read as text on the
             // background, and the composer's chip puts the background's
             // color on each hat's (`docs/sidebar-design.md` R-COLOR-06).
