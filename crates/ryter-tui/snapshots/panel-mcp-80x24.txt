@@ -1,24 +1,24 @@
- ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────
- · system
-   w╭─ mcp ─────────────────────────────────────────────────────── 0/0 up ─╮
-    │›○ inbound  let other agents drive this ses…enabled · restart to bind │
-    │                                                                      │
-    │ outbound servers                                                     │
-    │   none configured                                                    │
-    │ + add server  stdio command → ~/.ryter/mcp.toml                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │ enter open/toggle   r reconnect   d remove   esc                     │
-    ╰──────────────────────────────────────────────────────────────────────╯
-
-
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
-│› what should change?                                                         │
-╰──────────────────────────────────────────────────────────────────────────────╯
- enter open/toggle    r reconnect    d remove    esc
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ New session                     ● Idle · asks first Activity
+ 0.2.0-patch                                         grok-4.6
+╭─ mcp ─────────────────────────────────── 0/0 up ─╮ Idle
+│›○ inbound  let other a…enabled · restart to bind │▌
+│                                                  │▌──────────────────────────
+│ outbound servers                                 │▌Context
+│   none configured                                │▌█▏
+│ + add server  stdio command → ~/.ryter/mcp.toml  │▌12k of 256k             5%
+│                                                  │▌
+│                                                  │▌──────────────────────────
+│                                                  │▌Spend · no cap
+│                                                  │▌$0
+│                                                  │▌Build                   $0
+│                                                  │▌
+│                                                  │▌──────────────────────────
+│ enter open/toggle   r reconnect   d remove   esc │▌──────────────────────────
+╰──────────────────────────────────────────────────╯▌
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ ╭────────────────────────────────────────────────╮
+ │ Build  › what should change?                   │▌
+ ╰────────────────────────────────────────────────╯▌
+  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands                      focus · conversation

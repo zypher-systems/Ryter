@@ -1,24 +1,24 @@
- ryter  ·  build                                ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────
- dusty  trim the query                        ↑ 3  │╭─ session ────────────────╮
- ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥ ││ untitled           build │
-   4   app.get('/search', (req, res) => {          ││ tools ask                │
-   5 -   const q = req.query.q                     │╰──────────────────────────╯
-   5 +   const q = (req.query.q || '').trim()      │╭─ model ──────────────────╮
-   6 +   if (!q) return res.json([])               ┃│ spacexai ●      grok-4.6 │
-   7     res.json(find(q))                         ┃│ ctx █░░░░░░░░░░░░░   5%  │
-   8   })                                          ┃│     12.4k / 256k tokens  │
- · write  test/search.test.js  new · 6 lines  0.0s ┃│ price unknown            │
-   1 + import { test } from 'node:test'            ┃│ reasoning  auto · medium │
-   2 + import assert from 'node:assert'            ┃╰──────────────────────────╯
-   3 +                                             ┃╭─ spend ──────────────────╮
-   4 + test('an empty query finds nothing', async  ┃│ session            $?.?? │
-       () => {                                     ┃╰──────────────────────────╯
-   5 +   assert.deepEqual(await search(''), [])    ┃╭─ budget ─────────── off ─╮
-   6 + })                                          ┃│ cap                  off │
-                                                   ┃╰──────────────────────────╯
- ─── 2 files (1 new, 1 changed, +8 −1) · 2.1s ──── ┃
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
-│› what should change?                                                         │
-╰──────────────────────────────────────────────────────────────────────────────╯
- enter send    tab plan    ⇧tab specialists    / commands    ^b panel    ^c quit
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ New session                     ● Done · asks first Activity
+ 0.2.0-patch                                         grok-4.6
+                                                     Done
+        ●  dusty  trim the query               ↑ 9
+ ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥  ──────────────────────────
+        │    6 +   if (!q) return res.json([])       Context
+        │    7     res.json(find(q))                 █▏
+        │    8   })                                  12k of 256k             5%
+        ├─ write  test/search.test…   new · 6 lines
+        │    1 + import { test } from 'node:test'    ──────────────────────────
+        │    2 + import assert from 'node:assert'    Spend · no cap
+        │    3 +                                     $0
+        │    4 + test('an empty query finds nothing  Build                   $0
+        │        ', async () => {
+        │    5 +   assert.deepEqual(await search(''  ──────────────────────────
+        │        ), [])                              ──────────────────────────
+        │    6 + })
+        └─ ✓ 2 tools · 2 files (1 new, 1 changed, …
+ ╭────────────────────────────────────────────────╮
+ │ Build  › what should change?                   │▌
+ ╰────────────────────────────────────────────────╯▌
+  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands                      focus · conversation

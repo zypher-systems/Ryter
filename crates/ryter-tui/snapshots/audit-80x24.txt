@@ -1,24 +1,24 @@
- ryter  ·  build                                ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────
- dusty  trim the query                       ↑ 23  │╭─ session ────────────────╮
- ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥ ││ untitled           build │
-                                                   ││ tools ask                │
- claude-opus-5.5                                   │╰──────────────────────────╯
-   • blocking  app/server.js:6 : an empty query    │╭─ model ──────────────────╮
-     returns early, but  find  still runs on       ││ spacexai ●      grok-4.6 │
-     undefined  when  q  is missing.               ││ ctx █░░░░░░░░░░░░░   5%  │
-   • note: the test covers  ""  only.              ││     12.4k / 256k tokens  │
-                                                   ││ price unknown            │
-   VERDICT: FAIL                                   ││ reasoning  auto · medium │
-                                                   │╰──────────────────────────╯
- · system                                          ┃╭─ spend ──────────────────╮
-   audit · claude-opus-5.5 · ✗ failed, unfiled ·   ┃│ session            $?.?? │
-   $0.040                                          ┃╰──────────────────────────╯
-                                                   ┃╭─ budget ─────────── off ─╮
- · system                                          ┃│ cap                  off │
-   switched to the build hat · Tab to change it    ┃╰──────────────────────────╯
-   again                                           ┃
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
-│› what should change?                                                         │
-╰──────────────────────────────────────────────────────────────────────────────╯
- enter send    tab plan    ⇧tab specialists    / commands    ^b panel    ^c quit
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ New session                     ● Done · asks first Activity
+ 0.2.0-patch                                         grok-4.6
+                                                     Done
+        ●  dusty  trim the query              ↑ 29
+ ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥  ──────────────────────────
+        │    query returns early, but  find          Context
+        │    still runs on  undefined  when  q       █▏
+        │    is missing.                             12k of 256k             5%
+        │  • note: the test covers  ""  only.
+        │                                            ──────────────────────────
+        │  VERDICT: FAIL                             Spend · no cap
+        │                                            $0
+        ·  audit · claude-opus-5.5 · ✗ failed,       Build                   $0
+        │  unfiled · $0.040
+        └─ ✓ answered · 3.0s                         ──────────────────────────
+        │                                            ──────────────────────────
+        ·  switched to the build hat · Tab to
+        │  change it again
+ ╭────────────────────────────────────────────────╮
+ │ Build  › what should change?                   │▌
+ ╰────────────────────────────────────────────────╯▌
+  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands                      focus · conversation

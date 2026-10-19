@@ -1,32 +1,27 @@
- ryter  ·  build                                                grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system
-   welcome · /help for keys
-
-
-
-
-                     ╭─ spend · session ────────────────────────────────────────────────── $?.?? ─╮
-                     │ total  $?.??                                                               │
-                     │ budget off · nothing stops on cost · /budget <amount> sets a cap           │
-                     │                                                                            │
-                     │ by role                                                                    │
-                     │   nothing spent yet                                                        │
-                     │                                                                            │
-                     │ by connection                                                              │
-                     │   nothing spent yet                                                        │
-                     │                                                                            │
-                     │                                                                            │
-                     │                                                                            │
-                     │                                                                            │
-                     │ p project   e export csv   ↑↓ scroll   esc                                 │
-                     ╰────────────────────────────────────────────────────────────────────────────╯
-
-
-
-
-
-
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ ryter                           New session                           ● Idle · asks first Activity
+ ⎇ 0.2.0-patch                   0.2.0-patch                                               grok-4.6
+                                                                                           Idle
+ Hats                                   ·  welcome · /help for keys
+ ● Plan                      $0                                                            ────────────────────────────
+   grok-4.6                                                                                Context
+   read only                                                                               █▏
+ ┃ Build                     $0 ╭─ spend · session ────────────────────────────── $?.?? ─╮ 12k of 256k               5%
+   grok-4.6                     │ total  $?.??                                           │▌
+   asks first                   │ budget off · nothing stops on cost · /budget <amount> s│▌────────────────────────────
+ ── Specialists                 │                                                        │▌Spend · no cap
+ ● Audit                     $0 │ by role                                                │▌$0
+   grok-4.6                     │   nothing spent yet                                    │▌Build                     $0
+   checkpoint                   │                                                        │▌
+ ● Scribe                    $0 │ by connection                                          │▌────────────────────────────
+   follows all hats             │   nothing spent yet                                    │▌────────────────────────────
+   docs only                    │                                                        │▌
+                                │                                                        │▌
+                                │                                                        │▌
+                                │                                                        │▌
+                                │ p project   e export csv   ↑↓ scroll   esc             │▌
+                                ╰────────────────────────────────────────────────────────╯▌
+                                 ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 
 
 
@@ -34,7 +29,12 @@
 
 
 
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│› what should change?                                                                                                 │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- p project    e export csv    ↑↓ scroll    esc
+
+
+
+
+                                 ╭──────────────────────────────────────────────────────╮
+                                 │ Build  › what should change?                         │▌
+                                 ╰──────────────────────────────────────────────────────╯▌
+                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views   f2  instruments                           focus · conversation

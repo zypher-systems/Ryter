@@ -197,10 +197,6 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             }
         }
         Action::New => new_session(view, cx),
-        // On the ledger `/changes` is the workbench.
-        Action::OpenPanel(PanelId::Changes) if !view.ui.classic() => {
-            perform(view, cx, Action::OpenWorkbench);
-        }
         Action::OpenPanel(id) => open_panel(view, cx, id),
         Action::Resume(id) => resume(view, cx, &id),
         Action::DeleteSession(id) => delete_session(view, cx, &id),
@@ -270,15 +266,6 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             }
         }
         Action::Revert { base, path } => cx.send(Work::Revert { base, path }),
-        Action::RevertHunk { base, path, hunk } => cx.send(Work::RevertHunk { base, path, hunk }),
-        Action::OpenWorkbench => {
-            view.panels.clear();
-            view.palette = None;
-            view.workbench = Some(crate::workbench::Workbench::open(
-                view,
-                cx.workspace.clone(),
-            ));
-        }
 
         Action::DraftCommit(paths) => cx.send(Work::DraftCommit(paths)),
         Action::Commit { paths, message } => cx.send(Work::Commit { paths, message }),

@@ -1,24 +1,24 @@
- ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────
- · system
-   welcome · /help for keys
-        ╭─ context ─────────────────────────────────────────────── 5% ─╮
-        │ used █░░░░░░░░░░░░░░░░░░░░░  5%  12.4k / 256k tokens         │
-        │ asking the agent…                                            │
-        │                                                              │
-        │ no breakdown yet · r to refresh                              │
-        │                                                              │
-        │ c compact · summarizes older turns                           │
-        │                                                              │
-        │                                                              │
-        │ c compact   r refresh   esc                                  │
-        ╰──────────────────────────────────────────────────────────────╯
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ New session                     ● Idle · asks first Activity
+ 0.2.0-patch                                         grok-4.6
+                                                     Idle
+╭─ context ─────────────────────────────────── 5% ─╮
+│ used █░░░░░░░░░░░  5%  12.4k / 256k tokens       │▌──────────────────────────
+│ asking the agent…                                │▌Context
+│                                                  │▌█▏
+│ no breakdown yet · r to refresh                  │▌12k of 256k             5%
+│                                                  │▌
+│ c compact · summarizes older turns               │▌──────────────────────────
+│                                                  │▌Spend · no cap
+│                                                  │▌$0
+│ c compact   r refresh   esc                      │▌Build                   $0
+╰──────────────────────────────────────────────────╯▌
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀──────────────────────────
+                                                     ──────────────────────────
 
 
-
-
-
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
-│› what should change?                                                         │
-╰──────────────────────────────────────────────────────────────────────────────╯
- c compact    r refresh    esc
+ ╭────────────────────────────────────────────────╮
+ │ Build  › what should change?                   │▌
+ ╰────────────────────────────────────────────────╯▌
+  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands                      focus · conversation

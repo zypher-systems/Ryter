@@ -4,8 +4,8 @@
 //! the top bar, with Conversation, Hats, and Sessions beside it. The rack
 //! is the sidebar. The conversation, the hats, or the sessions fill the
 //! middle, and activity, context, spend (session + project glance), files,
-//! and the plan sit on the right. Ledger and classic remain as legacy
-//! layouts; prefer workspace.
+//! and the plan sit on the right. It is the one screen: the ledger and
+//! classic layouts went on 2026-10-19 (`DECISIONS.md`).
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
@@ -24,11 +24,8 @@ use crate::theme::Theme;
 use crate::view::{Focus, Page, SavedSession, View};
 use crate::{composer, draw, palette, panel};
 
-/// Paint one frame of the workspace. The workbench keeps the ledger's frame.
+/// Paint one frame of the workspace.
 pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
-    if view.workbench.is_some() {
-        return draw::draw_ledger(frame, view, theme);
-    }
     let full = frame.area();
     let mut clicks = Vec::new();
     // Quiet chrome (E): no hairline under the top bar — body starts next.
@@ -61,7 +58,7 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
     if side_w > 0 {
         draw_sidebar(frame, side, view, theme, &mut clicks);
     }
-    let (chat, composer_rect, slot) = draw_stage(frame, stage, view, theme);
+    let (chat, composer_rect, slot, activity) = draw_stage(frame, stage, view, theme);
     if insp_w > 0 {
         draw_inspector(frame, insp, view, theme);
     }
@@ -69,7 +66,7 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
     if view.panels.is_empty() {
         palette::draw(frame, stage, composer_rect.y, view, theme);
     }
-    let cursor = panel::draw(frame, full, stage, stage, slot, view, theme);
+    let cursor = panel::draw(frame, full, panel::Ground::over(stage, slot), view, theme);
     if cursor.is_some() {
         composer::draw::paint_cursor(frame, cursor, theme);
     } else if view.page == Page::Conversation
@@ -82,8 +79,7 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
         chat,
         chat_text: Rect::default(),
         covers: Vec::new(),
-        cards: Vec::new(),
-        activity: Rect::default(),
+        activity,
         composer: composer_rect,
         clicks,
     }
@@ -92,7 +88,7 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
 /// `F2`, `F6`, `F7`, and `Alt+1`–`Alt+3`. `None` when the key is not one of
 /// those, or this is not the workspace. A palette swallows them.
 pub fn chrome_key(view: &mut View, key: KeyEvent) -> Option<Action> {
-    if !view.ui.workspace() || view.workbench.is_some() {
+    if false {
         return None;
     }
     let alt =
@@ -137,7 +133,7 @@ pub fn chrome_key(view: &mut View, key: KeyEvent) -> Option<Action> {
 /// Arrows and Enter while the sidebar, the hats page, or the sessions list
 /// has focus. `None` when the composer should keep the key.
 pub fn nav_key(view: &mut View, key: KeyEvent) -> Option<Action> {
-    if !view.ui.workspace() || view.workbench.is_some() || view.palette.is_some() {
+    if view.palette.is_some() {
         return None;
     }
     if !key.modifiers.is_empty() {
@@ -211,7 +207,7 @@ pub fn reload_sessions(view: &mut View) {
                 .map(|m| m.hat().as_str().to_string())
                 .unwrap_or_else(|| "build".into()),
             messages: s.messages,
-            spend: ryter_core::format_usd(s.meta.spend_usd_total),
+            spend: session_spend(s.meta.spend_usd_total, s.messages),
             updated: panel::sessions::relative(now, s.updated_millis()),
         })
         .collect();
@@ -286,7 +282,7 @@ fn hat_index(role: Role) -> usize {
     HATS.iter().position(|h| *h == role.hat()).unwrap_or(0)
 }
 
-fn columns(width: u16, instruments: bool) -> (u16, u16) {
+pub(crate) fn columns(width: u16, instruments: bool) -> (u16, u16) {
     if width >= 156 {
         return (36, if instruments { 36 } else { 0 });
     }
@@ -536,7 +532,7 @@ fn draw_hat(
     tall: bool,
 ) {
     let bg = if hat == view.mode {
-        theme.selection_bg
+        on_bg(theme, side_bg(theme))
     } else {
         side_bg(theme)
     };
@@ -683,16 +679,16 @@ fn draw_stage(
     area: Rect,
     view: &View,
     theme: Theme,
-) -> (Rect, Rect, Option<Rect>) {
+) -> (Rect, Rect, Option<Rect>, Rect) {
     fill(frame, area, theme.bg);
     match view.page {
         Page::Hats => {
             draw_hats_page(frame, area, view, theme);
-            (area, Rect::default(), None)
+            (area, Rect::default(), None, Rect::default())
         }
         Page::Sessions => {
             draw_sessions_page(frame, area, view, theme);
-            (area, Rect::default(), None)
+            (area, Rect::default(), None, Rect::default())
         }
         Page::Conversation => draw_conversation(frame, area, view, theme),
     }
@@ -703,7 +699,7 @@ fn draw_conversation(
     area: Rect,
     view: &View,
     theme: Theme,
-) -> (Rect, Rect, Option<Rect>) {
+) -> (Rect, Rect, Option<Rect>, Rect) {
     let w = usize::from(area.width);
     let title = if view.session_title.trim().is_empty() {
         "New session".to_string()
@@ -758,8 +754,10 @@ fn draw_conversation(
         height: comp_h,
         ..area
     };
+    let mut activity = Rect::default();
     if chat.height > 0 {
-        let _ = draw::draw_chat(frame, chat, view, theme);
+        let cf = draw::draw_chat(frame, chat, view, theme);
+        activity = draw::status_hit(chat, &cf);
     }
     let cursor = if comp.height > 0 {
         composer::draw::draw_workspace(frame, comp, view, theme)
@@ -769,7 +767,7 @@ fn draw_conversation(
     if view.panels.is_empty() {
         composer::draw::paint_cursor(frame, cursor, theme);
     }
-    (chat, comp, slot)
+    (chat, comp, slot, activity)
 }
 
 fn draw_hats_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
@@ -838,12 +836,42 @@ fn draw_hats_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         }
         for hat in hats {
             if y + 5 > area.height {
-                return;
+                // No room for the card: the hat on one line, so a short
+                // screen never hides a hat.
+                if y < area.height {
+                    put(frame, area, y, seat_line(*hat, view, theme, w));
+                    y += 1;
+                }
+                continue;
             }
             y = draw_seat(frame, area, y, *hat, view, theme);
         }
         y += 1;
     }
+}
+
+/// A seat as one line: its name, its model and its standing.
+fn seat_line(hat: Role, view: &View, theme: Theme, w: usize) -> Line<'static> {
+    let color = theme.mode(hat);
+    let wearing = hat == view.mode;
+    let mut title: Vec<char> = hat.hat().as_str().chars().collect();
+    if let Some(c) = title.first_mut() {
+        *c = c.to_ascii_uppercase();
+    }
+    let title: String = title.into_iter().collect();
+    let name = format!(" {} {title}", if wearing { "┃" } else { " " });
+    let rest = format!(
+        "  {}  ·  {}",
+        crate::chat::short_model(view.model_of(hat)),
+        crate::sidebar::hat_may(hat)
+    );
+    Line::from(vec![
+        Span::styled(name, sty(color, theme.bg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            wrap::truncate(&rest, w.saturating_sub(14)),
+            sty(theme.dim, theme.bg),
+        ),
+    ])
 }
 
 fn draw_seat(frame: &mut Frame, area: Rect, y: u16, hat: Role, view: &View, theme: Theme) -> u16 {
@@ -860,7 +888,7 @@ fn draw_seat(frame: &mut Frame, area: Rect, y: u16, hat: Role, view: &View, them
     let wearing = hat == view.mode;
     let on = view.seat == hat || wearing;
     let bg = if on {
-        theme.selection_bg
+        on_bg(theme, theme.composer_bg)
     } else {
         theme.composer_bg
     };
@@ -1556,14 +1584,25 @@ fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let bg = side_bg(theme);
     fill(frame, area, bg);
     let asking = view.panels.has_modal();
+    // A card's keys are its own: the plan panel's y/e/n are approve,
+    // adjust and reject, the audit card's Enter is repair, and only the
+    // allow card has `a edits`. The legend is the panel's.
+    let legend = view
+        .panels
+        .top()
+        .filter(|_| asking)
+        .map(|p| p.legend(view))
+        .unwrap_or_default();
+    let own: Vec<(&str, &str)> = legend
+        .split(" · ")
+        .filter_map(|item| item.split_once(' '))
+        .collect();
     let mut items: Vec<(&str, &str)> = Vec::new();
     if view.palette.is_some() {
         items.extend([("↑↓", "move"), ("enter", "run"), ("esc", "close")]);
     } else if asking {
+        items.extend(own);
         items.extend([
-            ("y", "allow"),
-            ("a", "edits"),
-            ("n", "deny"),
             ("tab", "hat"),
             ("⇧tab", "mode"),
             ("/", "commands"),
@@ -1853,6 +1892,27 @@ fn rule(frame: &mut Frame, area: Rect, y: &mut u16, theme: Theme) {
 
 /// Sidebar and instruments, a step off the conversation. In 256-color the
 /// two truecolor tints can quantize to one index; step the gray ramp then.
+/// The fill under the row that is on. In sixteen colours the fill is the
+/// terminal's dark grey, and a hat's colour on it is nothing to read, so
+/// the row keeps `plain` and is marked by its bar and its bold name.
+fn on_bg(theme: Theme, plain: Color) -> Color {
+    if theme.mode == crate::theme::ColorMode::Ansi16 {
+        plain
+    } else {
+        theme.selection_bg
+    }
+}
+
+/// A session's cost as the list says it: `$0` before anything has run,
+/// `$?.??` only when something ran and had no price.
+fn session_spend(total: Option<f64>, messages: usize) -> String {
+    match total {
+        None if messages == 0 => "$0".into(),
+        None => ryter_core::format_usd(None),
+        Some(usd) => crate::chat::turn_usd(usd),
+    }
+}
+
 fn side_bg(theme: Theme) -> Color {
     if theme.mode == crate::theme::ColorMode::Ansi256 {
         let side = crate::theme::quantize_256(theme.sidebar_bg);
@@ -1897,10 +1957,12 @@ fn draw_project_spend_glance(
     );
     y += 1;
     if y < area.height {
+        // Three places under a dime, as the hats and the spend panel
+        // say it: a project that has cost something is never `$0.00`.
         let total = if p.calls > 0 && p.calls == p.unpriced_calls {
             "$?.??".into()
         } else {
-            ryter_core::format_usd(Some(p.total_usd))
+            crate::chat::turn_usd(p.total_usd)
         };
         put(
             frame,
@@ -1925,7 +1987,7 @@ fn draw_project_spend_glance(
             y,
             sidebar::ends(
                 vec![Span::styled(
-                    format!(" {}", ryter_core::format_usd(Some(p.this_month()))),
+                    format!(" {}", crate::chat::turn_usd(p.this_month())),
                     sty(theme.dim, bg),
                 )],
                 vec![Span::styled("this month", sty(theme.dim, bg))],
@@ -1994,7 +2056,6 @@ mod tests {
 
     fn ws() -> View {
         let mut v = View::new("spacexai".into(), "grok-4.6".into(), "~/shop".into());
-        v.ui.layout = "workspace".into();
         v.username = "Dusty".into();
         v.git_branch = Some("search-patch".into());
         v.session_title = "Empty-query fix".into();
@@ -2392,6 +2453,104 @@ mod tests {
             !text
                 .lines()
                 .any(|l| l.contains("$0.00") && l.contains("total")),
+            "{text}"
+        );
+    }
+
+    /// The hint bar carries the open card's own keys: the plan panel's
+    /// approve, adjust and reject; the audit card's repair; `a edits`
+    /// only on an allow card.
+    #[test]
+    fn the_hint_bar_shows_the_open_cards_keys() {
+        let mut v = ws();
+        v.panels.push(Box::new(crate::panel::plan::PlanModal::new(
+            "T".into(),
+            "## Goal\nx\n".into(),
+            0,
+        )));
+        let text = crate::draw::render_to_string(&v, 120, 40);
+        let hint = text.lines().last().unwrap().to_string();
+        assert!(
+            hint.contains("approve") && hint.contains("reject"),
+            "{hint}"
+        );
+        assert!(!hint.contains("allow") && !hint.contains("edits"), "{hint}");
+        let mut v = ws();
+        v.panels
+            .push(Box::new(crate::panel::modal::PermissionModal::new(
+                "bash".into(),
+                "git push".into(),
+            )));
+        let text = crate::draw::render_to_string(&v, 120, 40);
+        let hint = text.lines().last().unwrap().to_string();
+        assert!(hint.contains("allow") && hint.contains("deny"), "{hint}");
+    }
+
+    /// In sixteen colours the hat that is on keeps the sidebar's own
+    /// background: a hat's colour on the terminal's grey was unreadable.
+    #[test]
+    fn sixteen_colours_mark_the_hat_without_a_grey_fill() {
+        let v = ws();
+        let theme = Theme::default_16();
+        let buf = crate::draw::render_buffer(&v, 120, 40, theme);
+        let text = crate::draw::render_with_theme(&v, 120, 40, theme);
+        let mut title: Vec<char> = v.mode.hat().as_str().chars().collect();
+        title[0] = title[0].to_ascii_uppercase();
+        let title: String = title.into_iter().collect();
+        let marked = format!("┃ {title}");
+        let (y, row) = text
+            .lines()
+            .enumerate()
+            .find(|(_, l)| l.contains(&marked))
+            .unwrap_or_else(|| panic!("no {marked}\n{text}"));
+        let x = row.find(&title).unwrap() as u16;
+        let cell = &buf[(x, y as u16)];
+        assert_ne!(
+            cell.bg,
+            theme.selection_bg,
+            "the fill under {:?}",
+            cell.symbol()
+        );
+    }
+
+    /// On a short screen the Hats page still names every hat: a hat
+    /// with no room for its card gets one line.
+    #[test]
+    fn a_short_hats_page_names_every_hat() {
+        let mut v = ws();
+        v.page = Page::Hats;
+        let text = crate::draw::render_to_string(&v, 80, 24);
+        for hat in ["Audit", "Scribe"] {
+            assert!(text.contains(hat), "{hat} missing\n{text}");
+        }
+    }
+
+    /// A new session costs nothing yet; `$?.??` is for a run with no price.
+    #[test]
+    fn a_new_sessions_cost_is_nothing_yet() {
+        assert_eq!(session_spend(None, 0), "$0");
+        assert_eq!(session_spend(None, 3), "$?.??");
+        assert_eq!(session_spend(Some(0.004), 3), "$0.004");
+    }
+
+    /// A project that has cost a few tenths of a cent says so on the
+    /// total and this-month rows, as the hats do: never a fake `$0.00`.
+    #[test]
+    fn a_small_project_total_is_never_a_fake_zero() {
+        let mut v = ws();
+        let mut p = ryter_core::project::ProjectSpend::default();
+        p.add(ryter_core::Role::Build, "m", Some(0.004));
+        v.project_spend = Some(p);
+        let text = crate::draw::render_to_string(&v, 160, 50);
+        assert!(
+            text.lines()
+                .any(|l| l.contains("$0.004") && l.contains("total")),
+            "{text}"
+        );
+        assert!(
+            !text
+                .lines()
+                .any(|l| l.contains("$0.00 ") || l.ends_with("$0.00")),
             "{text}"
         );
     }

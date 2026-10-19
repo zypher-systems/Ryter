@@ -1,30 +1,30 @@
- ryter  ·  build                                                    ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                       ╭─ session ────────────────────────╮
-   welcome · /help for keys                                     │ untitled                   build │
-                                                                │ tools ask                        │
-                                                                ╰──────────────────────────────────╯
-                                                                ╭─ model ──────────────────────────╮
-                                                                │ spacexai ●              grok-4.6 │
-                                                                │ ctx █░░░░░░░░░░░░░░░░░░░   5%    │
-                                                                │     12.4k / 256k tokens          │
-                                                                │ price unknown                    │
-                                                                │ reasoning          auto · medium │
-                                                                ╰──────────────────────────────────╯
-                                                                ╭─ spend ──────────────────────────╮
-                                                                │ session                    $?.?? │
-                                                                ╰──────────────────────────────────╯
-                                                                ╭─ budget ─────────────────── off ─╮
-                                                                │ cap                          off │
-                                                                ╰──────────────────────────────────╯
-╭─ commands ──────────────────────────────────────── 4 of 31 ─╮
-│ mo                                                          │
-│›/models         Choose models: one for every hat, or on… ▸  │
-│ /permissions    Durable allow/ask/deny bash rules from … ▸  │
-│ /tools          Tool permission mode for this session    ▸  │
-│ /skills         Browse, run, create, and remove skills … ▸  │
-╰─ enter run · tab complete · esc close ──────────────────────╯
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
-│› /mo█                                                                                            │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    tab complete    enter run    → open    esc close
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ ryter                     New session                 ● Idle · asks first Activity
+ ⎇ 0.2.0-patch             0.2.0-patch                                     grok-4.6
+                           ╭ commands ───────────────────────── 4 of 31 ╮  Idle
+ Hats                      │ mo                                         │▌
+ ● Plan     $0  read only  │›/models         Choose models: one for… ▸  │▌ ────────────────────────
+ ┃ Build   $0  asks first  │ /permissions    Durable allow/ask/deny… ▸  │▌ Context
+ ── Specialists            │ /tools          Tool permission mode f… ▸  │▌ █▏
+ ● Audit   $0  checkpoint  │  ↑↓  move   enter  run   esc  close        │▌ 12k of 256k           5%
+ ● Scribe   $0  docs only  ╰────────────────────────────────────────────╯▌
+                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ ────────────────────────
+                                                                           Spend · no cap
+                                                                           $0
+                                                                           Build                 $0
+
+                                                                           ────────────────────────
+                                                                           ────────────────────────
+
+
+
+
+
+
+
+
+                           ╭────────────────────────────────────────────╮
+                           │ Build  › /mo█                              │▌
+                           ╰────────────────────────────────────────────╯▌
+                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  ↑↓  move   enter  run   esc  close                                           focus · conversation

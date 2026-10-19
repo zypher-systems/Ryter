@@ -343,7 +343,7 @@ two distinct guarantees.
   (`theme.selection_bg`); the release copies it and clears the highlight. A press and release
   in one cell is a click, copies nothing, and acts on the release (the status row, a card).
 - **R-SEL-02** A selection stays in the pane the press landed in: the conversation's text
-  column (never the ledger's timeline; with the workbench open, its middle pane), the
+  column (never the timeline beside it), the
   composer's text rows, a card, whatever is drawn over the conversation (the pinned
   question, the palette, the "new rows" mark), or the whole screen while a panel is open.
 - **R-SEL-07** What is highlighted is what is copied. A conversation's selection is painted
@@ -936,8 +936,14 @@ A shared panel system replaces the twelve ad-hoc `Overlay` draw functions in `dr
   border; a key legend in the bottom border.
 - **R-POP-04** The content behind a panel dims one step. Implemented by rendering the base
   frame, then a `Clear` + a dim-style overlay on the panel's shadow region, then the panel.
+  Dimming leaves text on a hat's colour alone (the prompt's chip stays the background's
+  colour on its hat: dim on amber is nothing at all), and the rows the focused panel sits
+  on are cleared across the body first (a docked card: across the prompt's width), so
+  nothing of the conversation shows beside it: the chat's gutter against a panel's left
+  border and the ends of lines against its right read as torn text, not as a panel.
 - **R-POP-05** A panel drops a one-column shadow to the right and one row below in a
-  darkened background, so it visibly floats.
+  darkened background, so it visibly floats. The shadow never falls on the prompt's rule
+  or below it: a shadow there read as a hole in the rule.
 - **R-POP-06** Lists scroll with `↑`/`↓`/`PgUp`/`PgDn`, wrap at the ends, and show a
   scrollbar in the right border when content overflows.
 - **R-POP-07** Universal keys: `Esc` back one level (or close at the top level),

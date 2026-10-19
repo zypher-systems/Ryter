@@ -21,6 +21,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 The last release is 0.29.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
+- **The workspace is the only screen (unreleased).** The ledger and classic layouts, the `^t` workbench and `[ui] layout` are removed on the user's call (2026-10-19): one screen to polish, and the one the reviewer sees. `/changes` is the changes panel everywhere; a settings file that still names a layout loads. Clicking the status row still opens the reasoning pane, which the workspace had lost. A `NO_COLOR` screen no longer draws the drop shadow.
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
 - **1.0 item 1 (flow on a real project): closed 2026-10-14** (recorded in 0.28.0). Further ask friction from fiscus/tunes stays under Next (item 2). G4 closed the nested-scratch and tmux-scope holes in 0.29.0.
@@ -108,7 +109,7 @@ Released 2026-10-10 (PR #73, both reviews approved first round). The note is `do
 
 ### 0.25.0 — the sidebar screen, and a specialist's prompt opens on its request (2026-10-09 to 2026-10-10)
 
-Released 2026-10-10 (PR #72, three review rounds). The note is `docs/releases/v0.25.0.md`. Owed from it: the README's screenshot, the light theme on the new screen.
+Released 2026-10-10 (PR #72, three review rounds). The note is `docs/releases/v0.25.0.md`. Owed from it: the light theme on the new screen (the README's screenshots were retaken on 2026-10-18).
 
 - **0.25.0 — the sidebar screen.** The first developers to use Ryter said it works well and looks like a toy. After a first pass on the old layout (below), the layout chosen by the user over five rounds of mockups and written as `docs/sidebar-design.md`: one permanent sidebar where every row is a measurement, an event or a name (the hats as a ledger with turns, spend and verdict; what the model is doing now; context; spend with its cap; the files touched; one permissions row), no top bar, `RYTER` in capitals at the top of the sidebar, no fedora anywhere, plan blue, build green, one colour for every specialist, a muted palette, an opening screen in place of the welcome line, and the specialists picker on `⇧tab`. Driven against the simulated provider at 120×40, 80×24 and in sixteen colours; the build notes are the contract's §17. Open: the light theme on this screen, the README's screenshot, and whether `⇧tab` should switch directly while there are only two specialists. The same developers asked for more specialists; that is a separate conversation, and no specialist hat is added before 1.0.
 

@@ -1,24 +1,24 @@
- ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────
- · s╭─ models ─────────────────────────────────────────────── 4 · loading ─╮
-   w│ SEATS                │ ⌕ type to filter                              │
-    │›  All hats           │ model            in/M  out/M                  │
-    │   grok-4.6           │ grok-4.6           $2     $6                  │
-    │   Plan               │ grok-4.5           $2     $6                  │
-    │   follows all hats   │ grok-4.3        $1.25   $2.5                  │
-    │   Build              │ grok-build-0.1     $1     $2                  │
-    │   follows all hats   │                                               │
-    │   Audit              │                                               │
-    │   follows all hats   │                                               │
-    │   Scribe             │                                               │
-    │   follows all hats   │                                               │
-    │                      │                                               │
-    │                      │ spacexai · grok-4.6 · reasoning auto (medium… │
-    │ ↑↓ seat   → models   │ enter set for all hats   ← seats   esc done   │
-    ╰──────────────────────────────────────────────────────────────────────╯
-
-
-╭─ filter ─────────────────────────────────────────────────────────────────────╮
-│› typing goes to the search in the panel above                                │
-╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ seat    → models    esc done
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+╭─ models ─────────────────────────── 4 · loading ─╮ Activity
+│ SEATS                │ ⌕ type to filter          │▌grok-4.6
+│›  All hats           │ model        in/M  out/M  │▌Idle
+│   grok-4.6           │ grok-4.6       $2     $6  │▌
+│   Plan               │ grok-4.5       $2     $6  │▌──────────────────────────
+│   follows all hats   │ grok-4.3    $1.25   $2.5  │▌Context
+│   Build              │ grok-buil…     $1     $2  │▌█▏
+│   follows all hats   │                           │▌12k of 256k             5%
+│   Audit              │                           │▌
+│   follows all hats   │                           │▌──────────────────────────
+│   Scribe             │                           │▌Spend · no cap
+│   follows all hats   │                           │▌$0
+│                      │                           │▌Build                   $0
+│                      │                           │▌
+│                      │                           │▌──────────────────────────
+│                      │                           │▌──────────────────────────
+│                      │                           │▌
+│                      │ spacexai · grok-4.6 · re… │▌
+│ ↑↓ seat   → models   │ enter set for all hats    │▌
+╰──────────────────────────────────────────────────╯▌
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands                      focus · conversation

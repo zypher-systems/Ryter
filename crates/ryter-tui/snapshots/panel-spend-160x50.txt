@@ -1,39 +1,31 @@
- ryter  ·  build                                                                                        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system
-   welcome · /help for keys
-
-
-
-
-
-
-
-                                         ╭─ spend · session ────────────────────────────────────────────────── $?.?? ─╮
-                                         │ total  $?.??                                                               │
-                                         │ budget off · nothing stops on cost · /budget <amount> sets a cap           │
-                                         │                                                                            │
-                                         │ by role                                                                    │
-                                         │   nothing spent yet                                                        │
-                                         │                                                                            │
-                                         │ by connection                                                              │
-                                         │   nothing spent yet                                                        │
-                                         │                                                                            │
-                                         │                                                                            │
-                                         │                                                                            │
-                                         │                                                                            │
-                                         │ p project   e export csv   ↑↓ scroll   esc                                 │
-                                         ╰────────────────────────────────────────────────────────────────────────────╯
-
-
-
-
-
-
-
-
-
-
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ ryter                               New session                                                         ● Idle · asks first Activity
+ ⎇ 0.2.0-patch                       0.2.0-patch                                                                             grok-4.6
+                                                                                                                             Idle
+ Hats                                       ·  welcome · /help for keys
+ ● Plan                          $0                                                                                          ──────────────────────────────────
+   grok-4.6                                                                                                                  Context
+   read only                                                                                                                 █▏
+ ┃ Build                         $0                                                                                          12k of 256k                     5%
+   grok-4.6
+   asks first                                                                                                                ──────────────────────────────────
+ ── Specialists                                                                                                              Spend · no cap
+ ● Audit                         $0      ╭─ spend · session ────────────────────────────────────────────────── $?.?? ─╮      $0
+   grok-4.6                              │ total  $?.??                                                               │▌     Build                           $0
+   checkpoint                            │ budget off · nothing stops on cost · /budget <amount> sets a cap           │▌
+ ● Scribe                        $0      │                                                                            │▌     ──────────────────────────────────
+   follows all hats                      │ by role                                                                    │▌     ──────────────────────────────────
+   docs only                             │   nothing spent yet                                                        │▌
+                                         │                                                                            │▌
+                                         │ by connection                                                              │▌
+                                         │   nothing spent yet                                                        │▌
+                                         │                                                                            │▌
+                                         │                                                                            │▌
+                                         │                                                                            │▌
+                                         │                                                                            │▌
+                                         │ p project   e export csv   ↑↓ scroll   esc                                 │▌
+                                         ╰────────────────────────────────────────────────────────────────────────────╯▌
+                                          ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 
 
 
@@ -44,7 +36,15 @@
 
 
 
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│› what should change?                                                                                                                                         │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- p project    e export csv    ↑↓ scroll    esc
+
+
+
+
+
+
+
+                                     ╭────────────────────────────────────────────────────────────────────────────────────╮
+                                     │ Build  › what should change?                                                       │▌
+                                     ╰────────────────────────────────────────────────────────────────────────────────────╯▌
+                                      ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views   f2  instruments   f6 f7  panes                                                    focus · conversation

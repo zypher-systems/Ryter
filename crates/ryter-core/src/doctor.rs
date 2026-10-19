@@ -222,7 +222,7 @@ fn spend_checks(checks: &mut Vec<Check>, cfg: &Config) {
         } else {
             CheckStatus::Fail
         },
-        detail: format!("mystery-model is {label} (must not be $0.00)"),
+        detail: format!("a model with no known price shows {label}, never $0.00"),
     });
 }
 

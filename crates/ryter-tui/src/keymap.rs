@@ -53,8 +53,6 @@ pub enum KeyAction {
     TogglePanel,
     /// Show every edit's diff whole, or folded.
     ToggleDiffs,
-    /// `^T`: the workbench (ledger).
-    ToggleWorkbench,
     /// Redraw.
     Redraw,
     /// Release the mouse so the terminal can select text.
@@ -179,19 +177,13 @@ pub const KEYMAP: &[Binding] = &[
         Ctx::Global,
         "Ctrl+B",
         KeyAction::TogglePanel,
-        "toggle the info panel",
+        "show or hide the instruments beside the conversation",
     ),
     b(
         Ctx::Global,
         "Ctrl+O",
         KeyAction::ToggleDiffs,
         "show every edit, audit, and folded turn whole, or folded",
-    ),
-    b(
-        Ctx::Global,
-        "Ctrl+T",
-        KeyAction::ToggleWorkbench,
-        "the workbench: what changed beside the chat, one change at a time",
     ),
     b(Ctx::Global, "Ctrl+L", KeyAction::Redraw, "redraw"),
     b(

@@ -4,6 +4,8 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::text::Line;
 use ryter_core::{format_tokens, format_usd};
 
+use crate::chat::turn_usd;
+
 use super::{Body, Notice, Outcome, Panel, widgets};
 use crate::action::Action;
 use crate::theme::Theme;
@@ -18,13 +20,27 @@ pub struct Spend {
     project: bool,
 }
 
+/// `$14.20`, or `$14.20+` when some calls had no known price (never a
+/// silent undercount).
+pub fn project_label(p: &ryter_core::project::ProjectSpend) -> String {
+    if p.calls > 0 && p.calls == p.unpriced_calls {
+        "$?.??".into()
+    } else if p.unpriced_calls > 0 {
+        format!("{}+", crate::chat::turn_usd(p.total_usd))
+    } else {
+        // As the sidebar says it: three places under a dime, never a
+        // fake `$0.00` for a project that has cost something.
+        crate::chat::turn_usd(p.total_usd)
+    }
+}
+
 /// `[name, usd]` rows, largest first, at most `n`.
 fn usd_rows(map: &std::collections::BTreeMap<String, f64>, n: usize) -> Vec<Vec<String>> {
     let mut v: Vec<(&String, &f64)> = map.iter().filter(|(_, u)| **u > 0.0).collect();
     v.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
     v.into_iter()
         .take(n)
-        .map(|(k, u)| vec![crate::view::role_label(k).to_string(), format_usd(Some(*u))])
+        .map(|(k, u)| vec![crate::view::role_label(k).to_string(), turn_usd(*u)])
         .collect()
 }
 
@@ -39,7 +55,7 @@ fn project_lines(view: &View, w: usize, theme: Theme) -> Vec<Line<'static>> {
     lines.push(widgets::text(
         &format!(
             "project  {}   across {} session(s) · {}",
-            crate::info::cards::project_label(p),
+            project_label(p),
             p.sessions,
             p.root.display()
         ),
@@ -52,12 +68,12 @@ fn project_lines(view: &View, w: usize, theme: Theme) -> Vec<Line<'static>> {
         &if crew > 0.005 {
             format!(
                 "this month {} · hats {} · crew mode (removed) {}",
-                format_usd(Some(p.this_month())),
-                format_usd(Some(p.solo_usd())),
-                format_usd(Some(crew))
+                turn_usd(p.this_month()),
+                turn_usd(p.solo_usd()),
+                turn_usd(crew)
             )
         } else {
-            format!("this month {}", format_usd(Some(p.this_month())))
+            format!("this month {}", turn_usd(p.this_month()))
         },
         theme,
     ));
@@ -109,9 +125,11 @@ fn rows(map: &std::collections::BTreeMap<String, SpendRow>) -> Vec<Vec<String>> 
                 if r.unpriced && r.usd == 0.0 {
                     "$?.??".into()
                 } else if r.unpriced {
-                    format!("{}+", format_usd(Some(r.usd)))
+                    format!("{}+", turn_usd(r.usd))
                 } else {
-                    format_usd(Some(r.usd))
+                    // Three places under a dime, as the rail and the
+                    // sidebar say it: a row is never a fake `$0.00`.
+                    turn_usd(r.usd)
                 },
             ]
         })
@@ -161,7 +179,7 @@ impl Panel for Spend {
 
     fn status(&self, view: &View) -> String {
         match (&view.project_spend, self.project) {
-            (Some(p), true) => crate::info::cards::project_label(p),
+            (Some(p), true) => project_label(p),
             _ => view.spend_label(),
         }
     }
@@ -390,5 +408,56 @@ mod tests {
             t.contains("hats $1.00") && t.contains("crew mode (removed) $2.00"),
             "{t}"
         );
+    }
+}
+
+#[cfg(test)]
+mod money {
+    use super::*;
+
+    fn text(body: Body) -> String {
+        body.lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect()
+    }
+
+    /// A row's cost is never a fake `$0.00`: a build that cost $0.004 says
+    /// so, as the rail and the sidebar do, and the project's rows the same.
+    #[test]
+    fn a_rows_cost_is_never_a_fake_zero() {
+        let mut v = View::new("c".into(), "m".into(), "/tmp".into());
+        v.spend_rows_role.insert(
+            "build".into(),
+            crate::view::SpendRow {
+                calls: 4,
+                input: 4000,
+                output: 40,
+                cached: 0,
+                usd: 0.004,
+                unpriced: false,
+            },
+        );
+        let theme = Theme::truecolor_dark();
+        let mut panel = Spend::default();
+        let session = text(panel.render(&v, 78, 26, theme));
+        assert!(session.contains("$0.004"), "{session}");
+        assert!(!session.contains("$0.00 "), "{session}");
+        let mut p = ryter_core::project::ProjectSpend::default();
+        p.add(ryter_core::Role::Build, "m", Some(0.004));
+        v.project_spend = Some(p);
+        let _ = panel.key(
+            KeyEvent::new(KeyCode::Char('p'), crossterm::event::KeyModifiers::NONE),
+            &mut v,
+        );
+        let project = text(panel.render(&v, 78, 26, theme));
+        assert!(project.contains("$0.004"), "{project}");
+        assert!(!project.contains("$0.00 "), "{project}");
     }
 }

@@ -4,9 +4,9 @@ Ryter is Zypher Systems’ terminal AI coding harness.
 
 One model works in your project, with you, and `Tab` switches between its two working hats, **plan** and **build**; `Shift+Tab` reaches the specialists, **audit** and **scribe**. Each hat can run on a model of its own: a strong one to plan, a cheaper one to build, a different one to audit, a small one to write the docs. Bring your own keys: **SpaceXAI** and **OpenRouter** are built in, and local model servers (Ollama, LM Studio, llama.cpp) work without one.
 
-![Ryter in the build hat, before the sidebar screen: a screenshot from 0.24.1, owed a new one. The conversation shows a diff of app/server.js and a new test, with the hats and the instruments beside it.](docs/screenshots/build.png)
+![Ryter in the build hat: the Conversation, Hats and Sessions tabs on the top bar, the hats with their models and costs in the sidebar, the conversation in the middle with the diff of app/server.js and a new test, and the instruments at the right.](docs/screenshots/build.png)
 
-Linux first. The current release is 0.29.0. Apache-2.0.
+Linux first. The current release is 0.30.0. Apache-2.0.
 
 ## Install
 
@@ -14,7 +14,7 @@ Linux first. The current release is 0.29.0. Apache-2.0.
 curl -fsSL https://raw.githubusercontent.com/zypher-systems/ryter/main/install.sh | sh
 ```
 
-This installs a prebuilt binary to `~/.local/bin` for Linux (x86_64 and arm64, static, any distro) or macOS (Apple Silicon and Intel). The download is checked against the release's `SHA256SUMS` first. `RYTER_VERSION=v0.22.0` pins the current release and `RYTER_INSTALL_DIR` picks the folder. Linux gets the full feature set; on macOS everything works except the Landlock sandbox, which is Linux-only.
+This installs a prebuilt binary to `~/.local/bin` for Linux (x86_64 and arm64, static, any distro) or macOS (Apple Silicon and Intel). The download is checked against the release's `SHA256SUMS` first. `RYTER_VERSION=v0.30.0` pins the current release and `RYTER_INSTALL_DIR` picks the folder. Linux gets the full feature set; on macOS everything works except the Landlock sandbox, which is Linux-only.
 
 The installer verifies signed checksums against the same pinned release key as the updater. It requires OpenSSL 3+ with Ed25519 support; set `RYTER_INSTALL_OPENSSL` to its executable if it is not the default `openssl`. Unsigned older releases and invalid signatures are refused before extraction.
 
@@ -46,14 +46,14 @@ One model works in your files. `Tab` cycles its hat, and the message box shows t
 | --- | --- |
 | **plan** | reads and proposes; shows you a plan to approve, adjust or reject; changes nothing |
 | **build** | changes your files; your toolchains and the project's containers run, and edits, deletions and publishing ask first |
-| **scribe** | writes the documentation and nothing else: `.md`, `.txt` and their kind; give it a cheap model |
 | **audit** | runs everything the project has against the plan you approved, the product included, and files its findings on a card you can hand to the builder; a checkpoint puts back anything it changed |
+| **scribe** | writes the documentation and nothing else: `.md`, `.txt` and their kind; give it a cheap model |
 
-![Ryter in the plan hat. Plan is the filled chip and wears grok-4.6 on SpaceXAI. Build stays on deepseek-pro-latest and audit on claude-opus-5.5. The guard says this hat is read only, and the conversation still holds the diff from the build.](docs/screenshots/plan.png)
+![Ryter in the plan hat. Plan is the filled chip and the marked hat in the sidebar, which carries each hat's model, its turns and their cost; the conversation still holds the diff from the build.](docs/screenshots/plan.png)
 
 - **A plan is approved in its own panel.** `y` saves it as `.ryter/plan.md` (and a dated copy under `.ryter/plans/`) and the build starts from that file; that is the one hat change Ryter makes on its own. Where the work later differs from it, the difference and the reason are recorded in `.ryter/decisions.md`, which an audit reads.
 - **Each hat can have its own model** (`/models`). The hats share one conversation, and Ryter says what it costs when a different model takes over.
-- **`/audit` asks for an audit**, with its cost up front. It ends on a card: the verdict and the findings, written to `.ryter/audit.md`; `y` hands it to the build hat to repair.
+- **An audit is a hat and `Enter`.** `Shift+Tab` puts the audit hat on with "Audit this project" in the prompt, `Enter` asks, and a card says what it will cost before it starts (`/audit` asks for one from any hat). It ends on a card: the verdict and the findings, written to `.ryter/audit.md`; `Enter` again hands them to the build hat to repair.
 - **Before each build turn Ryter checkpoints your files**, and `/undo` puts them back. `/changes` shows what changed, file by file with diffs, and can undo a single file.
 - **`/commit`** drafts the message from the diff and from what the model said about why, and commits the files you choose. Its receipt trailer records the model, the cost, the test result and the review (`Ryter: deepseek-pro-latest · $0.34 · tests ✓ 13 passed · review ✓ grok-4.7`).
 - **Every call is priced** as it happens, for the session and for the project. A model with no known price shows `$?.??`, never a fake `$0.00`. `/budget 5` caps the session, `/budget +2` raises it, and `/budget off` lifts the cap.

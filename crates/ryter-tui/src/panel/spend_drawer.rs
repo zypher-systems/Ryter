@@ -1,4 +1,4 @@
-//! `$` on the ledger: what the work has cost, this turn, this session and
+//! `$` on an empty prompt: what the work has cost, this turn, this session and
 //! this project, side by side, by role, against the budget. A drawer above
 //! the composer; `/spend` is the full table.
 

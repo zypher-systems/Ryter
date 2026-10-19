@@ -266,8 +266,6 @@ pub struct View {
     /// Where the model list stands (`AgentEvent::ModelsNote`): from the
     /// cache and refreshing, or why the fresh one didn't come.
     pub models_note: Option<String>,
-    /// The workbench, when open (`^T`).
-    pub workbench: Option<crate::workbench::Workbench>,
     /// The chat's folded lookup row and what it has counted, while lookups
     /// keep coming.
     pub lookups: Option<(u64, crate::chat::toolview::Lookups)>,
@@ -560,7 +558,6 @@ impl View {
             theme_generation: 0,
             connections: Vec::new(),
             has_key: false,
-            workbench: None,
             models_note: None,
             lookups: None,
             tally: Default::default(),
@@ -607,12 +604,7 @@ impl View {
             update_mode: ryter_core::config::UpdateMode::default(),
             web: false,
             search: SearchRow::default(),
-            // Tests and snapshots start on the classic layout; the app takes
-            // the user's `[ui] layout` (workspace by default) from config.
-            ui: UiConfig {
-                layout: "classic".into(),
-                ..UiConfig::default()
-            },
+            ui: UiConfig::default(),
             recent_commands: Vec::new(),
             conn_tests: BTreeMap::new(),
             last_export: None,
@@ -972,10 +964,12 @@ impl View {
 
     /// Spend label for the header / cards (`$?.??` when any turn was unpriced).
     pub fn spend_label(&self) -> String {
-        if self.spend_unknown && self.spend.is_none() {
-            format_usd(None)
-        } else {
-            format_usd(self.spend)
+        match self.spend {
+            None if self.spend_unknown => format_usd(None),
+            None => format_usd(None),
+            // Three places under a dime, as every row that names a cost
+            // says it: a session that cost $0.004 is never `$0.00`.
+            Some(usd) => crate::chat::turn_usd(usd),
         }
     }
 

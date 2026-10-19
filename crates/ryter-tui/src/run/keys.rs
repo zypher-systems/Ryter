@@ -12,26 +12,9 @@ use crate::view::View;
 /// Window for the second `Ctrl+C` (`R-COMP-14`).
 pub const QUIT_ARM_MS: u64 = 2000;
 
-/// `^b`: the info panel on the classic screen, the sidebar on the solo
-/// one. A screen too narrow or too short to hold the sidebar beside the
-/// conversation opens it as a panel instead, and `^b` again closes it;
-/// the sidebar itself is left to come back when there is room for it.
+/// `^b`: show or hide the instruments beside the conversation.
 fn toggle_side(view: &mut View) {
-    let (w, h) = view.screen.get();
-    let folded =
-        !view.ui.classic() && view.workbench.is_none() && !crate::draw::sidebar_fits(view, w, h);
-    if !folded {
-        view.panel_visible = !view.panel_visible;
-        return;
-    }
-    if view.panels.top().is_some_and(|p| p.kind() == "sidebar") {
-        view.panels.pop();
-    } else if !view.panels.has_modal() {
-        view.palette = None;
-        view.panels
-            .push(Box::new(panel::sidebar::Sidebar::default()));
-    }
-    panel::sync_composer(view);
+    view.panel_visible = !view.panel_visible;
 }
 
 /// Route one key press. Whatever it did to the prompt, a line Ryter put
@@ -63,17 +46,6 @@ fn route(view: &mut View, key: KeyEvent) -> Action {
                 view.diffs_expanded = !view.diffs_expanded;
                 return Action::None;
             }
-            KeyAction::ToggleWorkbench if !view.panels.has_modal() => {
-                if view.workbench.take().is_some() {
-                    return Action::None;
-                }
-                // The classic screen has `/changes` for this.
-                return if view.ui.classic() {
-                    Action::OpenPanel(PanelId::Changes)
-                } else {
-                    Action::OpenWorkbench
-                };
-            }
             KeyAction::Help if !view.panels.has_modal() => {
                 if view.panels.top().is_some_and(|p| p.kind() == "help") {
                     view.panels.pop();
@@ -84,19 +56,14 @@ fn route(view: &mut View, key: KeyEvent) -> Action {
             KeyAction::QuitIfEmpty if view.panels.is_empty() && view.composer.is_empty() => {
                 return Action::Quit;
             }
-            // Esc leaves the workbench (a `y`/`n` confirm in it takes Esc too).
-            KeyAction::Back if view.panels.is_empty() && view.workbench.is_some() => {
-                view.workbench = None;
-                return Action::None;
-            }
             KeyAction::Back if view.panels.is_empty() => return esc(view),
             _ => {}
         }
     }
 
     // Workspace chrome: views, instruments, and which pane has focus.
-    // A palette or the workbench keeps the keys. A permission card does
-    // not: these are not its answers.
+    // A palette keeps the keys. A permission card does not: these are
+    // not its answers.
     if let Some(a) = crate::workspace::chrome_key(view, key) {
         return a;
     }
@@ -105,15 +72,6 @@ fn route(view: &mut View, key: KeyEvent) -> Action {
     if !view.panels.is_empty() {
         let a = panel::handle_key(view, key);
         panel::sync_composer(view);
-        return a;
-    }
-
-    // The workbench takes every other key: `x` there undoes a change.
-    if let Some(mut w) = view.workbench.take() {
-        let (keep, a) = w.key(key, view);
-        if keep {
-            view.workbench = Some(w);
-        }
         return a;
     }
 
@@ -172,12 +130,11 @@ fn route(view: &mut View, key: KeyEvent) -> Action {
         return a;
     }
 
-    // `$` on an empty composer opens the spend drawer (the ledger's bar
-    // says so). Anywhere in a message it is just a dollar sign.
+    // `$` on an empty composer opens the spend drawer. Anywhere in a
+    // message it is just a dollar sign.
     if key.code == KeyCode::Char('$')
         && !key.modifiers.contains(KeyModifiers::CONTROL)
         && view.composer.is_empty()
-        && !view.ui.classic()
         && matches!(view.composer.mode, ComposerMode::Normal)
     {
         return Action::OpenPanel(PanelId::SpendDrawer);

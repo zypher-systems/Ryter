@@ -1,24 +1,24 @@
- ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────
- · s╭─ settings ───────────────────────────────────────────────────────────╮
-   w│ STARTUP                                                              ┃
-    │› start in                  ‹ plan ›                          default ┃
-    │    read and propose first                                            ┃
-    │                                                                      │
-    │ SPEND                                                                │
-    │  budget usd (0 = off)      ‹ 0.00 ›                          default │
-    │  warn usd                  ‹ 1.00 ›                          default │
-    │  rounds a turn (0 = no ca  ‹ 150 ›                           default │
-    │  audit usd (0 = off)       ‹ 0.00 ›                          default │
-    │                                                                      │
-    │ TOOLS                                                                │
-    │  permission mode           ‹ ask ›                           default │
-    │  features.web              [ off ]                           default │
-    │ ↑↓ move   space/←→ change   enter edit   esc done                    │
-    ╰──────────────────────────────────────────────────────────────────────╯
-
-
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
-│› what should change?                                                         │
-╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    space/←→ change    enter edit    esc done
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+╭─ settings ───────────────────────────────────────╮ Activity
+│ STARTUP                                          ┃▌grok-4.6
+│› start in                 ‹ plan ›       default ┃▌Idle
+│    read and propose first                        ┃▌
+│                                                  ┃▌──────────────────────────
+│ SPEND                                            ┃▌Context
+│  budget usd (0 = off)     ‹ 0.00 ›       default │▌█▏
+│  warn usd                 ‹ 1.00 ›       default │▌12k of 256k             5%
+│  rounds a turn (0 = off)  ‹ 150 ›        default │▌
+│  audit usd (0 = off)      ‹ 0.00 ›       default │▌──────────────────────────
+│                                                  │▌Spend · no cap
+│ TOOLS                                            │▌$0
+│  permission mode          ‹ ask ›        default │▌Build                   $0
+│  features.web             [ off ]        default │▌
+│                                                  │▌──────────────────────────
+│ SANDBOX                                          │▌──────────────────────────
+│  profile                  ‹ off ›        default │▌
+│                                                  │▌
+│ ↑↓ move   space/←→ change   enter edit   esc done│▌
+╰──────────────────────────────────────────────────╯▌
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands                      focus · conversation

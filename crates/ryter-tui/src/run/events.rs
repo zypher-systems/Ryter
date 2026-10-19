@@ -72,7 +72,7 @@ pub fn apply(view: &mut View, ev: AgentEvent) {
 }
 
 fn apply_to_shown(view: &mut View, ev: AgentEvent) {
-    // The workbench shows the files as they are: read them again after
+    // The instruments show the files as they are: read them again after
     // anything that changes them.
     if matches!(
         ev,
@@ -84,10 +84,6 @@ fn apply_to_shown(view: &mut View, ev: AgentEvent) {
         apply_inner(view, &ev);
         // So do the instruments, of what is uncommitted.
         view.refresh_uncommitted();
-        if let Some(mut w) = view.workbench.take() {
-            w.reload(view);
-            view.workbench = Some(w);
-        }
         return;
     }
     apply_inner(view, &ev);
@@ -173,26 +169,12 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             view.cancelling = false;
             view.activity
                 .finish(verb.clone(), Some(*tools), Some(*duration_ms));
-            if !view.ui.classic() {
-                // The ledger closes every turn with what it came to.
+            // Every turn closes with what it came to.
+            {
                 let line = receipt(view, &verb, *tools, *duration_ms);
                 view.push(
                     MessageKind::System {
                         level: crate::chat::SystemLevel::Receipt,
-                    },
-                    line,
-                );
-                view.tally = Default::default();
-            } else if !view.tally.is_empty() {
-                // What the turn did, measured, whatever the model said about it.
-                let line = format!(
-                    "{} · {}",
-                    view.tally.line(),
-                    crate::chat::fmt_duration(*duration_ms)
-                );
-                view.push(
-                    MessageKind::System {
-                        level: crate::chat::SystemLevel::Rule,
                     },
                     line,
                 );
@@ -1035,12 +1017,8 @@ mod tests {
                 .map(|m| m.body.clone())
                 .unwrap_or_default()
         };
-        let ledger = || {
-            let mut v = view();
-            v.ui.layout = "ledger".into();
-            v
-        };
-        let mut v = ledger();
+        let fresh = || view();
+        let mut v = fresh();
         apply(
             &mut v,
             AgentEvent::Error {
@@ -1054,7 +1032,7 @@ mod tests {
         };
         apply(&mut v, done.clone());
         assert!(receipt(&v).starts_with("✕ failed · "), "{}", receipt(&v));
-        let mut v = ledger();
+        let mut v = fresh();
         apply(&mut v, done);
         assert!(receipt(&v).starts_with("✓ answered · "), "{}", receipt(&v));
     }

@@ -97,7 +97,7 @@ ryter models [connection]
 
 ## Talking to Ryter
 
-`ryter` on a tty opens the TUI in the **workspace** layout (`[ui] layout = "workspace"`, the default). `ledger` is the 0.6 reading column; `classic` is the 0.5 screen. Switch with `/settings` → layout.
+`ryter` on a tty opens the TUI: the workspace.
 
 **The workspace** puts `RYTER` and three tabs on the top bar: Conversation, Hats, and Sessions (`Alt+1`, `Alt+2`, `Alt+3`, or a click). The hat rack is the sidebar. The chosen view fills the middle. Instruments — activity, context, spend, files, and the plan — sit on the right; `F2` or `^b` hides them. `F6` and `F7` move focus between the sidebar, the view, and the instruments. Hat names on this screen are capitalized. `Tab` moves within the mode you are in (plan and build, or the specialists) and `Shift+Tab` switches mode. `/` opens the command palette. `[ui] nerd_font = true`, or `RYTER_NERD_FONT=1` when that key is absent, draws a few marks as Nerd Font icons. The ledger, below, is what `[ui] layout = "ledger"` still draws.
 
@@ -122,15 +122,6 @@ The rest of the screen:
 - **Every turn closes with what it came to**, measured by Ryter: `└─ ✓ 5 tools · 2 files (2 changed, +3 −0) · 1 command (1 ok) · 7.9s · $0.001`.
 - **Finished turns fold to one line:** what was asked, and at the row's end what it came to, without the time and the cost, ending in `▸`. The newest turn stays open. `^o` opens every turn and every edit whole, and folds them again.
 - **`$`** on an empty composer opens the **spend drawer** above it. It shows this turn, the session, and the project side by side, with spend by hat for the session and the project, and the budget and warning level. `b` sets a budget, `⏎` opens the full `/spend` table.
-
-**The workbench** (`^T`, or `/changes` on the ledger) shows what changed beside the chat, in three panes. It has the screen to itself, with a strip across the top naming the views (`chat`, `changes ^t`) and one bar at the foot:
-- **Left:** the files changed (this turn, or since the last commit with `tab`), the turn's commands and what came of them, and the turns.
-- **Middle:** the chat.
-- **Right:** the selected file's changes, one at a time, with line numbers on both sides.
-
-Its keys: `↑↓` pick a file, `j`/`k` move between its changes, `x` undoes the selected change alone, `X` undoes the whole file (after a `y`), and `u` undoes the turn. `x` and `X` are recorded like a turn, so `/undo` brings them back. While the workbench is open, keys go to it and not the composer; `esc` or `^T` returns to the chat.
-
-`[ui] layout = "classic"` (also in `/settings`, applied at once) brings back the 0.5 arrangement: a header row, the chat with a right-hand **info panel** of cards (session, model and context gauge, spend and budget, mcp), a bordered **composer**, and a hint bar. A turn uses the same status row and reasoning pane as the ledger. The old activity strip is not on either screen. `^b` shows or hides the info panel (it also drops automatically under 80 columns).
 
 Every message is a left-aligned block under a speaker header — your name (from `[ui] username`, then `git user.name`, then `$USER`), the model name, `· system`, or a one-line tool row (`· read_file  path  0.1s`). Markdown renders with headings, lists, quotes, tables, and fenced code with syntax highlighting and a line-number gutter. Long model turns end with a summary line (`3 tools · 12.4k tok · 0:42 · $0.01`).
 
@@ -184,10 +175,9 @@ If nobody answers for five minutes, the call ends with **timed out waiting for u
 | `^c` | clear composer → cancel turn → quit (press twice within 2 s) |
 | `^d` | quit when the composer is empty |
 | `^r` | toggle the reasoning pane |
-| `^b` | show or hide the columns beside the conversation (ledger; on a screen under 100 columns, open the sidebar as a panel), or the info panel (classic) |
+| `^b` | show or hide the instruments (`F2` does the same) |
 | `^o` | show every edit and finished turn whole, or folded |
-| `$` | the spend drawer (ledger, when the composer is empty) |
-| `^t` | the workbench (ledger); `/changes` on the classic screen |
+| `$` | the spend drawer, when the composer is empty |
 | `^l` | redraw |
 | `PgUp` / `PgDn` | scroll the transcript one viewport |
 | `Shift+↑` / `Shift+↓` | scroll one row |
@@ -205,7 +195,7 @@ Mouse: wheel scrolls the chat, clicking a card opens its panel, clicking the sta
 - **A code block is copied as code:** without the box drawn around it or its line numbers, and with every space of its own, so the body of a function keeps its indentation.
 - **What is drawn over the conversation is selected as itself:** the question pinned at the top while you are scrolled up, and the command palette. A drag from the text onto either stops at the last row of text in sight and scrolls toward it, as at the pane's edge. What is highlighted is what is copied.
 - **`Alt` held while dragging** selects a rectangle instead of lines.
-- **Elsewhere** (the message box, a card on the right, the panes beside the conversation in the workbench, anything on the screen while a panel is open) the selection is the cells you drag over, kept to the part of the screen it began in. A panel that opens over the conversation while you are dragging ends the selection.
+- **Elsewhere** (the message box, a card on the right, anything on the screen while a panel is open) the selection is the cells you drag over, kept to the part of the screen it began in. A panel that opens over the conversation while you are dragging ends the selection.
 - **Where the copy goes:** your terminal is asked to put it on the clipboard (OSC 52, which also works over `ssh`), and your desktop's own tool is run as well when one is installed: `wl-copy` on Wayland, `xclip` or `xsel` on X11, `pbcopy` on a Mac. A terminal that ignores OSC 52 on a machine with none of those tools leaves the clipboard as it was; inside `tmux`, OSC 52 needs `set -g set-clipboard on`.
 - **Lines that wrapped on the screen are copied as the rows you saw,** one line each.
 - **Your terminal's own selection** is still there with its modifier (Shift+drag on most), and `[ui] mouse = false` turns capture off entirely.
@@ -224,7 +214,7 @@ ryter -c -p "continue"               # continue the latest session
 
 One model works in your project, in the plan hat to start with. The hats are in two rows: **plan** and **build**, the hats the work is done in, and below a line the **specialists**, **audit** and **scribe**. `Tab` moves within the row you are in: between plan and build, or round the specialists. `Shift+Tab` moves to the other row, onto the hat you last wore there (build, or audit, when you haven't). `/plan`, `/build` and `/scribe` jump straight to a hat; `/audit` runs an audit. **A specialist's prompt opens on its request:** choose the audit hat and the prompt reads "Audit this project"; choose the scribe and it reads "Document this project". `Enter` sends it, so the hat and `Enter` are all it takes. Type over it for something else; the line goes when you leave the hat, and what you typed yourself is never replaced. The sidebar's ledger, the prompt's chip and its rule all show the hat in its own color.
 
-**Switching while a hat works.** A switch during a turn (`Tab`, `Shift+Tab`, `/plan`, `/build`, `/scribe`) chooses the hat for your next message and nothing else: the hat that started the turn finishes it, on its own model. The prompt's chip and the ledger's `▸` move to the hat you chose at once; the spinner stays on the hat working, and the `now` block, the status row and the name over the reply stay its model's. When the turn ends the switch lands, and a message you queued meanwhile goes to the new hat. Two hats working at once is not something Ryter does.
+**Switching while a hat works.** A switch during a turn (`Tab`, `Shift+Tab`, `/plan`, `/build`, `/scribe`) chooses the hat for your next message and nothing else: the hat that started the turn finishes it, on its own model. The prompt's chip and the sidebar's mark move to the hat you chose at once; the spinner stays on the hat working, and the `now` block, the status row and the name over the reply stay its model's. When the turn ends the switch lands, and a message you queued meanwhile goes to the new hat. Two hats working at once is not something Ryter does.
 
 **The hat a session starts in** is `[ui] start_hat`, also *start in* at the top of `/settings`: `plan` (the default: read and propose first), `build` (straight to work), `audit` (open on an audit, with "Audit this project" in the prompt), or `last` (the hat this project's most recent session ended in; plan when there is none). A resumed session opens in the hat it was left in. `ryter --hat build` opens in that hat for one run, whatever the setting. `/new` keeps the hat you are in. Headless runs (`ryter -p`) are not affected: they are in the build hat unless `--hat` says otherwise. A switch applies to your next message. The model can also offer a switch itself: after an audit ("fix these?") it asks with a yes/no prompt, and on `y` it carries on in the new hat in the same turn. A plan has its own panel, below.
 

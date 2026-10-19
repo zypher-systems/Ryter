@@ -1,50 +1,50 @@
- RYTER                       │         │                                                                                          │ now
- new session                 │         │  1. wire the loop                                                                        │   grok-4.6
- ryter · 0.2.0-patch         │         │  2. write tests                                                                          │   waiting for you · allow?
-                             │                                                                                                    │   allow?
- hats                        │         ●  dusty                                                                                   │
-   plan                      │         │  now implement step one                                                                  │ context
- ⠼ build                     │         │                                                                                          │   ━───────────────────   5%
-   ──────────── specialists  │         ├─ read   crates/ryter-tui/src/run/mod.rs                                                  │   12k of 256k
-   audit                     │         │                                                                                          │
-   scribe                    │         ◆  grok-4.6                                                                                │ spend
-                             │         │  Reading the loop now. The event loop drains reply line 0 reply line 1 reply line 2      │   session    $0  no cap
-                             │         │  reply line 3 reply line 4 reply line 5 reply line 6 reply line 7                        │
-                             │         │  ⠼ waiting for you · allow? · 0:12 · 85 tokens                                           │ changes
-                             │                                                                                                    │   no repository here
-                             │                                                                                                    │
-                             │                                                                                                    │ permissions
-                             │                                                                                                    │   asks first · sandbox off
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │                                                                                                    │
-                             │   ┏━ allow? · run as root  sudo dnf install -y alsa-lib-devel pkgconf · press y ━━━━━ build ━┓     │
-                             │   │ what    run as root  sudo dnf install -y alsa-lib-devel pkgconf                          │     │
-                             │   │ risk    as root · /undo can't reach it · your password is asked next                     │     │
-                             │   │   sudo dnf install -y alsa-lib-devel pkgconf                                             │     │
-                             │   │                                                                                          │     │
-                             │   │ y allow once   n deny                                                                    │     │
-                             │   ╰──────────────────────────────────────────────────────────────────────────────────────────╯     │
-                             │────────────────────────────────────────────────────────────────────────────────────────────────────│
-                             │  build  › type to queue the next message, / for commands                                           │
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ ryter                               New session                                              ● Waiting for you · asks first Activity
+ ⎇ 0.2.0-patch                       0.2.0-patch                                                                             grok-4.6
+                                                                                                                             Waiting for you
+ Hats                                       ·  welcome · /help for keys                                                      …ly line 4 reply line 5 reply li…
+ ● Plan                          $0         ●  summarise the plan                                             ✓ answered  ▸
+   grok-4.6                                                                                                                  ──────────────────────────────────
+   read only                                ●  dusty                                                                         Context
+ ┃ Build                         $0         │  now implement step one                                                        █▏
+   grok-4.6                                 │                                                                                12k of 256k                     5%
+   asks first                               ├─ read   crates/ryter-tui/src/run/mod.rs
+ ── Specialists                             │                                                                                ──────────────────────────────────
+ ● Audit                         $0         ◆  grok-4.6                                                                      Spend · no cap
+   grok-4.6                                 │  Reading the loop now. The event loop drains reply line 0 reply line 1         $0
+   checkpoint                               │  reply line 2 reply line 3 reply line 4 reply line 5 reply line 6 reply        Build                           $0
+ ● Scribe                        $0         │  line 7
+   follows all hats                         │  ⠼ waiting for you · allow? · 0:12 · 85 tokens                                 ──────────────────────────────────
+   docs only                                                                                                                 ──────────────────────────────────
 
- y allow once    n deny    esc deny    ^c stop the turn
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                      ╭─ allow? · run as root  sudo dnf install -y alsa-lib-devel pkgconf · press y ──  ─╮
+                                      │ what    run as root  sudo dnf install -y alsa-lib-devel pkgconf                  │▌
+                                      │ risk    as root · /undo can't reach it · your password is asked next             │▌
+                                      │   sudo dnf install -y alsa-lib-devel pkgconf                                     │▌
+                                      │ y allow once   n deny                                                            │▌
+                                      ╰──────────────────────────────────────────────────────────────────────────────────╯▌
+                                       ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                                     ╭────────────────────────────────────────────────────────────────────────────────────╮
+                                     │ Build  › type to queue the next message, / for commands                            │▌
+                                     ╰────────────────────────────────────────────────────────────────────────────────────╯▌
+                                      ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  y  allow once   n  deny   tab  hat   ⇧tab  mode   /  commands   f2  instruments   f6 f7  panes                                           focus · conversation

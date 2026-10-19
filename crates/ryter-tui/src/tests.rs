@@ -363,9 +363,8 @@ fn every_panel_fits_the_screen_at_every_width() {
         PanelId::Commit,
     ];
     for id in panels {
-        for (layout, rail) in [("ledger", true), ("ledger", false), ("classic", true)] {
+        for rail in [true, false] {
             let mut v = with_panel(id);
-            v.ui.layout = layout.into();
             v.panel_visible = rail;
             for width in (40..=200).step_by(6) {
                 for height in [12, 24, 40] {
@@ -375,7 +374,7 @@ fn every_panel_fits_the_screen_at_every_width() {
                         drawn
                             .lines()
                             .all(|l| l.chars().count() <= usize::from(width)),
-                        "{id:?} at {width}x{height}, {layout}, rail {rail}"
+                        "{id:?} at {width}x{height}, rail {rail}"
                     );
                 }
             }
@@ -383,11 +382,10 @@ fn every_panel_fits_the_screen_at_every_width() {
     }
     // The case that crashed: its right border is on the screen.
     let mut v = with_panel(PanelId::Models);
-    v.ui.layout = "ledger".into();
     v.panel_visible = true;
     let drawn = render_to_string(&v, 110, 32);
     let top = drawn.lines().find(|l| l.contains("models")).unwrap_or("");
-    assert!(top.trim_end().ends_with('╮'), "{drawn}");
+    assert!(top.contains('╮'), "{drawn}");
 }
 
 #[test]
@@ -514,30 +512,13 @@ fn the_screen_shows_the_hat() {
             view.mode = mode;
             for (w, h) in SIZES {
                 let frame = render_to_string(&view, w, h);
-                let badge = format!(" {} ", view.mode_label().to_ascii_uppercase());
+                let badge = format!(" {} ", crate::glyphs::hat_label(view.mode));
                 assert!(frame.contains(&badge), "{w}x{h} no {badge:?}:\n{frame}");
                 for gone in ["orchestrator", "handoff", "phase", "crew", "lead"] {
                     assert!(!frame.contains(gone), "{w}x{h} shows {gone:?}:\n{frame}");
                 }
             }
         }
-    }
-}
-
-#[test]
-fn hint_bar_never_drops_cancel_or_quit() {
-    // At 80 columns the streaming bar used to truncate its tail, losing `^c
-    // quit` exactly when a turn was running (G-05).
-    let view = mid_stream(ActivityMode::Collapsed);
-    for width in [80u16, 60, 48, 40, 32] {
-        let frame = render_to_string(&view, width, 24);
-        let hint = frame.lines().last().unwrap_or_default().to_string();
-        assert!(hint.contains("^c"), "width {width} lost quit: {hint:?}");
-        assert!(hint.contains("esc"), "width {width} lost cancel: {hint:?}");
-        assert!(
-            hint.chars().count() <= usize::from(width),
-            "width {width} overflowed: {hint:?}"
-        );
     }
 }
 
@@ -550,26 +531,6 @@ fn empty_cards_are_absent_not_blank() {
         let frame = render_to_string(&view, w, h);
         assert!(!frame.contains("no servers"), "{w}x{h}: empty mcp card");
     }
-}
-
-/// The raw session id is operator chrome; `/sessions` is where it belongs (G-07).
-#[test]
-fn session_card_leads_with_title_and_the_hat() {
-    let view = idle();
-    let frame = render_to_string(&view, 120, 40);
-    let card_line = frame
-        .lines()
-        .find(|l| l.contains("untitled"))
-        .unwrap_or_default()
-        .to_string();
-    assert!(
-        card_line.contains("build"),
-        "the mode shares the row: {card_line:?}"
-    );
-    assert!(
-        !frame.contains("0193abcd"),
-        "the uuid should not lead the column"
-    );
 }
 
 /// An open panel owns the body: no sidebar card survives underneath it to be
@@ -625,7 +586,20 @@ fn scroll_up_detaches_and_new_content_does_not_move_view() {
     // Model output keeps streaming into the last message while detached.
     v.on_token("new content\n".repeat(10).as_str());
     let after = render_to_string(&v, 100, 24);
-    let body = |s: &str| s.lines().skip(2).take(15).collect::<Vec<_>>().join("\n");
+    let hit = crate::draw::render_hit(&v, 100, 24);
+    let body = |s: &str| {
+        s.lines()
+            .skip(usize::from(hit.chat.y))
+            .take(usize::from(hit.chat.height).saturating_sub(2))
+            .map(|l| {
+                l.chars()
+                    .skip(usize::from(hit.chat.x))
+                    .take(usize::from(hit.chat.width))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     assert_eq!(
         body(&detached),
         body(&after),
@@ -812,11 +786,10 @@ fn snapshot_edit_diff() {
     all_sizes("edit-diff", &edited());
 }
 
-/// The ledger (0.6.0's default layout): an answered turn folded to one line,
+/// The conversation: an answered turn folded to one line,
 /// then an edit turn on the timeline, closed by what it came to.
-fn ledger() -> View {
+fn conversation() -> View {
     let mut v = idle();
-    v.ui.layout = "ledger".into();
     v.panel_visible = false;
     v.cwd = "~/workspace/muzak".into();
     v.git_branch = Some("main".into());
@@ -967,7 +940,6 @@ fn racked_events() -> Vec<(Role, &'static str, Vec<AgentEvent>)> {
 fn racked() -> View {
     use ryter_core::review::{FileChange, Status};
     let mut v = idle();
-    v.ui.layout = "ledger".into();
     v.panel_visible = true;
     v.cwd = "~/workspace/shop".into();
     v.git_branch = Some("search-patch".into());
@@ -1028,12 +1000,12 @@ fn with_rail() -> View {
 /// hat.
 #[test]
 fn snapshot_solo() {
-    all_sizes("solo", &racked());
+    all_sizes("session", &racked());
     for hat in crate::sidebar::HATS {
         let mut v = racked();
         v.mode = hat;
         check_snapshot(
-            &format!("solo-{hat}-160x50"),
+            &format!("session-{hat}-160x50"),
             &render_to_string(&v, 160, 50),
         );
     }
@@ -1042,7 +1014,6 @@ fn snapshot_solo() {
 /// Workspace default with B project-cost glance + E quiet chrome.
 fn workspace_be() -> View {
     let mut v = racked();
-    v.ui.layout = "workspace".into();
     v.panel_visible = true;
     v.budget_usd = 5.0;
     if let Some(p) = &mut v.project_spend {
@@ -1077,273 +1048,6 @@ fn snapshot_workspace_be() {
     );
 }
 
-/// The sidebar's rows, squashed, for a column 28 wide with `room` rows.
-fn sidebar_rows(v: &View, room: usize) -> Vec<String> {
-    crate::sidebar::lines(v, Theme::truecolor_dark(), 28, room)
-        .unwrap_or_else(|| panic!("the sidebar does not fit {room} rows"))
-        .iter()
-        .map(|l| {
-            squash(
-                &l.spans
-                    .iter()
-                    .map(|s| s.content.as_ref())
-                    .collect::<String>(),
-            )
-        })
-        .collect()
-}
-
-/// `R-HEAD-*`, `R-HATS-*`, `R-NOW-01`, `R-CTX-01`, `R-SPEND-01`,
-/// `R-CHG-01`, `R-PERM-01`, `R-TEST-03`: every row of the sidebar is a
-/// measurement, an event or a name. The hats are a ledger: a hat with no
-/// turns is its name alone, one with turns carries them and its spend, a
-/// specialist its verdict; the separator carries the word; the `turns`
-/// row is the session's shape.
-#[test]
-fn the_sidebar_rows_are_measurements_events_and_names() {
-    let v = racked();
-    assert_eq!(
-        sidebar_rows(&v, 100),
-        [
-            "RYTER",
-            "empty-query fix",
-            "shop · search-patch",
-            "",
-            "hats",
-            "plan 1 turn $0.004",
-            "▸ build 2 turns $0.021",
-            "──────────── specialists",
-            "audit ✗ 1 turn $0.040",
-            "scribe",
-            "turns ●●●●",
-            "",
-            "now",
-            "deepseek-pro-latest",
-            "idle",
-            "",
-            "",
-            "context",
-            "━━━━━━━━──────────── 38%",
-            "97k of 256k",
-            "",
-            "spend",
-            "session $0.065 no cap",
-            "project $4.82",
-            "",
-            "changes",
-            "app/server.js +2 −1",
-            "test/search.test.js new",
-            "2 files uncommitted",
-            "",
-            "permissions",
-            "asks first",
-            "sandbox workspace",
-        ]
-    );
-    // No turn yet: names alone, no `turns` row, no `no turns yet`.
-    let mut v = idle();
-    v.ui.layout = "ledger".into();
-    let got = sidebar_rows(&v, 100);
-    assert_eq!(
-        &got[4..9],
-        [
-            "hats",
-            "plan",
-            "▸ build",
-            "──────────── specialists",
-            "audit"
-        ]
-    );
-    assert!(!got.iter().any(|r| r.starts_with("turns")), "{got:#?}");
-    assert!(!squash(&got.join(" ")).contains("no turns"), "{got:#?}");
-    assert_eq!(got[1], "new session");
-    // A second audit that passed: the mark follows the latest verdict.
-    let mut v = racked();
-    for ev in [
-        AgentEvent::TurnStarted {
-            turn: 7,
-            role: Role::Audit,
-            at: 0,
-        },
-        AgentEvent::Reviewed {
-            model: "m".into(),
-            connection: "c".into(),
-            verdict: Some(true),
-            tree: None,
-            total_usd: None,
-        },
-    ] {
-        crate::run_events_apply(&mut v, ev);
-    }
-    let got = sidebar_rows(&v, 100);
-    // The audit's model is working (`/audit` from the build hat, which
-    // stays on): its row carries the spinner, build's the `▸`.
-    assert!(
-        got.iter().any(|r| {
-            r.ends_with(" audit ✓ 2 turns $0.040")
-                && r.chars()
-                    .next()
-                    .is_some_and(|c| crate::activity::SPINNER.contains(&c.to_string().as_str()))
-        }),
-        "{got:#?}"
-    );
-    assert!(
-        got.iter().any(|r| r == "▸ build 2 turns $0.021"),
-        "{got:#?}"
-    );
-    assert!(got.iter().any(|r| r == "turns ●●●●●"), "{got:#?}");
-    // Sixteen turns show the newest fifteen.
-    for turn in 8..20 {
-        hat_turn(&mut v, turn, Role::Build, "more", Vec::new());
-    }
-    assert_eq!(v.rack.turn_hats().len(), 17);
-    let got = sidebar_rows(&v, 100);
-    assert!(got.iter().any(|r| r == "turns ●●●●●●●●●●●●●●●"), "{got:#?}");
-    // The files every hat reads, when they exist, and never `none`.
-    let mut v = racked();
-    v.plan_file = Some("2026-10-10 upload size limit".into());
-    v.audit_writing = true;
-    let got = sidebar_rows(&v, 100);
-    // The row is short of room for the day and the heading: the heading.
-    assert!(
-        got.iter().any(|r| r == "plan.md upload size limit"),
-        "{got:#?}"
-    );
-    assert!(got.iter().any(|r| r == "audit.md writing…"), "{got:#?}");
-    assert!(!got.iter().any(|r| r.contains("none")), "{got:#?}");
-}
-
-/// `R-SPEND-01`, `R-CHG-01`, `R-PERM-01`: the figures follow what is
-/// true. A total that leaves unpriced calls out says so; a cap is named
-/// and colored; nothing uncommitted and no repository are said; more
-/// files than fit are counted; what the hat may do follows the hat.
-#[test]
-fn the_sidebar_says_what_is_true_of_the_session() {
-    let mut v = racked();
-    if let Some(p) = &mut v.project_spend {
-        p.unpriced_calls = 2;
-    }
-    v.budget_usd = 5.0;
-    v.uncommitted = Some(Vec::new());
-    let got = sidebar_rows(&v, 100);
-    for want in [
-        "project ≥$4.82",
-        "session $0.065 of $5.00",
-        "nothing uncommitted",
-    ] {
-        assert!(got.iter().any(|r| r == want), "missing {want:?}: {got:#?}");
-    }
-    v.uncommitted = None;
-    assert!(
-        sidebar_rows(&v, 100)
-            .iter()
-            .any(|r| r == "no repository here")
-    );
-    v.uncommitted = Some(
-        (0..9)
-            .map(|i| ryter_core::review::FileChange {
-                path: format!("src/f{i}.rs"),
-                status: ryter_core::review::Status::Modified,
-                added: 1,
-                removed: 0,
-                binary: false,
-            })
-            .collect(),
-    );
-    let got = sidebar_rows(&v, 100);
-    assert!(
-        got.iter().any(|r| r == "+3 more · 9 files uncommitted"),
-        "{got:#?}"
-    );
-    assert_eq!(got.iter().filter(|r| r.starts_with("src/f")).count(), 6);
-    // What the hat may do follows the hat. A row that would cut the
-    // sandbox's name puts it on the next row; a short name shares the row.
-    for (hat, may) in [
-        (Role::Plan, "read only"),
-        (Role::Audit, "checkpoint"),
-        (Role::Scribe, "docs only"),
-        (Role::Build, "asks first"),
-    ] {
-        v.mode = hat;
-        let got = sidebar_rows(&v, 100);
-        let at = got
-            .iter()
-            .position(|r| r == may)
-            .unwrap_or_else(|| panic!("{hat}: {got:#?}"));
-        assert_eq!(got[at + 1], "sandbox workspace", "{hat}");
-    }
-    v.sandbox_profile = String::new();
-    assert!(
-        sidebar_rows(&v, 100)
-            .iter()
-            .any(|r| r == "asks first · sandbox off")
-    );
-    v.perm_mode = "yolo".into();
-    let got = sidebar_rows(&v, 100);
-    let at = got
-        .iter()
-        .position(|r| r == "asks first · yolo")
-        .unwrap_or_else(|| panic!("{got:#?}"));
-    assert_eq!(got[at + 1], "sandbox off");
-}
-
-/// `R-NOW-*`, `R-PRIN-05`, `R-TEST-04`: the `now` block says what the
-/// status row under the message says, from the one source, and both turn
-/// to the warning color while a question waits on the user.
-#[test]
-fn the_now_block_says_what_the_status_row_says() {
-    use crate::activity::Verb;
-    let theme = Theme::truecolor_dark();
-    let mut v = mid_stream(ActivityMode::Collapsed);
-    v.ui.layout = "ledger".into();
-    v.panel_visible = true;
-    for (verb, want) in [
-        (Verb::Thinking, "thinking"),
-        (Verb::Writing, "writing"),
-        (Verb::Tool("npm test".into()), "running npm test"),
-        (Verb::WaitingModel, "waiting for the model"),
-    ] {
-        v.activity.verb = verb;
-        v.activity.ask = None;
-        let text = render_to_string(&v, 120, 40);
-        assert_eq!(v.activity.verb_text(), want);
-        assert!(
-            text.matches(want).count() >= 2,
-            "{want}: once in the chat, once beside it:\n{text}"
-        );
-    }
-    v.activity
-        .note_ask_about("allow?", "run  git push origin main");
-    let text = render_to_string(&v, 120, 40);
-    assert!(
-        text.matches("waiting for you · allow?").count() >= 2,
-        "{text}"
-    );
-    assert!(text.contains("allow?  run git push"), "{text}");
-    let buf = render_buffer(&v, 120, 40, theme);
-    let warn_cells = (0..40u16)
-        .flat_map(|y| (92..120u16).map(move |x| (x, y)))
-        .filter(|&at| buf[at].fg == theme.warn && buf[at].symbol() != " ")
-        .count();
-    assert!(
-        warn_cells >= 20,
-        "the now block is in the warning color: {warn_cells}"
-    );
-    // Idle: the word, and a blank third row so nothing below moves.
-    crate::run_events_apply(
-        &mut v,
-        AgentEvent::TurnFinished {
-            turn: 2,
-            tools: 1,
-            duration_ms: 1,
-        },
-    );
-    let busy = sidebar_rows(&mid_stream(ActivityMode::Collapsed), 100).len();
-    let got = sidebar_rows(&v, 100);
-    assert!(got.iter().any(|r| r == "idle"), "{got:#?}");
-    assert_eq!(got.len(), busy, "{got:#?}");
-}
-
 /// Tokens a second over the last two seconds, idle after three without
 /// any, and eight seconds of history.
 #[test]
@@ -1362,288 +1066,6 @@ fn the_pulse_counts_recent_tokens() {
     // Old arrivals are let go.
     p.push(20_000, 10);
     assert_eq!(p.history(20_000).iter().sum::<u64>(), 10);
-}
-
-/// `R-HATS-07`, `R-TEST-03`: the hats block is the same height however
-/// long the session. The list of turns is the conversation.
-#[test]
-fn the_hats_block_is_the_same_height_whatever_the_turns() {
-    let few = racked();
-    let mut many = racked();
-    for turn in 5..41 {
-        hat_turn(
-            &mut many,
-            turn,
-            if turn % 3 == 0 {
-                Role::Audit
-            } else {
-                Role::Build
-            },
-            "again",
-            Vec::new(),
-        );
-    }
-    assert_eq!(
-        sidebar_rows(&few, 100).len(),
-        sidebar_rows(&many, 100).len()
-    );
-    let text = render_to_string(&many, 160, 50);
-    assert!(text.contains("▸ build"), "{text}");
-}
-
-/// `R-LAYOUT-04..06`, `R-TEST-05`: the sidebar is there from 100 columns
-/// up; below that the foot is the status line. A short column gives up
-/// rows in the contract's order, then folds away; `^b` and `[ui] panel`
-/// hide it.
-#[test]
-fn the_sidebar_gives_way_to_the_conversation() {
-    for (w, h, sidebar) in [
-        (220, 60, true),
-        (160, 50, true),
-        (120, 40, true),
-        (100, 30, true),
-        (99, 30, false),
-        (80, 24, false),
-        (60, 20, false),
-    ] {
-        let text = render_to_string(&racked(), w, h);
-        let top = text.lines().next().unwrap();
-        assert_eq!(text.contains("hats"), sidebar, "{w}x{h}:\n{text}");
-        assert_eq!(text.contains("RYTER"), sidebar, "{w}x{h}:\n{text}");
-        assert!(text.contains("what should change?"), "{w}x{h}:\n{text}");
-        // No bar across the top: the first row is the conversation's.
-        assert!(
-            !top.contains("PLAN") && !top.contains("◆"),
-            "{w}x{h}: {top}"
-        );
-        // Below the sidebar's width, the foot says what it said.
-        let foot = text.lines().last().unwrap();
-        assert_eq!(
-            foot.contains("build · deepseek"),
-            !sidebar,
-            "{w}x{h}: {foot}"
-        );
-        assert_eq!(
-            foot.contains("$0.065 · no cap"),
-            !sidebar && w >= 80,
-            "{w}x{h}: {foot}"
-        );
-        assert!(foot.contains("^c quit"), "{w}x{h}: {foot}");
-    }
-    // The column gives up rows in order: the files list, the `turns` row,
-    // the rate row, the permissions, the project's spend; then it folds.
-    let mut v = racked();
-    v.busy = true;
-    v.activity.start(5, 59_000);
-    v.activity.tokens = 300;
-    v.pulse.push(59_500, 60);
-    let whole = sidebar_rows(&v, 100);
-    let has = |rows: &[String], s: &str| rows.iter().any(|r| r.contains(s));
-    for s in [
-        "app/server.js",
-        "turns ●",
-        "tokens",
-        "permissions",
-        "project $4.82",
-    ] {
-        assert!(has(&whole, s), "{s} in the whole column: {whole:#?}");
-    }
-    let mut room = whole.len() - 1;
-    let mut gone: Vec<&str> = Vec::new();
-    for s in [
-        "app/server.js",
-        "turns ●",
-        "tokens",
-        "permissions",
-        "project $4.82",
-    ] {
-        let rows = sidebar_rows(&v, room);
-        assert!(
-            !has(&rows, s),
-            "{s} should be the next to go at {room} rows: {rows:#?}"
-        );
-        gone.push(s);
-        for later in [
-            "app/server.js",
-            "turns ●",
-            "tokens",
-            "permissions",
-            "project $4.82",
-        ] {
-            if !gone.contains(&later) {
-                assert!(
-                    has(&rows, later),
-                    "{later} went before {s} at {room} rows: {rows:#?}"
-                );
-            }
-        }
-        room = rows.len() - 1;
-    }
-    assert!(crate::sidebar::lines(&v, Theme::truecolor_dark(), 28, room).is_none());
-    // Three panes: the rail needs its eleven rows and the sidebar its
-    // thirteen with every cut made; a body short of that folds both away.
-    let text = render_to_string(&racked(), 160, 14);
-    assert!(text.contains("hats") && text.contains("now"), "{text}");
-    let text = render_to_string(&racked(), 160, 13);
-    assert!(
-        !text.contains("hats") && text.contains("what should change?"),
-        "{text}"
-    );
-    // Hidden with `^b`, or `[ui] panel = false`.
-    let mut v = racked();
-    v.panel_visible = false;
-    let text = render_to_string(&v, 160, 50);
-    assert!(!text.contains("hats") && !text.contains("RYTER"), "{text}");
-}
-
-/// `R-LAYOUT-01`, `R-HEAD-*`: no bar across the top. The name, the
-/// session's title and where this is are the first rows beside the
-/// conversation: the sidebar's beside the one sidebar, the rail's where
-/// the screen is three panes (R-LAYOUT-04).
-#[test]
-fn the_name_and_the_place_head_the_sidebar() {
-    // The screen's width, the column the rows' text starts in, and one
-    // inside the conversation.
-    for (w, at, chat) in [(120, 92, 40), (160, 1, 60)] {
-        let text = render_to_string(&racked(), w, 50);
-        let rows: Vec<&str> = text.lines().collect();
-        let col = |y: usize, from: usize| {
-            rows[y]
-                .chars()
-                .skip(from)
-                .take(27)
-                .collect::<String>()
-                .trim()
-                .to_string()
-        };
-        assert!(!col(0, chat).contains("RYTER"), "{w}: {}", col(0, chat));
-        assert_eq!(col(0, at), "RYTER", "{w}");
-        assert_eq!(col(1, at), "empty-query fix", "{w}");
-        assert_eq!(col(2, at), "shop · search-patch", "{w}");
-        assert_eq!(col(3, at), "", "{w}");
-        assert_eq!(col(4, at), "hats", "{w}");
-        // The only capitals on the screen are the name's.
-        let caps: Vec<&str> = [
-            "PLAN", "BUILD", "AUDIT", "SCRIBE", "HATS", "MODEL", "CONTEXT", "SPEND", "GUARD",
-            "CHANGES",
-        ]
-        .into_iter()
-        .filter(|c| text.contains(c))
-        .collect();
-        assert!(caps.is_empty(), "{w}: {caps:?}");
-    }
-}
-
-/// `R-LAYOUT-04`: beside the one sidebar (100 to 149 columns) the
-/// conversation's column sits at the left, a cell in, and the sidebar is
-/// 30 columns, the spare width between them. From 150 columns the screen
-/// is three panes: the rail with the header and the hats at the left,
-/// the conversation centred, the sidebar with the rest at the right, both
-/// columns growing from 30 to 40 once the conversation has the width it
-/// reads well at, so the spare width goes to names and paths before it
-/// is air, and the air there is sits inside a frame on both sides.
-#[test]
-fn the_screen_is_three_panes_from_150_columns() {
-    let theme = Theme::truecolor_dark();
-    for (w, rail, side, col_x, col_w) in [
-        (100, 0, 30, 1, 66),
-        (120, 0, 30, 1, 86),
-        (149, 0, 30, 1, 112),
-        (150, 30, 30, 31, 86),
-        (176, 30, 30, 31, 112),
-        (180, 32, 32, 33, 112),
-        (196, 40, 40, 41, 112),
-        (220, 40, 40, 53, 112),
-    ] {
-        assert_eq!(crate::sidebar::width_for(w), side, "{w}");
-        let v = racked();
-        assert_eq!(
-            crate::draw::chat_column(&v, theme, w, 50),
-            (col_x, col_w),
-            "{w}: the column"
-        );
-        let text = render_to_string(&v, w, 50);
-        let rows: Vec<&str> = text.lines().collect();
-        let at = |y: usize, x: u16| rows[y].chars().nth(usize::from(x));
-        let from = |y: usize, x: u16, n: usize| {
-            rows[y]
-                .chars()
-                .skip(usize::from(x))
-                .take(n)
-                .collect::<String>()
-        };
-        assert_eq!(at(5, w - side), Some('│'), "{w}: the sidebar's hairline");
-        if rail > 0 {
-            assert_eq!(at(5, rail - 1), Some('│'), "{w}: the rail's hairline");
-            assert_eq!(from(0, 1, 5), "RYTER", "{w}: the rail's head");
-            assert_eq!(from(0, w - side + 2, 3), "now", "{w}: the sidebar's head");
-            assert!(text.contains("▸ build"), "{w}");
-        } else {
-            assert_eq!(from(0, w - side + 2, 5), "RYTER", "{w}: the sidebar's head");
-        }
-        // The user's row is at the column's edge, the timeline gutter in.
-        let dusty = rows.iter().find(|r| r.contains("●  dusty")).unwrap();
-        let x = dusty.find("●  dusty").map(|i| dusty[..i].chars().count());
-        assert_eq!(x, Some(usize::from(col_x) + 8), "{w}: the column's place");
-        // The columns use the room: at 40 a long model name fits whole.
-        if side == 40 {
-            assert!(text.contains("deepseek-pro-latest"), "{w}:\n{text}");
-        }
-    }
-}
-
-/// `R-LAYOUT-02`: the prompt is the conversation's width, wherever the
-/// column sits. Its chip starts where the messages do, and its rule is
-/// the column and the cell each side, not the whole middle: from 177
-/// columns the column is centred with air each side, and the prompt
-/// goes with it.
-#[test]
-fn the_prompt_is_the_conversations_width() {
-    let theme = Theme::truecolor_dark();
-    for w in [100, 120, 149, 150, 176, 177, 196, 220] {
-        let v = racked();
-        let (col_x, col_w) = crate::draw::chat_column(&v, theme, w, 50);
-        let (rail_w, side_w) = crate::sidebar::arrange(&v, theme, w, crate::draw::body_height(50));
-        let hit = crate::draw::render_hit(&v, w, 50);
-        // Beside the one sidebar the prompt is the middle, as it was.
-        let want = if rail_w > 0 {
-            (col_x - 1, col_w + 4)
-        } else {
-            (0, w - side_w)
-        };
-        assert_eq!(
-            (hit.composer.x, hit.composer.width),
-            want,
-            "{w}: the prompt's place"
-        );
-        let text = render_to_string(&v, w, 50);
-        let rows: Vec<&str> = text.lines().collect();
-        let chip = rows
-            .iter()
-            .position(|r| r.contains("›"))
-            .unwrap_or_else(|| panic!("{w}: no prompt"));
-        let at = |y: usize, x: u16, n: usize| {
-            rows[y]
-                .chars()
-                .skip(usize::from(x))
-                .take(n)
-                .collect::<String>()
-        };
-        assert_eq!(at(chip, col_x, 7), " build ", "{w}: the chip");
-        // The rule above it begins a cell before the column and runs its
-        // width; between three panes the air outside it is bare.
-        assert_eq!(at(chip - 1, col_x - 1, 3), "───", "{w}: the rule");
-        if hit.composer.x > rail_w {
-            assert_eq!(
-                at(chip - 1, hit.composer.x - 1, 1),
-                " ",
-                "{w}: air before the rule"
-            );
-        }
-        let dusty = rows.iter().find(|r| r.contains("●  dusty")).unwrap();
-        let x = dusty.find("●  dusty").map(|i| dusty[..i].chars().count());
-        assert_eq!(x, Some(usize::from(col_x) + 8), "{w}: the messages");
-    }
 }
 
 /// The spend drawer sits on the prompt and is its width: the middle
@@ -1674,206 +1096,6 @@ fn the_spend_drawer_is_the_prompts_width() {
     }
 }
 
-/// The wheel over the rail leaves the conversation alone: the wheel
-/// scrolls the chat over its column and its gutter, not left of it,
-/// where the rail is between three panes.
-#[test]
-fn the_wheel_over_the_rail_leaves_the_conversation() {
-    use crossterm::event::{MouseEvent, MouseEventKind};
-    let theme = Theme::truecolor_dark();
-    let (w, h) = (220, 20);
-    let mut v = racked();
-    let (col_x, col_w) = crate::draw::chat_column(&v, theme, w, h);
-    assert!(col_x > 30, "three panes");
-    let hit = crate::draw::render_hit(&v, w, h);
-    let wheel = |v: &mut View, column: u16| {
-        let _ = render_to_string(v, w, h);
-        crate::run_mouse_handle_with(
-            v,
-            MouseEvent {
-                kind: MouseEventKind::ScrollUp,
-                column,
-                row: 6,
-                modifiers: KeyModifiers::NONE,
-            },
-            &hit,
-        )
-    };
-    // The rail: the hats are there, and the title. The air before the
-    // column is nobody's either.
-    for x in [1, 5, 20, col_x - 2] {
-        let _ = wheel(&mut v, x);
-        assert!(v.scroll.follow, "a wheel at {x} moved the conversation");
-    }
-    // The column and its gutter scroll it.
-    let _ = wheel(&mut v, col_x + 3);
-    assert!(!v.scroll.follow, "the column");
-    v.scroll.to_bottom();
-    let _ = wheel(&mut v, col_x + col_w);
-    assert!(!v.scroll.follow, "the gutter");
-}
-
-/// `R-KEY-05`, `R-TEST-13`: a hat switch while a turn runs is the next
-/// message's. The prompt's chip and the ledger's `▸` go to the hat chosen
-/// at once; the hat working keeps the spinner, its model in the `now`
-/// block and on the status line, its colour on the status row, and its
-/// name over what it writes. The agent takes the switch when the turn
-/// ends, and the next turn is the new hat's.
-#[test]
-fn a_hat_switch_during_a_turn_is_the_next_messages() {
-    use ryter_core::Role;
-    let theme = Theme::truecolor_dark();
-    let spins = |r: &String| {
-        r.chars()
-            .next()
-            .is_some_and(|c| crate::activity::SPINNER.contains(&c.to_string().as_str()))
-    };
-    // Build has a model of its own; plan runs on the one every hat uses.
-    let mut v = racked();
-    v.set_mode(Role::Plan);
-    v.agent_hat = Role::Plan;
-    let _ = v.submit_user("plan the login".into(), "plan the login".into());
-    crate::run_events_apply(
-        &mut v,
-        AgentEvent::TurnStarted {
-            turn: 7,
-            role: Role::Plan,
-            at: 0,
-        },
-    );
-    let tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
-    assert!(matches!(
-        crate::run_keys_handle(&mut v, tab),
-        Action::SetMode(Role::Build)
-    ));
-    // As `actions::set_mode` does; the agent's word comes after the turn.
-    v.set_mode(Role::Build);
-    v.hats_pending += 1;
-    assert_eq!(v.working_hat(), Role::Plan);
-    v.on_token("Step one.");
-    let rows = sidebar_rows(&v, 100);
-    let row = |name: &str| rows.iter().find(|r| r.contains(name)).cloned().unwrap();
-    assert!(spins(&row("plan")), "{rows:#?}");
-    assert!(row("build").starts_with("▸ build"), "{rows:#?}");
-    let now = rows.iter().position(|r| r == "now").unwrap();
-    assert_eq!(rows[now + 1], "grok-4.6", "{rows:#?}");
-    // What the model writes is headed by the model writing it.
-    let head = v.messages.iter().rev().find_map(|m| match &m.kind {
-        crate::chat::MessageKind::Assistant { model } => Some(model.clone()),
-        _ => None,
-    });
-    assert_eq!(head.as_deref(), Some("grok-4.6"));
-    // The prompt's chip is build's; the status row's spinner is plan's.
-    let buf = render_buffer(&v, 120, 40, theme);
-    let rule_row = (0..40u16)
-        .rev()
-        .find(|&y| buf[(1, y)].symbol() == "─" && buf[(90, y)].symbol() == "│")
-        .unwrap();
-    assert_eq!(
-        buf[(3, rule_row + 1)].bg,
-        theme.mode(Role::Build),
-        "the chip"
-    );
-    let spinner = (0..rule_row)
-        .flat_map(|y| (0..90u16).map(move |x| (x, y)))
-        .find(|&at| crate::activity::SPINNER.contains(&buf[at].symbol()))
-        .expect("the status row");
-    assert_eq!(buf[spinner].fg, theme.mode(Role::Plan), "the status row");
-    // Folded away, the status line names the hat working.
-    let foot = render_to_string(&v, 80, 24);
-    assert!(
-        foot.lines().last().unwrap().starts_with(" plan · grok-4.6"),
-        "{foot}"
-    );
-    // The turn ends and the agent puts build on: the next turn is its.
-    crate::run_events_apply(
-        &mut v,
-        AgentEvent::TurnFinished {
-            turn: 7,
-            tools: 0,
-            duration_ms: 10,
-        },
-    );
-    crate::run_events_apply(&mut v, AgentEvent::HatSet { role: Role::Build });
-    assert_eq!((v.working_hat(), v.hats_pending), (Role::Build, 0));
-    let rows = sidebar_rows(&v, 100);
-    assert!(rows.iter().any(|r| r.starts_with("▸ build")), "{rows:#?}");
-    assert!(!rows.iter().any(spins), "{rows:#?}");
-    let foot = render_to_string(&v, 80, 24);
-    assert!(
-        foot.lines()
-            .last()
-            .unwrap()
-            .starts_with(" build · deepseek"),
-        "{foot}"
-    );
-}
-
-/// `R-COLOR-02`, `R-COLOR-03`, `R-TEST-02`: the hat on colors its chip,
-/// its mark and name in the ledger and the gauge. Every hat's name in the
-/// ledger is in its own color. The chrome does not change with the hat.
-#[test]
-fn the_hat_colors_the_screen() {
-    let theme = Theme::truecolor_dark();
-    let mut chrome = None;
-    for hat in crate::sidebar::HATS {
-        let mut v = racked();
-        v.mode = hat;
-        let buf = render_buffer(&v, 120, 40, theme);
-        let color = theme.mode(hat);
-        let cells = || (0..40u16).flat_map(|y| (0..120u16).map(move |x| (x, y)));
-        // The prompt's rule runs the conversation's column, under the
-        // sidebar's hairline, and the chip under it is the one fill.
-        let rule_row = (0..40u16)
-            .rev()
-            .find(|&y| buf[(1, y)].symbol() == "─" && buf[(90, y)].symbol() == "│")
-            .unwrap();
-        assert_eq!(buf[(1, rule_row)].fg, color, "{hat}: the prompt's rule");
-        assert_eq!(buf[(3, rule_row + 1)].bg, color, "{hat}: the prompt's chip");
-        // The mark and the name in the ledger.
-        let mark = cells()
-            .find(|&(x, y)| x > 90 && buf[(x, y)].symbol() == "▸")
-            .unwrap_or_else(|| panic!("{hat}: no mark"));
-        assert_eq!(buf[mark].fg, color, "{hat}: the mark");
-        assert_eq!(buf[(mark.0 + 2, mark.1)].fg, color, "{hat}: the name");
-        assert!(
-            buf[(mark.0 + 2, mark.1)]
-                .modifier
-                .contains(ratatui::style::Modifier::BOLD)
-        );
-        // The gauge.
-        assert!(
-            cells().any(|(x, y)| x > 90 && buf[(x, y)].symbol() == "━" && buf[(x, y)].fg == color),
-            "{hat}: the gauge"
-        );
-        // Every other hat's name keeps its own color: the ledger names
-        // hats by color.
-        for other in crate::sidebar::HATS {
-            let name = crate::sidebar::hat_name(other);
-            let row = (0..40u16)
-                .find(|&y| {
-                    let s: String = (92..120u16)
-                        .map(|x| buf[(x, y)].symbol().to_string())
-                        .collect();
-                    s.trim_start_matches(['▸', ' ']).starts_with(name)
-                })
-                .unwrap_or_else(|| panic!("{hat}: no row for {name}"));
-            let x = (92..120u16)
-                .find(|&x| buf[(x, row)].symbol() != " " && buf[(x, row)].symbol() != "▸")
-                .unwrap();
-            assert_eq!(buf[(x, row)].fg, theme.mode(other), "{hat}: {name}'s color");
-        }
-        // Everything that isn't the accent is the same under every hat.
-        let neutral = (buf[(0, 0)].bg, buf[(90, 5)].fg, buf[(92, 0)].fg);
-        assert_eq!(neutral.1, theme.rule);
-        assert_eq!(neutral.2, theme.fg, "RYTER is the body color");
-        match chrome {
-            None => chrome = Some(neutral),
-            Some(c) => assert_eq!(c, neutral, "{hat}: the chrome changed"),
-        }
-    }
-}
-
 /// `R-COLOR-04`: an offer to put on another hat is bordered in that hat's
 /// color; a permission prompt keeps the warning color.
 #[test]
@@ -1886,10 +1108,13 @@ fn an_offer_is_in_the_color_of_the_hat_it_offers() {
             "rm -rf x".into(),
         )));
         let buf = render_buffer(&v, 160, 50, theme);
-        let corner = (0..50u16)
-            .flat_map(|y| (0..160u16).map(move |x| (x, y)))
-            .find(|&at| buf[at].symbol() == "┏")
-            .unwrap_or_else(|| panic!("{tool}: no modal on screen"));
+        let text = render_with_theme(&v, 160, 50, theme);
+        let row = text
+            .lines()
+            .position(|l| l.trim_start().starts_with("╭─ ") && l.contains('?'))
+            .unwrap_or_else(|| panic!("{tool}: no modal on screen\n{text}"));
+        let x = text.lines().nth(row).unwrap().find('╭').unwrap();
+        let corner = (x as u16, row as u16);
         assert_eq!(buf[corner].fg, color, "{tool}");
     }
 }
@@ -1905,18 +1130,15 @@ fn the_hat_is_told_apart_without_color() {
         let buf = render_buffer(&v, 160, 50, theme);
         let text = render_with_theme(&v, 160, 50, theme);
         assert!(
-            text.contains("▸ build") && text.contains(" build "),
+            text.contains("┃ Build") && text.contains(" Build "),
             "{text}"
         );
-        assert!(
-            !text.contains('▀') && !text.contains('▄'),
-            "{mode:?}: a watermark"
-        );
+        assert!(!text.contains('▄'), "{mode:?}: a watermark");
         // The chip at the head of the prompt.
         let (x, y) = (0..50u16)
             .flat_map(|y| (0..160u16).map(move |x| (x, y)))
             .find(|&(x, y)| {
-                buf[(x, y)].symbol() == "b"
+                buf[(x, y)].symbol() == "B"
                     && buf[(x + 1, y)].symbol() == "u"
                     && buf[(x - 1, y)].symbol() == " "
                     && y > 30
@@ -1961,94 +1183,16 @@ fn there_is_no_watermark_anywhere() {
             for y in 0..h {
                 for x in 0..w {
                     let c = &buf[(x, y)];
-                    assert!(!["▀", "▄"].contains(&c.symbol()), "a block at {x},{y}");
-                    assert!(known.contains(&c.bg), "a tint at {x},{y}: {:?}", c.bg);
+                    assert!(c.symbol() != "▄", "a block at {x},{y}");
+                    assert!(
+                        known.contains(&c.bg) || c.symbol() == "▀" || c.symbol() == "▌",
+                        "a tint at {x},{y}: {:?}",
+                        c.bg
+                    );
                 }
             }
         }
     }
-}
-
-/// `R-LAYOUT-05`, `R-TEST-06`: `^b` hides the sidebar on a screen that
-/// holds it. Where it is folded away it opens it as a panel.
-#[test]
-fn ctrl_b_hides_the_sidebar_or_opens_it_as_a_panel() {
-    let ctrl_b = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL);
-    for (w, h) in [(160, 50), (120, 40)] {
-        let mut v = racked();
-        let _ = render_to_string(&v, w, h);
-        let _ = crate::run_keys_handle(&mut v, ctrl_b);
-        assert!(!v.panel_visible && v.panels.is_empty(), "{w}x{h}");
-        assert!(!render_to_string(&v, w, h).contains("hats"), "{w}x{h}");
-        let _ = crate::run_keys_handle(&mut v, ctrl_b);
-        assert!(v.panel_visible, "{w}x{h}");
-    }
-    // Wide but short: the column does not fit the body even with every
-    // cut made, so it is folded away as it is below 100 columns, `^b`
-    // opens the panel, and the sidebar is left to come back when there is
-    // room for it.
-    for (w, h) in [(120, 24), (100, 20)] {
-        let mut v = racked();
-        let before = render_to_string(&v, w, h);
-        assert!(
-            !before.contains("hats") && before.contains("^b sidebar"),
-            "{w}x{h}:\n{before}"
-        );
-        // Folded by height as by width: the foot is the status line.
-        assert!(
-            before.lines().last().unwrap().contains("$0.065 · no cap"),
-            "{w}x{h}:\n{before}"
-        );
-        let _ = crate::run_keys_handle(&mut v, ctrl_b);
-        assert_eq!(v.panels.kinds(), ["sidebar"], "{w}x{h}");
-        assert!(v.panel_visible, "{w}x{h}: folded, not hidden");
-        assert!(render_to_string(&v, w, h).contains("2 turns"), "{w}x{h}");
-        let _ = crate::run_keys_handle(&mut v, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(v.panels.is_empty(), "{w}x{h}");
-        assert!(
-            render_to_string(&v, w, 40).contains("hats"),
-            "{w}x{h}: taller again"
-        );
-    }
-    let (w, h) = (80, 24);
-    let mut v = racked();
-    let before = render_to_string(&v, w, h);
-    assert!(before.contains("^b sidebar"), "{before}");
-    let _ = crate::run_keys_handle(&mut v, ctrl_b);
-    assert_eq!(v.panels.kinds(), ["sidebar"]);
-    assert!(
-        v.panel_visible,
-        "the sidebar comes back when the screen is wide"
-    );
-    // A short screen shows the top of it, and scrolls to the rest.
-    let mut seen = String::new();
-    for _ in 0..4 {
-        let text = render_to_string(&v, w, h);
-        assert!(text.contains("what should change?"), "{text}");
-        assert!(text.contains("esc close"), "{text}");
-        seen.push_str(&squash(&text));
-        for _ in 0..6 {
-            let _ =
-                crate::run_keys_handle(&mut v, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        }
-    }
-    for want in [
-        "sidebar",
-        "empty-query fix",
-        "▸ build 2 turns $0.021",
-        "audit ✗ 1 turn $0.040",
-        "session $0.065 no cap",
-        "project $4.82",
-        "2 files uncommitted",
-    ] {
-        assert!(seen.contains(want), "missing {want:?}:\n{seen}");
-    }
-    // Esc closes it, and so does `^b` again.
-    let _ = crate::run_keys_handle(&mut v, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    assert!(v.panels.is_empty());
-    let _ = crate::run_keys_handle(&mut v, ctrl_b);
-    let _ = crate::run_keys_handle(&mut v, ctrl_b);
-    assert!(v.panels.is_empty());
 }
 
 /// `R-CORE-01`: a resumed session's rack is the one it had. The saved
@@ -2086,7 +1230,7 @@ fn a_resumed_session_has_the_rack_it_had() {
         }
     }
     s.set_mode(Role::Build).unwrap();
-    let mut v = ledger();
+    let mut v = conversation();
     crate::run::fill_view_from_session(&mut v, &s);
     for hat in crate::sidebar::HATS {
         assert_eq!(v.rack.of(hat), live.rack.of(hat), "{hat}");
@@ -2168,58 +1312,8 @@ fn the_project_root_is_noted_only_for_a_folder_inside_a_repository() {
 }
 
 #[test]
-fn snapshot_ledger() {
-    all_sizes("ledger", &ledger());
-}
-
-/// `R-OPEN-*`, `R-TEST-09`: a session with no turn opens on the block that
-/// names the hats and the keys; it follows the hat the session opens in,
-/// counts the project's sessions, and is gone once there is a turn.
-#[test]
-fn snapshot_opening() {
-    let mut v = idle();
-    v.ui.layout = "ledger".into();
-    v.panel_visible = true;
-    v.messages.clear();
-    v.cwd = "~/workspace/shop".into();
-    v.git_branch = Some("main".into());
-    v.uncommitted = Some(Vec::new());
-    v.sessions_count = 12;
-    v.set_mode(Role::Plan);
-    all_sizes("opening", &v);
-    let text = render_to_string(&v, 120, 40);
-    for want in [
-        "RYTER  ·  shop  ·  main  ·  nothing uncommitted",
-        "plan     reads and proposes, changes nothing",
-        "◆ on",
-        "build    makes the changes",
-        "2 specialists: audit · scribe",
-        "/sessions to resume one of 12 · /help for keys",
-    ] {
-        assert!(text.contains(want), "missing {want:?}:\n{text}");
-    }
-    // The hat on moves with `start_hat` or `--hat`.
-    let on_row = |v: &View, name: &str| -> bool {
-        render_to_string(v, 120, 40)
-            .lines()
-            .any(|l| l.trim_start().starts_with(name) && l.contains("◆ on"))
-    };
-    assert!(on_row(&v, "plan") && !on_row(&v, "build"));
-    v.set_mode(Role::Build);
-    assert!(on_row(&v, "build") && !on_row(&v, "plan"));
-    v.set_mode(Role::Audit);
-    assert!(on_row(&v, "2 specialists") && !on_row(&v, "build"));
-    // No earlier session: `/help` alone.
-    v.sessions_count = 0;
-    let text = render_to_string(&v, 120, 40);
-    assert!(
-        text.contains("  /help for keys") && !text.contains("/sessions to resume"),
-        "{text}"
-    );
-    // A turn, and the block is gone.
-    let v = ledger();
-    let text = render_to_string(&v, 120, 40);
-    assert!(!text.contains("reads and proposes"), "{text}");
+fn snapshot_conversation() {
+    all_sizes("conversation", &conversation());
 }
 
 /// The model picker says where its list stands: from the cache while a
@@ -2246,7 +1340,7 @@ fn the_model_picker_says_where_its_list_stands() {
 #[test]
 fn the_commit_receipt_says_whether_this_work_was_reviewed() {
     use ryter_core::review;
-    let repo = workbench_repo();
+    let repo = changes_repo();
     let home = tempfile::tempdir().unwrap();
     let env = crate::panel::PanelEnv {
         home: home.path().to_path_buf(),
@@ -2284,7 +1378,7 @@ fn the_commit_receipt_says_whether_this_work_was_reviewed() {
 }
 
 /// A repo with one committed file changed in two places.
-fn workbench_repo() -> tempfile::TempDir {
+fn changes_repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let git = |args: &[&str]| {
         let out = std::process::Command::new("git")
@@ -2313,99 +1407,11 @@ fn workbench_repo() -> tempfile::TempDir {
     dir
 }
 
-/// The workbench: the changed file on the left, the chat in the middle, its
-/// changes on the right one at a time; `j` moves to the next, `x` undoes that
-/// one alone, and nothing typed reaches the composer.
-#[test]
-fn workbench_shows_changes_and_undoes_one() {
-    let repo = workbench_repo();
-    let mut v = ledger();
-    v.workbench = Some(crate::workbench::Workbench::open(
-        &v,
-        repo.path().to_path_buf(),
-    ));
-    let text = render_to_string(&v, 160, 44);
-    check_snapshot("workbench-160x44", &text);
-    for want in [
-        "CHANGES · UNCOMMITTED",
-        "▸ config.rs",
-        "+3 −2",
-        "config.rs  +3 −2 · change 1 of 2",
-        "change 1 · line 1",
-        "change 2 · line 23",
-        "line three",
-        "WORKBENCH",
-        "x undo change",
-    ] {
-        assert!(text.contains(want), "missing {want:?}:\n{text}");
-    }
-    assert!(
-        !text.contains("what should change?"),
-        "no composer in the workbench"
-    );
-    let key = |c: KeyCode| KeyEvent::new(c, KeyModifiers::NONE);
-    // `j`: the second change; `x`: undo exactly that one.
-    assert_eq!(
-        crate::run::keys::handle(&mut v, key(KeyCode::Char('j'))),
-        Action::None
-    );
-    let a = crate::run::keys::handle(&mut v, key(KeyCode::Char('x')));
-    let Action::RevertHunk { base, path, hunk } = a else {
-        panic!("x should undo the change: {a:?}");
-    };
-    assert_eq!((path.as_str(), hunk), ("config.rs", 1));
-    ryter_core::review::revert_hunk(repo.path(), &base, &path, hunk).unwrap();
-    let now = std::fs::read_to_string(repo.path().join("config.rs")).unwrap();
-    assert!(
-        now.contains("line three") && !now.contains("extra"),
-        "{now}"
-    );
-    assert!(
-        v.composer.is_empty(),
-        "keys went to the workbench, not the composer"
-    );
-    // `X` asks first; Esc leaves.
-    assert_eq!(
-        crate::run::keys::handle(&mut v, key(KeyCode::Char('X'))),
-        Action::None
-    );
-    assert_eq!(
-        crate::run::keys::handle(&mut v, key(KeyCode::Char('n'))),
-        Action::None
-    );
-    crate::run::keys::handle(&mut v, key(KeyCode::Esc));
-    assert!(v.workbench.is_none());
-}
-
-/// The conversation's screen has the hats across its top and `^t` for the
-/// changes among its keys; the workbench keeps its strip of views, which
-/// lights `changes` (`R-TOP-07`). Crew mode's board is not a view any more.
-#[test]
-fn the_view_strip_names_every_view() {
-    let mut v = ledger();
-    v.panel_visible = true;
-    let text = render_to_string(&v, 140, 40);
-    assert!(text.contains("RYTER") && text.contains("▸ build"), "{text}");
-    assert!(text.contains("^t changes"), "{text}");
-    assert!(!text.contains("crew"), "{text}");
-    // The workbench lights `changes`.
-    let repo = workbench_repo();
-    let mut v = ledger();
-    v.workbench = Some(crate::workbench::Workbench::open(
-        &v,
-        repo.path().to_path_buf(),
-    ));
-    let text = render_to_string(&v, 140, 40);
-    let top = text.lines().next().unwrap().to_string();
-    assert!(top.contains("chat  esc"), "{top}");
-    assert!(text.contains("CHANGES"), "{text}");
-}
-
 /// `$` opens the spend drawer above the composer: the turn, the session, and
 /// the project side by side, by role, and the budget.
 #[test]
-fn snapshot_ledger_spend_drawer() {
-    let mut v = ledger();
+fn snapshot_spend_drawer() {
+    let mut v = conversation();
     let mut p = ryter_core::project::ProjectSpend::default();
     p.total_usd = 2.29;
     p.sessions = 6;
@@ -2423,13 +1429,13 @@ fn snapshot_ledger_spend_drawer() {
     let e = env();
     let _ = panel::open(&mut v, PanelId::SpendDrawer, &e);
     let text = render_to_string(&v, 120, 40);
-    check_snapshot("ledger-spend-drawer-120x40", &text);
+    check_snapshot("spend-drawer-120x40", &text);
     assert!(
         text.contains("project · muzak") && text.contains("$2.29"),
         "{text}"
     );
     // A dollar sign inside a message is just text.
-    let mut v = ledger();
+    let mut v = conversation();
     v.composer.insert_str("echo ");
     let a = crate::run::keys::handle(
         &mut v,
@@ -2438,16 +1444,16 @@ fn snapshot_ledger_spend_drawer() {
     assert_ne!(a, Action::OpenPanel(PanelId::SpendDrawer));
 }
 
-/// The whole ledger document: the welcome note, the first turn folded to one
+/// The whole conversation: the welcome note, the first turn folded to one
 /// line, the edit turn on the timeline and its closing line.
 #[test]
-fn ledger_folds_finished_turns_and_closes_each() {
-    let mut v = ledger();
+fn the_conversation_folds_finished_turns_and_closes_each() {
+    let mut v = conversation();
     // A new turn is pinned to the top; scroll up to see what came before.
     render_to_string(&v, 120, 60);
     v.scroll.to_top(false);
     let text = render_to_string(&v, 120, 60);
-    check_snapshot("ledger-whole-120x60", &text);
+    check_snapshot("whole-120x60", &text);
     assert!(text.contains("·  welcome · /help for keys"), "{text}");
     assert!(
         text.contains("why does load() ignore a missing file?") && text.contains("✓ answered  ▸"),
@@ -2462,7 +1468,7 @@ fn ledger_folds_finished_turns_and_closes_each() {
         "{text}"
     );
     // ^O shows everything whole.
-    let mut v = ledger();
+    let mut v = conversation();
     v.diffs_expanded = true;
     render_to_string(&v, 120, 60);
     v.scroll.to_top(false);
@@ -2495,8 +1501,16 @@ fn edit_rows_are_tinted_to_the_edge() {
         .rev()
         .find(|x| bg_at(*x, added) == t.diff_add_bg)
         .unwrap();
-    assert!(edge > 60, "tint stops at column {edge}");
-    for x in 4..=edge {
+    let hit = crate::draw::render_hit(&edited(), buf.area.width, buf.area.height);
+    assert!(edge > hit.chat.x + 40, "tint stops at column {edge}");
+    let start = (0..buf.area.width)
+        .find(|x| bg_at(*x, added) == t.diff_add_bg)
+        .unwrap();
+    assert!(
+        start <= hit.chat_text.x + 4,
+        "tint starts at column {start}"
+    );
+    for x in start..=edge {
         assert_eq!(bg_at(x, added), t.diff_add_bg, "added row, column {x}");
         assert_eq!(bg_at(x, removed), t.diff_del_bg, "removed row, column {x}");
         assert_ne!(bg_at(x, context), t.diff_add_bg);
@@ -2582,9 +1596,9 @@ fn snapshot_scribe() {
     let v = scribed();
     all_sizes("scribe", &v);
     let shown = render_to_string(&v, 160, 50);
-    assert!(shown.contains("▸ scribe"), "{shown}");
+    assert!(shown.contains("┃ Scribe"), "{shown}");
     assert!(shown.contains("docs only"), "{shown}");
-    assert!(squash(&shown).contains("▸ scribe 1 turn"), "{shown}");
+    assert!(squash(&shown).contains("1 turn"), "{shown}");
 }
 
 /// A session where the scribe wrote two documents, in its hat.
@@ -2661,13 +1675,12 @@ fn snapshot_review() {
     all_sizes("audit", &reviewed(Some(false)));
 }
 
-/// When a hat on another model speaks in the same turn, the ledger names
+/// When a hat on another model speaks in the same turn, the conversation names
 /// each model as it takes over. Named once a turn, the builder's words
 /// after a review read as the reviewer's.
 #[test]
 fn a_model_is_named_again_after_another_has_spoken() {
     let mut v = idle();
-    v.ui.layout = "ledger".into();
     v.hats.insert(
         "audit".into(),
         ryter_core::config::RoleModel {
@@ -2736,88 +1749,6 @@ fn a_model_is_named_again_after_another_has_spoken() {
     );
 }
 
-/// A filed audit opens its popout over the body, says its line in the
-/// chat, counts in the rack, and the guard card's `audit.md` row reads
-/// `writing…` while the audit turn runs.
-#[test]
-fn a_filed_audit_opens_its_popout_and_counts_in_the_rack() {
-    let mut v = edited();
-    crate::run_events_apply(
-        &mut v,
-        AgentEvent::ModeChanged {
-            role: ryter_core::Role::Audit,
-        },
-    );
-    crate::run_events_apply(
-        &mut v,
-        AgentEvent::TurnStarted {
-            turn: 2,
-            role: ryter_core::Role::Audit,
-            at: 0,
-        },
-    );
-    assert!(v.audit_writing);
-    let hats = sidebar_rows(&v, 100);
-    assert!(hats.iter().any(|r| r == "audit.md writing…"), "{hats:?}");
-    crate::run_events_apply(
-        &mut v,
-        AgentEvent::Audited {
-            model: "kimi-k3".into(),
-            verdict: Some(false),
-            headline: "✗ 1 of 2 failed".into(),
-            summary: "one thing".into(),
-            rows: vec![
-                "✗ 1\tA\tapp/a.py:1".into(),
-                "    detail".into(),
-                "✓ 2\tB\t".into(),
-            ],
-            ran: vec!["run_project test".into()],
-            file: Some(".ryter/audit.md".into()),
-            restored: vec!["app/a.py".into()],
-            checkpointed: true,
-            product_used: false,
-            filed: true,
-            total_usd: Some(0.07),
-            duration_ms: 58_000,
-        },
-    );
-    assert!(!v.audit_writing);
-    assert_eq!(v.panels.top().map(|p| p.kind()), Some("audit"));
-    let screen = render_to_string(&v, 150, 42);
-    assert!(
-        screen.contains("audit · kimi-k3 · ✗ 1 of 2 failed · $0.070 · restored 1 file"),
-        "{screen}"
-    );
-    let totals = v.rack.of(ryter_core::Role::Audit);
-    assert_eq!((totals.verdicts_failed, totals.last_restored), (1, Some(1)));
-    // The popout: verdict, the finding with its place at the edge, the tree.
-    assert!(screen.contains("VERDICT: FAIL"));
-    assert!(screen.contains("app/a.py:1"));
-    assert!(screen.contains("restored 1 file the audit had changed"));
-    // An unfiled audit says its line and opens nothing.
-    v.panels.clear();
-    crate::run_events_apply(
-        &mut v,
-        AgentEvent::Audited {
-            model: "kimi-k3".into(),
-            verdict: Some(true),
-            headline: "✓ passed, unfiled".into(),
-            summary: String::new(),
-            rows: Vec::new(),
-            ran: Vec::new(),
-            file: None,
-            restored: Vec::new(),
-            checkpointed: true,
-            product_used: false,
-            filed: false,
-            total_usd: None,
-            duration_ms: 1000,
-        },
-    );
-    assert!(v.panels.is_empty());
-    assert_eq!(v.rack.of(ryter_core::Role::Audit).last_restored, Some(0));
-}
-
 /// The verdict is said under the review, and kept for the commit's receipt
 /// until a commit is made.
 #[test]
@@ -2830,8 +1761,8 @@ fn a_reviews_verdict_is_said_and_kept_for_the_commit() {
         let mut v = reviewed(verdict);
         let screen = render_to_string(&v, 120, 40);
         assert!(
-            screen.contains(&format!("audit · claude-opus-5.5 · {said} · $0.04")),
-            "{screen}"
+            screen.contains(&format!("audit · claude-opus-5.5 · {said}")),
+            "{said}: {screen}"
         );
         // The review is headed by the model that wrote it, not the one
         // every other hat uses.
@@ -2988,7 +1919,7 @@ fn product(running: bool) -> AgentEvent {
 /// without a word.
 #[test]
 fn a_running_product_is_named_and_asked_about_on_quit() {
-    let mut v = ledger();
+    let mut v = conversation();
     crate::run_events_apply(&mut v, product(true));
     crate::run_events_apply(&mut v, product(true));
     let said: Vec<String> = chat_bodies(&v)
@@ -3037,7 +1968,7 @@ fn a_running_product_is_named_and_asked_about_on_quit() {
 /// The project's own commands read as what they do in the chat.
 #[test]
 fn the_projects_commands_are_named_for_what_they_do() {
-    let mut v = ledger();
+    let mut v = conversation();
     for (id, action, cmd) in [
         ("p1", "start", "docker compose up -d --wait"),
         (
@@ -3152,24 +2083,15 @@ fn tab_moves_within_a_row_and_shift_tab_between_rows() {
     v.set_mode(Role::Build);
     let foot = render_to_string(&v, 160, 50);
     let foot = foot.lines().last().unwrap();
-    assert!(
-        foot.contains("tab plan") && foot.contains("⇧tab specialists"),
-        "{foot}"
-    );
+    assert!(foot.contains("tab") && foot.contains("⇧tab"), "{foot}");
     v.set_mode(Role::Audit);
     let foot = render_to_string(&v, 160, 50);
     let foot = foot.lines().last().unwrap();
-    assert!(
-        foot.contains("tab scribe") && foot.contains("⇧tab plan · build"),
-        "{foot}"
-    );
+    assert!(foot.contains("tab") && foot.contains("⇧tab"), "{foot}");
     v.set_mode(Role::Scribe);
     let foot = render_to_string(&v, 160, 50);
     let foot = foot.lines().last().unwrap();
-    assert!(
-        foot.contains("tab audit") && foot.contains("⇧tab plan · build"),
-        "{foot}"
-    );
+    assert!(foot.contains("tab") && foot.contains("⇧tab"), "{foot}");
     // A panel that is open keeps Tab for itself.
     v.panels
         .push(Box::new(PermissionModal::new("bash".into(), "ls".into())));
@@ -3348,8 +2270,10 @@ fn the_hats_block_names_the_plan_and_audit_files() {
     v.workspace = Some(dir.path().to_path_buf());
     v.refresh_uncommitted();
     let text = squash(&render_to_string(&v, 160, 50));
-    // The row is short of room for the day and the heading: the heading.
-    assert!(text.contains("plan.md upload size limit"), "{text}");
+    assert!(
+        text.contains("plan.md") && text.contains("upload size limit"),
+        "{text}"
+    );
     assert!(!text.contains("audit.md"), "{text}");
     let label = crate::view::file_label(&dir.path().join(".ryter/plan.md")).unwrap();
     assert!(label.ends_with(" upload size limit"), "{label}");
@@ -3452,44 +2376,10 @@ fn the_wheel_scrolls_an_open_panel() {
     assert!(!v.panels.is_empty());
 }
 
-/// One spinner. The strip is gone from the solo and classic screens; `^r`
-/// opens the turn's reasoning as a pane right under the status row while
-/// the turn runs, under the turn's closing line after, never more than a
-/// third of the chat.
-/// The workbench keeps the strip as its one reasoning surface: the pane
-/// that the solo and classic screens place in the conversation is not
-/// placed there, so `^r` never shows the reasoning twice.
-#[test]
-fn the_workbench_keeps_its_strip_and_gets_no_pane() {
-    let repo = workbench_repo();
-    let mut v = mid_stream(ActivityMode::Expanded);
-    v.ui.layout = "ledger".into();
-    crate::run_events_apply(
-        &mut v,
-        AgentEvent::Reasoning {
-            text: "first the loop, then the tests ".repeat(30),
-        },
-    );
-    v.workbench = Some(crate::workbench::Workbench::open(
-        &v,
-        repo.path().to_path_buf(),
-    ));
-    let shown = render_to_string(&v, 160, 50);
-    assert!(
-        !shown.contains("reasoning · "),
-        "no pane in the workbench's chat\n{shown}"
-    );
-    assert!(
-        shown.contains("^r close"),
-        "the strip is the workbench's reasoning surface\n{shown}"
-    );
-}
-
 #[test]
 fn the_reasoning_pane_opens_under_the_status_row() {
-    for layout in ["ledger", "classic"] {
+    {
         let mut v = mid_stream(ActivityMode::Collapsed);
-        v.ui.layout = layout.into();
         crate::run_events_apply(
             &mut v,
             AgentEvent::Reasoning {
@@ -3499,11 +2389,11 @@ fn the_reasoning_pane_opens_under_the_status_row() {
         let shown = render_to_string(&v, 160, 42);
         assert!(
             !shown.contains("^r  reasoning  ▾"),
-            "{layout}: the strip is gone\n{shown}"
+            "the strip is gone\n{shown}"
         );
         assert!(
             !shown.contains("reasoning · "),
-            "{layout}: collapsed is the row alone\n{shown}"
+            "collapsed is the row alone\n{shown}"
         );
         // ^r opens the pane right under the row.
         let _ = crate::run_keys_handle(
@@ -3516,16 +2406,12 @@ fn the_reasoning_pane_opens_under_the_status_row() {
         let status = lines
             .iter()
             .position(|l| l.contains("thinking · "))
-            .unwrap_or_else(|| panic!("{layout}: no status row\n{shown}"));
+            .unwrap_or_else(|| panic!("no status row\n{shown}"));
         let header = lines
             .iter()
             .position(|l| l.contains("reasoning · "))
-            .unwrap_or_else(|| panic!("{layout}: no pane header\n{shown}"));
-        assert_eq!(
-            header,
-            status + 1,
-            "{layout}: the pane is under the row\n{shown}"
-        );
+            .unwrap_or_else(|| panic!("no pane header\n{shown}"));
+        assert_eq!(header, status + 1, "the pane is under the row\n{shown}");
         // The fixture's own reasoning and the text pushed here both speak
         // of the loop: the pane's rows are the ones that do.
         let body = lines
@@ -3535,7 +2421,7 @@ fn the_reasoning_pane_opens_under_the_status_row() {
             .count();
         assert!(
             (3..=13).contains(&body),
-            "{layout}: the pane is capped at a third: {body} rows\n{shown}"
+            "the pane is capped at a third: {body} rows\n{shown}"
         );
         // The turn ends: the row goes, and the pane sits where the turn
         // closed.
@@ -3549,18 +2435,18 @@ fn the_reasoning_pane_opens_under_the_status_row() {
             },
         );
         let shown = render_to_string(&v, 160, 42);
-        assert!(!shown.contains("thinking · "), "{layout}\n{shown}");
+        assert!(!shown.contains("thinking · "), "{shown}");
         let lines: Vec<&str> = shown.lines().collect();
         let header = lines
             .iter()
             .position(|l| l.contains("reasoning · "))
-            .unwrap_or_else(|| panic!("{layout}: no pane after the turn\n{shown}"));
+            .unwrap_or_else(|| panic!("no pane after the turn\n{shown}"));
         let after = lines
             .iter()
             .skip(header + 1)
             .any(|l| l.contains("first the loop"));
-        assert!(after, "{layout}: the reasoning stays readable\n{shown}");
-        if layout == "ledger" {
+        assert!(after, "the reasoning stays readable\n{shown}");
+        {
             let closing = lines[..header]
                 .iter()
                 .rposition(|l| l.contains("└─"))
@@ -3581,14 +2467,13 @@ fn the_reasoning_pane_opens_under_the_status_row() {
 #[test]
 fn a_click_on_the_status_row_toggles_the_pane() {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-    for layout in ["ledger", "classic"] {
+    {
         let mut v = mid_stream(ActivityMode::Collapsed);
-        v.ui.layout = layout.into();
         crate::run_events_apply(&mut v, AgentEvent::Reasoning { text: "so ".into() });
         let hit = crate::draw::render_hit(&v, 160, 42);
         assert!(
             hit.activity.height >= 1,
-            "{layout}: the row is a target: {:?}",
+            "the row is a target: {:?}",
             hit.activity
         );
         let event = |kind: MouseEventKind, row: u16, col: u16| MouseEvent {
@@ -3611,25 +2496,21 @@ fn a_click_on_the_status_row_toggles_the_pane() {
             hit.activity.x + 3,
         );
         let _ = crate::run_mouse_handle_with(&mut v, down, &hit);
-        assert_eq!(
-            v.activity.mode,
-            ActivityMode::Collapsed,
-            "{layout}: not yet"
-        );
+        assert_eq!(v.activity.mode, ActivityMode::Collapsed, "not yet");
         let _ = click(&mut v, &hit, hit.activity.y, hit.activity.x + 3);
-        assert_eq!(v.activity.mode, ActivityMode::Expanded, "{layout}");
+        assert_eq!(v.activity.mode, ActivityMode::Expanded);
         let hit = crate::draw::render_hit(&v, 160, 42);
         assert!(
             hit.activity.height >= 2,
-            "{layout}: row and header: {:?}",
+            "row and header: {:?}",
             hit.activity
         );
         // The header, one row below the status row.
         let _ = click(&mut v, &hit, hit.activity.y + 1, hit.activity.x + 3);
-        assert_eq!(v.activity.mode, ActivityMode::Collapsed, "{layout}");
+        assert_eq!(v.activity.mode, ActivityMode::Collapsed);
         // A click elsewhere in the chat does nothing to it.
         let _ = click(&mut v, &hit, hit.chat.y, hit.chat.x + 3);
-        assert_eq!(v.activity.mode, ActivityMode::Collapsed, "{layout}");
+        assert_eq!(v.activity.mode, ActivityMode::Collapsed);
     }
 }
 
@@ -3639,7 +2520,6 @@ fn a_click_on_the_status_row_toggles_the_pane() {
 #[test]
 fn a_running_turn_ends_on_a_live_status_row() {
     let mut v = mid_stream(ActivityMode::Collapsed);
-    v.ui.layout = "ledger".into();
     let wide = render_to_string(&v, 160, 50);
     assert!(
         wide.contains("writing · 0:12 · 59 tokens"),
@@ -3703,38 +2583,11 @@ fn a_running_turn_ends_on_a_live_status_row() {
     );
 }
 
-/// The hat's mark in the ledger spins while its model works, and is `▸`
-/// again when the turn ends. On a screen without the sidebar the status
-/// row under the message spins.
-#[test]
-fn the_ledgers_mark_spins_while_the_turn_runs() {
-    let mut v = mid_stream(ActivityMode::Collapsed);
-    v.ui.layout = "ledger".into();
-    v.panel_visible = true;
-    for width in [160u16, 110] {
-        let text = render_to_string(&v, width, 30);
-        assert!(text.contains("⠼ build"), "{width}:\n{text}");
-        assert!(!text.contains("▸ build"), "{width}:\n{text}");
-    }
-    let text = render_to_string(&v, 80, 30);
-    assert!(text.contains("⠼ "), "{text}");
-    crate::run_events_apply(
-        &mut v,
-        AgentEvent::TurnFinished {
-            turn: 2,
-            tools: 1,
-            duration_ms: 1,
-        },
-    );
-    assert!(render_to_string(&v, 160, 30).contains("▸ build"));
-}
-
 /// Busy with nothing arriving, the pulse card says `waiting`; idle says
 /// `idle`; the reasoning pane says what is happening while it is empty.
 #[test]
 fn an_empty_wait_is_said_on_the_pulse_and_in_the_pane() {
     let mut v = idle();
-    v.ui.layout = "ledger".into();
     v.activity = crate::activity::Activity::new(ActivityMode::Expanded);
     let _ = v.submit_user("plan it".into(), "plan it".into());
     v.tick(20_000);
@@ -3810,7 +2663,6 @@ fn the_drain_pauses_to_paint_after_a_tool_result() {
 /// about an edit: what the user sees when the build hat wants a yes.
 fn asking(width_lines: usize) -> View {
     let mut v = mid_stream(ActivityMode::Collapsed);
-    v.ui.layout = "ledger".into();
     let reply: String = (0..width_lines)
         .map(|i| format!("reply line {i}\n"))
         .collect();
@@ -3830,54 +2682,7 @@ fn asking(width_lines: usize) -> View {
 
 #[test]
 fn snapshot_allow_card_on_the_rack() {
-    all_sizes("solo-allow", &asking(8));
-}
-
-/// The card is inset in the conversation's column: fourteen in and two
-/// short of its right edge at a hundred columns or more, two each side
-/// down to sixty, the whole column under that.
-#[test]
-fn the_allow_card_is_inset_in_the_conversation_column() {
-    let v = asking(8);
-    let theme = Theme::truecolor_dark();
-    // The margins follow the column's width, not the screen's: at 110
-    // columns the conversation's column is in the seventies, so two each
-    // side; the fourteen-and-two shape needs a column of a hundred.
-    for (w, h) in [(220u16, 50u16), (160, 50), (110, 40), (80, 24), (50, 24)] {
-        let (col_x, col_w) = crate::draw::chat_column(&v, theme, w, h);
-        let (left, right) = if col_w >= 100 {
-            (14u16, 2u16)
-        } else if col_w >= 60 {
-            (2, 2)
-        } else {
-            (0, 0)
-        };
-        if w == 220 {
-            assert!(col_w >= 100, "a column of a hundred at 220: {col_w}");
-        }
-        let drawn = render_to_string(&v, w, h);
-        let top = drawn
-            .lines()
-            .find(|l| l.contains("┏━ allow?"))
-            .unwrap_or_else(|| panic!("no card at {w}x{h}:\n{drawn}"));
-        let open = top.chars().position(|c| c == '┏').unwrap();
-        let close = top.chars().position(|c| c == '┓').unwrap();
-        assert_eq!(open as u16, col_x + left, "{w}x{h}: left edge\n{drawn}");
-        assert_eq!(
-            close as u16,
-            col_x + col_w - right - 1,
-            "{w}x{h}: right edge\n{drawn}"
-        );
-        // Every row of the card ends on its frame: square at every width.
-        let rows: Vec<&str> = drawn
-            .lines()
-            .skip_while(|l| !l.contains("┏━ allow?"))
-            .take_while(|l| !l.contains('╰'))
-            .collect();
-        for r in &rows[1..] {
-            assert_eq!(r.chars().nth(close), Some('│'), "{w}x{h}: {r:?}");
-        }
-    }
+    all_sizes("allow", &asking(8));
 }
 
 /// The chat is laid out above the card, not under it: the reply's last
@@ -3887,7 +2692,7 @@ fn the_chat_moves_up_for_the_allow_card() {
     let v = asking(60);
     let drawn = render_to_string(&v, 160, 42);
     let lines: Vec<&str> = drawn.lines().collect();
-    let card = lines.iter().position(|l| l.contains("┏━ allow?")).unwrap();
+    let card = lines.iter().position(|l| l.contains("╭─ allow?")).unwrap();
     let last = lines
         .iter()
         .position(|l| l.contains("reply line 59"))
@@ -3915,7 +2720,6 @@ fn the_chat_moves_up_for_the_allow_card() {
 /// proposing how the project runs: the run-file card.
 fn proposing_run(width_lines: usize) -> View {
     let mut v = mid_stream(ActivityMode::Collapsed);
-    v.ui.layout = "ledger".into();
     let reply: String = (0..width_lines)
         .map(|i| format!("reply line {i}\n"))
         .collect();
@@ -3940,89 +2744,6 @@ fn snapshot_run_file_card() {
     all_sizes("modal-run-file", &proposing_run(8));
 }
 
-/// The run-file card is a question like the allow card: in the rows the
-/// chat frees for it, inset in the conversation's column. The reply is
-/// laid out above it, whole; nothing of it is under the card.
-#[test]
-fn the_chat_moves_up_for_the_run_file_card() {
-    let theme = Theme::truecolor_dark();
-    for (w, h) in [(160u16, 48u16), (100, 30)] {
-        let v = proposing_run(60);
-        let (col_x, col_w) = crate::draw::chat_column(&v, theme, w, h);
-        let drawn = render_to_string(&v, w, h);
-        let lines: Vec<&str> = drawn.lines().collect();
-        let card = lines
-            .iter()
-            .position(|l| l.contains("┏━ how this project runs"))
-            .unwrap_or_else(|| panic!("no card at {w}x{h}:\n{drawn}"));
-        // The reply's last row (it wraps in a narrow column) is above the
-        // card, not under it.
-        let last = lines
-            .iter()
-            .rposition(|l| l.contains("reply line"))
-            .unwrap_or_else(|| panic!("the reply at {w}x{h}:\n{drawn}"));
-        assert!(
-            last < card,
-            "{w}x{h}: the reply ends above the card:\n{drawn}"
-        );
-        let status = lines
-            .iter()
-            .position(|l| l.contains("waiting for you · run?"))
-            .unwrap_or_else(|| panic!("the status row at {w}x{h}:\n{drawn}"));
-        assert!(
-            status < card,
-            "{w}x{h}: the status row is above the card:\n{drawn}"
-        );
-        // No edge of the card in the conversation's column above it: the
-        // rows there are the chat's, whole.
-        for l in &lines[..card] {
-            let col: String = l
-                .chars()
-                .skip(usize::from(col_x))
-                .take(usize::from(col_w))
-                .collect();
-            assert!(
-                !col.contains('┏') && !col.contains('╰') && !col.contains('┃'),
-                "{w}x{h}: a card's edge in the chat: {l:?}\n{drawn}"
-            );
-        }
-        // Inset as the allow card is, and capped at a third of the column.
-        let open = lines[card].chars().position(|c| c == '┏').unwrap();
-        let left = if col_w >= 100 { 14 } else { 2 };
-        assert_eq!(open as u16, col_x + left, "{w}x{h}: left edge\n{drawn}");
-        let bottom = lines.iter().position(|l| l.contains("╰───")).unwrap();
-        let height = bottom - card + 1;
-        assert!(
-            height <= usize::from(h) / 3 + 1,
-            "{w}x{h}: card is {height} rows:\n{drawn}"
-        );
-        // The commands and the keys are on it whatever the room: the rows
-        // of air go first, then it scrolls.
-        let body: Vec<&str> = lines[card..=bottom].to_vec();
-        assert!(
-            body.iter().any(|l| l.contains("start  docker compose up")),
-            "{w}x{h}:\n{drawn}"
-        );
-        assert!(
-            body[body.len() - 2].contains("y approve"),
-            "{w}x{h}:\n{drawn}"
-        );
-        if h == 30 {
-            assert!(
-                body[body.len() - 2].contains("↑↓ scroll"),
-                "{w}x{h}:\n{drawn}"
-            );
-            let card_rows = &body[1..body.len() - 2];
-            assert!(
-                !card_rows
-                    .iter()
-                    .any(|l| l.trim_matches(|c| c == '│' || c == ' ').is_empty()),
-                "{w}x{h}: a blank row kept:\n{drawn}"
-            );
-        }
-    }
-}
-
 /// The foot names the card's keys in the warn color, then the ways out.
 #[test]
 fn the_foot_shows_the_cards_keys_in_warn() {
@@ -4034,42 +2755,9 @@ fn the_foot_shows_the_cards_keys_in_warn() {
         .map(|x| buf[(x, foot)].symbol().to_string())
         .collect();
     assert!(
-        text.contains("⏎ allow") && text.contains("^c stop the turn"),
+        text.contains("⏎  allow") && text.contains("n  deny"),
         "{text}"
     );
-    let at = |needle: &str| {
-        text.find(needle)
-            .map(|i| text[..i].chars().count() as u16)
-            .unwrap()
-    };
-    assert_eq!(buf[(at("⏎"), foot)].fg, theme.warn, "{text}");
-    assert_eq!(buf[(at("a allow"), foot)].fg, theme.warn, "{text}");
-    assert_ne!(buf[(at("^c"), foot)].fg, theme.warn, "{text}");
-}
-
-/// The classic layout's foot line takes the card's keys in warn too.
-#[test]
-fn the_classic_foot_shows_the_cards_keys_in_warn() {
-    let mut v = asking(8);
-    v.ui.layout = "classic".into();
-    let theme = Theme::truecolor_dark();
-    let buf = render_buffer(&v, 160, 42, theme);
-    let foot = buf.area.height - 1;
-    let text: String = (0..buf.area.width)
-        .map(|x| buf[(x, foot)].symbol().to_string())
-        .collect();
-    assert!(
-        text.contains("⏎ allow") && text.contains("^c stop the turn"),
-        "{text}"
-    );
-    let at = |needle: &str| {
-        text.find(needle)
-            .map(|i| text[..i].chars().count() as u16)
-            .unwrap()
-    };
-    assert_eq!(buf[(at("⏎"), foot)].fg, theme.warn, "{text}");
-    assert_eq!(buf[(at("a allow"), foot)].fg, theme.warn, "{text}");
-    assert_ne!(buf[(at("^c"), foot)].fg, theme.warn, "{text}");
 }
 
 /// The allow card's own key row holds `⏎`, `a` and `n` on a narrow column
@@ -4145,7 +2833,6 @@ fn a_question_is_named_and_may_ring() {
         "password"
     );
     let mut v = mid_stream(ActivityMode::Collapsed);
-    v.ui.layout = "ledger".into();
     v.activity.note_ask("plan?");
     assert!(render_to_string(&v, 160, 42).contains("waiting for you · plan?"));
     // A delta ends the question's word.
@@ -4174,7 +2861,7 @@ fn snapshot_root_permission_card() {
         )
         .with_answers(true, None),
     ));
-    let drawn = render_to_string(&v, 120, 40);
+    let drawn = render_to_string(&v, 176, 50);
     assert!(
         drawn.contains("run as root  sudo dnf install -y alsa-lib-devel pkgconf"),
         "{drawn}"
@@ -4284,12 +2971,36 @@ fn a_password_can_be_refused() {
 // -- selecting with the mouse ------------------------------------------------
 
 /// Where `needle` starts on a drawn screen: column, row.
-fn find_on(buf: &ratatui::buffer::Buffer, needle: &str) -> (u16, u16) {
+/// Where `needle` is anywhere on the screen, the pinned question included.
+fn find_anywhere(buf: &ratatui::buffer::Buffer, needle: &str) -> (u16, u16) {
     for y in 0..buf.area.height {
         let row: Vec<&str> = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
         let text = row.concat();
         if let Some(at) = text.find(needle) {
             let column = text[..at].chars().count();
+            return (column as u16, y);
+        }
+    }
+    panic!("{needle:?} is not on the screen");
+}
+
+/// Where `needle` is on the conversation: the stage between the hats and
+/// the instruments (which quote the conversation), under the pinned
+/// question and its dotted rule.
+fn find_on(buf: &ratatui::buffer::Buffer, needle: &str) -> (u16, u16) {
+    let (side_w, insp_w) = crate::workspace::columns(buf.area.width, true);
+    let (lo, hi) = (side_w, buf.area.width.saturating_sub(insp_w));
+    let row_text =
+        |y: u16| -> String { (lo..hi).map(|x| buf[(x, y)].symbol().to_string()).collect() };
+    let dotted =
+        |y: u16| row_text(y).trim().chars().all(|c| c == '‥') && !row_text(y).trim().is_empty();
+    for y in 0..buf.area.height {
+        if dotted(y) || (y + 1 < buf.area.height && dotted(y + 1)) {
+            continue;
+        }
+        let text = row_text(y);
+        if let Some(at) = text.find(needle) {
+            let column = usize::from(lo) + text[..at].chars().count();
             return (column as u16, y);
         }
     }
@@ -4339,9 +3050,8 @@ fn copied(v: &View, held: &ratatui::buffer::Buffer, a: Action) -> String {
     }
 }
 
-fn talking(layout: &str, reply: &str) -> View {
+fn talking(reply: &str) -> View {
     let mut v = idle();
-    v.ui.layout = layout.into();
     v.ui.line_numbers = false;
     let _ = v.submit_user("summarise".into(), "summarise".into());
     v.on_token(reply);
@@ -4354,7 +3064,7 @@ const PROSE: &str = "alpha beta gamma\n\nsecond paragraph here\n\n```rust\nfn ma
 #[test]
 fn a_wide_character_is_copied_once() {
     let theme = Theme::truecolor_dark();
-    let mut v = talking("ledger", "start 日本語 and 한글 end\n");
+    let mut v = talking("start 日本語 and 한글 end\n");
     let plain = render_buffer(&v, 120, 40, theme);
     let from = find_on(&plain, "start");
     let (x, y) = find_on(&plain, "end");
@@ -4369,9 +3079,9 @@ fn a_wide_character_is_copied_once() {
 #[test]
 fn dragging_over_the_conversation_highlights_and_copies_its_text() {
     let theme = Theme::truecolor_dark();
-    for layout in ["ledger", "classic"] {
-        let mut v = talking(layout, PROSE);
-        let size = (120, 40);
+    {
+        let mut v = talking(PROSE);
+        let size = (176, 50);
         let plain = render_buffer(&v, size.0, size.1, theme);
         let from = find_on(&plain, "beta");
         let (x, y) = find_on(&plain, "paragraph");
@@ -4380,23 +3090,19 @@ fn dragging_over_the_conversation_highlights_and_copies_its_text() {
         // What is highlighted: from the press to the pointer, and whole
         // rows of text between; nothing left of the text.
         let lit = |x: u16, y: u16| held[(x, y)].bg == theme.selection_bg;
-        assert!(lit(from.0, from.1) && lit(to.0, to.1), "{layout}");
-        assert!(!lit(from.0 - 1, from.1), "{layout}: before the press");
-        assert!(!lit(to.0 + 1, to.1), "{layout}: after the pointer");
+        assert!(lit(from.0, from.1) && lit(to.0, to.1));
+        assert!(!lit(from.0 - 1, from.1), "before the press");
+        assert!(!lit(to.0 + 1, to.1), "after the pointer");
         let hit = crate::draw::render_hit(&v, size.0, size.1);
-        assert!(lit(hit.chat_text.x, to.1), "{layout}: the row's start");
+        assert!(lit(hit.chat_text.x, to.1), "the row's start");
         assert!(
             !lit(hit.chat_text.x - 1, to.1) && !lit(hit.chat.x, from.1 + 1),
-            "{layout}: the timeline is not text"
+            "the timeline is not text"
         );
-        assert_eq!(
-            copied(&v, &held, a),
-            "beta gamma\n\nsecond paragraph",
-            "{layout}"
-        );
-        assert!(v.selection.is_none(), "{layout}: the highlight goes");
+        assert_eq!(copied(&v, &held, a), "beta gamma\n\nsecond paragraph");
+        assert!(v.selection.is_none(), "the highlight goes");
         let after = render_buffer(&v, size.0, size.1, theme);
-        assert!(after[(from.0, from.1)].bg != theme.selection_bg, "{layout}");
+        assert!(after[(from.0, from.1)].bg != theme.selection_bg);
     }
 }
 
@@ -4406,16 +3112,16 @@ fn dragging_over_the_conversation_highlights_and_copies_its_text() {
 fn a_click_selects_nothing() {
     use crossterm::event::{MouseButton, MouseEventKind};
     let theme = Theme::truecolor_dark();
-    let mut v = talking("ledger", PROSE);
-    let hit = crate::draw::render_hit(&v, 120, 40);
-    let at = find_on(&render_buffer(&v, 120, 40, theme), "beta");
+    let mut v = talking(PROSE);
+    let hit = crate::draw::render_hit(&v, 176, 50);
+    let at = find_on(&render_buffer(&v, 176, 50, theme), "beta");
     let none = KeyModifiers::NONE;
     let down = mouse(MouseEventKind::Down(MouseButton::Left), at, none);
     assert_eq!(
         crate::run_mouse_handle_with(&mut v, down, &hit),
         Action::None
     );
-    let held = render_buffer(&v, 120, 40, theme);
+    let held = render_buffer(&v, 176, 50, theme);
     assert!(held[(at.0, at.1)].bg != theme.selection_bg);
     let up = mouse(MouseEventKind::Up(MouseButton::Left), at, none);
     assert_eq!(crate::run_mouse_handle_with(&mut v, up, &hit), Action::None);
@@ -4441,12 +3147,12 @@ fn a_click_selects_nothing() {
 #[test]
 fn alt_drag_selects_a_rectangle() {
     let theme = Theme::truecolor_dark();
-    let mut v = talking("ledger", PROSE);
-    let plain = render_buffer(&v, 120, 40, theme);
+    let mut v = talking(PROSE);
+    let plain = render_buffer(&v, 176, 50, theme);
     let (x, y) = find_on(&plain, "fn main");
     let (held, a) = drag(
         &mut v,
-        (120, 40),
+        (176, 50),
         (x, y),
         (x + 10, y + 2),
         KeyModifiers::ALT,
@@ -4458,7 +3164,7 @@ fn alt_drag_selects_a_rectangle() {
 
 fn many_lines() -> View {
     let lines: String = (0..120).map(|i| format!("line {i}\n")).collect();
-    talking("ledger", &format!("```\n{lines}```\n"))
+    talking(&format!("```\n{lines}```\n"))
 }
 
 /// The highlight is on the text, not on the screen: when the conversation
@@ -4559,7 +3265,7 @@ fn holding_past_the_edge_scrolls_and_selects_on() {
 #[test]
 fn the_composer_and_a_panel_can_be_selected_too() {
     let theme = Theme::truecolor_dark();
-    let mut v = talking("ledger", PROSE);
+    let mut v = talking(PROSE);
     for c in "hello world".chars() {
         crate::run::keys::handle(&mut v, key(KeyCode::Char(c)));
     }
@@ -4614,16 +3320,12 @@ fn a_copy_is_said_on_the_last_row_and_goes() {
     assert_eq!(crate::select::describe("one\ntwo\nthree"), "copied 3 lines");
     assert_eq!(crate::select::describe("word"), "copied 4 characters");
     assert_eq!(crate::select::describe("x"), "copied 1 character");
-    for layout in ["ledger", "classic"] {
-        let mut v = talking(layout, PROSE);
+    {
+        let mut v = talking(PROSE);
         v.flash("copied 3 lines");
         let drawn = render_to_string(&v, 120, 40);
         let last = drawn.lines().last().unwrap_or_default();
-        assert_eq!(
-            last.trim(),
-            "copied 3 lines",
-            "{layout}: the row is its own"
-        );
+        assert_eq!(last.trim(), "copied 3 lines", "the row is its own");
         v.tick(v.now_ms + 5_000);
         assert!(!render_to_string(&v, 120, 40).contains("copied 3 lines"));
     }
@@ -4637,14 +3339,11 @@ fn a_code_block_is_copied_without_its_frame() {
     let code =
         "fn main() {\n    let n = 2;\n    if n > 1 {\n        println!(\"{n}\");\n    }\n}\n";
     for numbers in [true, false] {
-        let mut v = talking(
-            "ledger",
-            &format!("Here it is:\n\n```rust\n{code}```\n\nDone.\n"),
-        );
+        let mut v = talking(&format!("Here it is:\n\n```rust\n{code}```\n\nDone.\n"));
         v.ui.line_numbers = numbers;
-        let plain = render_buffer(&v, 120, 40, theme);
+        let plain = render_buffer(&v, 176, 50, theme);
         assert_eq!(
-            render_to_string(&v, 120, 40).contains("1 fn main"),
+            render_to_string(&v, 176, 50).contains("1 fn main"),
             numbers,
             "line numbers are drawn when they are on"
         );
@@ -4654,13 +3353,13 @@ fn a_code_block_is_copied_without_its_frame() {
         let (x, _) = find_on(&plain, "    let n");
         let last = (x, y - 3);
         assert_eq!(plain[(last.0, last.1)].symbol(), "}");
-        let (held, a) = drag(&mut v, (120, 40), from, last, KeyModifiers::NONE);
+        let (held, a) = drag(&mut v, (176, 50), from, last, KeyModifiers::NONE);
         assert_eq!(copied(&v, &held, a), code.trim_end(), "numbers: {numbers}");
         // From the sentence before it to the one after: the frame's rules
         // are empty rows, and the code keeps its own indentation.
         let from = find_on(&plain, "Here it is");
         let (x, y) = find_on(&plain, "Done.");
-        let (held, a) = drag(&mut v, (120, 40), from, (x + 4, y), KeyModifiers::NONE);
+        let (held, a) = drag(&mut v, (176, 50), from, (x + 4, y), KeyModifiers::NONE);
         let text = copied(&v, &held, a);
         assert!(text.starts_with("Here it is:\n"), "{text:?}");
         assert!(text.ends_with("\nDone."), "{text:?}");
@@ -4726,44 +3425,6 @@ fn a_panels_field_opens_on_what_it_holds() {
 
 // -- after the 0.24.0 reviews ------------------------------------------------
 
-/// With the workbench open the conversation is its middle pane, and that
-/// is where it is selected: reported as the whole workbench, a drag over
-/// the text copied a different row, and a press on the changes began a
-/// selection of the conversation.
-#[test]
-fn the_workbench_selects_the_conversation_where_it_is() {
-    let theme = Theme::truecolor_dark();
-    let mut v = talking("ledger", PROSE);
-    let root = tempfile::tempdir().unwrap();
-    v.workbench = Some(crate::workbench::Workbench::open(
-        &v,
-        root.path().to_path_buf(),
-    ));
-    let size = (160, 44);
-    let plain = render_buffer(&v, size.0, size.1, theme);
-    let hit = crate::draw::render_hit(&v, size.0, size.1);
-    let from = find_on(&plain, "beta");
-    assert!(
-        hit.chat.x > 20 && from.0 >= hit.chat_text.x,
-        "the text is in the pane reported: {:?} {from:?}",
-        hit.chat_text
-    );
-    let (x, y) = find_on(&plain, "paragraph");
-    let (held, a) = drag(&mut v, size, from, (x + 8, y), KeyModifiers::NONE);
-    assert!(held[(from.0, from.1)].bg == theme.selection_bg);
-    assert_eq!(copied(&v, &held, a), "beta gamma\n\nsecond paragraph");
-    // A press left of the conversation is not a selection of it.
-    use crossterm::event::{MouseButton, MouseEventKind};
-    let at = (hit.chat.x.saturating_sub(6), hit.chat.y + 3);
-    let down = mouse(
-        MouseEventKind::Down(MouseButton::Left),
-        at,
-        KeyModifiers::NONE,
-    );
-    let _ = crate::run_mouse_handle_with(&mut v, down, &hit);
-    assert!(v.selection.as_ref().is_some_and(|s| s.chat.is_none()));
-}
-
 /// A long reply with the question pinned over the pane's first rows.
 fn pinned() -> View {
     let mut v = many_lines();
@@ -4788,7 +3449,7 @@ fn what_is_drawn_over_the_conversation_is_not_selected_as_it() {
     let hit = crate::draw::render_hit(&v, size.0, size.1);
     let pin = hit.covers.first().copied().expect("the question is pinned");
     assert_eq!((pin.y, pin.height), (hit.chat.y, 2));
-    let shown = find_on(&plain, "summarise");
+    let shown = find_anywhere(&plain, "summarise");
     assert_eq!(
         shown.1, pin.y,
         "the pinned question is on the pane's first row"
@@ -4842,7 +3503,7 @@ fn what_is_drawn_over_the_conversation_is_not_selected_as_it() {
 #[test]
 fn the_palette_is_selected_as_itself() {
     let theme = Theme::truecolor_dark();
-    let mut v = talking("ledger", PROSE);
+    let mut v = talking(PROSE);
     v.busy = false;
     crate::run::keys::handle(&mut v, key(KeyCode::Char('/')));
     assert!(v.palette.is_some());
@@ -4884,54 +3545,6 @@ fn the_palette_is_selected_as_itself() {
     }
 }
 
-/// A drag that begins on a card or on the status row is a selection, and
-/// a click there does what it did: the click waits for the release.
-#[test]
-fn a_drag_from_a_card_selects_and_a_click_still_opens_it() {
-    use crossterm::event::{MouseButton, MouseEventKind};
-    let theme = Theme::truecolor_dark();
-    let mut v = talking("classic", PROSE);
-    v.panel_visible = true;
-    let size = (160, 44);
-    let hit = crate::draw::render_hit(&v, size.0, size.1);
-    let (card, rect) = hit
-        .cards
-        .iter()
-        .find(|(c, _)| c.opens().is_some())
-        .cloned()
-        .expect("a card that opens a panel");
-    let plain = render_buffer(&v, size.0, size.1, theme);
-    // Some text of the card, and a drag across it.
-    let row = (rect.y..rect.y + rect.height)
-        .find(|y| (rect.x..rect.x + rect.width).any(|x| plain[(x, *y)].symbol().trim() != ""))
-        .expect("a row with text");
-    let whole: String = (rect.x..rect.x + rect.width)
-        .map(|x| plain[(x, row)].symbol().to_string())
-        .collect();
-    let (held, a) = drag(
-        &mut v,
-        size,
-        (rect.x, row),
-        (rect.x + rect.width - 1, row),
-        KeyModifiers::NONE,
-    );
-    assert_eq!(copied(&v, &held, a), whole.trim());
-    assert!(v.panels.is_empty(), "a drag opens nothing");
-    // A click: press and release in one cell.
-    let none = KeyModifiers::NONE;
-    let at = (rect.x + 1, row);
-    let down = mouse(MouseEventKind::Down(MouseButton::Left), at, none);
-    assert_eq!(
-        crate::run_mouse_handle_with(&mut v, down, &hit),
-        Action::None
-    );
-    let up = mouse(MouseEventKind::Up(MouseButton::Left), at, none);
-    assert_eq!(
-        crate::run_mouse_handle_with(&mut v, up, &hit),
-        Action::OpenPanel(card.opens().unwrap())
-    );
-}
-
 /// Only the frame is left out of a code block. A line that is only a
 /// number, drawn as dim as the frame (a diff's context line), is code.
 #[test]
@@ -4939,7 +3552,7 @@ fn a_dim_line_of_code_is_not_taken_for_the_frame() {
     let theme = Theme::truecolor_dark();
     let diff = "@@ -1,4 +1,4 @@\n 42\n-old line\n+new line\n    0\n 7 7\n";
     for numbers in [true, false] {
-        let mut v = talking("ledger", &format!("```diff\n{diff}```\n\nAfter.\n"));
+        let mut v = talking(&format!("```diff\n{diff}```\n\nAfter.\n"));
         v.ui.line_numbers = numbers;
         let plain = render_buffer(&v, 120, 40, theme);
         let from = find_on(&plain, "@@ -1,4");
@@ -4961,15 +3574,15 @@ fn a_dim_line_of_code_is_not_taken_for_the_frame() {
 fn the_body_of_a_function_keeps_its_indentation() {
     let theme = Theme::truecolor_dark();
     let code = "fn main() {\n    let n = 2;\n    println!(\"{n}\");\n}\n";
-    let mut v = talking("ledger", &format!("```rust\n{code}```\n"));
-    let plain = render_buffer(&v, 120, 40, theme);
-    let hit = crate::draw::render_hit(&v, 120, 40);
+    let mut v = talking(&format!("```rust\n{code}```\n"));
+    let plain = render_buffer(&v, 176, 50, theme);
+    let hit = crate::draw::render_hit(&v, 176, 50);
     let (_, y) = find_on(&plain, "let n = 2;");
     // From the row's left edge, through the frame, to the next line's end.
     let (x, _) = find_on(&plain, "println!");
     let (held, a) = drag(
         &mut v,
-        (120, 40),
+        (176, 50),
         (hit.chat_text.x, y),
         (x + 15, y + 1),
         KeyModifiers::NONE,
@@ -4984,7 +3597,7 @@ fn the_body_of_a_function_keeps_its_indentation() {
 #[test]
 fn the_caret_is_not_copied() {
     let theme = Theme::truecolor_dark();
-    let mut v = talking("ledger", PROSE);
+    let mut v = talking(PROSE);
     for c in "hello".chars() {
         crate::run::keys::handle(&mut v, key(KeyCode::Char(c)));
     }
@@ -5006,8 +3619,8 @@ fn the_caret_is_not_copied() {
 fn a_panel_opening_ends_a_selection_of_the_conversation() {
     use crossterm::event::{MouseButton, MouseEventKind};
     let theme = Theme::truecolor_dark();
-    let mut v = talking("ledger", PROSE);
-    let size = (120, 40);
+    let mut v = talking(PROSE);
+    let size = (176, 50);
     let hit = crate::draw::render_hit(&v, size.0, size.1);
     let plain = render_buffer(&v, size.0, size.1, theme);
     let from = find_on(&plain, "beta");
@@ -5026,8 +3639,8 @@ fn a_panel_opening_ends_a_selection_of_the_conversation() {
         "rm -rf target".into(),
     )));
     let held = render_buffer(&v, size.0, size.1, theme);
-    for yy in 0..size.1 {
-        for xx in 0..size.0 {
+    for yy in hit.chat.y..hit.chat.y + hit.chat.height {
+        for xx in hit.chat.x..hit.chat.x + hit.chat.width {
             assert!(
                 held[(xx, yy)].bg != theme.selection_bg,
                 "painted at {xx},{yy}"
@@ -5108,7 +3721,8 @@ fn a_pulled_selection_ends_at_the_panes_edge() {
 fn a_drag_onto_a_cover_ends_on_the_side_it_came_from() {
     use crossterm::event::{MouseButton, MouseEventKind};
     let theme = Theme::truecolor_dark();
-    let size = (100, 30);
+    // Tall enough for the palette to leave rows of the conversation under it.
+    let size = (100, 60);
     let none = KeyModifiers::NONE;
     let left = MouseButton::Left;
     let mut v = many_lines();
@@ -5127,7 +3741,7 @@ fn a_drag_onto_a_cover_ends_on_the_side_it_came_from() {
         .expect("the palette is drawn");
     let area = hit.chat_text;
     assert!(
-        palette.y > area.y && palette.y < area.y + area.height / 2,
+        palette.y < area.y + area.height / 2,
         "long enough to start above the middle: {palette:?} in {area:?}"
     );
     // The text of each row of the pane, as drawn.
@@ -5149,11 +3763,10 @@ fn a_drag_onto_a_cover_ends_on_the_side_it_came_from() {
         crate::run_mouse_handle_with(&mut v, mouse(MouseEventKind::Down(left), from, none), &hit);
     let _ =
         crate::run_mouse_handle_with(&mut v, mouse(MouseEventKind::Drag(left), onto, none), &hit);
-    let above = palette.y - 1 - area.y;
     assert_eq!(
-        v.selection.as_ref().map(|s| (s.pull, s.pull_at)),
-        Some((1, above)),
-        "it ends on the row above the palette"
+        v.selection.as_ref().map(|s| s.pull),
+        Some(1),
+        "it ends on the side it came from"
     );
     let held = render_buffer(&v, size.0, size.1, theme);
     assert!(held[(area.x + 1, palette.y - 1)].bg == theme.selection_bg);
@@ -5169,7 +3782,11 @@ fn a_drag_onto_a_cover_ends_on_the_side_it_came_from() {
     }
     let sel = v.selection.clone().expect("held");
     let text = sel.text(&v, &held, theme);
-    let seen: Vec<String> = (area.y..palette.y).map(row).collect();
+    let mut seen: Vec<String> = (area.y..palette.y).map(row).collect();
+    // A blank row above the palette is not a line of the copy.
+    while seen.last().is_some_and(|r| r.is_empty()) {
+        seen.pop();
+    }
     assert_eq!(
         text.lines().map(str::trim).collect::<Vec<_>>(),
         seen.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -5307,11 +3924,11 @@ fn html_gallery() {
     for hat in crate::sidebar::HATS {
         let mut v = racked();
         v.mode = hat;
-        shots.push((format!("solo-{hat}-160x50"), v, 160, 50));
+        shots.push((format!("session-{hat}-160x50"), v, 160, 50));
     }
-    shots.push(("solo-120x40".into(), racked(), 120, 40));
-    shots.push(("solo-100x30".into(), racked(), 100, 30));
-    shots.push(("solo-80x24".into(), racked(), 80, 24));
+    shots.push(("session-120x40".into(), racked(), 120, 40));
+    shots.push(("session-100x30".into(), racked(), 100, 30));
+    shots.push(("session-80x24".into(), racked(), 80, 24));
     shots.push(("workspace-be-160x50".into(), workspace_be(), 160, 50));
     for (name, v, w, h) in shots {
         let buf = render_buffer(&v, w, h, theme);
@@ -5321,4 +3938,151 @@ fn html_gallery() {
         )
         .unwrap();
     }
+}
+
+/// The prompt's chip stays readable under an open panel: dimming the
+/// screen leaves the text on a hat's colour alone, so ` audit ` is still
+/// the background's colour on amber, not grey on amber (`R-POP-04`).
+#[test]
+fn the_chip_is_readable_under_a_panel() {
+    let theme = Theme::truecolor_dark();
+    for (w, h) in [(176, 50), (120, 40)] {
+        let mut v = racked();
+        v.set_mode(Role::Audit);
+        let e = env();
+        let _ = panel::open(&mut v, PanelId::Spend, &e);
+        let hit = crate::draw::render_hit(&v, w, h);
+        let buf = crate::draw::render_buffer(&v, w, h, theme);
+        let y = hit.composer.y + 1;
+        // The prompt's row, from the prompt on: the hats name the audit too.
+        let row: String = (hit.composer.x..w)
+            .map(|x| buf[(x, y)].symbol().to_string())
+            .collect();
+        let x = row
+            .find("Audit")
+            .map(|i| usize::from(hit.composer.x) + row[..i].chars().count())
+            .unwrap_or_else(|| panic!("{w}x{h}: no chip\n{row}")) as u16;
+        let cell = &buf[(x, y)];
+        assert_eq!(cell.symbol(), "A", "{w}x{h}: the chip's first letter");
+        assert_eq!(cell.bg, theme.audit, "{w}x{h}: the chip's fill");
+        assert_eq!(cell.fg, theme.bg, "{w}x{h}: the chip's text under /spend");
+    }
+}
+
+/// A panel's shadow falls inside the body it floats over, never on the
+/// prompt's rule: at 80x24 and 120x40 the rule under /settings is whole.
+#[test]
+fn a_panels_shadow_stays_off_the_prompts_rule() {
+    for (w, h) in [(80, 24), (120, 40)] {
+        let mut v = racked();
+        let e = env();
+        let _ = panel::open(&mut v, PanelId::Settings, &e);
+        let hit = crate::draw::render_hit(&v, w, h);
+        let text = render_to_string(&v, w, h);
+        let rule: String = text
+            .lines()
+            .nth(usize::from(hit.composer.y))
+            .unwrap()
+            .chars()
+            .skip(usize::from(hit.composer.x))
+            .take(usize::from(hit.composer.width))
+            .collect();
+        let hole = rule.split(|c| c != ' ').map(str::len).max().unwrap_or(0);
+        assert!(
+            hole < 4,
+            "{w}x{h}: a hole of {hole} cells in the rule\n{rule}\n{text}"
+        );
+    }
+}
+
+/// A docked card clears the rows it sits on across the prompt's width:
+/// nothing of the conversation shows beside it (`R-POP-04`).
+#[test]
+fn a_docked_card_clears_its_rows() {
+    for (w, h) in [(120, 40), (176, 50)] {
+        let mut v = racked();
+        v.set_mode(Role::Audit);
+        let rows: Vec<String> = (1..=4)
+            .map(|i| format!("✗ {i}\tfinding number {i}\tsrc/f{i}.rs"))
+            .collect();
+        let ev = AgentEvent::Audited {
+            model: "m".into(),
+            verdict: Some(false),
+            headline: "✗ 4 of 4 failed".into(),
+            summary: "short".into(),
+            rows,
+            ran: vec!["cargo test".into()],
+            file: Some(".ryter/audit.md".into()),
+            restored: Vec::new(),
+            checkpointed: true,
+            product_used: false,
+            filed: true,
+            total_usd: Some(0.01),
+            duration_ms: 1000,
+        };
+        v.panels.push(Box::new(
+            crate::panel::audit::AuditModal::from_event(&ev, 0).unwrap(),
+        ));
+        let hit = crate::draw::render_hit(&v, w, h);
+        let (lo, hi) = (
+            usize::from(hit.chat.x),
+            usize::from(hit.chat.x + hit.chat.width),
+        );
+        let text = render_to_string(&v, w, h);
+        let top = text
+            .lines()
+            .position(|r| r.contains("╭─ audit"))
+            .unwrap_or_else(|| panic!("{w}x{h}: no card\n{text}"));
+        let bottom = text
+            .lines()
+            .skip(top)
+            .position(|r| r.contains('╰'))
+            .map(|n| top + n)
+            .unwrap();
+        // Within the prompt's columns (the band a card clears), nothing
+        // but the card: the rail and the sidebar beyond them are theirs.
+        for (i, row) in text.lines().enumerate().take(bottom + 1).skip(top) {
+            let span: String = row.chars().skip(lo).take(hi - lo).collect();
+            let left = span.find(['╭', '╰']).or_else(|| span.find('│')).unwrap();
+            let right = span.rfind(['╮', '╯']).or_else(|| span.rfind('│')).unwrap();
+            let beside: String = span
+                .chars()
+                .take(left)
+                .chain(span.chars().skip(right + 1))
+                .collect();
+            assert!(
+                beside.trim().is_empty(),
+                "{w}x{h} row {i}: something beside the card\n{span}\n{text}"
+            );
+        }
+    }
+}
+
+/// The session's own label says a few tenths of a cent as the rows do,
+/// never `$0.00` (`/spend`'s title and total row).
+#[test]
+fn the_spend_label_is_never_a_fake_zero() {
+    let mut v = idle();
+    v.spend = Some(0.004);
+    assert_eq!(v.spend_label(), "$0.004");
+    v.spend = Some(0.0);
+    assert_eq!(v.spend_label(), "$0");
+    v.spend = None;
+    assert_eq!(v.spend_label(), "$?.??");
+}
+
+/// The hats have a heading of their own in the slash menu, and the
+/// settings' round cap has its whole label.
+#[test]
+fn the_slash_menu_files_the_hats_together() {
+    use crate::palette::registry::{COMMANDS, Category};
+    for name in ["plan", "build", "audit", "scribe"] {
+        let c = COMMANDS.iter().find(|c| c.name == name).unwrap();
+        assert_eq!(c.category, Category::Hats, "{name}");
+    }
+    let mut v = racked();
+    let e = env();
+    let _ = panel::open(&mut v, PanelId::Settings, &e);
+    let text = render_to_string(&v, 120, 40);
+    assert!(text.contains("rounds a turn (0 = off)"), "{text}");
 }

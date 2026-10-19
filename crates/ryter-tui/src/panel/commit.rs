@@ -157,6 +157,7 @@ impl Panel for Commit {
         }
         let list_h = self.files.len().min((h / 3).max(3));
         let first = super::window(self.selected, self.files.len(), list_h);
+        let hidden = self.files.len() - list_h;
         for (i, (f, on)) in self.files.iter().enumerate().skip(first).take(list_h) {
             let color = match f.status {
                 Status::Added => theme.success,
@@ -178,6 +179,17 @@ impl Panel for Commit {
                 theme,
                 Some(color),
             ));
+        }
+        // A list cut short says so: seven files must never read as five.
+        if hidden > 0 {
+            let above = first;
+            let below = hidden - above;
+            let where_ = match (above, below) {
+                (0, n) => format!("{n} more below · ↑↓"),
+                (n, 0) => format!("{n} more above · ↑↓"),
+                (a, b) => format!("{a} more above · {b} below · ↑↓"),
+            };
+            lines.push(widgets::note(&where_, theme));
         }
         lines.push(widgets::blank(theme));
         match self.stage {
@@ -339,5 +351,62 @@ impl Panel for Commit {
 
     fn box_clone(&self) -> Box<dyn Panel> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ryter_core::review::{FileChange, Status};
+
+    fn text(body: Body) -> String {
+        body.lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect()
+    }
+
+    /// On a short screen the file list says how many files are out of
+    /// sight, so a commit of seven files never reads as five.
+    #[test]
+    fn a_short_list_says_how_many_more() {
+        let files = (1..=7)
+            .map(|i| {
+                (
+                    FileChange {
+                        path: format!("src/f{i}.rs"),
+                        status: Status::Added,
+                        added: i,
+                        removed: 0,
+                        binary: false,
+                    },
+                    true,
+                )
+            })
+            .collect();
+        let c = Commit {
+            files,
+            selected: 0,
+            message: "Add seven".into(),
+            stage: Stage::Ready,
+            receipt: Receipt::default(),
+            error: None,
+        };
+        let v = View::new("c".into(), "m".into(), "/tmp".into());
+        let short = text(c.render(&v, 90, 12, Theme::truecolor_dark()));
+        assert!(short.contains("src/f4.rs"), "{short}");
+        assert!(!short.contains("src/f5.rs"), "{short}");
+        assert!(short.contains("3 more"), "{short}");
+        let tall = text(c.render(&v, 90, 40, Theme::truecolor_dark()));
+        assert!(
+            tall.contains("src/f7.rs") && !tall.contains("more"),
+            "{tall}"
+        );
     }
 }

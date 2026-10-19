@@ -348,8 +348,9 @@ pub struct RenderOpts {
     pub continuation: bool,
     /// Diff rows shown under an edit; the rest fold into one line.
     pub diff_rows: usize,
-    /// Rows for the ledger: the timeline gutter carries the time and the
-    /// speaker mark, so headers drop them and tool rows lead to their result.
+    /// The conversation's timeline style (the ledger's, which the
+    /// workspace kept): the gutter carries the time and the speaker mark,
+    /// so headers drop them and tool rows lead to their result.
     pub ledger: bool,
 }
 

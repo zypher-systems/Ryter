@@ -1,22 +1,21 @@
- ryter  ·  build                                                                        ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system                                                                           ╭─ session ────────────────────────╮
-   welcome · /help for keys                                                         │ untitled                   build │
-                                                                                    │ tools ask                        │
-                                                                                    ╰──────────────────────────────────╯
-                                                                                    ╭─ model ──────────────────────────╮
-                                                                                    │ spacexai ●              grok-4.6 │
-                                                                                    │ ctx █░░░░░░░░░░░░░░░░░░░   5%    │
-                                                                                    │     12.4k / 256k tokens          │
-                                                                                    │ price unknown                    │
-                                                                                    │ reasoning          auto · medium │
-                                                                                    ╰──────────────────────────────────╯
-                                                                                    ╭─ spend ──────────────────────────╮
-                                                                                    │ session                    $?.?? │
-                                                                                    ╰──────────────────────────────────╯
-                                                                                    ╭─ budget ─────────────────── off ─╮
-                                                                                    │ cap                          off │
-                                                                                    ╰──────────────────────────────────╯
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ ryter                           New session                           ● Idle · asks first Activity
+ ⎇ 0.2.0-patch                   0.2.0-patch                                               grok-4.6
+                                                                                           Idle
+ Hats                            ╭ commands ─────────────────────────────────── 4 of 31 ╮
+ ● Plan                      $0  │ mo                                                   │▌ ────────────────────────────
+   grok-4.6                      │›/models         Choose models: one for every hat… ▸  │▌ Context
+   read only                     │ /permissions    Durable allow/ask/deny bash rule… ▸  │▌ █▏
+ ┃ Build                     $0  │ /tools          Tool permission mode for this se… ▸  │▌ 12k of 256k               5%
+   grok-4.6                      │  ↑↓  move   enter  run   esc  close                  │▌
+   asks first                    ╰──────────────────────────────────────────────────────╯▌ ────────────────────────────
+ ── Specialists                   ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ Spend · no cap
+ ● Audit                     $0                                                            $0
+   grok-4.6                                                                                Build                     $0
+   checkpoint
+ ● Scribe                    $0                                                            ────────────────────────────
+   follows all hats                                                                        ────────────────────────────
+   docs only
 
 
 
@@ -27,14 +26,15 @@
 
 
 
-╭─ commands ───────────────────────────────────────────────── 4 of 31 ─╮
-│ mo                                                                   │
-│›/models         Choose models: one for every hat, or one each fo… ▸  │
-│ /permissions    Durable allow/ask/deny bash rules from the TUI    ▸  │
-│ /tools          Tool permission mode for this session             ▸  │
-│ /skills         Browse, run, create, and remove skills and user … ▸  │
-╰─ enter run · tab complete · esc close ───────────────────────────────╯
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│› /mo█                                                                                                                │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    tab complete    enter run    → open    esc close
+
+
+
+
+
+
+
+                                 ╭──────────────────────────────────────────────────────╮
+                                 │ Build  › /mo█                                        │▌
+                                 ╰──────────────────────────────────────────────────────╯▌
+                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  ↑↓  move   enter  run   esc  close                                                               focus · conversation
