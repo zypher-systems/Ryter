@@ -343,7 +343,7 @@ two distinct guarantees.
   (`theme.selection_bg`); the release copies it and clears the highlight. A press and release
   in one cell is a click, copies nothing, and acts on the release (the status row, a card).
 - **R-SEL-02** A selection stays in the pane the press landed in: the conversation's text
-  column (never the ledger's timeline; with the workbench open, its middle pane), the
+  column (never the timeline beside it), the
   composer's text rows, a card, whatever is drawn over the conversation (the pinned
   question, the palette, the "new rows" mark), or the whole screen while a panel is open.
 - **R-SEL-07** What is highlighted is what is copied. A conversation's selection is painted

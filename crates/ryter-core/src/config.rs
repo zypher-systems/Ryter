@@ -178,7 +178,7 @@ pub struct UiConfig {
     pub reasoning: String,
     /// Enable mouse capture (wheel scroll, card clicks).
     pub mouse: bool,
-    /// The info panel (classic layout) or the rail (ledger), at startup.
+    /// The instruments beside the conversation, at startup.
     pub panel: bool,
     /// `auto` | `truecolor` | `256` | `16`.
     pub colors: String,
@@ -188,10 +188,6 @@ pub struct UiConfig {
     pub line_numbers: bool,
     /// `/commit` adds a `Ryter:` trailer: model, cost, tests.
     pub receipts: bool,
-    /// `workspace` (hat rack, three views, instruments) | `ledger` (the
-    /// 0.25 reading column) | `classic` (chat beside the info cards, as
-    /// before 0.6.0).
-    pub layout: String,
     /// Open a page the model shows (`show_page`) in the browser. Off, the
     /// chat gives its link only.
     pub open_pages: bool,
@@ -207,17 +203,7 @@ pub struct UiConfig {
     pub nerd_font: bool,
 }
 
-impl UiConfig {
-    /// The 0.5 layout: chat beside the info cards.
-    pub fn classic(&self) -> bool {
-        self.layout == "classic"
-    }
-
-    /// The workspace: hat rack, conversation / hats / sessions, instruments.
-    pub fn workspace(&self) -> bool {
-        self.layout == "workspace"
-    }
-}
+impl UiConfig {}
 
 impl Default for UiConfig {
     fn default() -> Self {
@@ -231,7 +217,6 @@ impl Default for UiConfig {
             timestamps: true,
             line_numbers: true,
             receipts: true,
-            layout: "workspace".into(),
             open_pages: true,
             start_hat: "plan".into(),
             bell: false,
@@ -264,6 +249,8 @@ pub const UI_KEYS: &[&str] = &[
     // offer; a settings file that still has either loads.
     "offer_audit",
     "offer_test",
+    // Retired with the ledger and classic screens (the workspace is the
+    // screen): a settings file that still names a layout loads.
     "layout",
     "open_pages",
     "start_hat",
@@ -1386,8 +1373,6 @@ struct UiFile {
     #[serde(skip_serializing_if = "Option::is_none")]
     receipts: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    layout: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     open_pages: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     start_hat: Option<String>,
@@ -1409,7 +1394,6 @@ impl From<&UiConfig> for UiFile {
             timestamps: Some(ui.timestamps),
             line_numbers: Some(ui.line_numbers),
             receipts: Some(ui.receipts),
-            layout: Some(ui.layout.clone()),
             open_pages: Some(ui.open_pages),
             start_hat: Some(ui.start_hat.clone()),
             bell: Some(ui.bell),
@@ -1449,9 +1433,6 @@ impl UiFile {
         }
         if let Some(v) = self.open_pages {
             ui.open_pages = v;
-        }
-        if let Some(v) = self.layout {
-            ui.layout = v;
         }
         if let Some(v) = self.start_hat {
             ui.start_hat = v;

@@ -1,24 +1,24 @@
- ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────
- · system
-       ╭─ tool permissions ─────────────────────────────────────────────╮
-       │›● ask     current                                              │
-       │    what the gate asks about (deleting, publishing, writing     │
-       │    outside the project, the project's .env) pauses for a y/n.  │
-       │                                                                │
-       │ ○ always                                                       │
-       │    a yes to everything inside the project; writes outside it   │
-       │    and to the project's .env still ask.                        │
-       │                                                                │
-       │ ○ yolo                                                         │
-       │    a yes to every question, outside the project too. Root      │
-       │    still asks; what is refused (secrets, the disk) stays       │
-       │ ↑↓ move   enter apply   esc   changes apply immediately        │
-       ╰────────────────────────────────────────────────────────────────╯
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ New session                     ● Idle · asks first Activity
+ 0.2.0-patch                                         grok-4.6
+╭─ tool permissions ───────────────────────────────╮ Idle
+│›● ask     current                                │▌
+│    what the gate asks about (deleting,           │▌──────────────────────────
+│    publishing, writing outside the project, the  │▌Context
+│    project's .env) pauses for a y/n.             │▌█▏
+│                                                  │▌12k of 256k             5%
+│ ○ always                                         │▌
+│    a yes to everything inside the project;       │▌──────────────────────────
+│    writes outside it and to the project's .env   │▌Spend · no cap
+│    still ask.                                    │▌$0
+│                                                  │▌Build                   $0
+│ ○ yolo                                           │▌
+│ ↑↓ move   enter apply   esc                      │▌──────────────────────────
+╰──────────────────────────────────────────────────╯▌──────────────────────────
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 
-
-
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
-│› what should change?                                                         │
-╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    enter apply    esc     changes apply immediately
+ ╭────────────────────────────────────────────────╮
+ │ Build  › what should change?                   │▌
+ ╰────────────────────────────────────────────────╯▌
+  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands                      focus · conversation

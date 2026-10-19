@@ -8,8 +8,6 @@ use crate::chat::wrap;
 
 /// Pastes longer than this are summarized (`R-COMP-10`).
 pub const PASTE_SUMMARY_AT: usize = 2000;
-/// Character counter appears past this (`R-COMP-08`).
-pub const COUNTER_AT: usize = 200;
 /// Maximum visible rows before internal scrolling (`R-LAYOUT-03`).
 pub const MAX_ROWS: usize = 8;
 

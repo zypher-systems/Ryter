@@ -11,7 +11,6 @@ use ratatui::widgets::{Clear, Paragraph};
 
 use crate::action::Action;
 use crate::chat::wrap;
-use crate::panel::chrome::{Chrome, draw_frame};
 use crate::theme::Theme;
 use crate::view::View;
 use registry::{COMMANDS, Category, CommandSpec};
@@ -290,21 +289,6 @@ pub fn close(view: &mut View) {
     }
 }
 
-/// Floating panel geometry above the composer (`R-PAL-01`).
-pub fn rect(chat: Rect, composer_top: u16, rows: usize) -> Rect {
-    let width = chat.width.clamp(24, 72);
-    let body_h = composer_top.saturating_sub(chat.y);
-    let max_h = body_h.saturating_sub(4).max(6);
-    let height = u16::try_from(rows + 2).unwrap_or(max_h).clamp(6, max_h);
-    let y = composer_top.saturating_sub(height);
-    Rect {
-        x: chat.x,
-        y: y.max(chat.y),
-        width,
-        height,
-    }
-}
-
 /// Rows the palette wants (headers + matches, plus the echoed filter).
 fn body_rows(view: &View, ms: &[Match], q: &str) -> Vec<Row> {
     let mut rows = Vec::new();
@@ -337,79 +321,11 @@ enum Row {
     Empty,
 }
 
-/// Draw the palette over `chat`, above `composer_top`.
-pub fn draw(frame: &mut Frame, chat: Rect, composer_top: u16, view: &View, theme: Theme) {
-    if view.palette.is_none() {
-        return;
-    }
-    if view.ui.workspace() {
+/// Draw the palette over `chat`.
+pub fn draw(frame: &mut Frame, chat: Rect, _composer_top: u16, view: &View, theme: Theme) {
+    if view.palette.is_some() {
         draw_workspace(frame, chat, view, theme);
-        return;
     }
-    let Some(p) = &view.palette else {
-        return;
-    };
-    let ms = matches(view);
-    let q = filter(view);
-    let rows = body_rows(view, &ms, &q);
-    let area = rect(chat, composer_top, rows.len());
-    view.covers.borrow_mut().push(area);
-    let total = entries(view).len();
-    let chrome = Chrome {
-        title: "commands".into(),
-        status: format!("{} of {}", ms.len(), total),
-        legend: "enter run · tab complete · esc close".into(),
-        border: theme.panel_border,
-        heavy: false,
-    };
-    let inner = draw_frame(frame, area, &chrome, theme);
-    let width = inner.width as usize;
-    // Keep the selection visible.
-    let sel_row = rows
-        .iter()
-        .position(|r| matches!(r, Row::Match(i) if *i == p.selected))
-        .unwrap_or(0);
-    let vis = inner.height as usize;
-    let start = (sel_row + 1).saturating_sub(vis);
-    let mut lines: Vec<Line> = Vec::new();
-    for row in rows.iter().skip(start).take(vis) {
-        match row {
-            Row::Filter => {
-                lines.push(Line::from(vec![
-                    Span::styled(" ", theme.panel()),
-                    Span::styled(
-                        if q.is_empty() {
-                            "type to filter".to_string()
-                        } else {
-                            q.clone()
-                        },
-                        if q.is_empty() {
-                            theme.panel_muted()
-                        } else {
-                            theme.panel()
-                        },
-                    ),
-                ]));
-            }
-            Row::Blank => lines.push(Line::from(Span::styled("", theme.panel()))),
-            Row::Header(c) => lines.push(Line::from(Span::styled(
-                format!("  {}", c.title()),
-                theme.panel_muted().add_modifier(Modifier::BOLD),
-            ))),
-            Row::Empty => {
-                lines.push(Line::from(Span::styled(
-                    format!(" no command matches \"{q}\""),
-                    theme.panel_muted(),
-                )));
-                lines.push(Line::from(Span::styled(
-                    " press enter to send it as a message instead",
-                    theme.panel_muted(),
-                )));
-            }
-            Row::Match(i) => lines.push(match_line(&ms[*i], *i == p.selected, width, theme)),
-        }
-    }
-    frame.render_widget(Paragraph::new(lines).style(theme.panel()), inner);
 }
 
 /// Workspace palette: a rounded dialog over a dimmed stage, grouped.

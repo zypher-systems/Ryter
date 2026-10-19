@@ -1,24 +1,24 @@
- ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────
- · system
-   welcome · /help for keys
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ New session                     ● Idle · asks first Activity
+ 0.2.0-patch                                         grok-4.6
+                                                     Idle
+        ·  welcome · /help for keys
+╭─ changes ────────────────────────────────────────╮ ──────────────────────────
+│  uncommitted   last turn                         │▌Context
+│                                                  │▌█▏
+│ not a git repository                             │▌12k of 256k             5%
+│                                                  │▌
+│                                                  │▌──────────────────────────
+│ ↑↓ file   pgup/pgdn diff   tab scope   c commit  │▌Spend · no cap
+╰──────────────────────────────────────────────────╯▌$0
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀Build                   $0
 
-    ╭─ changes ────────────────────────────────────────────────────────────╮
-    │  uncommitted   last turn                                             │
-    │                                                                      │
-    │ not a git repository                                                 │
-    │                                                                      │
-    │                                                                      │
-    │ ↑↓ file   pgup/pgdn diff   tab scope   x undo file   c commit   esc  │
-    ╰──────────────────────────────────────────────────────────────────────╯
+                                                     ──────────────────────────
+                                                     ──────────────────────────
 
 
-
-
-
-
-
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
-│› what should change?                                                         │
-╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ file    pgup/pgdn diff    tab scope    x undo file    c commit    esc
+ ╭────────────────────────────────────────────────╮
+ │ Build  › what should change?                   │▌
+ ╰────────────────────────────────────────────────╯▌
+  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands                      focus · conversation

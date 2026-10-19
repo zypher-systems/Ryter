@@ -460,8 +460,8 @@ fn populate_view(
     opts: &TuiOpts,
 ) {
     view.ui = cfg.ui.clone();
-    // `[ui] panel`: the info cards on the classic screen, the sidebar on
-    // the ledger's solo screen. ^b shows and hides either.
+    // `[ui] panel`: the instruments beside the conversation. ^b and F2
+    // show and hide them.
     view.panel_visible = cfg.ui.panel;
     // How many earlier sessions this project has, for the opening screen:
     // the one just created is not one to go back to.
@@ -829,7 +829,6 @@ pub(crate) fn mouse_handle(view: &mut View, m: MouseEvent) -> Action {
         chat: Rect::default(),
         chat_text: Rect::default(),
         covers: Vec::new(),
-        cards: Vec::new(),
         activity: Rect::default(),
         composer: Rect::default(),
         clicks: Vec::new(),
@@ -909,11 +908,7 @@ fn on_mouse(view: &mut View, m: MouseEvent, hit: &Hit) -> Action {
             } else if inside(hit.activity) && hit.activity.height > 0 {
                 Some(crate::select::Click::Pane)
             } else {
-                hit.cards
-                    .iter()
-                    .find(|(_, rect)| inside(*rect))
-                    .and_then(|(card, _)| card.opens())
-                    .map(crate::select::Click::Open)
+                None
             };
             // The press may be the start of a selection: it is one once the
             // pointer leaves this cell with the button down. It stays in
@@ -938,8 +933,6 @@ fn on_mouse(view: &mut View, m: MouseEvent, hit: &Hit) -> Action {
                     ..hit.composer
                 };
                 (text, None)
-            } else if let Some((_, card)) = hit.cards.iter().find(|(_, r)| inside(*r)) {
-                (*card, None)
             } else {
                 (screen, None)
             };

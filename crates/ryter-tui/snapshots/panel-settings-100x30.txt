@@ -1,30 +1,30 @@
- ryter  ·  build                            grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────────────────────────
-              ╭─ settings ───────────────────────────────────────────────────────────╮
-              │ STARTUP                                                              ┃
-              │› start in                 ‹ plan ›                           default ┃
-              │    read and propose first                                            ┃
-              │                                                                      ┃
-              │ SPEND                                                                ┃
-              │  budget usd (0 = off)     ‹ 0.00 ›                           default ┃
-              │  warn usd                 ‹ 1.00 ›                           default │
-              │  rounds a turn (0 = off)  ‹ 150 ›                            default │
-              │  audit usd (0 = off)      ‹ 0.00 ›                           default │
-              │                                                                      │
-              │ TOOLS                                                                │
-              │  permission mode          ‹ ask ›                            default │
-              │  features.web             [ off ]                            default │
-              │                                                                      │
-              │ SANDBOX                                                              │
-              │  profile                  ‹ off ›                            default │
-              │                                                                      │
-              │                 OFF           workspace     read-only                │
-              │ project files   read, write   read, write   read                     │
-              │ ↑↓ move   space/←→ change   enter edit   esc done                    │
-              ╰──────────────────────────────────────────────────────────────────────╯
-
-
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────────────────────────╮
-│› what should change?                                                                             │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    space/←→ change    enter edit    esc done
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ ryter                    ╭─ settings ───────────────────────────────────╮ Activity
+ ⎇ 0.2.0-patch            │ STARTUP                                      ┃▌grok-4.6
+                          │› start in                 ‹ plan ›   default ┃▌Idle
+ Hats                     │    read and propose first                    ┃▌
+ ● Plan     $0  read only │                                              ┃▌────────────────────────
+ ┃ Build   $0  asks first │ SPEND                                        ┃▌Context
+ ── Specialists           │  budget usd (0 = off)     ‹ 0.00 ›   default ┃▌█▏
+ ● Audit   $0  checkpoint │  warn usd                 ‹ 1.00 ›   default ┃▌12k of 256k           5%
+ ● Scribe   $0  docs only │  rounds a turn (0 = off)  ‹ 150 ›    default ┃▌
+                          │  audit usd (0 = off)      ‹ 0.00 ›   default ┃▌────────────────────────
+                          │                                              │▌Spend · no cap
+                          │ TOOLS                                        │▌$0
+                          │  permission mode          ‹ ask ›    default │▌Build                 $0
+                          │  features.web             [ off ]    default │▌
+                          │                                              │▌────────────────────────
+                          │ SANDBOX                                      │▌────────────────────────
+                          │  profile                  ‹ off ›    default │▌
+                          │                                              │▌
+                          │                 OFF           workspace     r│▌
+                          │ project files   read, write   read, write   r│▌
+                          │ rest of home    read, write   no            n│▌
+                          │ your tools      yes           yes           y│▌
+                          │ your keys       rule only †   never         n│▌
+                          │ /tmp            read, write   read, write   r│▌
+                          │ ↑↓ move   space/←→ change   enter edit       │▌
+                          ╰──────────────────────────────────────────────╯▌
+                           ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views                         focus · conversation

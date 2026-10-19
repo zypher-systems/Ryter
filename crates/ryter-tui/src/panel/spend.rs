@@ -20,6 +20,20 @@ pub struct Spend {
     project: bool,
 }
 
+/// `$14.20`, or `$14.20+` when some calls had no known price (never a
+/// silent undercount).
+pub fn project_label(p: &ryter_core::project::ProjectSpend) -> String {
+    if p.calls > 0 && p.calls == p.unpriced_calls {
+        "$?.??".into()
+    } else if p.unpriced_calls > 0 {
+        format!("{}+", crate::chat::turn_usd(p.total_usd))
+    } else {
+        // As the sidebar says it: three places under a dime, never a
+        // fake `$0.00` for a project that has cost something.
+        crate::chat::turn_usd(p.total_usd)
+    }
+}
+
 /// `[name, usd]` rows, largest first, at most `n`.
 fn usd_rows(map: &std::collections::BTreeMap<String, f64>, n: usize) -> Vec<Vec<String>> {
     let mut v: Vec<(&String, &f64)> = map.iter().filter(|(_, u)| **u > 0.0).collect();
@@ -41,7 +55,7 @@ fn project_lines(view: &View, w: usize, theme: Theme) -> Vec<Line<'static>> {
     lines.push(widgets::text(
         &format!(
             "project  {}   across {} session(s) · {}",
-            crate::info::cards::project_label(p),
+            project_label(p),
             p.sessions,
             p.root.display()
         ),
@@ -165,7 +179,7 @@ impl Panel for Spend {
 
     fn status(&self, view: &View) -> String {
         match (&view.project_spend, self.project) {
-            (Some(p), true) => crate::info::cards::project_label(p),
+            (Some(p), true) => project_label(p),
             _ => view.spend_label(),
         }
     }

@@ -1,40 +1,40 @@
- ryter  ·  build                                                grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- · system
-   welcome · /help for keys
-
-    ╭─ models ─────────────────────────────────────────────────────────────────────────────────────── 4 · loading ─╮
-    │ SEATS                       │ ⌕ type to filter                                                               │
-    │›  All hats                  │ model           context   in/M  out/M  reasoning  connection                   │
-    │   grok-4.6                  │ grok-4.6           500k     $2     $6  auto       spacexai                     │
-    │   Plan                      │ grok-4.5           256k     $2     $6  auto       spacexai                     │
-    │   follows all hats          │ grok-4.3           256k  $1.25   $2.5  auto       spacexai                     │
-    │   Build                     │ grok-build-0.1     256k     $1     $2  auto       spacexai                     │
-    │   follows all hats          │                                                                                │
-    │   Audit                     │                                                                                │
-    │   follows all hats          │                                                                                │
-    │   Scribe                    │                                                                                │
-    │   follows all hats          │                                                                                │
-    │                             │                                                                                │
-    │                             │                                                                                │
-    │                             │                                                                                │
-    │                             │                                                                                │
-    │                             │                                                                                │
-    │                             │                                                                                │
-    │                             │                                                                                │
-    │                             │                                                                                │
-    │                             │                                                                                │
-    │                             │ spacexai · grok-4.6 · reasoning auto (medium in build) · 500k ctx · $2/M inpu… │
-    │ ↑↓ seat   → models          │ enter set for all hats   ← seats   esc done   tab reasoning   s sort           │
-    ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-
-
-
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ ryter                           New session                           ● Idle · asks first Activity
+ ⎇ 0.2.0-patch                   0.2.0-patch                                               grok-4.6
+                                                                                           Idle
+ Hats                                   ·  welcome · /help for keys
+ ● Plan                      $0 ╭─ models ───────────────────────────────── 4 · loading ─╮ ────────────────────────────
+   grok-4.6                     │ SEATS                │ ⌕ type to filter                │▌Context
+   read only                    │›  All hats           │ model            in/M  out/M    │▌█▏
+ ┃ Build                     $0 │   grok-4.6           │ grok-4.6           $2     $6    │▌12k of 256k               5%
+   grok-4.6                     │   Plan               │ grok-4.5           $2     $6    │▌
+   asks first                   │   follows all hats   │ grok-4.3        $1.25   $2.5    │▌────────────────────────────
+ ── Specialists                 │   Build              │ grok-build-0.1     $1     $2    │▌Spend · no cap
+ ● Audit                     $0 │   follows all hats   │                                 │▌$0
+   grok-4.6                     │   Audit              │                                 │▌Build                     $0
+   checkpoint                   │   follows all hats   │                                 │▌
+ ● Scribe                    $0 │   Scribe             │                                 │▌────────────────────────────
+   follows all hats             │   follows all hats   │                                 │▌────────────────────────────
+   docs only                    │                      │                                 │▌
+                                │                      │                                 │▌
+                                │                      │                                 │▌
+                                │                      │                                 │▌
+                                │                      │                                 │▌
+                                │                      │                                 │▌
+                                │                      │                                 │▌
+                                │                      │                                 │▌
+                                │                      │                                 │▌
+                                │                      │ spacexai · grok-4.6 · reasonin… │▌
+                                │ ↑↓ seat   → models   │ enter set for all hats   ← seats│▌
+                                ╰────────────────────────────────────────────────────────╯▌
+                                 ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 
 
 
 
-╭─ filter ─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│› typing goes to the search in the panel above                                                                        │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ seat    → models    esc done
+
+                                 ╭──────────────────────────────────────────────────────╮
+                                 │› typing goes to the search in the panel above        │▌
+                                 ╰──────────────────────────────────────────────────────╯▌
+                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views   f2  instruments                           focus · conversation

@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-19 — The workspace is the only screen
+
+**Decision.** The ledger layout (0.6.0 to 0.26.0's reading column with its sidebar), the classic layout (the 0.5 screen) and the `^t` workbench are removed. `[ui] layout` goes; a settings file that still names a layout loads, as the retired keys do. `/changes` opens the changes panel on every screen. The design contracts for the removed screens stay in `docs/` marked retired. Two things the workspace had lost on the way are kept: a click on the status row opens the reasoning pane, and `NO_COLOR` leaves every cell reset (the workspace's drop shadow is not drawn without colour, and the prompt's chip is reverse video).
+
+**Why.** The user, after the second polish pass on 2026-10-19: "if the old ledger screens are needed we can remove ^t and those screens", and on the choice between dropping the workbench alone or the old layouts with it, the latter. One screen is one screen to polish, test and describe; the reviewer sees the workspace and nothing else, and 2,400 lines of drawing code plus 150 golden snapshots for screens nobody opens were weight. The 0.27.0 note had said the ledger and classic stay available; this reverses it, by the user's word.
+
+**Rejected.** Keeping the ledger behind a flag: every screen rule would need to be tested twice, and the bugs found in the first polish pass were in the shared code paths that a second screen keeps alive. A workspace-side workbench: `/changes` already shows each file's diff with per-file undo; a three-pane screen of its own can come back when someone misses it.
+
 ### 2026-10-19 — The hint bar carries the open card's own keys, and the workspace reads in light and in sixteen colours
 
 **Decision.** On the workspace screen the bottom bar's keys while a card is open are the card's own legend (the plan panel's approve, adjust and reject; the audit card's repair; `a edits` only on an allow card), followed by the keys that always apply. The light theme's `faint` is set outright so the section labels read at 4.5:1 or better, and the theme test holds it there. In sixteen colours the hat that is on keeps the sidebar's background and is marked by its bar and bold name, since a hat's colour on the terminal's grey is unreadable. On a Hats page too short for a hat's card the hat gets one line. A session with no message and no price says `$0`; `$?.??` is for a run that had no price. The session's own spend label uses the three-place form. The hats have their own heading in the slash menu, every tool has a short verb, the round cap's label fits, and `doctor` says what its unknown-price check means.

@@ -1,5 +1,7 @@
 # One column beside the conversation: the sidebar screen
 
+**Retired 2026-10-19.** The ledger screen this contract describes (and the classic screen and the `^t` workbench with it) was removed once the workspace became the only screen; `[ui] layout` is gone and a settings file that still names one loads. What follows is kept as the record of what was built and why; the rules that outlived the screen (the colours, the hats' rows, the cards) live on in the workspace.
+
 Status: approved 2026-10-10 (mockup canvas: https://claude.ai/artifact/CpYpB64B8CZRqP4V63PRd3, the Route E boards E0 to E3). Not built yet; §17 will record where the build differs. The boards were drawn on 0.24.1's transcript; the transcript this contract keeps is 0.25.0's (§1).
 
 This contract replaces the screen described by `docs/hat-rack-design.md` and the rack half of `docs/specialists-design.md`. Where they disagree, this one wins. The audit and scribe hats, the plan file and the keys between rows are unchanged and stay where they are described.

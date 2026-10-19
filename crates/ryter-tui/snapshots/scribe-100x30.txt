@@ -1,30 +1,30 @@
-         ●  dusty  fix the blocking finding                   ↑ 2     │ RYTER
-  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥    │ empty-query fix
-         ●  dusty                                                     │ shop · search-patch
-         │  fix the blocking finding                               ┃  │
-         │                                                         ┃  │ hats
-         ├─ write  app/server.js                             +1 −1 ┃  │   plan       1 turn  $0.004
-         │    1   app.get('/search', (req, res) => {               ┃  │   build      2 turns $0.021
-         │    2 -   const q = (req.query.q || '').trim()           ┃  │   ──────────── specialists
-         │    2 +   const q = String(req.query.q ?? '').trim()     ┃  │   audit ✗    1 turn  $0.040
-         │    3     if (!q) return res.json([])                    ┃  │ ▸ scribe     1 turn      $0
-         │    4     res.json(find(q))                              ┃  │
-         ├─ write  test/search.test.js                       +4 −0 ┃  │ now
-         │     5     assert.deepEqual(await search(''), [])        ┃  │   grok-4.6
-         │     6   })                                              ┃  │   idle
-         │     7 +                                                 ┃  │
-         │     8 + test('a missing query finds nothing', async ()  ┃  │ context
-         │         => {                                            ┃  │   ━━━━━━━────────────   38%
-         │     9 +   assert.deepEqual(await search(), [])          ┃  │   97k of 256k
-         │    10 + })                                              ┃  │
-         └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.0… ┃  │ spend
-         │                                                         ┃  │   session    $0.065  no cap
-         ├─ write  docs/install.md                  new · 20 lines ┃  │   project    $4.82
-         │    too large to show here · /changes has the diff       ┃  │
-         ├─ edit   README.md                                 +3 −1 ┃  │ changes
-         │    too large to show here · /changes has the diff       ┃  │   2 files uncommitted
-         └─ ✓ 2 tools · 2 files (1 new, 1 changed, +23 −1) · 0.9s… ┃  │
-──────────────────────────────────────────────────────────────────────│
-  scribe  › what should be documented?                                │
-
- $ spend    enter send    tab audit    ⇧tab plan · build    / commands    ^t changes    ^c quit
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ shop                      empty-query fix             ● Done · asks first Activity
+ ⎇ search-patch            search-patch  ·  2 files uncommitted            grok-4.6
+                                                                           Done
+ Hats                             ●  dusty  fix the blocking find…  ↑ 12
+ ● Plan $0.004  read only  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥  ────────────────────────
+ ● Build$0.021  asks firs         │    3     if (!q) return res.json([])   Context
+ ── Specialists                   │    4     res.json(find(q))             ████████▊
+ ● Audit ✗$0.040  checkpo         ├─ write  test/search.test.js     +4 −0  97k of 256k          38%
+ ┃ Scribe   $0  docs only         │     5     assert.deepEqual(await sear
+                                  │         ch(''), [])                    ────────────────────────
+                                  │     6   })                             Spend · no cap
+                                  │     7 +                                $0.065
+                                  │     8 + test('a missing query finds n  Plan ▊            $0.004
+                                  │         othing', async () => {         Build ████▎       $0.021
+                                  │     9 +   assert.deepEqual(await sear  Audit ████████    $0.040
+                                  │         ch(), [])                      Scribe                $0
+                                  │    10 + })
+                                  └─ ✓ answered · 2 files (2 changed, +5…  ────────────────────────
+                                  │                                        Uncommitted · 2
+                                  ├─ write  docs/instal…   new · 20 lines  app/server.js      +2 −1
+                                  │    too large to show here · /changes…  test/search.t…       +10
+                                  ├─ edit   README.md               +3 −1
+                                  │    too large to show here · /changes…  ────────────────────────
+                                  └─ ✓ 2 tools · 2 files (1 new, 1 chang…
+                           ╭────────────────────────────────────────────╮
+                           │ Scribe  › what should be documented?       │▌
+                           ╰────────────────────────────────────────────╯▌
+                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views                         focus · conversation

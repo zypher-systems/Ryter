@@ -1,24 +1,24 @@
- ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────
-    ╭─ help ───────────────────────────────────────────── [keys] commands ─╮
-    │ ⌕ type to filter                                                     ┃
-    │ GLOBAL                                                               ┃
-    │  ^c         clear composer → cancel turn → quit (double-press)       │
-    │  ^d         quit when the composer is empty                          │
-    │  ^r         toggle the reasoning pane                                │
-    │  ^b         show or hide the instruments (the ledger's sidebar)      │
-    │  ^o         show every edit, audit, and folded turn whole, or folded │
-    │  ^t         the workbench: what changed, one change at a time (ledg… │
-    │  ^l         redraw                                                   │
-    │  ^g         release/grab the mouse (release it to select and copy t… │
-    │  f1         open /help                                               │
-    │  esc        back one level                                           │
-    │                                                                      │
-    │ ←→ section   ↑↓ scroll   pgup pgdn page   esc close                  │
-    ╰──────────────────────────────────────────────────────────────────────╯
-
-
-╭─ filter ─────────────────────────────────────────────────────────────────────╮
-│› typing goes to the search in the panel above                                │
-╰──────────────────────────────────────────────────────────────────────────────╯
- ←→ section    ↑↓ scroll    pgup pgdn page    esc close
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+╭─ help ───────────────────────── [keys] commands ─╮ Activity
+│ ⌕ type to filter                                 ┃▌grok-4.6
+│ GLOBAL                                           ┃▌Idle
+│  ^c         clear composer → cancel turn → quit… ┃▌
+│  ^d         quit when the composer is empty      ┃▌──────────────────────────
+│  ^r         toggle the reasoning pane            │▌Context
+│  ^b         show or hide the instruments beside… │▌█▏
+│  ^o         show every edit, audit, and folded … │▌12k of 256k             5%
+│  ^l         redraw                               │▌
+│  ^g         release/grab the mouse (release it … │▌──────────────────────────
+│  f1         open /help                           │▌Spend · no cap
+│  esc        back one level                       │▌$0
+│                                                  │▌Build                   $0
+│ CHAT SCROLL                                      │▌
+│  pgup       scroll one viewport up               │▌──────────────────────────
+│  pgdn       scroll one viewport down             │▌──────────────────────────
+│  ⇧↑         scroll one row up                    │▌
+│  ⇧↓         scroll one row down                  │▌
+│ ←→ section   ↑↓ scroll   pgup pgdn page          │▌
+╰──────────────────────────────────────────────────╯▌
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands                      focus · conversation

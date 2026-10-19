@@ -1,24 +1,24 @@
- ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────
- · system
-   welcome · /help for keys
-    ╭─ skills & commands ────────────────────────── 0 skills · 0 commands ─╮
-    │›+ new skill  SKILL.md with a body the model reads                    │
-    │ + new command  template with $ARGUMENTS                              │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │ enter run   e edit in $EDITOR   d remove   esc                       │
-    ╰──────────────────────────────────────────────────────────────────────╯
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ New session                     ● Idle · asks first Activity
+ 0.2.0-patch                                         grok-4.6
+                                                     Idle
+╭─ skills & commands ────── 0 skills · 0 commands ─╮
+│›+ new skill  SKILL.md with a body the model rea… │▌──────────────────────────
+│ + new command  template with $ARGUMENTS          │▌Context
+│                                                  │▌█▏
+│                                                  │▌12k of 256k             5%
+│                                                  │▌
+│                                                  │▌──────────────────────────
+│                                                  │▌Spend · no cap
+│                                                  │▌$0
+│ enter run   e edit in $EDITOR   d remove   esc   │▌Build                   $0
+╰──────────────────────────────────────────────────╯▌
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀──────────────────────────
+                                                     ──────────────────────────
 
 
-
-
-
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
-│› what should change?                                                         │
-╰──────────────────────────────────────────────────────────────────────────────╯
- enter run    e edit in $EDITOR    d remove    esc
+ ╭────────────────────────────────────────────────╮
+ │ Build  › what should change?                   │▌
+ ╰────────────────────────────────────────────────╯▌
+  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands                      focus · conversation

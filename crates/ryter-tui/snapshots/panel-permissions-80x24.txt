@@ -1,24 +1,24 @@
- ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────
- · system
-    ╭─ permissions ───────────────────────────────── edit default (allow) ─╮
-    │ durable allows without yolo · ~/.ryter/permissions.toml · can't open │
-    │                                                                      │
-    │› edit of project files          default (allow)                      │
-    │                                                                      │
-    │  No bash rules yet. a adds one (e.g. rm -rf target, or git push* =   │
-    │  allow). The most specific pattern wins.                             │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │                                                                      │
-    │ ↑↓ move   ←→/space answer   a add   d remove   esc close             │
-    ╰──────────────────────────────────────────────────────────────────────╯
-
-
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
-│› what should change?                                                         │
-╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move    ←→/space answer    a add    d remove    esc close
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ New session                     ● Idle · asks first Activity
+ 0.2.0-patch                                         grok-4.6
+╭─ permissions ───────────── edit default (allow) ─╮ Idle
+│ durable allows without yolo · ~/.ryter/permission│▌
+│                                                  │▌──────────────────────────
+│› edit of project files          default (allow)  │▌Context
+│                                                  │▌█▏
+│  No bash rules yet. a adds one (e.g. rm -rf      │▌12k of 256k             5%
+│  target, or git push* = allow). The most         │▌
+│  specific pattern wins.                          │▌──────────────────────────
+│                                                  │▌Spend · no cap
+│                                                  │▌$0
+│                                                  │▌Build                   $0
+│                                                  │▌
+│                                                  │▌──────────────────────────
+│ ↑↓ move   ←→/space answer   a add   d remove     │▌──────────────────────────
+╰──────────────────────────────────────────────────╯▌
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ ╭────────────────────────────────────────────────╮
+ │ Build  › what should change?                   │▌
+ ╰────────────────────────────────────────────────╯▌
+  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands                      focus · conversation

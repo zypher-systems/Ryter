@@ -1,24 +1,24 @@
- ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────
- · system
-   welcome · /help for keys
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ New session                     ● Idle · asks first Activity
+ 0.2.0-patch                                         grok-4.6
+                                                     Idle
+        ·  welcome · /help for keys
+╭─ theme ────────────────────────────────────── 3 ─╮ ──────────────────────────
+│›◆ dark  built-in                         current │▌Context
+│ ◆ light  built-in                                │▌█▏
+│ ◆ default-16  built-in                           │▌12k of 256k             5%
+│                                                  │▌
+│ ██████████████████████████  truecolor            │▌──────────────────────────
+│                                                  │▌Spend · no cap
+│ ↑↓ preview   enter apply   esc revert            │▌$0
+╰──────────────────────────────────────────────────╯▌Build                   $0
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                                                     ──────────────────────────
+                                                     ──────────────────────────
 
-            ╭─ theme ────────────────────────────────────────── 3 ─╮
-            │›◆ dark  built-in                             current │
-            │ ◆ light  built-in                                    │
-            │ ◆ default-16  built-in                               │
-            │                                                      │
-            │ ██████████████████████████  truecolor                │
-            │                                                      │
-            │ ↑↓ preview   enter apply   esc revert                │
-            ╰──────────────────────────────────────────────────────╯
 
-
-
-
-
-
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
-│› what should change?                                                         │
-╰──────────────────────────────────────────────────────────────────────────────╯
- ↑↓ preview    enter apply    esc revert
+ ╭────────────────────────────────────────────────╮
+ │ Build  › what should change?                   │▌
+ ╰────────────────────────────────────────────────╯▌
+  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands                      focus · conversation

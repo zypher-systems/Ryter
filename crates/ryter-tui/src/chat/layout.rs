@@ -56,9 +56,12 @@ pub struct ChatFrame {
     pub sticky: Vec<Line<'static>>,
     /// Scroll resolution.
     pub resolved: Resolved,
-    /// Total document rows.
+    /// Total document rows (the tests read it; the screen reads the
+    /// scroll state).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub doc_rows: usize,
-    /// The document row of the live status row, while a turn runs.
+    /// The document row of the live status row, while a turn runs: a
+    /// click there opens the reasoning pane.
     pub status_row: Option<usize>,
     /// The document row of the reasoning pane's header, when it is open.
     pub pane_header: Option<usize>,
@@ -104,11 +107,10 @@ fn flags(opts: &RenderOpts) -> u64 {
     f ^ (uh << 3)
 }
 
-/// Whether a finished turn shows as one line: on the ledger, every turn
-/// but the latest, unless `^O` shows everything whole.
+/// Whether a finished turn shows as one line: every turn but the
+/// latest, unless `^O` shows everything whole.
 fn folds(view: &View, turn: u64, latest: u64) -> bool {
-    !view.ui.classic()
-        && !view.diffs_expanded
+    !view.diffs_expanded
         && turn != latest
         && turn != 0
         && view.messages.iter().any(|m| {
@@ -181,12 +183,8 @@ fn place(view: &View, width: usize, theme: Theme, pane_cap: usize) -> Laid {
     let mut tops = view.scroll.turn_tops.borrow_mut();
     tops.clear();
     let mut last_hint: Option<String> = None;
-    let ledger = !view.ui.classic();
-    let width = if ledger {
-        width.saturating_sub(GUTTER).max(12)
-    } else {
-        width
-    };
+    let ledger = true;
+    let width = width.saturating_sub(GUTTER).max(12);
     let latest = view.messages.iter().map(|m| m.turn).max().unwrap_or(0);
     let mut folded_done: Vec<u64> = Vec::new();
     for (i, msg) in view.messages.iter().enumerate() {
@@ -346,12 +344,7 @@ fn place(view: &View, width: usize, theme: Theme, pane_cap: usize) -> Laid {
     // The reasoning pane is part of the conversation: under the status row
     // while the turn runs, under the turn's closing line after, where `^r`
     // or a click on the row opened it.
-    // Not on the workbench: that screen keeps the strip as its one
-    // reasoning surface, and never publishes the row to click.
-    if view.activity.mode == crate::activity::Mode::Expanded
-        && view.activity.has_history
-        && view.workbench.is_none()
-    {
+    if view.activity.mode == crate::activity::Mode::Expanded && view.activity.has_history {
         let lines = reasoning_pane(view, width, pane_cap, theme);
         pane_at = Some(row);
         let n = lines.len();
@@ -455,18 +448,12 @@ pub fn frame(view: &View, width: usize, height: usize, theme: Theme) -> ChatFram
     // On the ledger a new turn is pinned a few rows down, so the turns
     // folded above it stay in sight: they are one line each, there to be
     // glanced at.
-    let anchor_top = view.anchor_top().map(|t| {
-        if view.ui.classic() {
-            t
-        } else {
-            t.saturating_sub(4)
-        }
-    });
+    let anchor_top = view.anchor_top().map(|t| t.saturating_sub(4));
     let resolved = view.scroll.resolve(doc_rows, height, anchor_top, view.busy);
     let off = resolved.offset;
     let end = off + height;
     let blank = || Line::from(Span::styled(String::new(), theme.body()));
-    let mut lines = rows_between(&placed, off, end, view, theme);
+    let mut lines = rows_between(&placed, off, end, theme);
     while lines.len() < height {
         lines.push(blank());
     }
@@ -482,11 +469,7 @@ pub fn frame(view: &View, width: usize, height: usize, theme: Theme) -> ChatFram
             let name = m.speaker(&view.username);
             let right = format!("↑ {}", s.rows_above);
             // On the ledger the pinned question sits on the timeline too.
-            let lead = if view.ui.classic() {
-                String::new()
-            } else {
-                format!("{:<5}  ●  ", stamp(view, m))
-            };
+            let lead = format!("{:<5}  ●  ", stamp(view, m));
             let name = format!("{lead}{name}");
             let used = wrap::width(&name) + 2;
             let room = width.saturating_sub(used + wrap::width(&right) + 3);
@@ -518,15 +501,9 @@ pub fn frame(view: &View, width: usize, height: usize, theme: Theme) -> ChatFram
 
 /// The document's rows from `off` up to `end`, as the pane draws them:
 /// each message's rows behind its gutter, and the row between messages.
-fn rows_between(
-    placed: &[Placed],
-    off: usize,
-    end: usize,
-    view: &View,
-    theme: Theme,
-) -> Vec<Line<'static>> {
+fn rows_between(placed: &[Placed], off: usize, end: usize, theme: Theme) -> Vec<Line<'static>> {
     let blank = || Line::from(Span::styled(String::new(), theme.body()));
-    let ledger = !view.ui.classic();
+    let ledger = true;
     let dim = Style::default().fg(theme.dim).bg(theme.bg);
     let spine_row = || Line::from(Span::styled(format!("{}│", " ".repeat(7)), dim));
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(end.saturating_sub(off));
@@ -573,7 +550,7 @@ pub fn rows(
     let pane_cap = (height / 3).clamp(3, 12);
     let laid = place(view, width.max(12), theme, pane_cap);
     let to = to.min(laid.rows);
-    let mut lines = rows_between(&laid.placed, from, to, view, theme);
+    let mut lines = rows_between(&laid.placed, from, to, theme);
     lines.resize(
         to.saturating_sub(from),
         Line::from(Span::styled(String::new(), theme.body())),
@@ -691,7 +668,7 @@ mod tests {
         assert_eq!(f.lines.len(), 15);
         assert!(f.resolved.sticky.is_some());
         let s = text(&f.sticky[0]);
-        assert!(s.starts_with("you  the in-flight question"), "{s}");
+        assert!(s.contains("you  the in-flight question"), "{s}");
         assert!(s.contains("↑ "), "{s}");
         assert!(text(&f.sticky[1]).starts_with('‥'));
         // While the turn's content still fits, the header row is the first row.
@@ -700,9 +677,10 @@ mod tests {
         v.on_token("one line");
         let f = frame(&v, 60, 15, Theme::truecolor_dark());
         assert!(
-            text(&f.lines[0]).starts_with("you"),
+            f.lines.iter().any(|l| text(l).contains("you"))
+                && f.lines.iter().any(|l| text(l).contains("short")),
             "{}",
-            text(&f.lines[0])
+            f.lines.iter().map(text).collect::<Vec<_>>().join("\n")
         );
         assert!(f.sticky.is_empty());
     }

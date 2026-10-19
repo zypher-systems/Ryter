@@ -1,24 +1,24 @@
- ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────
- dusty  trim the query                                                    ↑ 8
- ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
-   8   })
- · write  test/search.test.js                              new · 6 lines  0.0s
-   1 + import { test } from 'node:test'
-   2 + import assert from 'node:assert'
-   3 +
-   4 + test('an empty query finds nothing', async () => {
-   5 +   assert.deepEqual(await search(''), [])
-   6 + })
-
- ───────────────── 2 files (1 new, 1 changed, +8 −1) · 2.1s ──────────────────
-  ┏━ audit? ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ audit ━┓
-  │ x-ai/grok-4.7 on openrouter (the audit hat's model)                     │
-  │ audits 2 files, +8 −1, read-only                                        │
-  │ about $0.02–$0.31 of your $5.00 limit                                   │
-  │ ⏎ audit   n not now                                                     │
-  ╰─────────────────────────────────────────────────────────────────────────╯
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
-│› what should change?                                                         │
-╰──────────────────────────────────────────────────────────────────────────────╯
- ⏎ audit    n not now    esc not now
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ New session          ● Waiting for you · asks first Activity
+ 0.2.0-patch                                         grok-4.6
+                                                     Done
+        ●  dusty  trim the query              ↑ 15
+ ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥  ──────────────────────────
+        │    3 +                                     Context
+        │    4 + test('an empty query finds nothing  █▏
+        │        ', async () => {                    12k of 256k             5%
+        │    5 +   assert.deepEqual(await search(''
+        │        ), [])                              ──────────────────────────
+        │    6 + })                                  Spend · no cap
+        └─ ✓ 2 tools · 2 files (1 new, 1 changed, …  $0
+╭─ audit? ───────────────────────────────── audit ─╮ Build                   $0
+│ x-ai/grok-4.7 on openrouter (the audit hat's     │▌
+│ model)                                           │▌──────────────────────────
+│ ⏎ audit   n not now                              │▌──────────────────────────
+╰──────────────────────────────────────────────────╯▌
+ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ ╭────────────────────────────────────────────────╮
+ │ Build  › what should change?                   │▌
+ ╰────────────────────────────────────────────────╯▌
+  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  ⏎  audit   n  not now   tab  hat                         focus · conversation

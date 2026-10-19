@@ -1,5 +1,7 @@
 # Ryter TUI: the hat rack screen (design contract)
 
+**Retired 2026-10-19.** The screen this contract describes was replaced by the sidebar screen (`docs/sidebar-design.md`) and then, with it, removed when the workspace became the only screen. Kept as the record.
+
 Status: **built** on `hat-rack-patch` (2026-10-02), then amended. The current hats
 are plan and build, then audit and scribe. `docs/specialists-design.md` wins
 wherever this file still says three hats, a review hat, or a test hat. §18

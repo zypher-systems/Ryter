@@ -7,24 +7,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::{COUNTER_AT, MAX_ROWS, Mode, group_thousands};
+use super::{MAX_ROWS, Mode};
 use crate::chat::wrap;
 use crate::theme::Theme;
 use crate::view::View;
-
-/// Rows the composer needs at `width` (border included).
-pub fn height(view: &View, width: u16) -> u16 {
-    if !view.ui.classic() {
-        // A rule above the prompt, no box.
-        let col = width.min(crate::draw::LEDGER_COLUMN);
-        let inner = usize::from(col.saturating_sub(3));
-        let rows = view.composer.rows(inner).clamp(1, MAX_ROWS);
-        return u16::try_from(rows).unwrap_or(1) + 1;
-    }
-    let inner = usize::from(width.saturating_sub(4));
-    let rows = view.composer.rows(inner).clamp(1, MAX_ROWS);
-    u16::try_from(rows).unwrap_or(1) + 2
-}
 
 /// Border color per `R-COMP-01`.
 pub fn border_color(view: &View, theme: Theme) -> Color {
@@ -39,15 +25,6 @@ pub fn border_color(view: &View, theme: Theme) -> Color {
     // The mode's color, always: it is how the user knows, at the point of
     // typing, which hat gets this message.
     theme.mode(view.mode)
-}
-
-/// Border title per `R-COMP-02`.
-pub fn title(view: &View) -> String {
-    match &view.composer.mode {
-        Mode::Normal => view.username.clone(),
-        Mode::Secret { .. } => "api key".into(),
-        Mode::Field { label } => label.clone(),
-    }
 }
 
 fn glyph(view: &View) -> &'static str {
@@ -73,108 +50,11 @@ fn placeholder(view: &View) -> String {
     }
 }
 
-/// The ledger's composer: a rule, then the prompt. The rule takes the
-/// mode's color, so where the message goes is still in sight as you type;
-/// `queued` and a long message's count sit at its right end.
-/// Notes for the prompt's edge: a message waiting its turn, and the length
-/// of a long one.
-fn edge_notes(view: &View, theme: Theme) -> Vec<Span<'static>> {
-    let mut right: Vec<Span<'static>> = Vec::new();
-    if view.queued_prompt.is_some() {
-        right.push(Span::styled(
-            " queued ",
-            Style::default()
-                .fg(theme.warn)
-                .bg(theme.bg)
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
-    let count = view.composer.char_count();
-    if count > COUNTER_AT && !matches!(view.composer.mode, Mode::Secret { .. }) {
-        right.push(Span::styled(
-            format!(" {} chars ", group_thousands(count)),
-            Style::default().fg(theme.dim).bg(theme.bg),
-        ));
-    }
-    right
-}
-
-/// The hat's chip at the head of the prompt. The ledger says it in
-/// lowercase (` build `). The workspace capitalizes it (` Build `). None
-/// while the prompt is taking something other than a message.
+/// The hat's chip at the head of the prompt (` Build `). None while the
+/// prompt is taking something other than a message.
 fn chip(view: &View) -> Option<String> {
-    matches!(view.composer.mode, Mode::Normal).then(|| {
-        let name = if view.ui.workspace() {
-            crate::glyphs::hat_label(view.mode)
-        } else {
-            crate::sidebar::hat_name(view.mode).to_string()
-        };
-        format!(" {name} ")
-    })
-}
-
-/// Columns the prompt's text has on the solo screen, `width` wide.
-fn solo_text_width(view: &View, width: u16) -> usize {
-    let chip_w = chip(view).map_or(0, |c| wrap::width(&c) + 1);
-    usize::from(width).saturating_sub(1 + chip_w + 4)
-}
-
-/// Rows the solo screen's prompt needs at `width`: a rule in the hat's
-/// color, then the text.
-pub fn solo_height(view: &View, width: u16) -> u16 {
-    let rows = view
-        .composer
-        .rows(solo_text_width(view, width))
-        .clamp(1, MAX_ROWS);
-    u16::try_from(rows).unwrap_or(1) + 1
-}
-
-/// The solo screen's prompt (`docs/hat-rack-design.md` §10): a rule in
-/// the hat's color across the screen, then the hat's chip, the prompt
-/// mark in that color, and the text. No box, and no name: whose message it
-/// is shows on the message. Returns the cursor cell, if visible.
-pub fn draw_solo(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Option<(u16, u16)> {
-    if area.height < 2 || area.width < 8 {
-        return None;
-    }
-    let color = border_color(view, theme);
-    frame.render_widget(
-        Paragraph::new("").style(Style::default().bg(theme.bg)),
-        area,
-    );
-    let right = edge_notes(view, theme);
-    let right_w: usize = right.iter().map(|s| wrap::width(&s.content)).sum();
-    let rule = Style::default().fg(color).bg(theme.bg);
-    let mut spans = vec![Span::styled(
-        "─".repeat(usize::from(area.width).saturating_sub(right_w + 2)),
-        rule,
-    )];
-    spans.extend(right);
-    spans.push(Span::styled("──", rule));
-    frame.render_widget(
-        Paragraph::new(Line::from(spans)),
-        Rect { height: 1, ..area },
-    );
-    let mut inner = Rect {
-        x: area.x + 1,
-        y: area.y + 1,
-        width: area.width.saturating_sub(2),
-        height: area.height - 1,
-    };
-    if let Some(c) = chip(view) {
-        let w = wrap::width(&c) as u16;
-        frame.render_widget(
-            Paragraph::new(Span::styled(c, theme.chip(theme.mode(view.mode)))),
-            Rect {
-                width: w.min(inner.width),
-                height: 1,
-                ..inner
-            },
-        );
-        inner.x += w + 1;
-        inner.width = inner.width.saturating_sub(w + 1);
-    }
-    body(frame, inner, view, theme, theme.bg, color)
+    matches!(view.composer.mode, Mode::Normal)
+        .then(|| format!(" {} ", crate::glyphs::hat_label(view.mode)))
 }
 
 /// Rows the workspace prompt needs: the rounded box, the text, and the
@@ -259,7 +139,7 @@ pub fn draw_workspace(
     if let Some(c) = chip(view) {
         let fill = theme.mode(view.mode);
         let on = theme.bg;
-        let spans = pill(&c, on, fill);
+        let spans = pill(&c, on, fill, theme);
         let span_w: u16 = spans.iter().map(|s| wrap::width(&s.content) as u16).sum();
         frame.render_widget(
             Paragraph::new(Line::from(spans)),
@@ -279,152 +159,17 @@ pub fn draw_workspace(
 }
 
 /// A solid chip: the label, already padded, on a fill. No half-block caps.
-fn pill(label: &str, fg: Color, fill: Color) -> Vec<Span<'static>> {
-    vec![Span::styled(
-        label.to_string(),
+fn pill(label: &str, fg: Color, fill: Color, theme: Theme) -> Vec<Span<'static>> {
+    // Without colour there is no fill: reverse video marks the chip.
+    let style = if theme.mode == crate::theme::ColorMode::Mono {
+        Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+    } else {
         Style::default()
             .fg(fg)
             .bg(fill)
-            .add_modifier(Modifier::BOLD),
-    )]
-}
-
-fn ledger_frame(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Rect {
-    let w = area.width as usize;
-    let rule = Style::default().fg(theme.dim).bg(theme.bg);
-    let right = edge_notes(view, theme);
-    let lead = Style::default().fg(border_color(view, theme)).bg(theme.bg);
-    let right_w: usize = right.iter().map(|s| wrap::width(&s.content)).sum();
-    let mut spans = vec![Span::styled("──", lead)];
-    spans.push(Span::styled(
-        "─".repeat(w.saturating_sub(2 + right_w + 2)),
-        rule,
-    ));
-    spans.extend(right);
-    spans.push(Span::styled("──", rule));
-    frame.render_widget(
-        Paragraph::new(Line::from(spans)),
-        Rect { height: 1, ..area },
-    );
-    Rect {
-        y: area.y + 1,
-        height: area.height - 1,
-        ..area
-    }
-}
-
-/// Draw the composer into `area` and return the cursor cell, if visible.
-pub fn draw(frame: &mut Frame, area: Rect, view: &View, theme: Theme) -> Option<(u16, u16)> {
-    let ledger = !view.ui.classic();
-    if area.height < if ledger { 2 } else { 3 } || area.width < 8 {
-        return None;
-    }
-    let border = border_color(view, theme);
-    let bg = if ledger { theme.bg } else { theme.composer_bg };
-    let bs = Style::default().fg(border).bg(bg);
-    let w = area.width as usize;
-    frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
-    let inner = if ledger {
-        ledger_frame(frame, area, view, theme)
-    } else {
-        classic_frame(frame, area, view, theme, bs, bg, w)
+            .add_modifier(Modifier::BOLD)
     };
-    body(frame, inner, view, theme, bg, theme.prompt)
-}
-
-fn classic_frame(
-    frame: &mut Frame,
-    area: Rect,
-    view: &View,
-    theme: Theme,
-    bs: Style,
-    bg: Color,
-    w: usize,
-) -> Rect {
-    let border = border_color(view, theme);
-    // Top border: ╭─ title ──────── queued ─╮ (no phase: there are none).
-    let t = format!(" {} ", wrap::truncate(&title(view), w.saturating_sub(12)));
-    let mut right = String::new();
-    let mut right_style = Style::default().fg(theme.dim).bg(bg);
-    if view.queued_prompt.is_some() {
-        right = " queued ".into();
-        right_style = Style::default()
-            .fg(theme.warn)
-            .bg(bg)
-            .add_modifier(Modifier::BOLD);
-    }
-    let badge = if matches!(view.composer.mode, Mode::Normal) {
-        format!(" {} ", view.mode_label().to_ascii_uppercase())
-    } else {
-        String::new()
-    };
-    let fill =
-        w.saturating_sub(2 + 1 + wrap::width(&badge) + wrap::width(&t) + wrap::width(&right) + 1);
-    let top = Line::from(vec![
-        Span::styled("╭", bs),
-        Span::styled("─", bs),
-        Span::styled(
-            badge,
-            Style::default()
-                .fg(theme.composer_bg)
-                .bg(theme.mode(view.mode))
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            t,
-            Style::default()
-                .fg(border)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("─".repeat(fill), bs),
-        Span::styled(right, right_style),
-        Span::styled("─", bs),
-        Span::styled("╮", bs),
-    ]);
-    frame.render_widget(Paragraph::new(top), Rect { height: 1, ..area });
-    // Bottom border with optional counter (R-COMP-08).
-    let count = view.composer.char_count();
-    let counter = if count > COUNTER_AT && !matches!(view.composer.mode, Mode::Secret { .. }) {
-        format!(" {} chars ", group_thousands(count))
-    } else {
-        String::new()
-    };
-    let fill = w.saturating_sub(2 + wrap::width(&counter) + 1);
-    let bottom = Line::from(vec![
-        Span::styled("╰", bs),
-        Span::styled("─".repeat(fill), bs),
-        Span::styled(counter, Style::default().fg(theme.dim).bg(bg)),
-        Span::styled("─", bs),
-        Span::styled("╯", bs),
-    ]);
-    frame.render_widget(
-        Paragraph::new(bottom),
-        Rect {
-            y: area.y + area.height - 1,
-            height: 1,
-            ..area
-        },
-    );
-    // Sides.
-    {
-        let buf = frame.buffer_mut();
-        for y in (area.y + 1)..(area.y + area.height - 1) {
-            for x in [area.x, area.x + area.width - 1] {
-                if x < buf.area.width && y < buf.area.height {
-                    let c = &mut buf[(x, y)];
-                    c.set_symbol("│");
-                    c.set_style(bs);
-                }
-            }
-        }
-    }
-    Rect {
-        x: area.x + 1,
-        y: area.y + 1,
-        width: area.width - 2,
-        height: area.height - 2,
-    }
+    vec![Span::styled(label.to_string(), style)]
 }
 
 /// The prompt and the text, inside whatever frame the layout drew. `mark`

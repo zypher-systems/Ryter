@@ -1,24 +1,24 @@
- ryter  ·  build                                ~/workspace/ryter (0.2.0-patch)
-────────────────────────────────────────────────────────────────────────────────
- dusty                                             │╭─ session ────────────────╮
- ▎ now implement step one                          ││ untitled           build │
-                                                   ││ tools ask                │
- · read  crates/ryter-tui/src/run/mod.rs           │╰──────────────────────────╯
-                                                   │╭─ model ──────────────────╮
- grok-4.6                                          ││ spacexai ●      grok-4.6 │
-   Reading the loop now. The event loop drains     ┃│ ctx █░░░░░░░░░░░░░   5%  │
- ⠼ writing · 0:12                                  ┃│     12.4k / 256k tokens  │
- reasoning · 0:12   ^r close ▴                     ┃│ price unknown            │
-  The user wants the loop wired. I should read     ┃│ reasoning  auto · medium │
-  run.rs first, then The user wants the loop       ┃╰──────────────────────────╯
-  wired. I should read run.rs first, then The      ┃╭─ spend ──────────────────╮
-  user wants the loop wired. I should read run.rs  ┃│ session            $?.?? │
-  first, then                                      ┃╰──────────────────────────╯
-                                                   ┃╭─ budget ─────────── off ─╮
-                                                   ┃│ cap                  off │
-                                                   ┃╰──────────────────────────╯
-                                                   ┃
-╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
-│› type to queue the next message, / for commands                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
- enter send    tab plan    ⇧tab specialists    esc cancel    ^c quit
+ ●●● RYTER   Conversation   1    Hats   2    Sessions   3
+ New session                               ● Writing Activity
+ 0.2.0-patch                                         grok-4.6
+                                                     Writing
+        ●  dusty  now implement step one       ↑ 2   Reading the loop now. Th…
+ ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
+        │  now implement step one                    ──────────────────────────
+        │                                            Context
+        ├─ read   crates/ryter-tui/src/run/mod.…     █▏
+        │                                            12k of 256k             5%
+        ◆  grok-4.6
+        │  Reading the loop now. The event loop      ──────────────────────────
+        │  drains                                    Spend · no cap
+        │  ⠼ writing · 0:12                          $0
+        │  reasoning · 0:12   ^r close ▴             Build                   $0
+        │   user wants the loop wired. I should
+        │   read run.rs first, then The user wants   ──────────────────────────
+        │   the loop wired. I should read run.rs     ──────────────────────────
+        │   first, then
+ ╭────────────────────────────────────────────────╮
+ │ Build  › type to queue the next message, / fo… │▌
+ ╰────────────────────────────────────────────────╯▌
+  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  tab  hat   ⇧tab  mode   /  commands                      focus · conversation

@@ -4,8 +4,8 @@
 //! the top bar, with Conversation, Hats, and Sessions beside it. The rack
 //! is the sidebar. The conversation, the hats, or the sessions fill the
 //! middle, and activity, context, spend (session + project glance), files,
-//! and the plan sit on the right. Ledger and classic remain as legacy
-//! layouts; prefer workspace.
+//! and the plan sit on the right. It is the one screen: the ledger and
+//! classic layouts went on 2026-10-19 (`DECISIONS.md`).
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
@@ -24,11 +24,8 @@ use crate::theme::Theme;
 use crate::view::{Focus, Page, SavedSession, View};
 use crate::{composer, draw, palette, panel};
 
-/// Paint one frame of the workspace. The workbench keeps the ledger's frame.
+/// Paint one frame of the workspace.
 pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
-    if view.workbench.is_some() {
-        return draw::draw_ledger(frame, view, theme);
-    }
     let full = frame.area();
     let mut clicks = Vec::new();
     // Quiet chrome (E): no hairline under the top bar — body starts next.
@@ -61,7 +58,7 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
     if side_w > 0 {
         draw_sidebar(frame, side, view, theme, &mut clicks);
     }
-    let (chat, composer_rect, slot) = draw_stage(frame, stage, view, theme);
+    let (chat, composer_rect, slot, activity) = draw_stage(frame, stage, view, theme);
     if insp_w > 0 {
         draw_inspector(frame, insp, view, theme);
     }
@@ -69,13 +66,7 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
     if view.panels.is_empty() {
         palette::draw(frame, stage, composer_rect.y, view, theme);
     }
-    let cursor = panel::draw(
-        frame,
-        full,
-        panel::Ground::over(stage, composer_rect.y, slot),
-        view,
-        theme,
-    );
+    let cursor = panel::draw(frame, full, panel::Ground::over(stage, slot), view, theme);
     if cursor.is_some() {
         composer::draw::paint_cursor(frame, cursor, theme);
     } else if view.page == Page::Conversation
@@ -88,8 +79,7 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
         chat,
         chat_text: Rect::default(),
         covers: Vec::new(),
-        cards: Vec::new(),
-        activity: Rect::default(),
+        activity,
         composer: composer_rect,
         clicks,
     }
@@ -98,7 +88,7 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
 /// `F2`, `F6`, `F7`, and `Alt+1`–`Alt+3`. `None` when the key is not one of
 /// those, or this is not the workspace. A palette swallows them.
 pub fn chrome_key(view: &mut View, key: KeyEvent) -> Option<Action> {
-    if !view.ui.workspace() || view.workbench.is_some() {
+    if false {
         return None;
     }
     let alt =
@@ -143,7 +133,7 @@ pub fn chrome_key(view: &mut View, key: KeyEvent) -> Option<Action> {
 /// Arrows and Enter while the sidebar, the hats page, or the sessions list
 /// has focus. `None` when the composer should keep the key.
 pub fn nav_key(view: &mut View, key: KeyEvent) -> Option<Action> {
-    if !view.ui.workspace() || view.workbench.is_some() || view.palette.is_some() {
+    if view.palette.is_some() {
         return None;
     }
     if !key.modifiers.is_empty() {
@@ -292,7 +282,7 @@ fn hat_index(role: Role) -> usize {
     HATS.iter().position(|h| *h == role.hat()).unwrap_or(0)
 }
 
-fn columns(width: u16, instruments: bool) -> (u16, u16) {
+pub(crate) fn columns(width: u16, instruments: bool) -> (u16, u16) {
     if width >= 156 {
         return (36, if instruments { 36 } else { 0 });
     }
@@ -689,16 +679,16 @@ fn draw_stage(
     area: Rect,
     view: &View,
     theme: Theme,
-) -> (Rect, Rect, Option<Rect>) {
+) -> (Rect, Rect, Option<Rect>, Rect) {
     fill(frame, area, theme.bg);
     match view.page {
         Page::Hats => {
             draw_hats_page(frame, area, view, theme);
-            (area, Rect::default(), None)
+            (area, Rect::default(), None, Rect::default())
         }
         Page::Sessions => {
             draw_sessions_page(frame, area, view, theme);
-            (area, Rect::default(), None)
+            (area, Rect::default(), None, Rect::default())
         }
         Page::Conversation => draw_conversation(frame, area, view, theme),
     }
@@ -709,7 +699,7 @@ fn draw_conversation(
     area: Rect,
     view: &View,
     theme: Theme,
-) -> (Rect, Rect, Option<Rect>) {
+) -> (Rect, Rect, Option<Rect>, Rect) {
     let w = usize::from(area.width);
     let title = if view.session_title.trim().is_empty() {
         "New session".to_string()
@@ -764,8 +754,10 @@ fn draw_conversation(
         height: comp_h,
         ..area
     };
+    let mut activity = Rect::default();
     if chat.height > 0 {
-        let _ = draw::draw_chat(frame, chat, view, theme);
+        let cf = draw::draw_chat(frame, chat, view, theme);
+        activity = draw::status_hit(chat, &cf);
     }
     let cursor = if comp.height > 0 {
         composer::draw::draw_workspace(frame, comp, view, theme)
@@ -775,7 +767,7 @@ fn draw_conversation(
     if view.panels.is_empty() {
         composer::draw::paint_cursor(frame, cursor, theme);
     }
-    (chat, comp, slot)
+    (chat, comp, slot, activity)
 }
 
 fn draw_hats_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
@@ -2064,7 +2056,6 @@ mod tests {
 
     fn ws() -> View {
         let mut v = View::new("spacexai".into(), "grok-4.6".into(), "~/shop".into());
-        v.ui.layout = "workspace".into();
         v.username = "Dusty".into();
         v.git_branch = Some("search-patch".into());
         v.session_title = "Empty-query fix".into();
