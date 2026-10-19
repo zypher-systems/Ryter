@@ -1,13 +1,13 @@
  ●●● RYTER   Conversation   1    Hats   2    Sessions   3
  ryter                     New session                 ● Idle · asks first Activity
- ⎇ 0.2.0-patch            ╭─ models ─────────────────────── 4 · loading ─╮ grok-4.6
+ ⎇ 0.2.0-patch            ╭─ models ─────────────────────── 5 · loading ─╮ grok-4.6
                           │ SEATS                │ ⌕ type to filter      │▌Idle
  Hats                     │›  All hats           │ model    in/M  out/M  │▌
  ● Plan     $0  read only │   grok-4.6           │ grok-…     $2     $6  │▌────────────────────────
  ┃ Build   $0  asks first │   Plan               │ grok-…     $2     $6  │▌Context
- ── Specialists           │   follows all hats   │ grok-…  $1.25   $2.5  │▌█▏
- ● Audit   $0  checkpoint │   Build              │ grok-…     $1     $2  │▌12k of 256k           5%
- ● Scribe   $0  docs only │   follows all hats   │                       │▌
+ ── Specialists           │   follows all hats   │ grok-…     $2     $6  │▌█▏
+ ● Audit   $0  checkpoint │   Build              │ grok-…  $1.25   $2.5  │▌12k of 256k           5%
+ ● Scribe   $0  docs only │   follows all hats   │ grok-…     $1     $2  │▌
                           │   Audit              │                       │▌────────────────────────
                           │   follows all hats   │                       │▌Spend · no cap
                           │   Scribe             │                       │▌$0
@@ -21,7 +21,7 @@
                           │                      │                       │▌
                           │                      │                       │▌
                           │                      │                       │▌
-                          │                      │ spacexai · grok-4.6 … │▌
+                          │                      │ spacexsi · grok-4.6 … │▌
                           │ ↑↓ seat   → models   │ enter set for all hats│▌
                           ╰──────────────────────────────────────────────╯▌
                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀

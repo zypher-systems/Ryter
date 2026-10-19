@@ -8,7 +8,7 @@
    read only                                                                               █▏
  ┃ Build                     $0                                                            12k of 256k               5%
    grok-4.6                     ╭─ connections ────────────────────────────────────── 2 ─╮
-   asks first                   │›● spacexai  spacexai · grok-4.6                key set │▌────────────────────────────
+   asks first                   │›● spacexsi  spacexsi · grok-4.6                key set │▌────────────────────────────
  ── Specialists                 │ ○ openrouter  openrouter · claude-sonnet-4.6    no key │▌Spend · no cap
  ● Audit                     $0 │                                                        │▌$0
    grok-4.6                     │ ◇ web search  not set up · enter to choose             │▌Build                     $0

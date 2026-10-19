@@ -1,9 +1,9 @@
 # Copy to ~/.ryter/config.toml (chmod 600 if you put api_key here).
 
-default_connection = "spacexai"
+default_connection = "spacexsi"
 
-[connections.spacexai]
-kind = "spacexai"
+[connections.spacexsi]
+kind = "spacexsi"
 base_url = "https://api.x.ai/v1"
 api_backend = "responses"
 env_key = "XAI_API_KEY"
@@ -18,9 +18,23 @@ default_model = "anthropic/claude-sonnet-4.6"
 http_referer = "https://github.com/zypher-systems/ryter"
 x_title = "Ryter"
 
+[connections.anthropic]
+kind = "anthropic"
+base_url = "https://api.anthropic.com/v1"
+api_backend = "messages"
+env_key = "ANTHROPIC_API_KEY"
+default_model = "claude-opus-5-5"
+
+[connections.openai]
+kind = "openai"
+base_url = "https://api.openai.com/v1"
+api_backend = "responses"
+env_key = "OPENAI_API_KEY"
+default_model = "gpt-6.1-sol"
+
 # The model every hat uses. (`[orchestrator]` still loads under this name.)
 [model]
-connection = "spacexai"
+connection = "spacexsi"
 model = "grok-4.6"
 
 # A hat can have a model of its own: plan, build, audit, scribe. Set them in the

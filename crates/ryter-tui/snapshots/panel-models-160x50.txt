@@ -7,14 +7,14 @@
    grok-4.6                                                                                                                  Context
    read only                                                                                                                 █▏
  ┃ Build                         $0                                                                                          12k of 256k                     5%
-   grok-4.6                         ╭─ models ─────────────────────────────────────────────────────────────── 4 · loading ─╮
+   grok-4.6                         ╭─ models ─────────────────────────────────────────────────────────────── 5 · loading ─╮
    asks first                       │ SEATS                │ ⌕ type to filter                                              │▌──────────────────────────────────
  ── Specialists                     │›  All hats           │ model            in/M  out/M  connection                      │▌Spend · no cap
- ● Audit                         $0 │   grok-4.6           │ grok-4.6           $2     $6  spacexai                        │▌$0
-   grok-4.6                         │   Plan               │ grok-4.5           $2     $6  spacexai                        │▌Build                           $0
-   checkpoint                       │   follows all hats   │ grok-4.3        $1.25   $2.5  spacexai                        │▌
- ● Scribe                        $0 │   Build              │ grok-build-0.1     $1     $2  spacexai                        │▌──────────────────────────────────
-   follows all hats                 │   follows all hats   │                                                               │▌──────────────────────────────────
+ ● Audit                         $0 │   grok-4.6           │ grok-4.7           $2     $6  spacexsi                        │▌$0
+   grok-4.6                         │   Plan               │ grok-4.6           $2     $6  spacexsi                        │▌Build                           $0
+   checkpoint                       │   follows all hats   │ grok-4.5           $2     $6  spacexsi                        │▌
+ ● Scribe                        $0 │   Build              │ grok-4.3        $1.25   $2.5  spacexsi                        │▌──────────────────────────────────
+   follows all hats                 │   follows all hats   │ grok-build-0.1     $1     $2  spacexsi                        │▌──────────────────────────────────
    docs only                        │   Audit              │                                                               │▌
                                     │   follows all hats   │                                                               │▌
                                     │   Scribe             │                                                               │▌
@@ -28,7 +28,7 @@
                                     │                      │                                                               │▌
                                     │                      │                                                               │▌
                                     │                      │                                                               │▌
-                                    │                      │ spacexai · grok-4.6 · reasoning auto (medium in build) · 500… │▌
+                                    │                      │ spacexsi · grok-4.6 · reasoning auto (medium in build) · 500… │▌
                                     │ ↑↓ seat   → models   │ enter set for all hats   ← seats   esc done   tab reasoning   │▌
                                     ╰──────────────────────────────────────────────────────────────────────────────────────╯▌
                                      ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀

@@ -825,7 +825,7 @@ mod tests {
     }
 
     fn view() -> View {
-        let mut v = View::new("spacexai".into(), "grok-4.6".into(), "~/p".into());
+        let mut v = View::new("spacexsi".into(), "grok-4.6".into(), "~/p".into());
         let _ = v.submit_user("hi".into(), "hi".into());
         v
     }
@@ -1047,7 +1047,7 @@ mod tests {
         apply(
             &mut v,
             AgentEvent::Spend {
-                connection: "spacexai".into(),
+                connection: "spacexsi".into(),
                 model: "grok-4.6".into(),
                 role: Role::Build,
                 input_tokens: 100,

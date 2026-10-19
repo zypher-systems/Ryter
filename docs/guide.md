@@ -49,23 +49,25 @@ Ryter won't replace itself in these cases, and says what to do instead:
 
 ## Keys and connections
 
-SpaceXAI and OpenRouter are compiled in as equals. Other OpenAI-compatible or Anthropic Messages endpoints are user connections.
+SpaceXSI, OpenRouter, Anthropic and OpenAI are compiled in as equals. Other servers speaking OpenAI's chat completions or Anthropic's Messages are user connections (`openai_compat`, `anthropic`).
 
-| | SpaceXAI | OpenRouter |
-| --- | --- | --- |
-| `kind` | `spacexai` | `openrouter` |
-| Base URL | `https://api.x.ai/v1` | `https://openrouter.ai/api/v1` |
-| Wire | Responses (default) | Chat Completions |
-| Env | `XAI_API_KEY` | `OPENROUTER_API_KEY` |
-| Default model | `grok-4.6` | `anthropic/claude-sonnet-4.6` |
+| | SpaceXSI | OpenRouter | Anthropic | OpenAI |
+| --- | --- | --- | --- | --- |
+| `kind` | `spacexsi` | `openrouter` | `anthropic` | `openai` |
+| Base URL | `https://api.x.ai/v1` | `https://openrouter.ai/api/v1` | `https://api.anthropic.com/v1` | `https://api.openai.com/v1` |
+| Wire | Responses (default) | Chat Completions | Messages | Responses |
+| Env | `XAI_API_KEY` | `OPENROUTER_API_KEY` | `ANTHROPIC_API_KEY` | `OPENAI_API_KEY` |
+| Default model | `grok-4.6` | `anthropic/claude-sonnet-4.6` | `claude-opus-5-5` | `gpt-6.1-sol` |
 
-Credential order per connection: TOML `api_key` → `env_key` → the stored key → well-known env (`OPENROUTER_API_KEY`, `XAI_API_KEY`).
+SpaceXSI was xAI, then SpaceXAI; a config, a hat row, a session or a saved key that still says `spacexai` loads as `spacexsi`.
+
+Credential order per connection: TOML `api_key` → `env_key` → the stored key → well-known env (`XAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
 
 A search provider's key is stored the same way under the provider's name. In the TUI, `/provider` has a **web search** row under the connections: Enter on it chooses Tavily, SearXNG or off, and choosing Tavily goes straight to the key prompt (`k` on the row later re-enters it). The typed forms work too: `/provider set-key tavily`, `ryter connections set-key tavily`, or `TAVILY_API_KEY` in the environment. See [Web search](#web-search).
 
 **Reasoning.** Each model has a reasoning level you choose: **Tab** on a model in `/models`, for any seat, steps it through `auto → low → medium → high → model's own`. The model card shows the level in use (`reasoning  auto · medium`). The choice follows the model into every hat that uses it, and is saved to `~/.ryter/reasoning.toml`; `[model_reasoning]` in `config.toml` does the same by hand, keyed by model id.
 
-**Auto** means Ryter picks by hat: `high` for the plan hat, `medium` for build and audit. `[reasoning_effort]` overrides that per hat (`build`, `plan`, `audit`; `review` still reads as `audit`). **Model's own** sends nothing. Beware: with no setting, some models think for minutes before acting. The level is sent only to OpenRouter connections.
+**Auto** means Ryter picks by hat: `high` for the plan hat, `medium` for build and audit. `[reasoning_effort]` overrides that per hat (`build`, `plan`, `audit`; `review` still reads as `audit`). **Model's own** sends nothing. Beware: with no setting, some models think for minutes before acting. The level is sent to OpenRouter and OpenAI connections as their reasoning effort, and to Anthropic as adaptive thinking at that effort (Claude 4.6 and later) or a thinking budget (older Claude models).
 
 Where a saved key (`/provider` set-key, `ryter connections set-key`) is stored: on **Linux**, `~/.ryter/keys/<connection>`, readable only by you (mode 0600). Linux's kernel keyring is in memory and doesn't survive a reboot, so it isn't used to store keys. On **macOS**, the keychain (`service=ryter`, `account=connection:<name>`), falling back to the file if the keychain refuses.
 
@@ -89,7 +91,7 @@ ryter connections                         list
 ryter connections add NAME --kind openai  user row in ~/.ryter/connections.toml
 ryter connections remove NAME             user rows only (built-ins stay)
 ryter connections test NAME               list models (needs a key)
-ryter connections set-key spacexai
+ryter connections set-key spacexsi
 ryter models [connection]
 ```
 
@@ -469,7 +471,7 @@ Every model call is priced before the next request. Roll-ups: session, turn, hat
 
 Overrides must supply both `input_per_million` and `output_per_million`; all supplied rates must be finite and nonnegative. Missing or invalid rates remain unknown. Explicit zero is valid for a free model.
 
-Sources, high wins: TOML `[pricing."<model>"]` → OpenRouter catalog (when ingested) → shipped SpaceXAI table. Provider-reported cost on a stream wins for that turn.
+Sources, high wins: TOML `[pricing."<model>"]` → OpenRouter catalog (when ingested) → the shipped tables (Grok, Claude, GPT). Provider-reported cost on a stream wins for that turn.
 
 Unknown rates show `$?.??` plus token counts. Ryter never invents `$0.00` for an unpriced model.
 

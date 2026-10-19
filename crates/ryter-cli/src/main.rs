@@ -136,15 +136,16 @@ enum Command {
 enum ConnCmd {
     /// Store an API key (keyring, or ~/.ryter/keys/<name>).
     SetKey {
-        /// Connection name (`spacexai`, `openrouter`, …).
+        /// Connection name (`spacexsi`, `openrouter`, …).
         name: String,
     },
     /// Add a user connection (`~/.ryter/connections.toml`).
     Add {
         /// Name (`local`, `work`, …).
         name: String,
-        /// Kind: spacexai, openrouter, openai, anthropic, or a local server:
-        /// ollama, lmstudio, llamacpp (no key needed, no API cost).
+        /// Kind: spacexsi, openrouter, anthropic, openai, openai_compat (any
+        /// server speaking chat completions), or a local server: ollama,
+        /// lmstudio, llamacpp (no key needed, no API cost).
         #[arg(long)]
         kind: String,
         /// Override the template base URL.

@@ -3,14 +3,14 @@
  ⎇ 0.2.0-patch                   0.2.0-patch                                               grok-4.6
                                                                                            Idle
  Hats                                   ·  welcome · /help for keys
- ● Plan                      $0 ╭─ models ───────────────────────────────── 4 · loading ─╮ ────────────────────────────
+ ● Plan                      $0 ╭─ models ───────────────────────────────── 5 · loading ─╮ ────────────────────────────
    grok-4.6                     │ SEATS                │ ⌕ type to filter                │▌Context
    read only                    │›  All hats           │ model            in/M  out/M    │▌█▏
- ┃ Build                     $0 │   grok-4.6           │ grok-4.6           $2     $6    │▌12k of 256k               5%
-   grok-4.6                     │   Plan               │ grok-4.5           $2     $6    │▌
-   asks first                   │   follows all hats   │ grok-4.3        $1.25   $2.5    │▌────────────────────────────
- ── Specialists                 │   Build              │ grok-build-0.1     $1     $2    │▌Spend · no cap
- ● Audit                     $0 │   follows all hats   │                                 │▌$0
+ ┃ Build                     $0 │   grok-4.6           │ grok-4.7           $2     $6    │▌12k of 256k               5%
+   grok-4.6                     │   Plan               │ grok-4.6           $2     $6    │▌
+   asks first                   │   follows all hats   │ grok-4.5           $2     $6    │▌────────────────────────────
+ ── Specialists                 │   Build              │ grok-4.3        $1.25   $2.5    │▌Spend · no cap
+ ● Audit                     $0 │   follows all hats   │ grok-build-0.1     $1     $2    │▌$0
    grok-4.6                     │   Audit              │                                 │▌Build                     $0
    checkpoint                   │   follows all hats   │                                 │▌
  ● Scribe                    $0 │   Scribe             │                                 │▌────────────────────────────
@@ -24,7 +24,7 @@
                                 │                      │                                 │▌
                                 │                      │                                 │▌
                                 │                      │                                 │▌
-                                │                      │ spacexai · grok-4.6 · reasonin… │▌
+                                │                      │ spacexsi · grok-4.6 · reasonin… │▌
                                 │ ↑↓ seat   → models   │ enter set for all hats   ← seats│▌
                                 ╰────────────────────────────────────────────────────────╯▌
                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀

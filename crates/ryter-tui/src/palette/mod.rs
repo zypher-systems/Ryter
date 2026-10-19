@@ -562,7 +562,7 @@ mod tests {
     use super::*;
 
     fn view() -> View {
-        View::new("spacexai".into(), "grok-4.6".into(), "p".into())
+        View::new("spacexsi".into(), "grok-4.6".into(), "p".into())
     }
 
     #[test]

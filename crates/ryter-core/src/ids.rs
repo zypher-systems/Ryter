@@ -30,7 +30,7 @@ impl fmt::Display for SessionId {
     }
 }
 
-/// Named inference endpoint (for example `spacexai` or `openrouter`).
+/// Named inference endpoint (for example `spacexsi` or `openrouter`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ConnectionId(String);
 

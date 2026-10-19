@@ -3,7 +3,7 @@
  0.2.0-patch                                         grok-4.6
                                                      Idle
 ╭─ connections ──────────────────────────────── 2 ─╮
-│›● spacexai  spacexai · grok-4.6          key set │▌──────────────────────────
+│›● spacexsi  spacexsi · grok-4.6          key set │▌──────────────────────────
 │ ○ openrouter  openrouter · claude-sonnet-…no key │▌Context
 │                                                  │▌█▏
 │ ◇ web search  not set up · enter to choose       │▌12k of 256k             5%

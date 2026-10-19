@@ -3372,7 +3372,7 @@ mod tests {
         // answer later fails; do not price the same tokens a second time.
         agent
             .record_call(
-                "spacexai",
+                "spacexsi",
                 "grok-4.6",
                 Usage {
                     input_tokens: 1_000,
@@ -3404,7 +3404,7 @@ mod tests {
         let session = Session::create(
             home.path(),
             cwd.path(),
-            "spacexai".into(),
+            "spacexsi".into(),
             "grok-4.6".into(),
         )
         .unwrap();
@@ -3437,7 +3437,7 @@ mod tests {
             book: PriceBook::new(),
             session,
             ctx,
-            connection: "spacexai".into(),
+            connection: "spacexsi".into(),
             model: "grok-4.6".into(),
             role: Role::Build,
             max_turns: 8,
@@ -5538,7 +5538,7 @@ mod tests {
             cfg.hats.insert(
                 "audit".into(),
                 crate::config::RoleModel {
-                    connection: Some("spacexai".into()),
+                    connection: Some("spacexsi".into()),
                     model: Some("claude-reviewer".into()),
                 },
             );
@@ -6349,7 +6349,7 @@ mod tests {
         )
         .await;
         assert!(
-            asked[0].starts_with("audit: claude-reviewer on spacexai"),
+            asked[0].starts_with("audit: claude-reviewer on spacexsi"),
             "{asked:?}"
         );
         let said: Vec<(&str, &str)> = agent
@@ -6448,7 +6448,7 @@ mod tests {
         )
         .await;
         assert!(
-            asked[0].starts_with("audit: grok-4.6 on spacexai, the model that built it\n"),
+            asked[0].starts_with("audit: grok-4.6 on spacexsi, the model that built it\n"),
             "{asked:?}"
         );
         assert!(asked[0].contains("/models"), "{asked:?}");
@@ -6677,7 +6677,7 @@ mod tests {
             ),
             call(
                 "load_skill",
-                serde_json::json!({"name": "mine", "file": "../../keys/spacexai"}),
+                serde_json::json!({"name": "mine", "file": "../../keys/spacexsi"}),
             ),
             say("loaded"),
         ]);
@@ -6687,7 +6687,7 @@ mod tests {
         std::fs::write(dir.join("SKILL.md"), "---\ndescription: d\n---\nbody\n").unwrap();
         std::fs::write(dir.join("notes.md"), "the notes").unwrap();
         std::fs::create_dir_all(home.path().join("keys")).unwrap();
-        std::fs::write(home.path().join("keys/spacexai"), "xai-secret").unwrap();
+        std::fs::write(home.path().join("keys/spacexsi"), "xai-secret").unwrap();
         agent.role = Role::Build;
         let system = agent.system_prompt().unwrap();
         assert!(

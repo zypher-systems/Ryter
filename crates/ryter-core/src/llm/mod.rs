@@ -1,4 +1,4 @@
-//! Inference providers: SpaceXAI, OpenRouter, and generic OpenAI/Anthropic wires.
+//! Inference providers: SpaceXSI, OpenRouter, Anthropic, OpenAI, and generic wires.
 
 mod http;
 pub mod model_cache;
@@ -658,6 +658,22 @@ fn short_reason(e: &str) -> String {
     explain_error(e).unwrap_or_else(|| e.lines().next().unwrap_or(e).chars().take(140).collect())
 }
 
+/// A Claude model's generation, `(major, minor)`, from its id:
+/// `claude-opus-5-5` is `(5, 5)`, `claude-haiku-4-5` is `(4, 5)`,
+/// `anthropic.claude-sonnet-4-6` is `(4, 6)`. A date suffix is not a minor
+/// version. `None` for anything that isn't a Claude id.
+pub fn claude_version(model: &str) -> Option<(u32, u32)> {
+    if !model.contains("claude") {
+        return None;
+    }
+    let mut nums = model
+        .split(['-', '.', '@'])
+        .filter_map(|s| s.parse::<u32>().ok());
+    let major = nums.next()?;
+    let minor = nums.next().filter(|n| *n < 100).unwrap_or(0);
+    Some((major, minor))
+}
+
 /// Wire protocol for a connection.
 pub fn backend_for(conn: &ConnectionConfig) -> Backend {
     match conn.api_backend.as_str() {
@@ -996,6 +1012,27 @@ mod tests {
             n += 1;
         }
         assert!(n >= 3);
+    }
+
+    #[test]
+    fn a_claude_id_gives_its_generation() {
+        assert_eq!(claude_version("claude-opus-5-5"), Some((5, 5)));
+        assert_eq!(claude_version("claude-opus-5"), Some((5, 0)));
+        assert_eq!(claude_version("claude-haiku-4-5"), Some((4, 5)));
+        assert_eq!(
+            claude_version("claude-sonnet-4-20250514"),
+            Some((4, 0)),
+            "a date is no minor"
+        );
+        assert_eq!(claude_version("claude-3-5-sonnet-20241022"), Some((3, 5)));
+        assert_eq!(claude_version("anthropic.claude-sonnet-4-6"), Some((4, 6)));
+        assert_eq!(claude_version("claude-opus-4-5@20251101"), Some((4, 5)));
+        assert_eq!(claude_version("grok-4.6"), None);
+        assert_eq!(
+            claude_version("anthropic/claude-sonnet-4.6"),
+            Some((4, 6)),
+            "OpenRouter's spelling"
+        );
     }
 
     #[test]
