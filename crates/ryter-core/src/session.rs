@@ -355,7 +355,7 @@ impl Session {
                 best = Some((meta.updated_at, meta.mode));
             }
         }
-        best.map(|(_, mode)| mode.unwrap_or(crate::role::Role::SoloBuild))
+        best.map(|(_, mode)| mode.unwrap_or(crate::role::Role::Build))
     }
 
     /// Sessions for `cwd`, newest `updated_at` first.
@@ -500,6 +500,17 @@ impl Session {
     /// All spend rows.
     pub fn spend_log(&self) -> Result<Vec<SpendRecord>> {
         read_jsonl(&self.dir.join("spend.jsonl"))
+    }
+
+    /// The newest provider `input_tokens` from the spend log, if any.
+    pub fn last_input_tokens(&self) -> Option<u64> {
+        self.spend_log().ok()?.into_iter().rev().find_map(|r| {
+            if r.input_tokens > 0 {
+                Some(r.input_tokens)
+            } else {
+                None
+            }
+        })
     }
 
     /// The session's notes folder, which the plan hat may write in.
@@ -725,6 +736,7 @@ fn answer_unanswered(messages: &[Message]) -> (Vec<Message>, usize) {
                 content: UNANSWERED.into(),
                 tool_call_id: Some(c.id.clone()),
                 tool_calls: None,
+                messages_blocks: None,
             });
             added += 1;
         }
@@ -940,25 +952,25 @@ mod tests {
         // the hat a resume of it opens in.
         assert_eq!(
             Session::latest_hat(home.path(), cwd.path()),
-            Some(Role::SoloBuild)
+            Some(Role::Build)
         );
         assert_eq!(
             crate::role::start_hat("last", Session::latest_hat(home.path(), cwd.path())),
-            Role::SoloBuild
+            Role::Build
         );
-        first.set_mode(Role::SoloAudit).unwrap();
+        first.set_mode(Role::Audit).unwrap();
         assert_eq!(
             Session::latest_hat(home.path(), cwd.path()),
-            Some(Role::SoloAudit)
+            Some(Role::Audit)
         );
         let mut second = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
-        second.set_mode(Role::SoloBuild).unwrap();
+        second.set_mode(Role::Build).unwrap();
         // Later than the first, whatever the clock's grain.
         second.meta.updated_at = format!("{}9", first.meta.updated_at);
         second.write_meta().unwrap();
         assert_eq!(
             Session::latest_hat(home.path(), cwd.path()),
-            Some(Role::SoloBuild)
+            Some(Role::Build)
         );
         // Another project's sessions are not this one's.
         let other = tempfile::tempdir().unwrap();
@@ -1125,15 +1137,8 @@ mod tests {
         let home = TempDir::new().unwrap();
         let mut session =
             Session::create(home.path(), home.path(), "c".into(), "m".into()).unwrap();
-        let record = |cost| {
-            spend_record(
-                "c".into(),
-                "m".into(),
-                Role::SoloBuild,
-                Usage::default(),
-                cost,
-            )
-        };
+        let record =
+            |cost| spend_record("c".into(), "m".into(), Role::Build, Usage::default(), cost);
         session.record_spend(record(Some(0.25))).unwrap();
         // Emulate a durable ledger append followed by a crash before meta.
         append_jsonl(&session.spend_path(), &record(Some(0.75))).unwrap();
@@ -1209,7 +1214,7 @@ mod tests {
         let s = Session::open(&dir).unwrap();
         assert_eq!(s.meta.title, "a docker stack");
         assert_eq!(s.meta.mode, Some(Role::Crew));
-        assert_eq!(s.meta.mode.map(Role::hat), Some(Role::SoloBuild));
+        assert_eq!(s.meta.mode.map(Role::hat), Some(Role::Build));
         let spend = s.spend_log().unwrap();
         assert_eq!(spend.len(), 2);
         assert!(spend.iter().all(|r| r.role == Role::Crew));
@@ -1231,6 +1236,7 @@ mod tests {
             content: content.into(),
             tool_call_id: id.map(str::to_string),
             tool_calls: calls,
+            messages_blocks: None,
         };
         let t = vec![
             msg("user", "go", None, None),
@@ -1263,6 +1269,7 @@ mod tests {
             content: content.into(),
             tool_call_id: None,
             tool_calls: None,
+            messages_blocks: None,
         }
     }
 
@@ -1286,12 +1293,13 @@ mod tests {
             content: "hi".into(),
             tool_call_id: None,
             tool_calls: None,
+            messages_blocks: None,
         })
         .unwrap();
         s.record_spend(spend_record(
             "spacexai".into(),
             "grok-4.6".into(),
-            Role::SoloBuild,
+            Role::Build,
             Usage {
                 input_tokens: 10,
                 output_tokens: 5,

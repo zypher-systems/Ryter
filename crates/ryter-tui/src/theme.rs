@@ -243,40 +243,41 @@ impl Theme {
         let mut t = derive(dark_base(), &ThemeFile::default()).unwrap_or_else(|_| unreachable());
         // A softer red than the one derived from the warning color: it is
         // a removed line's text as well as an error's.
-        t.error = rgb(0xd6, 0x90, 0x8a);
+        t.error = rgb(0xe3, 0xa0, 0x9a);
         t.diff_del_bg = tint(t.bg, t.error, 0.18);
-        t.panel_bg = rgb(0x0e, 0x10, 0x13);
-        t.rule = rgb(0x22, 0x26, 0x2d);
-        t.faint = rgb(0x43, 0x49, 0x55);
-        t.code_bg = rgb(0x13, 0x15, 0x1a);
-        t.sticky_bg = rgb(0x13, 0x15, 0x1a);
-        t.selection_bg = rgb(0x18, 0x1b, 0x21);
+        t.panel_bg = rgb(0x17, 0x1a, 0x20);
+        t.rule = rgb(0x2c, 0x30, 0x38);
+        t.faint = rgb(0x7c, 0x84, 0x91);
+        t.code_bg = rgb(0x12, 0x14, 0x1a);
+        t.sticky_bg = rgb(0x1a, 0x1e, 0x26);
+        t.selection_bg = rgb(0x1d, 0x21, 0x29);
         t
     }
 
     /// Shipped truecolor light theme.
     pub fn truecolor_light() -> Self {
         let base = Base {
-            bg: rgb(0xfa, 0xfa, 0xf7),
-            sidebar_bg: rgb(0xf1, 0xf1, 0xec),
-            composer_bg: rgb(0xf4, 0xf4, 0xf0),
-            fg: rgb(0x1e, 0x1e, 0x1e),
-            dim: rgb(0x5c, 0x5c, 0x5c),
-            prompt: rgb(0x00, 0x00, 0x00),
-            user: rgb(0x0b, 0x5c, 0xad),
-            tool: rgb(0x5c, 0x5c, 0x5c),
-            warn: rgb(0x8f, 0x63, 0x00),
-            plan: rgb(0x00, 0x6e, 0x8a),
+            bg: rgb(0xf3, 0xf3, 0xf1),
+            sidebar_bg: rgb(0xfa, 0xfa, 0xf8),
+            composer_bg: rgb(0xff, 0xff, 0xff),
+            fg: rgb(0x1b, 0x1d, 0x21),
+            dim: rgb(0x5d, 0x64, 0x70),
+            prompt: rgb(0x1b, 0x1d, 0x21),
+            user: rgb(0x2d, 0x5d, 0x9c),
+            tool: rgb(0x5d, 0x64, 0x70),
+            warn: rgb(0x8f, 0x64, 0x18),
+            plan: rgb(0x2d, 0x5d, 0x9c),
             architect: rgb(0x7a, 0x3d, 0xa8),
-            build: rgb(0x1f, 0x7a, 0x2e),
-            audit: rgb(0x8f, 0x63, 0x00),
+            build: rgb(0x1d, 0x7a, 0x44),
+            audit: rgb(0x8d, 0x61, 0x28),
         };
         let mut t = derive(base, &ThemeFile::default()).unwrap_or_else(|_| unreachable());
-        t.error = rgb(0xb3, 0x1d, 0x1d);
-        t.diff_add_bg = rgb(0xdc, 0xf0, 0xdc);
-        t.diff_del_bg = rgb(0xf8, 0xdd, 0xdb);
-        t.code_bg = rgb(0xee, 0xee, 0xe9);
-        t.sticky_bg = rgb(0xef, 0xef, 0xea);
+        t.error = rgb(0xa3, 0x3d, 0x38);
+        t.diff_add_bg = rgb(0xe5, 0xf5, 0xeb);
+        t.diff_del_bg = rgb(0xfb, 0xec, 0xeb);
+        t.panel_bg = rgb(0xff, 0xff, 0xff);
+        t.code_bg = rgb(0xf7, 0xf7, 0xf5);
+        t.sticky_bg = rgb(0xe6, 0xe8, 0xee);
         t.selection_bg = rgb(0xd6, 0xe6, 0xf2);
         t
     }
@@ -466,11 +467,11 @@ impl Theme {
     /// The color of a hat.
     pub fn mode(self, mode: ryter_core::Role) -> Color {
         match mode {
-            ryter_core::Role::SoloBuild => self.build,
-            ryter_core::Role::SoloPlan => self.plan,
+            ryter_core::Role::Build => self.build,
+            ryter_core::Role::Plan => self.plan,
             // Every specialist is the one specialist color: a new hat
             // needs no new color (`docs/sidebar-design.md` R-COLOR-01).
-            ryter_core::Role::SoloAudit | ryter_core::Role::SoloScribe => self.audit,
+            ryter_core::Role::Audit | ryter_core::Role::Scribe => self.audit,
             ryter_core::Role::Crew => self.build,
         }
     }
@@ -579,23 +580,25 @@ struct Base {
 }
 
 fn dark_base() -> Base {
+    // The workspace mockup's dark palette: the stage, a lifted sidebar,
+    // and the elevated cards one step further.
     Base {
-        bg: rgb(0x0b, 0x0c, 0x0f),
-        sidebar_bg: rgb(0x0b, 0x0c, 0x0f),
-        composer_bg: rgb(0x0b, 0x0c, 0x0f),
-        fg: rgb(0xd6, 0xd9, 0xdf),
-        dim: rgb(0x84, 0x8b, 0x97),
-        prompt: rgb(0xff, 0xff, 0xff),
+        bg: rgb(0x0c, 0x0d, 0x10),
+        sidebar_bg: rgb(0x11, 0x13, 0x18),
+        composer_bg: rgb(0x17, 0x1a, 0x20),
+        fg: rgb(0xe7, 0xe9, 0xee),
+        dim: rgb(0xa7, 0xae, 0xb8),
+        prompt: rgb(0xe7, 0xe9, 0xee),
         // A neutral grey-blue, so the user's mark is not read as the plan
         // hat now that plan is blue.
         user: rgb(0xae, 0xb7, 0xc6),
-        tool: rgb(0x84, 0x8b, 0x97),
-        warn: rgb(0xd9, 0xa8, 0x66),
-        plan: rgb(0x7f, 0xa7, 0xdb),
+        tool: rgb(0x7c, 0x84, 0x91),
+        warn: rgb(0xe2, 0xb5, 0x6d),
+        plan: rgb(0x8e, 0xb4, 0xe4),
         // Syntax and user theme files only: no hat wears it.
         architect: rgb(0xb3, 0x9d, 0xdb),
-        build: rgb(0x8d, 0xc2, 0x9b),
-        audit: rgb(0xd0, 0xb0, 0x77),
+        build: rgb(0x8f, 0xc9, 0xa2),
+        audit: rgb(0xd7, 0xb8, 0x7e),
     }
 }
 

@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::action::Action;
 use crate::chat::wrap;
@@ -195,7 +195,9 @@ pub fn refresh(view: &mut View) {
     }
 }
 
-/// Open from an empty composer (`Ctrl+P`, `R-PAL-15`).
+/// Open from an empty composer. Typing `/` does this by inserting the
+/// character; tests open it directly.
+#[cfg(test)]
 pub fn open(view: &mut View) {
     if !view.composer.text().starts_with('/') {
         view.composer.set_text("/");
@@ -337,6 +339,13 @@ enum Row {
 
 /// Draw the palette over `chat`, above `composer_top`.
 pub fn draw(frame: &mut Frame, chat: Rect, composer_top: u16, view: &View, theme: Theme) {
+    if view.palette.is_none() {
+        return;
+    }
+    if view.ui.workspace() {
+        draw_workspace(frame, chat, view, theme);
+        return;
+    }
     let Some(p) = &view.palette else {
         return;
     };
@@ -401,6 +410,169 @@ pub fn draw(frame: &mut Frame, chat: Rect, composer_top: u16, view: &View, theme
         }
     }
     frame.render_widget(Paragraph::new(lines).style(theme.panel()), inner);
+}
+
+/// Workspace palette: a rounded dialog over a dimmed stage, grouped.
+fn draw_workspace(frame: &mut Frame, chat: Rect, view: &View, theme: Theme) {
+    let Some(p) = &view.palette else {
+        return;
+    };
+    crate::panel::dim_overlay(frame, chat, theme);
+    let ms = matches(view);
+    let q = filter(view);
+    let rows = body_rows(view, &ms, &q);
+    let width = chat.width.saturating_sub(2).min(64);
+    let y = chat.y + (chat.height / 10).min(chat.height.saturating_sub(8));
+    let room = chat.y.saturating_add(chat.height).saturating_sub(y + 1);
+    let max_h = room.max(6);
+    let height = u16::try_from(rows.len() + 2)
+        .unwrap_or(max_h)
+        .clamp(6, max_h);
+    let area = Rect {
+        x: chat.x + chat.width.saturating_sub(width) / 2,
+        y,
+        width,
+        height,
+    };
+    view.covers.borrow_mut().push(area);
+    crate::panel::drop_shadow(frame, area, theme);
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new("").style(theme.panel()), area);
+    let accent = theme.mode(view.mode);
+    let bg = theme.panel_bg;
+    let edge = Style::default().fg(theme.rule).bg(bg);
+    let top_edge = Style::default().fg(accent).bg(bg);
+    let w = usize::from(area.width);
+    let total = entries(view).len();
+    let title = " commands ";
+    let status = format!(" {} of {} ", ms.len(), total);
+    let fill = w.saturating_sub(2 + wrap::width(title) + wrap::width(&status));
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("╭", top_edge),
+            Span::styled(title, theme.panel().add_modifier(Modifier::BOLD)),
+            Span::styled("─".repeat(fill), top_edge),
+            Span::styled(status, Style::default().fg(theme.dim).bg(bg)),
+            Span::styled("╮", top_edge),
+        ])),
+        Rect { height: 1, ..area },
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("╰", edge),
+            Span::styled("─".repeat(w.saturating_sub(2)), edge),
+            Span::styled("╯", edge),
+        ])),
+        Rect {
+            y: area.y + area.height - 1,
+            height: 1,
+            ..area
+        },
+    );
+    {
+        let buf = frame.buffer_mut();
+        for y in (area.y + 1)..(area.y + area.height - 1) {
+            for x in [area.x, area.x + area.width - 1] {
+                if x < buf.area.width && y < buf.area.height {
+                    let c = &mut buf[(x, y)];
+                    c.set_symbol("│");
+                    c.set_style(edge);
+                }
+            }
+        }
+    }
+    let inner = Rect {
+        x: area.x + 1,
+        y: area.y + 1,
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    };
+    let sel_row = rows
+        .iter()
+        .position(|r| matches!(r, Row::Match(i) if *i == p.selected))
+        .unwrap_or(0);
+    let vis = usize::from(inner.height).saturating_sub(1).max(1);
+    let start = (sel_row + 1).saturating_sub(vis);
+    let mut lines: Vec<Line> = Vec::new();
+    for row in rows.iter().skip(start).take(vis) {
+        match row {
+            Row::Filter => lines.push(Line::from(vec![
+                Span::styled(" ", theme.panel()),
+                Span::styled(
+                    if q.is_empty() {
+                        "type to filter".to_string()
+                    } else {
+                        q.clone()
+                    },
+                    if q.is_empty() {
+                        theme.panel_muted()
+                    } else {
+                        theme.panel()
+                    },
+                ),
+            ])),
+            Row::Blank => lines.push(Line::from(Span::styled("", theme.panel()))),
+            Row::Header(c) => lines.push(Line::from(Span::styled(
+                format!(" {}", c.title()),
+                theme.panel_muted().add_modifier(Modifier::BOLD),
+            ))),
+            Row::Empty => {
+                lines.push(Line::from(Span::styled(
+                    format!(" no command matches \"{q}\""),
+                    theme.panel_muted(),
+                )));
+            }
+            Row::Match(i) => lines.push(match_line(
+                &ms[*i],
+                *i == p.selected,
+                inner.width as usize,
+                theme,
+            )),
+        }
+    }
+    let foot = inner.y + inner.height - 1;
+    let body = Rect {
+        height: inner.height.saturating_sub(1),
+        ..inner
+    };
+    frame.render_widget(Paragraph::new(lines).style(theme.panel()), body);
+    let keys = kbd_row(
+        &[("↑↓", "move"), ("enter", "run"), ("esc", "close")],
+        usize::from(inner.width),
+        theme,
+    );
+    frame.render_widget(
+        Paragraph::new(keys),
+        Rect {
+            y: foot,
+            height: 1,
+            ..inner
+        },
+    );
+}
+
+fn kbd_row(items: &[(&str, &str)], width: usize, theme: Theme) -> Line<'static> {
+    let bg = theme.panel_bg;
+    let fill = theme.sticky_bg;
+    let mut spans = vec![Span::styled(" ", Style::default().bg(bg))];
+    for (i, (k, l)) in items.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled("  ", Style::default().bg(bg)));
+        }
+        spans.push(crate::glyphs::filled(k, theme.fg, fill));
+        spans.push(Span::styled(
+            format!(" {l}"),
+            Style::default().fg(theme.dim).bg(bg),
+        ));
+    }
+    let used: usize = spans.iter().map(|s| wrap::width(&s.content)).sum();
+    if used < width {
+        spans.push(Span::styled(
+            " ".repeat(width - used),
+            Style::default().bg(bg),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn match_line(m: &Match, selected: bool, width: usize, theme: Theme) -> Line<'static> {
@@ -554,10 +726,10 @@ mod tests {
         step(&mut v, 1);
         let a = run(&mut v);
         assert!(!matches!(a, Action::None), "{a:?}");
-        // An alias is a name: `/perm` is `/tools`.
+        // A prefix is a name: `/perm` is `/permissions` (was once an alias of `/tools`).
         v.composer.set_text("/perm");
         refresh(&mut v);
-        assert_eq!(current(&v).unwrap().entry.name, "tools");
+        assert_eq!(current(&v).unwrap().entry.name, "permissions");
         let a = run(&mut v);
         assert!(!matches!(a, Action::None), "{a:?}");
         // A new filter starts the highlight over.

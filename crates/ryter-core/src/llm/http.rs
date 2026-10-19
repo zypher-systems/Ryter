@@ -12,7 +12,8 @@ use crate::config::ConnectionConfig;
 use crate::error::{Error, Result};
 use crate::llm::parse::Backend;
 use crate::llm::{
-    CompletionRequest, DeltaStream, ModelInfo, Provider, StreamDelta, ToolSpec, backend_for,
+    CompletionRequest, DeltaStream, MessagesBlock, ModelInfo, Provider, StreamDelta, ToolSpec,
+    backend_for,
 };
 
 /// How long to wait for the connection itself.
@@ -180,6 +181,14 @@ impl HttpProvider {
         if self.kind == "openrouter" {
             if let Some(effort) = &req.reasoning {
                 body["reasoning"] = json!({ "effort": effort });
+            }
+        }
+        // Direct Anthropic Messages: turn the same effort knob into extended
+        // thinking. Without this, thinking stays off and there is nothing to
+        // echo after a tool call.
+        if self.backend == Backend::Messages {
+            if let Some(thinking) = anthropic_thinking(req.reasoning.as_deref(), req.max_tokens) {
+                body["thinking"] = thinking;
             }
         }
         body
@@ -613,6 +622,18 @@ fn messages_body(req: &CompletionRequest) -> Value {
                 }
             }
             "assistant" => {
+                // Prefer the preserved wire order when the turn used extended
+                // thinking: rebuilding from text + tool_calls drops signatures
+                // and reorders interleaved thinking / tool_use blocks.
+                if let Some(blocks) = &m.messages_blocks {
+                    if !blocks.is_empty() {
+                        messages.push(json!({
+                            "role": "assistant",
+                            "content": messages_blocks_json(blocks),
+                        }));
+                    }
+                    continue;
+                }
                 let mut blocks = Vec::new();
                 if !m.content.is_empty() {
                     blocks.push(json!({"type": "text", "text": m.content}));
@@ -688,6 +709,61 @@ fn mark_last_for_cache(messages: &mut [Value]) {
 fn wants_cache_marks(model: &str) -> bool {
     let m = model.to_ascii_lowercase();
     m.starts_with("anthropic/") || m.contains("claude")
+}
+
+/// Serialize preserved Messages content blocks for the next request.
+fn messages_blocks_json(blocks: &[MessagesBlock]) -> Value {
+    blocks
+        .iter()
+        .map(|b| match b {
+            MessagesBlock::Thinking {
+                thinking,
+                signature,
+            } => json!({
+                "type": "thinking",
+                "thinking": thinking,
+                "signature": signature,
+            }),
+            MessagesBlock::RedactedThinking { data } => json!({
+                "type": "redacted_thinking",
+                "data": data,
+            }),
+            MessagesBlock::Text { text } => json!({
+                "type": "text",
+                "text": text,
+            }),
+            MessagesBlock::ToolUse { id, name, input } => json!({
+                "type": "tool_use",
+                "id": id,
+                "name": name,
+                "input": input,
+            }),
+        })
+        .collect()
+}
+
+/// Extended thinking for a direct Anthropic Messages request.
+///
+/// `budget_tokens` must be ≥ 1024 and strictly less than `max_tokens`. When
+/// the effort is unset or `default`, thinking stays off (Anthropic's default).
+fn anthropic_thinking(effort: Option<&str>, max_tokens: Option<u32>) -> Option<Value> {
+    let effort = effort?;
+    let budget = match effort {
+        "low" => 1024,
+        "medium" => 8192,
+        "high" => 16384,
+        _ => return None,
+    };
+    let max = max_tokens.unwrap_or(8192);
+    // Leave room for the visible reply; a budget ≥ max_tokens is rejected.
+    let budget = budget.min(max.saturating_sub(1));
+    if budget < 1024 {
+        return None;
+    }
+    Some(json!({
+        "type": "enabled",
+        "budget_tokens": budget,
+    }))
 }
 
 /// True when `msg` is a user turn built only of `tool_result` blocks, so a
@@ -1047,6 +1123,7 @@ mod tests {
             content: content.into(),
             tool_call_id: None,
             tool_calls: None,
+            messages_blocks: None,
         }
     }
 
@@ -1227,6 +1304,97 @@ mod tests {
         };
         let body = messages_body(&req);
         assert_eq!(body["messages"][0]["content"][0]["input"], json!({}));
+    }
+
+    /// After a tool round, the assistant turn must come back with its thinking
+    /// block and signature unmodified — rebuilding from text + tool_calls drops
+    /// them and Anthropic rejects the request.
+    #[test]
+    fn messages_echoes_thinking_blocks_beside_tool_use() {
+        let req = CompletionRequest {
+            model: "claude-sonnet-4-6".into(),
+            system: None,
+            messages: vec![
+                msg("user", "read it"),
+                Message {
+                    messages_blocks: Some(vec![
+                        MessagesBlock::Thinking {
+                            thinking: "I should read the file first.".into(),
+                            signature: "sig_echo_me_unmodified".into(),
+                        },
+                        MessagesBlock::ToolUse {
+                            id: "toolu_1".into(),
+                            name: "read_file".into(),
+                            input: json!({"path": "a.rs"}),
+                        },
+                    ]),
+                    tool_calls: Some(vec![call("toolu_1", "read_file", r#"{"path":"a.rs"}"#)]),
+                    ..msg("assistant", "")
+                },
+                Message {
+                    tool_call_id: Some("toolu_1".into()),
+                    ..msg("tool", "fn main() {}")
+                },
+            ],
+            tools: vec![ToolSpec {
+                name: "read_file".into(),
+                description: "read".into(),
+                parameters: json!({"type": "object"}),
+            }],
+            max_tokens: Some(8192),
+            reasoning: Some("medium".into()),
+        };
+        let body = messages_body(&req);
+        let ms = body["messages"].as_array().unwrap();
+        assert_eq!(ms[1]["role"], "assistant");
+        let content = ms[1]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2, "{content:?}");
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], "I should read the file first.");
+        assert_eq!(content[0]["signature"], "sig_echo_me_unmodified");
+        assert_eq!(content[1]["type"], "tool_use");
+        assert_eq!(content[1]["id"], "toolu_1");
+        assert_eq!(content[1]["input"]["path"], "a.rs");
+        // Redacted thinking also survives echo.
+        let mut redacted = req.clone();
+        redacted.messages[1].messages_blocks = Some(vec![
+            MessagesBlock::RedactedThinking {
+                data: "opaque".into(),
+            },
+            MessagesBlock::ToolUse {
+                id: "toolu_1".into(),
+                name: "read_file".into(),
+                input: json!({}),
+            },
+        ]);
+        let body = messages_body(&redacted);
+        assert_eq!(
+            body["messages"][1]["content"][0]["type"],
+            "redacted_thinking"
+        );
+        assert_eq!(body["messages"][1]["content"][0]["data"], "opaque");
+    }
+
+    #[test]
+    fn anthropic_messages_body_enables_extended_thinking_from_effort() {
+        let conn = crate::config::connection_template("anthropic").unwrap();
+        let p = HttpProvider::new(&conn, "k".into());
+        let mut req = tool_loop();
+        req.reasoning = Some("high".into());
+        req.max_tokens = Some(32_768);
+        let body = p.body(&req);
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["thinking"]["budget_tokens"], 16384);
+        req.reasoning = None;
+        let body = p.body(&req);
+        assert!(body.get("thinking").is_none(), "{body}");
+        // OpenRouter still gets the effort field, not Anthropic's thinking object.
+        let or = crate::config::connection_template("openrouter").unwrap();
+        let p = HttpProvider::new(&or, "k".into());
+        req.reasoning = Some("medium".into());
+        let body = p.body(&req);
+        assert_eq!(body["reasoning"]["effort"], "medium");
+        assert!(body.get("thinking").is_none(), "{body}");
     }
 
     /// A rate limit or an overloaded provider is the most common failure in a

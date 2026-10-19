@@ -233,7 +233,7 @@ impl Models {
             None => (view.model.clone(), Some(view.connection.clone())),
             // A hat that follows the others is on the `default` row.
             Some(role) => view
-                .specialists
+                .hats
                 .get(role)
                 .filter(|r| r.is_override())
                 .map(|r| (r.model.clone().unwrap_or_default(), r.connection.clone()))
@@ -302,7 +302,7 @@ impl Models {
         match role {
             None => (short_model(&view.model).to_string(), false),
             Some(role) => match view
-                .specialists
+                .hats
                 .get(role)
                 .filter(|r| r.is_override())
                 .and_then(|r| r.model.as_deref())
@@ -482,6 +482,9 @@ impl Panel for Models {
     }
 
     fn status(&self, view: &View) -> String {
+        if let Some(why) = &self.refusal {
+            return wrap::truncate(why, 48);
+        }
         let n = self.filtered(view).len();
         if let Some(note) = &view.models_note {
             format!("{n} · {note}")
@@ -811,8 +814,19 @@ impl Panel for Models {
     }
 
     fn on_notice(&mut self, n: &Notice, view: &mut View) {
-        if let Notice::Models(models) = n {
-            self.set_models(view, models);
+        match n {
+            Notice::Models(models) => self.set_models(view, models),
+            Notice::ModelChecked {
+                model,
+                result: Err(why),
+                ..
+            } => {
+                self.refusal = Some(format!("{model}: {why}"));
+            }
+            Notice::ModelChecked { result: Ok(()), .. } => {
+                self.refusal = None;
+            }
+            _ => {}
         }
     }
 
@@ -859,8 +873,8 @@ mod tests {
 
     fn hats_view() -> View {
         let mut v = View::new("openrouter".into(), "x-ai/grok-4.7".into(), "/tmp".into());
-        v.mode = ryter_core::Role::SoloBuild;
-        v.specialists.insert(
+        v.mode = ryter_core::Role::Build;
+        v.hats.insert(
             "audit".into(),
             ryter_core::RoleModel {
                 connection: Some("openrouter".into()),
@@ -885,7 +899,7 @@ mod tests {
     #[test]
     fn the_hats_are_the_seats() {
         let mut v = hats_view();
-        v.specialists.clear();
+        v.hats.clear();
         let mut p = Models::new(&mut v, None);
         p.set_models(&v, &catalog());
         let t = text(&p, &v);
@@ -920,7 +934,7 @@ mod tests {
         assert_eq!((p.focus, p.seat()), (Focus::Seats, 2));
         // As the loop applies it, the seat shows it, and the hat it is on
         // says so wherever the model is named.
-        v.specialists.insert(
+        v.hats.insert(
             "plan".into(),
             ryter_core::RoleModel {
                 connection: Some("openrouter".into()),
@@ -931,7 +945,7 @@ mod tests {
         assert!(t.contains("Plan      qwen3.7-max"), "{t}");
         assert!(t.contains("Build     follows all hats"), "{t}");
         assert_eq!(v.hat_model(), "x-ai/grok-4.7", "the build hat follows");
-        v.mode = ryter_core::Role::SoloPlan;
+        v.mode = ryter_core::Role::Plan;
         assert_eq!(v.hat_model(), "qwen/qwen3.7-max");
     }
 
@@ -1206,7 +1220,7 @@ mod tests {
             Outcome::Act(Action::SetHatModel { connection, .. }) if connection == "spacexai"
         ));
         // Opening on a seat set to the second connection's copy.
-        v.specialists.insert(
+        v.hats.insert(
             "audit".into(),
             ryter_core::RoleModel {
                 connection: Some("spacexai".into()),
@@ -1329,5 +1343,35 @@ mod tests {
             })
             .collect();
         assert!(text.contains("reasoning") && text.contains("low"), "{text}");
+    }
+
+    /// A failed choose-time check lands in the panel's status so the
+    /// refusal is visible before the first message.
+    #[test]
+    fn a_failed_model_check_shows_in_the_status() {
+        let mut v = hats_view();
+        let mut p = Models::new(&mut v, None);
+        p.set_models(&v, &catalog());
+        p.on_notice(
+            &Notice::ModelChecked {
+                seat: "plan".into(),
+                connection: "openrouter".into(),
+                model: "refused/model".into(),
+                result: Err("out of credits".into()),
+            },
+            &mut v,
+        );
+        assert_eq!(p.refusal.as_deref(), Some("refused/model: out of credits"));
+        assert!(p.status(&v).contains("credits"), "{}", p.status(&v));
+        p.on_notice(
+            &Notice::ModelChecked {
+                seat: "plan".into(),
+                connection: "openrouter".into(),
+                model: "ok/model".into(),
+                result: Ok(()),
+            },
+            &mut v,
+        );
+        assert!(p.refusal.is_none());
     }
 }

@@ -9,7 +9,8 @@ use std::sync::mpsc::Sender;
 use crate::error::{Error, Result};
 use crate::event::AgentEvent;
 use crate::llm::{
-    AssistantToolCall, CompletionRequest, Message, Provider, StreamDelta, ToolCallAccumulator,
+    AssistantToolCall, CompletionRequest, Message, MessagesEchoAccumulator, Provider, StreamDelta,
+    ToolCallAccumulator,
 };
 use crate::role::Role;
 use crate::session::{Session, spend_record};
@@ -113,6 +114,10 @@ pub struct Agent {
     /// The turn in progress, for the events made during it; `0` between
     /// turns.
     pub turn: u64,
+    /// Provider `input_tokens` from the last completed call, for the context
+    /// gauge. Cleared when compaction rewrites the transcript, so the gauge
+    /// does not keep a pre-compact count.
+    pub last_input_tokens: Option<u64>,
 }
 
 /// Output ceiling per round of the conversation.
@@ -240,7 +245,7 @@ impl Agent {
         // before it was removed) has no tools and no hat note: resumed as
         // it was, the model was sent the message bare, with nothing to
         // work with.
-        if !self.role.is_solo() {
+        if !self.role.is_hat() {
             self.put_on(self.role.hat())?;
         }
         // A plan approved in an earlier session, or put there by hand:
@@ -261,6 +266,7 @@ impl Agent {
         // checkpoint holds none of it.
         self.ctx.created.clear();
         self.ctx.kept.clear();
+        self.ctx.sessions.clear();
         let started = std::time::Instant::now();
         let mut tools = 0u32;
         self.emit(AgentEvent::TurnStarted {
@@ -274,7 +280,7 @@ impl Agent {
         // audits and what it should cost, yes or no. Asked inside the
         // turn: the screen showed the message when it was sent, and a no
         // has to close what that opened.
-        let requested = self.role == Role::SoloAudit && crate::gate::asks_for_audit(user);
+        let requested = self.role == Role::Audit && crate::gate::asks_for_audit(user);
         let agreed = if requested {
             self.agree_to_hat_audit()
         } else {
@@ -292,7 +298,7 @@ impl Agent {
                 // An audit changes nothing: a checkpoint before, the tree
                 // put back after. Without a repository there is no
                 // checkpoint, and the hat is held to looking for the turn.
-                if self.role == Role::SoloAudit {
+                if self.role == Role::Audit {
                     self.audit_live = Some(AuditLive {
                         checkpoint: self.audit_checkpoint(),
                         from: self.session.transcript.len(),
@@ -334,9 +340,10 @@ impl Agent {
     }
 
     /// Remember the files a call made this turn: a `write` of a file that
-    /// was not there, and what a shell command made or moved
-    /// ([`crate::tools::effects`]). Deleting one it made later in the turn
-    /// does not ask; a place it moved the user's file to always does.
+    /// was not there (and folders it created on the way), and what a shell
+    /// command made or moved ([`crate::tools::effects`]). Deleting one it
+    /// made later in the turn does not ask; a place it moved the user's
+    /// file to always does.
     fn note_created(
         &mut self,
         name: &str,
@@ -344,19 +351,32 @@ impl Agent {
         diff: Option<&crate::diff::FileDiff>,
         effects: crate::tools::Effects,
     ) {
-        let crate::tools::Effects { mut made, kept } = effects;
+        let crate::tools::Effects {
+            mut made,
+            kept,
+            sessions,
+        } = effects;
         for p in kept {
             if !self.ctx.kept.contains(&p) {
                 self.ctx.kept.push(p);
             }
         }
+        for s in sessions {
+            if !self.ctx.sessions.contains(&s) {
+                self.ctx.sessions.push(s);
+            }
+        }
+        // Belt and braces: if the pre-scan missed a new write, still credit
+        // the file (parents were scanned before the write ran).
         if name == "write" && diff.is_some_and(|d| d.created) {
             if let Some(p) = args
                 .get("path")
                 .and_then(Value::as_str)
                 .and_then(|p| crate::tools::resolve(&self.ctx, p))
             {
-                made.push(p);
+                if !made.contains(&p) {
+                    made.push(p);
+                }
             }
         }
         for p in made {
@@ -418,6 +438,7 @@ impl Agent {
             content,
             tool_call_id: None,
             tool_calls: None,
+            messages_blocks: None,
         })?;
         if self.session.meta.title.is_empty() {
             let t: String = user.chars().take(80).collect();
@@ -462,7 +483,7 @@ impl Agent {
                 }
                 reader = Some(model.clone());
             }
-            if self.role == Role::SoloAudit {
+            if self.role == Role::Audit {
                 let spent = self.session.meta.spend_usd_total.unwrap_or(0.0);
                 // Anything else said in the hat is answered without a
                 // question, with what an audit should cost said first: the
@@ -485,6 +506,7 @@ impl Agent {
                             content: crate::gate::WRITE_UP.into(),
                             tool_call_id: None,
                             tool_calls: None,
+                            messages_blocks: None,
                         })?;
                     }
                     crate::gate::Fit::No(why) => {
@@ -522,6 +544,7 @@ impl Agent {
             };
             let mut text = String::new();
             let mut calls = ToolCallAccumulator::default();
+            let mut echo = MessagesEchoAccumulator::default();
             let mut usage = Usage::default();
             let mut reported_cost: Option<f64> = None;
             let mut saw_usage = false;
@@ -544,7 +567,11 @@ impl Agent {
                     let Some(delta) = delta else {
                         break;
                     };
-                    match delta? {
+                    let delta = delta?;
+                    // Capture Anthropic thinking blocks (with signatures) so
+                    // the next Messages request can echo them beside tool_use.
+                    echo.push(&delta);
+                    match delta {
                         StreamDelta::Text(t) => {
                             text.push_str(&t);
                             self.emit(AgentEvent::Token { text: t })?;
@@ -552,6 +579,9 @@ impl Agent {
                         StreamDelta::Reasoning(t) => {
                             self.emit(AgentEvent::Reasoning { text: t })?;
                         }
+                        StreamDelta::ThinkingOpen { .. }
+                        | StreamDelta::ThinkingSignature { .. }
+                        | StreamDelta::ThinkingClose { .. } => {}
                         StreamDelta::ToolCall {
                             stream_key,
                             id,
@@ -662,6 +692,7 @@ impl Agent {
                 } else {
                     Some(call_list.clone())
                 },
+                messages_blocks: echo.finish(),
             })?;
 
             if call_list.is_empty() {
@@ -671,6 +702,7 @@ impl Agent {
                         content: n,
                         tool_call_id: None,
                         tool_calls: None,
+                        messages_blocks: None,
                     })?;
                     continue;
                 }
@@ -713,24 +745,33 @@ impl Agent {
                     at: crate::event::now_ms(),
                 })?;
                 let t0 = std::time::Instant::now();
-                if self.role == Role::SoloBuild
-                    && !checkpointed
-                    && self.would_change(&call.name, &args)
+                if self.role == Role::Build && !checkpointed && self.would_change(&call.name, &args)
                 {
                     self.checkpoint_before_build()?;
                     checkpointed = true;
                 }
-                if self.role == Role::SoloBuild && checkpointed && parsed.is_ok() {
+                if self.role == Role::Build && checkpointed && parsed.is_ok() {
                     self.save_ignored(&call.name, &args)?;
                 }
                 self.note_product_use(&call.name, &args);
                 // Read before the command runs: what is not there yet is
-                // what it makes.
+                // what it makes. A `write` of a new file also credits the
+                // folders `create_dir_all` will make, so `rm -rf` of that
+                // tree later in the turn does not ask.
                 let effects = if call.name == "bash" && parsed.is_ok() {
                     crate::tools::effects(&args, &self.ctx)
+                } else if call.name == "write" && parsed.is_ok() {
+                    crate::tools::Effects {
+                        made: crate::tools::write_makes(&args, &self.ctx),
+                        kept: Vec::new(),
+                        sessions: Vec::new(),
+                    }
                 } else {
                     crate::tools::Effects::default()
                 };
+                // A long `bash` (or `run_project` shell step) looks alive:
+                // newest lines go to the screen while it runs.
+                self.listen_for_live(&call.id, &call.name);
                 let out = match &parsed {
                     // Run with `null` arguments, the call was refused as
                     // "outside policy" and the model resent the same JSON.
@@ -769,6 +810,7 @@ impl Agent {
                     }
                     Ok(_) => gated_execute(&call.name, &args, &self.ctx),
                 };
+                self.ctx.live = None;
                 // Whatever the call came to, the cards it put up are logged
                 // under it, a cancelled one included.
                 self.emit_asked(Some(&call.id))?;
@@ -817,6 +859,7 @@ impl Agent {
                     content: out.text,
                     tool_call_id: Some(call.id.clone()),
                     tool_calls: None,
+                    messages_blocks: None,
                 })?;
                 if stuck {
                     self.answer_unrun(&call_list[i + 1..], "not run: the turn was stopped")?;
@@ -839,6 +882,7 @@ impl Agent {
                     content: n,
                     tool_call_id: None,
                     tool_calls: None,
+                    messages_blocks: None,
                 })?;
             }
         }
@@ -849,8 +893,7 @@ impl Agent {
             message: format!(
                 "stopped after {} rounds, the most one message may use (rounds a turn in \
                  /settings, [limits] rounds in config.toml, or --rounds N for one run; 0 \
-                 lifts it). Say \"continue\" \
-                 to carry on.",
+                 lifts it). Say \"continue\" to carry on.",
                 self.max_turns
             ),
         })?;
@@ -876,6 +919,7 @@ impl Agent {
                 content: why.to_string(),
                 tool_call_id: Some(c.id.clone()),
                 tool_calls: None,
+                messages_blocks: None,
             })?;
         }
         Ok(())
@@ -1091,6 +1135,9 @@ impl Agent {
                      from their next message; follow them now too."
                 )))
             }
+            crate::user_io::Permission::TimedOut => Ok(ToolOutput::err(
+                crate::user_io::timed_out_waiting("update_rules", &format!("change {shown}")),
+            )),
             crate::user_io::Permission::Deny => Ok(ToolOutput::err(
                 "the user said no: their rules are unchanged. Ask what they would like instead",
             )),
@@ -1137,7 +1184,7 @@ impl Agent {
                 // Out of the audit hat by the user's yes: the audit closes
                 // here, tree put back and findings filed, so what the next
                 // hat does in this turn is not undone at its end.
-                if from == Role::SoloAudit {
+                if from == Role::Audit {
                     self.close_audit();
                 }
                 self.put_on(to)?;
@@ -1145,7 +1192,7 @@ impl Agent {
                 // Into the audit hat by the user's yes: an audit phase of
                 // its own, with its checkpoint, closed at the turn's end or
                 // at the next switch out.
-                if to == Role::SoloAudit && self.audit_live.is_none() {
+                if to == Role::Audit && self.audit_live.is_none() {
                     self.audit_live = Some(AuditLive {
                         checkpoint: self.audit_checkpoint(),
                         from: self.session.transcript.len(),
@@ -1156,9 +1203,9 @@ impl Agent {
                     });
                 }
                 let now = match to {
-                    Role::SoloBuild => "you may now change files and run commands",
-                    Role::SoloPlan => "nothing may change now; read and plan",
-                    Role::SoloScribe => "write documentation only; change no code",
+                    Role::Build => "you may now change files and run commands",
+                    Role::Plan => "nothing may change now; read and plan",
+                    Role::Scribe => "write documentation only; change no code",
                     _ => "nothing may change now; audit",
                 };
                 Ok(ToolOutput {
@@ -1170,6 +1217,9 @@ impl Agent {
                     diff: None,
                 })
             }
+            crate::user_io::Permission::TimedOut => Ok(ToolOutput::err(
+                crate::user_io::timed_out_waiting("switch hat", &summary),
+            )),
             crate::user_io::Permission::Deny => Ok(ToolOutput::err(format!(
                 "the user said no: stay in the {} hat, and ask what they want instead",
                 self.role
@@ -1199,7 +1249,7 @@ impl Agent {
                 "present_plan needs `title` (a few words) and `plan` (the plan, in Markdown)",
             ));
         };
-        if !self.role.is_solo() {
+        if !self.role.is_hat() {
             return Ok(ToolOutput::err(
                 "plans are presented from the plan and build hats",
             ));
@@ -1258,17 +1308,15 @@ impl Agent {
                     ),
                 })?;
                 let from = self.role;
-                if from != Role::SoloBuild {
+                if from != Role::Build {
                     // Out of the audit hat by the user's yes to a plan: the
                     // audit closes here, as it does for `request_hat`, so
                     // the build that follows in this turn is not undone.
-                    if from == Role::SoloAudit {
+                    if from == Role::Audit {
                         self.close_audit();
                     }
-                    self.put_on(Role::SoloBuild)?;
-                    self.emit(AgentEvent::ModeChanged {
-                        role: Role::SoloBuild,
-                    })?;
+                    self.put_on(Role::Build)?;
+                    self.emit(AgentEvent::ModeChanged { role: Role::Build })?;
                 }
                 Ok(ToolOutput::ok(format!(
                     "The user approved the plan. It is saved at `{shown}`, and you are in the \
@@ -1278,7 +1326,7 @@ impl Agent {
                      its goal, record the difference with record_decision before you build \
                      it. If the plan's goal or a whole step can't be done, stop and say so: \
                      don't improvise a different plan.",
-                    if from == Role::SoloBuild {
+                    if from == Role::Build {
                         String::new()
                     } else {
                         format!(" now (was {from})")
@@ -1347,7 +1395,7 @@ impl Agent {
         };
         // A reviewer that could record a decision could explain away what
         // it was asked to find.
-        if !matches!(self.role, Role::SoloPlan | Role::SoloBuild) {
+        if !matches!(self.role, Role::Plan | Role::Build) {
             return Ok(ToolOutput::err(format!(
                 "decisions are recorded from the plan and build hats, not the {} hat. Say \
                  in your answer what differs from the plan.",
@@ -1473,7 +1521,7 @@ impl Agent {
     /// once the tree has been compared with the checkpoint.
     fn file_audit(&mut self, args: &Value) -> crate::tools::ToolOutput {
         use crate::tools::ToolOutput;
-        if self.role != Role::SoloAudit {
+        if self.role != Role::Audit {
             return ToolOutput::err(format!(
                 "an audit is filed from the audit hat, not the {} hat",
                 self.role
@@ -1649,7 +1697,7 @@ impl Agent {
             .unwrap_or_default()
             .into_iter()
             .skip(spent_from)
-            .filter(|r| r.role == Role::SoloAudit)
+            .filter(|r| r.role == Role::Audit)
             .collect();
         let total_usd = audits
             .iter()
@@ -1773,12 +1821,12 @@ impl Agent {
     /// The project's own commands are the build and audit hats' to run:
     /// the plan hat changes and starts nothing.
     fn not_the_plan_hat(&self, tool: &str) -> Option<crate::tools::ToolOutput> {
-        matches!(self.role, Role::SoloPlan | Role::SoloScribe).then(|| {
+        matches!(self.role, Role::Plan | Role::Scribe).then(|| {
             crate::tools::ToolOutput::err(format!(
                 "{tool} is the build and audit hats': the {} hat changes and starts \
                  nothing. Tell the user to press {} to the build hat.",
                 self.role,
-                if self.role == Role::SoloPlan {
+                if self.role == Role::Plan {
                     "Tab"
                 } else {
                     "Shift+Tab"
@@ -1871,7 +1919,7 @@ impl Agent {
     fn run_refused(&self, run: &crate::run::RunFile) -> Option<String> {
         let as_builder = crate::tools::ToolContext {
             live: None,
-            role: Role::SoloBuild,
+            role: Role::Build,
             ..self.ctx.clone()
         };
         for cmd in run.commands() {
@@ -2756,6 +2804,7 @@ impl Agent {
                 content: user.to_string(),
                 tool_call_id: None,
                 tool_calls: None,
+                messages_blocks: None,
             }],
             tools: Vec::new(),
             max_tokens: Some(max_tokens),
@@ -2864,10 +2913,19 @@ impl Agent {
     }
 
     /// `/context` snapshot for the active hat, including schemas and output.
+    ///
+    /// The headline uses the provider's last `input_tokens` when a call has
+    /// reported usage; admission and compaction still use the bytes/4 estimate.
     pub fn context_report(&self) -> Result<crate::compact::ContextReport> {
         let sys = self.system_prompt()?;
         let (_, model, connection) = self.hat_stack();
-        Ok(self.report_for(&sys, &model, &connection))
+        let mut r = self.report_for(&sys, &model, &connection);
+        if let Some(n) = self.last_input_tokens {
+            r.tokens = n;
+            r.pct = (n.saturating_mul(100) / r.window.max(1)).min(100) as u8;
+            r.from_provider = true;
+        }
+        Ok(r)
     }
 
     /// Emit a [`AgentEvent::Context`] for the TUI / `--json`.
@@ -2882,6 +2940,9 @@ impl Agent {
             "output allowance".into(),
             Self::output_allowance(r.window).into(),
         ));
+        if r.from_provider {
+            breakdown.insert(0, ("provider input".into(), r.tokens));
+        }
         self.emit(AgentEvent::Context {
             tokens: r.tokens,
             window: r.window,
@@ -2908,6 +2969,8 @@ impl Agent {
             < crate::compact::estimate_tokens(&sys, &self.session.transcript);
         if changed {
             self.session.replace_transcript(next)?;
+            // The last provider count was for the pre-compact prompt.
+            self.last_input_tokens = None;
         }
         let mut rep = self.report_for(&sys, &model, &connection);
         rep.compacted = changed;
@@ -2917,6 +2980,11 @@ impl Agent {
             window: rep.window,
         })?;
         Ok(rep)
+    }
+
+    /// Seed [`Self::last_input_tokens`] from the session's spend log (resume).
+    pub fn seed_prompt_tokens(&mut self) {
+        self.last_input_tokens = self.session.last_input_tokens();
     }
 
     fn maybe_compact(&mut self, system: &mut String, model: &str, connection: &str) -> Result<()> {
@@ -2962,7 +3030,7 @@ impl Agent {
     /// The provider, model and connection this turn's hat runs on: its own
     /// where the user gave it one, otherwise the one every hat uses.
     fn hat_stack(&self) -> (Arc<dyn Provider>, String, String) {
-        if self.role.is_solo() {
+        if self.role.is_hat() {
             self.stack_for(self.role)
         } else {
             (
@@ -2981,7 +3049,7 @@ impl Agent {
             .ok()?
             .into_iter()
             .rev()
-            .find(|r| r.role.is_solo())
+            .find(|r| r.role.is_hat())
             .map(|r| r.model)
     }
 
@@ -3042,7 +3110,7 @@ impl Agent {
         let Some(cfg) = &self.cfg else {
             return lead();
         };
-        if cfg.follows_orchestrator(role) {
+        if cfg.follows_all_hats(role) {
             return lead();
         }
         let (conn, model) = cfg.route_for(role);
@@ -3121,6 +3189,9 @@ impl Agent {
         record.incomplete = !local && reported_cost.is_none() && (!complete || !saw_usage);
         let incomplete = record.incomplete;
         self.session.record_spend(record)?;
+        if saw_usage && usage.input_tokens > 0 {
+            self.last_input_tokens = Some(usage.input_tokens);
+        }
         self.emit(AgentEvent::Spend {
             connection: connection.into(),
             model: model.into(),
@@ -3153,13 +3224,35 @@ impl Agent {
         }
         Ok(())
     }
+
+    /// Pass a running command's newest lines to the screen. Sink only — not
+    /// the session log (several a second is noise; finished calls still log).
+    fn listen_for_live(&mut self, id: &str, name: &str) {
+        if !matches!(name, "bash" | "run_project") {
+            self.ctx.live = None;
+            return;
+        }
+        let Some(sink) = self.sink.clone() else {
+            self.ctx.live = None;
+            return;
+        };
+        let id = id.to_string();
+        self.ctx.live = Some(crate::tools::LiveOutput(std::sync::Arc::new(
+            move |tail: &[String]| {
+                let _ = sink.send(AgentEvent::ToolLive {
+                    id: id.clone(),
+                    tail: tail.to_vec(),
+                });
+            },
+        )));
+    }
 }
 
 #[cfg(test)]
 mod tests {
     mod acceptance;
     use super::*;
-    use crate::llm::ReplayProvider;
+    use crate::llm::{MessagesBlock, ReplayProvider};
     use crate::tools::ToolContext;
     use std::sync::Mutex;
     use tempfile::TempDir;
@@ -3321,7 +3414,7 @@ mod tests {
             live: None,
             workspace: cwd.path().to_path_buf(),
             notes_dir: notes,
-            role: Role::SoloBuild,
+            role: Role::Build,
             always_approve: true,
             yolo: false,
             permissions: Default::default(),
@@ -3336,6 +3429,7 @@ mod tests {
             read_only: false,
             created: Vec::new(),
             kept: Vec::new(),
+            sessions: Vec::new(),
             search: Default::default(),
         };
         let agent = Agent {
@@ -3345,7 +3439,7 @@ mod tests {
             ctx,
             connection: "spacexai".into(),
             model: "grok-4.6".into(),
-            role: Role::SoloBuild,
+            role: Role::Build,
             max_turns: 8,
             budget_usd: 0.0,
             sink: None,
@@ -3360,6 +3454,7 @@ mod tests {
             audit_live: None,
             last_audit_verdict: None,
             turn: 0,
+            last_input_tokens: None,
         };
         (home, cwd, agent)
     }
@@ -3422,9 +3517,9 @@ mod tests {
         agent.role = Role::Crew;
         agent.ctx.role = Role::Crew;
         agent.turn("carry on").await.unwrap();
-        assert_eq!(agent.role, Role::SoloBuild);
-        assert_eq!(agent.ctx.role, Role::SoloBuild);
-        assert_eq!(agent.session.meta.mode, Some(Role::SoloBuild));
+        assert_eq!(agent.role, Role::Build);
+        assert_eq!(agent.ctx.role, Role::Build);
+        assert_eq!(agent.session.meta.mode, Some(Role::Build));
         let first = &agent.session.transcript[0].content;
         assert!(first.starts_with("[hat: build"), "{first}");
         assert!(
@@ -3498,8 +3593,8 @@ mod tests {
         let (_home, cwd, mut agent) = repo_setup(p);
         std::fs::create_dir_all(cwd.path().join("src")).unwrap();
         std::fs::write(cwd.path().join("src/a.rs"), "x\n").unwrap();
-        agent.role = Role::SoloBuild;
-        agent.ctx.role = Role::SoloBuild;
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
         let answerer = answering(&mut agent, crate::user_io::Permission::Deny);
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
@@ -3562,6 +3657,50 @@ mod tests {
         );
     }
 
+    /// A slow bash passes its newest lines to the sink while it runs, and
+    /// those updates are not written to the session log.
+    #[tokio::test]
+    async fn a_running_bash_sends_live_output_to_the_sink() {
+        let p = ReplayProvider::scripted(vec![
+            call(
+                "bash",
+                serde_json::json!({
+                    "command": "for i in 1 2 3 4; do echo line $i; sleep 0.3; done"
+                }),
+            ),
+            say("done"),
+        ]);
+        let (_home, _cwd, mut agent) = repo_setup(p);
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("run it").await.unwrap();
+        let events: Vec<AgentEvent> = events.try_iter().collect();
+        let live: Vec<&AgentEvent> = events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::ToolLive { .. }))
+            .collect();
+        assert!(
+            live.len() >= 2,
+            "expected several live updates, got {live:?} from {events:?}"
+        );
+        let AgentEvent::ToolLive { id, tail } = live[0] else {
+            unreachable!()
+        };
+        assert_eq!(id, "bash-1");
+        assert!(!tail.is_empty());
+        assert!(tail.iter().all(|l| l.len() <= 200), "{tail:?}");
+        // First update should not already be the last line (command still running).
+        assert!(
+            !tail.iter().any(|l| l.contains("line 4")),
+            "first live update already finished: {live:?}"
+        );
+        let log = std::fs::read_to_string(agent.session.dir.join("events.jsonl")).unwrap();
+        assert!(
+            !log.contains(r#""kind":"tool_live""#),
+            "live updates stay off the log:\n{log}"
+        );
+    }
+
     /// A file the turn made is the turn's to delete: no card for `rm` of a
     /// probe script the model wrote moments before, by `write` or by a
     /// redirect. The next turn's checkpoint holds it, so the next turn asks.
@@ -3581,8 +3720,8 @@ mod tests {
             say("asked"),
         ]);
         let (_home, cwd, mut agent) = repo_setup(p);
-        agent.role = Role::SoloBuild;
-        agent.ctx.role = Role::SoloBuild;
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
         let answerer = answering(&mut agent, crate::user_io::Permission::Deny);
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
@@ -3609,6 +3748,39 @@ mod tests {
         assert!(cwd.path().join("probe2.sh").exists());
     }
 
+    /// A folder the write tool made this turn is free to `rm -rf`: parents
+    /// created by `create_dir_all` are credited with the file (G1 / tunes).
+    #[tokio::test]
+    async fn a_folder_the_write_tool_made_is_deleted_without_asking() {
+        let p = ReplayProvider::scripted(vec![
+            write("scratch/probe/out.sh", "echo hi\n"),
+            call("bash", serde_json::json!({"command": "rm -rf scratch"})),
+            say("cleaned"),
+        ]);
+        let (_home, cwd, mut agent) = repo_setup(p);
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
+        let answerer = answering(&mut agent, crate::user_io::Permission::Deny);
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("probe nested").await.unwrap();
+        assert!(!cwd.path().join("scratch").exists());
+        let first: Vec<AgentEvent> = events.try_iter().collect();
+        assert!(
+            !first.iter().any(|e| matches!(e, AgentEvent::Asked { .. })),
+            "rm -rf of write-made folder asked: {first:?}"
+        );
+        assert!(
+            first
+                .iter()
+                .all(|e| !matches!(e, AgentEvent::ToolResult { is_error: true, .. })),
+            "{first:?}"
+        );
+        agent.ctx.user_io = None;
+        let asked = answerer.join().unwrap();
+        assert!(asked.is_empty(), "expected no asks, got {asked:?}");
+    }
+
     /// "Are you there?" is a conversation, not a reason to touch git: a turn
     /// that only talks or reads makes no repository and no snapshot.
     #[tokio::test]
@@ -3624,8 +3796,8 @@ mod tests {
         ];
         let p = ReplayProvider::scripted(vec![say("yes, here"), ls, say("two files")]);
         let (_home, cwd, mut agent) = setup(p);
-        agent.role = Role::SoloBuild;
-        agent.ctx.role = Role::SoloBuild;
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
         agent.turn("are you there?").await.unwrap();
         agent.turn("what's here?").await.unwrap();
         assert!(
@@ -3660,8 +3832,8 @@ mod tests {
             say("done"),
         ]);
         let (_home, cwd, mut agent) = repo_setup(p);
-        agent.role = Role::SoloPlan;
-        agent.ctx.role = Role::SoloPlan;
+        agent.role = Role::Plan;
+        agent.ctx.role = Role::Plan;
         agent.ctx.always_approve = true;
         let (io, rx) = crate::user_io::UserIo::pair();
         agent.ctx.user_io = Some(io);
@@ -3746,7 +3918,7 @@ mod tests {
         let mut script = calls;
         script.push(say("done"));
         agent.provider = Arc::new(ReplayProvider::scripted(script));
-        agent.put_on(Role::SoloBuild).unwrap();
+        agent.put_on(Role::Build).unwrap();
         let (io, rx) = crate::user_io::UserIo::pair();
         agent.ctx.user_io = Some(io);
         let shown = std::thread::spawn(move || {
@@ -3799,8 +3971,8 @@ mod tests {
     fn failed_cleanup_is_remembered_and_can_be_retried_after_resume() {
         for failed_start in [false, true] {
             let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![]));
-            agent.role = Role::SoloBuild;
-            agent.ctx.role = Role::SoloBuild;
+            agent.role = Role::Build;
+            agent.ctx.role = Role::Build;
             let run = crate::run::RunFile {
                 start: Some(if failed_start { "exit 7" } else { "true" }.into()),
                 stop: Some("test -f allow-stop".into()),
@@ -3835,8 +4007,8 @@ mod tests {
     #[test]
     fn an_unowned_ready_address_does_not_start_or_claim_a_service() {
         let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![]));
-        agent.role = Role::SoloBuild;
-        agent.ctx.role = Role::SoloBuild;
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let run = crate::run::RunFile {
             start: Some("echo started > state".into()),
@@ -4120,7 +4292,7 @@ mod tests {
             run_project("test"),
             say("done"),
         ]));
-        agent.put_on(Role::SoloBuild).unwrap();
+        agent.put_on(Role::Build).unwrap();
         let (io, rx) = crate::user_io::UserIo::pair();
         agent.ctx.user_io = Some(io);
         let swapped = file.clone();
@@ -4238,10 +4410,10 @@ mod tests {
         };
         std::fs::write(&file, "test = \"echo ok\"\n").unwrap();
         // Without the flag, nothing in it runs.
-        let out = headless(&mut agent, Role::SoloBuild, false).await;
+        let out = headless(&mut agent, Role::Build, false).await;
         assert!(out.contains("nobody can approve"), "{out}");
         // With it, a file within the hat's reach runs, and stays unapproved.
-        let out = headless(&mut agent, Role::SoloBuild, true).await;
+        let out = headless(&mut agent, Role::Build, true).await;
         assert_eq!(out, "$ echo ok\nok\n");
         assert!(matches!(
             crate::run::find(cwd.path(), &agent.home),
@@ -4252,21 +4424,21 @@ mod tests {
         // project is a question the flag answers.
         std::fs::write(cwd.path().join("hello.txt"), "hi\n").unwrap();
         std::fs::write(&file, "test = \"echo x > /opt/ryter-not-here.txt\"\n").unwrap();
-        let out = headless(&mut agent, Role::SoloBuild, true).await;
+        let out = headless(&mut agent, Role::Build, true).await;
         assert!(
             out.contains("more than --always-approve covers in the build hat"),
             "{out}"
         );
         std::fs::write(&file, "test = \"rm hello.txt\"\n").unwrap();
-        let out = headless(&mut agent, Role::SoloBuild, true).await;
+        let out = headless(&mut agent, Role::Build, true).await;
         assert!(!out.contains("more than --always-approve"), "{out}");
         assert!(!cwd.path().join("hello.txt").exists());
         // The review hat runs them too; the plan hat starts nothing, with
         // the flag or not.
         std::fs::write(&file, "test = \"echo ok\"\n").unwrap();
-        let out = headless(&mut agent, Role::SoloAudit, true).await;
+        let out = headless(&mut agent, Role::Audit, true).await;
         assert_eq!(out, "$ echo ok\nok\n");
-        let out = headless(&mut agent, Role::SoloPlan, true).await;
+        let out = headless(&mut agent, Role::Plan, true).await;
         assert!(
             out.contains("run_project is the build and audit hats'"),
             "{out}"
@@ -4283,7 +4455,7 @@ mod tests {
         let asked = Arc::new(Asked::default());
         agent.provider = asked.clone();
         let mut cfg = agent.cfg.clone().unwrap_or_default();
-        cfg.specialists.insert(
+        cfg.hats.insert(
             "audit".into(),
             crate::config::RoleModel {
                 connection: Some(agent.connection.clone()),
@@ -4299,13 +4471,13 @@ mod tests {
             agent.ctx.role = role;
         };
         // Something worth re-reading: about 3,000 tokens of conversation.
-        hat(&mut agent, Role::SoloBuild);
+        hat(&mut agent, Role::Build);
         agent.turn(&"a long request. ".repeat(800)).await.unwrap();
-        hat(&mut agent, Role::SoloPlan);
+        hat(&mut agent, Role::Plan);
         agent.turn("plan it").await.unwrap();
-        hat(&mut agent, Role::SoloAudit);
+        hat(&mut agent, Role::Audit);
         agent.turn("review it").await.unwrap();
-        hat(&mut agent, Role::SoloBuild);
+        hat(&mut agent, Role::Build);
         agent.turn("fix it").await.unwrap();
         assert_eq!(
             *asked.models.lock().unwrap(),
@@ -4378,8 +4550,8 @@ mod tests {
             say("done"),
         ]);
         let (_home, cwd, mut agent) = repo_setup(p);
-        agent.role = Role::SoloPlan;
-        agent.ctx.role = Role::SoloPlan;
+        agent.role = Role::Plan;
+        agent.ctx.role = Role::Plan;
         agent.ctx.always_approve = true;
         let shown = match answer {
             Some(answer) => {
@@ -4452,14 +4624,13 @@ mod tests {
             "{result}"
         );
         // It went on to build, in the same turn.
-        assert_eq!(agent.role, Role::SoloBuild);
-        assert_eq!(agent.session.meta.mode, Some(Role::SoloBuild));
-        assert!(events.iter().any(|e| matches!(
-            e,
-            AgentEvent::ModeChanged {
-                role: Role::SoloBuild
-            }
-        )));
+        assert_eq!(agent.role, Role::Build);
+        assert_eq!(agent.session.meta.mode, Some(Role::Build));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::ModeChanged { role: Role::Build }))
+        );
         assert!(events.iter().any(|e| matches!(
             e,
             AgentEvent::Notice { message } if message.contains("plan · approved and saved to")
@@ -4506,7 +4677,7 @@ mod tests {
     async fn a_session_without_a_plan_picks_up_the_plan_file() {
         let (_home, cwd, mut agent) =
             repo_setup(ReplayProvider::scripted(vec![say("ok"), say("ok again")]));
-        agent.put_on(Role::SoloBuild).unwrap();
+        agent.put_on(Role::Build).unwrap();
         assert_eq!(agent.session.meta.plan_file, None);
         let dated = crate::plan::save_on(cwd.path(), "2026-10-02", "Readme", "write it").unwrap();
         agent.turn("hi").await.unwrap();
@@ -4536,12 +4707,12 @@ mod tests {
             say("VERDICT: FAIL"),
         ]));
         std::fs::write(cwd.path().join("hello.txt"), "hi\n").unwrap();
-        agent.put_on(Role::SoloBuild).unwrap();
+        agent.put_on(Role::Build).unwrap();
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
         agent.turn("read it").await.unwrap();
         agent.turn("and again").await.unwrap();
-        assert_eq!(agent.role, Role::SoloBuild);
+        assert_eq!(agent.role, Role::Build);
         let evs: Vec<AgentEvent> = events.try_iter().collect();
         assert!(
             !evs.iter()
@@ -4639,8 +4810,7 @@ mod tests {
     /// the plan could not tell it from a mistake.
     #[tokio::test]
     async fn a_decision_is_recorded_under_the_approved_plan() {
-        let (file, result, notices) =
-            decision_recorded(Role::SoloBuild, Some(CMS_PLAN), "user").await;
+        let (file, result, notices) = decision_recorded(Role::Build, Some(CMS_PLAN), "user").await;
         let file = file.expect("the decisions file");
         assert!(
             file.contains(
@@ -4664,7 +4834,7 @@ mod tests {
             "{result}"
         );
         // One the model made is signed by its hat and its model.
-        let (file, _, _) = decision_recorded(Role::SoloBuild, Some(CMS_PLAN), "model").await;
+        let (file, _, _) = decision_recorded(Role::Build, Some(CMS_PLAN), "model").await;
         let file = file.expect("the decisions file");
         assert!(
             file.contains("- Decided by: build hat (grok-4.6) · 20"),
@@ -4677,12 +4847,11 @@ mod tests {
     /// what it was asked to find.
     #[tokio::test]
     async fn a_decision_needs_a_plan_and_a_hat_that_does_the_work() {
-        let (file, result, notices) = decision_recorded(Role::SoloBuild, None, "user").await;
+        let (file, result, notices) = decision_recorded(Role::Build, None, "user").await;
         assert_eq!(file, None);
         assert!(result.contains("no plan has been approved"), "{result}");
         assert!(notices.is_empty(), "{notices:?}");
-        let (file, result, notices) =
-            decision_recorded(Role::SoloAudit, Some(CMS_PLAN), "user").await;
+        let (file, result, notices) = decision_recorded(Role::Audit, Some(CMS_PLAN), "user").await;
         assert_eq!(file, None);
         assert!(
             result.contains("recorded from the plan and build hats, not the audit hat"),
@@ -4696,10 +4865,10 @@ mod tests {
         );
         // The plan hat may: the user can change their mind while planning
         // the next step.
-        let (file, _, _) = decision_recorded(Role::SoloPlan, Some(CMS_PLAN), "user").await;
+        let (file, _, _) = decision_recorded(Role::Plan, Some(CMS_PLAN), "user").await;
         assert!(file.is_some());
         // Who decided has to be said.
-        let (file, result, _) = decision_recorded(Role::SoloBuild, Some(CMS_PLAN), "me").await;
+        let (file, result, _) = decision_recorded(Role::Build, Some(CMS_PLAN), "me").await;
         assert_eq!(file, None);
         assert!(result.contains("needs `decided_by`"), "{result}");
     }
@@ -4715,7 +4884,7 @@ mod tests {
             "{result}"
         );
         assert!(plans_in(&cwd).is_empty());
-        assert_eq!(agent.role, Role::SoloPlan);
+        assert_eq!(agent.role, Role::Plan);
 
         let long = "- a step\n".repeat(crate::plan::MAX_BYTES / 9 + 10);
         let p = ReplayProvider::scripted(vec![
@@ -4726,8 +4895,8 @@ mod tests {
             say("done"),
         ]);
         let (_home, cwd, mut agent) = repo_setup(p);
-        agent.role = Role::SoloPlan;
-        agent.ctx.role = Role::SoloPlan;
+        agent.role = Role::Plan;
+        agent.ctx.role = Role::Plan;
         let (io, rx) = crate::user_io::UserIo::pair();
         agent.ctx.user_io = Some(io);
         agent.turn("plan everything").await.unwrap();
@@ -4754,14 +4923,13 @@ mod tests {
             asked,
             "switch hat: switch to the build hat: carry out the plan"
         );
-        assert_eq!(agent.role, Role::SoloBuild);
-        assert_eq!(agent.session.meta.mode, Some(Role::SoloBuild));
-        assert!(events.iter().any(|e| matches!(
-            e,
-            AgentEvent::ModeChanged {
-                role: Role::SoloBuild
-            }
-        )));
+        assert_eq!(agent.role, Role::Build);
+        assert_eq!(agent.session.meta.mode, Some(Role::Build));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::ModeChanged { role: Role::Build }))
+        );
         assert_eq!(
             std::fs::read_to_string(cwd.path().join("README.md")).unwrap(),
             "built\n",
@@ -4773,7 +4941,7 @@ mod tests {
     #[tokio::test]
     async fn no_keeps_the_plan_hat() {
         let (cwd, agent, events, _) = plan_then_offer_build(crate::user_io::Permission::Deny).await;
-        assert_eq!(agent.role, Role::SoloPlan);
+        assert_eq!(agent.role, Role::Plan);
         assert!(
             !events
                 .iter()
@@ -4813,8 +4981,8 @@ mod tests {
         let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![]));
         let p = Arc::new(SeesReasoning::default());
         agent.provider = p.clone();
-        agent.role = Role::SoloPlan;
-        agent.ctx.role = Role::SoloPlan;
+        agent.role = Role::Plan;
+        agent.ctx.role = Role::Plan;
         let mut cfg = crate::config::Config::default();
         agent.cfg = Some(cfg.clone());
         agent.turn("plan").await.unwrap();
@@ -4834,6 +5002,68 @@ mod tests {
         );
     }
 
+    /// Anthropic extended thinking with tools: the thinking block (and its
+    /// signature) is kept on the assistant turn so the next Messages request
+    /// can echo it beside `tool_use`. Without that, the API rejects the round.
+    #[tokio::test]
+    async fn anthropic_thinking_blocks_are_kept_for_the_next_tool_round() {
+        let thinking_then_read = vec![
+            StreamDelta::ThinkingOpen {
+                stream_key: Some("0".into()),
+                redacted_data: None,
+            },
+            StreamDelta::Reasoning("need the file".into()),
+            StreamDelta::ThinkingSignature {
+                stream_key: Some("0".into()),
+                signature: "sig_keep".into(),
+            },
+            StreamDelta::ThinkingClose {
+                stream_key: Some("0".into()),
+            },
+            StreamDelta::ToolCall {
+                stream_key: Some("1".into()),
+                id: "toolu_1".into(),
+                name: "read_file".into(),
+                arguments: r#"{"path":"README.md"}"#.into(),
+            },
+            StreamDelta::Done,
+        ];
+        let p = ReplayProvider::scripted(vec![thinking_then_read, say("looks fine")]);
+        let (_home, cwd, mut agent) = repo_setup(p);
+        std::fs::write(cwd.path().join("README.md"), "hi\n").unwrap();
+        agent.ctx.always_approve = true;
+        let r = agent.turn("check readme").await.unwrap();
+        assert_eq!(r.reason, StopReason::Completed);
+        let assistant = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "assistant" && m.messages_blocks.is_some())
+            .expect("the thinking assistant turn is kept");
+        assert_eq!(
+            assistant.messages_blocks.as_ref().unwrap(),
+            &vec![
+                MessagesBlock::Thinking {
+                    thinking: "need the file".into(),
+                    signature: "sig_keep".into(),
+                },
+                MessagesBlock::ToolUse {
+                    id: "toolu_1".into(),
+                    name: "read_file".into(),
+                    input: serde_json::json!({"path": "README.md"}),
+                },
+            ]
+        );
+        // The turn resumed and finished after the tool result.
+        assert!(
+            agent
+                .session
+                .transcript
+                .iter()
+                .any(|m| m.role == "assistant" && m.content == "looks fine")
+        );
+    }
+
     /// A build reply that is all reasoning and hits the output limit used to
     /// end the turn with nothing, and the screen was never told the turn was
     /// over. Now the model is told to continue in smaller steps, and the turn
@@ -4847,8 +5077,8 @@ mod tests {
         ];
         let p = ReplayProvider::scripted(vec![cut_off, write("README.md", "built\n"), say("done")]);
         let (_home, cwd, mut agent) = repo_setup(p);
-        agent.role = Role::SoloBuild;
-        agent.ctx.role = Role::SoloBuild;
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
         agent.ctx.always_approve = true;
         let (tx, rx) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
@@ -4902,8 +5132,8 @@ mod tests {
         };
         let p = ReplayProvider::scripted(vec![cut(), cut(), cut()]);
         let (_home, _cwd, mut agent) = repo_setup(p);
-        agent.role = Role::SoloBuild;
-        agent.ctx.role = Role::SoloBuild;
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
         let (tx, rx) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
         let r = agent.turn("build it").await.unwrap();
@@ -4928,8 +5158,8 @@ mod tests {
             say("planned"),
         ]);
         let (_home, cwd, mut agent) = repo_setup(p);
-        agent.role = Role::SoloBuild;
-        agent.ctx.role = Role::SoloBuild;
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
         agent.ctx.always_approve = true;
         agent.turn("rewrite the readme").await.unwrap();
         let readme = cwd.path().join("README.md");
@@ -4947,8 +5177,8 @@ mod tests {
         );
 
         // A plan turn is not a checkpoint, and can't edit.
-        agent.role = Role::SoloPlan;
-        agent.ctx.role = Role::SoloPlan;
+        agent.role = Role::Plan;
+        agent.ctx.role = Role::Plan;
         agent.turn("what next?").await.unwrap();
 
         let msg = agent.undo().unwrap();
@@ -4959,8 +5189,8 @@ mod tests {
 
     fn build_agent(turns: Vec<Vec<StreamDelta>>) -> (TempDir, TempDir, Agent) {
         let (home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(turns));
-        agent.role = Role::SoloBuild;
-        agent.ctx.role = Role::SoloBuild;
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
         agent.ctx.always_approve = true;
         (home, cwd, agent)
     }
@@ -5092,8 +5322,8 @@ mod tests {
             say("```text\nAdd new.txt\n\nIt was asked for.\n```"),
         ]);
         let (_home, cwd, mut agent) = repo_setup(p);
-        agent.role = Role::SoloBuild;
-        agent.ctx.role = Role::SoloBuild;
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
         agent.ctx.always_approve = true;
         agent.turn("add a file").await.unwrap();
         let dir = cwd.path();
@@ -5140,8 +5370,8 @@ mod tests {
         p.repeat_last = true;
         let (_home, _cwd, mut agent) = setup(p);
         agent.max_turns = 40;
-        agent.role = Role::SoloBuild;
-        agent.ctx.role = Role::SoloBuild;
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
         let r = agent.turn("fix hello").await.unwrap();
@@ -5171,14 +5401,16 @@ mod tests {
             std::fs::create_dir(cwd.path().join(format!("d{i}"))).unwrap();
         }
         agent.max_turns = 3;
-        agent.role = Role::SoloPlan;
-        agent.ctx.role = Role::SoloPlan;
+        agent.role = Role::Plan;
+        agent.ctx.role = Role::Plan;
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
         let r = agent.turn("look around").await.unwrap();
         assert_eq!(r.reason, StopReason::MaxTurns);
         assert!(events.try_iter().any(
-            |e| matches!(e, AgentEvent::Notice { message } if message.contains("after 3 rounds") && message.contains("[limits] rounds"))
+            |e| matches!(e, AgentEvent::Notice { message } if message.contains("after 3 rounds")
+                && message.contains("[limits] rounds")
+                && message.contains("Say \"continue\""))
         ));
     }
 
@@ -5202,8 +5434,8 @@ mod tests {
             StreamDelta::Done,
         ];
         let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![two, say("hello")]));
-        agent.role = Role::SoloBuild;
-        agent.ctx.role = Role::SoloBuild;
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
         let cancel = agent.ctx.cancel.clone();
         let t = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(400));
@@ -5241,8 +5473,8 @@ mod tests {
             StreamDelta::Done,
         ];
         let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![bad, say("ok")]));
-        agent.role = Role::SoloPlan;
-        agent.ctx.role = Role::SoloPlan;
+        agent.role = Role::Plan;
+        agent.ctx.role = Role::Plan;
         agent.turn("read it").await.unwrap();
         let tool = agent
             .session
@@ -5289,7 +5521,7 @@ mod tests {
         run: ReviewRun,
         script: Vec<Vec<StreamDelta>>,
     ) -> (TempDir, TempDir, Agent, Vec<AgentEvent>, Vec<String>) {
-        review_run_from(Role::SoloBuild, run, script).await
+        review_run_from(Role::Build, run, script).await
     }
 
     /// [`review_run`], from the hat the user is in.
@@ -5303,7 +5535,7 @@ mod tests {
         let cfg = agent.cfg.as_mut().unwrap();
         cfg.spend.audit_usd = run.limit;
         if run.own_model {
-            cfg.specialists.insert(
+            cfg.hats.insert(
                 "audit".into(),
                 crate::config::RoleModel {
                     connection: Some("spacexai".into()),
@@ -5469,7 +5701,7 @@ mod tests {
                     cwd.path().join("project.log"),
                 )
             });
-            agent.put_on(Role::SoloAudit).unwrap();
+            agent.put_on(Role::Audit).unwrap();
             let (tx, events) = std::sync::mpsc::channel();
             agent.sink = Some(tx);
             agent.turn("audit it").await.unwrap();
@@ -5501,7 +5733,7 @@ mod tests {
             say("filed"),
         ]));
         assert!(!cwd.path().join(".ryter/run.toml").exists());
-        agent.put_on(Role::SoloAudit).unwrap();
+        agent.put_on(Role::Audit).unwrap();
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
         agent.turn("audit it").await.unwrap();
@@ -5532,7 +5764,7 @@ mod tests {
             say("filed again"),
         ]));
         std::fs::write(cwd.path().join("hello.txt"), "hi\n").unwrap();
-        agent.put_on(Role::SoloAudit).unwrap();
+        agent.put_on(Role::Audit).unwrap();
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
         agent.turn("audit it").await.unwrap();
@@ -5602,9 +5834,9 @@ mod tests {
             counted(say("it says hi")),
         ]));
         std::fs::write(cwd.path().join("hello.txt"), "hi\n").unwrap();
-        agent.put_on(Role::SoloAudit).unwrap();
-        let (_, model, _) = agent.stack_for(Role::SoloAudit);
-        let opening = Role::SoloAudit.opening().unwrap();
+        agent.put_on(Role::Audit).unwrap();
+        let (_, model, _) = agent.stack_for(Role::Audit);
+        let opening = Role::Audit.opening().unwrap();
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
 
@@ -5687,7 +5919,7 @@ mod tests {
             ),
             say("done"),
         ]));
-        agent.put_on(Role::SoloAudit).unwrap();
+        agent.put_on(Role::Audit).unwrap();
         agent.ctx.always_approve = true;
         let (io, rx) = crate::user_io::UserIo::pair();
         agent.ctx.user_io = Some(io);
@@ -5720,19 +5952,12 @@ mod tests {
         );
         assert!(cwd.path().join(".ryter/plan.md").exists());
         assert!(cwd.path().join(".ryter/audit.md").exists());
-        assert_eq!(agent.role, Role::SoloBuild);
+        assert_eq!(agent.role, Role::Build);
         let evs: Vec<AgentEvent> = events.try_iter().collect();
         assert_eq!(audited(&evs).len(), 1, "{evs:?}");
         let at = |f: &dyn Fn(&AgentEvent) -> bool| evs.iter().position(f).unwrap();
         let filed = at(&|e| matches!(e, AgentEvent::Audited { .. }));
-        let switched = at(&|e| {
-            matches!(
-                e,
-                AgentEvent::ModeChanged {
-                    role: Role::SoloBuild
-                }
-            )
-        });
+        let switched = at(&|e| matches!(e, AgentEvent::ModeChanged { role: Role::Build }));
         assert!(filed < switched, "{evs:?}");
     }
 
@@ -5756,7 +5981,7 @@ mod tests {
             ),
             say("looked"),
         ]));
-        agent.put_on(Role::SoloBuild).unwrap();
+        agent.put_on(Role::Build).unwrap();
         agent.ctx.always_approve = true;
         let (io, rx) = crate::user_io::UserIo::pair();
         agent.ctx.user_io = Some(io);
@@ -5776,7 +6001,7 @@ mod tests {
             !cwd.path().join("probe.txt").exists(),
             "put back at the turn's end"
         );
-        assert_eq!(agent.role, Role::SoloAudit);
+        assert_eq!(agent.role, Role::Audit);
         let evs: Vec<AgentEvent> = events.try_iter().collect();
         assert!(
             evs.iter().any(|e| matches!(e, AgentEvent::Notice { message } if message.contains("put back from the checkpoint"))),
@@ -5818,7 +6043,7 @@ mod tests {
             ),
             say("done"),
         ]));
-        agent.put_on(Role::SoloAudit).unwrap();
+        agent.put_on(Role::Audit).unwrap();
         agent.ctx.always_approve = true;
         let (io, rx) = crate::user_io::UserIo::pair();
         agent.ctx.user_io = Some(io);
@@ -5844,19 +6069,12 @@ mod tests {
             "the build's file stays"
         );
         assert!(cwd.path().join(".ryter/audit.md").exists());
-        assert_eq!(agent.role, Role::SoloBuild);
+        assert_eq!(agent.role, Role::Build);
         let evs: Vec<AgentEvent> = events.try_iter().collect();
         assert_eq!(audited(&evs).len(), 1, "{evs:?}");
         let at = |f: &dyn Fn(&AgentEvent) -> bool| evs.iter().position(f).unwrap();
         let filed = at(&|e| matches!(e, AgentEvent::Audited { .. }));
-        let switched = at(&|e| {
-            matches!(
-                e,
-                AgentEvent::ModeChanged {
-                    role: Role::SoloBuild
-                }
-            )
-        });
+        let switched = at(&|e| matches!(e, AgentEvent::ModeChanged { role: Role::Build }));
         assert!(
             filed < switched,
             "the audit closes before the hat changes: {evs:?}"
@@ -5878,7 +6096,7 @@ mod tests {
         ]));
         std::fs::write(cwd.path().join("hello.txt"), "hi\n").unwrap();
         crate::review::commit(cwd.path(), &["hello.txt".into()], "base").unwrap();
-        agent.put_on(Role::SoloAudit).unwrap();
+        agent.put_on(Role::Audit).unwrap();
         agent.ctx.always_approve = true;
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
@@ -5924,7 +6142,7 @@ mod tests {
             say("could not write\nVERDICT: PASS"),
         ]));
         agent.cfg = Some(crate::config::Config::default());
-        agent.put_on(Role::SoloAudit).unwrap();
+        agent.put_on(Role::Audit).unwrap();
         agent.ctx.always_approve = true;
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
@@ -5976,7 +6194,7 @@ mod tests {
             say("looked\nVERDICT: FAIL"),
         ]));
         std::fs::write(cwd.path().join("hello.txt"), "hi\n").unwrap();
-        agent.put_on(Role::SoloAudit).unwrap();
+        agent.put_on(Role::Audit).unwrap();
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
         agent.turn("what does hello.txt say?").await.unwrap();
@@ -6011,7 +6229,7 @@ mod tests {
             file_audit_call("pass"),
             say("ok"),
         ]));
-        agent.put_on(Role::SoloBuild).unwrap();
+        agent.put_on(Role::Build).unwrap();
         agent.turn("file it").await.unwrap();
         let refused = agent
             .session
@@ -6033,7 +6251,7 @@ mod tests {
             ),
             say("ok"),
         ]));
-        agent.put_on(Role::SoloAudit).unwrap();
+        agent.put_on(Role::Audit).unwrap();
         agent.turn("audit").await.unwrap();
         let said: Vec<&str> = agent
             .session
@@ -6054,7 +6272,7 @@ mod tests {
     /// the audit hat, and the hat the user was in comes back.
     #[tokio::test]
     async fn the_audit_brief_asks_for_the_file_and_the_hat_comes_back() {
-        for prior in [Role::SoloPlan, Role::SoloBuild] {
+        for prior in [Role::Plan, Role::Build] {
             let (_home, _cwd, agent, events, _) = review_run_from(
                 prior,
                 ReviewRun::default(),
@@ -6104,7 +6322,7 @@ mod tests {
     #[tokio::test]
     async fn no_changes_no_review() {
         let (_home, _cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
-        agent.role = Role::SoloBuild;
+        agent.role = Role::Build;
         let (io, rx) = crate::user_io::UserIo::pair();
         agent.ctx.user_io = Some(io);
         let (tx, events) = std::sync::mpsc::channel();
@@ -6347,7 +6565,7 @@ mod tests {
             "{events:?}"
         );
         assert!(agent.session.spend_log().unwrap().is_empty());
-        assert_eq!(agent.role, Role::SoloBuild);
+        assert_eq!(agent.role, Role::Build);
     }
 
     /// A review that stops at its limit after some work is a review with
@@ -6470,7 +6688,7 @@ mod tests {
         std::fs::write(dir.join("notes.md"), "the notes").unwrap();
         std::fs::create_dir_all(home.path().join("keys")).unwrap();
         std::fs::write(home.path().join("keys/spacexai"), "xai-secret").unwrap();
-        agent.role = Role::SoloBuild;
+        agent.role = Role::Build;
         let system = agent.system_prompt().unwrap();
         assert!(
             system.contains("## Skills") && system.contains("- canvas: Build a page"),
@@ -6509,7 +6727,7 @@ mod tests {
             say("shown"),
         ]);
         let (_home, _cwd, mut agent) = setup(p);
-        agent.role = Role::SoloPlan;
+        agent.role = Role::Plan;
         let (tx, rx) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
         agent.turn("show me the costs").await.unwrap();
@@ -6669,8 +6887,8 @@ mod tests {
         for (answer, saved) in [(Permission::Allow, true), (Permission::Deny, false)] {
             let (home, _cwd, mut agent) = setup(rules_call("- Use British spelling."));
             // The plan hat changes nothing in the project; rules aren't in it.
-            agent.role = Role::SoloPlan;
-            agent.ctx.role = Role::SoloPlan;
+            agent.role = Role::Plan;
+            agent.ctx.role = Role::Plan;
             agent.ctx.always_approve = true;
             crate::rules::save(home.path(), "- Be brief.").unwrap();
             let (asked, result, events) = update_rules_turn(&mut agent, answer).await;
@@ -7096,8 +7314,8 @@ mod tests {
             std::fs::create_dir_all(cwd.path().join(app)).unwrap();
             crate::git::init_repo(&cwd.path().join(app)).unwrap();
         }
-        agent.role = Role::SoloBuild;
-        agent.ctx.role = Role::SoloBuild;
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
         let (tx, rx) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
         agent.turn("add hello.py").await.unwrap();
@@ -7316,6 +7534,42 @@ mod tests {
         agent.budget_usd = 0.01; // grok-4.6 1M/1M is long-context $16
         let err = agent.turn("go").await.unwrap_err();
         assert!(matches!(err, Error::Budget { .. }), "{err}");
+        let msg = err.to_string();
+        assert!(msg.starts_with("stopped:"), "{msg}");
+        assert!(msg.contains("/budget +N"), "{msg}");
+        assert!(msg.contains("Say \"continue\""), "{msg}");
+    }
+
+    /// The context gauge prefers the provider's `input_tokens` over bytes/4.
+    #[tokio::test]
+    async fn context_gauge_uses_provider_input_tokens() {
+        let p = ReplayProvider::new(vec![
+            StreamDelta::Text("ok".into()),
+            StreamDelta::Usage(Usage {
+                input_tokens: 12_345,
+                output_tokens: 50,
+                cached_tokens: 0,
+                cache_write_tokens: 0,
+            }),
+            StreamDelta::Done,
+        ]);
+        let (_home, _cwd, mut agent) = setup(p);
+        agent.context_window = 200_000;
+        let before = agent.context_report().unwrap();
+        assert!(!before.from_provider);
+        agent.turn("hi").await.unwrap();
+        assert_eq!(agent.last_input_tokens, Some(12_345));
+        let after = agent.context_report().unwrap();
+        assert!(after.from_provider, "{after:?}");
+        assert_eq!(after.tokens, 12_345);
+        assert_eq!(after.pct, ((12_345u64 * 100) / 200_000) as u8);
+        // Without the provider path, the estimate would still be used.
+        let saved = agent.last_input_tokens;
+        agent.last_input_tokens = None;
+        let estimate = agent.context_report().unwrap();
+        agent.last_input_tokens = saved;
+        assert!(!estimate.from_provider);
+        assert_ne!(estimate.tokens, 12_345);
     }
 
     #[tokio::test]
@@ -7422,7 +7676,7 @@ mod tests {
         let (home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![]));
         agent.context_window = 500_000;
         let mut cfg = crate::config::Config::default();
-        cfg.specialists.insert(
+        cfg.hats.insert(
             "audit".into(),
             crate::config::RoleModel {
                 connection: Some(agent.connection.clone()),
@@ -7435,8 +7689,8 @@ mod tests {
             &agent.connection,
             &[crate::llm::ModelInfo::named("small-reviewer", Some(24_000))],
         );
-        agent.role = Role::SoloAudit;
-        agent.ctx.role = Role::SoloAudit;
+        agent.role = Role::Audit;
+        agent.ctx.role = Role::Audit;
         let report = agent.context_report().unwrap();
         assert_eq!(report.window, 24_000);
         assert!(
@@ -7450,7 +7704,7 @@ mod tests {
             .context_windows
             .insert("small-reviewer".into(), 12_000);
         assert_eq!(agent.context_report().unwrap().window, 12_000);
-        agent.role = Role::SoloBuild;
+        agent.role = Role::Build;
         assert_eq!(agent.context_report().unwrap().window, 500_000);
     }
 
@@ -7487,6 +7741,7 @@ mod tests {
                     content: format!("turn {i} {}", "blob ".repeat(40)),
                     tool_call_id: None,
                     tool_calls: None,
+                    messages_blocks: None,
                 })
                 .unwrap();
             agent
@@ -7500,6 +7755,7 @@ mod tests {
                         name: "read_file".into(),
                         arguments: r#"{"path":"hello.txt"}"#.into(),
                     }]),
+                    messages_blocks: None,
                 })
                 .unwrap();
             agent
@@ -7509,6 +7765,7 @@ mod tests {
                     content: "data".repeat(4000),
                     tool_call_id: Some(format!("c{i}")),
                     tool_calls: None,
+                    messages_blocks: None,
                 })
                 .unwrap();
         }

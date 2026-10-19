@@ -44,8 +44,8 @@ pub fn handle(view: &mut View, key: KeyEvent) -> Action {
 
 fn route(view: &mut View, key: KeyEvent) -> Action {
     // Global bindings win everywhere, except `Esc` which panels interpret
-    // themselves (wizard step back, confirm cancel), and `Ctrl+D`/`Ctrl+P`
-    // which are composer-only conveniences.
+    // themselves (wizard step back, confirm cancel). `Ctrl+D` quits from
+    // an empty composer. The palette is `/`, not a chord.
     if let Some(a) = keymap::lookup(Ctx::Global, key) {
         match a {
             KeyAction::CtrlC => return ctrl_c(view),
@@ -84,12 +84,6 @@ fn route(view: &mut View, key: KeyEvent) -> Action {
             KeyAction::QuitIfEmpty if view.panels.is_empty() && view.composer.is_empty() => {
                 return Action::Quit;
             }
-            KeyAction::OpenPalette if view.panels.is_empty() => {
-                if matches!(view.composer.mode, ComposerMode::Normal) {
-                    palette::open(view);
-                }
-                return Action::None;
-            }
             // Esc leaves the workbench (a `y`/`n` confirm in it takes Esc too).
             KeyAction::Back if view.panels.is_empty() && view.workbench.is_some() => {
                 view.workbench = None;
@@ -98,6 +92,13 @@ fn route(view: &mut View, key: KeyEvent) -> Action {
             KeyAction::Back if view.panels.is_empty() => return esc(view),
             _ => {}
         }
+    }
+
+    // Workspace chrome: views, instruments, and which pane has focus.
+    // A palette or the workbench keeps the keys. A permission card does
+    // not: these are not its answers.
+    if let Some(a) = crate::workspace::chrome_key(view, key) {
+        return a;
     }
 
     // A focused panel (or modal) owns everything else.
@@ -165,6 +166,10 @@ fn route(view: &mut View, key: KeyEvent) -> Action {
             _ => {}
         }
         return Action::None;
+    }
+
+    if let Some(a) = crate::workspace::nav_key(view, key) {
+        return a;
     }
 
     // `$` on an empty composer opens the spend drawer (the ledger's bar
@@ -274,9 +279,8 @@ fn reasoning_scroll(view: &mut View, dir: i32) {
 
 /// Composer editing and submit (`R-COMP-09..13`).
 fn composer_key(view: &mut View, key: KeyEvent) -> Action {
-    // Tab moves within the row the hat is in; Shift+Tab moves to the
-    // other row, onto the hat last worn there (`docs/sidebar-design.md`
-    // R-KEY-02).
+    // Tab cycles within the mode (Plan and Build, or Audit and Scribe).
+    // Shift+Tab switches mode, onto the hat last worn there.
     if matches!(view.composer.mode, crate::composer::Mode::Normal)
         && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
     {

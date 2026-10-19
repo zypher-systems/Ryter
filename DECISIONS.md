@@ -9,6 +9,35 @@ Why, not what. Non-obvious choices are recorded here, newest first.
 **Why.** A polish pass before a reviewer tries Ryter (2026-10-18), at 80, 120 and 176 columns, in three themes: beside a panel at 80 and 120 columns the chat's gutter sat against its left border and the ends of lines against its right, which read as torn text; the shadow's bottom row fell on the prompt's rule, which read as a hole in it; the chip under a panel was dim text on amber, a 1.3:1 contrast in the light theme; `/spend` said `$0.00` for a build that cost $0.004 under a total of `$0.01`, against the README's promise that Ryter never shows a fake `$0.00`; and at 80x24 `/commit` listed five of seven files with nothing to say two were below.
 
 **Rejected.** Widening a panel to the body's edges when the slack is small: a threshold nobody would remember, and the torn edge came back at the next width. Leaving the dimmed chat beside a panel as the floating look: the rule stands for `/help` on a wide screen, but every panel is read at 80 and 120 columns too, and the band is one rule for all of them.
+### 2026-10-14 — Streamed `bash` output in the conversation
+
+**Decision.** While `bash` or a `run_project` shell step runs, the shell's existing live hook (`ToolContext.live`, newest three lines every 250 ms) emits `AgentEvent::ToolLive` to the TUI sink only. The running tool row in the conversation shows those lines; the finished tool result replaces them. Live updates are not written to `events.jsonl` (several a second is noise). Headless `--json` skips them too.
+
+**Why.** 1.0 item 6: the screen never lies — a busy command must look alive. The hook was kept when crew mode was removed and nothing listened; wiring it into the solo conversation closes that gap without reviving lanes.
+
+**Where.** `event.rs` (`ToolLive`), `agent.rs` (`listen_for_live`), `tools/shell.rs` (`run_command_live`), TUI `run/events.rs` (`on_tool_live`); `docs/guide.md`, `ROADMAP.md` Next item 6.
+
+### 2026-10-14 — One-mode leftovers renamed to hats language
+- **By:** 1.0 item 7 (correctness and the guide): rename what crew / one-mode left behind.
+- **Decision:** On disk, the model every hat uses is `[model]` and a hat's own model in `config.toml` is `[hats.<hat>]`. `[orchestrator]` and `[specialists.*]` still load; when both spellings are present the new one wins. `review` under either table is still audit. In code, `Role::{Plan,Build,Audit,Scribe}` replace `Solo*`; `Config::all_hats` / `Config::hats` replace `orchestrator` / `specialists`; `follows_all_hats` and `Role::is_hat` replace `follows_orchestrator` and `is_solo`. The sidebar's `specialists` row label and the solo screen layout names stay: those are product language for the second row and the ledger layout, not the crew leftovers.
+- **Why:** The guide and example config still taught crew-era table names while the product speaks in hats and *All hats*. The 2026-10-01 crew-removal entry left this rename as its own mechanical patch.
+- **Where:** `crates/ryter-core/src/role.rs`, `config.rs` (`ConfigFile` merge), `config.example.toml`, `docs/guide.md`, call sites across core/TUI/CLI; tests cover new tables, old tables, and both together.
+
+### 2026-10-14 — Context gauge uses provider `input_tokens`; stop messages share a voice
+
+**Decision.** The context gauge and `/context` headline show the provider's last reported `input_tokens` once a call has returned usage. Admission and auto-compaction still use the bytes/4 estimate. After a compact rewrites the transcript, the provider count is cleared until the next call. A turn that stops for the round cap or the session budget uses the same voice: what stopped, how to raise or lift the limit, and that saying "continue" carries on (`/budget +N` / `/budget N` / `/budget off` for spend; *rounds a turn* / `[limits] rounds` / `--rounds N` for rounds).
+
+**Why.** 1.0 item 5 asks that cost be predictable and that a round-cap or budget stop say how to go on. Bytes/4 made the gauge disagree with the bill the provider just sent; the old `budget exceeded ($x >= $y)` line did not match the round-cap notice or name a way forward.
+
+**Where.** `compact.rs` (`ContextReport::from_provider`), `agent.rs` (`last_input_tokens`, `context_report`, `emit_context`, `compact_now`), `error.rs` (`budget_message`), TUI `run/events.rs` (Spend → gauge), `docs/guide.md`.
+
+### 2026-10-14 — 1.0 item 1 closed; item 3 Linux closed, macOS still open
+
+**Decision.** 1.0 item 1 ("the flow holds on a real project") is closed on the user's call from the fiscus web run (0.20.0) and the tunes terminal run (0.24.1). Item 3's Linux half (setup works first time: install, key, change) is closed the same day. Item 3's macOS hand pass and the model check when a hat's model is chosen in `/models` stay open. Gate and blast findings from the real runs stay under their own items (2, 4, …), not as unfinished halves of item 1.
+
+**Why.** The definition asked for plan → build → audit → repair → scribe on a web service and a terminal/desktop app with real models and no workaround. Those two runs meet that bar; leaving item 1 "half done" forever while the leftover bugs are really items 2 and 4 was misleading the Now list. Linux setup is already the day-one path; inventing a macOS close would paper over an untried hand pass.
+
+**Where.** `ROADMAP.md` (What 1.0 means items 1 and 3; Now).
 
 ### 2026-10-11 — Three panes on a wide screen, and a hat switch during a turn is the next message's
 
@@ -504,7 +533,7 @@ Why, not what. Non-obvious choices are recorded here, newest first.
   - **`Role`** is the three hats and `Crew`, which stands for every role crew mode had. It exists so saved sessions and spend logs still load (`orchestrator`, `architect`, `planner`, `builder`, `auditor` all read as it). It has no tools, and `Agent::turn` puts a turn in the build hat if it finds one.
   - **Old files load:** `ConfigFile` and `SettingsFile` simply no longer name the crew's keys, so they are ignored; crew rows under `[specialists]` are left behind; `Meta` drops the crew's fields the same way.
   - **`ryter serve` / `mcp serve`** run a message in the build hat with in-project asks allowed, as `ryter -p --always-approve` does. They ran the lead before, which could not write source itself.
-  - **Kept, unused:** the shell's live-output hook (`run_command_live`), for streamed `bash` output later. Kept, by name only: `[orchestrator]` and `[specialists.*]` on disk and the `Solo*` names in the code; renaming them is a mechanical patch of its own.
+  - **Kept, unused then:** the shell's live-output hook (`run_command_live`), for streamed `bash` output later — wired into the conversation in 2026-10-14 (G7 / item 6). Kept, by name only: `[orchestrator]` and `[specialists.*]` on disk and the `Solo*` names in the code; renaming them is a mechanical patch of its own.
 - **Chosen vs rejected:**
   - Rejected switching crew mode off and removing it later (offered to the user). Code that is off still has to compile, be tested and be read around.
   - Rejected keeping the benchmark by rebuilding it on the hats in the same patch (offered to the user): it needs a design of its own and a paid run for its first results.

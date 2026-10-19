@@ -9,7 +9,8 @@ use crate::llm::Message;
 /// How full the model window is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextReport {
-    /// Heuristic token count (bytes / 4).
+    /// Tokens in use: the provider's last `input_tokens` when known, else the
+    /// bytes/4 estimate used for admission and compaction.
     pub tokens: u64,
     /// Model window used for the percentage.
     pub window: u64,
@@ -19,14 +20,17 @@ pub struct ContextReport {
     pub messages: usize,
     /// True when this report follows a compact pass.
     pub compacted: bool,
+    /// True when [`Self::tokens`] is the provider's reported `input_tokens`.
+    pub from_provider: bool,
 }
 
 impl ContextReport {
     /// One-line `/context` listing.
     pub fn render(&self) -> String {
         let flag = if self.compacted { "  compacted" } else { "" };
+        let approx = if self.from_provider { "" } else { "~" };
         format!(
-            "context  {}%  ~{}/{} tok  {} messages{flag}",
+            "context  {}%  {approx}{}/{} tok  {} messages{flag}",
             self.pct, self.tokens, self.window, self.messages
         )
     }
@@ -75,13 +79,32 @@ pub fn estimate_tokens(system: &str, messages: &[Message]) -> u64 {
     let mut n = system.len();
     for m in messages {
         n += m.role.len();
-        n += m.content.len();
         if let Some(id) = &m.tool_call_id {
             n += id.len();
         }
-        if let Some(calls) = &m.tool_calls {
-            for c in calls {
-                n += c.name.len() + c.arguments.len() + c.id.len();
+        // When Messages echo blocks are present they are what goes on the wire
+        // (thinking + text + tool_use); counting content/tool_calls too would
+        // double the assistant turn.
+        if let Some(blocks) = &m.messages_blocks {
+            for b in blocks {
+                n += match b {
+                    crate::llm::MessagesBlock::Thinking {
+                        thinking,
+                        signature,
+                    } => thinking.len() + signature.len(),
+                    crate::llm::MessagesBlock::RedactedThinking { data } => data.len(),
+                    crate::llm::MessagesBlock::Text { text } => text.len(),
+                    crate::llm::MessagesBlock::ToolUse { id, name, input } => {
+                        id.len() + name.len() + input.to_string().len()
+                    }
+                };
+            }
+        } else {
+            n += m.content.len();
+            if let Some(calls) = &m.tool_calls {
+                for c in calls {
+                    n += c.name.len() + c.arguments.len() + c.id.len();
+                }
             }
         }
     }
@@ -155,6 +178,7 @@ pub fn report(
         pct,
         messages: messages.len(),
         compacted: false,
+        from_provider: false,
     }
 }
 
@@ -228,6 +252,7 @@ pub fn compact(messages: &[Message], note: &str, keep_user_turns: usize) -> Vec<
             content: extract_prefix(&messages[..cut], note),
             tool_call_id: None,
             tool_calls: None,
+            messages_blocks: None,
         }];
         next.extend(messages[cut..].iter().cloned());
         next
@@ -323,6 +348,7 @@ mod tests {
             content: content.into(),
             tool_call_id: None,
             tool_calls: None,
+            messages_blocks: None,
         }
     }
 
@@ -334,6 +360,25 @@ mod tests {
         assert_eq!(format_tokens(500_000), "500k");
         assert_eq!(format_context_used(0, 500_000), "0/500k");
         assert_eq!(format_context_used(12_000, 500_000), "12k/500k");
+    }
+
+    #[test]
+    fn context_render_marks_estimates_only() {
+        let est = ContextReport {
+            tokens: 1_000,
+            window: 10_000,
+            pct: 10,
+            messages: 2,
+            compacted: false,
+            from_provider: false,
+        };
+        assert!(est.render().contains("~1000/10000"));
+        let exact = ContextReport {
+            from_provider: true,
+            ..est
+        };
+        assert!(exact.render().contains(" 1000/10000"));
+        assert!(!exact.render().contains("~1000"));
     }
 
     #[test]
@@ -350,12 +395,14 @@ mod tests {
                     name: "read_file".into(),
                     arguments: format!(r#"{{"path":"src/f{i}.rs"}}"#),
                 }]),
+                messages_blocks: None,
             });
             messages.push(Message {
                 role: "tool".into(),
                 content: "x".repeat(8_000),
                 tool_call_id: Some(format!("c{i}")),
                 tool_calls: None,
+                messages_blocks: None,
             });
         }
         let out = compact(&messages, "ship the flag", 2);
@@ -386,6 +433,7 @@ mod tests {
                 content: "x".repeat(400),
                 tool_call_id: Some("c1".into()),
                 tool_calls: None,
+                messages_blocks: None,
             },
         ];
         let rows = breakdown("sys", &messages);
@@ -423,12 +471,14 @@ mod tests {
                     name: "read_file".into(),
                     arguments: "{}".into(),
                 }]),
+                messages_blocks: None,
             });
             messages.push(Message {
                 role: "tool".into(),
                 content: "界".repeat(6000),
                 tool_call_id: Some(format!("c{i}")),
                 tool_calls: None,
+                messages_blocks: None,
             });
         }
         let next = compact(&messages, "", 4);

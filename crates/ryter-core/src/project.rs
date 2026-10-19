@@ -313,12 +313,12 @@ mod tests {
         crate::git::init_repo(repo.path()).unwrap();
         std::fs::create_dir_all(repo.path().join("web/src")).unwrap();
         let mut a = session(home.path(), repo.path());
-        spend(&mut a, Role::SoloBuild, "cheap", Some(0.25));
+        spend(&mut a, Role::Build, "cheap", Some(0.25));
         let mut b = session(home.path(), &repo.path().join("web/src"));
         spend(&mut b, Role::Crew, "strong", Some(1.0));
-        spend(&mut b, Role::SoloBuild, "cheap", None);
+        spend(&mut b, Role::Build, "cheap", None);
         let mut c = session(home.path(), other.path());
-        spend(&mut c, Role::SoloBuild, "cheap", Some(9.0));
+        spend(&mut c, Role::Build, "cheap", Some(9.0));
 
         // From the subfolder, the whole repository.
         let t = project_spend(home.path(), &repo.path().join("web")).unwrap();
@@ -355,11 +355,11 @@ mod tests {
         let home = TempDir::new().unwrap();
         let dir = TempDir::new().unwrap();
         let mut s = session(home.path(), dir.path());
-        spend(&mut s, Role::SoloBuild, "m", Some(0.5));
+        spend(&mut s, Role::Build, "m", Some(0.5));
         assert!((project_spend(home.path(), dir.path()).unwrap().total_usd - 0.5).abs() < 1e-9);
         // Reading again adds nothing.
         assert!((project_spend(home.path(), dir.path()).unwrap().total_usd - 0.5).abs() < 1e-9);
-        spend(&mut s, Role::SoloPlan, "m", Some(0.25));
+        spend(&mut s, Role::Plan, "m", Some(0.25));
         assert!((project_spend(home.path(), dir.path()).unwrap().total_usd - 0.75).abs() < 1e-9);
         // A corrupt total is rebuilt from the logs.
         let cache = home.path().join("projects").join(format!(
@@ -370,7 +370,7 @@ mod tests {
         assert!((project_spend(home.path(), dir.path()).unwrap().total_usd - 0.75).abs() < 1e-9);
         // A log rewritten shorter starts the count over.
         std::fs::write(s.spend_path(), "").unwrap();
-        spend(&mut s, Role::SoloBuild, "m", Some(0.1));
+        spend(&mut s, Role::Build, "m", Some(0.1));
         assert!((project_spend(home.path(), dir.path()).unwrap().total_usd - 0.1).abs() < 1e-9);
     }
 

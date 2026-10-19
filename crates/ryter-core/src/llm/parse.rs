@@ -290,31 +290,75 @@ fn push_messages(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) ->
     match ty {
         // A tool call's id and name arrive here, once; the arguments follow as
         // id-less `input_json_delta` fragments. Without this arm Anthropic
-        // models could never call a tool.
+        // models could never call a tool. Thinking / redacted_thinking open
+        // here too so their signatures can be echoed after a tool round.
         "content_block_start" => {
             let block = &v["content_block"];
-            if block.get("type").and_then(Value::as_str) == Some("tool_use") {
-                out.push(StreamDelta::ToolCall {
-                    stream_key: v
-                        .get("index")
-                        .and_then(Value::as_u64)
-                        .map(|i| i.to_string()),
-                    id: block
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string(),
-                    name: block
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string(),
-                    arguments: String::new(),
-                });
+            let stream_key = v
+                .get("index")
+                .and_then(Value::as_u64)
+                .map(|i| i.to_string());
+            match block.get("type").and_then(Value::as_str) {
+                Some("tool_use") => {
+                    out.push(StreamDelta::ToolCall {
+                        stream_key,
+                        id: block
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                        name: block
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                        arguments: String::new(),
+                    });
+                }
+                Some("thinking") => {
+                    out.push(StreamDelta::ThinkingOpen {
+                        stream_key,
+                        redacted_data: None,
+                    });
+                    // A non-streamed block may already carry text / signature.
+                    if let Some(s) = block.get("thinking").and_then(Value::as_str) {
+                        if !s.is_empty() {
+                            out.push(StreamDelta::Reasoning(s.to_string()));
+                        }
+                    }
+                    if let Some(s) = block.get("signature").and_then(Value::as_str) {
+                        if !s.is_empty() {
+                            out.push(StreamDelta::ThinkingSignature {
+                                stream_key: v
+                                    .get("index")
+                                    .and_then(Value::as_u64)
+                                    .map(|i| i.to_string()),
+                                signature: s.to_string(),
+                            });
+                        }
+                    }
+                }
+                Some("redacted_thinking") => {
+                    out.push(StreamDelta::ThinkingOpen {
+                        stream_key,
+                        redacted_data: Some(
+                            block
+                                .get("data")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string(),
+                        ),
+                    });
+                }
+                _ => {}
             }
         }
         "content_block_delta" => {
             let delta = &v["delta"];
+            let stream_key = v
+                .get("index")
+                .and_then(Value::as_u64)
+                .map(|i| i.to_string());
             match delta.get("type").and_then(Value::as_str) {
                 Some("text_delta") => {
                     if let Some(s) = delta.get("text").and_then(Value::as_str) {
@@ -330,16 +374,23 @@ fn push_messages(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) ->
                         }
                     }
                 }
+                Some("signature_delta") => {
+                    if let Some(s) = delta.get("signature").and_then(Value::as_str) {
+                        if !s.is_empty() {
+                            out.push(StreamDelta::ThinkingSignature {
+                                stream_key,
+                                signature: s.to_string(),
+                            });
+                        }
+                    }
+                }
                 Some("input_json_delta") => {
                     let arguments = delta
                         .get("partial_json")
                         .and_then(Value::as_str)
                         .unwrap_or("");
                     out.push(StreamDelta::ToolCall {
-                        stream_key: v
-                            .get("index")
-                            .and_then(Value::as_u64)
-                            .map(|i| i.to_string()),
+                        stream_key,
                         id: String::new(),
                         name: String::new(),
                         arguments: arguments.to_string(),
@@ -347,6 +398,17 @@ fn push_messages(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) ->
                 }
                 _ => {}
             }
+        }
+        "content_block_stop" => {
+            // Close a thinking block. Tool and text stops need no signal:
+            // tools finish via the accumulator, text is flush-on-next-block.
+            // A stop with no open thinking is ignored by the echo accumulator.
+            out.push(StreamDelta::ThinkingClose {
+                stream_key: v
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .map(|i| i.to_string()),
+            });
         }
         "message_start" => {
             if let Some(u) = usage_from(&v["message"]["usage"]) {

@@ -299,6 +299,8 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     }
     actions::load_project_spend(&mut view, &home, &cwd);
     view.workspace = Some(cwd.clone());
+    view.ryter_home = Some(home.clone());
+    crate::workspace::reload_sessions(&mut view);
     view.refresh_uncommitted();
     if config::asks_for_trust(&cwd) && !trusted {
         view.panels.push(Box::new(TrustModal::default()));
@@ -475,11 +477,12 @@ fn populate_view(
     view.tz_offset = ryter_core::clock::local_offset();
     view.git_branch = ryter_core::git::branch(cwd).ok();
     view.perm_mode = start_tools_mode(opts, cfg).as_str().into();
+    view.permissions = cfg.permissions.clone();
     view.catalog = load_catalog(home, Some(cwd), trusted);
     view.hooks = cfg.hooks.clone();
     view.theme_names = Theme::list(home);
     view.has_key = has_key;
-    view.specialists = cfg.specialists.clone();
+    view.hats = cfg.hats.clone();
     view.budget_usd = cfg.spend.session_budget_usd;
     if view.budget_usd > 0.0 {
         view.budget_last = view.budget_usd;
@@ -640,6 +643,17 @@ fn loop_ui(
             paint_now = true;
         }
         while let Ok(n) = notice_rx.try_recv() {
+            if let Notice::ModelChecked {
+                seat,
+                model,
+                result: Err(why),
+                ..
+            } = &n
+            {
+                // Fail at choose time: the chat says so before a turn spends
+                // on a model the account can't use.
+                view.error(format!("{seat} · {model} · can't use: {why}"));
+            }
             panel::on_notice(view, &n);
             dirty = true;
         }
@@ -818,6 +832,7 @@ pub(crate) fn mouse_handle(view: &mut View, m: MouseEvent) -> Action {
         cards: Vec::new(),
         activity: Rect::default(),
         composer: Rect::default(),
+        clicks: Vec::new(),
     };
     on_mouse(view, m, &hit)
 }
@@ -889,6 +904,8 @@ fn on_mouse(view: &mut View, m: MouseEvent, hit: &Hit) -> Action {
             // opened the panel and never selected.
             let click = if !view.panels.is_empty() {
                 None
+            } else if let Some((kind, _)) = hit.clicks.iter().find(|(_, rect)| inside(*rect)) {
+                Some(crate::select::Click::Workspace(*kind))
             } else if inside(hit.activity) && hit.activity.height > 0 {
                 Some(crate::select::Click::Pane)
             } else {
@@ -969,6 +986,9 @@ fn on_mouse(view: &mut View, m: MouseEvent, hit: &Hit) -> Action {
                         Action::None
                     }
                     Some(crate::select::Click::Open(id)) => Action::OpenPanel(id),
+                    Some(crate::select::Click::Workspace(kind)) => {
+                        crate::workspace::click(view, kind)
+                    }
                     None => Action::None,
                 },
                 None => Action::None,

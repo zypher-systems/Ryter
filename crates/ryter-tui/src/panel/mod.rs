@@ -15,6 +15,7 @@ pub mod hooks;
 pub mod mcp;
 pub mod modal;
 pub mod models;
+pub mod permissions;
 pub mod plan;
 pub mod providers;
 pub mod rules;
@@ -93,6 +94,17 @@ pub enum Notice {
     Exported(String),
     /// Models arrived for the picker (`/models`).
     Models(Vec<ryter_core::ModelInfo>),
+    /// A hat's model was checked after it was chosen in `/models`.
+    ModelChecked {
+        /// Seat label: `all hats`, or a hat name (`plan`, `build`, …).
+        seat: String,
+        /// Connection the check used.
+        connection: String,
+        /// Model id that was checked.
+        model: String,
+        /// Ok, or why the account can't use it.
+        result: Result<(), String>,
+    },
     /// Sessions list refreshed (after rename/delete).
     SessionsChanged,
 }
@@ -368,6 +380,7 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
         PanelId::Settings => Box::new(settings::Settings::new(view)),
         PanelId::Theme => Box::new(theme::ThemePicker::new(view)),
         PanelId::Tools => Box::new(toggles::Toggles::tools(view)),
+        PanelId::Permissions => Box::new(permissions::Permissions::new(view, None)),
         PanelId::Mcp => Box::new(mcp::Mcp::default()),
         PanelId::Skills => Box::new(skills::Skills::default()),
         PanelId::Rules => Box::new(rules::Rules::new(view, env)),
@@ -435,6 +448,60 @@ pub fn dim_region(frame: &mut Frame, area: Rect, theme: Theme) {
                 st = st.add_modifier(Modifier::DIM);
             }
             cell.set_style(st);
+        }
+    }
+}
+
+/// Dim a region so a floating dialog reads as sitting over it.
+pub fn dim_overlay(frame: &mut Frame, area: Rect, theme: Theme) {
+    let buf = frame.buffer_mut();
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            if x >= buf.area.width || y >= buf.area.height {
+                continue;
+            }
+            let cell = &mut buf[(x, y)];
+            let st = cell.style();
+            let bg = st.bg.unwrap_or(theme.bg);
+            let fg = st.fg.unwrap_or(theme.fg);
+            let (fg, bg) = match (fg, bg) {
+                (Color::Rgb(..), Color::Rgb(..)) => (
+                    crate::theme::darken(fg, 0.22),
+                    crate::theme::darken(bg, 0.34),
+                ),
+                _ => (theme.dim, bg),
+            };
+            cell.set_style(Style::default().fg(fg).bg(bg));
+        }
+    }
+}
+
+/// A half-block drop shadow: `▌` down the right edge, `▀` under the box.
+pub fn drop_shadow(frame: &mut Frame, area: Rect, theme: Theme) {
+    let shade = match theme.bg {
+        Color::Rgb(r, _, _) if r > 180 => crate::theme::darken(theme.bg, 0.18),
+        Color::Rgb(..) => crate::theme::darken(theme.bg, 0.78),
+        _ => Color::Black,
+    };
+    let buf = frame.buffer_mut();
+    let (bw, bh) = (buf.area.width, buf.area.height);
+    let right = area.x.saturating_add(area.width);
+    let bottom = area.y.saturating_add(area.height);
+    let paint = |buf: &mut ratatui::buffer::Buffer, x: u16, y: u16, symbol: &str| {
+        if x >= bw || y >= bh {
+            return;
+        }
+        let cell = &mut buf[(x, y)];
+        let under = cell.style().bg.unwrap_or(theme.bg);
+        cell.set_symbol(symbol);
+        cell.set_style(Style::default().fg(shade).bg(under));
+    };
+    for y in (area.y + 1)..bottom.min(bh) {
+        paint(buf, right, y, "▌");
+    }
+    if bottom < bh {
+        for x in (area.x + 1)..=right.min(bw.saturating_sub(1)) {
+            paint(buf, x, bottom, "▀");
         }
     }
 }
@@ -578,7 +645,15 @@ pub fn draw(
             // the conversation's column; with none freed, over the chat's
             // foot, inset the same.
             match slot.filter(|s| focused && s.height >= 3) {
-                Some(s) => inset(s),
+                Some(s) => {
+                    let mut card = inset(s);
+                    // Leave the slot's last row for the drop shadow, so it
+                    // does not land on the composer's top edge.
+                    if view.ui.workspace() {
+                        card.height = card.height.saturating_sub(1).max(3);
+                    }
+                    card
+                }
                 None => inset(docked_rect(dock, rows + extra)),
             }
         } else if p.docked() {
@@ -610,10 +685,12 @@ pub fn draw(
             ratatui::widgets::Block::default().style(Style::default().bg(theme.bg)),
             band,
         );
-        if !p.docked() {
+        if view.ui.workspace() {
+            drop_shadow(frame, area, theme);
+        } else if !p.docked() {
             shadow(frame, area, floor, theme);
         }
-        cursor = draw_one(frame, area, p.as_ref(), view, theme, true);
+        cursor = draw_one(frame, area, p.as_ref(), view, theme, focused);
     }
     cursor
 }
@@ -680,7 +757,9 @@ fn draw_one(
         status: p.status(view),
         legend: String::new(),
         border,
-        heavy: p.modal().is_some(),
+        // The workspace uses the rounded frame. Ledger and classic keep
+        // the heavy interrupt border their snapshots name.
+        heavy: p.modal().is_some() && !view.ui.workspace(),
     };
     // Only what is on the screen: a panel taller than a very short terminal
     // must not be told it drew rows that fell off the bottom.

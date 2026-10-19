@@ -530,7 +530,7 @@ mod tests {
             live: None,
             workspace: dir.path().to_path_buf(),
             notes_dir: dir.path().to_path_buf(),
-            role: Role::SoloBuild,
+            role: Role::Build,
             always_approve: true,
             yolo: false,
             permissions: Default::default(),
@@ -545,6 +545,7 @@ mod tests {
             read_only: false,
             created: Vec::new(),
             kept: Vec::new(),
+            sessions: Vec::new(),
             search: Default::default(),
         };
         let waiter = cancel.clone();

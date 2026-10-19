@@ -6,9 +6,9 @@ Living plan for Ryter.
 
 Agreed with the user on 2026-10-04. 1.0 is a gate, not a count: when every item holds, the user decides whether to release 1.0.0. Until then releases go 0.19, 0.20 and on. **No new specialist hat is added before 1.0.** The product as it stands, plan and build above the line and audit and scribe below, is what gets polished and proven. Ideas for more hats (a scout, the builder delegating to a specialist) wait on the other side of the gate.
 
-1. **The flow holds on a real project.** Plan, build, audit, repair and scribe, on a web service and on a terminal or desktop app, driven by the user with real models, without a workaround. The audit starts the product and uses it; the scribe writes the README and the guide on a cheap seat. This has not been done since the hats took their present shape, and it is the item that gates the others.
+1. **The flow holds on a real project.** Plan, build, audit, repair and scribe, on a web service and on a terminal or desktop app, driven by the user with real models, without a workaround. The audit starts the product and uses it; the scribe writes the README and the guide on a cheap seat. **Closed 2026-10-14** on the user's call: fiscus (web, 0.20.0) and tunes (terminal, 0.24.1). Findings from those runs stay under other items (gate asks → 2, `tmux kill-server` → 4).
 2. **A normal build asks for nothing.** Only deleting, discarding work in git, publishing or leaving the machine, writing outside the project, scratch space and home, and the project's `.env` ask. The user's real sessions, replayed through the gate, say so, and a new real session finds no new spelling.
-3. **Setup works the first time** on Linux and macOS: install, add a key, make a change, with no step the guide does not cover. Only models the account can use are offered, and a hat's model is checked when it is chosen, not on its first message.
+3. **Setup works the first time** on Linux and macOS: install, add a key, make a change, with no step the guide does not cover. Only models the account can use are offered, and a hat's model is checked when it is chosen, not on its first message. **Linux half closed 2026-10-14.** Model check on choose shipped in 0.29.0. Still open: macOS hand pass (install, key, change, TUI).
 4. **Ryter touches only the project it was started in.** It never creates a repository in a folder that holds other projects, never commits on its own, and says what it set up.
 5. **Cost is predictable.** What a model switch or an audit will cost is said before it is spent; project cost counts only the project; a turn that stops for its round cap or its budget says so and how to go on.
 6. **The screen never lies.** A thinking model looks alive, a question is announced where the eye is and covers nothing, nothing in the conversation is hidden by a card, and the figures on the rack and the instruments match the session's records.
@@ -19,43 +19,31 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.26.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.29.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
-
-- **The first real run on the hats as they are (1.0 item 1): half done.** The service half is the fiscus run, released in 0.20.0. The terminal half was run on 2026-10-07 on 0.22.0 ("tunes", a Rust TUI music player, $1.62): the four hats handed off, but a missing system package (`alsa-lib-devel`) had no path, so Ryter never built or ran the product, and the audit filed PASS with a failed finding beside it. Root by `sudo`, released in 0.23.0, is the fix for the first. Taken from that run since: the audit's verdict and its findings must agree, and an empty folder says it is empty (both released in 0.24.0). Open from that run, not yet taken: reads of `/etc` and `/usr` ask (four times, each answered "always", which on a compound command covers only that command); `rm -rf` of a folder the write tool made this turn asks; `cp` and `ln -s` from `/usr` are refused while `cat … >` asks; the plan hat is refused `cargo --version`; a decision was recorded before it was tried. Whether this run closes the item is the user's call; the audit has still not driven a terminal app.
-- **The terminal half, run again on 0.24.1 (2026-10-09, "tunes" rebuilt from an empty folder, $2.57).** Plan, build, audit, repair, audit and scribe ran to the end with the headers installed. The audit started the player in `tmux`, pressed its keys and failed it on two real faults (the selected row was never highlighted; the status line was drawn into a row of no height); the builder repaired both; the second audit rebuilt a stale binary before checking and passed it; the scribe wrote the README and the guide for four cents. Checked afterwards: 36 tests pass, clippy is clean, the highlight and the status line work. Whether this closes item 1 is the user's call. Found by it, beyond the audit's cost above: `tmux kill-server` ran 24 times unasked, which ends every `tmux` session the user has, not only the ones Ryter started (item 4, for the gate patch); four of the five asks were `rm` of files the turn's own shell commands had made, and the fifth a write under `/tmp` while two other writes there ran free (item 2, not yet replayed through the gate); the plan hat was again refused `cargo --version`; an ask nobody answers for five minutes is reported to the model as "denied by user"; nobody ran `cargo fmt` on the product.
+- **1.0 item 1 (flow on a real project): closed 2026-10-14** (recorded in 0.28.0). Further ask friction from fiscus/tunes stays under Next (item 2). G4 closed the nested-scratch and tmux-scope holes in 0.29.0.
+- **1.0 item 3 Linux setup: closed 2026-10-14** (recorded in 0.28.0). Model check on choose shipped in 0.29.0. Still owed under Next: macOS by hand.
 
 ## Next
 
 Everything here serves an item of the 1.0 list; the number says which. The direction that put the hats where they are is in `DECISIONS.md` (2026-10-01 to 2026-10-04) and `docs/specialists-design.md`; this section no longer repeats it.
 
 **Item 3, setup and models**
-- A hat's model is checked when it is chosen in `/models`: one tiny request with a tool, to catch a data policy that refuses it, missing tool support, or no credits. Today such a model fails on its first message.
 - macOS by hand: install, a key, a change, the TUI at three widths. The sandbox is Linux-only and is labelled so.
 
-**Item 5, cost**
-- Reconcile the context gauge with the provider's real `input_tokens` rather than bytes/4.
-- The round cap's message and the budget's message read the same way and say how to go on.
-
 **Item 6, the screen**
-- Streamed `bash` output in the conversation (the shell already passes a running command's newest lines to a hook nothing listens on).
 - The light theme on a real terminal, with the watermark, looked at by a person.
 
 **Item 7, correctness and the guide**
 - Recorded wire fixtures per provider (tool calls, parallel calls, truncation), replayed in tests, and one live round trip per built-in provider run by hand before a release. Tool calling was once broken on two backends while every test passed.
-- Anthropic extended thinking with tools (thinking blocks echoed back on `messages`).
 - The guide read against the release, screen by screen, before 1.0.
-- Rename what the one-mode world left behind: `[orchestrator]`, `[specialists.*]`, the `Solo*` names.
 
 **Item 2 and item 8, the gate and the lines**
 - Decide with the user what a sandbox profile is for. Under `workspace` or `read-only` the home folder is shut at the system level, so `cargo install` or a tool writing `~/.config/<name>` on first run fails; Landlock cannot grant a folder with exceptions.
 - Narrow the sandbox's grant on Ryter's own folder to this project's sessions.
 - Recorded live sessions replayed through the gate after each change to it, as was done for 0.14.0 and the fiscus run. The replay is a throwaway test each time; a kept `#[ignore]` test over a recorded `events.jsonl` would make it one command.
-- `curl`'s body to another host asks (it leaves the machine), but a header, user agent, referer, `-u` or `-w` value carrying `$VAR` to another host runs: `uploads_elsewhere` counts bodies, not headers. Older than 0.20.0 (found by its reviewers); a secret in a header leaves the machine as surely as one in a body.
-- A repository nested *below* a scratch folder the turn deletes freely (`rm -rf /tmp/probe` with someone's repository at `/tmp/probe/sub`) is not protected; the check looks at the path and above it, as `free_place` always has.
-- The looking hats (plan, scribe, the audit without a checkpoint) are refused `sed 's/a/b/' f` and `awk '{print}' f` while `sed -n p f` runs: a script with a `/` or a brace reads as a path. Older than the fiscus patch; found by its tests.
 - Writing a key-named file to scratch space (`touch /tmp/tls_test.key`, to check a `.gitignore`) is refused as naming a secret. Left as the secret rule for now.
 - Selection, from the 0.24.0 reviews, non-blocking: a scrolled message box copies the `↑`/`↓` mark in its corner; where the "new rows" mark meets the palette a press uses the mark's rect; a pulled selection whose start has scrolled off the screen, dragged onto the pinned question, ends a row or two short; a click on a card can open its panel on top of a card that opened between press and release; prose that wrapped is copied with the screen's line breaks.
 - As root, the programs that only list (`ls`, `find`, `du`, `stat`) are not held to the folder rule, so `sudo find / -name x` or `sudo ls -R /` prints the names, not the contents, of what is in root's folders when an ancestor is named. From the 0.23.0 approving review, non-blocking: refuse them a folder that holds one of root's own folders, which `holds_something_closed` nearly computes already.
@@ -78,6 +66,33 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.29.0 — model check, G4–G7 leftovers, hats rename, permissions MVP (2026-10-15)
+
+Released 2026-10-15 (PRs #85–#92). The note is `docs/releases/v0.29.0.md`.
+
+- **Model check on choose.** `/models` probes a hat's model when it is picked. PR #85.
+- **G4 project blast.** Scoped `tmux` kills; nested repos under scratch protected. PR #86.
+- **G6 cost truth.** Context gauge uses `input_tokens`; round-cap and budget share one stop voice. PR #87.
+- **G5 curl headers.** Secret-looking headers/`-u`/etc. ask like bodies. PR #88.
+- **Hats rename.** `[model]` / `[hats.*]`; `Role::{Plan,Build,Audit,Scribe}`. PR #89.
+- **G7 streamed bash.** Live tool-row output via `ToolLive`. PR #90.
+- **`/permissions` MVP.** Panel browse/add-rule; card `r`. PR #91.
+- **Anthropic thinking + tools.** Thinking blocks echoed on Messages tool rounds. PR #92.
+
+### 0.28.0 — workspace B+E, ask-friction G1–G3, and two 1.0 gates closed (2026-10-14)
+
+Released 2026-10-14 (PRs #79–#83). The note is `docs/releases/v0.28.0.md`.
+
+- **Workspace B+E.** Project cost on the Spend instrument; quieter top bar (brand dots stay). PR #79.
+- **G1–G3 ask friction.** Own-turn/`rm` and scratch copies (#80); looking-hat toolchain probes and safe `sed`/`awk` (#81); permission wait timeout is not a user denial (#82). rustls 0.23.46 for deny CI.
+- **1.0 item 1 closed; item 3 Linux closed.** User call 2026-10-14 from fiscus and tunes; macOS and model-on-choose stay open. PR #83.
+
+### 0.27.0 — the workspace is the screen Ryter opens on (2026-10-14)
+
+Released 2026-10-14 (PR #78). The note is `docs/releases/v0.27.0.md`.
+
+- **The workspace layout is the default.** Conversation, Hats, and Sessions are tabs on the top bar (`Alt+1`/`Alt+2`/`Alt+3`). The hat rack is the sidebar, and instruments sit on the right. `Tab` moves inside the current mode and `Shift+Tab` switches mode. `/` is the only palette key. Ledger and classic stay in `/settings`.
 
 ### 0.26.0 — three panes on a wide screen, and a hat switch during a turn is the next message's (2026-10-11)
 
@@ -139,7 +154,7 @@ Released in six releases over three days, each from a dev → main PR with two e
 
 - **0.15.0 — the test hat's dead ends, from the first real session on 0.14.0.** A wrapper in front of a program named by a path (`timeout 60 .venv/bin/python x.py`) was refused in the build and test hats: the program's own word was read as a file, and the link under `.venv` points at a system place. A `stop` of `pkill -f name` ended its own shell, read as a failed cleanup, and every `start` after it was refused until `/stop` passed, which it never could; it counts as a stop that worked now, a proposed run file is told to write `[n]ame`, and a corrected `stop` is the one the retry uses. The refusal hint no longer claims a write when the gate refused for another reason. The test hat itself went the same day (the entry above); `run_project` holds the product for the build and review hats, and a product with no address is taken to be up once its start command settles.
 
-- **0.14.0 — the gate runs the work and asks for what no checkpoint undoes.** In the build and test hats, edits, toolchains, scripts anywhere, inline code, system programs, unknown commands, the project's containers and ordinary git run without a prompt; deleting, discarding work in git, publishing, leaving the machine, writing outside the project, scratch space and home, and the project's `.env` ask. `[permissions]` (`edit`, `bash` patterns) moves any ask either way and never opens a refusal. `/yolo`, `/tools yolo`, `--yolo`: every question is yes, refusals hold. Fixed on the way: here-document bodies were judged as commands; `$PWD`, `$(pwd)`, `$HOME` and `cd ~` were unreadable; `cd -` after a `cd` in the same command; process substitution and shell functions; `docker inspect` and `compose config` as looks that print the project's variables. Replaying the two real sessions: 130 tool calls meet 10 prompts, 39 meet 3. DECISIONS entry of 2026-10-02. Open: a `/permissions` panel to edit the rules from the TUI; the prompt could offer "add a rule for this" beside `a`.
+- **0.14.0 — the gate runs the work and asks for what no checkpoint undoes.** In the build and test hats, edits, toolchains, scripts anywhere, inline code, system programs, unknown commands, the project's containers and ordinary git run without a prompt; deleting, discarding work in git, publishing, leaving the machine, writing outside the project, scratch space and home, and the project's `.env` ask. `[permissions]` (`edit`, `bash` patterns) moves any ask either way and never opens a refusal. `/yolo`, `/tools yolo`, `--yolo`: every question is yes, refusals hold. Fixed on the way: here-document bodies were judged as commands; `$PWD`, `$(pwd)`, `$HOME` and `cd ~` were unreadable; `cd -` after a `cd` in the same command; process substitution and shell functions; `docker inspect` and `compose config` as looks that print the project's variables. Replaying the two real sessions: 130 tool calls meet 10 prompts, 39 meet 3. DECISIONS entry of 2026-10-02. Residual closed later: `/permissions` TUI panel + card `r` add-rule (see ask-friction G3 follow-up).
 
 - **0.14.0 — the wander, and three refusals that were reads.** Commands start without `OLDPWD`; a compose or `docker run` after a `cd` out of the project asks; the review hat may `GET` the project's own address and list the stash; the build hat may `cp .env.example .env` with a `y`; a refusal for a secret path says what it is about. The fewer-prompts question this left open was decided the same day (the entry above).
 

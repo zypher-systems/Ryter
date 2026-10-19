@@ -178,6 +178,16 @@ impl PermissionModal {
         !self.is_hat() && !self.y_only() && self.scope.is_some()
     }
 
+    /// `r` opens `/permissions` with a draft for this bash ask. Outside,
+    /// `.env`, and root stay y-only every time (no durable carve-out here).
+    fn can_add_rule(&self) -> bool {
+        self.base_tool() == "bash"
+            && !self.is_hat()
+            && !self.is_outside()
+            && !self.is_secret()
+            && !self.is_root()
+    }
+
     fn base_tool(&self) -> &str {
         self.tool
             .strip_suffix(ryter_core::tools::OUTSIDE)
@@ -324,6 +334,9 @@ impl Panel for PermissionModal {
         } else {
             "⏎ allow · n deny".into()
         };
+        if self.can_add_rule() {
+            keys.push_str(" · r add rule");
+        }
         if self.max_top.get() > 0 {
             keys.push_str(" · ↑↓ wheel more of the change");
         }
@@ -356,7 +369,7 @@ impl Panel for PermissionModal {
     /// hat's color.
     fn offers(&self) -> Option<ryter_core::Role> {
         match self.tool.as_str() {
-            "audit" => Some(ryter_core::Role::SoloAudit),
+            "audit" => Some(ryter_core::Role::Audit),
             _ => None,
         }
     }
@@ -633,6 +646,16 @@ impl Panel for PermissionModal {
             // card, in one press. It used to allow everything, and needed
             // a second press because of it.
             KeyCode::Char('a' | 'A') if self.can_allow_session() => reply(Permission::Always),
+            // `r` stacks `/permissions` with a draft; the card stays until
+            // answered. Outside / .env / root do not offer this.
+            KeyCode::Char('r' | 'R') if self.can_add_rule() => {
+                let draft =
+                    ryter_core::permissions::suggest_pattern(self.asks.as_deref(), &self.summary);
+                Outcome::Push(Box::new(super::permissions::Permissions::new(
+                    view,
+                    Some(draft),
+                )))
+            }
             _ => Outcome::Stay,
         }
     }
@@ -1235,7 +1258,7 @@ mod tests {
         };
         assert!(matches!(press(&mut m, &mut v, 'a'), Outcome::Stay));
         assert!(matches!(press(&mut m, &mut v, 's'), Outcome::Stay));
-        assert_eq!(m.offers(), Some(ryter_core::Role::SoloAudit));
+        assert_eq!(m.offers(), Some(ryter_core::Role::Audit));
     }
     use crossterm::event::KeyModifiers;
 
@@ -1314,15 +1337,30 @@ mod tests {
             t.legend(&v)
                 .contains("a allow `cargo test` commands this session")
         );
+        assert!(t.legend(&v).contains("r add rule"), "{}", t.legend(&v));
         assert!(matches!(
             press(&mut t, 'a'),
             Outcome::CloseAct(Action::PermissionReply(Permission::Always))
         ));
-        // Destruction an undo may not reach: `y` only.
+        // Destruction an undo may not reach: `y` only; `r` still offers a
+        // durable rule (the point of carving allows without yolo).
         let mut d =
             PermissionModal::new("bash".into(), "rm -rf target".into()).with_answers(true, None);
-        assert_eq!(d.legend(&v), "y allow once · n deny");
+        assert_eq!(d.legend(&v), "y allow once · n deny · r add rule");
         assert!(matches!(press(&mut d, 'a'), Outcome::Stay));
+        assert!(matches!(press(&mut d, 'r'), Outcome::Push(_)));
+        // Outside / .env / root: no durable carve-out from the card.
+        let mut outside = PermissionModal::new(
+            format!("bash {}", ryter_core::tools::OUTSIDE),
+            "echo x > /opt/x".into(),
+        )
+        .with_answers(true, None);
+        assert!(
+            !outside.legend(&v).contains("r add rule"),
+            "{}",
+            outside.legend(&v)
+        );
+        assert!(matches!(press(&mut outside, 'r'), Outcome::Stay));
     }
 
     /// Enter approves, but not in the first half-second, when it may be a

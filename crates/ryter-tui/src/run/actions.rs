@@ -240,7 +240,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         Action::ReviewNow => cx.send(Work::ReviewNow),
         Action::RepairFromAudit { file } => {
             // The user's switch, not Ryter's: `y` on the audit.
-            set_mode(view, cx, ryter_core::Role::SoloBuild);
+            set_mode(view, cx, ryter_core::Role::Build);
             let brief = "Repair what this audit found; run the checks it ran.";
             let body = file
                 .as_deref()
@@ -343,9 +343,10 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             model,
         } => {
             if connection == view.connection && model == view.model {
-                view.specialists.remove(&role);
+                view.hats.remove(&role);
             } else {
-                view.specialists.insert(
+                check_model(cx, connection.clone(), model.clone(), role.clone());
+                view.hats.insert(
                     role.clone(),
                     ryter_core::RoleModel {
                         connection: Some(connection),
@@ -356,7 +357,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             save_hats(view, cx);
         }
         Action::ResetHatModel(role) => {
-            view.specialists.remove(&role);
+            view.hats.remove(&role);
             save_hats(view, cx);
         }
         Action::ListAllModels { .. } => cx.send(Work::ListAllModels),
@@ -416,6 +417,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
                 hooks: view.hooks.clone(),
             });
         }
+        Action::SavePermissions => save_permissions(view, cx),
         Action::SaveSettings => save_settings(view, cx),
         Action::CopySelection(sel) => {
             let text = cx
@@ -633,7 +635,7 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
         session
             .meta
             .mode
-            .map_or(ryter_core::Role::SoloBuild, ryter_core::Role::hat),
+            .map_or(ryter_core::Role::Build, ryter_core::Role::hat),
     );
     view.agent_hat = view.mode;
     view.spend = session.meta.spend_usd_total;
@@ -837,7 +839,7 @@ fn use_connection(view: &mut View, cx: &mut Ctx, name: &str) {
             let model = conn
                 .default_model
                 .clone()
-                .or_else(|| cx.cfg.orchestrator.model.clone())
+                .or_else(|| cx.cfg.all_hats.model.clone())
                 .unwrap_or_else(|| "grok-4.6".into());
             view.connection = name.to_string();
             view.model = model.clone();
@@ -894,6 +896,12 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
                 save_hats(view, cx);
             }
             view.system(format!("model · {model}{}", crate::view::followed(&own)));
+            check_model(
+                cx,
+                view.connection.clone(),
+                model.clone(),
+                "all hats".into(),
+            );
             cx.send(Work::Reconnect {
                 name: view.connection.clone(),
                 model,
@@ -902,6 +910,38 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
         }
         Err(_) => perform(view, cx, Action::BeginSetKey(view.connection.clone())),
     }
+}
+
+/// One tiny request with a tool: catch a data policy, missing tools, or no
+/// credits when the model is chosen, not on its first message.
+fn check_model(cx: &mut Ctx, connection: String, model: String, seat: String) {
+    let tx = cx.notice_tx.clone();
+    let cfg = cx.cfg.clone();
+    std::thread::spawn(move || {
+        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        let result = match (
+            cfg.connections.get(&connection),
+            resolve_secret(&cfg, &ConnectionId::new(&connection)),
+        ) {
+            (Some(c), Ok(key)) => {
+                let p = ryter_core::http_provider(c, key);
+                rt.block_on(ryter_core::probe_model(&p, &model))
+            }
+            (None, _) => Err(format!("unknown connection {connection}")),
+            (_, Err(_)) => Err(format!("no key for {connection}")),
+        };
+        let _ = tx.send(Notice::ModelChecked {
+            seat,
+            connection,
+            model,
+            result,
+        });
+    });
 }
 
 /// Switch hats: the hat the next message goes to, now. The agent takes
@@ -1038,12 +1078,24 @@ fn remove_connection(view: &mut View, cx: &mut Ctx, name: &str) {
 
 /// Save each hat's own model, and tell the worker.
 fn save_hats(view: &mut View, cx: &mut Ctx) {
-    if let Err(e) = config::save_hats(&cx.home, &view.specialists) {
+    if let Err(e) = config::save_hats(&cx.home, &view.hats) {
         view.error(e.to_string());
     }
-    cx.cfg.specialists = view.specialists.clone();
+    cx.cfg.hats = view.hats.clone();
     cx.send(Work::SetHats {
-        specialists: view.specialists.clone(),
+        hats: view.hats.clone(),
+    });
+}
+
+/// Save durable gate rules, and tell the worker.
+fn save_permissions(view: &mut View, cx: &mut Ctx) {
+    if let Err(e) = config::save_permissions(&cx.home, &view.permissions) {
+        view.error(e.to_string());
+        return;
+    }
+    cx.cfg.permissions = view.permissions.clone();
+    cx.send(Work::SetPermissions {
+        permissions: view.permissions.clone(),
     });
 }
 

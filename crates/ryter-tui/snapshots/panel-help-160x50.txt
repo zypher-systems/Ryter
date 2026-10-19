@@ -9,7 +9,6 @@
                                       │ GLOBAL                                                                           ┃
                                       │  ^c         clear composer → cancel turn → quit (double-press)                   ┃
                                       │  ^d         quit when the composer is empty                                      ┃
-                                      │  ^p         open the command palette                                             ┃
                                       │  ^r         toggle the reasoning pane                                            ┃
                                       │  ^b         toggle the info panel                                                ┃
                                       │  ^o         show every edit, audit, and folded turn whole, or folded             ┃
@@ -17,7 +16,7 @@
                                       │  ^l         redraw                                                               ┃
                                       │  ^g         release/grab the mouse (release it to select and copy text)          ┃
                                       │  f1         open /help                                                           ┃
-                                      │  esc        back one level                                                       │
+                                      │  esc        back one level                                                       ┃
                                       │                                                                                  │
                                       │ CHAT SCROLL                                                                      │
                                       │  pgup       scroll one viewport up                                               │
@@ -34,6 +33,7 @@
                                       │ COMPOSER                                                                         │
                                       │  enter      send                                                                 │
                                       │  ⇧enter     newline                                                              │
+                                      │  ⌥enter     newline                                                              │
                                       │ ←→ section   ↑↓ scroll   pgup pgdn page   esc close                              │
                                       ╰──────────────────────────────────────────────────────────────────────────────────╯
 

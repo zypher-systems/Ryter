@@ -17,13 +17,17 @@ use crate::llm::ToolSpec;
 use crate::role::Role;
 
 pub use fs::changed_lines;
-pub(crate) use policy::{Effects, effects, on_this_machine, resolve};
+pub(crate) use policy::{Effects, effects, on_this_machine, resolve, write_makes};
 pub use web::Search;
 pub(crate) use web::TAVILY_KEY_VAR;
 
 /// What `a` ("allow for this session") on this call's prompt would cover:
 /// a key, and the words for it. `None` when the prompt must not offer it.
-pub fn allow_scope(name: &str, args: &Value) -> Option<(String, String)> {
+///
+/// For a shell chain, the kind is the segment that asked — so `a` on
+/// `ls /usr && true` covers later `ls /usr/include`, not only that exact
+/// chain. Destruction still offers no `a`.
+pub fn allow_scope(name: &str, args: &Value, ctx: &ToolContext) -> Option<(String, String)> {
     match name {
         "write" | "search_replace" => Some(("edit".into(), "edits to files in the project".into())),
         "bash" => {
@@ -31,13 +35,16 @@ pub fn allow_scope(name: &str, args: &Value) -> Option<(String, String)> {
             if policy::destructive_command(cmd) {
                 return None;
             }
-            let scope = policy::command_scope(cmd)?;
-            let label = if scope.contains("&&") || scope.contains(';') || scope.contains('|') {
-                "this exact command".to_string()
-            } else {
-                format!("`{scope}` commands")
-            };
-            Some((format!("bash:{scope}"), label))
+            // The card names the asking segment; `a` must stick to that
+            // kind across later compounds, not to one exact chain.
+            let focused = policy::asking_segment(cmd, ctx)
+                .filter(|s| !policy::destructive_command(s))
+                .unwrap_or_else(|| cmd.to_string());
+            if policy::destructive_command(&focused) {
+                return None;
+            }
+            let scope = policy::command_scope(&focused)?;
+            Some((format!("bash:{scope}"), format!("`{scope}` commands")))
         }
         other => Some((other.to_string(), format!("{other} calls"))),
     }
@@ -154,6 +161,9 @@ pub struct ToolContext {
     /// Places this turn moved a file of the user's to (`mv src/x new/`):
     /// never a free deletion, whatever else is known about them.
     pub kept: Vec<std::path::PathBuf>,
+    /// `tmux` session names this turn started (`new-session -s …`): only
+    /// those may be killed without asking. `kill-server` always asks.
+    pub sessions: Vec<String>,
     /// Where `web_search` looks, with its key read once.
     pub search: web::Search,
 }
@@ -520,7 +530,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
         // One list for every hat, so switching hats never changes the tool
         // definitions (and never throws away the prompt cache). The gate
         // decides what each hat may run.
-        Role::SoloPlan | Role::SoloBuild | Role::SoloAudit | Role::SoloScribe => &[
+        Role::Plan | Role::Build | Role::Audit | Role::Scribe => &[
             "read_file",
             "list_dir",
             "grep",
@@ -688,6 +698,9 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                     crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
                         Err(crate::error::Error::Cancelled)
                     }
+                    crate::user_io::Permission::TimedOut => Ok(ToolOutput::err(
+                        crate::user_io::timed_out_waiting(&format!("{name} {OUTSIDE}"), &summary),
+                    )),
                     crate::user_io::Permission::Deny => Ok(ToolOutput::err(format!(
                         "denied by user: {name} {summary} (outside the project). Work inside \
                          the project instead, or ask the user where it should go"
@@ -717,6 +730,9 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                     crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
                         Err(crate::error::Error::Cancelled)
                     }
+                    crate::user_io::Permission::TimedOut => Ok(ToolOutput::err(
+                        crate::user_io::timed_out_waiting(&format!("{name} {SECRET}"), &summary),
+                    )),
                     crate::user_io::Permission::Deny => Ok(ToolOutput::err(format!(
                         "denied by user: {name} {summary} (a secret file). Don't retry it: \
                          tell the user what the file needs and let them write it"
@@ -735,7 +751,7 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
         Decision::AskRoot => run_as_root(name, args, ctx),
         Decision::Ask
             if ctx.always_approve
-                || allow_scope(name, args)
+                || allow_scope(name, args, ctx)
                     .is_some_and(|(key, _)| ctx.allowed.lock().is_ok_and(|a| a.contains(&key))) =>
         {
             run_with_hooks(name, args, ctx)
@@ -750,7 +766,7 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                 format!(
                     "denied: {name} is off ([features] web = false). Tell the user: /settings \
                      turns web on{}.",
-                    if matches!(ctx.role, Role::SoloPlan | Role::SoloAudit) {
+                    if matches!(ctx.role, Role::Plan | Role::Audit) {
                         ""
                     } else {
                         ", and it is the plan and audit hats' tool"
@@ -780,16 +796,14 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
         // A hat that can't do this: say which one can, so the model tells the
         // user instead of hunting for a way round.
         Decision::Deny
-            if matches!(
-                ctx.role,
-                Role::SoloPlan | Role::SoloAudit | Role::SoloScribe
-            ) && matches!(name, "write" | "search_replace" | "bash")
+            if matches!(ctx.role, Role::Plan | Role::Audit | Role::Scribe)
+                && matches!(name, "write" | "search_replace" | "bash")
                 && !(name == "bash" && policy::bash_hint(args, ctx).is_some()) =>
         {
             // What the audit may do is said, or the model took "changes
             // nothing" for "writes nothing" while its shell commands wrote
             // probe scripts behind the checkpoint all along.
-            if ctx.role == Role::SoloAudit && name != "bash" {
+            if ctx.role == Role::Audit && name != "bash" {
                 return Ok(ToolOutput::err(
                     "denied: the audit's only file is audit.md (file_audit); its findings go \
                      there. A probe or a fixture it needs goes through bash (`cat > probe.sh`), \
@@ -798,13 +812,13 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                      Shift+Tab for it.",
                 ));
             }
-            if ctx.role == Role::SoloScribe && name != "bash" {
+            if ctx.role == Role::Scribe && name != "bash" {
                 return Ok(ToolOutput::err(
                     "denied: the scribe writes documentation (.md, .txt and their kind), \
                      not this file. Tell the user: Shift+Tab to the build hat for code.",
                 ));
             }
-            let key = if matches!(ctx.role, Role::SoloAudit | Role::SoloScribe) {
+            let key = if matches!(ctx.role, Role::Audit | Role::Scribe) {
                 "Shift+Tab"
             } else {
                 "Tab"
@@ -812,7 +826,7 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
             // The looking hats refuse most commands because they look, not
             // because the command changes anything: a `GET` of the product
             // was once refused as one that did.
-            if name == "bash" && matches!(ctx.role, Role::SoloPlan | Role::SoloScribe) {
+            if name == "bash" && matches!(ctx.role, Role::Plan | Role::Scribe) {
                 return Ok(ToolOutput::err(format!(
                     "denied: the {} hat only looks — it runs read-only commands, curl GET/HEAD \
                      to this project's own address, and a project program's --help or \
@@ -829,7 +843,7 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                 } else {
                     "edit files"
                 },
-                if name == "bash" && ctx.role == Role::SoloAudit && policy::names_containers(args) {
+                if name == "bash" && ctx.role == Role::Audit && policy::names_containers(args) {
                     CONTAINER_CHECKS
                 } else {
                     ""
@@ -852,7 +866,7 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
         Decision::Ask => match &ctx.user_io {
             Some(io) => {
                 let summary = crate::user_io::summary_args(name, args);
-                let scope = allow_scope(name, args);
+                let scope = allow_scope(name, args, ctx);
                 let answer = io.ask_tool(
                     crate::user_io::ToolAsk {
                         tool: name.to_string(),
@@ -881,6 +895,9 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                     crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
                         Err(crate::error::Error::Cancelled)
                     }
+                    crate::user_io::Permission::TimedOut => Ok(ToolOutput::err(
+                        crate::user_io::timed_out_waiting(name, &summary),
+                    )),
                     // Said so the model doesn't ask again in other words.
                     crate::user_io::Permission::Deny => Ok(ToolOutput::err(format!(
                         "denied by user: {name} {summary}. Don't retry it or a variant of it: \
@@ -928,6 +945,12 @@ fn run_as_root(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput
         crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {}
         crate::user_io::Permission::Deny if ctx.cancel.is_cancelled() => {
             return Err(crate::error::Error::Cancelled);
+        }
+        crate::user_io::Permission::TimedOut => {
+            return Ok(ToolOutput::err(crate::user_io::timed_out_waiting(
+                &format!("{name} {AS_ROOT}"),
+                &summary,
+            )));
         }
         crate::user_io::Permission::Deny => {
             return Ok(ToolOutput::err(format!(
@@ -1033,9 +1056,10 @@ mod tests {
             vars: Default::default(),
             // The audit hat with no checkpoint behind it (see policy's
             // `ctx_for`).
-            read_only: role == Role::SoloAudit,
+            read_only: role == Role::Audit,
             created: Vec::new(),
             kept: Vec::new(),
+            sessions: Vec::new(),
             search: Default::default(),
         }
     }
@@ -1050,7 +1074,7 @@ mod tests {
         let ws = outside_scratch();
         let home = outside_scratch();
         let scope = fixture_scope(SandboxProfile::Workspace, home.path());
-        let mut c = ctx(Role::SoloBuild, ws.path());
+        let mut c = ctx(Role::Build, ws.path());
         c.always_approve = true;
         c.notes_dir = home.path().join("sessions/project/first/notes");
         if let Err(error) = scope.check(ws.path(), &c.notes_dir) {
@@ -1095,7 +1119,7 @@ mod tests {
     fn the_plan_hat_writes_memory_not_source() {
         let dir = TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
-        let c = ctx(Role::SoloPlan, dir.path());
+        let c = ctx(Role::Plan, dir.path());
         let road = json!({"path": "ROADMAP.md", "content": "# Roadmap\n"});
         assert_eq!(decide("write", &road, &c), Decision::Allow);
         let out = gated_execute("write", &road, &c).unwrap();
@@ -1110,7 +1134,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let src = dir.path().join("src");
         std::fs::create_dir_all(&src).unwrap();
-        let c = ctx(Role::SoloPlan, dir.path());
+        let c = ctx(Role::Plan, dir.path());
         let args = json!({"path": "src/lib.rs", "content": "fn x() {}"});
         assert_eq!(decide("write", &args, &c), Decision::Deny);
         let out = gated_execute("write", &args, &c).unwrap();
@@ -1122,7 +1146,7 @@ mod tests {
     fn the_build_hat_writes_source_once_allowed() {
         let dir = TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
-        let mut c = ctx(Role::SoloBuild, dir.path());
+        let mut c = ctx(Role::Build, dir.path());
         let args = json!({"path": "src/lib.rs", "content": "fn x() {}"});
         // Edits run; `[permissions] edit = "ask"` makes them a question.
         assert_eq!(decide("write", &args, &c), Decision::Allow);
@@ -1143,7 +1167,7 @@ mod tests {
     #[test]
     fn the_plan_hat_writes_its_notes() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::SoloPlan, dir.path());
+        let c = ctx(Role::Plan, dir.path());
         let note = c.notes_dir.join("plan.md");
         let args = json!({"path": note.to_string_lossy(), "content": "# plan\n"});
         assert_eq!(decide("write", &args, &c), Decision::Allow);
@@ -1155,7 +1179,7 @@ mod tests {
     fn env_file_is_denied_even_for_the_build_hat() {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join(".env"), "SECRET=1").unwrap();
-        let c = ctx(Role::SoloBuild, dir.path());
+        let c = ctx(Role::Build, dir.path());
         let args = json!({"path": ".env"});
         assert_eq!(decide("read_file", &args, &c), Decision::Deny);
     }
@@ -1177,7 +1201,7 @@ mod tests {
             url: None,
             matcher: Some("write".into()),
         }]);
-        let mut c = ctx(Role::SoloBuild, dir.path());
+        let mut c = ctx(Role::Build, dir.path());
         c.always_approve = true;
         c.hooks = Some(Arc::new(hooks));
         let args = json!({"path": "src/lib.rs", "content": "fn x() {}"});
@@ -1191,7 +1215,7 @@ mod tests {
     fn reading_is_allowed() {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("README.md"), "hello").unwrap();
-        let c = ctx(Role::SoloPlan, dir.path());
+        let c = ctx(Role::Plan, dir.path());
         let out = gated_execute("read_file", &json!({"path": "README.md"}), &c).unwrap();
         assert!(!out.is_error);
         assert!(out.text.contains("hello"));
@@ -1202,7 +1226,7 @@ mod tests {
     fn a_scribe_write_of_code_says_where_code_goes() {
         let dir = TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
-        let c = ctx(Role::SoloScribe, dir.path());
+        let c = ctx(Role::Scribe, dir.path());
         let out = gated_execute(
             "write",
             &json!({"path": "src/main.rs", "content": "fn main() {}"}),
@@ -1228,20 +1252,20 @@ mod tests {
 
     #[test]
     fn web_tools_are_opt_in() {
-        let names: Vec<_> = specs_for_opts(Role::SoloPlan, false)
+        let names: Vec<_> = specs_for_opts(Role::Plan, false)
             .into_iter()
             .map(|s| s.name)
             .collect();
         assert!(names.contains(&"ask_user".into()));
         assert!(!names.contains(&"web_fetch".into()));
-        let names: Vec<_> = specs_for_opts(Role::SoloPlan, true)
+        let names: Vec<_> = specs_for_opts(Role::Plan, true)
             .into_iter()
             .map(|s| s.name)
             .collect();
         assert!(names.contains(&"web_fetch".into()));
         assert!(names.contains(&"web_search".into()));
         let dir = TempDir::new().unwrap();
-        let mut c = ctx(Role::SoloPlan, dir.path());
+        let mut c = ctx(Role::Plan, dir.path());
         let out = execute("web_fetch", &json!({"url": "https://example.com"}), &c).unwrap();
         assert!(out.is_error);
         c.web = true;
@@ -1254,7 +1278,7 @@ mod tests {
     #[test]
     fn oversized_tool_output_is_capped_at_both_ends() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::SoloBuild, dir.path());
+        let c = ctx(Role::Build, dir.path());
         let big = "x".repeat(MAX_TOOL_OUTPUT_BYTES * 3);
         std::fs::write(dir.path().join("big.txt"), &big).unwrap();
         let out = execute("read_file", &json!({"path": "big.txt"}), &c).unwrap();
@@ -1278,7 +1302,7 @@ mod tests {
     #[test]
     fn oversized_lines_have_bounded_results_and_do_not_hide_later_matches() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::SoloBuild, dir.path());
+        let c = ctx(Role::Build, dir.path());
         let path = dir.path().join("huge.txt");
         let mut file = std::fs::File::create(&path).unwrap();
         use std::io::Write;
@@ -1312,7 +1336,7 @@ mod tests {
     #[test]
     fn read_file_pages_a_long_file() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::SoloBuild, dir.path());
+        let c = ctx(Role::Build, dir.path());
         let body: String = (1..=5_000).map(|i| format!("line {i}\n")).collect();
         std::fs::write(dir.path().join("long.txt"), body).unwrap();
 
@@ -1347,7 +1371,7 @@ mod tests {
     #[test]
     fn bash_timeout_is_raisable_and_clamped() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::SoloBuild, dir.path());
+        let c = ctx(Role::Build, dir.path());
         let out = execute(
             "bash",
             &json!({"command": "sleep 2", "timeout_secs": 1}),
@@ -1366,7 +1390,7 @@ mod tests {
     #[test]
     fn bash_is_not_a_login_shell() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::SoloBuild, dir.path());
+        let c = ctx(Role::Build, dir.path());
         let out = execute(
             "bash",
             &json!({"command": "shopt -q login_shell; echo $?"}),
@@ -1387,7 +1411,7 @@ mod tests {
             .prefix("ryter-scratch-")
             .tempdir()
             .unwrap();
-        for role in [Role::SoloBuild, Role::SoloPlan, Role::SoloAudit] {
+        for role in [Role::Build, Role::Plan, Role::Audit] {
             let target = outside.path().join(format!("{role}.txt"));
             let args = json!({"path": target.to_string_lossy(), "content": "hi"});
             let out = gated_execute("write", &args, &ctx(role, dir.path())).unwrap();
@@ -1404,7 +1428,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join(".env.example"), "DB_PASSWORD=\n").unwrap();
         let args = json!({"path": ".env", "content": "DB_PASSWORD=localdev\n"});
-        let mut c = ctx(Role::SoloBuild, dir.path());
+        let mut c = ctx(Role::Build, dir.path());
         c.always_approve = true;
         c.allowed.lock().unwrap().insert("edit".into());
         let out = gated_execute("write", &args, &c).unwrap();
@@ -1434,7 +1458,7 @@ mod tests {
         let read = gated_execute("read_file", &json!({"path": ".env"}), &c).unwrap();
         assert!(read.is_error, "{read:?}");
         // No other hat is asked: it is refused.
-        let out = gated_execute("write", &args, &ctx(Role::SoloPlan, dir.path())).unwrap();
+        let out = gated_execute("write", &args, &ctx(Role::Plan, dir.path())).unwrap();
         assert!(out.is_error, "{out:?}");
     }
 
@@ -1445,7 +1469,7 @@ mod tests {
     fn outside_writes_need_a_yes_every_time() {
         let dir = TempDir::new().unwrap();
         let args = json!({"path": "/opt/ryter-not-here/scratch.txt", "content": "hi"});
-        let mut c = ctx(Role::SoloBuild, dir.path());
+        let mut c = ctx(Role::Build, dir.path());
         c.always_approve = true;
         c.allowed.lock().unwrap().insert("edit".into());
         let out = gated_execute("write", &args, &c).unwrap();
@@ -1472,7 +1496,7 @@ mod tests {
             "the prompt says where"
         );
         // No other hat is asked: it is refused.
-        let out = gated_execute("write", &args, &ctx(Role::SoloPlan, dir.path())).unwrap();
+        let out = gated_execute("write", &args, &ctx(Role::Plan, dir.path())).unwrap();
         assert!(out.is_error, "{out:?}");
     }
 
@@ -1482,7 +1506,7 @@ mod tests {
     #[test]
     fn an_empty_listing_says_it_is_empty() {
         let dir = tempfile::tempdir().unwrap();
-        let c = ctx(Role::SoloPlan, dir.path());
+        let c = ctx(Role::Plan, dir.path());
         // `ctx` keeps its notes in a hidden folder of the project.
         let list = |c: &ToolContext| gated_execute("list_dir", &json!({"path": "."}), c).unwrap();
         let out = list(&c);
@@ -1544,7 +1568,7 @@ mod tests {
         ] {
             let (io, rx) = crate::user_io::UserIo::pair();
             io.set_askpass(askpass.clone());
-            let mut c = ctx(Role::SoloBuild, dir.path());
+            let mut c = ctx(Role::Build, dir.path());
             c.user_io = Some(io);
             c.always_approve = always;
             c.yolo = yolo;
@@ -1585,7 +1609,7 @@ mod tests {
             }
         }
         // Nobody to ask: refused, and no flag changes that.
-        let mut c = ctx(Role::SoloBuild, dir.path());
+        let mut c = ctx(Role::Build, dir.path());
         c.always_approve = true;
         c.yolo = true;
         let out = gated_execute("bash", &args, &c).unwrap();
@@ -1606,7 +1630,7 @@ mod tests {
     #[test]
     fn inline_code_runs_in_the_build_hat_and_the_refusals_say_why() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::SoloBuild, dir.path());
+        let c = ctx(Role::Build, dir.path());
         let out =
             gated_execute("bash", &json!({ "command": "python3 -c 'print(6*7)'" }), &c).unwrap();
         assert!(!out.is_error && out.text.contains("42"), "{out:?}");
@@ -1615,7 +1639,7 @@ mod tests {
             out.is_error && out.text.contains("shell handed a command"),
             "{out:?}"
         );
-        let r = ctx(Role::SoloAudit, dir.path());
+        let r = ctx(Role::Audit, dir.path());
         let out =
             gated_execute("bash", &json!({ "command": "python3 -c 'print(1)'" }), &r).unwrap();
         assert!(out.is_error && out.text.contains("build hat"), "{out:?}");
@@ -1629,14 +1653,14 @@ mod tests {
     #[test]
     fn a_web_refusal_says_off_or_whose() {
         let dir = TempDir::new().unwrap();
-        let mut c = ctx(Role::SoloBuild, dir.path());
+        let mut c = ctx(Role::Build, dir.path());
         c.web = true;
         let out = gated_execute("web_search", &json!({"query": "x"}), &c).unwrap();
         assert!(
             out.is_error && out.text.contains("plan and audit hats' tool"),
             "{out:?}"
         );
-        let mut c = ctx(Role::SoloPlan, dir.path());
+        let mut c = ctx(Role::Plan, dir.path());
         c.web = false;
         let out = gated_execute("web_fetch", &json!({"url": "https://example.com"}), &c).unwrap();
         assert!(
@@ -1646,7 +1670,7 @@ mod tests {
                 && !out.text.contains("config.toml"),
             "{out:?}"
         );
-        let mut c = ctx(Role::SoloBuild, dir.path());
+        let mut c = ctx(Role::Build, dir.path());
         c.web = false;
         let out = gated_execute("web_search", &json!({"query": "x"}), &c).unwrap();
         assert!(
@@ -1660,7 +1684,7 @@ mod tests {
     #[test]
     fn a_package_check_from_the_wrong_hat_names_who_asks() {
         let dir = TempDir::new().unwrap();
-        for role in [Role::SoloBuild, Role::SoloScribe] {
+        for role in [Role::Build, Role::Scribe] {
             let c = ctx(role, dir.path());
             let out = gated_execute(
                 "check_package",
@@ -1680,7 +1704,7 @@ mod tests {
     #[test]
     fn an_audit_write_is_pointed_at_its_file() {
         let dir = TempDir::new().unwrap();
-        let mut c = ctx(Role::SoloAudit, dir.path());
+        let mut c = ctx(Role::Audit, dir.path());
         c.read_only = false;
         let out = gated_execute("write", &json!({"path": "src/a.rs", "content": "x"}), &c).unwrap();
         assert!(
@@ -1705,7 +1729,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("gone.txt"), "x").unwrap();
         let outside = TempDir::new().unwrap();
-        let mut c = ctx(Role::SoloBuild, dir.path());
+        let mut c = ctx(Role::Build, dir.path());
         c.yolo = true;
         for (name, args) in [
             ("bash", json!({"command": "rm gone.txt"})),
@@ -1734,7 +1758,7 @@ mod tests {
     #[test]
     fn the_looking_hats_say_they_only_look() {
         let dir = TempDir::new().unwrap();
-        for (role, key) in [(Role::SoloScribe, "Shift+Tab"), (Role::SoloPlan, "Tab")] {
+        for (role, key) in [(Role::Scribe, "Shift+Tab"), (Role::Plan, "Tab")] {
             let out = gated_execute(
                 "bash",
                 &json!({ "command": ".venv/bin/tasks add x" }),
@@ -1755,7 +1779,7 @@ mod tests {
     #[test]
     fn a_refused_container_command_says_what_does_run() {
         let dir = TempDir::new().unwrap();
-        let reviewer = ctx(Role::SoloAudit, dir.path());
+        let reviewer = ctx(Role::Audit, dir.path());
         for (cmd, containers) in [
             ("docker compose up -d --wait", true),
             ("cd app && podman-compose build", true),
@@ -1781,7 +1805,7 @@ mod tests {
     #[test]
     fn a_failing_tool_is_an_error_result_not_a_dead_task() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::SoloBuild, dir.path());
+        let c = ctx(Role::Build, dir.path());
         let missing = gated_execute("read_file", &json!({"path": "not/yet.py"}), &c).unwrap();
         assert!(missing.is_error, "{missing:?}");
         std::fs::write(dir.path().join("x.pyc"), [0xff_u8, 0xfe, 0x00, 0x01]).unwrap();
@@ -1795,7 +1819,7 @@ mod tests {
     #[test]
     fn ask_is_fail_closed_without_tui() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::SoloBuild, dir.path());
+        let c = ctx(Role::Build, dir.path());
         let out = gated_execute(
             "bash",
             &json!({"command": "rm -rf /nonexistent-ryter-ask-fixture"}),
@@ -1810,7 +1834,7 @@ mod tests {
     fn permission_allow_from_user_io() {
         let dir = TempDir::new().unwrap();
         let (io, rx) = crate::user_io::UserIo::pair();
-        let mut c = ctx(Role::SoloBuild, dir.path());
+        let mut c = ctx(Role::Build, dir.path());
         c.user_io = Some(io);
         let worker = std::thread::spawn(move || {
             gated_execute(
@@ -1830,10 +1854,40 @@ mod tests {
         assert!(!out.is_error, "{out:?}");
     }
 
+    /// Silence on the card is not `denied by user`: the model must not
+    /// treat AFK as a no.
+    #[test]
+    fn permission_wait_timeout_is_not_denied_by_user() {
+        let dir = TempDir::new().unwrap();
+        let (io, rx) = crate::user_io::UserIo::pair();
+        let mut c = ctx(Role::Build, dir.path());
+        c.user_io = Some(io.clone());
+        let worker = std::thread::spawn(move || {
+            let _short = crate::user_io::ShortWait::ms(80);
+            gated_execute(
+                "bash",
+                &json!({"command": "rm -rf /nonexistent-ryter-timeout-fixture"}),
+                &c,
+            )
+            .unwrap()
+        });
+        let held = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        let out = worker.join().unwrap();
+        drop(held);
+        assert!(out.is_error, "{out:?}");
+        assert!(
+            out.text.contains("timed out waiting for user") && out.text.contains("not a denial"),
+            "{out:?}"
+        );
+        assert!(!out.text.contains("denied by user"), "{out:?}");
+        let asked = io.take_asked();
+        assert_eq!(asked[0].answer, "timeout", "{asked:?}");
+    }
+
     #[test]
     fn ask_user_needs_tui() {
         let dir = TempDir::new().unwrap();
-        let c = ctx(Role::SoloPlan, dir.path());
+        let c = ctx(Role::Plan, dir.path());
         let out = gated_execute("ask_user", &json!({"question": "ok?"}), &c).unwrap();
         assert!(out.is_error);
         assert!(out.text.contains("TUI"), "{out:?}");
@@ -1846,7 +1900,7 @@ mod edit_tests {
     use serde_json::json;
 
     fn edit(root: &std::path::Path, old: &str, new: &str) -> ToolOutput {
-        let c = tests::ctx(Role::SoloBuild, root);
+        let c = tests::ctx(Role::Build, root);
         execute(
             "search_replace",
             &json!({"path": "f.txt", "old_string": old, "new_string": new}),
@@ -1887,7 +1941,7 @@ mod edit_tests {
     fn an_edit_asks_with_the_change_it_would_make() {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join("f.txt"), "keep\nold\n").unwrap();
-        let mut c = tests::ctx(Role::SoloBuild, dir.path());
+        let mut c = tests::ctx(Role::Build, dir.path());
         c.permissions = Arc::new(crate::permissions::Permissions {
             edit: Some(crate::permissions::Answer::Ask),
             ..Default::default()
@@ -1956,7 +2010,7 @@ mod allow_tests {
     #[test]
     fn allow_for_the_session_covers_only_what_it_named() {
         let dir = tempfile::TempDir::new().unwrap();
-        let mut c = tests::ctx(Role::SoloBuild, dir.path());
+        let mut c = tests::ctx(Role::Build, dir.path());
         // `mkdir` runs by default; a rule of the user's makes it a question.
         let mut rules = crate::permissions::Permissions::default();
         rules
@@ -2008,19 +2062,77 @@ mod allow_tests {
 
     #[test]
     fn scopes_name_what_a_would_allow() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let c = tests::ctx(Role::Build, dir.path());
         assert_eq!(
-            allow_scope("bash", &json!({"command": "cargo test --workspace"})),
+            allow_scope("bash", &json!({"command": "cargo test --workspace"}), &c),
             Some(("bash:cargo test".into(), "`cargo test` commands".into()))
         );
         assert_eq!(
-            allow_scope("search_replace", &json!({"path": "a.rs"})).map(|s| s.1),
+            allow_scope("search_replace", &json!({"path": "a.rs"}), &c).map(|s| s.1),
             Some("edits to files in the project".into())
         );
         assert_eq!(
-            allow_scope("bash", &json!({"command": "rm -rf target"})),
+            allow_scope("bash", &json!({"command": "rm -rf target"}), &c),
             None
+        );
+        // A compound that asks: `a` names the asking segment's kind, so a
+        // later different chain with the same kind is covered.
+        assert_eq!(
+            allow_scope("bash", &json!({"command": "ls /usr/include && true"}), &c),
+            Some(("bash:ls".into(), "`ls` commands".into()))
+        );
+        assert_eq!(
+            allow_scope("bash", &json!({"command": "cat /etc/hosts; echo done"}), &c),
+            Some(("bash:cat".into(), "`cat` commands".into()))
         );
         assert!(strict_prompt("bash", &json!({"command": "git clean -fdx"})));
         assert!(!strict_prompt("bash", &json!({"command": "cargo test"})));
+    }
+
+    /// `a` on one compound covers later compounds that ask for the same
+    /// kind — the tunes run pressed always four times for `/usr`/`/etc`
+    /// reads because the key was the exact chain.
+    #[test]
+    fn allow_for_the_session_sticks_across_compound_steps() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut c = tests::ctx(Role::Build, dir.path());
+        let (io, rx) = crate::user_io::UserIo::pair();
+        c.user_io = Some(io);
+        let answers = std::thread::spawn(move || {
+            let mut asked = Vec::new();
+            while let Ok(req) = rx.recv() {
+                if let crate::user_io::UserRequest::Permission {
+                    summary,
+                    scope,
+                    reply,
+                    ..
+                } = req
+                {
+                    asked.push((summary.clone(), scope.clone()));
+                    let _ = reply.send(crate::user_io::Permission::Always);
+                }
+            }
+            asked
+        });
+        // Paths that exist on Linux and macOS; the gate asks on the read,
+        // and we only care which cards appeared (not that every host file
+        // is present — `/etc/os-release` is Linux-only).
+        let run = |cmd: &str| gated_execute("bash", &json!({"command": cmd}), &c).unwrap();
+        assert!(!run("ls /usr && true").is_error);
+        assert!(!run("ls /usr").is_error);
+        assert!(!run("ls /usr && pwd").is_error);
+        assert!(!run("cat /etc/hosts").is_error);
+        drop(c);
+        let asked = answers.join().unwrap();
+        let summaries: Vec<&str> = asked.iter().map(|(s, _)| s.as_str()).collect();
+        // `ls` once for the session; `cat` is another kind and asks once.
+        assert_eq!(
+            summaries,
+            vec!["ls /usr && true", "cat /etc/hosts"],
+            "{asked:?}"
+        );
+        assert_eq!(asked[0].1.as_deref(), Some("`ls` commands"));
+        assert_eq!(asked[1].1.as_deref(), Some("`cat` commands"));
     }
 }

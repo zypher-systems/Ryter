@@ -133,7 +133,7 @@ fn mid_stream(reasoning: ActivityMode) -> View {
             id: "t1".into(),
             name: "read_file".into(),
             args: serde_json::json!({"path": "crates/ryter-tui/src/run/mod.rs"}),
-            role: Role::SoloBuild,
+            role: Role::Build,
             summary: Some("read crates/ryter-tui/src/run/mod.rs".into()),
         },
     );
@@ -311,7 +311,7 @@ fn the_provider_panel_offers_web_search() {
 
 #[test]
 fn snapshot_every_panel() {
-    let panels: [(&str, PanelId); 16] = [
+    let panels: [(&str, PanelId); 17] = [
         ("providers", PanelId::Providers),
         ("models", PanelId::Models),
         ("sessions", PanelId::Sessions(SessionsMode::Browse)),
@@ -320,6 +320,7 @@ fn snapshot_every_panel() {
         ("settings", PanelId::Settings),
         ("theme", PanelId::Theme),
         ("tools", PanelId::Tools),
+        ("permissions", PanelId::Permissions),
         ("mcp", PanelId::Mcp),
         ("skills", PanelId::Skills),
         ("hooks", PanelId::Hooks),
@@ -350,6 +351,7 @@ fn every_panel_fits_the_screen_at_every_width() {
         PanelId::Settings,
         PanelId::Theme,
         PanelId::Tools,
+        PanelId::Permissions,
         PanelId::Mcp,
         PanelId::Skills,
         PanelId::Rules,
@@ -503,9 +505,9 @@ fn many_turns(n: usize) -> View {
 #[test]
 fn the_screen_shows_the_hat() {
     for mode in [
-        ryter_core::Role::SoloBuild,
-        ryter_core::Role::SoloPlan,
-        ryter_core::Role::SoloAudit,
+        ryter_core::Role::Build,
+        ryter_core::Role::Plan,
+        ryter_core::Role::Audit,
     ] {
         for base in [idle(), mid_stream(ActivityMode::Collapsed)] {
             let mut view = base;
@@ -776,7 +778,7 @@ fn edited_on(mut v: View) -> View {
                 id: id.into(),
                 name: name.into(),
                 args: args.clone(),
-                role: Role::SoloBuild,
+                role: Role::Build,
                 summary: None,
             },
         );
@@ -827,7 +829,7 @@ fn ledger() -> View {
         &mut v,
         AgentEvent::TurnStarted {
             turn: 1,
-            role: Role::SoloBuild,
+            role: Role::Build,
             at: 0,
         },
     );
@@ -873,7 +875,7 @@ fn edit_of(id: &str, path: &str, before: Option<&str>, after: &str) -> [AgentEve
             id: id.into(),
             name: "write".into(),
             args: serde_json::json!({"path": path, "content": "…"}),
-            role: Role::SoloBuild,
+            role: Role::Build,
             summary: None,
         },
         AgentEvent::ToolResult {
@@ -921,26 +923,26 @@ fn racked_events() -> Vec<(Role, &'static str, Vec<AgentEvent>)> {
     let mut build = Vec::new();
     build.extend(edit_of("e1", "app/server.js", Some(old), mid));
     build.extend(edit_of("e2", "test/search.test.js", None, test));
-    build.push(spent(Role::SoloBuild, Some(0.012)));
+    build.push(spent(Role::Build, Some(0.012)));
     let mut fix = Vec::new();
     fix.extend(edit_of("e3", "app/server.js", Some(mid), new));
     fix.extend(edit_of("e4", "test/search.test.js", Some(test), &more));
-    fix.push(spent(Role::SoloBuild, Some(0.009)));
+    fix.push(spent(Role::Build, Some(0.009)));
     vec![
         (
-            Role::SoloPlan,
+            Role::Plan,
             "search returns everything for an empty query",
             vec![
                 AgentEvent::Token {
                     text: "The handler passes the query straight to find.".into(),
                 },
                 AgentEvent::Planned { approved: true },
-                spent(Role::SoloPlan, Some(0.004)),
+                spent(Role::Plan, Some(0.004)),
             ],
         ),
-        (Role::SoloBuild, "build the plan", build),
+        (Role::Build, "build the plan", build),
         (
-            Role::SoloAudit,
+            Role::Audit,
             "review it",
             vec![
                 AgentEvent::Token {
@@ -953,10 +955,10 @@ fn racked_events() -> Vec<(Role, &'static str, Vec<AgentEvent>)> {
                     tree: Some("4b825dc".into()),
                     total_usd: Some(0.04),
                 },
-                spent(Role::SoloAudit, Some(0.04)),
+                spent(Role::Audit, Some(0.04)),
             ],
         ),
-        (Role::SoloBuild, "fix the blocking finding", fix),
+        (Role::Build, "fix the blocking finding", fix),
     ]
 }
 
@@ -978,7 +980,7 @@ fn racked() -> View {
         ("build", "openrouter", "deepseek/deepseek-pro-latest"),
         ("audit", "openrouter", "anthropic/claude-opus-5.5"),
     ] {
-        v.specialists.insert(
+        v.hats.insert(
             hat.into(),
             ryter_core::RoleModel {
                 connection: Some(conn.into()),
@@ -1035,6 +1037,44 @@ fn snapshot_solo() {
             &render_to_string(&v, 160, 50),
         );
     }
+}
+
+/// Workspace default with B project-cost glance + E quiet chrome.
+fn workspace_be() -> View {
+    let mut v = racked();
+    v.ui.layout = "workspace".into();
+    v.panel_visible = true;
+    v.budget_usd = 5.0;
+    if let Some(p) = &mut v.project_spend {
+        // Seed this_month, then set the glance totals the board locked.
+        p.add(Role::Build, "m", Some(1.24));
+        p.total_usd = 4.82;
+        p.calls = 40;
+        p.unpriced_calls = 3;
+        p.sessions = 12;
+    }
+    v
+}
+
+#[test]
+fn snapshot_workspace_be() {
+    all_sizes("workspace-be", &workspace_be());
+    let text = render_to_string(&workspace_be(), 160, 50);
+    let top = text.lines().next().unwrap();
+    assert!(
+        top.contains("●●● RYTER") && top.contains("Conversation"),
+        "{top}"
+    );
+    assert!(!top.contains('☀') && !top.contains('☾'), "{top}");
+    assert!(!top.contains(" dusty"), "{top}");
+    assert!(
+        text.contains("this month") && text.contains("unpriced"),
+        "{text}"
+    );
+    assert!(
+        text.contains("12 sessions") && text.contains("$4.82"),
+        "{text}"
+    );
 }
 
 /// The sidebar's rows, squashed, for a column 28 wide with `room` rows.
@@ -1122,7 +1162,7 @@ fn the_sidebar_rows_are_measurements_events_and_names() {
     for ev in [
         AgentEvent::TurnStarted {
             turn: 7,
-            role: Role::SoloAudit,
+            role: Role::Audit,
             at: 0,
         },
         AgentEvent::Reviewed {
@@ -1154,7 +1194,7 @@ fn the_sidebar_rows_are_measurements_events_and_names() {
     assert!(got.iter().any(|r| r == "turns ●●●●●"), "{got:#?}");
     // Sixteen turns show the newest fifteen.
     for turn in 8..20 {
-        hat_turn(&mut v, turn, Role::SoloBuild, "more", Vec::new());
+        hat_turn(&mut v, turn, Role::Build, "more", Vec::new());
     }
     assert_eq!(v.rack.turn_hats().len(), 17);
     let got = sidebar_rows(&v, 100);
@@ -1219,10 +1259,10 @@ fn the_sidebar_says_what_is_true_of_the_session() {
     // What the hat may do follows the hat. A row that would cut the
     // sandbox's name puts it on the next row; a short name shares the row.
     for (hat, may) in [
-        (Role::SoloPlan, "read only"),
-        (Role::SoloAudit, "checkpoint"),
-        (Role::SoloScribe, "docs only"),
-        (Role::SoloBuild, "asks first"),
+        (Role::Plan, "read only"),
+        (Role::Audit, "checkpoint"),
+        (Role::Scribe, "docs only"),
+        (Role::Build, "asks first"),
     ] {
         v.mode = hat;
         let got = sidebar_rows(&v, 100);
@@ -1335,9 +1375,9 @@ fn the_hats_block_is_the_same_height_whatever_the_turns() {
             &mut many,
             turn,
             if turn % 3 == 0 {
-                Role::SoloAudit
+                Role::Audit
             } else {
-                Role::SoloBuild
+                Role::Build
             },
             "again",
             Vec::new(),
@@ -1690,26 +1730,26 @@ fn a_hat_switch_during_a_turn_is_the_next_messages() {
     };
     // Build has a model of its own; plan runs on the one every hat uses.
     let mut v = racked();
-    v.set_mode(Role::SoloPlan);
-    v.agent_hat = Role::SoloPlan;
+    v.set_mode(Role::Plan);
+    v.agent_hat = Role::Plan;
     let _ = v.submit_user("plan the login".into(), "plan the login".into());
     crate::run_events_apply(
         &mut v,
         AgentEvent::TurnStarted {
             turn: 7,
-            role: Role::SoloPlan,
+            role: Role::Plan,
             at: 0,
         },
     );
     let tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
     assert!(matches!(
         crate::run_keys_handle(&mut v, tab),
-        Action::SetMode(Role::SoloBuild)
+        Action::SetMode(Role::Build)
     ));
     // As `actions::set_mode` does; the agent's word comes after the turn.
-    v.set_mode(Role::SoloBuild);
+    v.set_mode(Role::Build);
     v.hats_pending += 1;
-    assert_eq!(v.working_hat(), Role::SoloPlan);
+    assert_eq!(v.working_hat(), Role::Plan);
     v.on_token("Step one.");
     let rows = sidebar_rows(&v, 100);
     let row = |name: &str| rows.iter().find(|r| r.contains(name)).cloned().unwrap();
@@ -1731,18 +1771,14 @@ fn a_hat_switch_during_a_turn_is_the_next_messages() {
         .unwrap();
     assert_eq!(
         buf[(3, rule_row + 1)].bg,
-        theme.mode(Role::SoloBuild),
+        theme.mode(Role::Build),
         "the chip"
     );
     let spinner = (0..rule_row)
         .flat_map(|y| (0..90u16).map(move |x| (x, y)))
         .find(|&at| crate::activity::SPINNER.contains(&buf[at].symbol()))
         .expect("the status row");
-    assert_eq!(
-        buf[spinner].fg,
-        theme.mode(Role::SoloPlan),
-        "the status row"
-    );
+    assert_eq!(buf[spinner].fg, theme.mode(Role::Plan), "the status row");
     // Folded away, the status line names the hat working.
     let foot = render_to_string(&v, 80, 24);
     assert!(
@@ -1758,13 +1794,8 @@ fn a_hat_switch_during_a_turn_is_the_next_messages() {
             duration_ms: 10,
         },
     );
-    crate::run_events_apply(
-        &mut v,
-        AgentEvent::HatSet {
-            role: Role::SoloBuild,
-        },
-    );
-    assert_eq!((v.working_hat(), v.hats_pending), (Role::SoloBuild, 0));
+    crate::run_events_apply(&mut v, AgentEvent::HatSet { role: Role::Build });
+    assert_eq!((v.working_hat(), v.hats_pending), (Role::Build, 0));
     let rows = sidebar_rows(&v, 100);
     assert!(rows.iter().any(|r| r.starts_with("▸ build")), "{rows:#?}");
     assert!(!rows.iter().any(spins), "{rows:#?}");
@@ -2036,6 +2067,7 @@ fn a_resumed_session_has_the_rack_it_had() {
             content: format!("[hat: {role} — x]\n\n{ask}"),
             tool_call_id: None,
             tool_calls: None,
+            messages_blocks: None,
         })
         .unwrap();
         s.push_message(ryter_core::Message {
@@ -2043,6 +2075,7 @@ fn a_resumed_session_has_the_rack_it_had() {
             content: "done".into(),
             tool_call_id: None,
             tool_calls: None,
+            messages_blocks: None,
         })
         .unwrap();
         let mut all = vec![AgentEvent::TurnStarted { turn, role, at: 0 }];
@@ -2052,14 +2085,14 @@ fn a_resumed_session_has_the_rack_it_had() {
             crate::run_events_apply(&mut live, ev);
         }
     }
-    s.set_mode(Role::SoloBuild).unwrap();
+    s.set_mode(Role::Build).unwrap();
     let mut v = ledger();
     crate::run::fill_view_from_session(&mut v, &s);
     for hat in crate::sidebar::HATS {
         assert_eq!(v.rack.of(hat), live.rack.of(hat), "{hat}");
     }
-    assert_eq!(v.rack.of(Role::SoloBuild).turns, 2);
-    assert_eq!(v.rack.of(Role::SoloPlan).plans_approved, 1);
+    assert_eq!(v.rack.of(Role::Build).turns, 2);
+    assert_eq!(v.rack.of(Role::Plan).plans_approved, 1);
     // What each hat said is in its color again.
     let hats: Vec<Option<Role>> = v
         .messages
@@ -2070,10 +2103,10 @@ fn a_resumed_session_has_the_rack_it_had() {
     assert_eq!(
         hats,
         [
-            Some(Role::SoloPlan),
-            Some(Role::SoloBuild),
-            Some(Role::SoloAudit),
-            Some(Role::SoloBuild)
+            Some(Role::Plan),
+            Some(Role::Build),
+            Some(Role::Audit),
+            Some(Role::Build)
         ]
     );
     // A new session starts with an empty rack.
@@ -2152,7 +2185,7 @@ fn snapshot_opening() {
     v.git_branch = Some("main".into());
     v.uncommitted = Some(Vec::new());
     v.sessions_count = 12;
-    v.set_mode(Role::SoloPlan);
+    v.set_mode(Role::Plan);
     all_sizes("opening", &v);
     let text = render_to_string(&v, 120, 40);
     for want in [
@@ -2172,9 +2205,9 @@ fn snapshot_opening() {
             .any(|l| l.trim_start().starts_with(name) && l.contains("◆ on"))
     };
     assert!(on_row(&v, "plan") && !on_row(&v, "build"));
-    v.set_mode(Role::SoloBuild);
+    v.set_mode(Role::Build);
     assert!(on_row(&v, "build") && !on_row(&v, "plan"));
-    v.set_mode(Role::SoloAudit);
+    v.set_mode(Role::Audit);
     assert!(on_row(&v, "2 specialists") && !on_row(&v, "build"));
     // No earlier session: `/help` alone.
     v.sessions_count = 0;
@@ -2475,7 +2508,7 @@ fn edit_rows_are_tinted_to_the_edge() {
 /// its verdict under it, and the hat the user was in put back.
 fn reviewed(verdict: Option<bool>) -> View {
     let mut v = edited();
-    v.specialists.insert(
+    v.hats.insert(
         "audit".into(),
         ryter_core::config::RoleModel {
             connection: Some("openrouter".into()),
@@ -2493,11 +2526,11 @@ fn reviewed(verdict: Option<bool>) -> View {
     // As `/audit` does it: the audit hat worn, then the turn in it.
     for ev in [
         AgentEvent::ModeChanged {
-            role: ryter_core::Role::SoloAudit,
+            role: ryter_core::Role::Audit,
         },
         AgentEvent::TurnStarted {
             turn: 2,
-            role: Role::SoloAudit,
+            role: Role::Audit,
             at: 0,
         },
         AgentEvent::Token { text: body.into() },
@@ -2528,7 +2561,7 @@ fn reviewed(verdict: Option<bool>) -> View {
             duration_ms: 3000,
         },
         AgentEvent::ModeChanged {
-            role: ryter_core::Role::SoloBuild,
+            role: ryter_core::Role::Build,
         },
         AgentEvent::Reviewed {
             model: "anthropic/claude-opus-5.5".into(),
@@ -2570,7 +2603,7 @@ fn scribed() -> View {
     for ev in [
         AgentEvent::TurnStarted {
             turn: 7,
-            role: Role::SoloScribe,
+            role: Role::Scribe,
             at: 0,
         },
         AgentEvent::ToolCall {
@@ -2579,7 +2612,7 @@ fn scribed() -> View {
             id: "s1".into(),
             name: "write".into(),
             args: serde_json::json!({"path": "docs/install.md"}),
-            role: Role::SoloScribe,
+            role: Role::Scribe,
             summary: None,
         },
         AgentEvent::ToolResult {
@@ -2595,7 +2628,7 @@ fn scribed() -> View {
             id: "s2".into(),
             name: "search_replace".into(),
             args: serde_json::json!({"path": "README.md"}),
-            role: Role::SoloScribe,
+            role: Role::Scribe,
             summary: None,
         },
         AgentEvent::ToolResult {
@@ -2613,7 +2646,7 @@ fn scribed() -> View {
     ] {
         crate::run_events_apply(&mut v, ev);
     }
-    v.set_mode(Role::SoloScribe);
+    v.set_mode(Role::Scribe);
     v
 }
 
@@ -2635,7 +2668,7 @@ fn snapshot_review() {
 fn a_model_is_named_again_after_another_has_spoken() {
     let mut v = idle();
     v.ui.layout = "ledger".into();
-    v.specialists.insert(
+    v.hats.insert(
         "audit".into(),
         ryter_core::config::RoleModel {
             connection: Some("openrouter".into()),
@@ -2645,11 +2678,11 @@ fn a_model_is_named_again_after_another_has_spoken() {
     let _ = v.submit_user("change it".into(), "change it".into());
     let hat = |v: &mut View, role| crate::run_events_apply(v, AgentEvent::ModeChanged { role });
     v.on_token("Changing the greeting.");
-    hat(&mut v, ryter_core::Role::SoloAudit);
+    hat(&mut v, ryter_core::Role::Audit);
     v.on_token("The word is wrong.\n\nVERDICT: FAIL");
-    hat(&mut v, ryter_core::Role::SoloBuild);
+    hat(&mut v, ryter_core::Role::Build);
     v.on_token("Fixing the word.");
-    hat(&mut v, ryter_core::Role::SoloAudit);
+    hat(&mut v, ryter_core::Role::Audit);
     v.on_token("Nothing to report.\n\nVERDICT: PASS");
     let screen = render_to_string(&v, 120, 50);
     let at = |what: &str| {
@@ -2712,14 +2745,14 @@ fn a_filed_audit_opens_its_popout_and_counts_in_the_rack() {
     crate::run_events_apply(
         &mut v,
         AgentEvent::ModeChanged {
-            role: ryter_core::Role::SoloAudit,
+            role: ryter_core::Role::Audit,
         },
     );
     crate::run_events_apply(
         &mut v,
         AgentEvent::TurnStarted {
             turn: 2,
-            role: ryter_core::Role::SoloAudit,
+            role: ryter_core::Role::Audit,
             at: 0,
         },
     );
@@ -2755,7 +2788,7 @@ fn a_filed_audit_opens_its_popout_and_counts_in_the_rack() {
         screen.contains("audit · kimi-k3 · ✗ 1 of 2 failed · $0.070 · restored 1 file"),
         "{screen}"
     );
-    let totals = v.rack.of(ryter_core::Role::SoloAudit);
+    let totals = v.rack.of(ryter_core::Role::Audit);
     assert_eq!((totals.verdicts_failed, totals.last_restored), (1, Some(1)));
     // The popout: verdict, the finding with its place at the edge, the tree.
     assert!(screen.contains("VERDICT: FAIL"));
@@ -2782,10 +2815,7 @@ fn a_filed_audit_opens_its_popout_and_counts_in_the_rack() {
         },
     );
     assert!(v.panels.is_empty());
-    assert_eq!(
-        v.rack.of(ryter_core::Role::SoloAudit).last_restored,
-        Some(0)
-    );
+    assert_eq!(v.rack.of(ryter_core::Role::Audit).last_restored, Some(0));
 }
 
 /// The verdict is said under the review, and kept for the commit's receipt
@@ -2827,7 +2857,7 @@ fn a_reviews_verdict_is_said_and_kept_for_the_commit() {
             ))
         );
         // The hat the user was in is back.
-        assert_eq!(v.mode, ryter_core::Role::SoloBuild);
+        assert_eq!(v.mode, ryter_core::Role::Build);
         crate::run_events_apply(
             &mut v,
             AgentEvent::Committed {
@@ -3024,7 +3054,7 @@ fn the_projects_commands_are_named_for_what_they_do() {
                 id: id.into(),
                 name: "run_project".into(),
                 args: serde_json::json!({ "action": action }),
-                role: Role::SoloBuild,
+                role: Role::Build,
                 summary: Some(cmd.into()),
             },
         );
@@ -3093,68 +3123,47 @@ fn tab_moves_within_a_row_and_shift_tab_between_rows() {
         };
         crate::run_keys_handle(v, KeyEvent::new(code, KeyModifiers::NONE))
     };
-    v.set_mode(Role::SoloPlan);
-    assert!(matches!(
-        press(&mut v, false),
-        Action::SetMode(Role::SoloBuild)
-    ));
-    v.set_mode(Role::SoloBuild);
-    assert!(matches!(
-        press(&mut v, false),
-        Action::SetMode(Role::SoloPlan)
-    ));
+    v.set_mode(Role::Plan);
+    assert!(matches!(press(&mut v, false), Action::SetMode(Role::Build)));
+    v.set_mode(Role::Build);
+    assert!(matches!(press(&mut v, false), Action::SetMode(Role::Plan)));
     // Nothing worn in the specialist row yet: audit, straight to it. No
     // box to choose from: with two specialists, Tab round them is enough.
-    assert!(matches!(
-        press(&mut v, true),
-        Action::SetMode(Role::SoloAudit)
-    ));
+    assert!(matches!(press(&mut v, true), Action::SetMode(Role::Audit)));
     assert!(v.panels.is_empty());
-    v.set_mode(Role::SoloAudit);
+    v.set_mode(Role::Audit);
     // The specialists go round: audit, scribe, audit.
     assert!(matches!(
         press(&mut v, false),
-        Action::SetMode(Role::SoloScribe)
+        Action::SetMode(Role::Scribe)
     ));
-    v.set_mode(Role::SoloScribe);
-    assert!(matches!(
-        press(&mut v, false),
-        Action::SetMode(Role::SoloAudit)
-    ));
+    v.set_mode(Role::Scribe);
+    assert!(matches!(press(&mut v, false), Action::SetMode(Role::Audit)));
     // Back to the primary hat last worn, from either specialist.
-    assert!(matches!(
-        press(&mut v, true),
-        Action::SetMode(Role::SoloBuild)
-    ));
-    v.set_mode(Role::SoloPlan);
-    v.set_mode(Role::SoloAudit);
-    assert!(matches!(
-        press(&mut v, true),
-        Action::SetMode(Role::SoloPlan)
-    ));
+    assert!(matches!(press(&mut v, true), Action::SetMode(Role::Build)));
+    v.set_mode(Role::Plan);
+    v.set_mode(Role::Audit);
+    assert!(matches!(press(&mut v, true), Action::SetMode(Role::Plan)));
     // The specialist last worn is remembered: scribe, then back to it.
-    v.set_mode(Role::SoloScribe);
-    v.set_mode(Role::SoloBuild);
-    assert!(matches!(
-        press(&mut v, true),
-        Action::SetMode(Role::SoloScribe)
-    ));
+    v.set_mode(Role::Scribe);
+    v.set_mode(Role::Build);
+    assert!(matches!(press(&mut v, true), Action::SetMode(Role::Scribe)));
     // The hints say where each key goes.
-    v.set_mode(Role::SoloBuild);
+    v.set_mode(Role::Build);
     let foot = render_to_string(&v, 160, 50);
     let foot = foot.lines().last().unwrap();
     assert!(
         foot.contains("tab plan") && foot.contains("⇧tab specialists"),
         "{foot}"
     );
-    v.set_mode(Role::SoloAudit);
+    v.set_mode(Role::Audit);
     let foot = render_to_string(&v, 160, 50);
     let foot = foot.lines().last().unwrap();
     assert!(
         foot.contains("tab scribe") && foot.contains("⇧tab plan · build"),
         "{foot}"
     );
-    v.set_mode(Role::SoloScribe);
+    v.set_mode(Role::Scribe);
     let foot = render_to_string(&v, 160, 50);
     let foot = foot.lines().last().unwrap();
     assert!(
@@ -3175,16 +3184,16 @@ fn tab_moves_within_a_row_and_shift_tab_between_rows() {
 fn choosing_a_specialist_opens_the_composer_on_its_line() {
     use ryter_core::Role;
     let mut v = idle();
-    v.open_composer_on(Role::SoloAudit);
+    v.open_composer_on(Role::Audit);
     assert_eq!(v.composer.text(), "Audit this project");
     assert_eq!(v.composer.cursor(), v.composer.text().len());
-    v.open_composer_on(Role::SoloScribe);
+    v.open_composer_on(Role::Scribe);
     assert_eq!(v.composer.text(), "Document this project");
-    v.open_composer_on(Role::SoloBuild);
+    v.open_composer_on(Role::Build);
     assert!(v.composer.is_empty());
     for typed in ["fix the seek", "Audit this project, the seek most of all"] {
         v.composer.set_text(typed);
-        for hat in [Role::SoloAudit, Role::SoloScribe, Role::SoloPlan] {
+        for hat in [Role::Audit, Role::Scribe, Role::Plan] {
             v.open_composer_on(hat);
             assert_eq!(v.composer.text(), typed, "{hat}");
         }
@@ -3193,7 +3202,7 @@ fn choosing_a_specialist_opens_the_composer_on_its_line() {
     v.composer.clear();
     v.panels
         .push(Box::new(PermissionModal::new("bash".into(), "ls".into())));
-    v.open_composer_on(Role::SoloAudit);
+    v.open_composer_on(Role::Audit);
     assert!(v.composer.is_empty());
 }
 
@@ -3206,23 +3215,23 @@ fn a_specialists_line_typed_by_hand_is_the_users() {
     use ryter_core::Role;
     let mut v = idle();
     v.composer.set_text("Audit this project");
-    for hat in [Role::SoloScribe, Role::SoloBuild, Role::SoloAudit] {
+    for hat in [Role::Scribe, Role::Build, Role::Audit] {
         v.open_composer_on(hat);
         assert_eq!(v.composer.text(), "Audit this project", "{hat}");
     }
     // Put there by Ryter, it goes with the hat.
     v.composer.clear();
-    v.open_composer_on(Role::SoloAudit);
-    v.open_composer_on(Role::SoloScribe);
+    v.open_composer_on(Role::Audit);
+    v.open_composer_on(Role::Scribe);
     assert_eq!(v.composer.text(), "Document this project");
-    v.open_composer_on(Role::SoloPlan);
+    v.open_composer_on(Role::Plan);
     assert!(v.composer.is_empty());
     // Sent, the line is no longer Ryter's: the next one typed is the user's.
-    v.open_composer_on(Role::SoloAudit);
+    v.open_composer_on(Role::Audit);
     let _ = v.submit_user("Audit this project".into(), "Audit this project".into());
     v.busy = false;
     v.composer.set_text("Audit this project");
-    v.open_composer_on(Role::SoloScribe);
+    v.open_composer_on(Role::Scribe);
     assert_eq!(v.composer.text(), "Audit this project");
 }
 
@@ -3237,9 +3246,9 @@ fn an_in_tui_resume_opens_on_the_specialists_line() {
     let mut s =
         ryter_core::Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
     for (hat, line) in [
-        (Role::SoloAudit, "Audit this project"),
-        (Role::SoloScribe, "Document this project"),
-        (Role::SoloBuild, ""),
+        (Role::Audit, "Audit this project"),
+        (Role::Scribe, "Document this project"),
+        (Role::Build, ""),
     ] {
         s.set_mode(hat).unwrap();
         let mut v = idle();
@@ -3258,7 +3267,7 @@ fn a_panel_that_takes_the_prompt_lets_ryters_line_go() {
     use ryter_core::Role;
     let key = |c: KeyCode| KeyEvent::new(c, KeyModifiers::NONE);
     let mut v = idle();
-    v.open_composer_on(Role::SoloAudit);
+    v.open_composer_on(Role::Audit);
     assert_eq!(v.seeded.as_deref(), Some("Audit this project"));
     // The sessions list empties the prompt, and the line goes with it.
     let _ = panel::open(
@@ -3274,7 +3283,7 @@ fn a_panel_that_takes_the_prompt_lets_ryters_line_go() {
         let _ = crate::run_keys_handle(&mut v, key(KeyCode::Char(c)));
     }
     assert_eq!(v.composer.text(), "Audit this project");
-    v.open_composer_on(Role::SoloScribe);
+    v.open_composer_on(Role::Scribe);
     assert_eq!(
         v.composer.text(),
         "Audit this project",
@@ -3283,17 +3292,17 @@ fn a_panel_that_takes_the_prompt_lets_ryters_line_go() {
     // Put there by Ryter, edited, and put back: the user's.
     v.composer.clear();
     v.seeded = None;
-    v.open_composer_on(Role::SoloAudit);
+    v.open_composer_on(Role::Audit);
     let _ = crate::run_keys_handle(&mut v, key(KeyCode::Char('!')));
     let _ = crate::run_keys_handle(&mut v, key(KeyCode::Backspace));
     assert_eq!(v.composer.text(), "Audit this project");
-    v.open_composer_on(Role::SoloScribe);
+    v.open_composer_on(Role::Scribe);
     assert_eq!(v.composer.text(), "Audit this project");
     // Untouched, it still goes with the hat.
     v.composer.clear();
-    v.open_composer_on(Role::SoloAudit);
+    v.open_composer_on(Role::Audit);
     let _ = crate::run_keys_handle(&mut v, key(KeyCode::Tab));
-    v.open_composer_on(Role::SoloScribe);
+    v.open_composer_on(Role::Scribe);
     assert_eq!(v.composer.text(), "Document this project");
 }
 
@@ -3307,12 +3316,12 @@ fn a_queued_follow_up_is_not_replaced_by_a_specialists_line() {
     let mut v = idle();
     let _ = v.submit_user("start".into(), "start".into());
     assert!(v.busy);
-    v.open_composer_on(Role::SoloAudit);
+    v.open_composer_on(Role::Audit);
     assert_eq!(v.composer.text(), "Audit this project");
     v.composer.clear();
     let _ = v.submit_user("then fix the seek".into(), "then fix the seek".into());
     assert_eq!(v.queued_prompt.as_deref(), Some("then fix the seek"));
-    for hat in [Role::SoloAudit, Role::SoloScribe] {
+    for hat in [Role::Audit, Role::Scribe] {
         v.open_composer_on(hat);
         assert!(v.composer.is_empty(), "{hat}");
         assert_eq!(v.queued_prompt.as_deref(), Some("then fix the seek"));
@@ -3653,7 +3662,7 @@ fn a_running_turn_ends_on_a_live_status_row() {
             id: "t2".into(),
             name: "bash".into(),
             args: serde_json::json!({"command": "cargo test"}),
-            role: Role::SoloBuild,
+            role: Role::Build,
             summary: Some("cargo test".into()),
         },
     );
@@ -3762,7 +3771,7 @@ fn the_drain_pauses_to_paint_after_a_tool_result() {
             id: format!("w{i}"),
             name: "write".into(),
             args: serde_json::json!({"path": format!("f{i}.txt"), "content": "x"}),
-            role: Role::SoloBuild,
+            role: Role::Build,
             summary: None,
         })
         .unwrap();
@@ -5187,16 +5196,16 @@ fn a_model_for_all_hats_is_every_hats() {
         model: Some(model.into()),
     };
     let mut v = idle();
-    v.specialists
+    v.hats
         .insert("plan".into(), own("anthropic/claude-opus-5.5"));
-    v.specialists.insert("audit".into(), own("z-ai/glm-5.3"));
-    v.specialists
+    v.hats.insert("audit".into(), own("z-ai/glm-5.3"));
+    v.hats
         .insert("scribe".into(), own("deepseek/deepseek-v4.1-flash"));
-    v.mode = Role::SoloAudit;
+    v.mode = Role::Audit;
     assert_eq!(v.hat_model(), "z-ai/glm-5.3");
     // The hats that had their own, in the seats' order.
     assert_eq!(v.hats_follow(), ["plan", "audit", "scribe"]);
-    assert!(v.specialists.is_empty());
+    assert!(v.hats.is_empty());
     assert_eq!(v.hat_model(), v.model, "the audit hat follows all hats");
     assert!(v.hats_follow().is_empty(), "nothing left to put back");
 
@@ -5303,6 +5312,7 @@ fn html_gallery() {
     shots.push(("solo-120x40".into(), racked(), 120, 40));
     shots.push(("solo-100x30".into(), racked(), 100, 30));
     shots.push(("solo-80x24".into(), racked(), 80, 24));
+    shots.push(("workspace-be-160x50".into(), workspace_be(), 160, 50));
     for (name, v, w, h) in shots {
         let buf = render_buffer(&v, w, h, theme);
         std::fs::write(
@@ -5321,7 +5331,7 @@ fn the_chip_is_readable_under_a_panel() {
     let theme = Theme::truecolor_dark();
     for (w, h) in [(176, 50), (120, 40)] {
         let mut v = racked();
-        v.set_mode(Role::SoloAudit);
+        v.set_mode(Role::Audit);
         let e = env();
         let _ = panel::open(&mut v, PanelId::Spend, &e);
         let hit = crate::draw::render_hit(&v, w, h);
@@ -5366,7 +5376,7 @@ fn a_panels_shadow_stays_off_the_prompts_rule() {
 fn a_docked_card_clears_its_rows() {
     for (w, h) in [(120, 40), (176, 50)] {
         let mut v = racked();
-        v.set_mode(Role::SoloAudit);
+        v.set_mode(Role::Audit);
         let rows: Vec<String> = (1..=4)
             .map(|i| format!("✗ {i}\tfinding number {i}\tsrc/f{i}.rs"))
             .collect();

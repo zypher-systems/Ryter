@@ -861,7 +861,8 @@ immediately; **hidden alias** means it is matchable and runnable but not listed.
 | --- | --- | --- | --- |
 | `/settings` | | Budget, warn, max crew, sandbox, inbound MCP, web | **panel** (§11.7) |
 | `/theme` | | Switch and preview themes | **panel** (§11.8) — with live preview |
-| `/tools` | `/permissions`, `/ask`, `/auto`, `/always` | Tool permission mode | **panel** (§11.9) |
+| `/tools` | `/ask`, `/auto`, `/always` | Tool permission mode (session ask/always/yolo) | **panel** (§11.9) |
+| `/permissions` | — | Durable `[permissions]` edit + bash rules | **panel** |
 | `/auditor` | | Auditor gate on or off | **panel** (§11.9) |
 
 `/ask`, `/auto`, and `/always` become **hidden aliases** that jump straight to the

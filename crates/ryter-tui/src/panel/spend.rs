@@ -367,9 +367,9 @@ mod tests {
     fn p_shows_the_project_across_sessions() {
         let mut v = View::new("c".into(), "m".into(), "/tmp".into());
         let mut p = ryter_core::project::ProjectSpend::default();
-        p.add(ryter_core::Role::SoloPlan, "opus", Some(0.91));
-        p.add(ryter_core::Role::SoloBuild, "flash", Some(0.09));
-        p.add(ryter_core::Role::SoloAudit, "grok", None);
+        p.add(ryter_core::Role::Plan, "opus", Some(0.91));
+        p.add(ryter_core::Role::Build, "flash", Some(0.09));
+        p.add(ryter_core::Role::Audit, "grok", None);
         v.project_spend = Some(p);
         let theme = Theme::truecolor_dark();
         let mut panel = Spend::default();
@@ -436,7 +436,7 @@ mod money {
         assert!(session.contains("$0.004"), "{session}");
         assert!(!session.contains("$0.00 "), "{session}");
         let mut p = ryter_core::project::ProjectSpend::default();
-        p.add(ryter_core::Role::SoloBuild, "m", Some(0.004));
+        p.add(ryter_core::Role::Build, "m", Some(0.004));
         v.project_spend = Some(p);
         let _ = panel.key(
             KeyEvent::new(KeyCode::Char('p'), crossterm::event::KeyModifiers::NONE),

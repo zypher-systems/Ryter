@@ -616,7 +616,7 @@ mod tests {
         );
         // Without a provider or a key, the tool says what to set.
         let dir = tempfile::TempDir::new().unwrap();
-        let mut ctx = crate::tools::tests::ctx(crate::Role::SoloPlan, dir.path());
+        let mut ctx = crate::tools::tests::ctx(crate::Role::Plan, dir.path());
         ctx.web = true;
         let out = web_search(&json!({"query": "fastify cookies"}), &ctx).unwrap();
         assert!(

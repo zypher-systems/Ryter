@@ -134,6 +134,49 @@ impl Pulse {
     }
 }
 
+/// Which page the workspace stage shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Page {
+    /// The conversation, the composer, and a permission card when one is up.
+    #[default]
+    Conversation,
+    /// The four hats, and the model each one wears.
+    Hats,
+    /// Saved sessions for this project.
+    Sessions,
+}
+
+/// Which pane has the keyboard's attention.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Focus {
+    /// Project, views, and the hat rack.
+    Sidebar,
+    /// The conversation, the hats page, or the sessions list.
+    #[default]
+    Stage,
+    /// Activity, context, spend, files, and the plan.
+    Inspector,
+}
+
+/// One saved session, as the sessions page lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedSession {
+    /// Full id, for resume.
+    pub id: String,
+    /// Title, or the first line of the conversation.
+    pub title: String,
+    /// A second line: branch, or the short id.
+    pub sub: String,
+    /// The hat it was left in.
+    pub hat: String,
+    /// Transcript rows.
+    pub messages: usize,
+    /// Known spend, already formatted.
+    pub spend: String,
+    /// When it was last written, already formatted.
+    pub updated: String,
+}
+
 /// Everything the draw path needs.
 #[derive(Debug, Clone)]
 pub struct View {
@@ -202,8 +245,10 @@ pub struct View {
     pub cwd: String,
     /// Current git branch, if any.
     pub git_branch: Option<String>,
-    /// `ask` / `always`.
+    /// `ask` / `always` / `yolo`.
     pub perm_mode: String,
+    /// Durable `[permissions]` rules (`permissions.toml` / config.toml).
+    pub permissions: ryter_core::permissions::Permissions,
     /// Skills + user slash commands.
     pub catalog: SlashCatalog,
     /// Editable hook rows (persisted to `hooks.toml`).
@@ -271,7 +316,7 @@ pub struct View {
     /// `default`); a model not listed is "auto".
     pub model_reasoning: BTreeMap<String, String>,
     /// Each hat's own model, where it has one (set in `/models`).
-    pub specialists: BTreeMap<String, ryter_core::RoleModel>,
+    pub hats: BTreeMap<String, ryter_core::RoleModel>,
     /// Unix socket path if inbound MCP is listening.
     pub mcp_listen: Option<String>,
     /// Current session id.
@@ -374,6 +419,22 @@ pub struct View {
     pub pulse: Pulse,
     /// Saved sessions this project has, for the opening screen's count.
     pub sessions_count: usize,
+    /// Workspace stage: conversation, hats, or sessions.
+    pub page: Page,
+    /// Sidebar, stage, or instruments.
+    pub focus: Focus,
+    /// Highlight in the sidebar (views, then the four hats).
+    pub side_at: usize,
+    /// Hat the hats page is showing. Wearing a hat moves this with it.
+    pub seat: ryter_core::Role,
+    /// Highlight in the sessions list.
+    pub session_at: usize,
+    /// Sessions for this project, newest first. Empty until loaded.
+    pub sessions: Vec<SavedSession>,
+    /// `~/.ryter`, so the sessions page can list what is saved there.
+    pub ryter_home: Option<std::path::PathBuf>,
+    /// Checkbox lines of `.ryter/plan.md`, in order.
+    pub plan_steps: Vec<(bool, String)>,
 }
 
 /// Aggregated spend row for `/spend`.
@@ -412,10 +473,10 @@ impl View {
         let own: Vec<&'static str> = HAT_ROLES
             .iter()
             .copied()
-            .filter(|role| self.specialists.get(*role).is_some_and(|m| m.is_override()))
+            .filter(|role| self.hats.get(*role).is_some_and(|m| m.is_override()))
             .collect();
         for role in HAT_ROLES {
-            self.specialists.remove(*role);
+            self.hats.remove(*role);
         }
         own
     }
@@ -429,7 +490,7 @@ impl View {
     /// The model `hat` runs on: its own where the user gave it one,
     /// otherwise the one every hat uses.
     pub fn model_of(&self, hat: ryter_core::Role) -> &str {
-        self.specialists
+        self.hats
             .get(hat.as_str())
             .filter(|r| r.is_override())
             .and_then(|r| r.model.as_deref())
@@ -461,7 +522,7 @@ impl View {
 
     pub fn new(connection: String, model: String, cwd: String) -> Self {
         Self {
-            mode: ryter_core::Role::SoloBuild,
+            mode: ryter_core::Role::Build,
             connection,
             model,
             spend: None,
@@ -488,6 +549,7 @@ impl View {
             cwd,
             git_branch: None,
             perm_mode: "ask".into(),
+            permissions: ryter_core::permissions::Permissions::default(),
             catalog: SlashCatalog::default(),
             hooks: Vec::new(),
             theme_name: "dark".into(),
@@ -519,7 +581,7 @@ impl View {
             last_review: None,
             model_reasoning: BTreeMap::new(),
             price_out: None,
-            specialists: BTreeMap::new(),
+            hats: BTreeMap::new(),
             mcp_listen: None,
             session_id: String::new(),
             session_title: String::new(),
@@ -546,7 +608,7 @@ impl View {
             web: false,
             search: SearchRow::default(),
             // Tests and snapshots start on the classic layout; the app takes
-            // the user's `[ui] layout` (ledger by default) from config.
+            // the user's `[ui] layout` (workspace by default) from config.
             ui: UiConfig {
                 layout: "classic".into(),
                 ..UiConfig::default()
@@ -563,20 +625,28 @@ impl View {
             pending_warnings: Vec::new(),
             starting_product: None,
             turn_open: false,
-            agent_hat: ryter_core::Role::SoloBuild,
+            agent_hat: ryter_core::Role::Build,
             hats_pending: 0,
             product: None,
             rack: ryter_core::rack::Rack::default(),
             uncommitted: None,
             workspace: None,
-            last_primary: ryter_core::Role::SoloBuild,
-            last_specialist: ryter_core::Role::SoloAudit,
+            last_primary: ryter_core::Role::Build,
+            last_specialist: ryter_core::Role::Audit,
             plan_file: None,
             audit_file: None,
             audit_writing: false,
             screen: std::cell::Cell::new((0, 0)),
             pulse: Pulse::default(),
             sessions_count: 0,
+            page: Page::Conversation,
+            focus: Focus::Stage,
+            side_at: 0,
+            seat: ryter_core::Role::Build,
+            session_at: 0,
+            sessions: Vec::new(),
+            ryter_home: None,
+            plan_steps: Vec::new(),
         }
     }
 
@@ -769,7 +839,9 @@ impl View {
     pub fn refresh_uncommitted(&mut self) {
         if let Some(root) = &self.workspace {
             self.uncommitted = ryter_core::review::uncommitted(root).ok();
-            self.plan_file = file_label(&root.join(".ryter/plan.md"));
+            let plan = root.join(".ryter/plan.md");
+            self.plan_file = file_label(&plan);
+            self.plan_steps = plan_steps(&plan);
             self.audit_file = file_label(&root.join(".ryter/audit.md"));
         }
     }
@@ -778,6 +850,7 @@ impl View {
     /// `Shift+Tab` comes back to it.
     pub fn set_mode(&mut self, role: ryter_core::Role) {
         self.mode = role;
+        self.seat = role.hat();
         match role.row() {
             ryter_core::role::Row::Primary => self.last_primary = role.hat(),
             ryter_core::role::Row::Specialist => self.last_specialist = role,
@@ -930,6 +1003,35 @@ pub fn role_label(role: &str) -> &str {
 
 /// The hats that can have a model of their own, in the order the work goes.
 pub const HAT_ROLES: &[&str] = &["plan", "build", "audit", "scribe"];
+
+/// Checkbox lines of a plan file, in file order. Anything that is not a
+/// task line is left out.
+pub fn plan_steps(path: &std::path::Path) -> Vec<(bool, String)> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let t = line.trim();
+        let (done, rest) = if let Some(rest) = t
+            .strip_prefix("- [x]")
+            .or_else(|| t.strip_prefix("- [X]"))
+            .or_else(|| t.strip_prefix("* [x]"))
+            .or_else(|| t.strip_prefix("* [X]"))
+        {
+            (true, rest)
+        } else if let Some(rest) = t.strip_prefix("- [ ]").or_else(|| t.strip_prefix("* [ ]")) {
+            (false, rest)
+        } else {
+            continue;
+        };
+        let text = rest.trim();
+        if !text.is_empty() {
+            out.push((done, text.to_string()));
+        }
+    }
+    out
+}
 
 /// What the guard card says of a file under `.ryter/`: the day it was
 /// written and its first heading, cut to fit; `None` when it isn't there.

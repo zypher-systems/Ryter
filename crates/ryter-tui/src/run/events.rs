@@ -97,7 +97,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
     // The guard card's `audit.md` row reads `writing…` through an audit turn.
     match ev {
         AgentEvent::TurnStarted { role, .. } => {
-            view.audit_writing = *role == ryter_core::Role::SoloAudit;
+            view.audit_writing = *role == ryter_core::Role::Audit;
         }
         AgentEvent::TurnFinished { .. } | AgentEvent::Audited { .. } => {
             view.audit_writing = false;
@@ -144,6 +144,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 view.activity.note_delta(now);
             }
         }
+        AgentEvent::ToolLive { id, tail } => on_tool_live(view, id, tail),
         AgentEvent::TurnStarted { .. } => {
             view.tally = Default::default();
             view.lookups = None;
@@ -419,6 +420,31 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
     panel::on_event(view, ev);
 }
 
+/// Newest lines from a running command: under the tool row, and the quiet
+/// clock resets so a long `cargo test` is not "waiting for the model".
+fn on_tool_live(view: &mut View, id: &str, tail: &[String]) {
+    let body = tail.join("\n");
+    if let Some(m) = view.messages.iter_mut().rev().find(|m| {
+        m.meta.tool_id.as_deref() == Some(id)
+            && matches!(
+                m.kind,
+                MessageKind::Tool {
+                    status: ToolStatus::Running,
+                    ..
+                }
+            )
+    }) {
+        m.set_body(body);
+    }
+    if view.activity.busy() {
+        let now = view.now_ms;
+        view.activity.note_delta(now);
+        if let Some(line) = tail.last().filter(|l| !l.is_empty()) {
+            view.activity.note_text(line);
+        }
+    }
+}
+
 fn on_tool_call(
     view: &mut View,
     id: &str,
@@ -437,7 +463,7 @@ fn on_tool_call(
     if name == "run_project" && args.get("action").and_then(|a| a.as_str()) == Some("start") {
         view.starting_product = Some(id.to_string());
     }
-    let speaker = role.is_solo();
+    let speaker = role.is_hat();
     // Reads and searches fold into one row while they keep coming; the
     // chat is for the work.
     if speaker && toolview::is_lookup(name) {
@@ -501,7 +527,7 @@ fn on_tool_call(
         }
         view.lookups = None;
     }
-    if view.activity.busy() && role.is_solo() {
+    if view.activity.busy() && role.is_hat() {
         // `running cargo test`, `running write app.py`: the tool row's
         // own words, so the status row and the sidebar name the step.
         let step = match (name, target.trim()) {
@@ -574,12 +600,21 @@ fn on_tool_result(
             m.meta.diff = Some(Box::new(d.clone()));
             m.set_body(String::new());
         } else if !body.is_empty() {
-            let joined = if m.body.is_empty() {
-                body
+            // Live bash lines were only for the screen while it ran; the
+            // finished output replaces them. An edit keeps its preview.
+            if tool == "bash" || tool == "run_project" {
+                m.set_body(body);
             } else {
-                format!("{}\n{body}", m.body)
-            };
-            m.set_body(joined);
+                let joined = if m.body.is_empty() {
+                    body
+                } else {
+                    format!("{}\n{body}", m.body)
+                };
+                m.set_body(joined);
+            }
+        } else if tool == "bash" || tool == "run_project" {
+            // A quiet success: drop the live tail so the row is the header.
+            m.set_body(String::new());
         } else {
             m.touch();
         }
@@ -682,7 +717,7 @@ fn on_spend(
             view.unpriced_calls += 1;
         }
     }
-    if role.is_solo() {
+    if role.is_hat() {
         // Tokens this turn become exact once accounting lands (`R-ACT-07`).
         view.activity.tokens = output_tokens;
         view.activity.tokens_estimated = incomplete;
@@ -702,8 +737,10 @@ fn on_spend(
                 m.touch();
             }
         }
-        let used = input_tokens.saturating_add(output_tokens);
-        view.ctx_tokens = Some(used.max(view.ctx_tokens.unwrap_or(0).min(used)));
+        // Context fill is the prompt the provider counted, not input+output
+        // and not the bytes/4 estimate.
+        let used = input_tokens;
+        view.ctx_tokens = Some(used);
         let window = view.ctx_window_or_default();
         view.ctx_window = Some(window);
         view.ctx_pct = Some(((used.min(window) * 100) / window.max(1)) as u8);
@@ -739,7 +776,7 @@ mod tests {
                     id: id.into(),
                     name: "record_decision".into(),
                     args: serde_json::json!({"title": "No export button in this pass"}),
-                    role: Role::SoloBuild,
+                    role: Role::Build,
                     summary: None,
                 },
             );
@@ -822,7 +859,7 @@ mod tests {
                 id: "t1".into(),
                 name: "bash".into(),
                 args: serde_json::json!({"command": "cargo test --all"}),
-                role: Role::SoloBuild,
+                role: Role::Build,
                 summary: None,
             },
         );
@@ -851,6 +888,115 @@ mod tests {
         ));
         assert_eq!(tool.meta.duration_ms, Some(1200));
         assert!(v.messages.last().unwrap().body.contains("E0308"));
+    }
+
+    /// A running bash shows its newest lines under the tool row, and those
+    /// lines are replaced by the finished output (not kept beside it).
+    #[test]
+    fn a_running_bash_shows_its_newest_lines() {
+        let mut v = view();
+        apply(
+            &mut v,
+            AgentEvent::TurnStarted {
+                turn: 1,
+                role: Role::Build,
+                at: 0,
+            },
+        );
+        apply(
+            &mut v,
+            AgentEvent::ToolCall {
+                turn: 1,
+                at: 0,
+                id: "b1".into(),
+                name: "bash".into(),
+                args: serde_json::json!({"command": "cargo test"}),
+                role: Role::Build,
+                summary: Some("cargo test".into()),
+            },
+        );
+        v.now_ms = 1_000;
+        apply(
+            &mut v,
+            AgentEvent::ToolLive {
+                id: "b1".into(),
+                tail: vec![
+                    "test a ... ok".into(),
+                    "test b ... ok".into(),
+                    "test c ... ok".into(),
+                ],
+            },
+        );
+        let tool = v
+            .messages
+            .iter()
+            .find(|m| m.meta.tool_id.as_deref() == Some("b1"))
+            .expect("running bash row");
+        assert!(
+            matches!(
+                &tool.kind,
+                MessageKind::Tool {
+                    status: ToolStatus::Running,
+                    ..
+                }
+            ),
+            "{:?}",
+            tool.kind
+        );
+        assert_eq!(tool.body, "test a ... ok\ntest b ... ok\ntest c ... ok");
+        assert_eq!(v.activity.last_delta_ms, Some(1_000));
+        // Still running: quiet clock must not flip to waiting for the model.
+        assert!(
+            matches!(v.activity.verb, Verb::Tool(_)),
+            "{:?}",
+            v.activity.verb
+        );
+        apply(
+            &mut v,
+            AgentEvent::ToolLive {
+                id: "b1".into(),
+                tail: vec!["test c ... ok".into(), "test d ... ok".into()],
+            },
+        );
+        let tool = v
+            .messages
+            .iter()
+            .find(|m| m.meta.tool_id.as_deref() == Some("b1"))
+            .unwrap();
+        assert_eq!(tool.body, "test c ... ok\ntest d ... ok");
+        apply(
+            &mut v,
+            AgentEvent::ToolResult {
+                id: "b1".into(),
+                output: "test result: ok. 4 passed\n".into(),
+                is_error: false,
+                duration_ms: Some(4_000),
+                diff: None,
+            },
+        );
+        let tool = v
+            .messages
+            .iter()
+            .find(|m| m.meta.tool_id.as_deref() == Some("b1"))
+            .unwrap();
+        assert!(
+            !tool.body.contains("test a ... ok"),
+            "live tail must not stay: {}",
+            tool.body
+        );
+        assert!(
+            tool.body.is_empty(),
+            "live tail cleared for a test summary: {}",
+            tool.body
+        );
+        assert!(
+            tool.meta
+                .detail
+                .as_deref()
+                .is_some_and(|d| d.starts_with('✓') && d.contains("4 passed")),
+            "finished detail: {:?}",
+            tool.meta.detail
+        );
     }
 
     #[test]
@@ -925,7 +1071,7 @@ mod tests {
             AgentEvent::Spend {
                 connection: "spacexai".into(),
                 model: "grok-4.6".into(),
-                role: Role::SoloBuild,
+                role: Role::Build,
                 input_tokens: 100,
                 output_tokens: 20,
                 cached_tokens: 0,
@@ -934,6 +1080,8 @@ mod tests {
             },
         );
         assert!(v.busy, "spend alone does not end the turn");
+        assert_eq!(v.ctx_tokens, Some(100), "gauge uses provider input_tokens");
+        assert_ne!(v.ctx_tokens, Some(120), "not input+output");
         apply(
             &mut v,
             AgentEvent::TurnFinished {
@@ -957,7 +1105,7 @@ mod tests {
             AgentEvent::Spend {
                 connection: "x".into(),
                 model: "m".into(),
-                role: Role::SoloBuild,
+                role: Role::Build,
                 input_tokens: 1,
                 output_tokens: 1,
                 cached_tokens: 0,
@@ -978,7 +1126,7 @@ mod tests {
             AgentEvent::Spend {
                 connection: "fixture".into(),
                 model: "fixture".into(),
-                role: Role::SoloBuild,
+                role: Role::Build,
                 input_tokens: 1_000,
                 output_tokens: 0,
                 cached_tokens: 0,

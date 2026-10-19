@@ -1,0 +1,24 @@
+ ryter  ·  build        grok-4.6 · 5% · $?.??   ~/workspace/ryter (0.2.0-patch)
+────────────────────────────────────────────────────────────────────────────────
+ · system
+    ╭─ permissions ───────────────────────────────── edit default (allow) ─╮
+    │ durable allows without yolo · ~/.ryter/permissions.toml · can't open │
+    │                                                                      │
+    │› edit of project files          default (allow)                      │
+    │                                                                      │
+    │  No bash rules yet. a adds one (e.g. rm -rf target, or git push* =   │
+    │  allow). The most specific pattern wins.                             │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │ ↑↓ move   ←→/space answer   a add   d remove   esc close             │
+    ╰──────────────────────────────────────────────────────────────────────╯
+
+
+╭─ BUILD  dusty ───────────────────────────────────────────────────────────────╮
+│› what should change?                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move    ←→/space answer    a add    d remove    esc close

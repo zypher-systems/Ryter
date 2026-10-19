@@ -8,6 +8,7 @@ mod chat;
 mod clipboard;
 mod composer;
 mod draw;
+mod glyphs;
 mod info;
 mod keymap;
 mod palette;
@@ -18,6 +19,7 @@ mod sidebar;
 mod theme;
 mod view;
 mod workbench;
+mod workspace;
 
 pub use draw::{render_to_string, render_with_theme};
 pub use run::{TuiOpts, run};

@@ -57,8 +57,8 @@ pub enum AgentEvent {
         what: String,
         /// Only `y` would do: a deletion, a write outside the project.
         strict: bool,
-        /// `allow`, `always`, `deny`, or `none` when nobody answered: the
-        /// turn was cancelled, the card timed out, or the screen went away.
+        /// `allow`, `always`, `deny`, `timeout` when the wait ended with no
+        /// answer, or `none` when the turn was cancelled or the screen went away.
         answer: String,
         /// How long the person took.
         waited_ms: u64,
@@ -79,6 +79,14 @@ pub enum AgentEvent {
         /// What an edit did to the file, with line numbers.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         diff: Option<Box<crate::diff::FileDiff>>,
+    },
+    /// Newest lines from a running `bash` (or `run_project` shell step).
+    /// Ephemeral screen update: not written to `events.jsonl`.
+    ToolLive {
+        /// Provider tool-call id.
+        id: String,
+        /// Up to three newest output lines.
+        tail: Vec<String>,
     },
     /// A user turn began.
     TurnStarted {
@@ -262,7 +270,8 @@ pub enum AgentEvent {
     },
     /// `/context` snapshot.
     Context {
-        /// Heuristic tokens.
+        /// Tokens for the gauge: provider `input_tokens` when known, else the
+        /// bytes/4 estimate.
         tokens: u64,
         /// Window used for the percentage.
         window: u64,
@@ -369,7 +378,7 @@ mod tests {
             id: "c1".into(),
             name: "bash".into(),
             args: serde_json::json!({"command": "ls"}),
-            role: Role::SoloBuild,
+            role: Role::Build,
             summary: None,
             turn: 4,
             at: 5,
@@ -379,7 +388,7 @@ mod tests {
         assert_eq!(v["at"], 5);
         let v = serde_json::to_value(AgentEvent::TurnStarted {
             turn: 4,
-            role: Role::SoloBuild,
+            role: Role::Build,
             at: 6,
         })
         .unwrap();
@@ -389,12 +398,24 @@ mod tests {
 
     #[test]
     fn json_tag_is_snake_case() {
-        let ev = AgentEvent::ModeChanged {
-            role: Role::SoloAudit,
-        };
+        let ev = AgentEvent::ModeChanged { role: Role::Audit };
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["kind"], "mode_changed");
         assert_eq!(v["role"], "audit");
+    }
+
+    #[test]
+    fn tool_live_carries_the_call_and_its_newest_lines() {
+        let ev = AgentEvent::ToolLive {
+            id: "c1".into(),
+            tail: vec!["test foo ... ok".into(), "test bar ... ok".into()],
+        };
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["kind"], "tool_live");
+        assert_eq!(v["id"], "c1");
+        assert_eq!(v["tail"].as_array().unwrap().len(), 2);
+        let back: AgentEvent = serde_json::from_value(v).unwrap();
+        assert_eq!(back, ev);
     }
 
     #[test]
