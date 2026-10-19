@@ -2055,7 +2055,7 @@ mod tests {
     use ryter_core::Role;
 
     fn ws() -> View {
-        let mut v = View::new("spacexai".into(), "grok-4.6".into(), "~/shop".into());
+        let mut v = View::new("spacexsi".into(), "grok-4.6".into(), "~/shop".into());
         v.username = "Dusty".into();
         v.git_branch = Some("search-patch".into());
         v.session_title = "Empty-query fix".into();

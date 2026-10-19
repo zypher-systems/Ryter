@@ -12,7 +12,7 @@
  ── Specialists                                                                                                              Spend · no cap
  ● Audit                         $0                                                                                          $0
    grok-4.6                                  ╭─ connections ────────────────────────────────────────────────── 2 ─╮          Build                           $0
-   checkpoint                                │›● spacexai  spacexai · grok-4.6                            key set │▌
+   checkpoint                                │›● spacexsi  spacexsi · grok-4.6                            key set │▌
  ● Scribe                        $0          │ ○ openrouter  openrouter · claude-sonnet-4.6                no key │▌         ──────────────────────────────────
    follows all hats                          │                                                                    │▌         ──────────────────────────────────
    docs only                                 │ ◇ web search  not set up · enter to choose                         │▌

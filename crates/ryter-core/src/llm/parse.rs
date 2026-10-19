@@ -11,7 +11,7 @@ use crate::spend::Usage;
 pub enum Backend {
     /// OpenAI `/v1/chat/completions` (OpenRouter, generic compat).
     ChatCompletions,
-    /// OpenAI `/v1/responses` (SpaceXAI default).
+    /// OpenAI `/v1/responses` (SpaceXSI default).
     Responses,
     /// Anthropic `/v1/messages`.
     Messages,

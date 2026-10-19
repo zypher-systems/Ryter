@@ -234,8 +234,10 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
             false,
         ),
     };
-    if resumed && cfg.connections.contains_key(&session.meta.connection) {
-        conn_name = session.meta.connection.clone();
+    // A session saved before a connection was renamed resumes on its new name.
+    let saved_conn = ryter_core::canonical_connection(&session.meta.connection).to_string();
+    if resumed && cfg.connections.contains_key(&saved_conn) {
+        conn_name = saved_conn;
         model = session.meta.model.clone();
         if let Some(c) = cfg.connections.get(&conn_name) {
             conn = c.clone();

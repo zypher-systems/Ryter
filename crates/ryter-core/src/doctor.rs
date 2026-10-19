@@ -152,7 +152,7 @@ pub fn run(opts: DoctorOpts<'_>) -> Report {
 }
 
 fn connection_checks(checks: &mut Vec<Check>, cfg: &Config) {
-    for name in ["spacexai", "openrouter"] {
+    for name in ["spacexsi", "openrouter", "anthropic", "openai"] {
         let Some(conn) = cfg.connections.get(name) else {
             checks.push(Check {
                 name: format!("connection {name}"),
@@ -167,11 +167,10 @@ fn connection_checks(checks: &mut Vec<Check>, cfg: &Config) {
             Ok(_) => "key=set".to_string(),
             Err(_) => format!(
                 "key missing ({})",
-                conn.env_key.as_deref().unwrap_or(if name == "spacexai" {
-                    "XAI_API_KEY"
-                } else {
-                    "OPENROUTER_API_KEY"
-                })
+                conn.env_key
+                    .as_deref()
+                    .or_else(|| config::well_known_env(&conn.kind))
+                    .unwrap_or("-")
             ),
         };
         let status = if key_bit.starts_with("key=set") {
@@ -306,9 +305,16 @@ mod tests {
             sandbox: SandboxProfile::Off,
         });
         let text = r.render();
-        assert!(text.contains("spacexai"), "{text}");
+        assert!(text.contains("spacexsi"), "{text}");
         assert!(text.contains("openrouter"), "{text}");
         assert!(text.contains("grok-4.6"), "{text}");
+        for (name, var) in [
+            ("anthropic", "ANTHROPIC_API_KEY"),
+            ("openai", "OPENAI_API_KEY"),
+        ] {
+            assert!(text.contains(&format!("connection {name}")), "{text}");
+            assert!(text.contains(var), "{text}");
+        }
         assert!(text.contains("$?"), "{text}");
         assert!(text.contains("landlock"), "{text}");
         assert!(text.contains("sandbox"), "{text}");

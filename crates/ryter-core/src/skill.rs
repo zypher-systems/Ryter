@@ -580,9 +580,9 @@ mod tests {
         fs::write(dir.join(".hidden"), "x").unwrap();
         fs::write(dir.join("big.txt"), "x".repeat(300 * 1024)).unwrap();
         fs::create_dir_all(home.path().join("keys")).unwrap();
-        fs::write(home.path().join("keys/spacexai"), "xai-secret").unwrap();
+        fs::write(home.path().join("keys/spacexsi"), "xai-secret").unwrap();
         #[cfg(unix)]
-        std::os::unix::fs::symlink(home.path().join("keys/spacexai"), dir.join("key")).unwrap();
+        std::os::unix::fs::symlink(home.path().join("keys/spacexsi"), dir.join("key")).unwrap();
         fs::write(home.path().join("skills/flat.md"), "flat\n").unwrap();
 
         let cat = load_catalog(home.path(), None, false);
@@ -604,7 +604,7 @@ mod tests {
             "./notes.md",
             "key",
             "../flat.md",
-            "../../keys/spacexai",
+            "../../keys/spacexsi",
             "/etc/hostname",
             "",
             "missing.md",

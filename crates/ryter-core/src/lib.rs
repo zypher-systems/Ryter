@@ -49,11 +49,11 @@ pub use compact::{ContextReport, format_context_used, format_tokens, window_for}
 pub use config::{
     Config, ConnectionConfig, FeaturesConfig, HookConfig, LastRoute, McpServerConfig, McpSettings,
     PriceOverride, RoleModel, SandboxConfig, SecretStore, SpendConfig, UI_KEYS, UiConfig,
-    connection_template, has_secret, list_mcp_tokens, load, load_at, load_last_route,
-    load_user_connections, new_inbound_token, resolve_route, resolve_secret, resolve_secret_with,
-    save_hooks, save_last_route, save_mcp, save_mcp_tokens, save_permissions, save_settings,
-    save_user_connections, store_secret_at, user_connection_names, write_default_config,
-    write_default_connection,
+    canonical_connection, connection_template, has_secret, list_mcp_tokens, load, load_at,
+    load_last_route, load_user_connections, new_inbound_token, resolve_route, resolve_secret,
+    resolve_secret_with, save_hooks, save_last_route, save_mcp, save_mcp_tokens, save_permissions,
+    save_settings, save_user_connections, store_secret_at, user_connection_names, well_known_env,
+    write_default_config, write_default_connection,
 };
 pub use doctor::Report as DoctorReport;
 pub use error::{Error, Result};

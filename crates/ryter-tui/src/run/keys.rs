@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn secret_mode_enter_yields_set_key() {
         let mut view = v();
-        view.composer.begin_secret("spacexai".into());
+        view.composer.begin_secret("spacexsi".into());
         for c in "sk-1".chars() {
             handle(&mut view, press(KeyCode::Char(c), KeyModifiers::NONE));
         }
@@ -485,7 +485,7 @@ mod tests {
         assert_eq!(
             a,
             Action::SetKey {
-                name: "spacexai".into(),
+                name: "spacexsi".into(),
                 key: "sk-1".into()
             }
         );

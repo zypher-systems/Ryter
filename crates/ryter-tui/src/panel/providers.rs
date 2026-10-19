@@ -10,7 +10,13 @@ use crate::chat::wrap;
 use crate::theme::Theme;
 use crate::view::View;
 
-const KINDS: [&str; 4] = ["spacexai", "openrouter", "openai_compat", "anthropic"];
+const KINDS: [&str; 5] = [
+    "spacexsi",
+    "openrouter",
+    "anthropic",
+    "openai",
+    "openai_compat",
+];
 
 /// Add-connection wizard steps (`R-POP-22`).
 #[derive(Debug, Clone, PartialEq)]
@@ -656,10 +662,11 @@ impl Panel for Providers {
 
 fn kind_note(kind: &str) -> &'static str {
     match kind {
-        "spacexai" => "xAI Grok · messages API",
+        "spacexsi" => "SpaceXSI Grok · Responses API",
         "openrouter" => "OpenRouter · chat completions",
-        "openai_compat" => "any OpenAI-compatible server",
-        "anthropic" => "Anthropic · messages API",
+        "anthropic" => "Anthropic Claude · Messages API",
+        "openai" => "OpenAI · Responses API",
+        "openai_compat" => "any server speaking chat completions",
         _ => "",
     }
 }

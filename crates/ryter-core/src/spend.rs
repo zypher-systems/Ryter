@@ -108,7 +108,7 @@ impl Rates {
     }
 }
 
-/// Looks up rates: TOML override → catalog (OpenRouter) → shipped SpaceXAI table.
+/// Looks up rates: TOML override → catalog (OpenRouter) → the shipped tables.
 #[derive(Debug, Clone, Default)]
 pub struct PriceBook {
     overrides: HashMap<String, Option<Rates>>,
@@ -116,7 +116,7 @@ pub struct PriceBook {
 }
 
 impl PriceBook {
-    /// Empty book; still has the shipped SpaceXAI table on lookup.
+    /// Empty book; still has the shipped tables on lookup.
     pub fn new() -> Self {
         Self::default()
     }
@@ -169,7 +169,7 @@ impl PriceBook {
         if let Some(r) = self.catalog.get(model) {
             return Some(*r);
         }
-        spacexai_rates(model)
+        shipped_rates(model)
     }
 
     /// USD cost, or `None` when the model has no rates (`$?.??`).
@@ -278,27 +278,94 @@ pub fn format_usd(total: Option<f64>) -> String {
     }
 }
 
-fn spacexai_rates(model: &str) -> Option<Rates> {
-    // Shipped from https://docs.x.ai/developers/models — refresh at release.
-    let (input, cached, output, long_in, long_cached, long_out) = match model {
-        "grok-4.6" | "grok-4.6-latest" => (2.00, 0.50, 6.00, 4.00, 1.00, 12.00),
-        "grok-4.5" | "grok-4.5-latest" | "grok-build-latest" => {
-            (2.00, 0.30, 6.00, 4.00, 0.60, 12.00)
+/// Rates shipped for the built-in connections' models, from the providers'
+/// price pages on 2026-10-19. Refresh at release.
+fn shipped_rates(model: &str) -> Option<Rates> {
+    grok_rates(model)
+        .or_else(|| claude_rates(model))
+        .or_else(|| gpt_rates(model))
+}
+
+/// A row with a higher rate from `threshold` input tokens.
+fn tiered(
+    (input, cached, output): (f64, f64, f64),
+    threshold: u64,
+    (long_in, long_cached, long_out): (f64, f64, f64),
+) -> Rates {
+    Rates {
+        input_per_million: input,
+        cached_per_million: cached,
+        output_per_million: output,
+        cache_write_per_million: None,
+        long_threshold: Some(threshold),
+        long_input_per_million: Some(long_in),
+        long_cached_per_million: Some(long_cached),
+        long_output_per_million: Some(long_out),
+    }
+}
+
+fn grok_rates(model: &str) -> Option<Rates> {
+    // https://docs.x.ai/developers/models — a prompt of 200k tokens or more
+    // is billed at the higher rate throughout.
+    let (short, long) = match model {
+        "grok-4.7" | "grok-4.7-latest" | "grok-4.6" | "grok-4.6-latest" => {
+            ((2.00, 0.50, 6.00), (4.00, 1.00, 12.00))
         }
-        "grok-4.3" | "grok-4.3-latest" => (1.25, 0.20, 2.50, 2.50, 0.40, 5.00),
-        "grok-build-0.1" => (1.00, 0.20, 2.00, 2.00, 0.40, 4.00),
+        "grok-4.5" | "grok-4.5-latest" | "grok-build-latest" => {
+            ((2.00, 0.30, 6.00), (4.00, 0.60, 12.00))
+        }
+        "grok-4.3" | "grok-4.3-latest" => ((1.25, 0.20, 2.50), (2.50, 0.40, 5.00)),
+        "grok-build-0.1" => ((1.00, 0.20, 2.00), (2.00, 0.40, 4.00)),
+        _ => return None,
+    };
+    Some(tiered(short, 200_000, long))
+}
+
+fn claude_rates(model: &str) -> Option<Rates> {
+    // https://docs.claude.com/en/docs/about-claude/pricing. A cache read is
+    // a tenth of input and a write five quarters where the page gives no
+    // rate of its own; where it gives none for the write, the write is
+    // billed as input (`None`).
+    let (input, cached, output, write) = match model {
+        "claude-fable-5-1" | "claude-fable-5" | "claude-mythos-5-1" => (10.0, 0.25, 50.0, None),
+        "claude-opus-5-5" => (4.0, 0.20, 20.0, None),
+        "claude-opus-5" => (5.0, 0.50, 25.0, None),
+        "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" => (5.0, 0.50, 25.0, Some(6.25)),
+        "claude-sonnet-5-5" | "claude-sonnet-5" => (2.0, 0.20, 10.0, None),
+        "claude-sonnet-4-6" => (3.0, 0.30, 15.0, Some(3.75)),
+        "claude-haiku-4-5" => (1.0, 0.10, 5.0, Some(1.25)),
+        // Five times the rate past 100k tokens of prompt.
+        "claude-haiku-5-5" => {
+            return Some(tiered((0.10, 0.01, 0.50), 100_000, (0.50, 0.05, 2.50)));
+        }
         _ => return None,
     };
     Some(Rates {
         input_per_million: input,
         cached_per_million: cached,
         output_per_million: output,
-        cache_write_per_million: None,
-        long_threshold: Some(200_000),
-        long_input_per_million: Some(long_in),
-        long_cached_per_million: Some(long_cached),
-        long_output_per_million: Some(long_out),
+        cache_write_per_million: write,
+        long_threshold: None,
+        long_input_per_million: None,
+        long_cached_per_million: None,
+        long_output_per_million: None,
     })
+}
+
+fn gpt_rates(model: &str) -> Option<Rates> {
+    // https://developers.openai.com/api/docs/pricing — standard tier; a
+    // prompt over 272k tokens is billed at the long-context rate.
+    let (short, long) = match model {
+        "gpt-6-astra" => ((10.0, 1.0, 50.0), (20.0, 2.0, 75.0)),
+        "gpt-6.1-sol" => ((2.0, 0.10, 10.0), (4.0, 0.20, 15.0)),
+        "gpt-6-sol" => ((2.0, 0.20, 10.0), (4.0, 0.40, 15.0)),
+        "gpt-6-luna" => ((0.10, 0.01, 0.50), (0.20, 0.02, 0.75)),
+        "gpt-5.6-sol" => ((4.0, 0.40, 20.0), (8.0, 0.80, 30.0)),
+        "gpt-5.6-terra" => ((2.0, 0.20, 12.0), (4.0, 0.40, 18.0)),
+        "gpt-5.6-luna" => ((0.20, 0.02, 1.20), (0.40, 0.04, 1.80)),
+        _ => return None,
+    };
+    Some(tiered(short, 272_000 + 1, long))
 }
 
 #[derive(Deserialize)]
@@ -359,6 +426,51 @@ mod tests {
             .unwrap();
         let expected = 50_000.0 * 2.0 / 1e6 + 10_000.0 * 6.0 / 1e6;
         assert!((cost - expected).abs() < 1e-9, "{cost}");
+    }
+
+    /// The shipped tables price the built-ins' models: Grok, Claude and
+    /// GPT, each with its provider's long-context tier where it has one.
+    #[test]
+    fn the_shipped_tables_price_claude_and_gpt_too() {
+        let book = PriceBook::new();
+        // A tenth of a million each way, under every long-context line.
+        let small = Usage {
+            input_tokens: 100_000,
+            output_tokens: 100_000,
+            ..Usage::default()
+        };
+        let cost = |model: &str, usage: Usage| book.cost(model, usage).unwrap();
+        assert!((cost("grok-4.7", small) - 0.8).abs() < 1e-9);
+        assert!((cost("claude-opus-5-5", small) - 2.4).abs() < 1e-9);
+        assert!((cost("claude-sonnet-5-5", small) - 1.2).abs() < 1e-9);
+        assert!((cost("gpt-6.1-sol", small) - 1.2).abs() < 1e-9);
+        // Over 272k tokens of prompt OpenAI doubles the input rate.
+        let long = Usage {
+            input_tokens: 300_000,
+            output_tokens: 0,
+            ..Usage::default()
+        };
+        assert!(
+            (cost("gpt-6.1-sol", long) - 1.2).abs() < 1e-9,
+            "{}",
+            cost("gpt-6.1-sol", long)
+        );
+        let under = Usage {
+            input_tokens: 272_000,
+            ..long
+        };
+        assert!((cost("gpt-6.1-sol", under) - 0.544).abs() < 1e-9);
+        // A cache read on Opus 5.5 is $0.20 per million.
+        let cached = Usage {
+            input_tokens: 100_000,
+            cached_tokens: 100_000,
+            output_tokens: 0,
+            ..Usage::default()
+        };
+        assert!((cost("claude-opus-5-5", cached) - 0.02).abs() < 1e-9);
+        // A model the tables don't know is still unpriced, never free.
+        assert_eq!(book.cost("claude-opus-9", small), None);
+        assert_eq!(book.cost("gpt-7", small), None);
     }
 
     #[test]

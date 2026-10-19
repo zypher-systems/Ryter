@@ -72,7 +72,7 @@ fn env() -> PanelEnv {
 /// Deterministic idle session: no clock, fixed username, one connection.
 fn idle() -> View {
     let mut v = View::new(
-        "spacexai".into(),
+        "spacexsi".into(),
         "grok-4.6".into(),
         "~/workspace/ryter".into(),
     );
@@ -86,8 +86,8 @@ fn idle() -> View {
     v.ctx_pct = Some(5);
     v.price_label = "$2/M in · $6/M out".into();
     v.connections.push(crate::view::ConnRow {
-        name: "spacexai".into(),
-        kind: "spacexai".into(),
+        name: "spacexsi".into(),
+        kind: "spacexsi".into(),
         model: "grok-4.6".into(),
         has_key: true,
     });
@@ -646,7 +646,7 @@ fn help_lists_every_binding() {
 #[test]
 fn secret_never_reaches_the_frame() {
     let mut v = idle();
-    v.composer.begin_secret("spacexai".into());
+    v.composer.begin_secret("spacexsi".into());
     let secret = "sk-ZZtopSECRET-9f8e7d";
     for c in secret.chars() {
         v.composer.insert_char(c);

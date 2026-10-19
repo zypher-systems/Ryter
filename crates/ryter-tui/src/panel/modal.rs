@@ -1368,7 +1368,7 @@ mod tests {
     #[test]
     fn enter_approves_after_a_moment_and_never_destruction() {
         use crossterm::event::KeyModifiers;
-        let mut v = crate::view::View::new("spacexai".into(), "grok-4.6".into(), "/tmp".into());
+        let mut v = crate::view::View::new("spacexsi".into(), "grok-4.6".into(), "/tmp".into());
         let enter = |m: &mut PermissionModal, v: &mut crate::view::View| {
             m.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), v)
         };

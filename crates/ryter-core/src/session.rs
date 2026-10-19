@@ -1284,7 +1284,7 @@ mod tests {
         let mut s = Session::create(
             home.path(),
             cwd.path(),
-            "spacexai".into(),
+            "spacexsi".into(),
             "grok-4.6".into(),
         )
         .unwrap();
@@ -1297,7 +1297,7 @@ mod tests {
         })
         .unwrap();
         s.record_spend(spend_record(
-            "spacexai".into(),
+            "spacexsi".into(),
             "grok-4.6".into(),
             Role::Build,
             Usage {

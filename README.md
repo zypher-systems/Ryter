@@ -2,11 +2,11 @@
 
 Ryter is Zypher Systems’ terminal AI coding harness.
 
-One model works in your project, with you, and `Tab` switches between its two working hats, **plan** and **build**; `Shift+Tab` reaches the specialists, **audit** and **scribe**. Each hat can run on a model of its own: a strong one to plan, a cheaper one to build, a different one to audit, a small one to write the docs. Bring your own keys: **SpaceXAI** and **OpenRouter** are built in, and local model servers (Ollama, LM Studio, llama.cpp) work without one.
+One model works in your project, with you, and `Tab` switches between its two working hats, **plan** and **build**; `Shift+Tab` reaches the specialists, **audit** and **scribe**. Each hat can run on a model of its own: a strong one to plan, a cheaper one to build, a different one to audit, a small one to write the docs. Bring your own keys: **SpaceXSI**, **OpenRouter**, **Anthropic** and **OpenAI** are built in, and local model servers (Ollama, LM Studio, llama.cpp) work without one.
 
 ![Ryter in the build hat: the Conversation, Hats and Sessions tabs on the top bar, the hats with their models and costs in the sidebar, the conversation in the middle with the diff of app/server.js and a new test, and the instruments at the right.](docs/screenshots/build.png)
 
-Linux first. The current release is 0.30.0. Apache-2.0.
+Linux first. The current release is 0.31.0. Apache-2.0.
 
 ## Install
 
@@ -14,7 +14,7 @@ Linux first. The current release is 0.30.0. Apache-2.0.
 curl -fsSL https://raw.githubusercontent.com/zypher-systems/ryter/main/install.sh | sh
 ```
 
-This installs a prebuilt binary to `~/.local/bin` for Linux (x86_64 and arm64, static, any distro) or macOS (Apple Silicon and Intel). The download is checked against the release's `SHA256SUMS` first. `RYTER_VERSION=v0.30.0` pins the current release and `RYTER_INSTALL_DIR` picks the folder. Linux gets the full feature set; on macOS everything works except the Landlock sandbox, which is Linux-only.
+This installs a prebuilt binary to `~/.local/bin` for Linux (x86_64 and arm64, static, any distro) or macOS (Apple Silicon and Intel). The download is checked against the release's `SHA256SUMS` first. `RYTER_VERSION=v0.31.0` pins the current release and `RYTER_INSTALL_DIR` picks the folder. Linux gets the full feature set; on macOS everything works except the Landlock sandbox, which is Linux-only.
 
 The installer verifies signed checksums against the same pinned release key as the updater. It requires OpenSSL 3+ with Ed25519 support; set `RYTER_INSTALL_OPENSSL` to its executable if it is not the default `openssl`. Unsigned older releases and invalid signatures are refused before extraction.
 
@@ -25,7 +25,7 @@ From source (Rust 1.88+): `cargo install --git https://github.com/zypher-systems
 ## Quick start
 
 ```sh
-export OPENROUTER_API_KEY=...   # or XAI_API_KEY, or a local model: see below
+export OPENROUTER_API_KEY=...   # or XAI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, or a local model: see below
 cd your-project
 ryter doctor                    # checks keys, terminal, sandbox; no network
 ryter                           # the TUI, in the plan hat ([ui] start_hat picks another)
@@ -69,7 +69,7 @@ ryter -p TEXT [--json]        one headless turn
 ryter -c -p TEXT              continue the latest session headless
 ryter --hat build|plan|audit|scribe -p TEXT    (default build)
 ryter --hat build             the TUI in that hat, for this run
-ryter --connection spacexai|openrouter
+ryter --connection spacexsi|openrouter|anthropic|openai
 ryter --sandbox off|workspace|read-only
 ryter spend [session]
 ryter spend --project         this repository, across sessions

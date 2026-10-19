@@ -138,10 +138,10 @@ fn apply_old_review_file(cfg: &mut Config, home: &Path) {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            default_connection: "spacexai".into(),
+            default_connection: "spacexsi".into(),
             connections: builtin_connections(),
             all_hats: RoleModel {
-                connection: Some("spacexai".into()),
+                connection: Some("spacexsi".into()),
                 model: Some("grok-4.6".into()),
             },
             hats: BTreeMap::new(),
@@ -317,8 +317,10 @@ impl SearchConfig {
 /// One named LLM endpoint.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConnectionConfig {
-    /// Built-in kind: `spacexai`, `openrouter`, `openai_compat`, `anthropic`,
-    /// or `local` (a model server on this machine: no key, no API cost).
+    /// Built-in kind: `spacexsi`, `openrouter`, `anthropic`, `openai`,
+    /// `openai_compat` (any server speaking chat completions), or `local` (a
+    /// model server on this machine: no key, no API cost). `spacexai` loads
+    /// as `spacexsi`.
     pub kind: String,
     /// API base URL.
     pub base_url: String,
@@ -607,33 +609,38 @@ impl Default for SpendConfig {
     }
 }
 
+/// A built-in connection: one of the four `kind`s compiled in.
+fn builtin(kind: &str, base_url: &str, backend: &str, env: &str, model: &str) -> ConnectionConfig {
+    ConnectionConfig {
+        kind: kind.into(),
+        base_url: base_url.into(),
+        api_backend: backend.into(),
+        env_key: Some(env.into()),
+        api_key: None,
+        default_model: Some(model.into()),
+        http_referer: None,
+        x_title: None,
+    }
+}
+
+/// The four connections compiled in as equals, under their own names.
 fn builtin_connections() -> BTreeMap<String, ConnectionConfig> {
     let mut m = BTreeMap::new();
     m.insert(
-        "spacexai".into(),
-        ConnectionConfig {
-            kind: "spacexai".into(),
-            base_url: "https://api.x.ai/v1".into(),
-            api_backend: "responses".into(),
-            env_key: Some("XAI_API_KEY".into()),
-            api_key: None,
-            default_model: Some("grok-4.6".into()),
-            http_referer: None,
-            x_title: None,
-        },
+        "spacexsi".into(),
+        connection_template("spacexsi").expect("built-in"),
     );
     m.insert(
         "openrouter".into(),
-        ConnectionConfig {
-            kind: "openrouter".into(),
-            base_url: "https://openrouter.ai/api/v1".into(),
-            api_backend: "chat_completions".into(),
-            env_key: Some("OPENROUTER_API_KEY".into()),
-            api_key: None,
-            default_model: Some("anthropic/claude-sonnet-4.6".into()),
-            http_referer: Some("https://github.com/zypher-systems/ryter".into()),
-            x_title: Some("Ryter".into()),
-        },
+        connection_template("openrouter").expect("built-in"),
+    );
+    m.insert(
+        "anthropic".into(),
+        connection_template("anthropic").expect("built-in"),
+    );
+    m.insert(
+        "openai".into(),
+        connection_template("openai").expect("built-in"),
     );
     m
 }
@@ -641,16 +648,15 @@ fn builtin_connections() -> BTreeMap<String, ConnectionConfig> {
 /// Starter row for `ryter connections add`.
 pub fn connection_template(kind: &str) -> Result<ConnectionConfig> {
     match kind {
-        "spacexai" => Ok(ConnectionConfig {
-            kind: "spacexai".into(),
-            base_url: "https://api.x.ai/v1".into(),
-            api_backend: "responses".into(),
-            env_key: Some("XAI_API_KEY".into()),
-            api_key: None,
-            default_model: Some("grok-4.6".into()),
-            http_referer: None,
-            x_title: None,
-        }),
+        // The company was xAI, then SpaceXAI, and is SpaceXSI since
+        // 2026-10; its API host and key variable never changed.
+        "spacexsi" | "spacexai" => Ok(builtin(
+            "spacexsi",
+            "https://api.x.ai/v1",
+            "responses",
+            "XAI_API_KEY",
+            "grok-4.6",
+        )),
         "openrouter" => Ok(ConnectionConfig {
             kind: "openrouter".into(),
             base_url: "https://openrouter.ai/api/v1".into(),
@@ -661,27 +667,33 @@ pub fn connection_template(kind: &str) -> Result<ConnectionConfig> {
             http_referer: Some("https://github.com/zypher-systems/ryter".into()),
             x_title: Some("Ryter".into()),
         }),
-        "openai" | "openai_compat" => Ok(ConnectionConfig {
+        // OpenAI's own API speaks Responses, like SpaceXSI's.
+        "openai" => Ok(builtin(
+            "openai",
+            "https://api.openai.com/v1",
+            "responses",
+            "OPENAI_API_KEY",
+            "gpt-6.1-sol",
+        )),
+        // Any other server speaking OpenAI's chat completions.
+        "openai_compat" => Ok(ConnectionConfig {
             kind: "openai_compat".into(),
             base_url: "https://api.openai.com/v1".into(),
             api_backend: "chat_completions".into(),
             env_key: Some("OPENAI_API_KEY".into()),
             api_key: None,
-            default_model: Some("gpt-4o".into()),
+            default_model: None,
             http_referer: None,
             x_title: None,
         }),
-        "anthropic" => Ok(ConnectionConfig {
-            kind: "anthropic".into(),
-            // The API lives under /v1; the provider appends `/messages`.
-            base_url: "https://api.anthropic.com/v1".into(),
-            api_backend: "messages".into(),
-            env_key: Some("ANTHROPIC_API_KEY".into()),
-            api_key: None,
-            default_model: Some("claude-sonnet-4-6".into()),
-            http_referer: None,
-            x_title: None,
-        }),
+        // The API lives under /v1; the provider appends `/messages`.
+        "anthropic" => Ok(builtin(
+            "anthropic",
+            "https://api.anthropic.com/v1",
+            "messages",
+            "ANTHROPIC_API_KEY",
+            "claude-opus-5-5",
+        )),
         // A model server on this machine, speaking the OpenAI API. No key and
         // no API cost; a builder here costs tokens against the cap, not money.
         "local" | "ollama" | "lmstudio" | "llamacpp" => Ok(ConnectionConfig {
@@ -700,7 +712,7 @@ pub fn connection_template(kind: &str) -> Result<ConnectionConfig> {
             x_title: None,
         }),
         other => Err(Error::Config(format!(
-            "unknown kind {other:?} (spacexai, openrouter, openai, anthropic, local, ollama, lmstudio, llamacpp)"
+            "unknown kind {other:?} (spacexsi, openrouter, anthropic, openai, openai_compat, local, ollama, lmstudio, llamacpp)"
         ))),
     }
 }
@@ -842,6 +854,7 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
     // (config.toml's `[permissions]` still applies until the first save).
     apply_permissions_file(&mut cfg, &permissions_path(home));
     apply_old_review_file(&mut cfg, home);
+    retire_spacexai(&mut cfg);
     validate(&cfg)?;
     // A key read from the environment stays out of the commands Ryter runs,
     // whatever its variable is called. Here, before any MCP server is
@@ -1570,6 +1583,63 @@ fn check_mode_0600(_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The environment variable a built-in kind's key is read from when none
+/// is configured or stored.
+pub fn well_known_env(kind: &str) -> Option<&'static str> {
+    match kind {
+        "spacexsi" | "spacexai" => Some("XAI_API_KEY"),
+        "openrouter" => Some("OPENROUTER_API_KEY"),
+        "anthropic" => Some("ANTHROPIC_API_KEY"),
+        "openai" => Some("OPENAI_API_KEY"),
+        _ => None,
+    }
+}
+
+/// The name a saved connection name means today: `spacexai` became
+/// `spacexsi` with the company's name (2026-10-19), and a config, a hat row,
+/// a session or a stored key that still says `spacexai` keeps working.
+pub fn canonical_connection(name: &str) -> &str {
+    if name == "spacexai" { "spacexsi" } else { name }
+}
+
+/// The name a connection went by before, where a key may still be stored.
+fn former_name(name: &str) -> Option<&'static str> {
+    (name == "spacexsi").then_some("spacexai")
+}
+
+/// A stored key: the keychain where it is durable, the file where it isn't.
+/// A key saved under the connection's former name is still its key.
+fn stored_key_in(home: &Path, name: &str) -> Option<String> {
+    let one = |name: &str| {
+        if durable_keyring() {
+            keyring_get(name).or_else(|| file_key_in(home, name))
+        } else {
+            file_key_in(home, name).or_else(|| keyring_get(name))
+        }
+    };
+    one(name).or_else(|| former_name(name).and_then(one))
+}
+
+/// `spacexai`, wherever a file still says it, is `spacexsi`: a row under
+/// the old name takes the built-in's place, the old kind reads as the new,
+/// and every seat that named it follows.
+fn retire_spacexai(cfg: &mut Config) {
+    if let Some(row) = cfg.connections.remove("spacexai") {
+        cfg.connections.insert("spacexsi".into(), row);
+    }
+    for c in cfg.connections.values_mut() {
+        if c.kind == "spacexai" {
+            c.kind = "spacexsi".into();
+        }
+    }
+    cfg.default_connection = canonical_connection(&cfg.default_connection).to_string();
+    for seat in std::iter::once(&mut cfg.all_hats).chain(cfg.hats.values_mut()) {
+        if let Some(c) = seat.connection.as_mut() {
+            *c = canonical_connection(c).to_string();
+        }
+    }
+}
+
 /// Resolve a secret for `connection` without logging it.
 pub fn resolve_secret(cfg: &Config, connection: &ConnectionId) -> Result<String> {
     resolve_secret_with(cfg, connection, |k| std::env::var(k).ok())
@@ -1598,13 +1668,7 @@ pub fn resolve_secret_with(
             }
         }
     }
-    // Where keys are stored first: the keychain where it is durable, the
-    // file where it isn't.
-    let stored = if durable_keyring() {
-        keyring_get(name).or_else(|| file_key(name))
-    } else {
-        file_key(name).or_else(|| keyring_get(name))
-    };
+    let stored = stored_key_in(&home_dir(), name);
     if let Some(k) = stored {
         return Ok(k);
     }
@@ -1613,11 +1677,7 @@ pub fn resolve_secret_with(
     if conn.is_local() {
         return Ok(String::new());
     }
-    let fallback = match conn.kind.as_str() {
-        "spacexai" => Some("XAI_API_KEY"),
-        "openrouter" => Some("OPENROUTER_API_KEY"),
-        _ => None,
-    };
+    let fallback = well_known_env(&conn.kind);
     if let Some(var) = fallback {
         if let Some(v) = env(var) {
             let t = v.trim();
@@ -1931,15 +1991,11 @@ pub fn write_default_connection(home: &Path, name: &str) -> Result<()> {
 /// file, whichever is durable here; `None` when there is none. For keys
 /// that are not a connection's, such as a search provider's.
 pub fn stored_secret(name: &str) -> Option<String> {
-    if durable_keyring() {
-        keyring_get(name).or_else(|| file_key(name))
-    } else {
-        file_key(name).or_else(|| keyring_get(name))
-    }
+    stored_key_in(&home_dir(), name)
 }
 
-fn file_key(connection: &str) -> Option<String> {
-    let p = home_dir().join("keys").join(connection);
+fn file_key_in(home: &Path, connection: &str) -> Option<String> {
+    let p = home.join("keys").join(connection);
     fs::read_to_string(p)
         .ok()
         .map(|s| s.trim().to_string())
@@ -2245,14 +2301,121 @@ mod tests {
     }
 
     #[test]
-    fn defaults_include_spacexai_and_openrouter() {
+    fn defaults_include_spacexsi_and_openrouter() {
         let cfg = Config::default();
-        assert!(cfg.connections.contains_key("spacexai"));
+        assert!(cfg.connections.contains_key("spacexsi"));
         assert!(cfg.connections.contains_key("openrouter"));
-        assert_eq!(cfg.connections["spacexai"].api_backend, "responses");
+        assert_eq!(cfg.connections["spacexsi"].api_backend, "responses");
+        assert_eq!(cfg.default_connection, "spacexsi");
         assert!(
             cfg.hats.is_empty(),
             "every hat follows one model until the user says otherwise"
+        );
+    }
+
+    /// Anthropic and OpenAI are built in beside SpaceXSI and OpenRouter,
+    /// each on its own wire with its own well-known key variable.
+    #[test]
+    fn anthropic_and_openai_are_built_in_equals() {
+        let cfg = Config::default();
+        let a = &cfg.connections["anthropic"];
+        assert_eq!(
+            (
+                a.kind.as_str(),
+                a.api_backend.as_str(),
+                a.env_key.as_deref()
+            ),
+            ("anthropic", "messages", Some("ANTHROPIC_API_KEY"))
+        );
+        assert_eq!(a.base_url, "https://api.anthropic.com/v1");
+        assert_eq!(a.default_model.as_deref(), Some("claude-opus-5-5"));
+        let o = &cfg.connections["openai"];
+        assert_eq!(
+            (
+                o.kind.as_str(),
+                o.api_backend.as_str(),
+                o.env_key.as_deref()
+            ),
+            ("openai", "responses", Some("OPENAI_API_KEY"))
+        );
+        assert_eq!(o.base_url, "https://api.openai.com/v1");
+        assert_eq!(o.default_model.as_deref(), Some("gpt-6.1-sol"));
+        assert_eq!(cfg.connections.len(), 4);
+        // Without a key of their own, each reads its well-known variable.
+        for (name, var) in [
+            ("anthropic", "ANTHROPIC_API_KEY"),
+            ("openai", "OPENAI_API_KEY"),
+        ] {
+            let got = resolve_secret_with(&cfg, &ConnectionId::new(name), |k| {
+                (k == var).then(|| "from-env".into())
+            })
+            .unwrap();
+            assert_eq!(got, "from-env", "{name}");
+        }
+        // `openai` is OpenAI's own API; any other chat-completions server
+        // is still `openai_compat`, with no model presumed.
+        let generic = connection_template("openai_compat").unwrap();
+        assert_eq!(generic.api_backend, "chat_completions");
+        assert_eq!(generic.default_model, None);
+    }
+
+    /// `spacexai` was the company's name until 2026-10. A config that still
+    /// says it, in the connection, its kind, the default, the hats' rows,
+    /// loads as `spacexsi`, and a row under the old name is the built-in's.
+    #[test]
+    fn spacexai_still_loads_as_spacexsi() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("config.toml"),
+            "default_connection = \"spacexai\"\n\n\
+             [connections.spacexai]\nkind = \"spacexai\"\n\
+             base_url = \"https://api.x.ai/v1\"\napi_backend = \"responses\"\n\
+             env_key = \"MY_XAI_KEY\"\ndefault_model = \"grok-4.6\"\n\n\
+             [model]\nconnection = \"spacexai\"\nmodel = \"grok-4.6\"\n\n\
+             [hats.audit]\nconnection = \"spacexai\"\nmodel = \"grok-4.7\"\n",
+        )
+        .unwrap();
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        assert!(
+            !cfg.connections.contains_key("spacexai"),
+            "{:?}",
+            cfg.connections.keys()
+        );
+        let c = &cfg.connections["spacexsi"];
+        assert_eq!(c.kind, "spacexsi");
+        assert_eq!(
+            c.env_key.as_deref(),
+            Some("MY_XAI_KEY"),
+            "the user's row, not the built-in"
+        );
+        assert_eq!(cfg.default_connection, "spacexsi");
+        assert_eq!(cfg.all_hats.connection.as_deref(), Some("spacexsi"));
+        assert_eq!(cfg.hats["audit"].connection.as_deref(), Some("spacexsi"));
+        assert_eq!(cfg.hats["audit"].model.as_deref(), Some("grok-4.7"));
+        // The template answers to both names, and the kind's key variable too.
+        assert_eq!(connection_template("spacexai").unwrap().kind, "spacexsi");
+        assert_eq!(well_known_env("spacexai"), Some("XAI_API_KEY"));
+        assert_eq!(canonical_connection("spacexai"), "spacexsi");
+        assert_eq!(canonical_connection("openrouter"), "openrouter");
+    }
+
+    /// A key saved before the rename sits in `keys/spacexai`; `spacexsi`
+    /// still finds it, and a key under the new name wins.
+    #[test]
+    fn a_key_saved_under_the_former_name_is_still_found() {
+        let home = TempDir::new().unwrap();
+        let keys = home.path().join("keys");
+        fs::create_dir_all(&keys).unwrap();
+        fs::write(keys.join("spacexai"), "xai-old\n").unwrap();
+        assert_eq!(
+            stored_key_in(home.path(), "spacexsi").as_deref(),
+            Some("xai-old")
+        );
+        assert_eq!(stored_key_in(home.path(), "openrouter"), None);
+        fs::write(keys.join("spacexsi"), "xai-new\n").unwrap();
+        assert_eq!(
+            stored_key_in(home.path(), "spacexsi").as_deref(),
+            Some("xai-new")
         );
     }
 
@@ -2315,7 +2478,7 @@ mod tests {
     fn route_for_a_hat_with_no_model_follows_the_rest() {
         use crate::role::Role;
         let mut cfg = Config::default();
-        let all: (String, String) = ("spacexai".into(), "grok-4.6".into());
+        let all: (String, String) = ("spacexsi".into(), "grok-4.6".into());
         for hat in [Role::Plan, Role::Build, Role::Audit] {
             assert_eq!(cfg.route_for(hat), all);
         }
@@ -2369,7 +2532,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         fs::write(
             dir.path().join("config.toml"),
-            "[orchestrator]\nconnection = \"spacexai\"\nmodel = \"grok-4.6\"\n\
+            "[orchestrator]\nconnection = \"spacexsi\"\nmodel = \"grok-4.6\"\n\
              [specialists.scribe]\nconnection = \"openrouter\"\nmodel = \"small/writer\"\n\
              [specialists.review]\nmodel = \"old/reviewer\"\n",
         )
@@ -2377,7 +2540,7 @@ mod tests {
         let old = load_at(dir.path(), None, false).unwrap();
         assert_eq!(
             old.route_for(Role::Build),
-            ("spacexai".into(), "grok-4.6".into())
+            ("spacexsi".into(), "grok-4.6".into())
         );
         assert_eq!(
             old.route_for(Role::Scribe),
@@ -2385,14 +2548,14 @@ mod tests {
         );
         assert_eq!(
             old.route_for(Role::Audit),
-            ("spacexai".into(), "old/reviewer".into())
+            ("spacexsi".into(), "old/reviewer".into())
         );
 
         // Both spellings: `[model]` and `[hats.*]` win.
         let dir = TempDir::new().unwrap();
         fs::write(
             dir.path().join("config.toml"),
-            "[orchestrator]\nconnection = \"spacexai\"\nmodel = \"old/all\"\n\
+            "[orchestrator]\nconnection = \"spacexsi\"\nmodel = \"old/all\"\n\
              [model]\nconnection = \"openrouter\"\nmodel = \"new/all\"\n\
              [specialists.plan]\nmodel = \"old/plan\"\n\
              [hats.plan]\nconnection = \"openrouter\"\nmodel = \"new/plan\"\n",
@@ -2415,7 +2578,7 @@ mod tests {
         write_default_config(dir.path()).unwrap();
         let path = dir.path().join("config.toml");
         let body = fs::read_to_string(&path).unwrap();
-        assert!(body.contains("spacexai"));
+        assert!(body.contains("spacexsi"));
         fs::write(&path, "sentinel = true\n").unwrap();
         write_default_config(dir.path()).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "sentinel = true\n");
@@ -2447,7 +2610,7 @@ mod tests {
         cfg.features.web = true;
         cfg.spend.session_budget_usd = 9.0;
         save_settings(dir.path(), &cfg).unwrap();
-        let extra = connection_template("openai").unwrap();
+        let extra = connection_template("openai_compat").unwrap();
         let mut map = BTreeMap::new();
         map.insert("local".into(), extra);
         save_user_connections(dir.path(), &map).unwrap();
@@ -2572,8 +2735,8 @@ mod tests {
         assert_eq!(last.context_length, Some(200_000));
         assert_eq!(last.input_per_million, Some(3.0));
         assert_eq!(last.output_per_million, Some(15.0));
-        let (conn, model) = resolve_route(&cfg, Some(&last), Some("spacexai"), None);
-        assert_eq!(conn, "spacexai");
+        let (conn, model) = resolve_route(&cfg, Some(&last), Some("spacexsi"), None);
+        assert_eq!(conn, "spacexsi");
         assert_ne!(model, "anthropic/claude-sonnet-4.6");
     }
 
@@ -2583,9 +2746,9 @@ mod tests {
         write_default_connection(dir.path(), "openrouter").unwrap();
         let cfg = load_at(dir.path(), None, false).unwrap();
         assert_eq!(cfg.default_connection, "openrouter");
-        write_default_connection(dir.path(), "spacexai").unwrap();
+        write_default_connection(dir.path(), "spacexsi").unwrap();
         let cfg = load_at(dir.path(), None, false).unwrap();
-        assert_eq!(cfg.default_connection, "spacexai");
+        assert_eq!(cfg.default_connection, "spacexsi");
     }
 
     /// On Linux a key must survive a reboot, so it goes to the 0600 file,
@@ -2739,7 +2902,7 @@ mod tests {
         .unwrap();
         let cfg = load_at(dir.path(), None, false).unwrap();
         assert_eq!(cfg.default_connection, "openrouter");
-        assert!(cfg.connections.contains_key("spacexai"));
+        assert!(cfg.connections.contains_key("spacexsi"));
     }
 
     #[test]
@@ -2753,7 +2916,7 @@ mod tests {
         )
         .unwrap();
         let cfg = load_at(home.path(), Some(proj.path()), false).unwrap();
-        assert_eq!(cfg.default_connection, "spacexai");
+        assert_eq!(cfg.default_connection, "spacexsi");
         let cfg = load_at(home.path(), Some(proj.path()), true).unwrap();
         assert_eq!(cfg.default_connection, "openrouter");
     }
@@ -2767,7 +2930,7 @@ mod tests {
         let mut f = fs::File::create(&path).unwrap();
         writeln!(
             f,
-            "[connections.spacexai]\nkind = \"spacexai\"\nbase_url = \"https://api.x.ai/v1\"\napi_key = \"xai-secret\"\n"
+            "[connections.spacexsi]\nkind = \"spacexsi\"\nbase_url = \"https://api.x.ai/v1\"\napi_key = \"xai-secret\"\n"
         )
         .unwrap();
         f.flush().unwrap();
@@ -2890,7 +3053,7 @@ mod tests {
         use crate::role::Role;
         let dir = TempDir::new().unwrap();
         let mut cfg = load_at(dir.path(), None, false).unwrap();
-        let all: (String, String) = ("spacexai".into(), "grok-4.6".into());
+        let all: (String, String) = ("spacexsi".into(), "grok-4.6".into());
         for hat in [Role::Plan, Role::Build, Role::Audit] {
             assert!(cfg.follows_all_hats(hat));
             assert_eq!(cfg.route_for(hat), all);
@@ -3140,7 +3303,7 @@ mod tests {
     #[test]
     fn resolve_secret_from_env_key() {
         let cfg = Config::default();
-        let got = resolve_secret_with(&cfg, &ConnectionId::new("spacexai"), |k| {
+        let got = resolve_secret_with(&cfg, &ConnectionId::new("spacexsi"), |k| {
             (k == "XAI_API_KEY").then(|| "from-env".into())
         })
         .unwrap();

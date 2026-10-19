@@ -5,7 +5,7 @@
  Hats                             ·  welcome · /help for keys
  ● Plan     $0  read only                                                  ────────────────────────
  ┃ Build   $0  asks first ╭─ connections ──────────────────────────── 2 ─╮ Context
- ── Specialists           │›● spacexai  spacexai · grok-4.6      key set │▌█▏
+ ── Specialists           │›● spacexsi  spacexsi · grok-4.6      key set │▌█▏
  ● Audit   $0  checkpoint │ ○ openrouter  openrouter · claude-son…no key │▌12k of 256k           5%
  ● Scribe   $0  docs only │                                              │▌
                           │ ◇ web search  not set up · enter to choose   │▌────────────────────────

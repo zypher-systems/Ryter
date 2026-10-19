@@ -19,9 +19,9 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.29.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.30.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
-- **The workspace is the only screen (unreleased).** The ledger and classic layouts, the `^t` workbench and `[ui] layout` are removed on the user's call (2026-10-19): one screen to polish, and the one the reviewer sees. `/changes` is the changes panel everywhere; a settings file that still names a layout loads. Clicking the status row still opens the reasoning pane, which the workspace had lost. A `NO_COLOR` screen no longer draws the drop shadow.
+- **Anthropic and OpenAI built in, SpaceXAI renamed SpaceXSI (unreleased).** Four built-in connections as equals; `spacexai` still loads as `spacexsi` everywhere a file says it, and a key saved under the old name is found. Claude 4.6 and later get adaptive thinking at the chosen effort instead of a token budget, which they reject; OpenAI gets the reasoning effort like OpenRouter. Shipped price tables and model lists for Claude and GPT. Untried live: a turn on the real Anthropic and OpenAI APIs with the user's keys.
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
 - **1.0 item 1 (flow on a real project): closed 2026-10-14** (recorded in 0.28.0). Further ask friction from fiscus/tunes stays under Next (item 2). G4 closed the nested-scratch and tmux-scope holes in 0.29.0.
@@ -67,6 +67,13 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.30.0 — the workspace is the only screen, and the polish before a review (2026-10-19)
+
+Released 2026-10-19 (PR #94). The note is `docs/releases/v0.30.0.md`.
+
+- **One screen.** The ledger and classic layouts, the `^t` workbench and `[ui] layout` are removed on the user's call (2026-10-19). `/changes` is the changes panel everywhere; a settings file that still names a layout loads. Clicking the status row opens the reasoning pane again, and a `NO_COLOR` screen draws no drop shadow.
+- **Polish before a content creator's review.** A panel sits on a cleared band and the hat chip stays readable under it; a cost is never a fake `$0.00`; the hint bar carries the open card's keys; the workspace reads in the light theme and in sixteen colours; a short Hats page names every hat; the README's screenshots are the workspace.
 
 ### 0.29.0 — model check, G4–G7 leftovers, hats rename, permissions MVP (2026-10-15)
 

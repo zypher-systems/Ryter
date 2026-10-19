@@ -870,7 +870,7 @@ pub(crate) mod tests {
         std::fs::create_dir_all(home.path().join("skills/mine")).unwrap();
         std::fs::write(home.path().join("skills/mine/SKILL.md"), "body").unwrap();
         std::fs::create_dir_all(home.path().join("keys")).unwrap();
-        std::fs::write(home.path().join("keys/spacexai"), "xai-secret").unwrap();
+        std::fs::write(home.path().join("keys/spacexsi"), "xai-secret").unwrap();
         crate::rules::save(home.path(), "- a rule").unwrap();
         let home_p = home.path().to_path_buf();
         let scope = fixture_scope(SandboxProfile::ReadOnly, home.path());
@@ -894,7 +894,7 @@ pub(crate) mod tests {
                     "body"
                 );
                 assert!(std::fs::write(home_p.join("skills/mine/x"), "y").is_err());
-                assert!(std::fs::read_to_string(home_p.join("keys/spacexai")).is_err());
+                assert!(std::fs::read_to_string(home_p.join("keys/spacexsi")).is_err());
                 Ok(())
             })
             .unwrap();

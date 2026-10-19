@@ -23,7 +23,7 @@ Edition 2024, MSRV 1.88, Apache-2.0. `#![forbid(unsafe_code)]`.
 
 - The permission gate enforces the hat: plan and audit do not edit source; the scribe writes documentation only (`.md`, `.txt` and their kind); plan, build and scribe may write project memory (`ROADMAP.md`, `DECISIONS.md`, `notes/`); the build hat runs the work and asks for what no checkpoint undoes (deleting, discarding git work, publishing, writing outside the project). Tests assert this.
 - Spend: unknown rates are `$?.??`, never a fake `$0.00`. Budget stop is a real stop (headless exit 3).
-- SpaceXAI (`https://api.x.ai/v1`, Responses, `XAI_API_KEY`, `grok-4.6`) and OpenRouter are built-in equals.
+- SpaceXSI (`https://api.x.ai/v1`, Responses, `XAI_API_KEY`, `grok-4.6`), OpenRouter, Anthropic (Messages, `ANTHROPIC_API_KEY`, `claude-opus-5-5`) and OpenAI (Responses, `OPENAI_API_KEY`, `gpt-6.1-sol`) are built-in equals. `spacexai`, the former name, still loads as `spacexsi`.
 - `ryter --version` must not open config, keyring, or the network.
 - TUI chrome is structural — borders group and separate, they never decorate. Panels are bordered; the base layout uses hairline rules. Golden snapshots under `crates/ryter-tui/snapshots/` are the contract; regenerate with `UPDATE_SNAPSHOTS=1` only when the change is intended.
 - Every hat shares one system prompt and one tool list, so a hat switch keeps the provider's prompt cache. The hat is a note on each message.

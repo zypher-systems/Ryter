@@ -43,7 +43,7 @@ const PULL_MS: u64 = 40;
 /// One configured connection for `/provider` and the info panel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnRow {
-    /// Name (`spacexai`).
+    /// Name (`spacexsi`).
     pub name: String,
     /// Kind.
     pub kind: String,
@@ -1065,11 +1065,22 @@ pub fn file_label(path: &std::path::Path) -> Option<String> {
 /// Shipped model list when `GET /models` is unavailable.
 pub fn fallback_models(kind: &str, default_model: &str) -> Vec<ryter_core::ModelInfo> {
     let mut v = Vec::new();
-    if kind == "spacexai" || default_model.starts_with("grok-") {
+    if kind == "spacexsi" || default_model.starts_with("grok-") {
+        v.push(model_row("grok-4.7", 500_000, 2.0, 6.0));
         v.push(model_row("grok-4.6", 500_000, 2.0, 6.0));
-        v.push(model_row("grok-4.5", 256_000, 2.0, 6.0));
-        v.push(model_row("grok-4.3", 256_000, 1.25, 2.5));
+        v.push(model_row("grok-4.5", 500_000, 2.0, 6.0));
+        v.push(model_row("grok-4.3", 1_000_000, 1.25, 2.5));
         v.push(model_row("grok-build-0.1", 256_000, 1.0, 2.0));
+    }
+    if kind == "anthropic" || default_model.starts_with("claude-") {
+        v.push(model_row("claude-opus-5-5", 1_000_000, 4.0, 20.0));
+        v.push(model_row("claude-sonnet-5-5", 1_000_000, 2.0, 10.0));
+        v.push(model_row("claude-haiku-5-5", 1_000_000, 0.1, 0.5));
+    }
+    if kind == "openai" || default_model.starts_with("gpt-") {
+        v.push(model_row("gpt-6-astra", 1_050_000, 10.0, 50.0));
+        v.push(model_row("gpt-6.1-sol", 1_050_000, 2.0, 10.0));
+        v.push(model_row("gpt-6-luna", 1_050_000, 0.1, 0.5));
     }
     if !default_model.is_empty() && !v.iter().any(|m| m.id == default_model) {
         v.insert(
@@ -1158,5 +1169,38 @@ mod tests {
         let a = v.submit_user("next".into(), "next".into());
         assert_eq!(a, Action::None);
         assert_eq!(v.queued_prompt.as_deref(), Some("next"));
+    }
+
+    /// Without a model list from the server, each built-in has a shipped
+    /// one, by its kind or by the shape of its default model's name.
+    #[test]
+    fn each_built_in_has_a_shipped_model_list() {
+        let ids = |kind: &str, model: &str| -> Vec<String> {
+            fallback_models(kind, model)
+                .into_iter()
+                .map(|m| m.id)
+                .collect()
+        };
+        assert_eq!(ids("spacexsi", "grok-4.6")[..2], ["grok-4.7", "grok-4.6"]);
+        let claude = ids("anthropic", "claude-opus-5-5");
+        assert_eq!(claude[0], "claude-opus-5-5");
+        assert!(
+            claude.contains(&"claude-haiku-5-5".to_string()),
+            "{claude:?}"
+        );
+        let gpt = ids("openai", "gpt-6.1-sol");
+        assert!(
+            gpt.contains(&"gpt-6-astra".to_string()) && gpt.contains(&"gpt-6.1-sol".to_string()),
+            "{gpt:?}"
+        );
+        // A user connection is told by its default model's name.
+        assert_eq!(
+            ids("openai_compat", "claude-sonnet-5-5")[0],
+            "claude-opus-5-5"
+        );
+        // An unknown default model still leads its own list.
+        assert_eq!(ids("openai_compat", "my-model"), ["my-model"]);
+        let w = fallback_models("anthropic", "claude-opus-5-5")[0].context_length;
+        assert_eq!(w, Some(1_000_000));
     }
 }

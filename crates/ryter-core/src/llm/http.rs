@@ -80,7 +80,7 @@ fn jitter_ms() -> u16 {
     (nanos % 250) as u16
 }
 
-/// reqwest-backed provider for SpaceXAI, OpenRouter, and generic endpoints.
+/// reqwest-backed provider for SpaceXSI, OpenRouter, and generic endpoints.
 pub struct HttpProvider {
     client: reqwest::Client,
     base_url: String,
@@ -176,19 +176,28 @@ impl HttpProvider {
             Backend::Responses => responses_body(req),
             Backend::Messages => messages_body(req),
         };
-        // OpenRouter normalizes one reasoning setting across its models.
-        // Other OpenAI-compatible servers may reject an unknown field.
-        if self.kind == "openrouter" {
+        // OpenRouter normalizes one reasoning setting across its models, and
+        // OpenAI's Responses API takes the same field. Other OpenAI-compatible
+        // servers may reject an unknown field.
+        if self.kind == "openrouter" || self.kind == "openai" {
             if let Some(effort) = &req.reasoning {
                 body["reasoning"] = json!({ "effort": effort });
             }
         }
         // Direct Anthropic Messages: turn the same effort knob into extended
         // thinking. Without this, thinking stays off and there is nothing to
-        // echo after a tool call.
+        // echo after a tool call. Claude 4.6 and later take the effort as
+        // such, with adaptive thinking; a token budget is a 400 there.
         if self.backend == Backend::Messages {
-            if let Some(thinking) = anthropic_thinking(req.reasoning.as_deref(), req.max_tokens) {
-                body["thinking"] = thinking;
+            if let Some(effort) = req.reasoning.as_deref() {
+                if adaptive_thinking(&req.model) {
+                    if let Some(effort) = anthropic_effort(effort) {
+                        body["thinking"] = json!({ "type": "adaptive" });
+                        body["output_config"] = json!({ "effort": effort });
+                    }
+                } else if let Some(thinking) = anthropic_thinking(Some(effort), req.max_tokens) {
+                    body["thinking"] = thinking;
+                }
             }
         }
         body
@@ -746,6 +755,24 @@ fn messages_blocks_json(blocks: &[MessagesBlock]) -> Value {
 ///
 /// `budget_tokens` must be ≥ 1024 and strictly less than `max_tokens`. When
 /// the effort is unset or `default`, thinking stays off (Anthropic's default).
+/// Claude 4.6 and later: `thinking: adaptive` plus an `effort`, where the
+/// older `budget_tokens` form is rejected. Anything that isn't a Claude id
+/// on a Messages endpoint (a proxy's own names) keeps the budget form.
+fn adaptive_thinking(model: &str) -> bool {
+    crate::llm::claude_version(model).is_some_and(|v| v >= (4, 6))
+}
+
+/// Ryter's reasoning level as an Anthropic `output_config.effort`.
+fn anthropic_effort(effort: &str) -> Option<&'static str> {
+    match effort {
+        "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" => Some("high"),
+        _ => None,
+    }
+}
+
+/// Extended thinking by token budget, for Claude models before 4.6.
 fn anthropic_thinking(effort: Option<&str>, max_tokens: Option<u32>) -> Option<Value> {
     let effort = effort?;
     let budget = match effort {
@@ -1082,10 +1109,10 @@ mod tests {
         }
     }
 
-    /// OpenRouter gets the reasoning setting; other servers never see a field
-    /// they may reject.
+    /// OpenRouter and OpenAI get the reasoning setting; other servers never
+    /// see a field they may reject.
     #[test]
-    fn reasoning_effort_goes_to_openrouter_only() {
+    fn reasoning_effort_goes_to_openrouter_and_openai() {
         let req = CompletionRequest {
             model: "z-ai/glm-5.3-flashx".into(),
             system: None,
@@ -1097,9 +1124,14 @@ mod tests {
         let or = crate::config::connection_template("openrouter").unwrap();
         let body = HttpProvider::new(&or, "k".into()).body(&req);
         assert_eq!(body["reasoning"]["effort"], "medium");
-        let local = crate::config::connection_template("ollama").unwrap();
-        let body = HttpProvider::new(&local, String::new()).body(&req);
-        assert!(body.get("reasoning").is_none(), "{body}");
+        let openai = crate::config::connection_template("openai").unwrap();
+        let body = HttpProvider::new(&openai, "k".into()).body(&req);
+        assert_eq!(body["reasoning"]["effort"], "medium");
+        for kind in ["ollama", "openai_compat"] {
+            let other = crate::config::connection_template(kind).unwrap();
+            let body = HttpProvider::new(&other, String::new()).body(&req);
+            assert!(body.get("reasoning").is_none(), "{kind}: {body}");
+        }
         // Nothing chosen, nothing sent.
         let none = CompletionRequest {
             reasoning: None,
@@ -1373,6 +1405,55 @@ mod tests {
             "redacted_thinking"
         );
         assert_eq!(body["messages"][1]["content"][0]["data"], "opaque");
+    }
+
+    /// Claude 4.6 and later reject a thinking budget with a 400: they take
+    /// `thinking: adaptive` and the effort as `output_config.effort`. Older
+    /// Claude models, and a proxy's own model names, keep the budget.
+    #[test]
+    fn claude_4_6_and_later_take_adaptive_thinking_at_the_effort() {
+        let conn = crate::config::connection_template("anthropic").unwrap();
+        let p = HttpProvider::new(&conn, "k".into());
+        let mut req = tool_loop();
+        req.reasoning = Some("high".into());
+        req.max_tokens = Some(32_768);
+        for model in [
+            "claude-opus-5-5",
+            "claude-sonnet-4-6",
+            "claude-fable-5-1",
+            "claude-opus-5",
+            "anthropic.claude-haiku-5-5",
+        ] {
+            req.model = model.into();
+            let body = p.body(&req);
+            assert_eq!(
+                body["thinking"],
+                json!({"type": "adaptive"}),
+                "{model}: {body}"
+            );
+            assert_eq!(body["output_config"]["effort"], "high", "{model}");
+            assert!(body["thinking"].get("budget_tokens").is_none(), "{model}");
+        }
+        for model in [
+            "claude-haiku-4-5",
+            "claude-sonnet-4-5-20250929",
+            "claude-3-5-sonnet-20241022",
+            "m",
+        ] {
+            req.model = model.into();
+            let body = p.body(&req);
+            assert_eq!(body["thinking"]["type"], "enabled", "{model}: {body}");
+            assert_eq!(body["thinking"]["budget_tokens"], 16384, "{model}");
+            assert!(body.get("output_config").is_none(), "{model}");
+        }
+        // Model's own: nothing sent either way.
+        req.reasoning = None;
+        req.model = "claude-opus-5-5".into();
+        let body = p.body(&req);
+        assert!(
+            body.get("thinking").is_none() && body.get("output_config").is_none(),
+            "{body}"
+        );
     }
 
     #[test]
@@ -1653,7 +1734,7 @@ mod tests {
         }
         let cfg = crate::config::Config::default();
         let (name, env) = if std::env::var("XAI_API_KEY").is_ok() {
-            ("spacexai", "XAI_API_KEY")
+            ("spacexsi", "XAI_API_KEY")
         } else {
             ("openrouter", "OPENROUTER_API_KEY")
         };

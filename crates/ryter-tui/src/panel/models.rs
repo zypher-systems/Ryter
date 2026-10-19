@@ -889,7 +889,7 @@ mod tests {
             row("x-ai/grok-4.7", "openrouter", Some((2.0, 6.0))),
             row("qwen/qwen3.7-max", "openrouter", Some((1.6, 6.4))),
             row("minimax/minimax-m2.7", "openrouter", Some((0.3, 1.2))),
-            row("grok-4.6", "spacexai", Some((2.0, 6.0))),
+            row("grok-4.6", "spacexsi", Some((2.0, 6.0))),
         ]
     }
 
@@ -1013,7 +1013,7 @@ mod tests {
         assert!(matches!(
             key(&mut p, &mut v, KeyCode::Enter),
             Outcome::Act(Action::SetHatModel { role, connection, .. })
-                if role == "build" && connection == "spacexai"
+                if role == "build" && connection == "spacexsi"
         ));
 
         // The reviewer: ← goes back without setting.
@@ -1176,12 +1176,12 @@ mod tests {
             .collect();
         assert!(!narrow.contains("connection"), "no column: {narrow}");
         assert!(
-            narrow.contains("spacexai · grok-4.6 · reasoning"),
+            narrow.contains("spacexsi · grok-4.6 · reasoning"),
             "{narrow}"
         );
         let wide = text(&p, &v);
         assert!(
-            wide.contains("connection") && wide.contains("spacexai"),
+            wide.contains("connection") && wide.contains("spacexsi"),
             "{wide}"
         );
     }
@@ -1190,13 +1190,13 @@ mod tests {
     /// connection as well as the id, when a seat opens on its model and
     /// after the last seat is set; by id alone it went to the first
     /// connection's row, and enter then moved the seat there. A reviewer's
-    /// case: `shared-model` on openrouter and on spacexai.
+    /// case: `shared-model` on openrouter and on spacexsi.
     #[test]
     fn a_model_on_two_connections_keeps_its_connection() {
         let mut v = hats_view();
         let mut models = catalog();
         models.push(row("shared-model", "openrouter", Some((1.0, 2.0))));
-        models.push(row("shared-model", "spacexai", Some((1.0, 2.0))));
+        models.push(row("shared-model", "spacexsi", Some((1.0, 2.0))));
         let mut p = Models::new(&mut v, Some("scribe".into()));
         p.set_models(&v, &models);
         for c in "shared".chars() {
@@ -1207,23 +1207,23 @@ mod tests {
         assert!(matches!(
             key(&mut p, &mut v, KeyCode::Enter),
             Outcome::Act(Action::SetHatModel { connection, model, .. })
-                if connection == "spacexai" && model == "shared-model"
+                if connection == "spacexsi" && model == "shared-model"
         ));
         let on = p.filtered(&v)[p.selected];
         assert_eq!(
             (on.id.as_str(), on.connection.as_deref()),
-            ("shared-model", Some("spacexai"))
+            ("shared-model", Some("spacexsi"))
         );
         key(&mut p, &mut v, KeyCode::Right);
         assert!(matches!(
             key(&mut p, &mut v, KeyCode::Enter),
-            Outcome::Act(Action::SetHatModel { connection, .. }) if connection == "spacexai"
+            Outcome::Act(Action::SetHatModel { connection, .. }) if connection == "spacexsi"
         ));
         // Opening on a seat set to the second connection's copy.
         v.hats.insert(
             "audit".into(),
             ryter_core::RoleModel {
-                connection: Some("spacexai".into()),
+                connection: Some("spacexsi".into()),
                 model: Some("shared-model".into()),
             },
         );
@@ -1231,7 +1231,7 @@ mod tests {
         p.set_models(&v, &models);
         assert_eq!(
             p.filtered(&v)[p.selected].connection.as_deref(),
-            Some("spacexai")
+            Some("spacexsi")
         );
     }
 
