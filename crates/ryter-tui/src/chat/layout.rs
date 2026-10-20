@@ -411,27 +411,34 @@ fn reasoning_pane(view: &View, width: usize, cap: usize, theme: Theme) -> Vec<Li
     lines
 }
 
-/// The live status row of a running turn: the spinner in the hat's color,
-/// then `thinking · 1:40 · 12k tokens`, `running cargo test · 0:03`,
-/// `waiting for the model · 0:42`, or `waiting for you`.
+/// The live status row of a running turn: `thinking · 1:40 · 12k tokens`,
+/// `running cargo test · 0:03`, `waiting for the model · 0:42`, or
+/// `waiting for you`, with a band of light crossing it while the turn
+/// runs. The hat working lights the band: the hat on, unless a Tab during
+/// the turn has chosen another for the next message.
 fn status_row(view: &View, width: usize, theme: Theme) -> Line<'static> {
     let a = &view.activity;
-    let spinner = crate::activity::SPINNER[a.frame % crate::activity::SPINNER.len()];
-    // The hat working colours the row: the hat on, unless a Tab during
-    // the turn has chosen another for the next message.
-    let accent = Style::default()
-        .fg(theme.mode(view.working_hat()))
-        .bg(theme.bg)
-        .add_modifier(Modifier::BOLD);
-    let text = a.status(width.saturating_sub(3));
-    Line::from(vec![
-        Span::styled(spinner.to_string(), accent),
-        Span::styled(" ", theme.body()),
+    let text = wrap::truncate(&a.status(width.saturating_sub(3)), width.saturating_sub(3));
+    let square = crate::activity::SQUARE
+        [(view.now_ms / crate::activity::SQUARE_MS) as usize % crate::activity::SQUARE.len()];
+    let mut spans = vec![
         Span::styled(
-            wrap::truncate(&text, width.saturating_sub(3)),
-            theme.muted(),
+            square.to_string(),
+            Style::default()
+                .fg(theme.mode(view.working_hat()))
+                .bg(theme.bg)
+                .add_modifier(Modifier::BOLD),
         ),
-    ])
+        Span::styled(" ", theme.body()),
+    ];
+    spans.extend(crate::shimmer::spans(
+        &text,
+        theme.muted(),
+        theme.mode(view.working_hat()),
+        view.now_ms,
+        theme.mode,
+    ));
+    Line::from(spans)
 }
 
 /// Assemble the visible frame.
@@ -505,7 +512,12 @@ fn rows_between(placed: &[Placed], off: usize, end: usize, theme: Theme) -> Vec<
     let blank = || Line::from(Span::styled(String::new(), theme.body()));
     let ledger = true;
     let dim = Style::default().fg(theme.dim).bg(theme.bg);
-    let spine_row = || Line::from(Span::styled(format!("{}│", " ".repeat(7)), dim));
+    let spine_row = || {
+        Line::from(Span::styled(
+            format!("{}{}", " ".repeat(7), crate::glyphs::SPINE),
+            dim,
+        ))
+    };
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(end.saturating_sub(off));
     for p in placed {
         let sep_row = p.start.checked_sub(1);
@@ -571,7 +583,7 @@ fn stamp(view: &View, m: &super::Message) -> String {
 fn gutter_spans(g: &Gutter, first: bool, theme: Theme) -> Vec<Span<'static>> {
     let dim = Style::default().fg(theme.dim).bg(theme.bg);
     let pad = |s: &str| Span::styled(s.to_string(), dim);
-    let spine = || vec![pad("       │  ")];
+    let spine = || vec![pad(&format!("       {}  ", crate::glyphs::SPINE))];
     if !first {
         return match g {
             Gutter::None => Vec::new(),
@@ -598,7 +610,7 @@ fn gutter_spans(g: &Gutter, first: bool, theme: Theme) -> Vec<Span<'static>> {
             pad("  "),
         ],
         Gutter::Tool => vec![pad("       ├─ ")],
-        Gutter::End => vec![pad("       └─ ")],
+        Gutter::End => vec![pad("       ╰─ ")],
         Gutter::Note(mark, c) => vec![
             pad("       "),
             Span::styled(*mark, Style::default().fg(*c).bg(theme.bg)),

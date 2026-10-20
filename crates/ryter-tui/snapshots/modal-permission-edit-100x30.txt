@@ -1,30 +1,30 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                     New session      ● Waiting for you · asks first Activity
- ⎇ 0.2.0-patch             0.2.0-patch                                     grok-4.6
-                                                                           Writing
- Hats                             ·  welcome · /help for keys              Reading the loop now. …
- ● Plan     $0  read only         ●  summarise the plan     ✓ answered  ▸
- ┃ Build   $0  asks first                                                  ────────────────────────
- ── Specialists                   ●  dusty                                 Context
- ● Audit   $0  checkpoint         │  now implement step one                █▏
- ● Scribe   $0  docs only         │                                        12k of 256k           5%
-                                  ├─ read   crates/ryter-tui/src/run/…
-                                  │                                        ────────────────────────
-                                  ◆  grok-4.6                              Spend · no cap
-                                  │  Reading the loop now. The event       $0
-                                  │  loop drains                           Build                 $0
-                                  │  ⠼ writing · 0:12
-                                                                           ────────────────────────
-                                                                           ────────────────────────
-                          ╭─ allow? · edit  app/server.js ─────── build ─╮
-                          │ what    edit  app/server.js                  │▌
-                          │ risk    changes a file in your project · /und│▌
-                          │ change  app/server.js  +2 −1                 │▌
-                          │ ⏎ allow   n deny                             │▌
-                          ╰──────────────────────────────────────────────╯▌
-                           ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-                           ╭────────────────────────────────────────────╮
-                           │ Build  › type to queue the next message, … │▌
-                           ╰────────────────────────────────────────────╯▌
-                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  ⏎  allow   n  deny   tab  hat   ⇧tab  mode   /  commands                     focus · conversation
+
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
+
+  New session                            ● Waiting for you · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                           ┊
+                                                                        ┊ HATS
+         ·  welcome · /help for keys                                    ┊ ● Plan   grok-4.6     $0
+         ●  summarise the plan                           ✓ answered  ▸  ┊ ┃ Build               $0
+                                                                        ┊   grok-4.6
+         ●  dusty                                                       ┊   asks first
+         ┆  now implement step one                                      ┊ ● Audit  grok-4.6     $0
+         ┆                                                              ┊ ● Scribe follows al…  $0
+         ├─ read   crates/ryter-tui/src/run/mod.rs                      ┊
+         ┆                                                              ┊
+         ◆  grok-4.6                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ┆  Reading the loop now. The event loop drains                 ┊ Context
+         ┆  ◲ writing · 0:12 · 59 tokens                                ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                                                                        ┊ 12k of 256k           5%
+                                                                        ┊
+   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+     allow? · edit  app/server.js                             build     ┊ Spend · no cap
+     what    edit  app/server.js                                        ┊ $0
+     risk    changes a file in your project · /undo puts it back        ┊ Build  ╌╌╌╌╌╌╌╌       $0
+   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
+                                                                        ┊
+  ╭──────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › type to queue the next message, / for commands          │  ┊
+  ╰──────────────────────────────────────────────────────────────────╯  ┊
+                                                                        ┊
+ ⏎ allow  n deny  tab hat  ⇧tab mode  / commands  f2 instruments  f6 f7 panes  focus · conversation

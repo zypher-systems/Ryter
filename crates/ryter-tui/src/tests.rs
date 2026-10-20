@@ -384,8 +384,9 @@ fn every_panel_fits_the_screen_at_every_width() {
     let mut v = with_panel(PanelId::Models);
     v.panel_visible = true;
     let drawn = render_to_string(&v, 110, 32);
-    let top = drawn.lines().find(|l| l.contains("models")).unwrap_or("");
-    assert!(top.contains('╮'), "{drawn}");
+    let lid = drawn.lines().find(|l| l.contains('▗')).unwrap_or("");
+    assert!(lid.contains('▖'), "{drawn}");
+    assert!(drawn.contains("models"), "{drawn}");
 }
 
 #[test]
@@ -469,7 +470,7 @@ fn panels_have_rounded_borders_and_titles() {
         let v = with_panel(id);
         let s = render_to_string(&v, 120, 40);
         assert!(
-            s.contains('╭') && s.contains('╯'),
+            (s.contains('╭') && s.contains('╯')) || (s.contains('▗') && s.contains('▘')),
             "{name}: no rounded corners\n{s}"
         );
         assert!(
@@ -1032,7 +1033,8 @@ fn workspace_be() -> View {
 fn snapshot_workspace_be() {
     all_sizes("workspace-be", &workspace_be());
     let text = render_to_string(&workspace_be(), 160, 50);
-    let top = text.lines().next().unwrap();
+    // The brand's row: the band has a row above it on a tall screen.
+    let top = text.lines().find(|l| l.contains("RYTER")).unwrap();
     assert!(
         top.contains("●●● RYTER") && top.contains("Conversation"),
         "{top}"
@@ -1080,12 +1082,13 @@ fn the_spend_drawer_is_the_prompts_width() {
         let _ = panel::open(&mut v, PanelId::SpendDrawer, &e);
         let hit = crate::draw::render_hit(&v, w, 50);
         let text = render_to_string(&v, w, 50);
+        // The drawer's lid: its corners are the slab's.
         let top = text
             .lines()
-            .find(|r| r.contains("╭─ spend"))
+            .find(|r| r.contains('▗') && r.contains('▖'))
             .unwrap_or_else(|| panic!("{w}: no drawer\n{text}"));
-        let left = top.chars().position(|c| c == '╭');
-        let right = top.chars().position(|c| c == '╮');
+        let left = top.chars().position(|c| c == '▗');
+        let right = top.chars().position(|c| c == '▖');
         assert_eq!(
             (left, right),
             (
@@ -1110,12 +1113,25 @@ fn an_offer_is_in_the_color_of_the_hat_it_offers() {
         )));
         let buf = render_buffer(&v, 160, 50, theme);
         let text = render_with_theme(&v, 160, 50, theme);
+        // The rack is drawn beside the card: find its lid by column. The
+        // title is the row under the lid, a cell in from its corner.
         let row = text
             .lines()
-            .position(|l| l.trim_start().starts_with("╭─ ") && l.contains('?'))
+            .position(|l| l.contains('▗'))
             .unwrap_or_else(|| panic!("{tool}: no modal on screen\n{text}"));
-        let x = text.lines().nth(row).unwrap().find('╭').unwrap();
-        let corner = (x as u16, row as u16);
+        let x = text
+            .lines()
+            .nth(row)
+            .unwrap()
+            .chars()
+            .position(|c| c == '▗')
+            .unwrap();
+        let title = text.lines().nth(row + 1).unwrap();
+        assert!(
+            title.contains('?'),
+            "{tool}: no title under the lid\n{text}"
+        );
+        let corner = (x as u16 + 2, row as u16 + 1);
         assert_eq!(buf[corner].fg, color, "{tool}");
     }
 }
@@ -1317,6 +1333,60 @@ fn snapshot_conversation() {
     all_sizes("conversation", &conversation());
 }
 
+/// The Hats and Sessions views, and a session with nothing in it yet,
+/// at each size: the narrow tiers fold the panes and compact the cards.
+#[test]
+fn snapshot_workspace_views() {
+    let mut v = racked();
+    v.page = crate::view::Page::Hats;
+    all_sizes("workspace-hats", &v);
+    v.page = crate::view::Page::Sessions;
+    all_sizes("workspace-sessions", &v);
+    let mut v = idle();
+    v.messages.clear();
+    all_sizes("workspace-opening", &v);
+}
+
+/// Every size leaves the conversation at least 70 columns, the three view
+/// tabs to click, all four hats on the Hats view, and a queued message
+/// said on the prompt's edge, in every colour mode.
+#[test]
+fn workspace_keeps_the_conversation_and_every_hat_accessible() {
+    for (width, height) in SIZES {
+        for theme in [
+            Theme::truecolor_dark(),
+            Theme::truecolor_light(),
+            Theme::truecolor_dark().degrade(ColorMode::Ansi256),
+            Theme::default_16(),
+            Theme::truecolor_dark().degrade(ColorMode::Mono),
+        ] {
+            let mut v = racked();
+            let hit = crate::draw::render_hit(&v, width, height);
+            assert!(hit.chat.width >= 70, "{width}x{height}: {:?}", hit.chat);
+            for page in [1, 2, 3] {
+                assert!(
+                    hit.clicks
+                        .iter()
+                        .any(|(c, _)| *c == crate::select::WorkspaceClick::Page(page)),
+                    "{width}x{height}: no tab {page}"
+                );
+            }
+            v.page = crate::view::Page::Hats;
+            let text = render_with_theme(&v, width, height, theme);
+            for hat in ["Plan", "Build", "Audit", "Scribe"] {
+                assert!(
+                    text.contains(&format!("─ {hat} ")),
+                    "{width}x{height}: {hat}\n{text}"
+                );
+            }
+            v.page = crate::view::Page::Conversation;
+            v.queued_prompt = Some("next task".into());
+            let text = render_with_theme(&v, width, height, theme);
+            assert!(text.contains("queued"), "{width}x{height}\n{text}");
+        }
+    }
+}
+
 /// The model picker says where its list stands: from the cache while a
 /// fresh one downloads, or that the provider is slow.
 #[test]
@@ -1465,7 +1535,7 @@ fn the_conversation_folds_finished_turns_and_closes_each() {
         "its answer is folded away"
     );
     assert!(
-        text.contains("└─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s · $0.004"),
+        text.contains("╰─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s · $0.004"),
         "{text}"
     );
     // ^O shows everything whole.
@@ -2272,11 +2342,22 @@ fn the_hats_block_names_the_plan_and_audit_files() {
     let mut v = racked();
     v.workspace = Some(dir.path().to_path_buf());
     v.refresh_uncommitted();
-    let text = squash(&render_to_string(&v, 160, 50));
-    assert!(
-        text.contains("plan.md") && text.contains("upload size limit"),
-        "{text}"
-    );
+    let shown = render_to_string(&v, 160, 50);
+    let text = squash(&shown);
+    assert!(text.contains("plan.md"), "{text}");
+    // The instruments' Plan block has the heading whole, over two rows.
+    let (_, insp_w) = crate::workspace::columns(160, true);
+    let pane: String = shown
+        .lines()
+        .map(|l| {
+            l.chars()
+                .skip(usize::from(160 - insp_w))
+                .filter(|c| *c != '│' && *c != '┊')
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(squash(&pane).contains("upload size limit"), "{pane}");
     assert!(!text.contains("audit.md"), "{text}");
     let label = crate::view::file_label(&dir.path().join(".ryter/plan.md")).unwrap();
     assert!(label.ends_with(" upload size limit"), "{label}");
@@ -2452,7 +2533,7 @@ fn the_reasoning_pane_opens_under_the_status_row() {
         {
             let closing = lines[..header]
                 .iter()
-                .rposition(|l| l.contains("└─"))
+                .rposition(|l| l.contains("╰─"))
                 .unwrap_or_else(|| panic!("no closing line\n{shown}"));
             assert!(header > closing, "{shown}");
         }
@@ -2695,7 +2776,7 @@ fn the_chat_moves_up_for_the_allow_card() {
     let v = asking(60);
     let drawn = render_to_string(&v, 160, 42);
     let lines: Vec<&str> = drawn.lines().collect();
-    let card = lines.iter().position(|l| l.contains("╭─ allow?")).unwrap();
+    let card = lines.iter().position(|l| l.contains('▗')).unwrap();
     let last = lines
         .iter()
         .position(|l| l.contains("reply line 59"))
@@ -2710,7 +2791,7 @@ fn the_chat_moves_up_for_the_allow_card() {
     );
     assert!(status < card, "the status row is above the card:\n{drawn}");
     // And the card is capped at a third of the column, scrolling inside.
-    let bottom = lines.iter().position(|l| l.contains("╰───")).unwrap();
+    let bottom = lines.iter().position(|l| l.contains('▝')).unwrap();
     let height = bottom - card + 1;
     assert!(height <= 42 / 3, "card is {height} rows:\n{drawn}");
     assert!(
@@ -2758,7 +2839,7 @@ fn the_foot_shows_the_cards_keys_in_warn() {
         .map(|x| buf[(x, foot)].symbol().to_string())
         .collect();
     assert!(
-        text.contains("⏎  allow") && text.contains("n  deny"),
+        text.contains("⏎ allow") && text.contains("n deny"),
         "{text}"
     );
 }
@@ -3913,8 +3994,9 @@ fn buffer_to_html(buf: &ratatui::buffer::Buffer, theme: Theme) -> String {
 }
 
 /// `RYTER_HTML_DIR=<dir> cargo test -p ryter-tui html_gallery` writes the
-/// solo screen in each hat, and at the narrower tiers, as HTML files with
-/// their colors. It does nothing without the variable.
+/// session in each hat, each view at each size, and three panels, as HTML
+/// files with their colors, dark and light. It does nothing without the
+/// variable.
 #[test]
 fn html_gallery() {
     let Some(dir) = std::env::var_os("RYTER_HTML_DIR") else {
@@ -3922,7 +4004,6 @@ fn html_gallery() {
     };
     let dir = PathBuf::from(dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let theme = Theme::truecolor_dark();
     let mut shots: Vec<(String, View, u16, u16)> = Vec::new();
     for hat in crate::sidebar::HATS {
         let mut v = racked();
@@ -3933,13 +4014,41 @@ fn html_gallery() {
     shots.push(("session-100x30".into(), racked(), 100, 30));
     shots.push(("session-80x24".into(), racked(), 80, 24));
     shots.push(("workspace-be-160x50".into(), workspace_be(), 160, 50));
+    for (w, h) in SIZES {
+        let mut v = racked();
+        v.page = crate::view::Page::Hats;
+        shots.push((format!("workspace-hats-{w}x{h}"), v.clone(), w, h));
+        v.page = crate::view::Page::Sessions;
+        shots.push((format!("workspace-sessions-{w}x{h}"), v, w, h));
+        let mut v = idle();
+        v.messages.clear();
+        shots.push((format!("workspace-opening-{w}x{h}"), v, w, h));
+        let mut v = racked();
+        v.composer.set_text("/");
+        crate::palette::refresh(&mut v);
+        shots.push((format!("workspace-palette-{w}x{h}"), v, w, h));
+        for (name, id) in [
+            ("settings", PanelId::Settings),
+            ("models", PanelId::Models),
+            ("help", PanelId::Help),
+        ] {
+            shots.push((format!("workspace-{name}-{w}x{h}"), with_panel(id), w, h));
+        }
+    }
     for (name, v, w, h) in shots {
-        let buf = render_buffer(&v, w, h, theme);
-        std::fs::write(
-            dir.join(format!("{name}.html")),
-            buffer_to_html(&buf, theme),
-        )
-        .unwrap();
+        for (variant, theme) in [
+            ("dark", Theme::truecolor_dark()),
+            ("light", Theme::truecolor_light()),
+        ] {
+            let mut v = v.clone();
+            v.theme_name = variant.into();
+            let buf = render_buffer(&v, w, h, theme);
+            std::fs::write(
+                dir.join(format!("{name}-{variant}.html")),
+                buffer_to_html(&buf, theme),
+            )
+            .unwrap();
+        }
     }
 }
 
@@ -3973,10 +4082,12 @@ fn the_chip_is_readable_under_a_panel() {
 }
 
 /// A panel's shadow falls inside the body it floats over, never on the
-/// prompt's rule: at 80x24 and 120x40 the rule under /settings is whole.
+/// prompt's rule: at 120x40 and 160x50 the rule under /settings is whole.
+/// Below 40 rows /settings is taller than the room above the prompt and
+/// `panel::rect` lets it take the body, prompt included.
 #[test]
 fn a_panels_shadow_stays_off_the_prompts_rule() {
-    for (w, h) in [(80, 24), (120, 40)] {
+    for (w, h) in [(120, 40), (160, 50)] {
         let mut v = racked();
         let e = env();
         let _ = panel::open(&mut v, PanelId::Settings, &e);
@@ -4034,20 +4145,34 @@ fn a_docked_card_clears_its_rows() {
         let text = render_to_string(&v, w, h);
         let top = text
             .lines()
-            .position(|r| r.contains("╭─ audit"))
+            .position(|r| r.contains('▗'))
             .unwrap_or_else(|| panic!("{w}x{h}: no card\n{text}"));
+        assert!(
+            text.lines()
+                .nth(top + 1)
+                .is_some_and(|r| r.contains("audit")),
+            "{w}x{h}: no audit title under the lid\n{text}"
+        );
         let bottom = text
             .lines()
             .skip(top)
-            .position(|r| r.contains('╰'))
+            .position(|r| r.contains('▝'))
             .map(|n| top + n)
             .unwrap();
+        // The card's columns are its lid's.
+        let lid: String = text
+            .lines()
+            .nth(top)
+            .unwrap()
+            .chars()
+            .skip(lo)
+            .take(hi - lo)
+            .collect();
+        let (left, right) = (lid.find('▗').unwrap(), lid.rfind('▖').unwrap());
         // Within the prompt's columns (the band a card clears), nothing
         // but the card: the rail and the sidebar beyond them are theirs.
         for (i, row) in text.lines().enumerate().take(bottom + 1).skip(top) {
             let span: String = row.chars().skip(lo).take(hi - lo).collect();
-            let left = span.find(['╭', '╰']).or_else(|| span.find('│')).unwrap();
-            let right = span.rfind(['╮', '╯']).or_else(|| span.rfind('│')).unwrap();
             let beside: String = span
                 .chars()
                 .take(left)
@@ -4088,4 +4213,36 @@ fn the_slash_menu_files_the_hats_together() {
     let _ = panel::open(&mut v, PanelId::Settings, &e);
     let text = render_to_string(&v, 120, 40);
     assert!(text.contains("rounds a turn (0 = off)"), "{text}");
+}
+
+/// The welcome is for a session with nothing said yet: a config warning
+/// or `/new`'s note at its head is not content, and the welcome sits
+/// under such lines rather than over them.
+#[test]
+fn the_welcome_sits_under_a_system_line() {
+    let mut v = idle();
+    v.messages.clear();
+    v.system("new session");
+    let text = render_to_string(&v, 120, 40);
+    let titles = [
+        "Start with a plan.",
+        "What are we building?",
+        "A fresh look at your work.",
+        "Make the work clear.",
+    ];
+    let lines: Vec<&str> = text.lines().collect();
+    let note = lines
+        .iter()
+        .position(|l| l.contains("new session"))
+        .unwrap_or_else(|| panic!("no system line\n{text}"));
+    let welcome = lines
+        .iter()
+        .position(|l| titles.iter().any(|t| l.contains(t)))
+        .unwrap_or_else(|| panic!("no welcome under a system line\n{text}"));
+    assert!(welcome > note, "the welcome is under the note\n{text}");
+    // With a turn said, the welcome is gone.
+    let v = racked();
+    assert!(v.has_content());
+    let text = render_to_string(&v, 120, 40);
+    assert!(!titles.iter().any(|t| text.contains(t)), "{text}");
 }

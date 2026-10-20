@@ -1,50 +1,50 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                               New session                                                         ● Idle · asks first Activity
- ⎇ 0.2.0-patch                       0.2.0-patch                                                                             grok-4.6
-                                                                                                                             Idle
- Hats                                       ·  welcome · /help for keys
- ● Plan                          $0                                                                                          ──────────────────────────────────
-   grok-4.6                                                                                                                  Context
-   read only                                                                                                                 █▏
- ┃ Build                         $0                                                                                          12k of 256k                     5%
-   grok-4.6
-   asks first                                                                                                                ──────────────────────────────────
- ── Specialists                                                                                                              Spend · no cap
- ● Audit                         $0                                                                                          $0
-   grok-4.6                                                                                                                  Build                           $0
-   checkpoint
- ● Scribe                        $0                                                                                          ──────────────────────────────────
-   follows all hats                                                                                                          ──────────────────────────────────
-   docs only
+
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                                     ╭────────────────────────────────────────────────────────────────────────────────────╮
-                                     │ Build  › what should change?                                                       │▌
-                                     ╰────────────────────────────────────────────────────────────────────────────────────╯▌
-                                      ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views   f2  instruments   f6 f7  panes                                                    focus · conversation
+    New session                                                                                 ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+    0.2.0-patch                                                                                                     ┊
+                                                                                                                    ┊ HATS
+           ·  welcome · /help for keys                                                                              ┊ ● Plan   grok-4.6                     $0
+                                                                                                                    ┊ ┃ Build                               $0
+                                                                                                                    ┊   grok-4.6
+                                                                                                                    ┊   asks first
+      What are we building?                                                                                         ┊ ● Audit  grok-4.6                     $0
+                                                                                                                    ┊ ● Scribe follows all hats             $0
+      Describe a change, ask a question, or pick up where you                                                       ┊
+      left off.                                                                                                     ┊
+                                                                                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+      / commands    Alt+3 resume a session                                                                          ┊ Context
+                                                                                                                    ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+                                                                                                                    ┊  ⢰⠋      ⠙⡆ 12k
+                                                                                                                    ┊  ⢸   5%   ⡧ of 256k
+                                                                                                                    ┊  ⠸⣄      ⣠⠇
+                                                                                                                    ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+                                                                                                                    ┊
+                                                                                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                                                                    ┊ Spend · no cap
+                                                                                                                    ┊ $0
+                                                                                                                    ┊ Build  ╌╌╌╌╌╌╌╌                       $0
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+    ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ┊
+    │ Build  › what should change?                                                                               │  ┊
+    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ┊
+                                                                                                                    ┊
+ tab hat  ⇧tab mode  / commands  alt 1–3 views  f2 instruments  f6 f7 panes                                                                focus · conversation

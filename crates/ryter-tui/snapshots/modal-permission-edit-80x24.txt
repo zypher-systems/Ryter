@@ -1,24 +1,24 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- New session          ● Waiting for you · asks first Activity
- 0.2.0-patch                                         grok-4.6
-                                                     Writing
-        ●  dusty  now implement step one       ↑ 3   Reading the loop now. Th…
- ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
-        │                                            ──────────────────────────
-        ├─ read   crates/ryter-tui/src/run/mod.…     Context
-        │                                            █▏
-        ◆  grok-4.6                                  12k of 256k             5%
-        │  Reading the loop now. The event loop
-        │  drains                                    ──────────────────────────
-        │  ⠼ writing · 0:12                          Spend · no cap
-╭─ allow? · edit  app/server.js ─────────── build ─╮ $0
-│ what    edit  app/server.js                      │▌Build                   $0
-│ risk    changes a file in your project · /undo pu│▌
-│ ⏎ allow   n deny                                 │▌──────────────────────────
-╰──────────────────────────────────────────────────╯▌──────────────────────────
- ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
- ╭────────────────────────────────────────────────╮
- │ Build  › type to queue the next message, / fo… │▌
- ╰────────────────────────────────────────────────╯▌
-  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  ⏎  allow   n  deny   tab  hat   ⇧tab  mode               focus · conversation
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
+  New session                                    ● Waiting for you · asks first
+  0.2.0-patch
+
+         ●  dusty  now implement step one                                 ↑ 2
+  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
+         ┆  now implement step one
+         ┆
+         ├─ read   crates/ryter-tui/src/run/mod.rs
+         ┆
+         ◆  grok-4.6
+         ┆  Reading the loop now. The event loop drains
+         ┆  ◲ writing · 0:12 · 59 tokens
+   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
+     allow? · edit  app/server.js                                     build
+     what    edit  app/server.js
+     risk    changes a file in your project · /undo puts it back
+   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ Build  › type to queue the next message, / for commands                  │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+
+ ⏎ allow  n deny  tab hat  ⇧tab mode  / commands  f2 instruments  Build · $?.??

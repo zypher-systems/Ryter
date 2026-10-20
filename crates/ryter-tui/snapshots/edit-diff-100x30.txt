@@ -1,30 +1,30 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                     New session                 ● Done · asks first Activity
- ⎇ 0.2.0-patch             0.2.0-patch                                     grok-4.6
-                                                                           Done
- Hats                             ●  dusty  trim the query           ↑ 6
- ● Plan     $0  read only  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥  ────────────────────────
- ┃ Build   $0  asks first         │        => {                            Context
- ── Specialists                   │    5 -   const q = req.query.q         █▏
- ● Audit   $0  checkpoint         │    5 +   const q = (req.query.q || ''  12k of 256k           5%
- ● Scribe   $0  docs only         │        ).trim()
-                                  │    6 +   if (!q) return res.json([])   ────────────────────────
-                                  │    7     res.json(find(q))             Spend · no cap
-                                  │    8   })                              $0
-                                  ├─ write  test/search.…   new · 6 lines  Build                 $0
-                                  │    1 + import { test } from 'node:tes
-                                  │        t'                              ────────────────────────
-                                  │    2 + import assert from 'node:asser  ────────────────────────
-                                  │        t'
-                                  │    3 +
-                                  │    4 + test('an empty query finds not
-                                  │        hing', async () => {
-                                  │    5 +   assert.deepEqual(await searc
-                                  │        h(''), [])
-                                  │    6 + })
-                                  └─ ✓ 2 tools · 2 files (1 new, 1 chang…
-                           ╭────────────────────────────────────────────╮
-                           │ Build  › what should change?               │▌
-                           ╰────────────────────────────────────────────╯▌
-                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views                         focus · conversation
+
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
+
+  New session                                       ● Done · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                           ┊
+                                                                        ┊ HATS
+         ●  dusty  trim the query                                 ↑ 2   ┊ ● Plan   grok-4.6     $0
+  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥  ┊ ┃ Build               $0
+         ┆                                                              ┊   grok-4.6
+         ├─ edit   app/server.js                                 +2 −1  ┊   asks first
+         ┆    3                                                         ┊ ● Audit  grok-4.6     $0
+         ┆    4   app.get('/search', (req, res) => {                    ┊ ● Scribe follows al…  $0
+         ┆    5 -   const q = req.query.q                               ┊
+         ┆    5 +   const q = (req.query.q || '').trim()                ┊
+         ┆    6 +   if (!q) return res.json([])                         ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ┆    7     res.json(find(q))                                   ┊ Context
+         ┆    8   })                                                    ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+         ├─ write  test/search.test.js                   new · 6 lines  ┊ 12k of 256k           5%
+         ┆    1 + import { test } from 'node:test'                      ┊
+         ┆    2 + import assert from 'node:assert'                      ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ┆    3 +                                                       ┊ Spend · no cap
+         ┆    4 + test('an empty query finds nothing', async () => {    ┊ $0
+         ┆    5 +   assert.deepEqual(await search(''), [])              ┊ Build  ╌╌╌╌╌╌╌╌       $0
+         ┆    6 + })                                                    ┊
+         ╰─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s        ┊
+  ╭──────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › what should change?                                     │  ┊
+  ╰──────────────────────────────────────────────────────────────────╯  ┊
+                                                                        ┊
+ tab hat  ⇧tab mode  / commands  alt 1–3 views  f2 instruments  f6 f7 panes    focus · conversation

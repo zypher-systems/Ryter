@@ -1,30 +1,30 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                     New session                 ● Idle · asks first Activity
- ⎇ 0.2.0-patch             0.2.0-patch                                     grok-4.6
-                                                                           Idle
- Hats                             ·  welcome · /help for keys
- ● Plan     $0  read only                                                  ────────────────────────
- ┃ Build   $0  asks first ╭─ skills & commands ── 0 skills · 0 commands ─╮ Context
- ── Specialists           │›+ new skill  SKILL.md with a body the model… │▌█▏
- ● Audit   $0  checkpoint │ + new command  template with $ARGUMENTS      │▌12k of 256k           5%
- ● Scribe   $0  docs only │                                              │▌
-                          │                                              │▌────────────────────────
-                          │                                              │▌Spend · no cap
-                          │                                              │▌$0
-                          │                                              │▌Build                 $0
-                          │                                              │▌
-                          │ enter run   e edit in $EDITOR   d remove     │▌────────────────────────
-                          ╰──────────────────────────────────────────────╯▌────────────────────────
-                           ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-
-
-
-
-
-                           ╭────────────────────────────────────────────╮
-                           │ Build  › what should change?               │▌
-                           ╰────────────────────────────────────────────╯▌
-                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views                         focus · conversation
+  New session                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                           ┊
+                                                                        ┊ HATS
+         ·  welcome · /help for keys                                    ┊ ● Plan   grok-4.6     $0
+ ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ ┊ ┃ Build               $0
+   skills & commands                            0 skills · 0 commands   ┊   grok-4.6
+  ›+ new skill  SKILL.md with a body the model reads                    ┊   asks first
+   + new command  template with $ARGUMENTS                              ┊ ● Audit  grok-4.6     $0
+                                                                        ┊ ● Scribe follows al…  $0
+                                                                        ┊
+                                                                        ┊
+                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                        ┊ Context
+                                                                        ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+   enter run   e edit in $EDITOR   d remove   esc                       ┊ 12k of 256k           5%
+ ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘ ┊
+                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                        ┊ Spend · no cap
+                                                                        ┊ $0
+                                                                        ┊ Build  ╌╌╌╌╌╌╌╌       $0
+                                                                        ┊
+                                                                        ┊
+  ╭──────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › what should change?                                     │  ┊
+  ╰──────────────────────────────────────────────────────────────────╯  ┊
+                                                                        ┊
+ tab hat  ⇧tab mode  / commands  alt 1–3 views  f2 instruments  f6 f7 panes    focus · conversation

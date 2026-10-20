@@ -5,6 +5,11 @@ use crate::view::View;
 
 /// Braille spinner frames at 80 ms (`R-ACT-03`).
 pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+/// The square that turns beside a running turn's status row, a quadrant
+/// at a time, every 120 ms.
+pub const SQUARE: [&str; 4] = ["◰", "◳", "◲", "◱"];
+/// Milliseconds a quadrant holds.
+pub const SQUARE_MS: u64 = 120;
 
 /// Per-turn reasoning cap (`R-ACT-12`).
 pub const REASONING_CAP: usize = 64 * 1024;

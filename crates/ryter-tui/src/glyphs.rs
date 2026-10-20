@@ -19,13 +19,56 @@ pub fn hat_label(hat: Role) -> String {
     }
 }
 
-/// A solid chip: padded text on a fill, no half-block caps.
-pub fn filled(text: &str, fg: Color, bg: Color) -> Span<'static> {
-    Span::styled(
+/// A pill: the padded text on a fill, with round caps when `round`. The
+/// caps are the Powerline half-circles, the one smooth curve a cell grid
+/// has; plain Unicode has no glyph that rounds a cell, so without them
+/// the chip is square. `under` is the colour behind the caps.
+pub fn pill(text: &str, fg: Color, fill: Color, under: Color, round: bool) -> Vec<Span<'static>> {
+    let body = Span::styled(
         format!(" {text} "),
-        Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(fg)
+            .bg(fill)
+            .add_modifier(Modifier::BOLD),
+    );
+    if !round {
+        return vec![body];
+    }
+    let cap = Style::default().fg(fill).bg(under);
+    vec![
+        Span::styled("\u{e0b6}", cap),
+        body,
+        Span::styled("\u{e0b4}", cap),
+    ]
+}
+
+/// Whether the terminal this run is in draws the Powerline glyphs itself,
+/// whatever its font: kitty, WezTerm, Ghostty, iTerm2 and Windows
+/// Terminal do. `env` is the environment, so a test can hand one in.
+pub fn caps_terminal(env: impl Fn(&str) -> Option<String>) -> bool {
+    if [
+        "KITTY_WINDOW_ID",
+        "WEZTERM_EXECUTABLE",
+        "GHOSTTY_RESOURCES_DIR",
+        "WT_SESSION",
+    ]
+    .iter()
+    .any(|k| env(k).is_some_and(|v| !v.is_empty()))
+    {
+        return true;
+    }
+    matches!(
+        env("TERM_PROGRAM").as_deref(),
+        Some("WezTerm" | "ghostty" | "iTerm.app" | "kitty")
     )
 }
+
+/// The hairline between regions: dotted, so the screen is not ruled.
+pub const HAIRLINE_V: &str = "┊";
+/// Its horizontal twin.
+pub const HAIRLINE_H: &str = "┈";
+/// The turn's spine down the conversation's gutter.
+pub const SPINE: &str = "┆";
 
 /// A mark that has a plain-Unicode form and a Nerd Font form.
 #[derive(Clone, Copy)]
@@ -94,5 +137,36 @@ mod tests {
         assert!(!mark(Mark::File, true).is_empty());
         assert_eq!(hat_icon(Role::Build, false), "●");
         assert_ne!(hat_icon(Role::Plan, true), hat_icon(Role::Audit, true));
+    }
+
+    #[test]
+    fn the_pill_takes_caps_only_when_asked() {
+        let round = pill("Plan", Color::Black, Color::Blue, Color::Reset, true);
+        assert_eq!(round.len(), 3);
+        assert_eq!(round[0].content, "\u{e0b6}");
+        assert_eq!(round[2].content, "\u{e0b4}");
+        assert_eq!(
+            pill("Plan", Color::Black, Color::Blue, Color::Reset, false).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_terminal_is_told_by_its_own_variables() {
+        let none = |_: &str| None;
+        assert!(!caps_terminal(none));
+        assert!(caps_terminal(
+            |k| (k == "KITTY_WINDOW_ID").then(|| "1".into())
+        ));
+        assert!(caps_terminal(|k| (k == "WT_SESSION").then(|| "x".into())));
+        assert!(caps_terminal(
+            |k| (k == "TERM_PROGRAM").then(|| "ghostty".into())
+        ));
+        assert!(!caps_terminal(
+            |k| (k == "TERM_PROGRAM").then(|| "Apple_Terminal".into())
+        ));
+        assert!(!caps_terminal(
+            |k| (k == "KITTY_WINDOW_ID").then(String::new)
+        ));
     }
 }

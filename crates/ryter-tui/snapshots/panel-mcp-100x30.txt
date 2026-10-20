@@ -1,30 +1,30 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                     New session                 ● Idle · asks first Activity
- ⎇ 0.2.0-patch             0.2.0-patch                                     grok-4.6
-                                                                           Idle
- Hats                             ·  welcome · /help for keys
- ● Plan     $0  read only ╭─ mcp ─────────────────────────────── 0/0 up ─╮ ────────────────────────
- ┃ Build   $0  asks first │›○ inbound  let oth…enabled · restart to bind │▌Context
- ── Specialists           │                                              │▌█▏
- ● Audit   $0  checkpoint │ outbound servers                             │▌12k of 256k           5%
- ● Scribe   $0  docs only │   none configured                            │▌
-                          │ + add server  stdio command → ~/.ryter/mcp.… │▌────────────────────────
-                          │                                              │▌Spend · no cap
-                          │                                              │▌$0
-                          │                                              │▌Build                 $0
-                          │                                              │▌
-                          │                                              │▌────────────────────────
-                          │                                              │▌────────────────────────
-                          │                                              │▌
-                          │ enter open/toggle   r reconnect   d remove   │▌
-                          ╰──────────────────────────────────────────────╯▌
-                           ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-
-
-                           ╭────────────────────────────────────────────╮
-                           │ Build  › what should change?               │▌
-                           ╰────────────────────────────────────────────╯▌
-                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views                         focus · conversation
+  New session                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                           ┊
+                                                                        ┊ HATS
+ ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ ┊ ● Plan   grok-4.6     $0
+   mcp                                                         0/0 up   ┊ ┃ Build               $0
+  ›○ inbound  let other agents drive this s…enabled · restart to bind   ┊   grok-4.6
+                                                                        ┊   asks first
+   outbound servers                                                     ┊ ● Audit  grok-4.6     $0
+     none configured                                                    ┊ ● Scribe follows al…  $0
+   + add server  stdio command → ~/.ryter/mcp.toml                      ┊
+                                                                        ┊
+                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                        ┊ Context
+                                                                        ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                                                                        ┊ 12k of 256k           5%
+                                                                        ┊
+                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+   enter open/toggle   r reconnect   d remove   esc                     ┊ Spend · no cap
+ ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘ ┊ $0
+                                                                        ┊ Build  ╌╌╌╌╌╌╌╌       $0
+                                                                        ┊
+                                                                        ┊
+  ╭──────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › what should change?                                     │  ┊
+  ╰──────────────────────────────────────────────────────────────────╯  ┊
+                                                                        ┊
+ tab hat  ⇧tab mode  / commands  alt 1–3 views  f2 instruments  f6 f7 panes    focus · conversation

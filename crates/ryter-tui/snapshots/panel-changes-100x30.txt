@@ -1,30 +1,30 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                     New session                 ● Idle · asks first Activity
- ⎇ 0.2.0-patch             0.2.0-patch                                     grok-4.6
-                                                                           Idle
- Hats                             ·  welcome · /help for keys
- ● Plan     $0  read only                                                  ────────────────────────
- ┃ Build   $0  asks first                                                  Context
- ── Specialists           ╭─ changes ────────────────────────────────────╮ █▏
- ● Audit   $0  checkpoint │  uncommitted   last turn                     │▌12k of 256k           5%
- ● Scribe   $0  docs only │                                              │▌
-                          │ not a git repository                         │▌────────────────────────
-                          │                                              │▌Spend · no cap
-                          │                                              │▌$0
-                          │ ↑↓ file   pgup/pgdn diff   tab scope   esc   │▌Build                 $0
-                          ╰──────────────────────────────────────────────╯▌
-                           ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀────────────────────────
-                                                                           ────────────────────────
 
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-
-
-
-
-
-
-                           ╭────────────────────────────────────────────╮
-                           │ Build  › what should change?               │▌
-                           ╰────────────────────────────────────────────╯▌
-                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views                         focus · conversation
+  New session                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                           ┊
+                                                                        ┊ HATS
+         ·  welcome · /help for keys                                    ┊ ● Plan   grok-4.6     $0
+                                                                        ┊ ┃ Build               $0
+ ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ ┊   grok-4.6
+   changes                                                              ┊   asks first
+    uncommitted   last turn                                             ┊ ● Audit  grok-4.6     $0
+                                                                        ┊ ● Scribe follows al…  $0
+   not a git repository                                                 ┊
+                                                                        ┊
+                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+   ↑↓ file   pgup/pgdn diff   tab scope   x undo file   c commit        ┊ Context
+ ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘ ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                                                                        ┊ 12k of 256k           5%
+                                                                        ┊
+                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                        ┊ Spend · no cap
+                                                                        ┊ $0
+                                                                        ┊ Build  ╌╌╌╌╌╌╌╌       $0
+                                                                        ┊
+                                                                        ┊
+  ╭──────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › what should change?                                     │  ┊
+  ╰──────────────────────────────────────────────────────────────────╯  ┊
+                                                                        ┊
+ tab hat  ⇧tab mode  / commands  alt 1–3 views  f2 instruments  f6 f7 panes    focus · conversation

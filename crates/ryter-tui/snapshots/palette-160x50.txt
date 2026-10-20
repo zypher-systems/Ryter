@@ -1,50 +1,50 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                               New session                                                         ● Idle · asks first Activity
- ⎇ 0.2.0-patch                       0.2.0-patch                                                                             grok-4.6
-                                                                                                                             Idle
- Hats                                       ·  welcome · /help for keys
- ● Plan                          $0             ╭ commands ─────────────────────────────────────────── 4 of 31 ╮             ──────────────────────────────────
-   grok-4.6                                     │ mo                                                           │▌            Context
-   read only                                    │›/models         Choose models: one for every hat, or one… ▸  │▌            █▏
- ┃ Build                         $0             │ /permissions    Durable allow/ask/deny bash rules from t… ▸  │▌            12k of 256k                     5%
-   grok-4.6                                     │ /tools          Tool permission mode for this session     ▸  │▌
-   asks first                                   │  ↑↓  move   enter  run   esc  close                          │▌            ──────────────────────────────────
- ── Specialists                                 ╰──────────────────────────────────────────────────────────────╯▌            Spend · no cap
- ● Audit                         $0              ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀            $0
-   grok-4.6                                                                                                                  Build                           $0
-   checkpoint
- ● Scribe                        $0                                                                                          ──────────────────────────────────
-   follows all hats                                                                                                          ──────────────────────────────────
-   docs only
+
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                                     ╭────────────────────────────────────────────────────────────────────────────────────╮
-                                     │ Build  › /mo█                                                                      │▌
-                                     ╰────────────────────────────────────────────────────────────────────────────────────╯▌
-                                      ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  ↑↓  move   enter  run   esc  close                                                                                                       focus · conversation
+    New session                                                                                 ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+    0.2.0-patch                                                                                                     ┊
+                                                                                                                    ┊ HATS
+           ·  welcome · /help for keys                                                                              ┊ ● Plan   grok-4.6                     $0
+                     ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖                   ┊ ┃ Build                               $0
+                       Commands                                                         4 of 31                     ┊   grok-4.6
+                       mo                                                                                           ┊   asks first
+      What are we bui ›/models         Choose models: one for every hat, or one each for pl… ▸                      ┊ ● Audit  grok-4.6                     $0
+                       /permissions    Durable allow/ask/deny bash rules from the TUI        ▸                      ┊ ● Scribe follows all hats             $0
+      Describe a chan  /tools          Tool permission mode for this session                 ▸                      ┊
+      left off.        ↑↓ move  enter run  esc close                                                                ┊
+                     ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘                   ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+      / commands    Alt+3 resume a session                                                                          ┊ Context
+                                                                                                                    ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+                                                                                                                    ┊  ⢰⠋      ⠙⡆ 12k
+                                                                                                                    ┊  ⢸   5%   ⡧ of 256k
+                                                                                                                    ┊  ⠸⣄      ⣠⠇
+                                                                                                                    ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+                                                                                                                    ┊
+                                                                                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                                                                    ┊ Spend · no cap
+                                                                                                                    ┊ $0
+                                                                                                                    ┊ Build  ╌╌╌╌╌╌╌╌                       $0
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+    ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ┊
+    │ Build  › /mo█                                                                                              │  ┊
+    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ┊
+                                                                                                                    ┊
+ ↑↓ move  enter run  esc close                                                                                                             focus · conversation

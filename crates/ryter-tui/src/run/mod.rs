@@ -475,6 +475,10 @@ fn populate_view(
     opts: &TuiOpts,
 ) {
     view.ui = cfg.ui.clone();
+    // The terminal is asked once, here, whether it has the round caps;
+    // the file's `auto` stays `auto`, so a save keeps it, and the drawing
+    // never asks the environment, so a frame is the same anywhere.
+    view.caps_terminal = crate::glyphs::caps_terminal(|k| std::env::var(k).ok());
     // `[ui] panel`: the instruments beside the conversation. ^b and F2
     // show and hide them.
     view.panel_visible = cfg.ui.panel;
@@ -644,6 +648,7 @@ fn loop_ui(
 ) -> ryter_core::Result<()> {
     let epoch = Instant::now();
     let mut last_draw = epoch.checked_sub(FRAME).unwrap_or(epoch);
+    let mut motion = crate::motion::Motion::default();
     let mut hit = Hit::default();
     let mut dirty = true;
     let mut paint_now = false;
@@ -713,6 +718,7 @@ fn loop_ui(
 
         let now = Instant::now();
         let animating = view.busy
+            || motion.active()
             || view.quit_armed_until.is_some()
             || view.flash.is_some()
             || view.selection.as_ref().is_some_and(|s| s.pull != 0);
@@ -738,8 +744,12 @@ fn loop_ui(
             view.tick(now.duration_since(epoch).as_millis() as u64);
             let theme = cx.theme;
             let mut painted = Hit::default();
+            let now_ms = now.duration_since(epoch).as_millis() as u64;
             let drawn = terminal
-                .draw(|f| painted = draw(f, view, theme))
+                .draw(|f| {
+                    painted = draw(f, view, theme);
+                    motion.render(f, &painted, view, theme, now_ms);
+                })
                 .map_err(io_err)?;
             // A selection reads its text from what was on the screen.
             if cx.mouse_grabbed {
@@ -845,6 +855,9 @@ pub(crate) fn mouse_handle(view: &mut View, m: MouseEvent) -> Action {
         chat: Rect::default(),
         chat_text: Rect::default(),
         covers: Vec::new(),
+        welcome: None,
+        chip: None,
+        hat_row: None,
         activity: Rect::default(),
         composer: Rect::default(),
         clicks: Vec::new(),

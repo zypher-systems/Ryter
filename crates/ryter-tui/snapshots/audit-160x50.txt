@@ -1,50 +1,50 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                               New session                                                         ● Done · asks first Activity
- ⎇ 0.2.0-patch                       0.2.0-patch                                                                             grok-4.6
-                                                                                                                             Done
- Hats                                       ·  welcome · /help for keys
- ● Plan                          $0                                                                                          ──────────────────────────────────
-   grok-4.6                                 ●  dusty                                                                         Context
-   read only                                │  trim the query                                                                █▏
- ┃ Build                         $0         │                                                                                12k of 256k                     5%
-   grok-4.6                                 ├─ edit   app/server.js                                                   +2 −1
-   asks first                               │    3                                                                           ──────────────────────────────────
- ── Specialists                             │    4   app.get('/search', (req, res) => {                                      Spend · no cap
- ● Audit ✗                       $0         │    5 -   const q = req.query.q                                                 $0
-   claude-opus-5.5           1 turn         │    5 +   const q = (req.query.q || '').trim()                                  Build                           $0
-   checkpoint                               │    6 +   if (!q) return res.json([])
- ● Scribe                        $0         │    7     res.json(find(q))                                                     ──────────────────────────────────
-   follows all hats                         │    8   })                                                                      ──────────────────────────────────
-   docs only                                ├─ write  test/search.test.js                                     new · 6 lines
-                                            │    1 + import { test } from 'node:test'
- Turns ●                                    │    2 + import assert from 'node:assert'
-                                            │    3 +
-                                            │    4 + test('an empty query finds nothing', async () => {
-                                            │    5 +   assert.deepEqual(await search(''), [])
-                                            │    6 + })
-                                            └─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s
-                                            │
-                                            ·  switched to the audit hat (claude-opus-5.5) · Tab to change it again
-                                            │
-                                            ◆  claude-opus-5.5
-                                            │  • blocking  app/server.js:6 : an empty query returns early, but  find
-                                            │    still runs on  undefined  when  q  is missing.
-                                            │  • note: the test covers  ""  only.
-                                            │
-                                            │  VERDICT: FAIL
-                                            │
-                                            ·  audit · claude-opus-5.5 · ✗ failed, unfiled · $0.040
-                                            └─ ✓ answered · 3.0s
-                                            │
-                                            ·  switched to the build hat · Tab to change it again
+
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-
-
-
-
-                                     ╭────────────────────────────────────────────────────────────────────────────────────╮
-                                     │ Build  › what should change?                                                       │▌
-                                     ╰────────────────────────────────────────────────────────────────────────────────────╯▌
-                                      ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views   f2  instruments   f6 f7  panes                                                    focus · conversation
+    New session                                                                                 ● Done · asks first ┊ ryter  ⎇ 0.2.0-patch
+    0.2.0-patch                                                                                                     ┊
+                                                                                                                    ┊ HATS
+           ·  welcome · /help for keys                                                                              ┊ ● Plan   grok-4.6                     $0
+                                                                                                                    ┊ ┃ Build                               $0
+           ●  dusty                                                                                                 ┊   grok-4.6
+           ┆  trim the query                                                                                        ┊   asks first
+           ┆                                                                                                        ┊ ● Audit  claude-opus-5.5              $0
+           ├─ edit   app/server.js                                                                           +2 −1  ┊ ● Scribe follows all hats             $0
+           ┆    3                                                                                                   ┊
+           ┆    4   app.get('/search', (req, res) => {                                                              ┊ Turns ●○○○○○○○
+           ┆    5 -   const q = req.query.q                                                                         ┊
+           ┆    5 +   const q = (req.query.q || '').trim()                                                          ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+           ┆    6 +   if (!q) return res.json([])                                                                   ┊ Context
+           ┆    7     res.json(find(q))                                                                             ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+           ┆    8   })                                                                                              ┊  ⢰⠋      ⠙⡆ 12k
+           ├─ write  test/search.test.js                                                             new · 6 lines  ┊  ⢸   5%   ⡧ of 256k
+           ┆    1 + import { test } from 'node:test'                                                                ┊  ⠸⣄      ⣠⠇
+           ┆    2 + import assert from 'node:assert'                                                                ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+           ┆    3 +                                                                                                 ┊
+           ┆    4 + test('an empty query finds nothing', async () => {                                              ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+           ┆    5 +   assert.deepEqual(await search(''), [])                                                        ┊ Spend · no cap
+           ┆    6 + })                                                                                              ┊ $0
+           ╰─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s                                                  ┊ Build  ╌╌╌╌╌╌╌╌                       $0
+           ┆                                                                                                        ┊
+           ·  switched to the audit hat (claude-opus-5.5) · Tab to change it again                                  ┊
+           ┆                                                                                                        ┊
+           ◆  claude-opus-5.5                                                                                       ┊
+           ┆  • blocking  app/server.js:6 : an empty query returns early, but  find  still runs on  undefined       ┊
+           ┆    when  q  is missing.                                                                                ┊
+           ┆  • note: the test covers  ""  only.                                                                    ┊
+           ┆                                                                                                        ┊
+           ┆  VERDICT: FAIL                                                                                         ┊
+           ┆                                                                                                        ┊
+           ·  audit · claude-opus-5.5 · ✗ failed, unfiled · $0.040                                                  ┊
+           ╰─ ✓ answered · 3.0s                                                                                     ┊
+           ┆                                                                                                        ┊
+           ·  switched to the build hat · Tab to change it again                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+    ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ┊
+    │ Build  › what should change?                                                                               │  ┊
+    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ┊
+                                                                                                                    ┊
+ tab hat  ⇧tab mode  / commands  alt 1–3 views  f2 instruments  f6 f7 panes                                                                focus · conversation

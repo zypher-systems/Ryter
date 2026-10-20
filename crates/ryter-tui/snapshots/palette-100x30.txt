@@ -1,30 +1,30 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                     New session                 ● Idle · asks first Activity
- ⎇ 0.2.0-patch             0.2.0-patch                                     grok-4.6
-                           ╭ commands ───────────────────────── 4 of 31 ╮  Idle
- Hats                      │ mo                                         │▌
- ● Plan     $0  read only  │›/models         Choose models: one for… ▸  │▌ ────────────────────────
- ┃ Build   $0  asks first  │ /permissions    Durable allow/ask/deny… ▸  │▌ Context
- ── Specialists            │ /tools          Tool permission mode f… ▸  │▌ █▏
- ● Audit   $0  checkpoint  │  ↑↓  move   enter  run   esc  close        │▌ 12k of 256k           5%
- ● Scribe   $0  docs only  ╰────────────────────────────────────────────╯▌
-                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ ────────────────────────
-                                                                           Spend · no cap
-                                                                           $0
-                                                                           Build                 $0
 
-                                                                           ────────────────────────
-                                                                           ────────────────────────
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-
-
-
-
-
-
-
-                           ╭────────────────────────────────────────────╮
-                           │ Build  › /mo█                              │▌
-                           ╰────────────────────────────────────────────╯▌
-                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  ↑↓  move   enter  run   esc  close                                           focus · conversation
+  New session                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                           ┊
+   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊ HATS
+     Commands                                               4 of 31     ┊ ● Plan   grok-4.6     $0
+     mo                                                                 ┊ ┃ Build               $0
+    ›/models         Choose models: one for every hat, or one e… ▸      ┊   grok-4.6
+     /permissions    Durable allow/ask/deny bash rules from the… ▸      ┊   asks first
+     /tools          Tool permission mode for this session       ▸      ┊ ● Audit  grok-4.6     $0
+     ↑↓ move  enter run  esc close                                      ┊ ● Scribe follows al…  $0
+   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
+                                                                        ┊
+    / commands    Alt+3 resume a session                                ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                        ┊ Context
+                                                                        ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                                                                        ┊ 12k of 256k           5%
+                                                                        ┊
+                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                        ┊ Spend · no cap
+                                                                        ┊ $0
+                                                                        ┊ Build  ╌╌╌╌╌╌╌╌       $0
+                                                                        ┊
+                                                                        ┊
+  ╭──────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › /mo█                                                    │  ┊
+  ╰──────────────────────────────────────────────────────────────────╯  ┊
+                                                                        ┊
+ ↑↓ move  enter run  esc close                                                 focus · conversation

@@ -1,40 +1,40 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                           New session                ● Waiting for you · asks first Activity
- ⎇ 0.2.0-patch                   0.2.0-patch                                               grok-4.6
-                                                                                           Writing
- Hats                                   ·  welcome · /help for keys                        Reading the loop now. The …
- ● Plan                      $0         ●  summarise the plan               ✓ answered  ▸
-   grok-4.6                                                                                ────────────────────────────
-   read only                            ●  dusty                                           Context
- ┃ Build                     $0         │  now implement step one                          █▏
-   grok-4.6                             │                                                  12k of 256k               5%
-   asks first                           ├─ read   crates/ryter-tui/src/run/mod.rs
- ── Specialists                         │                                                  ────────────────────────────
- ● Audit                     $0         ◆  grok-4.6                                        Spend · no cap
-   grok-4.6                             │  Reading the loop now. The event loop drains     $0
-   checkpoint                           │  ⠼ writing · 0:12                                Build                     $0
- ● Scribe                    $0
-   follows all hats                                                                        ────────────────────────────
-   docs only                                                                               ────────────────────────────
+
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-
-
-
-
-
-
-
-
-                                ╭─ allow? · run  rm -rf target/ && cargo build --rel…   ─╮
-                                │ what    run  rm -rf target/ && cargo build --release   │▌
-                                │ risk    runs a command that can change things · /undo c│▌
-                                │   rm -rf target/ && cargo build --release              │▌
-                                │ ⏎ allow   n deny   r add rule                          │▌
-                                ╰────────────────────────────────────────────────────────╯▌
-                                 ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-                                 ╭──────────────────────────────────────────────────────╮
-                                 │ Build  › type to queue the next message, / for comm… │▌
-                                 ╰──────────────────────────────────────────────────────╯▌
-                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  ⏎  allow   n  deny   r  add rule   tab  hat   ⇧tab  mode   /  commands                           focus · conversation
+  New session                                            ● Waiting for you · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                                           ┊
+                                                                                        ┊ HATS
+         ·  welcome · /help for keys                                                    ┊ ● Plan   grok-4.6         $0
+         ●  summarise the plan                                           ✓ answered  ▸  ┊ ┃ Build                   $0
+                                                                                        ┊   grok-4.6
+         ●  dusty                                                                       ┊   asks first
+         ┆  now implement step one                                                      ┊ ● Audit  grok-4.6         $0
+         ┆                                                                              ┊ ● Scribe follows all ha…  $0
+         ├─ read   crates/ryter-tui/src/run/mod.rs                                      ┊
+         ┆                                                                              ┊
+         ◆  grok-4.6                                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ┆  Reading the loop now. The event loop drains                                 ┊ Context
+         ┆  ◲ writing · 0:12 · 59 tokens                                                ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+                                                                                        ┊  ⢰⠋      ⠙⡆ 12k
+                                                                                        ┊  ⢸   5%   ⡧ of 256k
+                                                                                        ┊  ⠸⣄      ⣠⠇
+                                                                                        ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+                                                                                        ┊
+                                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                                        ┊ Spend · no cap
+                                                                                        ┊ $0
+                                                                                        ┊ Build  ╌╌╌╌╌╌╌╌           $0
+   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊
+     allow? · run  rm -rf target/ && cargo build --release                    build     ┊
+     what    run  rm -rf target/ && cargo build --release                               ┊
+     risk    runs a command that can change things · /undo covers files in the proje    ┊
+       rm -rf target/ && cargo build --release                                          ┊
+     ⏎ allow   n deny   r add rule                                                      ┊
+   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
+                                                                                        ┊
+  ╭──────────────────────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › type to queue the next message, / for commands                          │  ┊
+  ╰──────────────────────────────────────────────────────────────────────────────────╯  ┊
+                                                                                        ┊
+ ⏎ allow  n deny  r add rule  tab hat  ⇧tab mode  / commands  f2 instruments  f6 f7 panes          focus · conversation

@@ -400,7 +400,14 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
 
 /// Panel rectangle (`R-POP-01`, `R-POP-02`). `body` is the area above the
 /// composer; `full` is the whole terminal.
-pub fn rect(full: Rect, body: Rect, pref_w: u16, content_rows: u16, modal: bool) -> Rect {
+pub fn rect(
+    full: Rect,
+    body: Rect,
+    pref_w: u16,
+    content_rows: u16,
+    modal: bool,
+    theme: Theme,
+) -> Rect {
     if full.width < 60 || full.height < 20 {
         return body;
     }
@@ -415,7 +422,7 @@ pub fn rect(full: Rect, body: Rect, pref_w: u16, content_rows: u16, modal: bool)
     // clipped the first thing a new user reads; two rows of breathing room
     // above and below is enough to still read as floating.
     let max_h = body.height.saturating_sub(2).max(8);
-    let h = (content_rows + 2).clamp(8, max_h);
+    let h = (content_rows + chrome::frame_rows(theme)).clamp(8, max_h);
     let x = body.x + body.width.saturating_sub(w) / 2;
     let y = body.y + body.height.saturating_sub(h) / if modal { 4 } else { 3 };
     Rect {
@@ -533,7 +540,7 @@ pub fn inset(column: Rect) -> Rect {
 /// the chat is laid out above it rather than painted over: its content
 /// plus the frame, never more than a third of the column's height, and
 /// nothing when the top panel is not a docked question.
-pub fn prompt_height(view: &View, column_h: u16) -> u16 {
+pub fn prompt_height(view: &View, column_h: u16, theme: Theme) -> u16 {
     let Some(p) = view
         .panels
         .top()
@@ -545,15 +552,15 @@ pub fn prompt_height(view: &View, column_h: u16) -> u16 {
     let extra = u16::from(!p.legend(view).is_empty() && !p.keys_in_body())
         + u16::from(p.inline_input() && p.input(view).is_some() && p.input_indent(pw) == 0);
     let cap = (column_h / 3).max(6);
-    (rows + extra + 2)
+    (rows + extra + chrome::frame_rows(theme))
         .clamp(6, cap)
         .min(column_h.saturating_sub(4).max(3))
 }
 
 /// Where a docked panel sits: the bottom of `dock`, its full width.
-fn docked_rect(dock: Rect, content_rows: u16) -> Rect {
+fn docked_rect(dock: Rect, content_rows: u16, theme: Theme) -> Rect {
     let max_h = dock.height.saturating_sub(2).max(6);
-    let h = (content_rows + 2).clamp(6, max_h);
+    let h = (content_rows + chrome::frame_rows(theme)).clamp(6, max_h);
     Rect {
         x: dock.x,
         y: dock.y + dock.height.saturating_sub(h),
@@ -618,17 +625,18 @@ pub fn draw(
             match slot.filter(|s| focused && s.height >= 3) {
                 Some(s) => {
                     let mut card = inset(s);
-                    // Leave the slot's last row for the drop shadow, so it
-                    // does not land on the composer's top edge.
+                    // The slot's last row stays clear: a line box casts its
+                    // shadow there, a slab keeps it between its foot and
+                    // the composer's edge.
                     card.height = card.height.saturating_sub(1).max(3);
                     card
                 }
-                None => inset(docked_rect(dock, rows + extra)),
+                None => inset(docked_rect(dock, rows + extra, theme)),
             }
         } else if p.docked() {
-            docked_rect(dock, rows + extra)
+            docked_rect(dock, rows + extra, theme)
         } else {
-            rect(full, body, pw, rows + extra, modal.is_some())
+            rect(full, body, pw, rows + extra, modal.is_some(), theme)
         };
         // Whatever a panel asks for, nothing is drawn off the screen.
         let area = area.intersection(full);
@@ -654,7 +662,11 @@ pub fn draw(
             ratatui::widgets::Block::default().style(Style::default().bg(theme.bg)),
             band,
         );
-        drop_shadow(frame, area, theme);
+        // A slab lifts itself; a line box casts a shadow.
+        if !chrome::slab(theme) {
+            drop_shadow(frame, area, theme);
+        }
+        view.covers.borrow_mut().push(area);
         cursor = draw_one(frame, area, p.as_ref(), view, theme, focused);
     }
     cursor
