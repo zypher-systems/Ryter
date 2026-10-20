@@ -786,8 +786,8 @@ fn route_from_view(view: &View) -> config::LastRoute {
     }
 }
 
-fn apply_pricing(view: &mut View, cfg: &Config, model: &str) {
-    let mut book = PriceBook::from_config(cfg);
+fn apply_pricing(view: &mut View, cfg: &Config, home: &Path, model: &str) {
+    let mut book = PriceBook::load(cfg, home);
     // The picker showed a price from the provider's list; use it when the
     // built-in book has none, rather than saying "price unknown".
     if book.rates(model).is_none() {
@@ -797,6 +797,8 @@ fn apply_pricing(view: &mut View, cfg: &Config, model: &str) {
                 context_length: None,
                 input_per_million: Some(i),
                 output_per_million: Some(o),
+                cached_per_million: None,
+                cache_write_per_million: None,
                 connection: None,
                 created: None,
                 tools: None,
@@ -832,7 +834,7 @@ fn use_connection(view: &mut View, cx: &mut Ctx, name: &str) {
             view.model = model.clone();
             view.has_key = true;
             view.ctx_window = Some(ryter_core::window_for(&model));
-            apply_pricing(view, &cx.cfg, &model);
+            apply_pricing(view, &cx.cfg, &cx.home, &model);
             let _ = config::save_last_route(&cx.home, &route_from_view(view));
             view.system(format!("using {name} · {model}"));
             cx.send(Work::Reconnect {
@@ -874,7 +876,7 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
         Ok(key) => {
             view.model = model.clone();
             view.ctx_window = Some(ryter_core::window_for(&model));
-            apply_pricing(view, &cx.cfg, &model);
+            apply_pricing(view, &cx.cfg, &cx.home, &model);
             let _ = config::save_last_route(&cx.home, &route_from_view(view));
             // The model for all hats is every hat's: the ones that had
             // their own follow it again, and the line says which.
@@ -1314,11 +1316,12 @@ mod tests {
             "/tmp".into(),
         );
         let cfg = Config::default();
-        apply_pricing(&mut v, &cfg, "vendor/new-model");
+        let home = tempfile::tempdir().unwrap();
+        apply_pricing(&mut v, &cfg, home.path(), "vendor/new-model");
         assert_eq!(v.price_in, None, "unknown to the book and no catalog yet");
         v.catalog_rates
             .insert("vendor/new-model".into(), (0.15, 0.6));
-        apply_pricing(&mut v, &cfg, "vendor/new-model");
+        apply_pricing(&mut v, &cfg, home.path(), "vendor/new-model");
         assert_eq!(v.price_in, Some(0.15));
         assert_eq!(v.price_out, Some(0.6));
         assert!(!v.price_label.contains('?'), "{}", v.price_label);

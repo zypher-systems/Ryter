@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use std::path::Path;
 
 use crate::config::{Config, PriceOverride};
 
@@ -55,10 +55,13 @@ pub struct Rates {
     pub long_cached_per_million: Option<f64>,
     /// Long-context output.
     pub long_output_per_million: Option<f64>,
+    /// Long-context cache write. Falls back to long-context input if unset.
+    pub long_cache_write_per_million: Option<f64>,
 }
 
 impl Rates {
-    /// Catalog row with only the two rates the sidebar shows.
+    /// Catalog row with only the two rates the sidebar shows. A cache read
+    /// is billed as input: no discount is claimed that the row does not give.
     pub fn per_million(input: f64, output: f64) -> Self {
         Self {
             input_per_million: input,
@@ -69,17 +72,28 @@ impl Rates {
             long_input_per_million: None,
             long_cached_per_million: None,
             long_output_per_million: None,
+            long_cache_write_per_million: None,
         }
     }
 
-    fn effective(self, usage: Usage) -> (f64, f64, f64) {
+    /// Whether the row says what a cache read costs, as against assuming
+    /// the input rate.
+    pub fn knows_cache(self) -> bool {
+        self.cached_per_million != self.input_per_million || self.cache_write_per_million.is_some()
+    }
+
+    /// `(input, cached, write, output)` per million for this request.
+    fn effective(self, usage: Usage) -> (f64, f64, f64, f64) {
         let long = self.long_threshold.is_some_and(|t| usage.input_tokens >= t);
         if long {
+            let input = self
+                .long_input_per_million
+                .unwrap_or(self.input_per_million);
             (
-                self.long_input_per_million
-                    .unwrap_or(self.input_per_million),
+                input,
                 self.long_cached_per_million
                     .unwrap_or(self.cached_per_million),
+                self.long_cache_write_per_million.unwrap_or(input),
                 self.long_output_per_million
                     .unwrap_or(self.output_per_million),
             )
@@ -87,6 +101,8 @@ impl Rates {
             (
                 self.input_per_million,
                 self.cached_per_million,
+                self.cache_write_per_million
+                    .unwrap_or(self.input_per_million),
                 self.output_per_million,
             )
         }
@@ -95,8 +111,7 @@ impl Rates {
     /// USD for `usage`. `input_tokens` is the whole prompt: cache reads and
     /// writes are the parts of it billed at their own rates.
     pub fn cost(self, usage: Usage) -> f64 {
-        let (input, cached, output) = self.effective(usage);
-        let write = self.cache_write_per_million.unwrap_or(input);
+        let (input, cached, write, output) = self.effective(usage);
         let plain = usage
             .input_tokens
             .saturating_sub(usage.cached_tokens)
@@ -108,11 +123,26 @@ impl Rates {
     }
 }
 
-/// Looks up rates: TOML override → catalog (OpenRouter) → the shipped tables.
+/// Looks up rates: TOML override → the connection's own model list → the
+/// pulled catalog (`prices.json`, see [`crate::prices`]) → the shipped tables.
 #[derive(Debug, Clone, Default)]
 pub struct PriceBook {
     overrides: HashMap<String, Option<Rates>>,
     catalog: HashMap<String, Rates>,
+    pulled: HashMap<String, Rates>,
+}
+
+/// The provider a built-in connection kind is listed under in the pulled
+/// catalog. Other kinds take any provider's row for the exact id, when the
+/// providers that have one agree on it.
+pub fn catalog_provider(kind: &str) -> Option<&'static str> {
+    match kind {
+        "spacexsi" | "spacexai" => Some("xai"),
+        "anthropic" => Some("anthropic"),
+        "openai" => Some("openai"),
+        "openrouter" => Some("openrouter"),
+        _ => None,
+    }
 }
 
 impl PriceBook {
@@ -130,35 +160,65 @@ impl PriceBook {
         book
     }
 
-    /// Merge OpenRouter `GET /api/v1/models` (or a fixture) into the catalog.
-    pub fn ingest_openrouter_models(&mut self, json: &str) -> crate::Result<usize> {
-        let parsed: OpenRouterModels = serde_json::from_str(json)
-            .map_err(|e| crate::Error::Provider(format!("openrouter models: {e}")))?;
-        let mut n = 0;
-        for m in parsed.data {
-            let Some(pricing) = m.pricing else { continue };
-            let prompt = parse_per_token(pricing.prompt.as_deref())?;
-            let completion = parse_per_token(pricing.completion.as_deref())?;
-            let Some(input) = prompt else { continue };
-            let Some(output) = completion else { continue };
-            let read = parse_per_token(pricing.input_cache_read.as_deref())?.unwrap_or(input);
-            let write = parse_per_token(pricing.input_cache_write.as_deref())?;
-            self.catalog.insert(
-                m.id,
-                Rates {
-                    input_per_million: input * 1_000_000.0,
-                    cached_per_million: read * 1_000_000.0,
-                    output_per_million: output * 1_000_000.0,
-                    cache_write_per_million: write.map(|w| w * 1_000_000.0),
-                    long_threshold: None,
-                    long_input_per_million: None,
-                    long_cached_per_million: None,
-                    long_output_per_million: None,
-                },
-            );
-            n += 1;
+    /// The book for a run: the config's overrides plus the pulled catalog
+    /// under `home`, when one has been fetched.
+    pub fn load(cfg: &Config, home: &Path) -> Self {
+        let mut book = Self::from_config(cfg);
+        if let Ok(text) = std::fs::read_to_string(crate::prices::cache_path(home)) {
+            book.ingest_pulled(cfg, &text);
         }
-        Ok(n)
+        book
+    }
+
+    /// Merge a pulled catalog (the file [`crate::prices::refresh`] writes).
+    /// Each configured connection takes the rows of its provider; a kind
+    /// with no provider of its own takes a row any providers agree on.
+    /// Returns how many rows were taken.
+    pub fn ingest_pulled(&mut self, cfg: &Config, json: &str) -> usize {
+        let Ok(catalog) = serde_json::from_str::<crate::prices::Catalog>(json) else {
+            return 0;
+        };
+        let mut n = 0;
+        let kinds: Vec<&str> = cfg.connections.values().map(|c| c.kind.as_str()).collect();
+        let named: Vec<&str> = kinds.iter().filter_map(|k| catalog_provider(k)).collect();
+        let open = kinds.iter().any(|k| catalog_provider(k).is_none());
+        for provider in &named {
+            if let Some(models) = catalog.providers.get(*provider) {
+                for (id, row) in models {
+                    if let Some(rates) = row.rates() {
+                        self.pulled.insert(id.clone(), rates);
+                        n += 1;
+                    }
+                }
+            }
+        }
+        if open {
+            let mut seen: HashMap<&str, Option<Rates>> = HashMap::new();
+            for (provider, models) in &catalog.providers {
+                if named.contains(&provider.as_str()) {
+                    continue;
+                }
+                for (id, row) in models {
+                    let Some(rates) = row.rates() else { continue };
+                    seen.entry(id)
+                        .and_modify(|r| {
+                            if *r != Some(rates) {
+                                *r = None;
+                            }
+                        })
+                        .or_insert(Some(rates));
+                }
+            }
+            for (id, rates) in seen {
+                if let Some(rates) = rates {
+                    if !self.pulled.contains_key(id) {
+                        self.pulled.insert(id.to_string(), rates);
+                        n += 1;
+                    }
+                }
+            }
+        }
+        n
     }
 
     /// Rates for `model`, if known.
@@ -169,7 +229,19 @@ impl PriceBook {
         if let Some(r) = self.catalog.get(model) {
             return Some(*r);
         }
+        if let Some(r) = self.pulled.get(model) {
+            return Some(*r);
+        }
         shipped_rates(model)
+    }
+
+    /// What is known of `model` outside its connection's own list: the
+    /// pulled catalog, else the shipped tables.
+    fn known(&self, model: &str) -> Option<Rates> {
+        self.pulled
+            .get(model)
+            .copied()
+            .or_else(|| shipped_rates(model))
     }
 
     /// USD cost, or `None` when the model has no rates (`$?.??`).
@@ -187,6 +259,11 @@ impl PriceBook {
     }
 
     /// Fill missing catalog rows from a live `/models` list.
+    ///
+    /// A list that prices its cache reads (OpenRouter) is taken as it is. One
+    /// that gives only input and output keeps the cache rates and tiers the
+    /// book already knows for that model; it never turns a known cache
+    /// discount back into the input rate.
     pub fn ingest_model_info(&mut self, models: &[crate::llm::ModelInfo]) {
         for m in models {
             let Some(input) = m.input_per_million else {
@@ -195,9 +272,21 @@ impl PriceBook {
             let Some(output) = m.output_per_million else {
                 continue;
             };
-            self.catalog
-                .entry(m.id.clone())
-                .or_insert(Rates::per_million(input, output));
+            if self.catalog.contains_key(&m.id) {
+                continue;
+            }
+            let row = match m.cached_per_million {
+                Some(cached) => Rates {
+                    cached_per_million: cached,
+                    cache_write_per_million: m.cache_write_per_million,
+                    ..Rates::per_million(input, output)
+                },
+                None => match self.known(&m.id) {
+                    Some(known) if known.knows_cache() => known,
+                    _ => Rates::per_million(input, output),
+                },
+            };
+            self.catalog.insert(m.id.clone(), row);
         }
     }
 }
@@ -254,17 +343,8 @@ fn override_rates(o: &PriceOverride) -> Option<Rates> {
         long_input_per_million: None,
         long_cached_per_million: None,
         long_output_per_million: None,
+        long_cache_write_per_million: None,
     })
-}
-
-fn parse_per_token(raw: Option<&str>) -> crate::Result<Option<f64>> {
-    let Some(s) = raw else { return Ok(None) };
-    if s.is_empty() {
-        return Ok(None);
-    }
-    s.parse::<f64>()
-        .map(Some)
-        .map_err(|e| crate::Error::Provider(format!("pricing {s:?}: {e}")))
 }
 
 /// Format a priced total for the status line. Unknown is `$?.??`, never `$0.00` unless the value is actually zero.
@@ -286,21 +366,33 @@ fn shipped_rates(model: &str) -> Option<Rates> {
         .or_else(|| gpt_rates(model))
 }
 
-/// A row with a higher rate from `threshold` input tokens.
+/// A row with a higher rate from `threshold` input tokens. `write` is the
+/// cache write as a multiple of input (`None`: writes are not charged, or
+/// not reported, and bill as input).
 fn tiered(
     (input, cached, output): (f64, f64, f64),
     threshold: u64,
     (long_in, long_cached, long_out): (f64, f64, f64),
+    write: Option<f64>,
 ) -> Rates {
     Rates {
         input_per_million: input,
         cached_per_million: cached,
         output_per_million: output,
-        cache_write_per_million: None,
+        cache_write_per_million: write.map(|w| w * input),
         long_threshold: Some(threshold),
         long_input_per_million: Some(long_in),
         long_cached_per_million: Some(long_cached),
         long_output_per_million: Some(long_out),
+        long_cache_write_per_million: write.map(|w| w * long_in),
+    }
+}
+
+/// A dated id (`claude-haiku-4-5-20251001`) prices as its model.
+fn undated(model: &str) -> &str {
+    match model.rsplit_once('-') {
+        Some((base, date)) if date.len() == 8 && date.bytes().all(|b| b.is_ascii_digit()) => base,
+        _ => model,
     }
 }
 
@@ -318,25 +410,34 @@ fn grok_rates(model: &str) -> Option<Rates> {
         "grok-build-0.1" => ((1.00, 0.20, 2.00), (2.00, 0.40, 4.00)),
         _ => return None,
     };
-    Some(tiered(short, 200_000, long))
+    // SpaceXSI does not charge for writing the cache.
+    Some(tiered(short, 200_000, long, None))
 }
 
 fn claude_rates(model: &str) -> Option<Rates> {
-    // https://docs.claude.com/en/docs/about-claude/pricing. A cache read is
-    // a tenth of input and a write five quarters where the page gives no
-    // rate of its own; where it gives none for the write, the write is
-    // billed as input (`None`).
-    let (input, cached, output, write) = match model {
-        "claude-fable-5-1" | "claude-fable-5" | "claude-mythos-5-1" => (10.0, 0.25, 50.0, None),
-        "claude-opus-5-5" => (4.0, 0.20, 20.0, None),
-        "claude-opus-5" => (5.0, 0.50, 25.0, None),
-        "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" => (5.0, 0.50, 25.0, Some(6.25)),
-        "claude-sonnet-5-5" | "claude-sonnet-5" => (2.0, 0.20, 10.0, None),
-        "claude-sonnet-4-6" => (3.0, 0.30, 15.0, Some(3.75)),
-        "claude-haiku-4-5" => (1.0, 0.10, 5.0, Some(1.25)),
-        // Five times the rate past 100k tokens of prompt.
+    // https://platform.claude.com/docs/en/about-claude/pricing, read
+    // 2026-10-19. Ryter writes five-minute cache entries, which cost five
+    // quarters of input on every model; the whole 1M window is at the
+    // standard rate, except Haiku 5.5 past 100k tokens of prompt.
+    let (input, cached, output) = match undated(model) {
+        "claude-fable-5-1" | "claude-mythos-5-1" => (10.0, 0.25, 50.0),
+        "claude-fable-5" | "claude-mythos-5" => (10.0, 1.0, 50.0),
+        "claude-opus-5-5" => (4.0, 0.20, 20.0),
+        "claude-opus-5" | "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6"
+        | "claude-opus-4-5" => (5.0, 0.50, 25.0),
+        "claude-opus-4-1" | "claude-opus-4" => (15.0, 1.50, 75.0),
+        "claude-sonnet-5-5" => (2.0, 0.10, 10.0),
+        "claude-sonnet-5" => (2.0, 0.20, 10.0),
+        "claude-sonnet-4-6" | "claude-sonnet-4-5" | "claude-sonnet-4" => (3.0, 0.30, 15.0),
+        "claude-haiku-4-5" => (1.0, 0.10, 5.0),
+        "claude-haiku-3-5" => (0.80, 0.08, 4.0),
         "claude-haiku-5-5" => {
-            return Some(tiered((0.10, 0.01, 0.50), 100_000, (0.50, 0.05, 2.50)));
+            return Some(tiered(
+                (0.10, 0.01, 0.50),
+                100_000 + 1,
+                (0.50, 0.05, 2.50),
+                Some(1.25),
+            ));
         }
         _ => return None,
     };
@@ -344,17 +445,19 @@ fn claude_rates(model: &str) -> Option<Rates> {
         input_per_million: input,
         cached_per_million: cached,
         output_per_million: output,
-        cache_write_per_million: write,
+        cache_write_per_million: Some(input * 1.25),
         long_threshold: None,
         long_input_per_million: None,
         long_cached_per_million: None,
         long_output_per_million: None,
+        long_cache_write_per_million: None,
     })
 }
 
 fn gpt_rates(model: &str) -> Option<Rates> {
-    // https://developers.openai.com/api/docs/pricing — standard tier; a
-    // prompt over 272k tokens is billed at the long-context rate.
+    // https://developers.openai.com/api/docs/pricing, read 2026-10-19:
+    // standard tier; a prompt over 272k tokens is billed at the long-context
+    // rate; a cache write is five quarters of input from GPT-5.6 on.
     let (short, long) = match model {
         "gpt-6-astra" => ((10.0, 1.0, 50.0), (20.0, 2.0, 75.0)),
         "gpt-6.1-sol" => ((2.0, 0.10, 10.0), (4.0, 0.20, 15.0)),
@@ -365,32 +468,7 @@ fn gpt_rates(model: &str) -> Option<Rates> {
         "gpt-5.6-luna" => ((0.20, 0.02, 1.20), (0.40, 0.04, 1.80)),
         _ => return None,
     };
-    Some(tiered(short, 272_000 + 1, long))
-}
-
-#[derive(Deserialize)]
-struct OpenRouterModels {
-    #[serde(default)]
-    data: Vec<OpenRouterModel>,
-}
-
-#[derive(Deserialize)]
-struct OpenRouterModel {
-    id: String,
-    #[serde(default)]
-    pricing: Option<OpenRouterPricing>,
-}
-
-#[derive(Deserialize)]
-struct OpenRouterPricing {
-    #[serde(default)]
-    prompt: Option<String>,
-    #[serde(default)]
-    completion: Option<String>,
-    #[serde(default)]
-    input_cache_read: Option<String>,
-    #[serde(default)]
-    input_cache_write: Option<String>,
+    Some(tiered(short, 272_000 + 1, long, Some(1.25)))
 }
 
 #[cfg(test)]
@@ -460,7 +538,7 @@ mod tests {
             ..long
         };
         assert!((cost("gpt-6.1-sol", under) - 0.544).abs() < 1e-9);
-        // A cache read on Opus 5.5 is $0.20 per million.
+        // A cache read on Opus 5.5 is $0.20 per million; a write $5.
         let cached = Usage {
             input_tokens: 100_000,
             cached_tokens: 100_000,
@@ -468,6 +546,40 @@ mod tests {
             ..Usage::default()
         };
         assert!((cost("claude-opus-5-5", cached) - 0.02).abs() < 1e-9);
+        let written = Usage {
+            input_tokens: 100_000,
+            cache_write_tokens: 100_000,
+            output_tokens: 0,
+            ..Usage::default()
+        };
+        assert!((cost("claude-opus-5-5", written) - 0.5).abs() < 1e-9);
+        // The page's own numbers, read 2026-10-19: Fable 5 reads at $1,
+        // Sonnet 5.5 at $0.10, Haiku 5.5 past 100k at $0.05.
+        assert!((cost("claude-fable-5", cached) - 0.1).abs() < 1e-9);
+        assert!((cost("claude-sonnet-5-5", cached) - 0.01).abs() < 1e-9);
+        let haiku_long = Usage {
+            input_tokens: 100_001,
+            cached_tokens: 100_001,
+            ..Usage::default()
+        };
+        assert!((cost("claude-haiku-5-5", haiku_long) - 0.00500005).abs() < 1e-9);
+        assert!(
+            (cost("claude-haiku-5-5-20260301", cached) - 0.001).abs() < 1e-9,
+            "a dated id"
+        );
+        // OpenAI writes at five quarters, from GPT-5.6 on; doubled over 272k.
+        assert!((cost("gpt-6.1-sol", written) - 0.25).abs() < 1e-9);
+        let long_written = Usage {
+            input_tokens: 300_000,
+            cache_write_tokens: 300_000,
+            ..Usage::default()
+        };
+        assert!((cost("gpt-6.1-sol", long_written) - 1.5).abs() < 1e-9);
+        // SpaceXSI reports no writes; a write would bill as input.
+        assert_eq!(
+            book.rates("grok-4.7").unwrap().cache_write_per_million,
+            None
+        );
         // A model the tables don't know is still unpriced, never free.
         assert_eq!(book.cost("claude-opus-9", small), None);
         assert_eq!(book.cost("gpt-7", small), None);
@@ -549,8 +661,9 @@ mod tests {
     fn openrouter_catalog_fixture() {
         let json = include_str!("../fixtures/openrouter_models.json");
         let mut book = PriceBook::new();
-        let n = book.ingest_openrouter_models(json).unwrap();
-        assert!(n >= 1);
+        let models = crate::llm::parse_models_json(json).unwrap();
+        book.ingest_model_info(&models);
+        assert!(!models.is_empty());
         // prompt 0.000003 / token = $3 / M; completion 0.000015 = $15 / M
         let cost = book
             .cost(
@@ -603,10 +716,127 @@ mod tests {
             "prompt":"0.000003","completion":"0.000015",
             "input_cache_read":"0.0000003","input_cache_write":"0.00000375"}}]}"#;
         let mut book = PriceBook::new();
-        book.ingest_openrouter_models(json).unwrap();
+        book.ingest_model_info(&crate::llm::parse_models_json(json).unwrap());
         let r = book.rates("anthropic/claude-sonnet-5").unwrap();
         assert!((r.cached_per_million - 0.3).abs() < 1e-9);
         assert!((r.cache_write_per_million.unwrap() - 3.75).abs() < 1e-9);
+    }
+
+    fn row(id: &str, input: f64, output: f64) -> crate::llm::ModelInfo {
+        crate::llm::ModelInfo {
+            input_per_million: Some(input),
+            output_per_million: Some(output),
+            ..crate::llm::ModelInfo::named(id, None)
+        }
+    }
+
+    /// The user's own audit turn on 0.31.0: Opus 5.5 read 26,478 of 27,691
+    /// prompt tokens from the cache and Ryter said $0.16, every token at
+    /// the input rate, because the model list (input and output only) had
+    /// been laid over the shipped row and its cached rate. The list fills
+    /// what the book does not know; it never undoes a cache discount.
+    #[test]
+    fn a_list_without_cache_prices_keeps_the_known_cache_rate() {
+        let usage = Usage {
+            input_tokens: 27_691,
+            output_tokens: 2_642,
+            cached_tokens: 26_478,
+            cache_write_tokens: 0,
+        };
+        let mut book = PriceBook::new();
+        book.ingest_model_info(&[row("claude-opus-5-5", 4.0, 20.0)]);
+        let cost = book.cost("claude-opus-5-5", usage).unwrap();
+        let expected = 1_213.0 * 4.0 / 1e6 + 26_478.0 * 0.20 / 1e6 + 2_642.0 * 20.0 / 1e6;
+        assert!(
+            (cost - expected).abs() < 1e-9,
+            "{cost} vs {expected}, not 0.163604"
+        );
+        let r = book.rates("claude-opus-5-5").unwrap();
+        assert_eq!(
+            r.cache_write_per_million,
+            Some(5.0),
+            "the write rate rides too"
+        );
+
+        // A model nobody prices the cache of: no discount is invented.
+        book.ingest_model_info(&[row("vendor/new-model", 1.0, 2.0)]);
+        let r = book.rates("vendor/new-model").unwrap();
+        assert_eq!(
+            (r.cached_per_million, r.cache_write_per_million),
+            (1.0, None)
+        );
+    }
+
+    const PULLED: &str = r#"{"fetched": 1, "source": "test", "providers": {
+        "anthropic": {"claude-opus-9": {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_write": 1.25}},
+        "xai": {"grok-9": {"input": 2.0, "output": 6.0, "cache_read": 0.5,
+            "tiers": [{"size": 200000, "input": 4.0, "output": 12.0, "cache_read": 1.0}]}},
+        "deepseek": {"deepseek-chat": {"input": 0.28, "output": 0.42, "cache_read": 0.028},
+                     "shared-id": {"input": 1.0, "output": 1.0}},
+        "other": {"shared-id": {"input": 2.0, "output": 2.0},
+                  "claude-opus-9": {"input": 9.0, "output": 9.0}}
+    }}"#;
+
+    /// The pulled catalog prices what the shipped tables don't know, by
+    /// the provider of each configured connection; a kind with no provider
+    /// of its own takes any row the providers agree on.
+    #[test]
+    fn the_pulled_catalog_prices_by_the_connections_providers() {
+        // The four built-ins: anthropic's and xai's rows, nobody else's.
+        let mut cfg = Config::default();
+        let mut book = PriceBook::from_config(&cfg);
+        assert_eq!(
+            book.ingest_pulled(&cfg, PULLED),
+            2,
+            "anthropic's and xai's rows"
+        );
+        let r = book.rates("claude-opus-9").unwrap();
+        assert_eq!((r.input_per_million, r.cached_per_million), (1.0, 0.1));
+        assert_eq!(book.rates("grok-9").unwrap().long_threshold, Some(200_001));
+        assert!(book.rates("deepseek-chat").is_none(), "no open kind");
+        assert!(book.rates("shared-id").is_none());
+
+        cfg.connections.insert(
+            "local".into(),
+            crate::config::connection_template("openai_compat").unwrap(),
+        );
+        let mut book = PriceBook::from_config(&cfg);
+        assert_eq!(
+            book.ingest_pulled(&cfg, PULLED),
+            3,
+            "the built-ins' rows and deepseek-chat"
+        );
+        assert_eq!(
+            book.rates("deepseek-chat").unwrap().cached_per_million,
+            0.028
+        );
+        assert!(book.rates("shared-id").is_none(), "two providers disagree");
+        assert_eq!(
+            book.rates("claude-opus-9").unwrap().input_per_million,
+            1.0,
+            "the named provider's row, not other's"
+        );
+
+        // A list with only input and output defers to the pulled row.
+        book.ingest_model_info(&[row("claude-opus-9", 1.0, 5.0)]);
+        assert_eq!(book.rates("claude-opus-9").unwrap().cached_per_million, 0.1);
+        // Garbage is no catalog.
+        assert_eq!(PriceBook::new().ingest_pulled(&cfg, "nope"), 0);
+    }
+
+    #[test]
+    fn load_reads_the_pulled_file_under_home() {
+        let home = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.connections.insert(
+            "spacexsi".into(),
+            crate::config::connection_template("spacexsi").unwrap(),
+        );
+        assert!(PriceBook::load(&cfg, home.path()).rates("grok-9").is_none());
+        std::fs::write(crate::prices::cache_path(home.path()), PULLED).unwrap();
+        let r = PriceBook::load(&cfg, home.path()).rates("grok-9").unwrap();
+        assert_eq!(r.long_threshold, Some(200_001));
+        assert_eq!(r.long_cached_per_million, Some(1.0));
     }
 }
 #[test]

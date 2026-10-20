@@ -56,7 +56,7 @@ One model works in your files. `Tab` cycles its hat, and the message box shows t
 - **An audit is a hat and `Enter`.** `Shift+Tab` puts the audit hat on with "Audit this project" in the prompt, `Enter` asks, and a card says what it will cost before it starts (`/audit` asks for one from any hat). It ends on a card: the verdict and the findings, written to `.ryter/audit.md`; `Enter` again hands them to the build hat to repair.
 - **Before each build turn Ryter checkpoints your files**, and `/undo` puts them back. `/changes` shows what changed, file by file with diffs, and can undo a single file.
 - **`/commit`** drafts the message from the diff and from what the model said about why, and commits the files you choose. Its receipt trailer records the model, the cost, the test result and the review (`Ryter: deepseek-pro-latest · $0.34 · tests ✓ 13 passed · review ✓ grok-4.7`).
-- **Every call is priced** as it happens, for the session and for the project. A model with no known price shows `$?.??`, never a fake `$0.00`. `/budget 5` caps the session, `/budget +2` raises it, and `/budget off` lifts the cap.
+- **Every call is priced** as it happens, for the session and for the project: cache reads and cache writes at their own rates, and where the provider states what it charged (SpaceXSI, OpenRouter), that figure. A model with no known price shows `$?.??`, never a fake `$0.00`. `/budget 5` caps the session, `/budget +2` raises it, and `/budget off` lifts the cap.
 - **Web search** is a row under the connections in `/provider`: Tavily, your own SearXNG server, or off. The choice is saved, and the session you are in starts using it at once.
 
 Nothing is committed unless you commit it.

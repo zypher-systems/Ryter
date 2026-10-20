@@ -24,6 +24,7 @@ mod outside;
 pub mod page;
 pub mod permissions;
 pub mod plan;
+pub mod prices;
 pub mod project;
 mod project_file;
 pub mod prompt;

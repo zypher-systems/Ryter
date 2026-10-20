@@ -141,7 +141,7 @@ pub fn run(opts: DoctorOpts<'_>) -> Report {
 
     if let Some(cfg) = &cfg {
         connection_checks(&mut checks, cfg);
-        spend_checks(&mut checks, cfg);
+        spend_checks(&mut checks, cfg, opts.home);
     }
 
     project_trust_check(&mut checks, opts.cwd, opts.trusted);
@@ -187,8 +187,25 @@ fn connection_checks(checks: &mut Vec<Check>, cfg: &Config) {
     }
 }
 
-fn spend_checks(checks: &mut Vec<Check>, cfg: &Config) {
-    let book = PriceBook::from_config(cfg);
+fn spend_checks(checks: &mut Vec<Check>, cfg: &Config, home: &Path) {
+    let book = PriceBook::load(cfg, home);
+    // The pulled catalog: what prices a model the shipped tables don't know.
+    let pulled = crate::prices::load(home);
+    checks.push(Check {
+        name: "price catalog".into(),
+        status: CheckStatus::Ok,
+        detail: match (&pulled, cfg.spend.catalog) {
+            (Some(c), _) => format!(
+                "{} models from {} · pulled {}{}",
+                c.providers.values().map(|m| m.len()).sum::<usize>(),
+                if c.source.is_empty() { "the catalog" } else { &c.source },
+                crate::prices::age(c.fetched),
+                if cfg.spend.catalog { "" } else { " · [spend] catalog = false: not refreshed" }
+            ),
+            (None, true) => "not pulled yet · fetched once a day at launch; the shipped tables price what they know".into(),
+            (None, false) => "off ([spend] catalog = false) · the shipped tables price what they know".into(),
+        },
+    });
     let usage = Usage {
         input_tokens: 1_000,
         output_tokens: 1_000,

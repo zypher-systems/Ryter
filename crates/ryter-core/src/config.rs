@@ -411,6 +411,10 @@ pub struct SpendConfig {
     /// `audit_usd` is the name it had until 0.15.
     #[serde(default, alias = "review_usd")]
     pub audit_usd: f64,
+    /// Pull the public price catalog (models.dev) once a day, so a model
+    /// the shipped tables don't know is still priced, cache rates included.
+    #[serde(default = "default_true")]
+    pub catalog: bool,
 }
 
 fn usd() -> String {
@@ -605,6 +609,7 @@ impl Default for SpendConfig {
             session_budget_usd: 0.0,
             warn_usd: 1.0,
             audit_usd: 0.0,
+            catalog: true,
         }
     }
 }
