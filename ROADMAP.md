@@ -19,9 +19,8 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.31.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.32.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
-- **Cache reads and writes priced right, for every model (unreleased).** The user's first Anthropic run on 0.31.0 billed every cached token at the input rate: the model list (input and output only) had been laid over the shipped row and its cached rate. A list now fills what the book does not know and never undoes a cache discount; the tables carry each provider's cache write (five quarters of input at Anthropic and OpenAI) and were read against the price pages on 2026-10-19; OpenRouter's list brings its cache rates; SpaceXSI's own cost (`cost_in_usd_ticks`) and OpenAI's cache-write count are read; writes are in the ledger, `ryter spend`, the spend panel and its CSV. For a model nobody ships, the public models.dev catalog is pulled once a day into `~/.ryter/prices.json` (`[spend] catalog = false` stops it). Untried live: the pull on the user's machine and a turn on each wire against the provider's console.
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
 - **1.0 item 1 (flow on a real project): closed 2026-10-14** (recorded in 0.28.0). Further ask friction from fiscus/tunes stays under Next (item 2). G4 closed the nested-scratch and tmux-scope holes in 0.29.0.
@@ -67,6 +66,15 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.32.0 — cache reads and writes priced for every model (2026-10-20)
+
+Released 2026-10-20 (PR #96, two rounds). The note is `docs/releases/v0.32.0.md`.
+
+- **The cached rate is never lost.** The first Anthropic run on 0.31.0 billed every cached token at the input rate: the model list (input and output only) had been laid over the shipped row and its cached rate. A list now fills what the book does not know and never undoes a cache discount; the tables carry each provider's cache write (five quarters of input at Anthropic and OpenAI) and were read against the price pages on 2026-10-19; OpenRouter's list brings its cache rates; SpaceXSI's own cost (`cost_in_usd_ticks`) and OpenAI's cache-write count are read; writes are in the ledger, `ryter spend`, the spend panel and its CSV.
+- **A pulled price catalog.** For a model nobody ships, the public models.dev catalog is pulled once a day into `~/.ryter/prices.json`; the shipped tables win for a model they know (the review's round 1 found the order reversed), and `[spend] catalog = false` stops the pull and leaves the file unread.
+- **The doctor reads a saved key from the home it was given,** so its test no longer depends on the machine's `~/.ryter/keys`.
+- **Open from it.** A live turn on each wire against the provider's console; the sidebar's three price fields are drawn nowhere since 0.30.0 and want removing; a pulled Grok row goes long one token later than the shipped one.
 
 ### 0.31.0 — Anthropic and OpenAI built in, SpaceXAI renamed SpaceXSI (2026-10-19)
 
