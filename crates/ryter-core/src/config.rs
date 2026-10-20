@@ -1656,6 +1656,17 @@ pub fn resolve_secret_with(
     connection: &ConnectionId,
     env: impl Fn(&str) -> Option<String>,
 ) -> Result<String> {
+    resolve_secret_in(cfg, connection, &home_dir(), env)
+}
+
+/// Resolve a secret with a stored key read under `home` rather than the
+/// process's own Ryter home, for a doctor pass over a given home.
+pub fn resolve_secret_in(
+    cfg: &Config,
+    connection: &ConnectionId,
+    home: &Path,
+    env: impl Fn(&str) -> Option<String>,
+) -> Result<String> {
     let name = connection.as_str();
     let Some(conn) = cfg.connections.get(name) else {
         return Err(Error::Config(format!("unknown connection {name:?}")));
@@ -1673,7 +1684,7 @@ pub fn resolve_secret_with(
             }
         }
     }
-    let stored = stored_key_in(&home_dir(), name);
+    let stored = stored_key_in(home, name);
     if let Some(k) = stored {
         return Ok(k);
     }
