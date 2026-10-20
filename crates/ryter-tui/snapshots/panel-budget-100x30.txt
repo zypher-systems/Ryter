@@ -1,30 +1,30 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                     New session                 ● Idle · asks first Activity
- ⎇ 0.2.0-patch             0.2.0-patch                                     grok-4.6
-                          ╭─ budget ─────────────────────────────── off ─╮ Idle
- Hats                     │ spent $?.?? · no cap                         │▌
- ● Plan     $0  read only │                                              │▌────────────────────────
- ┃ Build   $0  asks first │ SESSION                                      │▌Context
- ── Specialists           │› cap spend    [ off ]                 config │▌█▏
- ● Audit   $0  checkpoint │  cap usd      ‹ 5.00 ›               default │▌12k of 256k           5%
- ● Scribe   $0  docs only │  warn at usd  ‹ 1.00 ›               default │▌
-                          │                                              │▌────────────────────────
-                          │ nothing stops on cost. the spend card keeps  │▌Spend · no cap
-                          │ count; watch it yourself.                    │▌$0
-                          │                                              │▌Build                 $0
-                          │                                              │▌
-                          │                                              │▌────────────────────────
-                          │                                              │▌────────────────────────
-                          │                                              │▌
-                          │                                              │▌
-                          │                                              │▌
-                          │                                              │▌
-                          │ ↑↓ move   space/←→ change   enter edit       │▌
-                          ╰──────────────────────────────────────────────╯▌
-                           ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 
-                           ╭────────────────────────────────────────────╮
-                           │ Build  › what should change?               │▌
-                           ╰────────────────────────────────────────────╯▌
-                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views                         focus · conversation
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
+
+  New session                                       ● Idle · asks first │ Activity
+  0.2.0-patch                                                           │ grok-4.6
+ ╭─ budget ───────────────────────────────────────────────────── off ─╮ │ Idle
+ │ spent $?.?? · no cap                                               │▌│
+ │                                                                    │▌│ ────────────────────────
+ │ SESSION                                                            │▌│ Context
+ │› cap spend    [ off ]                                       config │▌│ █▏
+ │  cap usd      ‹ 5.00 ›                                     default │▌│ 12k of 256k           5%
+ │  warn at usd  ‹ 1.00 ›                                     default │▌│
+ │                                                                    │▌│ ────────────────────────
+ │ nothing stops on cost. the spend card keeps count; watch it        │▌│ Spend · no cap
+ │ yourself.                                                          │▌│ $0
+ │                                                                    │▌│ Build                 $0
+ │                                                                    │▌│
+ │                                                                    │▌│
+ │                                                                    │▌│
+ │                                                                    │▌│
+ │                                                                    │▌│
+ │                                                                    │▌│
+ │                                                                    │▌│
+ │ ↑↓ move   space/←→ change   enter edit   esc done                  │▌│
+ ╰────────────────────────────────────────────────────────────────────╯▌│
+  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀│
+  │ Build  › what should change?                                     │  │
+  ╰──────────────────────────────────────────────────────────────────╯  │
+                                                                        │
+ tab hat  ⇧tab mode  / commands  alt 1–3 views  f2 instruments  f6 f7 panes    focus · conversation

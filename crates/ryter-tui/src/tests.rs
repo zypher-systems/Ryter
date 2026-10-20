@@ -1110,11 +1110,18 @@ fn an_offer_is_in_the_color_of_the_hat_it_offers() {
         )));
         let buf = render_buffer(&v, 160, 50, theme);
         let text = render_with_theme(&v, 160, 50, theme);
+        // The rack is drawn beside the card: find its corner by column.
         let row = text
             .lines()
-            .position(|l| l.trim_start().starts_with("╭─ ") && l.contains('?'))
+            .position(|l| l.contains("╭─ ") && l.contains('?'))
             .unwrap_or_else(|| panic!("{tool}: no modal on screen\n{text}"));
-        let x = text.lines().nth(row).unwrap().find('╭').unwrap();
+        let x = text
+            .lines()
+            .nth(row)
+            .unwrap()
+            .chars()
+            .position(|c| c == '╭')
+            .unwrap();
         let corner = (x as u16, row as u16);
         assert_eq!(buf[corner].fg, color, "{tool}");
     }
@@ -1315,6 +1322,60 @@ fn the_project_root_is_noted_only_for_a_folder_inside_a_repository() {
 #[test]
 fn snapshot_conversation() {
     all_sizes("conversation", &conversation());
+}
+
+/// The Hats and Sessions views, and a session with nothing in it yet,
+/// at each size: the narrow tiers fold the panes and compact the cards.
+#[test]
+fn snapshot_workspace_views() {
+    let mut v = racked();
+    v.page = crate::view::Page::Hats;
+    all_sizes("workspace-hats", &v);
+    v.page = crate::view::Page::Sessions;
+    all_sizes("workspace-sessions", &v);
+    let mut v = idle();
+    v.messages.clear();
+    all_sizes("workspace-opening", &v);
+}
+
+/// Every size leaves the conversation at least 70 columns, the three view
+/// tabs to click, all four hats on the Hats view, and a queued message
+/// said on the prompt's edge, in every colour mode.
+#[test]
+fn workspace_keeps_the_conversation_and_every_hat_accessible() {
+    for (width, height) in SIZES {
+        for theme in [
+            Theme::truecolor_dark(),
+            Theme::truecolor_light(),
+            Theme::truecolor_dark().degrade(ColorMode::Ansi256),
+            Theme::default_16(),
+            Theme::truecolor_dark().degrade(ColorMode::Mono),
+        ] {
+            let mut v = racked();
+            let hit = crate::draw::render_hit(&v, width, height);
+            assert!(hit.chat.width >= 70, "{width}x{height}: {:?}", hit.chat);
+            for page in [1, 2, 3] {
+                assert!(
+                    hit.clicks
+                        .iter()
+                        .any(|(c, _)| *c == crate::select::WorkspaceClick::Page(page)),
+                    "{width}x{height}: no tab {page}"
+                );
+            }
+            v.page = crate::view::Page::Hats;
+            let text = render_with_theme(&v, width, height, theme);
+            for hat in ["Plan", "Build", "Audit", "Scribe"] {
+                assert!(
+                    text.contains(&format!("─ {hat} ")),
+                    "{width}x{height}: {hat}\n{text}"
+                );
+            }
+            v.page = crate::view::Page::Conversation;
+            v.queued_prompt = Some("next task".into());
+            let text = render_with_theme(&v, width, height, theme);
+            assert!(text.contains("queued"), "{width}x{height}\n{text}");
+        }
+    }
 }
 
 /// The model picker says where its list stands: from the cache while a
@@ -2272,11 +2333,22 @@ fn the_hats_block_names_the_plan_and_audit_files() {
     let mut v = racked();
     v.workspace = Some(dir.path().to_path_buf());
     v.refresh_uncommitted();
-    let text = squash(&render_to_string(&v, 160, 50));
-    assert!(
-        text.contains("plan.md") && text.contains("upload size limit"),
-        "{text}"
-    );
+    let shown = render_to_string(&v, 160, 50);
+    let text = squash(&shown);
+    assert!(text.contains("plan.md"), "{text}");
+    // The instruments' Plan block has the heading whole, over two rows.
+    let (_, insp_w) = crate::workspace::columns(160, true);
+    let pane: String = shown
+        .lines()
+        .map(|l| {
+            l.chars()
+                .skip(usize::from(160 - insp_w))
+                .filter(|c| *c != '│')
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(squash(&pane).contains("upload size limit"), "{pane}");
     assert!(!text.contains("audit.md"), "{text}");
     let label = crate::view::file_label(&dir.path().join(".ryter/plan.md")).unwrap();
     assert!(label.ends_with(" upload size limit"), "{label}");
@@ -2758,7 +2830,7 @@ fn the_foot_shows_the_cards_keys_in_warn() {
         .map(|x| buf[(x, foot)].symbol().to_string())
         .collect();
     assert!(
-        text.contains("⏎  allow") && text.contains("n  deny"),
+        text.contains("⏎ allow") && text.contains("n deny"),
         "{text}"
     );
 }
@@ -3913,8 +3985,9 @@ fn buffer_to_html(buf: &ratatui::buffer::Buffer, theme: Theme) -> String {
 }
 
 /// `RYTER_HTML_DIR=<dir> cargo test -p ryter-tui html_gallery` writes the
-/// solo screen in each hat, and at the narrower tiers, as HTML files with
-/// their colors. It does nothing without the variable.
+/// session in each hat, each view at each size, and three panels, as HTML
+/// files with their colors, dark and light. It does nothing without the
+/// variable.
 #[test]
 fn html_gallery() {
     let Some(dir) = std::env::var_os("RYTER_HTML_DIR") else {
@@ -3922,7 +3995,6 @@ fn html_gallery() {
     };
     let dir = PathBuf::from(dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let theme = Theme::truecolor_dark();
     let mut shots: Vec<(String, View, u16, u16)> = Vec::new();
     for hat in crate::sidebar::HATS {
         let mut v = racked();
@@ -3933,13 +4005,41 @@ fn html_gallery() {
     shots.push(("session-100x30".into(), racked(), 100, 30));
     shots.push(("session-80x24".into(), racked(), 80, 24));
     shots.push(("workspace-be-160x50".into(), workspace_be(), 160, 50));
+    for (w, h) in SIZES {
+        let mut v = racked();
+        v.page = crate::view::Page::Hats;
+        shots.push((format!("workspace-hats-{w}x{h}"), v.clone(), w, h));
+        v.page = crate::view::Page::Sessions;
+        shots.push((format!("workspace-sessions-{w}x{h}"), v, w, h));
+        let mut v = idle();
+        v.messages.clear();
+        shots.push((format!("workspace-opening-{w}x{h}"), v, w, h));
+        let mut v = racked();
+        v.composer.set_text("/");
+        crate::palette::refresh(&mut v);
+        shots.push((format!("workspace-palette-{w}x{h}"), v, w, h));
+        for (name, id) in [
+            ("settings", PanelId::Settings),
+            ("models", PanelId::Models),
+            ("help", PanelId::Help),
+        ] {
+            shots.push((format!("workspace-{name}-{w}x{h}"), with_panel(id), w, h));
+        }
+    }
     for (name, v, w, h) in shots {
-        let buf = render_buffer(&v, w, h, theme);
-        std::fs::write(
-            dir.join(format!("{name}.html")),
-            buffer_to_html(&buf, theme),
-        )
-        .unwrap();
+        for (variant, theme) in [
+            ("dark", Theme::truecolor_dark()),
+            ("light", Theme::truecolor_light()),
+        ] {
+            let mut v = v.clone();
+            v.theme_name = variant.into();
+            let buf = render_buffer(&v, w, h, theme);
+            std::fs::write(
+                dir.join(format!("{name}-{variant}.html")),
+                buffer_to_html(&buf, theme),
+            )
+            .unwrap();
+        }
     }
 }
 
@@ -3973,10 +4073,12 @@ fn the_chip_is_readable_under_a_panel() {
 }
 
 /// A panel's shadow falls inside the body it floats over, never on the
-/// prompt's rule: at 80x24 and 120x40 the rule under /settings is whole.
+/// prompt's rule: at 120x40 and 160x50 the rule under /settings is whole.
+/// Below 40 rows /settings is taller than the room above the prompt and
+/// `panel::rect` lets it take the body, prompt included.
 #[test]
 fn a_panels_shadow_stays_off_the_prompts_rule() {
-    for (w, h) in [(80, 24), (120, 40)] {
+    for (w, h) in [(120, 40), (160, 50)] {
         let mut v = racked();
         let e = env();
         let _ = panel::open(&mut v, PanelId::Settings, &e);

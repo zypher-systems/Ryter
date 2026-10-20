@@ -1,40 +1,40 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                           New session                ● Waiting for you · asks first Activity
- ⎇ 0.2.0-patch                   0.2.0-patch                                               grok-4.6
-                                                                                           Waiting for you
- Hats                                   ·  welcome · /help for keys                        …ly line 4 reply line 5 re…
- ● Plan                      $0         ●  summarise the plan               ✓ answered  ▸
-   grok-4.6                                                                                ────────────────────────────
-   read only                            ●  dusty                                           Context
- ┃ Build                     $0         │  now implement step one                          █▏
-   grok-4.6                             │                                                  12k of 256k               5%
-   asks first                           ├─ read   crates/ryter-tui/src/run/mod.rs
- ── Specialists                         │                                                  ────────────────────────────
- ● Audit                     $0         ◆  grok-4.6                                        Spend · no cap
-   grok-4.6                             │  Reading the loop now. The event loop drains     $0
-   checkpoint                           │  reply line 0 reply line 1 reply line 2 reply    Build                     $0
- ● Scribe                    $0         │  line 3 reply line 4 reply line 5 reply line
-   follows all hats                     │  6 reply line 7                                  ────────────────────────────
-   docs only                            │  ⠼ waiting for you · allow? · 0:12               ────────────────────────────
+
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-
-
-
-
-
-
-
-
-                                ╭─ allow? · run as root  sudo dnf install -y alsa-li…   ─╮
-                                │ what    run as root  sudo dnf install -y alsa-lib-dev… │▌
-                                │ risk    as root · /undo can't reach it · your password │▌
-                                │   sudo dnf install -y alsa-lib-devel pkgconf           │▌
-                                │ y allow once   n deny                                  │▌
-                                ╰────────────────────────────────────────────────────────╯▌
-                                 ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-                                 ╭──────────────────────────────────────────────────────╮
-                                 │ Build  › type to queue the next message, / for comm… │▌
-                                 ╰──────────────────────────────────────────────────────╯▌
-                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  y  allow once   n  deny   tab  hat   ⇧tab  mode   /  commands                                    focus · conversation
+  New session                                                ● Waiting for you · asks first │ Activity
+  0.2.0-patch                                                                               │ grok-4.6
+                                                                                            │ Waiting for you
+         ·  welcome · /help for keys                                                        │ …ly line 4 reply line …
+         ●  summarise the plan                                               ✓ answered  ▸  │
+                                                                                            │ ────────────────────────
+         ●  dusty                                                                           │ Context
+         │  now implement step one                                                          │ █▏
+         │                                                                                  │ 12k of 256k           5%
+         ├─ read   crates/ryter-tui/src/run/mod.rs                                          │
+         │                                                                                  │ ────────────────────────
+         ◆  grok-4.6                                                                        │ Spend · no cap
+         │  Reading the loop now. The event loop drains reply line 0 reply line 1 reply     │ $0
+         │  line 2 reply line 3 reply line 4 reply line 5 reply line 6 reply line 7         │ Build                 $0
+         │  ⠼ waiting for you · allow? · 0:12 · 85 tokens                                   │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+   ╭─ allow? · run as root  sudo dnf install -y alsa-lib-devel pkgconf · press y ────  ─╮   │
+   │ what    run as root  sudo dnf install -y alsa-lib-devel pkgconf                    │▌  │
+   │ risk    as root · /undo can't reach it · your password is asked next               │▌  │
+   │   sudo dnf install -y alsa-lib-devel pkgconf                                       │▌  │
+   │ y allow once   n deny                                                              │▌  │
+   ╰────────────────────────────────────────────────────────────────────────────────────╯▌  │
+    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀  │
+  ╭──────────────────────────────────────────────────────────────────────────────────────╮  │
+  │ Build  › type to queue the next message, / for commands                              │  │
+  ╰──────────────────────────────────────────────────────────────────────────────────────╯  │
+                                                                                            │
+ y allow once  n deny  tab hat  ⇧tab mode  / commands  f2 instruments  f6 f7 panes                 focus · conversation

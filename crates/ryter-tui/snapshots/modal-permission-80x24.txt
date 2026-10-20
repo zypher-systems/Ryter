@@ -1,24 +1,24 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- New session          ● Waiting for you · asks first Activity
- 0.2.0-patch                                         grok-4.6
-                                                     Writing
-        ●  dusty  now implement step one       ↑ 3   Reading the loop now. Th…
- ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
-        │                                            ──────────────────────────
-        ├─ read   crates/ryter-tui/src/run/mod.…     Context
-        │                                            █▏
-        ◆  grok-4.6                                  12k of 256k             5%
-        │  Reading the loop now. The event loop
-        │  drains                                    ──────────────────────────
-        │  ⠼ writing · 0:12                          Spend · no cap
-╭─ allow? · run  rm -rf target/ && cargo build…   ─╮ $0
-│ what    run  rm -rf target/ && cargo build --re… │▌Build                   $0
-│ risk    runs a command that can change things · /│▌
-│ ⏎ allow   n deny   r add rule                    │▌──────────────────────────
-╰──────────────────────────────────────────────────╯▌──────────────────────────
- ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
- ╭────────────────────────────────────────────────╮
- │ Build  › type to queue the next message, / fo… │▌
- ╰────────────────────────────────────────────────╯▌
-  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  ⏎  allow   n  deny   r  add rule   tab  hat              focus · conversation
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
+  New session                                    ● Waiting for you · asks first
+  0.2.0-patch
+
+         ●  dusty  now implement step one                                 ↑ 2
+  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
+         │  now implement step one
+         │
+         ├─ read   crates/ryter-tui/src/run/mod.rs
+         │
+         ◆  grok-4.6
+         │  Reading the loop now. The event loop drains
+         │  ⠼ writing · 0:12 · 59 tokens
+   ╭─ allow? · run  rm -rf target/ && cargo build --release ──────── build ─╮
+   │ what    run  rm -rf target/ && cargo build --release                   │▌
+   │ risk    runs a command that can change things · /undo covers files in t│▌
+   │ ⏎ allow   n deny   r add rule                                          │▌
+   ╰────────────────────────────────────────────────────────────────────────╯▌
+    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ Build  › type to queue the next message, / for commands                  │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+
+ ⏎ allow  n deny  r add rule  tab hat  ⇧tab mode  / commands      Build · $?.??

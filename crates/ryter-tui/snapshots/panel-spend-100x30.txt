@@ -1,30 +1,30 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                     New session                 ● Idle · asks first Activity
- ⎇ 0.2.0-patch             0.2.0-patch                                     grok-4.6
-                                                                           Idle
- Hats                             ·  welcome · /help for keys
- ● Plan     $0  read only ╭─ spend · session ──────────────────── $?.?? ─╮ ────────────────────────
- ┃ Build   $0  asks first │ total  $?.??                                 │▌Context
- ── Specialists           │ budget off · nothing stops on cost · /budget │▌█▏
- ● Audit   $0  checkpoint │                                              │▌12k of 256k           5%
- ● Scribe   $0  docs only │ by role                                      │▌
-                          │   nothing spent yet                          │▌────────────────────────
-                          │                                              │▌Spend · no cap
-                          │ by connection                                │▌$0
-                          │   nothing spent yet                          │▌Build                 $0
-                          │                                              │▌
-                          │                                              │▌────────────────────────
-                          │                                              │▌────────────────────────
-                          │                                              │▌
-                          │ p project   e export csv   ↑↓ scroll   esc   │▌
-                          ╰──────────────────────────────────────────────╯▌
-                           ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-
-
-                           ╭────────────────────────────────────────────╮
-                           │ Build  › what should change?               │▌
-                           ╰────────────────────────────────────────────╯▌
-                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views                         focus · conversation
+  New session                                       ● Idle · asks first │ Activity
+  0.2.0-patch                                                           │ grok-4.6
+                                                                        │ Idle
+ ╭─ spend · session ────────────────────────────────────────── $?.?? ─╮ │
+ │ total  $?.??                                                       │▌│ ────────────────────────
+ │ budget off · nothing stops on cost · /budget <amount> sets a cap   │▌│ Context
+ │                                                                    │▌│ █▏
+ │ by role                                                            │▌│ 12k of 256k           5%
+ │   nothing spent yet                                                │▌│
+ │                                                                    │▌│ ────────────────────────
+ │ by connection                                                      │▌│ Spend · no cap
+ │   nothing spent yet                                                │▌│ $0
+ │                                                                    │▌│ Build                 $0
+ │                                                                    │▌│
+ │                                                                    │▌│
+ │                                                                    │▌│
+ │ p project   e export csv   ↑↓ scroll   esc                         │▌│
+ ╰────────────────────────────────────────────────────────────────────╯▌│
+  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀│
+                                                                        │
+                                                                        │
+                                                                        │
+  ╭──────────────────────────────────────────────────────────────────╮  │
+  │ Build  › what should change?                                     │  │
+  ╰──────────────────────────────────────────────────────────────────╯  │
+                                                                        │
+ tab hat  ⇧tab mode  / commands  alt 1–3 views  f2 instruments  f6 f7 panes    focus · conversation

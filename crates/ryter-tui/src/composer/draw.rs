@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::{MAX_ROWS, Mode};
+use super::{COUNTER_AT, MAX_ROWS, Mode, group_thousands};
 use crate::chat::wrap;
 use crate::theme::Theme;
 use crate::view::View;
@@ -57,8 +57,30 @@ fn chip(view: &View) -> Option<String> {
         .then(|| format!(" {} ", crate::glyphs::hat_label(view.mode)))
 }
 
-/// Rows the workspace prompt needs: the rounded box, the text, and the
-/// shadow row under it.
+/// Notes for the prompt's edge: a message waiting its turn, and the length
+/// of a long one.
+fn edge_notes(view: &View, theme: Theme) -> Vec<Span<'static>> {
+    let mut right: Vec<Span<'static>> = Vec::new();
+    if view.queued_prompt.is_some() {
+        right.push(Span::styled(
+            " queued ",
+            Style::default()
+                .fg(theme.warn)
+                .bg(theme.bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    let count = view.composer.char_count();
+    if count > COUNTER_AT && !matches!(view.composer.mode, Mode::Secret { .. }) {
+        right.push(Span::styled(
+            format!(" {} chars ", group_thousands(count)),
+            Style::default().fg(theme.dim).bg(theme.bg),
+        ));
+    }
+    right
+}
+
+/// Rows the workspace prompt needs: its border, text, and breathing row.
 pub fn workspace_height(view: &View, width: u16) -> u16 {
     let rows = view
         .composer
@@ -72,8 +94,9 @@ fn workspace_text_width(view: &View, width: u16) -> usize {
     usize::from(width).saturating_sub(6 + chip_w)
 }
 
-/// The workspace prompt: a rounded card, a hat-colored top edge, the hat
-/// as a pill, and a half-block shadow. Returns the cursor cell.
+/// The workspace prompt: a quiet border and a hat chip at the point of
+/// typing. Queued state and long-message counts sit on the top edge.
+/// Returns the cursor cell.
 pub fn draw_workspace(
     frame: &mut Frame,
     area: Rect,
@@ -92,15 +115,29 @@ pub fn draw_workspace(
     let bg = theme.composer_bg;
     let accent = border_color(view, theme);
     let edge = Style::default().fg(theme.rule).bg(bg);
-    let top_edge = Style::default().fg(accent).bg(bg);
+    let top_edge = if view.composer.rejected || !matches!(view.composer.mode, Mode::Normal) {
+        Style::default().fg(accent).bg(bg)
+    } else {
+        edge
+    };
     frame.render_widget(Block::default().style(Style::default().bg(bg)), box_area);
     let w = usize::from(box_area.width);
+    let notes = edge_notes(view, Theme { bg, ..theme });
+    let notes_w: usize = notes.iter().map(|s| wrap::width(&s.content)).sum();
+    let fits = notes_w + 3 <= w;
+    let mut top = vec![
+        Span::styled("╭", top_edge),
+        Span::styled(
+            "─".repeat(w.saturating_sub(if fits { notes_w + 3 } else { 3 })),
+            top_edge,
+        ),
+    ];
+    if fits {
+        top.extend(notes);
+    }
+    top.push(Span::styled("─╮", top_edge));
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("╭", top_edge),
-            Span::styled("─".repeat(w.saturating_sub(2)), top_edge),
-            Span::styled("╮", top_edge),
-        ])),
+        Paragraph::new(Line::from(top)),
         Rect {
             height: 1,
             ..box_area
@@ -153,9 +190,7 @@ pub fn draw_workspace(
         inner.x += step;
         inner.width = inner.width.saturating_sub(step);
     }
-    let cursor = body(frame, inner, view, theme, bg, accent);
-    crate::panel::drop_shadow(frame, box_area, theme);
-    cursor
+    body(frame, inner, view, theme, bg, accent)
 }
 
 /// A solid chip: the label, already padded, on a fill. No half-block caps.

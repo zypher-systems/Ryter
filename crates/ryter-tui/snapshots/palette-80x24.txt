@@ -1,24 +1,24 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- New session                     ● Idle · asks first Activity
- 0.2.0-patch                                         grok-4.6
- ╭ commands ───────────────────────────── 4 of 31 ╮  Idle
- │ mo                                             │▌
- │›/models         Choose models: one for eve… ▸  │▌ ──────────────────────────
- │ /permissions    Durable allow/ask/deny bas… ▸  │▌ Context
- │ /tools          Tool permission mode for t… ▸  │▌ █▏
- │  ↑↓  move   enter  run   esc  close            │▌ 12k of 256k             5%
- ╰────────────────────────────────────────────────╯▌
-  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ ──────────────────────────
-                                                     Spend · no cap
-                                                     $0
-                                                     Build                   $0
-
-                                                     ──────────────────────────
-                                                     ──────────────────────────
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
+  New session                                               ● Idle · asks first
+  0.2.0-patch
+   ╭─ Commands ─────────────────────────────────────────────────── 4 of 31 ─╮
+   │ mo                                                                     │▌
+   │›/models         Choose models: one for every hat, or one each for … ▸  │▌
+   │ /permissions    Durable allow/ask/deny bash rules from the TUI      ▸  │▌
+   │ /tools          Tool permission mode for this session               ▸  │▌
+   │ ↑↓ move  enter run  esc close                                          │▌
+   ╰────────────────────────────────────────────────────────────────────────╯▌
+    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 
 
- ╭────────────────────────────────────────────────╮
- │ Build  › /mo█                                  │▌
- ╰────────────────────────────────────────────────╯▌
-  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  ↑↓  move   enter  run   esc  close                       focus · conversation
+
+
+
+
+
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ Build  › /mo█                                                            │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+
+ ↑↓ move  enter run  esc close                                    Build · $?.??

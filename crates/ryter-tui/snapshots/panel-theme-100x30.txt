@@ -1,30 +1,30 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                     New session                 ● Idle · asks first Activity
- ⎇ 0.2.0-patch             0.2.0-patch                                     grok-4.6
-                                                                           Idle
- Hats                             ·  welcome · /help for keys
- ● Plan     $0  read only                                                  ────────────────────────
- ┃ Build   $0  asks first                                                  Context
- ── Specialists           ╭─ theme ────────────────────────────────── 3 ─╮ █▏
- ● Audit   $0  checkpoint │›◆ dark  built-in                     current │▌12k of 256k           5%
- ● Scribe   $0  docs only │ ◆ light  built-in                            │▌
-                          │ ◆ default-16  built-in                       │▌────────────────────────
-                          │                                              │▌Spend · no cap
-                          │ ██████████████████████████  truecolor        │▌$0
-                          │                                              │▌Build                 $0
-                          │ ↑↓ preview   enter apply   esc revert        │▌
-                          ╰──────────────────────────────────────────────╯▌────────────────────────
-                           ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀────────────────────────
 
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-
-
-
-
-
-
-                           ╭────────────────────────────────────────────╮
-                           │ Build  › what should change?               │▌
-                           ╰────────────────────────────────────────────╯▌
-                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views                         focus · conversation
+  New session                                       ● Idle · asks first │ Activity
+  0.2.0-patch                                                           │ grok-4.6
+                                                                        │ Idle
+         ·  welcome · /help for keys                                    │
+                                                                        │ ────────────────────────
+        ╭─ theme ────────────────────────────────────────── 3 ─╮        │ Context
+        │›◆ dark  built-in                             current │▌       │ █▏
+        │ ◆ light  built-in                                    │▌       │ 12k of 256k           5%
+        │ ◆ default-16  built-in                               │▌       │
+        │                                                      │▌       │ ────────────────────────
+        │ ██████████████████████████  truecolor                │▌       │ Spend · no cap
+        │                                                      │▌       │ $0
+        │ ↑↓ preview   enter apply   esc revert                │▌       │ Build                 $0
+        ╰──────────────────────────────────────────────────────╯▌       │
+         ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀       │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+                                                                        │
+  ╭──────────────────────────────────────────────────────────────────╮  │
+  │ Build  › what should change?                                     │  │
+  ╰──────────────────────────────────────────────────────────────────╯  │
+                                                                        │
+ tab hat  ⇧tab mode  / commands  alt 1–3 views  f2 instruments  f6 f7 panes    focus · conversation

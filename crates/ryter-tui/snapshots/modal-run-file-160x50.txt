@@ -1,50 +1,50 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                               New session                                              ● Waiting for you · asks first Activity
- ⎇ 0.2.0-patch                       0.2.0-patch                                                                             grok-4.6
-                                                                                                                             Waiting for you
- Hats                                       ·  welcome · /help for keys                                                      …ly line 4 reply line 5 reply li…
- ● Plan                          $0         ●  summarise the plan                                             ✓ answered  ▸
-   grok-4.6                                                                                                                  ──────────────────────────────────
-   read only                                ●  dusty                                                                         Context
- ┃ Build                         $0         │  now implement step one                                                        █▏
-   grok-4.6                                 │                                                                                12k of 256k                     5%
-   asks first                               ├─ read   crates/ryter-tui/src/run/mod.rs
- ── Specialists                             │                                                                                ──────────────────────────────────
- ● Audit                         $0         ◆  grok-4.6                                                                      Spend · no cap
-   grok-4.6                                 │  Reading the loop now. The event loop drains reply line 0 reply line 1         $0
-   checkpoint                               │  reply line 2 reply line 3 reply line 4 reply line 5 reply line 6 reply        Build                           $0
- ● Scribe                        $0         │  line 7
-   follows all hats                         │  ⠼ waiting for you · run? · 0:12 · 85 tokens                                   ──────────────────────────────────
-   docs only                                                                                                                 ──────────────────────────────────
+
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                                      ╭─ how this project runs ──────────────────────────────────────────────────────────╮
-                                      │ start  docker compose up -d --wait                                               │▌
-                                      │ ready  http://localhost:8000/healthz                                             │▌
-                                      │ test   docker compose run --rm web pytest -q                                     │▌
-                                      │ stop   docker compose down                                                       │▌
-                                      │                                                                                  │▌
-                                      │ saved to .ryter/run.toml                                                         │▌
-                                      │ ryter runs these without asking                                                  │▌
-                                      │ y approve   e adjust   n reject                                                  │▌
-                                      ╰──────────────────────────────────────────────────────────────────────────────────╯▌
-                                       ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-                                     ╭────────────────────────────────────────────────────────────────────────────────────╮
-                                     │ Build  › type to queue the next message, / for commands                            │▌
-                                     ╰────────────────────────────────────────────────────────────────────────────────────╯▌
-                                      ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  y  approve   e  adjust   n  reject   tab  hat   ⇧tab  mode   /  commands   f2  instruments   f6 f7  panes                                focus · conversation
+  ryter                    │  New session                                                          ● Waiting for you · asks first │ Activity
+  ⎇ 0.2.0-patch            │  0.2.0-patch                                                                                         │ grok-4.6
+                           │                                                                                                      │ Waiting for you
+  HATS                     │         ·  welcome · /help for keys                                                                  │ …ly line 4 reply line 5 …
+  ● Plan                $0 │         ●  summarise the plan                                                         ✓ answered  ▸  │
+    grok-4.6               │                                                                                                      │ ──────────────────────────
+    read only              │         ●  dusty                                                                                     │ Context
+                           │         │  now implement step one                                                                    │ █▏
+  ┃ Build               $0 │         │                                                                                            │ 12k of 256k             5%
+    grok-4.6               │         ├─ read   crates/ryter-tui/src/run/mod.rs                                                    │
+    asks first             │         │                                                                                            │ ──────────────────────────
+                           │         ◆  grok-4.6                                                                                  │ Spend · no cap
+  Specialists              │         │  Reading the loop now. The event loop drains reply line 0 reply line 1 reply line 2        │ $0
+  ● Audit               $0 │         │  reply line 3 reply line 4 reply line 5 reply line 6 reply line 7                          │ Build                   $0
+    grok-4.6               │         │  ⠼ waiting for you · run? · 0:12 · 85 tokens                                               │
+    checkpoint             │                                                                                                      │
+                           │                                                                                                      │
+  ● Scribe              $0 │                                                                                                      │
+    follows all hats       │                                                                                                      │
+    docs only              │                                                                                                      │
+                           │                                                                                                      │
+                           │                                                                                                      │
+                           │                                                                                                      │
+                           │                                                                                                      │
+                           │                                                                                                      │
+                           │                                                                                                      │
+                           │                                                                                                      │
+                           │                                                                                                      │
+                           │                                                                                                      │
+                           │                                                                                                      │
+                           │               ╭─ how this project runs ──────────────────────────────────────────────────────────╮   │
+                           │               │ start  docker compose up -d --wait                                               │▌  │
+                           │               │ ready  http://localhost:8000/healthz                                             │▌  │
+                           │               │ test   docker compose run --rm web pytest -q                                     │▌  │
+                           │               │ stop   docker compose down                                                       │▌  │
+                           │               │                                                                                  │▌  │
+                           │               │ saved to .ryter/run.toml                                                         │▌  │
+                           │               │ ryter runs these without asking                                                  │▌  │
+                           │               │ y approve   e adjust   n reject                                                  │▌  │
+                           │               ╰──────────────────────────────────────────────────────────────────────────────────╯▌  │
+                           │                ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀  │
+                           │  ╭────────────────────────────────────────────────────────────────────────────────────────────────╮  │
+                           │  │ Build  › type to queue the next message, / for commands                                        │  │
+                           │  ╰────────────────────────────────────────────────────────────────────────────────────────────────╯  │
+                           │                                                                                                      │
+ y approve  e adjust  n reject  ↑↓ scroll  tab hat  ⇧tab mode  / commands  f2 instruments  f6 f7 panes                                     focus · conversation

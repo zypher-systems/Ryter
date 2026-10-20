@@ -1,24 +1,24 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- New session          ● Waiting for you · asks first Activity
- 0.2.0-patch                                         grok-4.6
-                                                     Waiting for you
-        ●  dusty  now implement step one       ↑ 5   …ly line 4 reply line 5 …
- ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
-        │                                            ──────────────────────────
-        ◆  grok-4.6                                  Context
-        │  Reading the loop now. The event loop      █▏
-        │  drains reply line 0 reply line 1 reply    12k of 256k             5%
-        │  line 2 reply line 3 reply line 4 reply
-        │  line 5 reply line 6 reply line 7          ──────────────────────────
-        │  ⠼ waiting for you · allow? · 0:12         Spend · no cap
-╭─ allow? · run as root  sudo dnf install -y a…   ─╮ $0
-│ what    run as root  sudo dnf install -y alsa-l… │▌Build                   $0
-│ risk    as root · /undo can't reach it · your pas│▌
-│ y allow once   n deny                            │▌──────────────────────────
-╰──────────────────────────────────────────────────╯▌──────────────────────────
- ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
- ╭────────────────────────────────────────────────╮
- │ Build  › type to queue the next message, / fo… │▌
- ╰────────────────────────────────────────────────╯▌
-  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  y  allow once   n  deny   tab  hat                       focus · conversation
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
+  New session                                    ● Waiting for you · asks first
+  0.2.0-patch
+
+         ●  dusty  now implement step one                                 ↑ 4
+  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
+         ├─ read   crates/ryter-tui/src/run/mod.rs
+         │
+         ◆  grok-4.6
+         │  Reading the loop now. The event loop drains reply line 0 reply
+         │  line 1 reply line 2 reply line 3 reply line 4 reply line 5 reply
+         │  line 6 reply line 7
+         │  ⠼ waiting for you · allow? · 0:12 · 85 tokens
+   ╭─ allow? · run as root  sudo dnf install -y alsa-lib-devel pkgconf …   ─╮
+   │ what    run as root  sudo dnf install -y alsa-lib-devel pkgconf        │▌
+   │ risk    as root · /undo can't reach it · your password is asked next   │▌
+   │ y allow once   n deny                                                  │▌
+   ╰────────────────────────────────────────────────────────────────────────╯▌
+    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ Build  › type to queue the next message, / for commands                  │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+
+ y allow once  n deny  tab hat  ⇧tab mode  / commands             Build · $?.??
