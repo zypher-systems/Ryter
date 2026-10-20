@@ -19,9 +19,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.32.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
-
-- **The softer screen, on dev unreleased (2026-10-20).** Route B and C of the design canvas, on the interface polish: dotted hairlines, slab cards with no shadow, `╰─` closing the turn, capped line gauges, pill chips with Nerd Font caps, the context ring, the spend rows' bars, the tok/s trace, the Turns row's hollow dots, the shimmer in place of the spinner, and tachyonfx motion after the frame (card fade, hat sweep, welcome gather). Ratatui 0.30 and crossterm 0.29 came first. The user ran it on 2026-10-20 and found only the spend block wrong (one shared bar), put back to a row and bar per hat the same day. Then one rail: the left rail and the three-pane tier are gone, the hats are the right rail's first block with the worn hat expanded, the Activity block and the tok/s trace are gone, and a running turn turns a square on its status row. Then the user asked for smooth round ends, not cut corners: `[ui] caps` (auto by terminal, round, square) draws the Powerline half-circles on the chip and the tab, and the tint behind the worn hat is gone. Untried: the light theme's slab.
+The last release is 0.33.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
@@ -68,6 +66,15 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.33.0 — one rail, the softer screen, round ends, motion (2026-10-20)
+
+Released 2026-10-20 (PR #97, two rounds: the first rejected on six real defects in the new behaviour, all fixed in 1f4ba2a). The note is `docs/releases/v0.33.0.md`.
+
+- **One rail at the right**, 28 columns at 100 and 44 from 132, with the hats at its top (the worn hat over three rows, the others on one), the turns, the context ring, the spend rows, the changes and the plan; the left rail and the three-pane tier gone; the conversation at the left edge. No Activity block: a running turn turns a square on its status row beside the shimmer.
+- **Softer lines**: dotted hairlines, slab cards with no shadow (the line box kept in sixteen colours and mono), `╰─` closing the turn, capped line gauges, round Powerline ends on the chip and the tab (`[ui] caps` = auto | round | square, the terminal asked once at startup), no tint behind the worn hat.
+- **Motion after the frame** with tachyonfx: a card fades in from the hat colour, a hat switch sweeps the chip, the welcome gathers. Ratatui 0.30 and crossterm 0.29 came first. Drawn on the design canvas and built step by step on the user's choices.
+- **Open, from the reviews:** the README screenshots still show the two-rail screen; the light theme's slab is untried by a person; a card does not dissolve as it closes; below 100 columns there is no rail and no popout for it; the hint keys looked boxed in the user's terminal though the bytes carry the right background.
 
 ### 0.32.0 — cache reads and writes priced for every model (2026-10-20)
 

@@ -814,7 +814,6 @@ impl View {
         self.has_content() || self.busy
     }
 
-    /// Anything in the transcript worth confirming before `/new`.
     /// Whether the hat chip and the view tab take round caps: `round`
     /// does, `square` does not, and `auto` follows the terminal decided at
     /// startup or a Nerd Font, which has the glyphs.
@@ -826,6 +825,7 @@ impl View {
         }
     }
 
+    /// Anything in the transcript worth confirming before `/new`.
     pub fn has_content(&self) -> bool {
         self.messages
             .iter()
