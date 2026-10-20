@@ -1,6 +1,8 @@
 //! Inference providers: SpaceXSI, OpenRouter, Anthropic, OpenAI, and generic wires.
 
 mod http;
+#[cfg(test)]
+pub(crate) use http::parse_models_json;
 pub mod model_cache;
 mod parse;
 
@@ -182,6 +184,12 @@ pub struct ModelInfo {
     /// USD per million output tokens, when the catalog includes it.
     #[serde(default)]
     pub output_per_million: Option<f64>,
+    /// USD per million cached input tokens, when the catalog prices them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_per_million: Option<f64>,
+    /// USD per million tokens written to the cache, when the catalog prices them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_per_million: Option<f64>,
     /// Connection this row was listed from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<String>,
@@ -202,6 +210,8 @@ impl ModelInfo {
             context_length,
             input_per_million: None,
             output_per_million: None,
+            cached_per_million: None,
+            cache_write_per_million: None,
             connection: None,
             created: None,
             tools: None,

@@ -349,6 +349,19 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         });
     }
 
+    // The price catalog: pulled at most once a day, on its own thread; the
+    // worker prices with it once it is in.
+    {
+        let work = work_tx.clone();
+        let home = home.clone();
+        let enabled = cfg.spend.catalog;
+        std::thread::spawn(move || {
+            if ryter_core::prices::on_launch(&home, enabled).is_some() {
+                let _ = work.send(Work::ReloadPrices);
+            }
+        });
+    }
+
     let start_mode = start_tools_mode(&opts, &cfg);
     // `--rounds` is for this run: the worker gets it, the loaded config
     // that `/settings`, `/budget` and `/theme` save does not.
@@ -511,8 +524,9 @@ fn populate_view(
     view.ctx_tokens = Some(0);
     view.ctx_pct = Some(0);
     view.ctx_window = Some(ryter_core::window_for(&view.model));
-    view.price_label = PriceBook::from_config(cfg).format_model_rates(&view.model);
-    if let Some(r) = PriceBook::from_config(cfg).rates(&view.model) {
+    let book = PriceBook::load(cfg, home);
+    view.price_label = book.format_model_rates(&view.model);
+    if let Some(r) = book.rates(&view.model) {
         view.price_in = Some(r.input_per_million);
         view.price_out = Some(r.output_per_million);
     }

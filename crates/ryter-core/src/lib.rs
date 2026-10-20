@@ -24,6 +24,7 @@ mod outside;
 pub mod page;
 pub mod permissions;
 pub mod plan;
+pub mod prices;
 pub mod project;
 mod project_file;
 pub mod prompt;
@@ -51,9 +52,9 @@ pub use config::{
     PriceOverride, RoleModel, SandboxConfig, SecretStore, SpendConfig, UI_KEYS, UiConfig,
     canonical_connection, connection_template, has_secret, list_mcp_tokens, load, load_at,
     load_last_route, load_user_connections, new_inbound_token, resolve_route, resolve_secret,
-    resolve_secret_with, save_hooks, save_last_route, save_mcp, save_mcp_tokens, save_permissions,
-    save_settings, save_user_connections, store_secret_at, user_connection_names, well_known_env,
-    write_default_config, write_default_connection,
+    resolve_secret_in, resolve_secret_with, save_hooks, save_last_route, save_mcp, save_mcp_tokens,
+    save_permissions, save_settings, save_user_connections, store_secret_at, user_connection_names,
+    well_known_env, write_default_config, write_default_connection,
 };
 pub use doctor::Report as DoctorReport;
 pub use error::{Error, Result};

@@ -19,9 +19,9 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.30.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.31.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
-- **Anthropic and OpenAI built in, SpaceXAI renamed SpaceXSI (unreleased).** Four built-in connections as equals; `spacexai` still loads as `spacexsi` everywhere a file says it, and a key saved under the old name is found. Claude 4.6 and later get adaptive thinking at the chosen effort instead of a token budget, which they reject; OpenAI gets the reasoning effort like OpenRouter. Shipped price tables and model lists for Claude and GPT. Untried live: a turn on the real Anthropic and OpenAI APIs with the user's keys.
+- **Cache reads and writes priced right, for every model (unreleased).** The user's first Anthropic run on 0.31.0 billed every cached token at the input rate: the model list (input and output only) had been laid over the shipped row and its cached rate. A list now fills what the book does not know and never undoes a cache discount; the tables carry each provider's cache write (five quarters of input at Anthropic and OpenAI) and were read against the price pages on 2026-10-19; OpenRouter's list brings its cache rates; SpaceXSI's own cost (`cost_in_usd_ticks`) and OpenAI's cache-write count are read; writes are in the ledger, `ryter spend`, the spend panel and its CSV. For a model nobody ships, the public models.dev catalog is pulled once a day into `~/.ryter/prices.json` (`[spend] catalog = false` stops it). Untried live: the pull on the user's machine and a turn on each wire against the provider's console.
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
 - **1.0 item 1 (flow on a real project): closed 2026-10-14** (recorded in 0.28.0). Further ask friction from fiscus/tunes stays under Next (item 2). G4 closed the nested-scratch and tmux-scope holes in 0.29.0.
@@ -67,6 +67,15 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.31.0 — Anthropic and OpenAI built in, SpaceXAI renamed SpaceXSI (2026-10-19)
+
+Released 2026-10-19 (PR #95). The note is `docs/releases/v0.31.0.md`.
+
+- **Four built-in connections.** `anthropic` (Messages API) and `openai` (Responses API) sit beside `spacexsi` and `openrouter` as equals in `/provider`, `doctor`, `ryter connections` and `--connection`; a key in the environment or saved on the row makes one live. `openai_compat` stays the kind for any other chat-completions server and no longer presumes a model.
+- **SpaceXAI is SpaceXSI.** The kind, the built-in and the docs follow the company's name; `spacexai` still loads as `spacexsi` everywhere a file says it, and a key saved under the old name is found.
+- **Claude 4.6 and later think.** Adaptive thinking at the chosen effort instead of a token budget, which those models reject; OpenAI gets the reasoning effort like OpenRouter. Claude and GPT models are priced and have their windows in the gauge.
+- **Open from it.** A live turn on the real Anthropic and OpenAI APIs was not made before the release; the user's first Anthropic run showed the cached-token pricing fault fixed next (above).
 
 ### 0.30.0 — the workspace is the only screen, and the polish before a review (2026-10-19)
 

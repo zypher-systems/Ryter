@@ -868,7 +868,7 @@ fn account_models_url(base_url: &str) -> String {
     format!("{base_url}/models/user")
 }
 
-fn parse_models_json(text: &str) -> Result<Vec<ModelInfo>> {
+pub(crate) fn parse_models_json(text: &str) -> Result<Vec<ModelInfo>> {
     let v: Value =
         serde_json::from_str(text).map_err(|e| Error::Provider(format!("models json: {e}")))?;
     let data = v
@@ -897,6 +897,18 @@ fn parse_models_json(text: &str) -> Result<Vec<ModelInfo>> {
                 .and_then(Value::as_str)
                 .and_then(|s| s.parse::<f64>().ok())
                 .map(|per_token| per_token * 1_000_000.0);
+            // OpenRouter prices the cache: a read, and a write where the
+            // model charges for one.
+            let per_million = |k: &str| {
+                pricing
+                    .and_then(|p| p.get(k))
+                    .and_then(Value::as_str)
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .filter(|v| v.is_finite() && *v >= 0.0)
+                    .map(|per_token| per_token * 1_000_000.0)
+            };
+            let cached_per_million = per_million("input_cache_read");
+            let cache_write_per_million = per_million("input_cache_write");
             let created = m.get("created").and_then(Value::as_u64);
             let tools = m
                 .get("supported_parameters")
@@ -907,6 +919,8 @@ fn parse_models_json(text: &str) -> Result<Vec<ModelInfo>> {
                 context_length,
                 input_per_million,
                 output_per_million,
+                cached_per_million,
+                cache_write_per_million,
                 connection: None,
                 created,
                 tools,

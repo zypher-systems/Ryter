@@ -835,6 +835,7 @@ fn spent(role: Role, usd: Option<f64>) -> AgentEvent {
         input_tokens: 100,
         output_tokens: 10,
         cached_tokens: 0,
+        cache_write_tokens: 0,
         total_usd: usd,
         incomplete: false,
     }
@@ -1845,6 +1846,8 @@ fn render_theme_preview() {
                     context_length: Some(256_000),
                     input_per_million: Some(i),
                     output_per_million: Some(o),
+                    cached_per_million: None,
+                    cache_write_per_million: None,
                     connection: Some("openrouter".into()),
                     created: None,
                     tools: Some(true),

@@ -3199,6 +3199,7 @@ impl Agent {
             input_tokens: usage.input_tokens,
             output_tokens: usage.output_tokens,
             cached_tokens: usage.cached_tokens,
+            cache_write_tokens: usage.cache_write_tokens,
             total_usd,
             incomplete,
         })?;
@@ -5549,6 +5550,8 @@ mod tests {
                 context_length: None,
                 input_per_million: Some(i),
                 output_per_million: Some(o),
+                cached_per_million: None,
+                cache_write_per_million: None,
                 connection: None,
                 created: None,
                 tools: None,

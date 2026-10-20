@@ -6,7 +6,7 @@ One model works in your project, with you, and `Tab` switches between its two wo
 
 ![Ryter in the build hat: the Conversation, Hats and Sessions tabs on the top bar, the hats with their models and costs in the sidebar, the conversation in the middle with the diff of app/server.js and a new test, and the instruments at the right.](docs/screenshots/build.png)
 
-Linux first. The current release is 0.31.0. Apache-2.0.
+Linux first. The current release is 0.32.0. Apache-2.0.
 
 ## Install
 
@@ -14,7 +14,7 @@ Linux first. The current release is 0.31.0. Apache-2.0.
 curl -fsSL https://raw.githubusercontent.com/zypher-systems/ryter/main/install.sh | sh
 ```
 
-This installs a prebuilt binary to `~/.local/bin` for Linux (x86_64 and arm64, static, any distro) or macOS (Apple Silicon and Intel). The download is checked against the release's `SHA256SUMS` first. `RYTER_VERSION=v0.31.0` pins the current release and `RYTER_INSTALL_DIR` picks the folder. Linux gets the full feature set; on macOS everything works except the Landlock sandbox, which is Linux-only.
+This installs a prebuilt binary to `~/.local/bin` for Linux (x86_64 and arm64, static, any distro) or macOS (Apple Silicon and Intel). The download is checked against the release's `SHA256SUMS` first. `RYTER_VERSION=v0.32.0` pins the current release and `RYTER_INSTALL_DIR` picks the folder. Linux gets the full feature set; on macOS everything works except the Landlock sandbox, which is Linux-only.
 
 The installer verifies signed checksums against the same pinned release key as the updater. It requires OpenSSL 3+ with Ed25519 support; set `RYTER_INSTALL_OPENSSL` to its executable if it is not the default `openssl`. Unsigned older releases and invalid signatures are refused before extraction.
 
@@ -56,7 +56,7 @@ One model works in your files. `Tab` cycles its hat, and the message box shows t
 - **An audit is a hat and `Enter`.** `Shift+Tab` puts the audit hat on with "Audit this project" in the prompt, `Enter` asks, and a card says what it will cost before it starts (`/audit` asks for one from any hat). It ends on a card: the verdict and the findings, written to `.ryter/audit.md`; `Enter` again hands them to the build hat to repair.
 - **Before each build turn Ryter checkpoints your files**, and `/undo` puts them back. `/changes` shows what changed, file by file with diffs, and can undo a single file.
 - **`/commit`** drafts the message from the diff and from what the model said about why, and commits the files you choose. Its receipt trailer records the model, the cost, the test result and the review (`Ryter: deepseek-pro-latest · $0.34 · tests ✓ 13 passed · review ✓ grok-4.7`).
-- **Every call is priced** as it happens, for the session and for the project. A model with no known price shows `$?.??`, never a fake `$0.00`. `/budget 5` caps the session, `/budget +2` raises it, and `/budget off` lifts the cap.
+- **Every call is priced** as it happens, for the session and for the project: cache reads and cache writes at their own rates, and where the provider states what it charged (SpaceXSI, OpenRouter), that figure. A model with no known price shows `$?.??`, never a fake `$0.00`. `/budget 5` caps the session, `/budget +2` raises it, and `/budget off` lifts the cap.
 - **Web search** is a row under the connections in `/provider`: Tavily, your own SearXNG server, or off. The choice is saved, and the session you are in starts using it at once.
 
 Nothing is committed unless you commit it.

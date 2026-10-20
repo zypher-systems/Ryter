@@ -107,7 +107,7 @@ fn project_lines(view: &View, w: usize, theme: Theme) -> Vec<Line<'static>> {
     lines
 }
 
-fn rows(map: &std::collections::BTreeMap<String, SpendRow>) -> Vec<Vec<String>> {
+fn rows(map: &std::collections::BTreeMap<String, SpendRow>, wide: bool) -> Vec<Vec<String>> {
     let mut v: Vec<(&String, &SpendRow)> = map.iter().collect();
     v.sort_by(|a, b| {
         b.1.usd
@@ -133,31 +133,50 @@ fn rows(map: &std::collections::BTreeMap<String, SpendRow>) -> Vec<Vec<String>> 
                 },
             ]
         })
+        .map(|mut row| {
+            if wide {
+                row.insert(5, format_tokens(map[&row[0]].written));
+            }
+            row
+        })
         .collect()
 }
 
-const HEADERS: [&str; 6] = ["", "calls", "input", "output", "cached", "usd"];
-const ALIGNS: [widgets::Al; 6] = [
-    widgets::Al::L,
-    widgets::Al::R,
-    widgets::Al::R,
-    widgets::Al::R,
-    widgets::Al::R,
-    widgets::Al::R,
-];
+const HEADERS: [&str; 7] = ["", "calls", "input", "output", "cached", "written", "usd"];
+
+/// Whether the panel holds the written column too; narrower, the table
+/// keeps the columns it always had.
+fn wide(w: usize) -> bool {
+    w >= 56
+}
+
+fn headers(wide: bool) -> Vec<&'static str> {
+    HEADERS
+        .iter()
+        .copied()
+        .filter(|h| wide || *h != "written")
+        .collect()
+}
+
+fn aligns(wide: bool) -> Vec<widgets::Al> {
+    std::iter::once(widgets::Al::L)
+        .chain(std::iter::repeat_n(widgets::Al::R, headers(wide).len() - 1))
+        .collect()
+}
 
 /// CSV body for the export (`R-POP-46`).
 pub fn csv(view: &View) -> String {
-    let mut s =
-        String::from("group,name,calls,input_tokens,output_tokens,cached_tokens,usd,unpriced\n");
+    let mut s = String::from(
+        "group,name,calls,input_tokens,output_tokens,cached_tokens,cache_write_tokens,usd,unpriced\n",
+    );
     for (group, map) in [
         ("role", &view.spend_rows_role),
         ("connection", &view.spend_rows_conn),
     ] {
         for (name, r) in map {
             s.push_str(&format!(
-                "{group},{name},{},{},{},{},{:.6},{}\n",
-                r.calls, r.input, r.output, r.cached, r.usd, r.unpriced
+                "{group},{name},{},{},{},{},{},{:.6},{}\n",
+                r.calls, r.input, r.output, r.cached, r.written, r.usd, r.unpriced
             ));
         }
     }
@@ -286,9 +305,9 @@ impl Panel for Spend {
             lines.push(widgets::note("  nothing spent yet", theme));
         } else {
             lines.extend(widgets::table(
-                &HEADERS,
-                &rows(&view.spend_rows_role),
-                &ALIGNS,
+                &headers(wide(w)),
+                &rows(&view.spend_rows_role, wide(w)),
+                &aligns(wide(w)),
                 None,
                 w,
                 theme,
@@ -300,9 +319,9 @@ impl Panel for Spend {
             lines.push(widgets::note("  nothing spent yet", theme));
         } else {
             lines.extend(widgets::table(
-                &HEADERS,
-                &rows(&view.spend_rows_conn),
-                &ALIGNS,
+                &headers(wide(w)),
+                &rows(&view.spend_rows_conn, wide(w)),
+                &aligns(wide(w)),
                 None,
                 w,
                 theme,
@@ -440,6 +459,7 @@ mod money {
                 input: 4000,
                 output: 40,
                 cached: 0,
+                written: 0,
                 usd: 0.004,
                 unpriced: false,
             },

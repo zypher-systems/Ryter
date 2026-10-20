@@ -188,6 +188,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             input_tokens,
             output_tokens,
             cached_tokens,
+            cache_write_tokens,
             total_usd,
             incomplete,
         } => {
@@ -203,7 +204,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 *role,
                 *input_tokens,
                 *output_tokens,
-                *cached_tokens,
+                (*cached_tokens, *cache_write_tokens),
                 *total_usd,
                 *incomplete,
             );
@@ -644,7 +645,7 @@ fn on_spend(
     role: Role,
     input_tokens: u64,
     output_tokens: u64,
-    cached_tokens: u64,
+    (cached_tokens, cache_write_tokens): (u64, u64),
     total_usd: Option<f64>,
     incomplete: bool,
 ) {
@@ -656,6 +657,7 @@ fn on_spend(
         row.input += input_tokens;
         row.output += output_tokens;
         row.cached += cached_tokens;
+        row.written += cache_write_tokens;
         if let Some(v) = total_usd {
             row.usd += v;
         } else {
@@ -672,6 +674,7 @@ fn on_spend(
         row.input += input_tokens;
         row.output += output_tokens;
         row.cached += cached_tokens;
+        row.written += cache_write_tokens;
         if let Some(v) = total_usd {
             row.usd += v;
         } else {
@@ -1053,6 +1056,7 @@ mod tests {
                 input_tokens: 100,
                 output_tokens: 20,
                 cached_tokens: 0,
+                cache_write_tokens: 0,
                 total_usd: Some(0.01),
                 incomplete: false,
             },
@@ -1087,6 +1091,7 @@ mod tests {
                 input_tokens: 1,
                 output_tokens: 1,
                 cached_tokens: 0,
+                cache_write_tokens: 0,
                 total_usd: None,
                 incomplete: false,
             },
@@ -1108,6 +1113,7 @@ mod tests {
                 input_tokens: 1_000,
                 output_tokens: 0,
                 cached_tokens: 0,
+                cache_write_tokens: 0,
                 total_usd: Some(0.002),
                 incomplete: true,
             },

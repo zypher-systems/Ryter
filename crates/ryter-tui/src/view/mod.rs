@@ -444,8 +444,10 @@ pub struct SpendRow {
     pub input: u64,
     /// Output tokens.
     pub output: u64,
-    /// Cached tokens.
+    /// Tokens read from the cache.
     pub cached: u64,
+    /// Tokens written to the cache.
+    pub written: u64,
     /// Known USD.
     pub usd: f64,
     /// Any unpriced call.
@@ -1100,6 +1102,8 @@ fn model_row(id: &str, window: u64, input: f64, output: f64) -> ryter_core::Mode
         context_length: Some(window),
         input_per_million: Some(input),
         output_per_million: Some(output),
+        cached_per_million: None,
+        cache_write_per_million: None,
         connection: None,
         created: None,
         tools: None,

@@ -140,8 +140,8 @@ pub fn run(opts: DoctorOpts<'_>) -> Report {
     };
 
     if let Some(cfg) = &cfg {
-        connection_checks(&mut checks, cfg);
-        spend_checks(&mut checks, cfg);
+        connection_checks(&mut checks, cfg, opts.home);
+        spend_checks(&mut checks, cfg, opts.home);
     }
 
     project_trust_check(&mut checks, opts.cwd, opts.trusted);
@@ -151,7 +151,7 @@ pub fn run(opts: DoctorOpts<'_>) -> Report {
     Report { checks }
 }
 
-fn connection_checks(checks: &mut Vec<Check>, cfg: &Config) {
+fn connection_checks(checks: &mut Vec<Check>, cfg: &Config, home: &Path) {
     for name in ["spacexsi", "openrouter", "anthropic", "openai"] {
         let Some(conn) = cfg.connections.get(name) else {
             checks.push(Check {
@@ -161,8 +161,11 @@ fn connection_checks(checks: &mut Vec<Check>, cfg: &Config) {
             });
             continue;
         };
-        let key =
-            config::resolve_secret_with(cfg, &ConnectionId::new(name), |k| std::env::var(k).ok());
+        // The home the doctor was given, so a saved key is read from there
+        // and nowhere else.
+        let key = config::resolve_secret_in(cfg, &ConnectionId::new(name), home, |k| {
+            std::env::var(k).ok()
+        });
         let key_bit = match key {
             Ok(_) => "key=set".to_string(),
             Err(_) => format!(
@@ -187,8 +190,25 @@ fn connection_checks(checks: &mut Vec<Check>, cfg: &Config) {
     }
 }
 
-fn spend_checks(checks: &mut Vec<Check>, cfg: &Config) {
-    let book = PriceBook::from_config(cfg);
+fn spend_checks(checks: &mut Vec<Check>, cfg: &Config, home: &Path) {
+    let book = PriceBook::load(cfg, home);
+    // The pulled catalog: what prices a model the shipped tables don't know.
+    let pulled = crate::prices::load(home);
+    checks.push(Check {
+        name: "price catalog".into(),
+        status: CheckStatus::Ok,
+        detail: match (&pulled, cfg.spend.catalog) {
+            (Some(c), _) => format!(
+                "{} models from {} · pulled {}{}",
+                c.providers.values().map(|m| m.len()).sum::<usize>(),
+                if c.source.is_empty() { "the catalog" } else { &c.source },
+                crate::prices::age(c.fetched),
+                if cfg.spend.catalog { "" } else { " · [spend] catalog = false: not read or refreshed" }
+            ),
+            (None, true) => "not pulled yet · fetched once a day at launch; the shipped tables price what they know".into(),
+            (None, false) => "off ([spend] catalog = false) · the shipped tables price what they know".into(),
+        },
+    });
     let usage = Usage {
         input_tokens: 1_000,
         output_tokens: 1_000,
@@ -320,6 +340,31 @@ mod tests {
         assert!(text.contains("sandbox"), "{text}");
         assert!(!text.to_lowercase().contains("xai-"));
         assert!(!r.failed(), "{text}");
+    }
+
+    /// A key saved under the doctor's home is seen (and never printed), so
+    /// the report is about that home and not whatever this machine holds.
+    #[test]
+    fn a_saved_key_is_read_from_the_doctors_home() {
+        let home = TempDir::new().unwrap();
+        let cwd = TempDir::new().unwrap();
+        std::fs::create_dir_all(home.path().join("keys")).unwrap();
+        std::fs::write(home.path().join("keys").join("openai"), "sk-test\n").unwrap();
+        let r = run(DoctorOpts {
+            home: home.path(),
+            cwd: cwd.path(),
+            trusted: false,
+            sandbox: SandboxProfile::Off,
+        });
+        let text = r.render();
+        let row = |name: &str| {
+            text.lines()
+                .find(|l| l.contains(&format!("connection {name}")))
+                .unwrap_or_else(|| panic!("no {name} row in {text}"))
+                .to_string()
+        };
+        assert!(row("openai").contains("key=set"), "{text}");
+        assert!(!text.contains("sk-test"), "{text}");
     }
 
     #[test]

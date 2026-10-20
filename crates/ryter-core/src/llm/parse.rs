@@ -258,6 +258,9 @@ fn push_responses(out: &mut Vec<StreamDelta>, event: Option<&str>, data: &str) -
             if let Some(u) = usage_from(&v["response"]["usage"]) {
                 out.push(StreamDelta::Usage(u));
             }
+            if let Some(c) = reported_cost(&v["response"]) {
+                out.push(StreamDelta::ReportedCost(c));
+            }
             match v["response"]["incomplete_details"]["reason"].as_str() {
                 Some("max_output_tokens") => out.push(StreamDelta::Truncated),
                 Some(r) if ty == "response.incomplete" => return Err(refused(r)),
@@ -464,7 +467,10 @@ fn usage_from(v: &Value) -> Option<Usage> {
             // DeepSeek's own API.
             .or_else(|| n("prompt_cache_hit_tokens"))
             .unwrap_or(0);
-        let write = detail("prompt_tokens_details", "cache_write_tokens").unwrap_or(0);
+        // OpenRouter and OpenAI (Responses) name the write the same way.
+        let write = detail("prompt_tokens_details", "cache_write_tokens")
+            .or_else(|| detail("input_tokens_details", "cache_write_tokens"))
+            .unwrap_or(0);
         (input, cached, write)
     };
     if input == 0 && output == 0 && cached == 0 {
@@ -478,10 +484,26 @@ fn usage_from(v: &Value) -> Option<Usage> {
     })
 }
 
+/// What the provider itself says the request cost, in USD: OpenRouter's
+/// `usage.cost`; SpaceXSI's `usage.cost_in_usd_ticks` (ten billion to the
+/// dollar) or `cost_in_nano_usd`.
 fn reported_cost(v: &Value) -> Option<f64> {
-    v.get("usage")
+    let usage = v.get("usage");
+    usage
         .and_then(|u| u.get("cost").or_else(|| u.get("total_cost")))
         .and_then(Value::as_f64)
+        .or_else(|| {
+            usage
+                .and_then(|u| u.get("cost_in_usd_ticks"))
+                .and_then(Value::as_f64)
+                .map(|t| t / 1e10)
+        })
+        .or_else(|| {
+            usage
+                .and_then(|u| u.get("cost_in_nano_usd"))
+                .and_then(Value::as_f64)
+                .map(|n| n / 1e9)
+        })
         .or_else(|| v.get("cost").and_then(Value::as_f64))
 }
 
@@ -581,6 +603,57 @@ data: {"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":40}}
                 cache_write_tokens: 800,
             }
         );
+    }
+
+    /// OpenAI's Responses usage names the write the way OpenRouter does;
+    /// from GPT-5.6 on a write is billed at five quarters, so it is kept.
+    #[test]
+    fn openai_cache_writes_are_counted() {
+        let sse = "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1000,\"output_tokens\":5,\"input_tokens_details\":{\"cached_tokens\":600,\"cache_write_tokens\":300}}}}\n\n";
+        let deltas = parse_sse(Backend::Responses, sse).unwrap();
+        let u = deltas
+            .into_iter()
+            .find_map(|d| match d {
+                StreamDelta::Usage(u) => Some(u),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            (u.input_tokens, u.cached_tokens, u.cache_write_tokens),
+            (1000, 600, 300)
+        );
+    }
+
+    /// SpaceXSI says what the request cost, in ticks of a ten-billionth
+    /// of a dollar (or nano-dollars); that figure beats any table.
+    #[test]
+    fn the_providers_own_cost_is_read_in_ticks_and_nano_dollars() {
+        let cost = |sse: &str| {
+            parse_sse(Backend::Responses, sse)
+                .unwrap()
+                .into_iter()
+                .find_map(|d| match d {
+                    StreamDelta::ReportedCost(c) => Some(c),
+                    _ => None,
+                })
+        };
+        let ticks = "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":5,\"cost_in_usd_ticks\":1636040000}}}\n\n";
+        assert!((cost(ticks).unwrap() - 0.163604).abs() < 1e-12);
+        let nano = "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":5,\"cost_in_nano_usd\":163604000}}}\n\n";
+        assert!((cost(nano).unwrap() - 0.163604).abs() < 1e-12);
+        let none = "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n\n";
+        assert_eq!(cost(none), None);
+        // The chat wire too (OpenRouter's `cost`, or a tick count there).
+        let chat = "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"cost_in_usd_ticks\":5000000000}}\n\ndata: [DONE]\n\n";
+        let c = parse_sse(Backend::ChatCompletions, chat)
+            .unwrap()
+            .into_iter()
+            .find_map(|d| match d {
+                StreamDelta::ReportedCost(c) => Some(c),
+                _ => None,
+            })
+            .unwrap();
+        assert!((c - 0.5).abs() < 1e-12);
     }
 
     /// OpenAI-style counts already include cached tokens; DeepSeek names its

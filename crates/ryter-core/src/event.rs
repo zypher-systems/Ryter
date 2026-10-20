@@ -122,6 +122,9 @@ pub enum AgentEvent {
         output_tokens: u64,
         /// Cached / discounted input tokens if reported.
         cached_tokens: u64,
+        /// Tokens written to the cache, part of `input_tokens`.
+        #[serde(default)]
+        cache_write_tokens: u64,
         /// USD total for this call. `None` means unknown price (`$?.??`).
         total_usd: Option<f64>,
         /// Any reported tokens and cost are a lower bound, not a final bill.

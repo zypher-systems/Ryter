@@ -480,7 +480,7 @@ async fn run_prompt(
     let last_input_tokens = session.last_input_tokens();
     let mut agent = Agent {
         provider: Arc::new(provider),
-        book: PriceBook::from_config(&cfg),
+        book: PriceBook::load(&cfg, &config::home_dir()),
         session,
         ctx: ToolContext {
             sandbox: tool_sandbox,
@@ -860,7 +860,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
     let rt = sandbox::runtime(profile).map_err(|e| Error::Io(e.to_string()))?;
     let agent = Agent {
         provider: Arc::new(provider),
-        book: PriceBook::from_config(&cfg),
+        book: PriceBook::load(&cfg, &config::home_dir()),
         session,
         ctx: ToolContext {
             sandbox: tool_sandbox,
@@ -992,7 +992,7 @@ fn serve_host_from_config(
     let cancel = ryter_core::Cancel::new();
     let agent = Agent {
         provider: Arc::new(provider),
-        book: PriceBook::from_config(cfg),
+        book: PriceBook::load(cfg, &config::home_dir()),
         session,
         ctx: ToolContext {
             sandbox: tool_sandbox,
@@ -1120,10 +1120,12 @@ fn spend_cmd(id: Option<&str>) -> ryter_core::Result<()> {
     }
     for rec in session.spend_log()? {
         println!(
-            "  {}  {:<14}  in={} out={}  {}{}",
+            "  {}  {:<14}  in={} (cached {} written {}) out={}  {}{}",
             rec.role,
             rec.model,
             rec.input_tokens,
+            rec.cached_tokens,
+            rec.cache_write_tokens,
             rec.output_tokens,
             format_usd(rec.total_usd),
             if rec.incomplete { " (incomplete)" } else { "" }

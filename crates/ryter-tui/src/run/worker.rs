@@ -56,6 +56,8 @@ pub enum Work {
     ListModels,
     /// `GET /models` on every keyed connection (a hat's seat).
     ListAllModels,
+    /// The price catalog was pulled: price with it from here on.
+    ReloadPrices,
     /// Replace each hat's own model.
     SetHats {
         /// Assignments.
@@ -333,7 +335,7 @@ pub fn run(init: WorkerInit) {
             }
         }
         while let Ok(done) = fetch_rx.try_recv() {
-            let book = PriceBook::from_config(&cfg);
+            let book = PriceBook::load(&cfg, &home);
             let mut all = Vec::new();
             let mut notes = Vec::new();
             for (name, result) in done.results {
@@ -666,7 +668,7 @@ pub fn run(init: WorkerInit) {
                 }
             }
             Ok(Work::ListAllModels) => {
-                let book = PriceBook::from_config(&cfg);
+                let book = PriceBook::load(&cfg, &home);
                 let mut shown = Vec::new();
                 let mut oldest = 0u64;
                 let mut targets: Vec<(String, Arc<dyn Provider>)> = Vec::new();
@@ -698,6 +700,19 @@ pub fn run(init: WorkerInit) {
                     fetch_models(targets, true, fetch_tx.clone());
                 }
             }
+            Ok(Work::ReloadPrices) => {
+                if let Some(a) = &mut agent {
+                    // The book as at startup, with the connections' own
+                    // lists over the catalog, as `ListModels` lays them.
+                    let mut book = PriceBook::load(&cfg, &home);
+                    for name in cfg.connections.keys() {
+                        if let Some((models, _)) = ryter_core::llm::model_cache::load(&home, name) {
+                            book.ingest_model_info(&models);
+                        }
+                    }
+                    a.book = book;
+                }
+            }
             Ok(Work::ListModels) => {
                 let Some(a) = &agent else {
                     let _ = ev_tx.send(AgentEvent::ModelsListed { models: vec![] });
@@ -706,7 +721,7 @@ pub fn run(init: WorkerInit) {
                 let name = a.connection.clone();
                 // The last list at once; the fresh one behind it.
                 if let Some((models, secs)) = ryter_core::llm::model_cache::load(&home, &name) {
-                    let book = PriceBook::from_config(&cfg);
+                    let book = PriceBook::load(&cfg, &home);
                     let _ = ev_tx.send(AgentEvent::ModelsListed {
                         models: prepared(models, &name, &book),
                     });
@@ -896,7 +911,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
     let last_input_tokens = b.session.last_input_tokens();
     Agent {
         provider: Arc::new(provider),
-        book: PriceBook::from_config(b.cfg),
+        book: PriceBook::load(b.cfg, b.home),
         session: b.session,
         ctx: ToolContext {
             sandbox: sandbox::Scope::for_profile(b.profile, b.home),

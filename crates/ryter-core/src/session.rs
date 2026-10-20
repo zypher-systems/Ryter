@@ -145,8 +145,11 @@ pub struct SpendRecord {
     pub input_tokens: u64,
     /// Completion tokens.
     pub output_tokens: u64,
-    /// Cached tokens.
+    /// Cached tokens: read from the cache, part of `input_tokens`.
     pub cached_tokens: u64,
+    /// Tokens written to the cache, part of `input_tokens`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cache_write_tokens: u64,
     /// USD, or omitted when unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_usd: Option<f64>,
@@ -702,9 +705,14 @@ pub fn spend_record(
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         cached_tokens: usage.cached_tokens,
+        cache_write_tokens: usage.cache_write_tokens,
         total_usd,
         incomplete: false,
     }
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 /// What stands in for a result that never came.
@@ -1303,8 +1311,8 @@ mod tests {
             Usage {
                 input_tokens: 10,
                 output_tokens: 5,
-                cached_tokens: 0,
-                cache_write_tokens: 0,
+                cached_tokens: 4,
+                cache_write_tokens: 3,
             },
             Some(0.01),
         ))
@@ -1314,6 +1322,12 @@ mod tests {
         let s2 = Session::open(&dir).unwrap();
         assert_eq!(s2.transcript.len(), 1);
         assert_eq!(s2.meta.spend_usd_total, Some(0.01));
+        let rec = &s2.spend_log().unwrap()[0];
+        assert_eq!(
+            (rec.cached_tokens, rec.cache_write_tokens),
+            (4, 3),
+            "both cache counts are kept"
+        );
         let latest = Session::latest(home.path(), cwd.path()).unwrap().unwrap();
         assert_eq!(latest.meta.id, s2.meta.id);
         let listed = Session::list(home.path(), cwd.path()).unwrap();

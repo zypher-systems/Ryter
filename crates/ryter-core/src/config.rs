@@ -411,6 +411,10 @@ pub struct SpendConfig {
     /// `audit_usd` is the name it had until 0.15.
     #[serde(default, alias = "review_usd")]
     pub audit_usd: f64,
+    /// Pull the public price catalog (models.dev) once a day, so a model
+    /// the shipped tables don't know is still priced, cache rates included.
+    #[serde(default = "default_true")]
+    pub catalog: bool,
 }
 
 fn usd() -> String {
@@ -605,6 +609,7 @@ impl Default for SpendConfig {
             session_budget_usd: 0.0,
             warn_usd: 1.0,
             audit_usd: 0.0,
+            catalog: true,
         }
     }
 }
@@ -1651,6 +1656,17 @@ pub fn resolve_secret_with(
     connection: &ConnectionId,
     env: impl Fn(&str) -> Option<String>,
 ) -> Result<String> {
+    resolve_secret_in(cfg, connection, &home_dir(), env)
+}
+
+/// Resolve a secret with a stored key read under `home` rather than the
+/// process's own Ryter home, for a doctor pass over a given home.
+pub fn resolve_secret_in(
+    cfg: &Config,
+    connection: &ConnectionId,
+    home: &Path,
+    env: impl Fn(&str) -> Option<String>,
+) -> Result<String> {
     let name = connection.as_str();
     let Some(conn) = cfg.connections.get(name) else {
         return Err(Error::Config(format!("unknown connection {name:?}")));
@@ -1668,7 +1684,7 @@ pub fn resolve_secret_with(
             }
         }
     }
-    let stored = stored_key_in(&home_dir(), name);
+    let stored = stored_key_in(home, name);
     if let Some(k) = stored {
         return Ok(k);
     }

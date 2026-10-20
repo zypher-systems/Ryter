@@ -471,7 +471,9 @@ Every model call is priced before the next request. Roll-ups: session, turn, hat
 
 Overrides must supply both `input_per_million` and `output_per_million`; all supplied rates must be finite and nonnegative. Missing or invalid rates remain unknown. Explicit zero is valid for a free model.
 
-Sources, high wins: TOML `[pricing."<model>"]` → OpenRouter catalog (when ingested) → the shipped tables (Grok, Claude, GPT). Provider-reported cost on a stream wins for that turn.
+Sources, high wins: TOML `[pricing."<model>"]` → the connection's own model list, where it prices the cache (OpenRouter's catalog does) → the shipped tables (Grok, Claude, GPT, read against the providers' price pages) → the pulled catalog, for a model the tables don't know. What the provider itself says the request cost wins for that turn: OpenRouter sends `usage.cost` and SpaceXSI `cost_in_usd_ticks` on every response. A model list that gives only input and output fills a model the book does not know; it never replaces a known cache rate.
+
+The pulled catalog is the public [models.dev](https://models.dev) list: input, output, cache read and cache write per model under each provider's own ids. Ryter pulls it at most once a day when it starts, on a thread of its own, into `~/.ryter/prices.json`, and `ryter doctor` says how old it is. `[spend] catalog = false` stops the pull and leaves a file pulled earlier unread; the shipped tables then price what they know. Each built-in connection takes its provider's rows (`spacexsi` → xai); an `openai_compat` or local connection takes a row every provider that has it agrees on.
 
 Unknown rates show `$?.??` plus token counts. Ryter never invents `$0.00` for an unpriced model.
 
@@ -485,7 +487,7 @@ cache_write_per_million = 3.75  # cache writes (Anthropic: 1.25x input)
 output_per_million = 15.0
 ```
 
-Prompt caching is priced in parts: cache reads at the cached rate, cache writes at the cache-write rate, the rest at the input rate. Each rate falls back to the input rate when unset.
+Prompt caching is priced in parts: cache reads at the cached rate, cache writes at the cache-write rate, the rest at the input rate. Each rate falls back to the input rate when unset. The counts come from the provider's usage report on every wire: Anthropic's `cache_read_input_tokens` and `cache_creation_input_tokens` (added back into the prompt count, which leaves them out), OpenAI's and OpenRouter's `cached_tokens` and `cache_write_tokens`, SpaceXSI's `cached_tokens` (it does not charge for writes). Both counts are in `spend.jsonl`, `ryter spend`, the spend panel and its CSV, so a turn can be checked against the provider's console. Where a provider bills a long-context prompt higher (SpaceXSI from 200k tokens, OpenAI over 272k, Claude Haiku 5.5 over 100k), the whole request is priced at that tier, reads and writes included.
 
 Cancelled or failed streams keep any reported usage and estimated cost as a lower bound. If the final accounting is missing, the session is marked incomplete. A configured budget then blocks further model calls, including commit-message drafting, even after resume or a model change. Start a separate session or explicitly use `/budget off` to continue with unknown spend.
 
@@ -648,7 +650,7 @@ At 85%, compaction keeps older user constraints and assistant notes in an extrac
 
 ## Doctor and sandbox
 
-`ryter doctor` (and the `/doctor` panel, which runs the checks off-thread and can save the report with `c`) checks OS, tty, home, config, both built-in connections (key set/missing, never printed), spend catalog, git, Landlock, sandbox profile, and whether `.ryter/` is trusted. No network.
+`ryter doctor` (and the `/doctor` panel, which runs the checks off-thread and can save the report with `c`) checks OS, tty, home, config, the built-in connections (key set/missing, never printed), the price catalog (how many models, how old), spend catalog, git, Landlock, sandbox profile, and whether `.ryter/` is trusted. No network.
 
 ### Sandbox profiles
 
