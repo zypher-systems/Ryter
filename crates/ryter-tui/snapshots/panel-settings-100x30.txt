@@ -13,8 +13,8 @@
     rounds a turn (0 = off)  ‹ 150 ›                          default ┆ ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
     audit usd (0 = off)      ‹ 0.00 ›                         default ┆ ┊ Spend · no cap
                                                                       ┆ ┊ $0
-   TOOLS                                                              ┆ ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-    permission mode          ‹ ask ›                          default ┆ ┊ Build $0
+   TOOLS                                                              ┆ ┊ Build  ╌╌╌╌╌╌╌╌       $0
+    permission mode          ‹ ask ›                          default ┆ ┊
     features.web             [ off ]                          default ┆ ┊
                                                                       ┆ ┊
    SANDBOX                                                            ┆ ┊

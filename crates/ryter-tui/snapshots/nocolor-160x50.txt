@@ -16,8 +16,8 @@
                            ┊         ◆  grok-4.6                                                                                  ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   Specialists              ┊         ┆  Reading the loop now. The event loop drains                                               ┊ Spend · no cap
   ● Audit               $0 ┊         ┆    writing · 0:12 · 59 tokens                                                              ┊ $0
-    grok-4.6               ┊                                                                                                      ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-    checkpoint             ┊                                                                                                      ┊ Build $0
+    grok-4.6               ┊                                                                                                      ┊ Build  ╌╌╌╌╌╌╌╌         $0
+    checkpoint             ┊                                                                                                      ┊
                            ┊                                                                                                      ┊
   ● Scribe              $0 ┊                                                                                                      ┊
     follows all hats       ┊                                                                                                      ┊

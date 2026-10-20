@@ -19,8 +19,8 @@
     grok-4.6               ┊         ┆  reasoning · 0:12   ^r close ▴                                                             ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
     checkpoint             ┊         ┆   The user wants the loop wired. I should read run.rs first, then The user wants the       ┊ Spend · no cap
                            ┊         ┆   loop wired. I should read run.rs first, then The user wants the loop wired. I should     ┊ $0
-  ● Scribe              $0 ┊         ┆   read run.rs first, then                                                                  ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-    follows all hats       ┊                                                                                                      ┊ Build $0
+  ● Scribe              $0 ┊         ┆   read run.rs first, then                                                                  ┊ Build  ╌╌╌╌╌╌╌╌         $0
+    follows all hats       ┊                                                                                                      ┊
     docs only              ┊                                                                                                      ┊
                            ┊                                                                                                      ┊
                            ┊                                                                                                      ┊

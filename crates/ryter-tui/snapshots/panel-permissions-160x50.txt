@@ -17,8 +17,8 @@
   Specialists              ┊                                                                                                      ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   ● Audit               $0 ┊             › edit of project files          default (allow)                                         ┊ Spend · no cap
     grok-4.6               ┊                                                                                                      ┊ $0
-    checkpoint             ┊               No bash rules yet. a adds one (e.g. rm -rf target, or git push* =                      ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                           ┊               allow). The most specific pattern wins.                                                ┊ Build $0
+    checkpoint             ┊               No bash rules yet. a adds one (e.g. rm -rf target, or git push* =                      ┊ Build  ╌╌╌╌╌╌╌╌         $0
+                           ┊               allow). The most specific pattern wins.                                                ┊
   ● Scribe              $0 ┊                                                                                                      ┊
     follows all hats       ┊                                                                                                      ┊
     docs only              ┊                                                                                                      ┊

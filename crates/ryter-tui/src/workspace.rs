@@ -1457,95 +1457,63 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
             ),
         );
         y += 1;
-        // One bar for the session: each hat's share of it in the hat's
-        // colour. Under a cap the bar is the spend's part of the cap and
-        // the rest is track; with none, the shares fill the width.
-        let shares: Vec<(Role, f64)> = HATS
-            .iter()
-            .map(|hat| {
-                (
-                    *hat,
-                    view.spend_rows_role
-                        .get(hat.as_str())
-                        .map(|r| r.usd)
-                        .unwrap_or(0.0),
-                )
-            })
-            .collect();
-        let total: f64 = shares.iter().map(|(_, usd)| usd).sum();
-        if y < area.height {
-            let bar_w = w.saturating_sub(2).clamp(4, 24);
-            // Under a cap, a spend too small for a cell still shows its cap.
-            let lit = if view.budget_usd > 0.0 {
-                let spent = view.spend.unwrap_or(0.0);
-                let cells =
-                    ((spent / view.budget_usd).clamp(0.0, 1.0) * bar_w as f64).round() as usize;
-                if spent > 0.0 { cells.max(1) } else { cells }
-            } else if total > 0.0 {
-                bar_w
-            } else {
-                0
-            };
+        // Under a cap, the session's part of it.
+        if view.budget_usd > 0.0 && view.spend.is_some() && y < area.height {
+            let frac = (view.spend.unwrap_or(0.0) / view.budget_usd).clamp(0.0, 1.0);
             let mut spans = vec![Span::styled(" ", sty(theme.dim, bg))];
-            let mut used = 0usize;
-            let lit_hats: Vec<&(Role, f64)> = shares.iter().filter(|(_, usd)| *usd > 0.0).collect();
-            for (i, (hat, usd)) in lit_hats.iter().enumerate() {
-                let cells = if i + 1 == lit_hats.len() {
-                    lit.saturating_sub(used)
-                } else {
-                    ((usd / total) * lit as f64).round() as usize
-                }
-                .min(lit.saturating_sub(used));
-                if cells == 0 {
-                    continue;
-                }
-                let ink = sty(theme.mode(*hat), bg);
-                spans.push(Span::styled("━".repeat(cells - 1), ink));
-                spans.push(Span::styled("╸", ink));
-                used += cells;
-            }
-            if used < bar_w {
-                spans.push(Span::styled("╌".repeat(bar_w - used), sty(theme.rule, bg)));
-            }
+            spans.extend(gauge_spans(
+                frac,
+                w.saturating_sub(2).clamp(4, 24),
+                theme.mode(view.mode),
+                theme.rule,
+                bg,
+            ));
             put(frame, area, y, Line::from(spans));
             y += 1;
         }
-        if y < area.height {
-            // `Plan $0.004 · Build $0.014`: the hats that spent, else the
-            // one that is on.
-            let mut spans = vec![Span::styled(" ", sty(theme.dim, bg))];
-            let mut named = 0;
-            for (hat, usd) in &shares {
-                if *usd <= 0.0 && (*hat != view.mode || total > 0.0) {
-                    continue;
-                }
-                if named > 0 {
-                    spans.push(Span::styled(" · ", sty(theme.faint, bg)));
-                }
-                spans.push(Span::styled(
-                    glyphs::hat_label(*hat),
-                    sty(theme.mode(*hat), bg),
-                ));
-                spans.push(Span::styled(
-                    format!(" {}", sidebar::hat_spend(view, *hat)),
-                    sty(theme.dim, bg),
-                ));
-                named += 1;
+        // A row for each hat that spent, and for the one that is on: its
+        // name, a bar against the hat that spent most, and its amount.
+        let mut most = 0.0f64;
+        for hat in HATS {
+            if let Some(row) = view.spend_rows_role.get(hat.as_str()) {
+                most = most.max(row.usd);
             }
-            let line = Line::from(spans);
-            if wrap::width(&line.to_string()) <= w {
-                put(frame, area, y, line);
-            } else {
-                put(
-                    frame,
-                    area,
-                    y,
-                    Line::from(Span::styled(
-                        wrap::truncate(&line.to_string(), w),
+        }
+        for hat in HATS {
+            if y >= area.height {
+                break;
+            }
+            let usd = view
+                .spend_rows_role
+                .get(hat.as_str())
+                .map(|r| r.usd)
+                .unwrap_or(0.0);
+            if usd <= 0.0 && hat != view.mode {
+                continue;
+            }
+            let frac = if most > 0.0 { usd / most } else { 0.0 };
+            let mut left = vec![
+                Span::styled(
+                    format!(" {:<6}", glyphs::hat_label(hat)),
+                    sty(theme.mode(hat), bg),
+                ),
+                Span::styled(" ", sty(theme.dim, bg)),
+            ];
+            left.extend(gauge_spans(frac, 8, theme.mode(hat), theme.rule, bg));
+            put(
+                frame,
+                area,
+                y,
+                sidebar::ends(
+                    left,
+                    vec![Span::styled(
+                        sidebar::hat_spend(view, hat),
                         sty(theme.dim, bg),
-                    )),
-                );
-            }
+                    )],
+                    w,
+                    bg,
+                ),
+            );
             y += 1;
         }
         // B — project cost glance when the project has calls or unpriced calls.

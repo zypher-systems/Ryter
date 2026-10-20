@@ -17,8 +17,8 @@
   Specialists              ┊                 SESSION                                                                              ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   ● Audit               $0 ┊                › cap spend    [ off ]                                         config                 ┊ Spend · no cap
     grok-4.6               ┊                  cap usd      ‹ 5.00 ›                                       default                 ┊ $0
-    checkpoint             ┊                  warn at usd  ‹ 1.00 ›                                       default                 ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                           ┊                                                                                                      ┊ Build $0
+    checkpoint             ┊                  warn at usd  ‹ 1.00 ›                                       default                 ┊ Build  ╌╌╌╌╌╌╌╌         $0
+                           ┊                                                                                                      ┊
   ● Scribe              $0 ┊                 nothing stops on cost. the spend card keeps count; watch it                          ┊
     follows all hats       ┊                 yourself.                                                                            ┊
     docs only              ┊                                                                                                      ┊

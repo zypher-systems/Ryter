@@ -17,8 +17,8 @@
   Specialists              ┊                         theme                                              3                         ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   ● Audit               $0 ┊                        ›◆ dark  built-in                             current                         ┊ Spend · no cap
     grok-4.6               ┊                         ◆ light  built-in                                                            ┊ $0
-    checkpoint             ┊                         ◆ default-16  built-in                                                       ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                           ┊                                                                                                      ┊ Build $0
+    checkpoint             ┊                         ◆ default-16  built-in                                                       ┊ Build  ╌╌╌╌╌╌╌╌         $0
+                           ┊                                                                                                      ┊
   ● Scribe              $0 ┊                         ██████████████████████████  truecolor                                        ┊
     follows all hats       ┊                                                                                                      ┊
     docs only              ┊                         ↑↓ preview   enter apply   esc revert                                        ┊

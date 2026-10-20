@@ -15,8 +15,8 @@
          ◆  grok-4.6                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
          ┆  Reading the loop now. The event loop drains                 ┊ Spend · no cap
          ┆    writing · 0:12 · 59 tokens                                ┊ $0
-         ┆  reasoning · 0:12   ^r close ▴                               ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-         ┆   The user wants the loop wired. I should read run.rs        ┊ Build $0
+         ┆  reasoning · 0:12   ^r close ▴                               ┊ Build  ╌╌╌╌╌╌╌╌       $0
+         ┆   The user wants the loop wired. I should read run.rs        ┊
          ┆   first, then The user wants the loop wired. I should read   ┊
          ┆   run.rs first, then The user wants the loop wired. I        ┊
          ┆   should read run.rs first, then                             ┊

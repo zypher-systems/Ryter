@@ -17,8 +17,8 @@
   Specialists              ┊     follows all hats   │ grok-4.5           $2     $6  spacexsi                                      ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   ● Audit               $0 ┊     Build              │ grok-4.3        $1.25   $2.5  spacexsi                                      ┊ Spend · no cap
     grok-4.6               ┊     follows all hats   │ grok-build-0.1     $1     $2  spacexsi                                      ┊ $0
-    checkpoint             ┊     Audit              │                                                                             ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                           ┊     follows all hats   │                                                                             ┊ Build $0
+    checkpoint             ┊     Audit              │                                                                             ┊ Build  ╌╌╌╌╌╌╌╌         $0
+                           ┊     follows all hats   │                                                                             ┊
   ● Scribe              $0 ┊     Scribe             │                                                                             ┊
     follows all hats       ┊     follows all hats   │                                                                             ┊
     docs only              ┊                        │                                                                             ┊

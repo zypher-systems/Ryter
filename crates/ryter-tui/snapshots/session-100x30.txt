@@ -13,14 +13,14 @@
          ┆    1   app.get('/search', (req, res) => {                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
          ┆    2 -   const q = (req.query.q || '').trim()                ┊ Spend · no cap
          ┆    2 +   const q = String(req.query.q ?? '').trim()          ┊ $0.065
-         ┆    3     if (!q) return res.json([])                         ┊ ╸━━━━━━╸━━━━━━━━━━━━━━╸
-         ┆    4     res.json(find(q))                                   ┊ Plan $0.004 · Build $0.…
-         ├─ write  test/search.test.js                           +4 −0  ┊
-         ┆     5     assert.deepEqual(await search(''), [])             ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-         ┆     6   })                                                   ┊ Changes · 2
-         ┆     7 +                                                      ┊ app/server.js      +2 −1
-         ┆     8 + test('a missing query finds nothing', async () => {  ┊ test/search.test.js  +10
-         ┆     9 +   assert.deepEqual(await search(), [])               ┊
+         ┆    3     if (!q) return res.json([])                         ┊ Plan   ╸╌╌╌╌╌╌╌   $0.004
+         ┆    4     res.json(find(q))                                   ┊ Build  ━━━━╌╌╌╌   $0.021
+         ├─ write  test/search.test.js                           +4 −0  ┊ Audit  ━━━━━━━━   $0.040
+         ┆     5     assert.deepEqual(await search(''), [])             ┊
+         ┆     6   })                                                   ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ┆     7 +                                                      ┊ Changes · 2
+         ┆     8 + test('a missing query finds nothing', async () => {  ┊ app/server.js      +2 −1
+         ┆     9 +   assert.deepEqual(await search(), [])               ┊ test/search.test.js  +10
          ┆    10 + })                                                   ┊
          ╰─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009     ┊
   ╭──────────────────────────────────────────────────────────────────╮  ┊

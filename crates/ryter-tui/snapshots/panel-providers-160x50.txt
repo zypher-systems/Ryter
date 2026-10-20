@@ -17,8 +17,8 @@
   Specialists              ┊                 ›● spacexsi  spacexsi · grok-4.6                            key set                  ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   ● Audit               $0 ┊                  ○ openrouter  openrouter · claude-sonnet-4.6                no key                  ┊ Spend · no cap
     grok-4.6               ┊                                                                                                      ┊ $0
-    checkpoint             ┊                  ◇ web search  not set up · enter to choose                                          ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                           ┊                                                                                                      ┊ Build $0
+    checkpoint             ┊                  ◇ web search  not set up · enter to choose                                          ┊ Build  ╌╌╌╌╌╌╌╌         $0
+                           ┊                                                                                                      ┊
   ● Scribe              $0 ┊                  + add connection                                                                    ┊
     follows all hats       ┊                  ⚙ test connection  live GET /models on the highlighted row                          ┊
     docs only              ┊                                                                                                      ┊

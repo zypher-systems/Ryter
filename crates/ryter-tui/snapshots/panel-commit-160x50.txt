@@ -17,8 +17,8 @@
   Specialists              ┊      ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖      ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   ● Audit               $0 ┊        commit                                                                    0 of 0 files        ┊ Spend · no cap
     grok-4.6               ┊        not a git repository                                                                          ┊ $0
-    checkpoint             ┊                                                                                                      ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                           ┊                                                                                                      ┊ Build $0
+    checkpoint             ┊                                                                                                      ┊ Build  ╌╌╌╌╌╌╌╌         $0
+                           ┊                                                                                                      ┊
   ● Scribe              $0 ┊                                                                                                      ┊
     follows all hats       ┊        t receipt on/off   esc                                                                        ┊
     docs only              ┊      ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘      ┊

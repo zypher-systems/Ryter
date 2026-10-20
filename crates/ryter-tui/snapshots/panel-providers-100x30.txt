@@ -13,8 +13,8 @@
    ◇ web search  not set up · enter to choose                           ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
                                                                         ┊ Spend · no cap
    + add connection                                                     ┊ $0
-   ⚙ test connection  live GET /models on the highlighted row           ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                                                                        ┊ Build $0
+   ⚙ test connection  live GET /models on the highlighted row           ┊ Build  ╌╌╌╌╌╌╌╌       $0
+                                                                        ┊
                                                                         ┊
    enter use   k set key   t test   d remove   esc                      ┊
  ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘ ┊

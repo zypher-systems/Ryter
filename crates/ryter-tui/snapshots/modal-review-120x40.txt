@@ -17,8 +17,8 @@
          ┆    6 +   if (!q) return res.json([])                                             ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
          ┆    7     res.json(find(q))                                                       ┊ Spend · no cap
          ┆    8   })                                                                        ┊ $0
-         ├─ write  test/search.test.js                                       new · 6 lines  ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-         ┆    1 + import { test } from 'node:test'                                          ┊ Build $0
+         ├─ write  test/search.test.js                                       new · 6 lines  ┊ Build  ╌╌╌╌╌╌╌╌       $0
+         ┆    1 + import { test } from 'node:test'                                          ┊
          ┆    2 + import assert from 'node:assert'                                          ┊
          ┆    3 +                                                                           ┊
          ┆    4 + test('an empty query finds nothing', async () => {                        ┊

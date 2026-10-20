@@ -17,8 +17,8 @@
   Specialists              ┊                                                                                                      ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   ● Audit               $0 ┊                outbound servers                                                                      ┊ Spend · no cap
     grok-4.6               ┊                  none configured                                                                     ┊ $0
-    checkpoint             ┊                + add server  stdio command → ~/.ryter/mcp.toml                                       ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                           ┊                                                                                                      ┊ Build $0
+    checkpoint             ┊                + add server  stdio command → ~/.ryter/mcp.toml                                       ┊ Build  ╌╌╌╌╌╌╌╌         $0
+                           ┊                                                                                                      ┊
   ● Scribe              $0 ┊                                                                                                      ┊
     follows all hats       ┊                                                                                                      ┊
     docs only              ┊                                                                                                      ┊

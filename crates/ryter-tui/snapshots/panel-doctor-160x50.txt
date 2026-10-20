@@ -17,8 +17,8 @@
   Specialists              ┊                 doctor                              running… · trusted · sandbox off                 ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   ● Audit               $0 ┊                 ⠋ running checks…                                                                    ┊ Spend · no cap
     grok-4.6               ┊                                                                                                      ┊ $0
-    checkpoint             ┊                                                                                                      ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                           ┊                                                                                                      ┊ Build $0
+    checkpoint             ┊                                                                                                      ┊ Build  ╌╌╌╌╌╌╌╌         $0
+                           ┊                                                                                                      ┊
   ● Scribe              $0 ┊                                                                                                      ┊
     follows all hats       ┊                                                                                                      ┊
     docs only              ┊                                                                                                      ┊

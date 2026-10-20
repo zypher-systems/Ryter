@@ -15,8 +15,8 @@
          ◆  grok-4.6                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
          ┆  Reading the loop now. The event loop drains reply line 0    ┊ Spend · no cap
          ┆  reply line 1 reply line 2 reply line 3 reply line 4         ┊ $0
-         ┆  reply line 5 reply line 6 reply line 7                      ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-         ┆    waiting for you · allow? · 0:12 · 85 tokens               ┊ Build $0
+         ┆  reply line 5 reply line 6 reply line 7                      ┊ Build  ╌╌╌╌╌╌╌╌       $0
+         ┆    waiting for you · allow? · 0:12 · 85 tokens               ┊
    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊
      allow? · run as root  sudo dnf install -y alsa-lib-devel pkgc…     ┊
      what    run as root  sudo dnf install -y alsa-lib-devel pkgco…     ┊

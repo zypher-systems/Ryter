@@ -17,8 +17,8 @@
   Specialists              ┊              hooks                                                                    0              ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   ● Audit               $0 ┊              no hooks configured                                                                     ┊ Spend · no cap
     grok-4.6               ┊                                                                                                      ┊ $0
-    checkpoint             ┊             ›+ add hook  a add · appended to ~/.ryter/hooks.toml                                     ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                           ┊                                                                                                      ┊ Build $0
+    checkpoint             ┊             ›+ add hook  a add · appended to ~/.ryter/hooks.toml                                     ┊ Build  ╌╌╌╌╌╌╌╌         $0
+                           ┊                                                                                                      ┊
   ● Scribe              $0 ┊                                                                                                      ┊
     follows all hats       ┊                                                                                                      ┊
     docs only              ┊                                                                                                      ┊

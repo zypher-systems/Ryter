@@ -17,8 +17,8 @@
   Specialists              ┊                     context                                                   5%                     ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   ● Audit               $0 ┊                     used █░░░░░░░░░░░░░░░░░░░░░  5%  12.4k / 256k tokens                             ┊ Spend · no cap
     grok-4.6               ┊                     asking the agent…                                                                ┊ $0
-    checkpoint             ┊                                                                                                      ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                           ┊                     no breakdown yet · r to refresh                                                  ┊ Build $0
+    checkpoint             ┊                                                                                                      ┊ Build  ╌╌╌╌╌╌╌╌         $0
+                           ┊                     no breakdown yet · r to refresh                                                  ┊
   ● Scribe              $0 ┊                                                                                                      ┊
     follows all hats       ┊                     c compact · summarizes older turns                                               ┊
     docs only              ┊                                                                                                      ┊

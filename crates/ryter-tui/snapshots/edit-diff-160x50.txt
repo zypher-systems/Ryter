@@ -17,8 +17,8 @@
   Specialists              ┊         ┆    5 +   const q = (req.query.q || '').trim()                                              ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   ● Audit               $0 ┊         ┆    6 +   if (!q) return res.json([])                                                       ┊ Spend · no cap
     grok-4.6               ┊         ┆    7     res.json(find(q))                                                                 ┊ $0
-    checkpoint             ┊         ┆    8   })                                                                                  ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                           ┊         ├─ write  test/search.test.js                                                 new · 6 lines  ┊ Build $0
+    checkpoint             ┊         ┆    8   })                                                                                  ┊ Build  ╌╌╌╌╌╌╌╌         $0
+                           ┊         ├─ write  test/search.test.js                                                 new · 6 lines  ┊
   ● Scribe              $0 ┊         ┆    1 + import { test } from 'node:test'                                                    ┊
     follows all hats       ┊         ┆    2 + import assert from 'node:assert'                                                    ┊
     docs only              ┊         ┆    3 +                                                                                     ┊

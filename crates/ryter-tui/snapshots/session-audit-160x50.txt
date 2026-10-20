@@ -17,14 +17,14 @@
   Specialists              ┊         ┆    2 -   const q = (req.query.q || '').trim()                                              ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   ┃ Audit ✗         $0.040 ┊         ┆    2 +   const q = String(req.query.q ?? '').trim()                                        ┊ Spend · no cap
     claude-opus-5.5        ┊         ┆    3     if (!q) return res.json([])                                                       ┊ $0.065
-    checkpoint      1 turn ┊         ┆    4     res.json(find(q))                                                                 ┊ ╸━━━━━━━╸━━━━━━━━━━━━━━╸
-                           ┊         ├─ write  test/search.test.js                                                         +4 −0  ┊ Plan $0.004 · Build $0.02…
-  ● Scribe              $0 ┊         ┆     5     assert.deepEqual(await search(''), [])                                           ┊
-    follows all hats       ┊         ┆     6   })                                                                                 ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-    docs only              ┊         ┆     7 +                                                                                    ┊ Changes · 2
-                           ┊         ┆     8 + test('a missing query finds nothing', async () => {                                ┊ app/server.js        +2 −1
-                           ┊         ┆     9 +   assert.deepEqual(await search(), [])                                             ┊ test/search.test.js    +10
-  Turns ●●●●○○○○           ┊         ┆    10 + })                                                                                 ┊
+    checkpoint      1 turn ┊         ┆    4     res.json(find(q))                                                                 ┊ Plan   ╸╌╌╌╌╌╌╌     $0.004
+                           ┊         ├─ write  test/search.test.js                                                         +4 −0  ┊ Build  ━━━━╌╌╌╌     $0.021
+  ● Scribe              $0 ┊         ┆     5     assert.deepEqual(await search(''), [])                                           ┊ Audit  ━━━━━━━━     $0.040
+    follows all hats       ┊         ┆     6   })                                                                                 ┊
+    docs only              ┊         ┆     7 +                                                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                           ┊         ┆     8 + test('a missing query finds nothing', async () => {                                ┊ Changes · 2
+                           ┊         ┆     9 +   assert.deepEqual(await search(), [])                                             ┊ app/server.js        +2 −1
+  Turns ●●●●○○○○           ┊         ┆    10 + })                                                                                 ┊ test/search.test.js    +10
                            ┊         ╰─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009                                   ┊
                            ┊                                                                                                      ┊
                            ┊                                                                                                      ┊

@@ -17,8 +17,8 @@
          ┆    3 +                                                                           ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
          ┆    4 + test('an empty query finds nothing', async () => {                        ┊ Spend · no cap
          ┆    5 +   assert.deepEqual(await search(''), [])                                  ┊ $0
-         ┆    6 + })                                                                        ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-         ╰─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s                            ┊ Build $0
+         ┆    6 + })                                                                        ┊ Build  ╌╌╌╌╌╌╌╌       $0
+         ╰─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s                            ┊
          ┆                                                                                  ┊
          ·  switched to the audit hat (claude-opus-5.5) · Tab to change it again            ┊
          ┆                                                                                  ┊

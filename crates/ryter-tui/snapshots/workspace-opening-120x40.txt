@@ -17,8 +17,8 @@
     / commands    Alt+3 resume a session                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
                                                                                             ┊ Spend · no cap
                                                                                             ┊ $0
-                                                                                            ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                                                                                            ┊ Build $0
+                                                                                            ┊ Build  ╌╌╌╌╌╌╌╌       $0
+                                                                                            ┊
                                                                                             ┊
                                                                                             ┊
                                                                                             ┊

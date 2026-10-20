@@ -17,15 +17,15 @@
          ┆    2 -   const q = (req.query.q || '').trim()                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
          ┆    2 +   const q = String(req.query.q ?? '').trim()                              ┊ Spend · no cap
          ┆    3     if (!q) return res.json([])                                             ┊ $0.065
-         ┆    4     res.json(find(q))                                                       ┊ ╸━━━━━━╸━━━━━━━━━━━━━━╸
-         ├─ write  test/search.test.js                                               +4 −0  ┊ Plan $0.004 · Build $0.…
-         ┆     5     assert.deepEqual(await search(''), [])                                 ┊
-         ┆     6   })                                                                       ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-         ┆     7 +                                                                          ┊ Changes · 2
-         ┆     8 + test('a missing query finds nothing', async () => {                      ┊ app/server.js      +2 −1
-         ┆     9 +   assert.deepEqual(await search(), [])                                   ┊ test/search.test.js  +10
-         ┆    10 + })                                                                       ┊
-         ╰─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009                         ┊
+         ┆    4     res.json(find(q))                                                       ┊ Plan   ╸╌╌╌╌╌╌╌   $0.004
+         ├─ write  test/search.test.js                                               +4 −0  ┊ Build  ━━━━╌╌╌╌   $0.021
+         ┆     5     assert.deepEqual(await search(''), [])                                 ┊ Audit  ━━━━━━━━   $0.040
+         ┆     6   })                                                                       ┊ Scribe ╌╌╌╌╌╌╌╌       $0
+         ┆     7 +                                                                          ┊
+         ┆     8 + test('a missing query finds nothing', async () => {                      ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ┆     9 +   assert.deepEqual(await search(), [])                                   ┊ Changes · 2
+         ┆    10 + })                                                                       ┊ app/server.js      +2 −1
+         ╰─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009                         ┊ test/search.test.js  +10
          ┆                                                                                  ┊
          ├─ write  docs/install.md                                          new · 20 lines  ┊
          ┆    too large to show here · /changes has the diff                                ┊

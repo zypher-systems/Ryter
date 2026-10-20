@@ -17,8 +17,8 @@
                     ◆ default-16  built-in                                                  ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
                                                                                             ┊ Spend · no cap
                     ██████████████████████████  truecolor                                   ┊ $0
-                                                                                            ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                    ↑↓ preview   enter apply   esc revert                                   ┊ Build $0
+                                                                                            ┊ Build  ╌╌╌╌╌╌╌╌       $0
+                    ↑↓ preview   enter apply   esc revert                                   ┊
                   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘                  ┊
                                                                                             ┊
                                                                                             ┊

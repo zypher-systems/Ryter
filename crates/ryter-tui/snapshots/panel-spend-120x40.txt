@@ -17,8 +17,8 @@
            nothing spent yet                                                                ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
                                                                                             ┊ Spend · no cap
          by connection                                                                      ┊ $0
-           nothing spent yet                                                                ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                                                                                            ┊ Build $0
+           nothing spent yet                                                                ┊ Build  ╌╌╌╌╌╌╌╌       $0
+                                                                                            ┊
                                                                                             ┊
                                                                                             ┊
                                                                                             ┊

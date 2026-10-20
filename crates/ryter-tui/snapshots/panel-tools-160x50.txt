@@ -17,8 +17,8 @@
   Specialists              ┊                   ›● ask     current                                                                 ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   ● Audit               $0 ┊                       what the gate asks about (deleting, publishing, writing                        ┊ Spend · no cap
     grok-4.6               ┊                       outside the project, the project's .env) pauses for a y/n.                     ┊ $0
-    checkpoint             ┊                                                                                                      ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                           ┊                    ○ always                                                                          ┊ Build $0
+    checkpoint             ┊                                                                                                      ┊ Build  ╌╌╌╌╌╌╌╌         $0
+                           ┊                    ○ always                                                                          ┊
   ● Scribe              $0 ┊                       a yes to everything inside the project; writes outside it                      ┊
     follows all hats       ┊                       and to the project's .env still ask.                                           ┊
     docs only              ┊                                                                                                      ┊

@@ -17,8 +17,8 @@
        esc        back one level                                                       ┃    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
                                                                                        ┃    ┊ Spend · no cap
       CHAT SCROLL                                                                      ┆    ┊ $0
-       pgup       scroll one viewport up                                               ┆    ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-       pgdn       scroll one viewport down                                             ┆    ┊ Build $0
+       pgup       scroll one viewport up                                               ┆    ┊ Build  ╌╌╌╌╌╌╌╌       $0
+       pgdn       scroll one viewport down                                             ┆    ┊
        ⇧↑         scroll one row up                                                    ┆    ┊
        ⇧↓         scroll one row down                                                  ┆    ┊
        ^home      top of the transcript                                                ┆    ┊

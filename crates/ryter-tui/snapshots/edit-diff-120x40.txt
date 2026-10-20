@@ -17,8 +17,8 @@
          ┆    5 +   const q = (req.query.q || '').trim()                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
          ┆    6 +   if (!q) return res.json([])                                             ┊ Spend · no cap
          ┆    7     res.json(find(q))                                                       ┊ $0
-         ┆    8   })                                                                        ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-         ├─ write  test/search.test.js                                       new · 6 lines  ┊ Build $0
+         ┆    8   })                                                                        ┊ Build  ╌╌╌╌╌╌╌╌       $0
+         ├─ write  test/search.test.js                                       new · 6 lines  ┊
          ┆    1 + import { test } from 'node:test'                                          ┊
          ┆    2 + import assert from 'node:assert'                                          ┊
          ┆    3 +                                                                           ┊

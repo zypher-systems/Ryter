@@ -19,8 +19,8 @@
     grok-4.6               ┊                                                                                                      ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
     checkpoint             ┊                                                                                                      ┊ Spend · no cap
                            ┊                                                                                                      ┊ $0
-  ● Scribe              $0 ┊                                                                                                      ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-    follows all hats       ┊                                                                                                      ┊ Build $0
+  ● Scribe              $0 ┊                                                                                                      ┊ Build  ╌╌╌╌╌╌╌╌         $0
+    follows all hats       ┊                                                                                                      ┊
     docs only              ┊                                                                                                      ┊
                            ┊                                                                                                      ┊
                            ┊                                                                                                      ┊

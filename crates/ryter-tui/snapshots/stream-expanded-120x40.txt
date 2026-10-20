@@ -19,8 +19,8 @@
          ┆  reasoning · 0:12   ^r close ▴                                                   ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
          ┆   The user wants the loop wired. I should read run.rs first, then The user       ┊ Spend · no cap
          ┆   wants the loop wired. I should read run.rs first, then The user wants the      ┊ $0
-         ┆   loop wired. I should read run.rs first, then                                   ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                                                                                            ┊ Build $0
+         ┆   loop wired. I should read run.rs first, then                                   ┊ Build  ╌╌╌╌╌╌╌╌       $0
+                                                                                            ┊
                                                                                             ┊
                                                                                             ┊
                                                                                             ┊

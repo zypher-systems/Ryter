@@ -13,8 +13,8 @@
     ^l         redraw                                                 ┆ ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
     ^g         release/grab the mouse (release it to select and copy… ┆ ┊ Spend · no cap
     f1         open /help                                             ┆ ┊ $0
-    esc        back one level                                         ┆ ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                                                                      ┆ ┊ Build $0
+    esc        back one level                                         ┆ ┊ Build  ╌╌╌╌╌╌╌╌       $0
+                                                                      ┆ ┊
    CHAT SCROLL                                                        ┆ ┊
     pgup       scroll one viewport up                                 ┆ ┊
     pgdn       scroll one viewport down                               ┆ ┊

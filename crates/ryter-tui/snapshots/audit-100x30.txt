@@ -13,8 +13,8 @@
          ┆                                                              ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
          ◆  claude-opus-5.5                                             ┊ Spend · no cap
          ┆  • blocking  app/server.js:6 : an empty query returns        ┊ $0
-         ┆    early, but  find  still runs on  undefined  when  q       ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-         ┆    is missing.                                               ┊ Build $0
+         ┆    early, but  find  still runs on  undefined  when  q       ┊ Build  ╌╌╌╌╌╌╌╌       $0
+         ┆    is missing.                                               ┊
          ┆  • note: the test covers  ""  only.                          ┊
          ┆                                                              ┊
          ┆  VERDICT: FAIL                                               ┊

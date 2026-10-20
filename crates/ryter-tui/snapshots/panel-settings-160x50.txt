@@ -17,8 +17,8 @@
   Specialists              ┊                  budget usd (0 = off)     ‹ 0.00 ›                           default ┃               ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   ● Audit               $0 ┊                  warn usd                 ‹ 1.00 ›                           default ┃               ┊ Spend · no cap
     grok-4.6               ┊                  rounds a turn (0 = off)  ‹ 150 ›                            default ┃               ┊ $0
-    checkpoint             ┊                  audit usd (0 = off)      ‹ 0.00 ›                           default ┃               ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                           ┊                                                                                      ┃               ┊ Build $0
+    checkpoint             ┊                  audit usd (0 = off)      ‹ 0.00 ›                           default ┃               ┊ Build  ╌╌╌╌╌╌╌╌         $0
+                           ┊                                                                                      ┃               ┊
   ● Scribe              $0 ┊                 TOOLS                                                                ┃               ┊
     follows all hats       ┊                  permission mode          ‹ ask ›                            default ┃               ┊
     docs only              ┊                  features.web             [ off ]                            default ┆               ┊

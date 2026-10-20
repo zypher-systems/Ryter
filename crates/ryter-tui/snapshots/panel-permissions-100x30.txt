@@ -13,8 +13,8 @@
     No bash rules yet. a adds one (e.g. rm -rf target, or git push*     ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
     = allow). The most specific pattern wins.                           ┊ Spend · no cap
                                                                         ┊ $0
-                                                                        ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                                                                        ┊ Build $0
+                                                                        ┊ Build  ╌╌╌╌╌╌╌╌       $0
+                                                                        ┊
                                                                         ┊
                                                                         ┊
                                                                         ┊

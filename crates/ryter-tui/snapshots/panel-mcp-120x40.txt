@@ -17,8 +17,8 @@
            + add server  stdio command → ~/.ryter/mcp.toml                                  ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
                                                                                             ┊ Spend · no cap
                                                                                             ┊ $0
-                                                                                            ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                                                                                            ┊ Build $0
+                                                                                            ┊ Build  ╌╌╌╌╌╌╌╌       $0
+                                                                                            ┊
                                                                                             ┊
                                                                                             ┊
                                                                                             ┊

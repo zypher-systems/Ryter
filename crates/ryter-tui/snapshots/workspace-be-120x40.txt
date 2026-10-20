@@ -17,20 +17,20 @@
          ┆    2 -   const q = (req.query.q || '').trim()                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
          ┆    2 +   const q = String(req.query.q ?? '').trim()                              ┊ Spend · of $5.00
          ┆    3     if (!q) return res.json([])                                             ┊ $0.065       1.3% of cap
-         ┆    4     res.json(find(q))                                                       ┊ ╸╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-         ├─ write  test/search.test.js                                               +4 −0  ┊ Plan $0.004 · Build $0.…
-         ┆     5     assert.deepEqual(await search(''), [])                                 ┊ Project
-         ┆     6   })                                                                       ┊ $4.82              total
-         ┆     7 +                                                                          ┊ $1.24         this month
-         ┆     8 + test('a missing query finds nothing', async () => {                      ┊ 3 unpriced
-         ┆     9 +   assert.deepEqual(await search(), [])                                   ┊ 12 sessions
-         ┆    10 + })                                                                       ┊
-         ╰─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009                         ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ┆    4     res.json(find(q))                                                       ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+         ├─ write  test/search.test.js                                               +4 −0  ┊ Plan   ╸╌╌╌╌╌╌╌   $0.004
+         ┆     5     assert.deepEqual(await search(''), [])                                 ┊ Build  ━━━━╌╌╌╌   $0.021
+         ┆     6   })                                                                       ┊ Audit  ━━━━━━━━   $0.040
+         ┆     7 +                                                                          ┊ Project
+         ┆     8 + test('a missing query finds nothing', async () => {                      ┊ $4.82              total
+         ┆     9 +   assert.deepEqual(await search(), [])                                   ┊ $1.24         this month
+         ┆    10 + })                                                                       ┊ 3 unpriced
+         ╰─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009                         ┊ 12 sessions
+                                                                                            ┊
+                                                                                            ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
                                                                                             ┊ Changes · 2
                                                                                             ┊ app/server.js      +2 −1
                                                                                             ┊ test/search.test.js  +10
-                                                                                            ┊
-                                                                                            ┊
                                                                                             ┊
                                                                                             ┊
   ╭──────────────────────────────────────────────────────────────────────────────────────╮  ┊

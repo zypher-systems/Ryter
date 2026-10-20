@@ -17,8 +17,8 @@
                                                                                  ┃          ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
             TOOLS                                                                ┃          ┊ Spend · no cap
              permission mode          ‹ ask ›                            default ┃          ┊ $0
-             features.web             [ off ]                            default ┆          ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                                                                                 ┆          ┊ Build $0
+             features.web             [ off ]                            default ┆          ┊ Build  ╌╌╌╌╌╌╌╌       $0
+                                                                                 ┆          ┊
             SANDBOX                                                              ┆          ┊
              profile                  ‹ off ›                            default ┆          ┊
                                                                                  ┆          ┊

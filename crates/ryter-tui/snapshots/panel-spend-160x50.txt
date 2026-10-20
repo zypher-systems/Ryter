@@ -17,8 +17,8 @@
   Specialists              ┊              budget off · nothing stops on cost · /budget <amount> sets a cap                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   ● Audit               $0 ┊                                                                                                      ┊ Spend · no cap
     grok-4.6               ┊              by role                                                                                 ┊ $0
-    checkpoint             ┊                nothing spent yet                                                                     ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                           ┊                                                                                                      ┊ Build $0
+    checkpoint             ┊                nothing spent yet                                                                     ┊ Build  ╌╌╌╌╌╌╌╌         $0
+                           ┊                                                                                                      ┊
   ● Scribe              $0 ┊              by connection                                                                           ┊
     follows all hats       ┊                nothing spent yet                                                                     ┊
     docs only              ┊                                                                                                      ┊

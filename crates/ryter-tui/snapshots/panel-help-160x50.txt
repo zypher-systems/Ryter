@@ -17,8 +17,8 @@
   Specialists              ┊            ^o         show every edit, audit, and folded turn whole, or folded             ┃         ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
   ● Audit               $0 ┊            ^l         redraw                                                               ┃         ┊ Spend · no cap
     grok-4.6               ┊            ^g         release/grab the mouse (release it to select and copy text)          ┃         ┊ $0
-    checkpoint             ┊            f1         open /help                                                           ┃         ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                           ┊            esc        back one level                                                       ┃         ┊ Build $0
+    checkpoint             ┊            f1         open /help                                                           ┃         ┊ Build  ╌╌╌╌╌╌╌╌         $0
+                           ┊            esc        back one level                                                       ┃         ┊
   ● Scribe              $0 ┊                                                                                            ┃         ┊
     follows all hats       ┊           CHAT SCROLL                                                                      ┆         ┊
     docs only              ┊            pgup       scroll one viewport up                                               ┆         ┊

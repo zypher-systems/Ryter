@@ -13,8 +13,8 @@
      Audit              │                                               ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
      follows all hats   │                                               ┊ Spend · no cap
      Scribe             │                                               ┊ $0
-     follows all hats   │                                               ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                        │                                               ┊ Build $0
+     follows all hats   │                                               ┊ Build  ╌╌╌╌╌╌╌╌       $0
+                        │                                               ┊
                         │                                               ┊
                         │                                               ┊
                         │                                               ┊
