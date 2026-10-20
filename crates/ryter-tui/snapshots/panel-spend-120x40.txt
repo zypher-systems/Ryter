@@ -2,39 +2,39 @@
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-  New session                                                           ● Idle · asks first ┊ Activity
-  0.2.0-patch                                                                               ┊ grok-4.6
-                                                                                            ┊ Idle
-         ·  welcome · /help for keys                                                        ┊
-                                                                                            ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-                                                                                            ┊ Context
-       ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖       ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
-         spend · session                                                      $?.??         ┊  ⢰⠋      ⠙⡆ 12k
-         total  $?.??                                                                       ┊  ⢸   5%   ⡧ of 256k
-         budget off · nothing stops on cost · /budget <amount> sets a cap                   ┊  ⠸⣄      ⣠⠇
-                                                                                            ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
-         by role                                                                            ┊
-           nothing spent yet                                                                ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-                                                                                            ┊ Spend · no cap
-         by connection                                                                      ┊ $0
-           nothing spent yet                                                                ┊ Build  ╌╌╌╌╌╌╌╌       $0
-                                                                                            ┊
-                                                                                            ┊
-                                                                                            ┊
-                                                                                            ┊
-         p project   e export csv   ↑↓ scroll   esc                                         ┊
-       ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘       ┊
-                                                                                            ┊
-                                                                                            ┊
-                                                                                            ┊
-                                                                                            ┊
-                                                                                            ┊
-                                                                                            ┊
-                                                                                            ┊
-                                                                                            ┊
-                                                                                            ┊
-  ╭──────────────────────────────────────────────────────────────────────────────────────╮  ┊
-  │ Build  › what should change?                                                         │  ┊
-  ╰──────────────────────────────────────────────────────────────────────────────────────╯  ┊
-                                                                                            ┊
+  New session                                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                                           ┊
+                                                                                        ┊ HATS
+         ·  welcome · /help for keys                                                    ┊ ● Plan   grok-4.6         $0
+                                                                                        ┊ ┃ Build                   $0
+                                                                                        ┊   grok-4.6
+     ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖     ┊   asks first
+       spend · session                                                      $?.??       ┊ ● Audit  grok-4.6         $0
+       total  $?.??                                                                     ┊ ● Scribe follows all ha…  $0
+       budget off · nothing stops on cost · /budget <amount> sets a cap                 ┊
+                                                                                        ┊
+       by role                                                                          ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         nothing spent yet                                                              ┊ Context
+                                                                                        ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+       by connection                                                                    ┊  ⢰⠋      ⠙⡆ 12k
+         nothing spent yet                                                              ┊  ⢸   5%   ⡧ of 256k
+                                                                                        ┊  ⠸⣄      ⣠⠇
+                                                                                        ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+                                                                                        ┊
+                                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+       p project   e export csv   ↑↓ scroll   esc                                       ┊ Spend · no cap
+     ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘     ┊ $0
+                                                                                        ┊ Build  ╌╌╌╌╌╌╌╌           $0
+                                                                                        ┊
+                                                                                        ┊
+                                                                                        ┊
+                                                                                        ┊
+                                                                                        ┊
+                                                                                        ┊
+                                                                                        ┊
+                                                                                        ┊
+  ╭──────────────────────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › what should change?                                                     │  ┊
+  ╰──────────────────────────────────────────────────────────────────────────────────╯  ┊
+                                                                                        ┊
  tab hat  ⇧tab mode  / commands  alt 1–3 views  f2 instruments  f6 f7 panes                        focus · conversation

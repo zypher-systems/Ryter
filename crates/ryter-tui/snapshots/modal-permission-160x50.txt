@@ -2,49 +2,49 @@
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-  ryter                    ┊  New session                                                          ● Waiting for you · asks first ┊ Activity
-  ⎇ 0.2.0-patch            ┊  0.2.0-patch                                                                                         ┊ grok-4.6
-                           ┊                                                                                                      ┊ Writing
-  HATS                     ┊         ·  welcome · /help for keys                                                                  ┊ Reading the loop now. Th…
-  ● Plan                $0 ┊         ●  summarise the plan                                                         ✓ answered  ▸  ┊ █▁▁▁▁▁▁▁           5 tok/s
-    grok-4.6               ┊                                                                                                      ┊
-    read only              ┊         ●  dusty                                                                                     ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-                           ┊         ┆  now implement step one                                                                    ┊ Context
-  ┃ Build               $0 ┊         ┆                                                                                            ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
-    grok-4.6               ┊         ├─ read   crates/ryter-tui/src/run/mod.rs                                                    ┊  ⢰⠋      ⠙⡆ 12k
-    asks first             ┊         ┆                                                                                            ┊  ⢸   5%   ⡧ of 256k
-                           ┊         ◆  grok-4.6                                                                                  ┊  ⠸⣄      ⣠⠇
-  Specialists              ┊         ┆  Reading the loop now. The event loop drains                                               ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
-  ● Audit               $0 ┊         ┆    writing · 0:12 · 59 tokens                                                              ┊
-    grok-4.6               ┊                                                                                                      ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-    checkpoint             ┊                                                                                                      ┊ Spend · no cap
-                           ┊                                                                                                      ┊ $0
-  ● Scribe              $0 ┊                                                                                                      ┊ Build  ╌╌╌╌╌╌╌╌         $0
-    follows all hats       ┊                                                                                                      ┊
-    docs only              ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊               ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊
-                           ┊                 allow? · run  rm -rf target/ && cargo build --release                      build     ┊
-                           ┊                 what    run  rm -rf target/ && cargo build --release                                 ┊
-                           ┊                 risk    runs a command that can change things · /undo covers files in the project    ┊
-                           ┊                   rm -rf target/ && cargo build --release                                            ┊
-                           ┊                 ⏎ allow   n deny   r add rule                                                        ┊
-                           ┊               ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
-                           ┊                                                                                                      ┊
-                           ┊  ╭────────────────────────────────────────────────────────────────────────────────────────────────╮  ┊
-                           ┊  │ Build  › type to queue the next message, / for commands                                        │  ┊
-                           ┊  ╰────────────────────────────────────────────────────────────────────────────────────────────────╯  ┊
-                           ┊                                                                                                      ┊
+    New session                                                                      ● Waiting for you · asks first ┊ ryter  ⎇ 0.2.0-patch
+    0.2.0-patch                                                                                                     ┊
+                                                                                                                    ┊ HATS
+           ·  welcome · /help for keys                                                                              ┊ ● Plan   grok-4.6                     $0
+           ●  summarise the plan                                                                     ✓ answered  ▸  ┊ ┃ Build                               $0
+                                                                                                                    ┊   grok-4.6
+           ●  dusty                                                                                                 ┊   asks first
+           ┆  now implement step one                                                                                ┊ ● Audit  grok-4.6                     $0
+           ┆                                                                                                        ┊ ● Scribe follows all hats             $0
+           ├─ read   crates/ryter-tui/src/run/mod.rs                                                                ┊
+           ┆                                                                                                        ┊
+           ◆  grok-4.6                                                                                              ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+           ┆  Reading the loop now. The event loop drains                                                           ┊ Context
+           ┆  ◲ writing · 0:12 · 59 tokens                                                                          ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+                                                                                                                    ┊  ⢰⠋      ⠙⡆ 12k
+                                                                                                                    ┊  ⢸   5%   ⡧ of 256k
+                                                                                                                    ┊  ⠸⣄      ⣠⠇
+                                                                                                                    ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+                                                                                                                    ┊
+                                                                                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                                                                    ┊ Spend · no cap
+                                                                                                                    ┊ $0
+                                                                                                                    ┊ Build  ╌╌╌╌╌╌╌╌                       $0
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                 ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊
+                   allow? · run  rm -rf target/ && cargo build --release                                  build     ┊
+                   what    run  rm -rf target/ && cargo build --release                                             ┊
+                   risk    runs a command that can change things · /undo covers files in the project                ┊
+                     rm -rf target/ && cargo build --release                                                        ┊
+                   ⏎ allow   n deny   r add rule                                                                    ┊
+                 ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
+                                                                                                                    ┊
+    ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ┊
+    │ Build  › type to queue the next message, / for commands                                                    │  ┊
+    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ┊
+                                                                                                                    ┊
  ⏎ allow  n deny  r add rule  tab hat  ⇧tab mode  / commands  f2 instruments  f6 f7 panes                                                  focus · conversation

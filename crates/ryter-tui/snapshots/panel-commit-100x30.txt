@@ -1,26 +1,26 @@
 
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-  New session                                       ● Idle · asks first ┊ Activity
-  0.2.0-patch                                                           ┊ grok-4.6
-                                                                        ┊ Idle
-         ·  welcome · /help for keys                                    ┊
+  New session                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                           ┊
+                                                                        ┊ HATS
+         ·  welcome · /help for keys                                    ┊ ● Plan   grok-4.6     $0
+                                                                        ┊ ┃ Build               $0
+                                                                        ┊   grok-4.6
+ ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ ┊   asks first
+   commit                                                0 of 0 files   ┊ ● Audit  grok-4.6     $0
+   not a git repository                                                 ┊ ● Scribe follows al…  $0
+                                                                        ┊
+                                                                        ┊
                                                                         ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-                                                                        ┊ Context
- ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-   commit                                                0 of 0 files   ┊ 12k of 256k           5%
-   not a git repository                                                 ┊
+   t receipt on/off   esc                                               ┊ Context
+ ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘ ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                                                                        ┊ 12k of 256k           5%
+                                                                        ┊
                                                                         ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
                                                                         ┊ Spend · no cap
                                                                         ┊ $0
-   t receipt on/off   esc                                               ┊ Build  ╌╌╌╌╌╌╌╌       $0
- ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘ ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
+                                                                        ┊ Build  ╌╌╌╌╌╌╌╌       $0
                                                                         ┊
                                                                         ┊
   ╭──────────────────────────────────────────────────────────────────╮  ┊

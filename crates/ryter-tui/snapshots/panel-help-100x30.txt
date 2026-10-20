@@ -1,26 +1,26 @@
 
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
- ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ ┊ Activity
-   help                                               [keys] commands ┃ ┊ grok-4.6
-   ⌕ type to filter                                                   ┃ ┊ Idle
-   GLOBAL                                                             ┃ ┊
-    ^c         clear composer → cancel turn → quit (double-press)     ┃ ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-    ^d         quit when the composer is empty                        ┃ ┊ Context
-    ^r         toggle the reasoning pane                              ┃ ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-    ^b         show or hide the instruments beside the conversation   ┆ ┊ 12k of 256k           5%
-    ^o         show every edit, audit, and folded turn whole, or fol… ┆ ┊
-    ^l         redraw                                                 ┆ ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-    ^g         release/grab the mouse (release it to select and copy… ┆ ┊ Spend · no cap
-    f1         open /help                                             ┆ ┊ $0
-    esc        back one level                                         ┆ ┊ Build  ╌╌╌╌╌╌╌╌       $0
-                                                                      ┆ ┊
-   CHAT SCROLL                                                        ┆ ┊
+ ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ ┊ ryter  ⎇ 0.2.0-patch
+   help                                               [keys] commands ┃ ┊
+   ⌕ type to filter                                                   ┃ ┊ HATS
+   GLOBAL                                                             ┃ ┊ ● Plan   grok-4.6     $0
+    ^c         clear composer → cancel turn → quit (double-press)     ┃ ┊ ┃ Build               $0
+    ^d         quit when the composer is empty                        ┃ ┊   grok-4.6
+    ^r         toggle the reasoning pane                              ┃ ┊   asks first
+    ^b         show or hide the instruments beside the conversation   ┆ ┊ ● Audit  grok-4.6     $0
+    ^o         show every edit, audit, and folded turn whole, or fol… ┆ ┊ ● Scribe follows al…  $0
+    ^l         redraw                                                 ┆ ┊
+    ^g         release/grab the mouse (release it to select and copy… ┆ ┊
+    f1         open /help                                             ┆ ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+    esc        back one level                                         ┆ ┊ Context
+                                                                      ┆ ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+   CHAT SCROLL                                                        ┆ ┊ 12k of 256k           5%
     pgup       scroll one viewport up                                 ┆ ┊
-    pgdn       scroll one viewport down                               ┆ ┊
-    ⇧↑         scroll one row up                                      ┆ ┊
-    ⇧↓         scroll one row down                                    ┆ ┊
-    ^home      top of the transcript                                  ┆ ┊
+    pgdn       scroll one viewport down                               ┆ ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+    ⇧↑         scroll one row up                                      ┆ ┊ Spend · no cap
+    ⇧↓         scroll one row down                                    ┆ ┊ $0
+    ^home      top of the transcript                                  ┆ ┊ Build  ╌╌╌╌╌╌╌╌       $0
     ^end       bottom (re-engages follow)                             ┆ ┊
     ^↑         previous turn / jump to the sticky message             ┆ ┊
    ←→ section   ↑↓ scroll   pgup pgdn page   esc close                ┆ ┊

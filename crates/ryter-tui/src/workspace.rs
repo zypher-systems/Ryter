@@ -75,15 +75,20 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
         height: r.height.saturating_sub(pad),
         ..r
     };
-    if side_w > 0 {
-        fill(frame, side, side_bg(theme));
-        draw_sidebar(frame, inset(side), view, theme, &mut clicks);
-    }
-    let stage = inset(stage);
+    debug_assert_eq!(side_w, 0, "the hats live on the one rail");
+    let _ = side;
+    // The text reads from the left edge, a gutter in from it where the
+    // column has the room: the conversation keeps its seventy columns.
+    let gutter = u16::from(stage.width >= 90) * 2;
+    let stage = inset(Rect {
+        x: stage.x + gutter,
+        width: stage.width.saturating_sub(gutter),
+        ..stage
+    });
     let (chat, composer_rect, slot, activity) = draw_stage(frame, stage, view, theme);
     if insp_w > 0 {
         fill(frame, insp, side_bg(theme));
-        draw_inspector(frame, inset(insp), view, theme);
+        draw_inspector(frame, inset(insp), view, theme, &mut clicks);
     }
     draw_hint(frame, hint, view, theme);
     // Dialogs and docked cards take the prompt's columns.
@@ -136,7 +141,7 @@ pub fn chrome_key(view: &mut View, key: KeyEvent) -> Option<Action> {
     match key.code {
         KeyCode::F(2) => {
             view.panel_visible = !view.panel_visible;
-            if !view.panel_visible && view.focus == Focus::Inspector {
+            if !view.panel_visible && matches!(view.focus, Focus::Inspector | Focus::Sidebar) {
                 view.focus = Focus::Stage;
             }
         }
@@ -255,8 +260,9 @@ pub fn reload_sessions(view: &mut View) {
 fn sidebar_key(view: &mut View, dir: i32) -> Action {
     let n = HATS.len();
     if dir == 0 {
+        // Enter puts the hat on and gives the conversation the focus
+        // back; the Hats page is a view of its own, on `Alt+2`.
         let hat = HATS[view.side_at.min(n - 1)];
-        view.page = Page::Hats;
         view.focus = Focus::Stage;
         return Action::SetMode(hat);
     }
@@ -284,14 +290,11 @@ fn sessions_key(view: &mut View, dir: i32) -> Action {
 
 fn move_focus(view: &mut View, dir: i32) {
     let (w, _) = view.screen.get();
-    let (side, insp) = columns(w, view.panel_visible);
-    let mut panes = Vec::new();
-    if side > 0 {
+    let (_, rail) = columns(w, view.panel_visible);
+    // Two panes: the conversation and the rail, whose cursor walks the hats.
+    let mut panes = vec![Focus::Stage];
+    if rail > 0 {
         panes.push(Focus::Sidebar);
-    }
-    panes.push(Focus::Stage);
-    if insp > 0 {
-        panes.push(Focus::Inspector);
     }
     let i = panes.iter().position(|p| *p == view.focus).unwrap_or(0);
     let n = panes.len() as i32;
@@ -311,15 +314,14 @@ fn hat_index(role: Role) -> usize {
 }
 
 pub(crate) fn columns(width: u16, instruments: bool) -> (u16, u16) {
-    // Keep at least 72 columns for the conversation. Fold the rack first;
-    // the Hats view still shows every seat, model, and permission.
-    if width >= 132 {
-        return (28, if instruments { 30 } else { 0 });
+    // One rail, at the right, from 100 columns: 28 wide there, growing to
+    // 44 by 132, where the changes list fits whole paths and the spend
+    // rows their amounts. The conversation keeps at least 70 columns.
+    // There is no left rail: the hats are the rail's first block.
+    if width < 100 || !instruments {
+        return (0, 0);
     }
-    if width >= 100 {
-        return if instruments { (0, 28) } else { (26, 0) };
-    }
-    (0, 0)
+    (0, width.saturating_sub(88).clamp(28, 44))
 }
 
 fn draw_top(
@@ -444,120 +446,119 @@ fn draw_tabs(
     }
 }
 
-fn draw_sidebar(
+/// The rail's first block: the project and its branch, then the hats,
+/// the one that is on with its three rows and the others on one row each
+/// with their model and their cost, then the turns and the plan and audit
+/// files. Returns the row after it.
+fn draw_hats_block(
     frame: &mut Frame,
     area: Rect,
     view: &View,
     theme: Theme,
     clicks: &mut Vec<(WorkspaceClick, Rect)>,
-) {
+) -> u16 {
     let bg = side_bg(theme);
-    fill(frame, area, bg);
-    let accent = theme.mode(view.mode);
-    if area.width > 0 {
-        let bar = Rect {
-            x: area.x + area.width - 1,
-            width: 1,
-            ..area
-        };
-        vertical_rule(
-            frame,
-            bar,
-            if view.focus == Focus::Sidebar {
-                accent
-            } else {
-                theme.rule
-            },
-            bg,
-        );
-    }
-    let inner = Rect {
-        x: area.x + 1,
-        width: area.width.saturating_sub(3),
-        ..area
-    };
-    let w = usize::from(inner.width);
-    let tall = inner.height >= 28;
+    let w = usize::from(area.width);
     let mut y = 0u16;
     let folder = folder_name(view);
     let folder_icon = glyphs::mark(Mark::Folder, view.ui.nerd_font);
-    let folder_line = if folder_icon.is_empty() {
-        format!(" {}", wrap::truncate(&folder, w.saturating_sub(2)))
-    } else {
-        format!(
-            " {folder_icon} {}",
-            wrap::truncate(&folder, w.saturating_sub(wrap::width(folder_icon) + 3))
-        )
-    };
+    let branch = view.git_branch.as_deref().unwrap_or("");
+    let branch_icon = glyphs::mark(Mark::Branch, view.ui.nerd_font);
+    let mut head = vec![Span::styled(
+        if folder_icon.is_empty() {
+            format!(" {}", wrap::truncate(&folder, w.saturating_sub(2)))
+        } else {
+            format!(
+                " {folder_icon} {}",
+                wrap::truncate(&folder, w.saturating_sub(5))
+            )
+        },
+        sty(theme.fg, bg).add_modifier(Modifier::BOLD),
+    )];
+    if !branch.is_empty() {
+        let used = wrap::width(&head[0].content);
+        head.push(Span::styled(
+            format!(
+                "  {branch_icon} {}",
+                wrap::truncate(
+                    branch,
+                    w.saturating_sub(used + wrap::width(branch_icon) + 4)
+                )
+            ),
+            sty(theme.dim, bg),
+        ));
+    }
+    put(frame, area, y, Line::from(head));
+    y += 2;
+    if y >= area.height {
+        return y;
+    }
     put(
         frame,
-        inner,
+        area,
         y,
-        Line::from(Span::styled(
-            folder_line,
-            sty(theme.fg, bg).add_modifier(Modifier::BOLD),
-        )),
+        Line::from(Span::styled(" HATS", sty(theme.dim, bg))),
     );
     y += 1;
-    let branch = view.git_branch.as_deref().unwrap_or("");
-    if !branch.is_empty() && y < inner.height {
-        let branch_icon = glyphs::mark(Mark::Branch, view.ui.nerd_font);
-        put(
-            frame,
-            inner,
-            y,
-            Line::from(Span::styled(
-                format!(
-                    " {branch_icon} {}",
-                    wrap::truncate(branch, w.saturating_sub(wrap::width(branch_icon) + 3))
-                ),
-                sty(theme.dim, bg),
-            )),
-        );
-        y += 1;
-    }
-    if y < inner.height {
-        y += 1;
-        put(
-            frame,
-            inner,
-            y,
-            Line::from(Span::styled(" HATS", sty(theme.dim, bg))),
-        );
-        y += 1;
-    }
-    let spec_at = HATS.iter().position(|h| *h == Role::Audit);
-    for (i, hat) in HATS.iter().enumerate() {
-        if spec_at == Some(i) && y < inner.height {
-            put(
-                frame,
-                inner,
-                y,
-                Line::from(Span::styled(" Specialists", sty(theme.dim, bg))),
-            );
-            y += 1;
-        }
-        if y >= inner.height {
+    for hat in HATS {
+        let worn = hat == view.mode;
+        let rows = if worn { 3 } else { 1 };
+        if y + rows > area.height {
             break;
         }
-        let rows = if tall { 3 } else { 1 };
-        if y + rows > inner.height {
-            break;
+        if worn {
+            draw_hat(frame, area, y, hat, view, theme, true);
+        } else {
+            draw_hat_compact(frame, area, y, hat, view, theme);
         }
-        draw_hat(frame, inner, y, *hat, view, theme, tall);
         clicks.push((
-            WorkspaceClick::Wear(*hat),
+            WorkspaceClick::Wear(hat),
             Rect {
-                y: inner.y + y,
+                y: area.y + y,
                 height: rows,
-                ..inner
+                ..area
             },
         ));
-        y += rows + u16::from(tall);
+        y += rows;
     }
-    if tall {
-        draw_side_foot(frame, inner, y, view, theme);
-    }
+    let y = draw_side_foot(frame, area, y, view, theme);
+    (y + 1).min(area.height)
+}
+
+/// A hat that is not on: its pip, its name, its model and its cost on one
+/// row. The cursor takes the pad column, as on the worn hat's rows.
+fn draw_hat_compact(frame: &mut Frame, area: Rect, y: u16, hat: Role, view: &View, theme: Theme) {
+    let bg = side_bg(theme);
+    let w = usize::from(area.width);
+    let color = theme.mode(hat);
+    let cursor = view.focus == Focus::Sidebar && view.side_at == hat_index(hat);
+    let mark = if cursor { "▸" } else { " " };
+    let name = glyphs::hat_label(hat);
+    let spend = sidebar::hat_spend(view, hat);
+    let model = crate::chat::short_model(view.model_of(hat));
+    let own = view.hats.get(hat.as_str()).is_some_and(|m| m.is_override());
+    let model = if hat == Role::Scribe && !own {
+        "follows all hats".to_string()
+    } else {
+        model.to_string()
+    };
+    let pip = format!("{mark}{} ", glyphs::hat_icon(hat, view.ui.nerd_font));
+    let label = format!("{name:<7}");
+    let room = w.saturating_sub(wrap::width(&pip) + wrap::width(&label) + wrap::width(&spend) + 2);
+    let left = vec![
+        Span::styled(pip, sty(color, bg)),
+        Span::styled(
+            label,
+            sty(if cursor { color } else { theme.fg }, bg).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(wrap::truncate(&model, room), sty(theme.dim, bg)),
+    ];
+    put(
+        frame,
+        area,
+        y,
+        sidebar::ends(left, vec![Span::styled(spend, sty(theme.dim, bg))], w, bg),
+    );
 }
 
 fn draw_hat(
@@ -679,11 +680,13 @@ fn draw_hat(
     );
 }
 
-fn draw_side_foot(frame: &mut Frame, area: Rect, mut y: u16, view: &View, theme: Theme) {
+/// The turns row and the plan and audit files, after a blank row.
+/// Returns the row after them.
+fn draw_side_foot(frame: &mut Frame, area: Rect, mut y: u16, view: &View, theme: Theme) -> u16 {
     let bg = side_bg(theme);
     let w = usize::from(area.width);
     if y + 2 >= area.height {
-        return;
+        return y;
     }
     y += 1;
     let turns = view.rack.turn_hats();
@@ -729,6 +732,7 @@ fn draw_side_foot(frame: &mut Frame, area: Rect, mut y: u16, view: &View, theme:
         );
         y += 1;
     }
+    y
 }
 
 fn draw_stage(
@@ -1220,7 +1224,13 @@ fn draw_sessions_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) 
     }
 }
 
-fn draw_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
+fn draw_inspector(
+    frame: &mut Frame,
+    area: Rect,
+    view: &View,
+    theme: Theme,
+    clicks: &mut Vec<(WorkspaceClick, Rect)>,
+) {
     let bg = side_bg(theme);
     fill(frame, area, bg);
     // One column of pad lives in the strings. The right column stays empty,
@@ -1233,13 +1243,13 @@ fn draw_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     match view.page {
         Page::Hats => draw_hat_inspector(frame, inner, view, theme),
         Page::Sessions => draw_session_inspector(frame, inner, view, theme),
-        Page::Conversation => draw_conv_inspector(frame, inner, view, theme),
+        Page::Conversation => draw_conv_inspector(frame, inner, view, theme, clicks),
     }
     if area.width > 0 {
         vertical_rule(
             frame,
             Rect { width: 1, ..area },
-            if view.focus == Focus::Inspector {
+            if matches!(view.focus, Focus::Inspector | Focus::Sidebar) {
                 theme.mode(view.mode)
             } else {
                 theme.rule
@@ -1249,10 +1259,16 @@ fn draw_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     }
 }
 
-fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
+fn draw_conv_inspector(
+    frame: &mut Frame,
+    area: Rect,
+    view: &View,
+    theme: Theme,
+    clicks: &mut Vec<(WorkspaceClick, Rect)>,
+) {
     let bg = side_bg(theme);
     let w = usize::from(area.width);
-    let mut y = 0u16;
+    let mut y = draw_hats_block(frame, area, view, theme, clicks);
     let section = |frame: &mut Frame, y: &mut u16, title: &str| {
         if *y >= area.height {
             return false;
@@ -1266,86 +1282,6 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
         *y += 1;
         true
     };
-    if section(frame, &mut y, "Activity") {
-        let model = crate::chat::short_model(view.model_of(view.working_hat()));
-        put(
-            frame,
-            area,
-            y,
-            Line::from(Span::styled(
-                format!(" {}", wrap::truncate(model, w.saturating_sub(2))),
-                sty(theme.fg, bg).add_modifier(Modifier::BOLD),
-            )),
-        );
-        y += 1;
-        let verb = {
-            let mut s = view.activity.verb.label();
-            if let Some(c) = s.chars().next() {
-                s.replace_range(..c.len_utf8(), &c.to_uppercase().to_string());
-            }
-            s
-        };
-        // A turn in flight shimmers; a verb at rest is said in its colour.
-        let mut verb_spans = vec![Span::styled(" ", sty(theme.dim, bg))];
-        if view.activity.busy() {
-            verb_spans.extend(crate::shimmer::spans(
-                &verb,
-                sty(pill_color(view, theme), bg),
-                theme.fg,
-                view.now_ms,
-                theme.mode,
-            ));
-        } else {
-            verb_spans.push(Span::styled(verb, sty(pill_color(view, theme), bg)));
-        }
-        put(frame, area, y, Line::from(verb_spans));
-        y += 1;
-        if !view.activity.current.is_empty() && y < area.height {
-            let tool = if view.ui.nerd_font
-                && matches!(view.activity.verb, crate::activity::Verb::Tool(_))
-            {
-                format!("{} ", glyphs::hat_icon(Role::Build, true))
-            } else {
-                String::new()
-            };
-            put(
-                frame,
-                area,
-                y,
-                Line::from(Span::styled(
-                    format!(
-                        " {tool}{}",
-                        wrap::truncate(
-                            &view.activity.current,
-                            w.saturating_sub(2 + wrap::width(&tool))
-                        )
-                    ),
-                    sty(theme.dim, bg),
-                )),
-            );
-            y += 1;
-        }
-        // The trace: output tokens a second while the turn runs. The row
-        // is kept from the first second so the blocks below do not jump.
-        if view.activity.busy() && y < area.height {
-            let mut history = view.pulse.history(view.now_ms).to_vec();
-            history.reverse();
-            let label = format!("{} tok/s", view.pulse.rate(view.now_ms).unwrap_or(0));
-            let trace_w = w.saturating_sub(wrap::width(&label) + 4).min(24);
-            let mut spans = vec![Span::styled(" ", sty(theme.dim, bg))];
-            if history.iter().any(|n| *n > 0) && trace_w >= 4 {
-                spans.extend(trace_spans(&history, trace_w, pill_color(view, theme), bg));
-                put(
-                    frame,
-                    area,
-                    y,
-                    sidebar::ends(spans, vec![Span::styled(label, sty(theme.dim, bg))], w, bg),
-                );
-            }
-            y += 1;
-        }
-        y += 1;
-    }
     rule(frame, area, &mut y, theme);
     if section(frame, &mut y, "Context") && y < area.height {
         let frac = view.ctx_frac().clamp(0.0, 1.0);
@@ -2104,19 +2040,6 @@ fn gauge_spans(
     spans
 }
 
-/// Tokens a second over the last seconds as a wave of eighth blocks, the
-/// tallest at the busiest second.
-fn trace_spans(rate: &[u64], width: usize, ink: Color, bg: Color) -> Vec<Span<'static>> {
-    const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-    let shown = &rate[rate.len().saturating_sub(width)..];
-    let most = shown.iter().copied().max().unwrap_or(0).max(1);
-    let wave: String = shown
-        .iter()
-        .map(|v| BARS[((*v * 7) / most) as usize])
-        .collect();
-    vec![Span::styled(wave, Style::default().fg(ink).bg(bg))]
-}
-
 fn short_count(n: u64) -> String {
     if n >= 1_000_000 {
         format!("{:.1}M", n as f64 / 1_000_000.0)
@@ -2371,13 +2294,14 @@ mod tests {
         assert_eq!(v.focus, Focus::Sidebar);
         crate::run_keys_handle(&mut v, press(KeyCode::F(7), KeyModifiers::NONE));
         assert_eq!(v.focus, Focus::Stage);
+        // Two panes: the conversation and the one rail.
         crate::run_keys_handle(&mut v, press(KeyCode::F(7), KeyModifiers::NONE));
-        assert_eq!(v.focus, Focus::Inspector);
-        // Hidden instruments are not a pane.
+        assert_eq!(v.focus, Focus::Sidebar);
+        // The rail hidden, the conversation is the one pane.
         v.panel_visible = false;
         v.focus = Focus::Stage;
         crate::run_keys_handle(&mut v, press(KeyCode::F(7), KeyModifiers::NONE));
-        assert_eq!(v.focus, Focus::Sidebar);
+        assert_eq!(v.focus, Focus::Stage);
     }
 
     #[test]
@@ -2415,7 +2339,9 @@ mod tests {
             crate::run_keys_handle(&mut v, press(KeyCode::Enter, KeyModifiers::NONE)),
             Action::SetMode(Role::Plan)
         ));
-        assert_eq!(v.page, Page::Hats);
+        // The hat goes on in place: the conversation keeps the screen.
+        assert_eq!(v.page, Page::Conversation);
+        assert_eq!(v.focus, Focus::Stage);
         v.page = Page::Sessions;
         v.focus = Focus::Stage;
         v.sessions = vec![
@@ -2499,7 +2425,7 @@ mod tests {
         assert!(!text.contains('\u{1D5D4}'), "math-sans headings are gone");
         assert!(!text.contains("Search commands"), "{text}");
         assert!(text.contains("Conversation"), "{text}");
-        assert!(text.contains("Specialists"), "{text}");
+        assert!(text.contains("HATS"), "{text}");
         assert!(text.contains("Build"), "{text}");
         assert!(text.contains("alt 1"), "{text}");
         assert!(text.contains("focus · conversation"), "{text}");

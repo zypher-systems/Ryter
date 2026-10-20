@@ -1,26 +1,26 @@
 
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-  New session                                       ● Idle · asks first ┊ Activity
-  0.2.0-patch                                                           ┊ grok-4.6
-                                                                        ┊ Idle
-         ·  welcome · /help for keys                                    ┊
+  New session                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                           ┊
+                                                                        ┊ HATS
+         ·  welcome · /help for keys                                    ┊ ● Plan   grok-4.6     $0
+                                                                        ┊ ┃ Build               $0
+        ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖        ┊   grok-4.6
+          theme                                              3          ┊   asks first
+         ›◆ dark  built-in                             current          ┊ ● Audit  grok-4.6     $0
+          ◆ light  built-in                                             ┊ ● Scribe follows al…  $0
+          ◆ default-16  built-in                                        ┊
+                                                                        ┊
+          ██████████████████████████  truecolor                         ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                        ┊ Context
+          ↑↓ preview   enter apply   esc revert                         ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+        ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘        ┊ 12k of 256k           5%
+                                                                        ┊
                                                                         ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-        ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖        ┊ Context
-          theme                                              3          ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-         ›◆ dark  built-in                             current          ┊ 12k of 256k           5%
-          ◆ light  built-in                                             ┊
-          ◆ default-16  built-in                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
                                                                         ┊ Spend · no cap
-          ██████████████████████████  truecolor                         ┊ $0
+                                                                        ┊ $0
                                                                         ┊ Build  ╌╌╌╌╌╌╌╌       $0
-          ↑↓ preview   enter apply   esc revert                         ┊
-        ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
                                                                         ┊
                                                                         ┊
   ╭──────────────────────────────────────────────────────────────────╮  ┊

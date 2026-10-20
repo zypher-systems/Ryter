@@ -2,39 +2,39 @@
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-  New session                                                ● Waiting for you · asks first ┊ Activity
-  0.2.0-patch                                                                               ┊ grok-4.6
-                                                                                            ┊ Writing
-         ·  welcome · /help for keys                                                        ┊ Reading the loop now. …
-         ●  summarise the plan                                               ✓ answered  ▸  ┊ █▁▁▁▁▁▁▁         5 tok/s
-                                                                                            ┊
-         ●  dusty                                                                           ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-         ┆  now implement step one                                                          ┊ Context
-         ┆                                                                                  ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
-         ├─ read   crates/ryter-tui/src/run/mod.rs                                          ┊  ⢰⠋      ⠙⡆ 12k
-         ┆                                                                                  ┊  ⢸   5%   ⡧ of 256k
-         ◆  grok-4.6                                                                        ┊  ⠸⣄      ⣠⠇
-         ┆  Reading the loop now. The event loop drains                                     ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
-         ┆    writing · 0:12 · 59 tokens                                                    ┊
-                                                                                            ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-                                                                                            ┊ Spend · no cap
-                                                                                            ┊ $0
-                                                                                            ┊ Build  ╌╌╌╌╌╌╌╌       $0
-                                                                                            ┊
-                                                                                            ┊
-                                                                                            ┊
-                                                                                            ┊
-   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊
-     allow? · edit  app/server.js                                                 build     ┊
-     what    edit  app/server.js                                                            ┊
-     risk    changes a file in your project · /undo puts it back                            ┊
-     change  app/server.js  +2 −1                                                           ┊
-     2                                                                                      ┊
-     ⏎ allow   n deny   ↑↓ wheel more of the change                                         ┊
-   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
-                                                                                            ┊
-  ╭──────────────────────────────────────────────────────────────────────────────────────╮  ┊
-  │ Build  › type to queue the next message, / for commands                              │  ┊
-  ╰──────────────────────────────────────────────────────────────────────────────────────╯  ┊
-                                                                                            ┊
+  New session                                            ● Waiting for you · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                                           ┊
+                                                                                        ┊ HATS
+         ·  welcome · /help for keys                                                    ┊ ● Plan   grok-4.6         $0
+         ●  summarise the plan                                           ✓ answered  ▸  ┊ ┃ Build                   $0
+                                                                                        ┊   grok-4.6
+         ●  dusty                                                                       ┊   asks first
+         ┆  now implement step one                                                      ┊ ● Audit  grok-4.6         $0
+         ┆                                                                              ┊ ● Scribe follows all ha…  $0
+         ├─ read   crates/ryter-tui/src/run/mod.rs                                      ┊
+         ┆                                                                              ┊
+         ◆  grok-4.6                                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ┆  Reading the loop now. The event loop drains                                 ┊ Context
+         ┆  ◲ writing · 0:12 · 59 tokens                                                ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+                                                                                        ┊  ⢰⠋      ⠙⡆ 12k
+                                                                                        ┊  ⢸   5%   ⡧ of 256k
+                                                                                        ┊  ⠸⣄      ⣠⠇
+                                                                                        ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+                                                                                        ┊
+                                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                                        ┊ Spend · no cap
+                                                                                        ┊ $0
+   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊ Build  ╌╌╌╌╌╌╌╌           $0
+     allow? · edit  app/server.js                                             build     ┊
+     what    edit  app/server.js                                                        ┊
+     risk    changes a file in your project · /undo puts it back                        ┊
+     change  app/server.js  +2 −1                                                       ┊
+     2                                                                                  ┊
+     ⏎ allow   n deny   ↑↓ wheel more of the change                                     ┊
+   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
+                                                                                        ┊
+  ╭──────────────────────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › type to queue the next message, / for commands                          │  ┊
+  ╰──────────────────────────────────────────────────────────────────────────────────╯  ┊
+                                                                                        ┊
  ⏎ allow  n deny  tab hat  ⇧tab mode  / commands  f2 instruments  f6 f7 panes                      focus · conversation

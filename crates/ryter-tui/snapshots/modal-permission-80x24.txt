@@ -10,7 +10,7 @@
          ┆
          ◆  grok-4.6
          ┆  Reading the loop now. The event loop drains
-         ┆    writing · 0:12 · 59 tokens
+         ┆  ◲ writing · 0:12 · 59 tokens
    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
      allow? · run  rm -rf target/ && cargo build --release            build
      what    run  rm -rf target/ && cargo build --release

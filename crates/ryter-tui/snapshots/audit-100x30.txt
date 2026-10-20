@@ -1,27 +1,27 @@
 
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-  New session                                       ● Done · asks first ┊ Activity
-  0.2.0-patch                                                           ┊ grok-4.6
-                                                                        ┊ Done
-         ●  dusty  trim the query                                ↑ 18   ┊
-  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥  ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-         ╰─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s        ┊ Context
-         ┆                                                              ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-         ·  switched to the audit hat (claude-opus-5.5) · Tab to        ┊ 12k of 256k           5%
-         ┆  change it again                                             ┊
-         ┆                                                              ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-         ◆  claude-opus-5.5                                             ┊ Spend · no cap
-         ┆  • blocking  app/server.js:6 : an empty query returns        ┊ $0
-         ┆    early, but  find  still runs on  undefined  when  q       ┊ Build  ╌╌╌╌╌╌╌╌       $0
-         ┆    is missing.                                               ┊
-         ┆  • note: the test covers  ""  only.                          ┊
+  New session                                       ● Done · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                           ┊
+                                                                        ┊ HATS
+         ●  dusty  trim the query                                ↑ 18   ┊ ● Plan   grok-4.6     $0
+  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥  ┊ ┃ Build               $0
+         ╰─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s        ┊   grok-4.6
+         ┆                                                              ┊   asks first
+         ·  switched to the audit hat (claude-opus-5.5) · Tab to        ┊ ● Audit  claude-opu…  $0
+         ┆  change it again                                             ┊ ● Scribe follows al…  $0
          ┆                                                              ┊
+         ◆  claude-opus-5.5                                             ┊ Turns ●○○○○○○○
+         ┆  • blocking  app/server.js:6 : an empty query returns        ┊
+         ┆    early, but  find  still runs on  undefined  when  q       ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ┆    is missing.                                               ┊ Context
+         ┆  • note: the test covers  ""  only.                          ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+         ┆                                                              ┊ 12k of 256k           5%
          ┆  VERDICT: FAIL                                               ┊
-         ┆                                                              ┊
-         ·  audit · claude-opus-5.5 · ✗ failed, unfiled · $0.040        ┊
-         ╰─ ✓ answered · 3.0s                                           ┊
-         ┆                                                              ┊
+         ┆                                                              ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ·  audit · claude-opus-5.5 · ✗ failed, unfiled · $0.040        ┊ Spend · no cap
+         ╰─ ✓ answered · 3.0s                                           ┊ $0
+         ┆                                                              ┊ Build  ╌╌╌╌╌╌╌╌       $0
          ·  switched to the build hat · Tab to change it again          ┊
   ╭──────────────────────────────────────────────────────────────────╮  ┊
   │ Build  › what should change?                                     │  ┊

@@ -419,7 +419,18 @@ fn reasoning_pane(view: &View, width: usize, cap: usize, theme: Theme) -> Vec<Li
 fn status_row(view: &View, width: usize, theme: Theme) -> Line<'static> {
     let a = &view.activity;
     let text = wrap::truncate(&a.status(width.saturating_sub(3)), width.saturating_sub(3));
-    let mut spans = vec![Span::styled("  ", theme.body())];
+    let square = crate::activity::SQUARE
+        [(view.now_ms / crate::activity::SQUARE_MS) as usize % crate::activity::SQUARE.len()];
+    let mut spans = vec![
+        Span::styled(
+            square.to_string(),
+            Style::default()
+                .fg(theme.mode(view.working_hat()))
+                .bg(theme.bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ", theme.body()),
+    ];
     spans.extend(crate::shimmer::spans(
         &text,
         theme.muted(),

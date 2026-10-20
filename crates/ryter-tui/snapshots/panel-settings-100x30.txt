@@ -1,26 +1,26 @@
 
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
- ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ ┊ Activity
-   settings                                                           ┃ ┊ grok-4.6
-   STARTUP                                                            ┃ ┊ Idle
-  › start in                 ‹ plan ›                         default ┃ ┊
-      read and propose first                                          ┃ ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-                                                                      ┃ ┊ Context
-   SPEND                                                              ┃ ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-    budget usd (0 = off)     ‹ 0.00 ›                         default ┃ ┊ 12k of 256k           5%
-    warn usd                 ‹ 1.00 ›                         default ┆ ┊
-    rounds a turn (0 = off)  ‹ 150 ›                          default ┆ ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-    audit usd (0 = off)      ‹ 0.00 ›                         default ┆ ┊ Spend · no cap
+ ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ ┊ ryter  ⎇ 0.2.0-patch
+   settings                                                           ┃ ┊
+   STARTUP                                                            ┃ ┊ HATS
+  › start in                 ‹ plan ›                         default ┃ ┊ ● Plan   grok-4.6     $0
+      read and propose first                                          ┃ ┊ ┃ Build               $0
+                                                                      ┃ ┊   grok-4.6
+   SPEND                                                              ┃ ┊   asks first
+    budget usd (0 = off)     ‹ 0.00 ›                         default ┃ ┊ ● Audit  grok-4.6     $0
+    warn usd                 ‹ 1.00 ›                         default ┆ ┊ ● Scribe follows al…  $0
+    rounds a turn (0 = off)  ‹ 150 ›                          default ┆ ┊
+    audit usd (0 = off)      ‹ 0.00 ›                         default ┆ ┊
+                                                                      ┆ ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+   TOOLS                                                              ┆ ┊ Context
+    permission mode          ‹ ask ›                          default ┆ ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+    features.web             [ off ]                          default ┆ ┊ 12k of 256k           5%
+                                                                      ┆ ┊
+   SANDBOX                                                            ┆ ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+    profile                  ‹ off ›                          default ┆ ┊ Spend · no cap
                                                                       ┆ ┊ $0
-   TOOLS                                                              ┆ ┊ Build  ╌╌╌╌╌╌╌╌       $0
-    permission mode          ‹ ask ›                          default ┆ ┊
-    features.web             [ off ]                          default ┆ ┊
-                                                                      ┆ ┊
-   SANDBOX                                                            ┆ ┊
-    profile                  ‹ off ›                          default ┆ ┊
-                                                                      ┆ ┊
-                   OFF           workspace     read-only              ┆ ┊
+                   OFF           workspace     read-only              ┆ ┊ Build  ╌╌╌╌╌╌╌╌       $0
    project files   read, write   read, write   read                   ┆ ┊
    rest of home    read, write   no            no                     ┆ ┊
    ↑↓ move   space/←→ change   enter edit   esc done                  ┆ ┊

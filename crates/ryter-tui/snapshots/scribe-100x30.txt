@@ -1,30 +1,30 @@
 
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-  empty-query fix                                   ● Done · asks first ┊ Activity
-  search-patch  ·  2 files uncommitted                                  ┊ grok-4.6
-                                                                        ┊ Done
-         ●  dusty  fix the blocking finding                       ↑ 8   ┊
-  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥  ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-         ┆    2 +   const q = String(req.query.q ?? '').trim()          ┊ Context
-         ┆    3     if (!q) return res.json([])                         ┊ ━━━━━━━━╸╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-         ┆    4     res.json(find(q))                                   ┊ 97k of 256k          38%
-         ├─ write  test/search.test.js                           +4 −0  ┊
-         ┆     5     assert.deepEqual(await search(''), [])             ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-         ┆     6   })                                                   ┊ Spend · no cap
-         ┆     7 +                                                      ┊ $0.065
-         ┆     8 + test('a missing query finds nothing', async () => {  ┊ Plan   ╸╌╌╌╌╌╌╌   $0.004
-         ┆     9 +   assert.deepEqual(await search(), [])               ┊ Build  ━━━━╌╌╌╌   $0.021
-         ┆    10 + })                                                   ┊ Audit  ━━━━━━━━   $0.040
-         ╰─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009     ┊ Scribe ╌╌╌╌╌╌╌╌       $0
+  empty-query fix                                   ● Done · asks first ┊ shop  ⎇ search-patch
+  search-patch  ·  2 files uncommitted                                  ┊
+                                                                        ┊ HATS
+         ●  dusty  fix the blocking finding                       ↑ 8   ┊ ● Plan   grok-4…  $0.004
+  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥  ┊ ● Build  deepse…  $0.021
+         ┆    2 +   const q = String(req.query.q ?? '').trim()          ┊ ● Audit  claude…  $0.040
+         ┆    3     if (!q) return res.json([])                         ┊ ┃ Scribe              $0
+         ┆    4     res.json(find(q))                                   ┊   follows all hats
+         ├─ write  test/search.test.js                           +4 −0  ┊   docs only       1 turn
+         ┆     5     assert.deepEqual(await search(''), [])             ┊
+         ┆     6   })                                                   ┊ Turns ●●●●●○○○
+         ┆     7 +                                                      ┊
+         ┆     8 + test('a missing query finds nothing', async () => {  ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ┆     9 +   assert.deepEqual(await search(), [])               ┊ Context
+         ┆    10 + })                                                   ┊ ━━━━━━━━╸╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+         ╰─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009     ┊ 97k of 256k          38%
          ┆                                                              ┊
          ├─ write  docs/install.md                      new · 20 lines  ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-         ┆    too large to show here · /changes has the diff            ┊ Changes · 2
-         ├─ edit   README.md                                     +3 −1  ┊ app/server.js      +2 −1
-         ┆    too large to show here · /changes has the diff            ┊ test/search.test.js  +10
-         ╰─ ✓ 2 tools · 2 files (1 new, 1 changed, +23 −1) · 0.9s · $0  ┊
-  ╭──────────────────────────────────────────────────────────────────╮  ┊
-  │ Scribe  › what should be documented?                             │  ┊
+         ┆    too large to show here · /changes has the diff            ┊ Spend · no cap
+         ├─ edit   README.md                                     +3 −1  ┊ $0.065
+         ┆    too large to show here · /changes has the diff            ┊ Plan   ╸╌╌╌╌╌╌╌   $0.004
+         ╰─ ✓ 2 tools · 2 files (1 new, 1 changed, +23 −1) · 0.9s · $0  ┊ Build  ━━━━╌╌╌╌   $0.021
+  ╭──────────────────────────────────────────────────────────────────╮  ┊ Audit  ━━━━━━━━   $0.040
+  │ Scribe  › what should be documented?                             │  ┊ Scribe ╌╌╌╌╌╌╌╌       $0
   ╰──────────────────────────────────────────────────────────────────╯  ┊
-                                                                        ┊
+                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
  tab hat  ⇧tab mode  / commands  alt 1–3 views  f2 instruments  f6 f7 panes    focus · conversation

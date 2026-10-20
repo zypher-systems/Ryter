@@ -1,26 +1,26 @@
 
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-  New session                                       ● Idle · asks first ┊ Activity
-  0.2.0-patch                                                           ┊ grok-4.6
-                                                                        ┊ Idle
-   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊
-     tool permissions                                                   ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-    ›● ask     current                                                  ┊ Context
-        what the gate asks about (deleting, publishing, writing         ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-        outside the project, the project's .env) pauses for a y/n.      ┊ 12k of 256k           5%
-                                                                        ┊
-     ○ always                                                           ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-        a yes to everything inside the project; writes outside it       ┊ Spend · no cap
-        and to the project's .env still ask.                            ┊ $0
-                                                                        ┊ Build  ╌╌╌╌╌╌╌╌       $0
-     ○ yolo                                                             ┊
-        a yes to every question, outside the project too. Root          ┊
+  New session                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                           ┊
+                                                                        ┊ HATS
+   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊ ● Plan   grok-4.6     $0
+     tool permissions                                                   ┊ ┃ Build               $0
+    ›● ask     current                                                  ┊   grok-4.6
+        what the gate asks about (deleting, publishing, writing         ┊   asks first
+        outside the project, the project's .env) pauses for a y/n.      ┊ ● Audit  grok-4.6     $0
+                                                                        ┊ ● Scribe follows al…  $0
+     ○ always                                                           ┊
+        a yes to everything inside the project; writes outside it       ┊
+        and to the project's .env still ask.                            ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                        ┊ Context
+     ○ yolo                                                             ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+        a yes to every question, outside the project too. Root          ┊ 12k of 256k           5%
         still asks; what is refused (secrets, the disk) stays           ┊
-     ↑↓ move   enter apply   esc   changes apply immediately            ┊
-   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
-                                                                        ┊
-                                                                        ┊
+     ↑↓ move   enter apply   esc   changes apply immediately            ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊ Spend · no cap
+                                                                        ┊ $0
+                                                                        ┊ Build  ╌╌╌╌╌╌╌╌       $0
                                                                         ┊
                                                                         ┊
   ╭──────────────────────────────────────────────────────────────────╮  ┊

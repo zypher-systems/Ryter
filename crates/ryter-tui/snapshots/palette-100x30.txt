@@ -1,26 +1,26 @@
 
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-  New session                                       ● Idle · asks first ┊ Activity
-  0.2.0-patch                                                           ┊ grok-4.6
-   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊ Idle
-     Commands                                               4 of 31     ┊
-     mo                                                                 ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-    ›/models         Choose models: one for every hat, or one e… ▸      ┊ Context
-     /permissions    Durable allow/ask/deny bash rules from the… ▸      ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-     /tools          Tool permission mode for this session       ▸      ┊ 12k of 256k           5%
-     ↑↓ move  enter run  esc close                                      ┊
-   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+  New session                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                           ┊
+   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊ HATS
+     Commands                                               4 of 31     ┊ ● Plan   grok-4.6     $0
+     mo                                                                 ┊ ┃ Build               $0
+    ›/models         Choose models: one for every hat, or one e… ▸      ┊   grok-4.6
+     /permissions    Durable allow/ask/deny bash rules from the… ▸      ┊   asks first
+     /tools          Tool permission mode for this session       ▸      ┊ ● Audit  grok-4.6     $0
+     ↑↓ move  enter run  esc close                                      ┊ ● Scribe follows al…  $0
+   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
+                                                                        ┊
+                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                        ┊ Context
+                                                                        ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                                                                        ┊ 12k of 256k           5%
+                                                                        ┊
+                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
                                                                         ┊ Spend · no cap
                                                                         ┊ $0
                                                                         ┊ Build  ╌╌╌╌╌╌╌╌       $0
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
                                                                         ┊
                                                                         ┊
   ╭──────────────────────────────────────────────────────────────────╮  ┊

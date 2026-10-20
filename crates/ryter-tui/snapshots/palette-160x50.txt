@@ -2,49 +2,49 @@
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-  ryter                    ┊  New session                                                                     ● Idle · asks first ┊ Activity
-  ⎇ 0.2.0-patch            ┊  0.2.0-patch                                                                                         ┊ grok-4.6
-                           ┊                                                                                                      ┊ Idle
-  HATS                     ┊         ·  welcome · /help for keys                                                                  ┊
-  ● Plan                $0 ┊             ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖             ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-    grok-4.6               ┊               Commands                                                         4 of 31               ┊ Context
-    read only              ┊               mo                                                                                     ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
-                           ┊              ›/models         Choose models: one for every hat, or one each for pl… ▸                ┊  ⢰⠋      ⠙⡆ 12k
-  ┃ Build               $0 ┊               /permissions    Durable allow/ask/deny bash rules from the TUI        ▸                ┊  ⢸   5%   ⡧ of 256k
-    grok-4.6               ┊               /tools          Tool permission mode for this session                 ▸                ┊  ⠸⣄      ⣠⠇
-    asks first             ┊               ↑↓ move  enter run  esc close                                                          ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
-                           ┊             ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘             ┊
-  Specialists              ┊                                                                                                      ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-  ● Audit               $0 ┊                                                                                                      ┊ Spend · no cap
-    grok-4.6               ┊                                                                                                      ┊ $0
-    checkpoint             ┊                                                                                                      ┊ Build  ╌╌╌╌╌╌╌╌         $0
-                           ┊                                                                                                      ┊
-  ● Scribe              $0 ┊                                                                                                      ┊
-    follows all hats       ┊                                                                                                      ┊
-    docs only              ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊  ╭────────────────────────────────────────────────────────────────────────────────────────────────╮  ┊
-                           ┊  │ Build  › /mo█                                                                                  │  ┊
-                           ┊  ╰────────────────────────────────────────────────────────────────────────────────────────────────╯  ┊
-                           ┊                                                                                                      ┊
+    New session                                                                                 ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+    0.2.0-patch                                                                                                     ┊
+                                                                                                                    ┊ HATS
+           ·  welcome · /help for keys                                                                              ┊ ● Plan   grok-4.6                     $0
+                     ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖                   ┊ ┃ Build                               $0
+                       Commands                                                         4 of 31                     ┊   grok-4.6
+                       mo                                                                                           ┊   asks first
+                      ›/models         Choose models: one for every hat, or one each for pl… ▸                      ┊ ● Audit  grok-4.6                     $0
+                       /permissions    Durable allow/ask/deny bash rules from the TUI        ▸                      ┊ ● Scribe follows all hats             $0
+                       /tools          Tool permission mode for this session                 ▸                      ┊
+                       ↑↓ move  enter run  esc close                                                                ┊
+                     ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘                   ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                                                                    ┊ Context
+                                                                                                                    ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+                                                                                                                    ┊  ⢰⠋      ⠙⡆ 12k
+                                                                                                                    ┊  ⢸   5%   ⡧ of 256k
+                                                                                                                    ┊  ⠸⣄      ⣠⠇
+                                                                                                                    ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+                                                                                                                    ┊
+                                                                                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                                                                    ┊ Spend · no cap
+                                                                                                                    ┊ $0
+                                                                                                                    ┊ Build  ╌╌╌╌╌╌╌╌                       $0
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+    ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ┊
+    │ Build  › /mo█                                                                                              │  ┊
+    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ┊
+                                                                                                                    ┊
  ↑↓ move  enter run  esc close                                                                                                             focus · conversation

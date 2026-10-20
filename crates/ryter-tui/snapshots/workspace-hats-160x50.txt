@@ -2,49 +2,49 @@
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-  shop                     ┊ Hats                                                                                                 ┊ Wearing Build.
-  ⎇ search-patch           ┊ One conversation, four seats. Tab cycles hats. Shift+Tab switches mode.                              ┊
-                           ┊                                                                                                      ┊ Seat
-  HATS                     ┊ All hats  grok-4.6  ·  default                                                                       ┊ Build
-  ● Plan            $0.004 ┊                                                                                                      ┊ makes the changes
-    grok-4.6               ┊ ╭─ Plan ───────────────────────────────────────────────────────────────────────────────────────────╮ ┊
-    read only       1 turn ┊ │ reads and proposes, changes nothing                                                              │ ┊ Model
-                           ┊ │ grok-4.6  ·  follows all hats   1 · $0.004  read only                                            │ ┊ deepseek-pro-latest
-  ┃ Build           $0.021 ┊ ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯ ┊ own model
-    deepseek-pro-latest    ┊                                                                                                      ┊
-    asks first     2 turns ┊ ╭─ Build wearing ──────────────────────────────────────────────────────────────────────────────────╮ ┊ Reasoning
-                           ┊ │ makes the changes                                                                                │ ┊ auto
-  Specialists              ┊ │ deepseek-pro-latest  ·  own model   2 · $0.021  asks first                                       │ ┊
-  ● Audit ✗         $0.040 ┊ ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯ ┊ Saved
-    claude-opus-5.5        ┊                                                                                                      ┊ ~/.ryter/hats.toml
-    checkpoint      1 turn ┊                                                                                                      ┊
-                           ┊ Specialists                                                                                          ┊
-  ● Scribe              $0 ┊ ╭─ Audit ──────────────────────────────────────────────────────────────────────────────────────────╮ ┊
-    follows all hats       ┊ │ checks the work, may run it                                                                      │ ┊
-    docs only              ┊ │ claude-opus-5.5  ·  own model   1 · $0.040  checkpoint                                           │ ┊
-                           ┊ ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯ ┊
-                           ┊                                                                                                      ┊
-  Turns ●●●●○○○○           ┊ ╭─ Scribe ─────────────────────────────────────────────────────────────────────────────────────────╮ ┊
-                           ┊ │ writes the docs, changes no code                                                                 │ ┊
-                           ┊ │ grok-4.6  ·  follows all hats   0 · $0  docs only                                                │ ┊
-                           ┊ ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯ ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
-                           ┊                                                                                                      ┊
+   Hats                                                                                                             ┊ Wearing Build.
+   One conversation, four seats. Tab cycles hats. Shift+Tab switches mode.                                          ┊
+                                                                                                                    ┊ Seat
+   All hats  grok-4.6  ·  default                                                                                   ┊ Build
+                                                                                                                    ┊ makes the changes
+   ╭─ Plan ───────────────────────────────────────────────────────────────────────────────────────────────────────╮ ┊
+   │ reads and proposes, changes nothing                                                                          │ ┊ Model
+   │ grok-4.6  ·  follows all hats   1 · $0.004  read only                                                        │ ┊ deepseek-pro-latest
+   ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ ┊ own model
+                                                                                                                    ┊
+   ╭─ Build wearing ──────────────────────────────────────────────────────────────────────────────────────────────╮ ┊ Reasoning
+   │ makes the changes                                                                                            │ ┊ auto
+   │ deepseek-pro-latest  ·  own model   2 · $0.021  asks first                                                   │ ┊
+   ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ ┊ Saved
+                                                                                                                    ┊ ~/.ryter/hats.toml
+                                                                                                                    ┊
+   Specialists                                                                                                      ┊
+   ╭─ Audit ──────────────────────────────────────────────────────────────────────────────────────────────────────╮ ┊
+   │ checks the work, may run it                                                                                  │ ┊
+   │ claude-opus-5.5  ·  own model   1 · $0.040  checkpoint                                                       │ ┊
+   ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ ┊
+                                                                                                                    ┊
+   ╭─ Scribe ─────────────────────────────────────────────────────────────────────────────────────────────────────╮ ┊
+   │ writes the docs, changes no code                                                                             │ ┊
+   │ grok-4.6  ·  follows all hats   0 · $0  docs only                                                            │ ┊
+   ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
  tab hat  ⇧tab mode  / commands  alt 1–3 views  f2 instruments  f6 f7 panes                                                                        focus · hats

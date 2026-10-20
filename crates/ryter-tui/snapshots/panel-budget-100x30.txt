@@ -1,26 +1,26 @@
 
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-  New session                                       ● Idle · asks first ┊ Activity
- ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ ┊ grok-4.6
-   budget                                                         off   ┊ Idle
-   spent $?.?? · no cap                                                 ┊
+  New session                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+ ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ ┊
+   budget                                                         off   ┊ HATS
+   spent $?.?? · no cap                                                 ┊ ● Plan   grok-4.6     $0
+                                                                        ┊ ┃ Build               $0
+   SESSION                                                              ┊   grok-4.6
+  › cap spend    [ off ]                                       config   ┊   asks first
+    cap usd      ‹ 5.00 ›                                     default   ┊ ● Audit  grok-4.6     $0
+    warn at usd  ‹ 1.00 ›                                     default   ┊ ● Scribe follows al…  $0
+                                                                        ┊
+   nothing stops on cost. the spend card keeps count; watch it          ┊
+   yourself.                                                            ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                        ┊ Context
+                                                                        ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                                                                        ┊ 12k of 256k           5%
+                                                                        ┊
                                                                         ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-   SESSION                                                              ┊ Context
-  › cap spend    [ off ]                                       config   ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-    cap usd      ‹ 5.00 ›                                     default   ┊ 12k of 256k           5%
-    warn at usd  ‹ 1.00 ›                                     default   ┊
-                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-   nothing stops on cost. the spend card keeps count; watch it          ┊ Spend · no cap
-   yourself.                                                            ┊ $0
+                                                                        ┊ Spend · no cap
+                                                                        ┊ $0
                                                                         ┊ Build  ╌╌╌╌╌╌╌╌       $0
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
    ↑↓ move   space/←→ change   enter edit   esc done                    ┊
  ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘ ┊
   ╭──────────────────────────────────────────────────────────────────╮  ┊

@@ -1,26 +1,26 @@
 
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-  New session                                       ● Idle · asks first ┊ Activity
-  0.2.0-patch                                                           ┊ grok-4.6
-                                                                        ┊ Idle
- ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ ┊
-   permissions                                   edit default (allow)   ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-   durable allows without yolo · ~/.ryter/permissions.toml · can't ope  ┊ Context
+  New session                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                           ┊
+                                                                        ┊ HATS
+ ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ ┊ ● Plan   grok-4.6     $0
+   permissions                                   edit default (allow)   ┊ ┃ Build               $0
+   durable allows without yolo · ~/.ryter/permissions.toml · can't ope  ┊   grok-4.6
+                                                                        ┊   asks first
+  › edit of project files          default (allow)                      ┊ ● Audit  grok-4.6     $0
+                                                                        ┊ ● Scribe follows al…  $0
+    No bash rules yet. a adds one (e.g. rm -rf target, or git push*     ┊
+    = allow). The most specific pattern wins.                           ┊
+                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                        ┊ Context
                                                                         ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-  › edit of project files          default (allow)                      ┊ 12k of 256k           5%
+                                                                        ┊ 12k of 256k           5%
                                                                         ┊
-    No bash rules yet. a adds one (e.g. rm -rf target, or git push*     ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-    = allow). The most specific pattern wins.                           ┊ Spend · no cap
-                                                                        ┊ $0
+                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+   ↑↓ move   ←→/space answer   a add   d remove   esc close             ┊ Spend · no cap
+ ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘ ┊ $0
                                                                         ┊ Build  ╌╌╌╌╌╌╌╌       $0
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-   ↑↓ move   ←→/space answer   a add   d remove   esc close             ┊
- ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘ ┊
-                                                                        ┊
                                                                         ┊
                                                                         ┊
   ╭──────────────────────────────────────────────────────────────────╮  ┊

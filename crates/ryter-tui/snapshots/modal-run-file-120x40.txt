@@ -2,39 +2,39 @@
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-  New session                                                ● Waiting for you · asks first ┊ Activity
-  0.2.0-patch                                                                               ┊ grok-4.6
-                                                                                            ┊ Waiting for you
-         ·  welcome · /help for keys                                                        ┊ …ly line 4 reply line …
-         ●  summarise the plan                                               ✓ answered  ▸  ┊ █▁▁▁▁▁▁▁        18 tok/s
-                                                                                            ┊
-         ●  dusty                                                                           ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-         ┆  now implement step one                                                          ┊ Context
-         ┆                                                                                  ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
-         ├─ read   crates/ryter-tui/src/run/mod.rs                                          ┊  ⢰⠋      ⠙⡆ 12k
-         ┆                                                                                  ┊  ⢸   5%   ⡧ of 256k
-         ◆  grok-4.6                                                                        ┊  ⠸⣄      ⣠⠇
-         ┆  Reading the loop now. The event loop drains reply line 0 reply line 1 reply     ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
-         ┆  line 2 reply line 3 reply line 4 reply line 5 reply line 6 reply line 7         ┊
-         ┆    waiting for you · run? · 0:12 · 85 tokens                                     ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-                                                                                            ┊ Spend · no cap
-                                                                                            ┊ $0
-                                                                                            ┊ Build  ╌╌╌╌╌╌╌╌       $0
-                                                                                            ┊
-                                                                                            ┊
-                                                                                            ┊
-                                                                                            ┊
-   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊
-     how this project runs                                                              ┃   ┊
-     start  docker compose up -d --wait                                                 ┃   ┊
-     ready  http://localhost:8000/healthz                                               ┃   ┊
-     test   docker compose run --rm web pytest -q                                       ┃   ┊
-     stop   docker compose down                                                         ┆   ┊
-     y approve   e adjust   n reject   ↑↓ scroll                                        ┆   ┊
-   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
-                                                                                            ┊
-  ╭──────────────────────────────────────────────────────────────────────────────────────╮  ┊
-  │ Build  › type to queue the next message, / for commands                              │  ┊
-  ╰──────────────────────────────────────────────────────────────────────────────────────╯  ┊
-                                                                                            ┊
+  New session                                            ● Waiting for you · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                                           ┊
+                                                                                        ┊ HATS
+         ·  welcome · /help for keys                                                    ┊ ● Plan   grok-4.6         $0
+         ●  summarise the plan                                           ✓ answered  ▸  ┊ ┃ Build                   $0
+                                                                                        ┊   grok-4.6
+         ●  dusty                                                                       ┊   asks first
+         ┆  now implement step one                                                      ┊ ● Audit  grok-4.6         $0
+         ┆                                                                              ┊ ● Scribe follows all ha…  $0
+         ├─ read   crates/ryter-tui/src/run/mod.rs                                      ┊
+         ┆                                                                              ┊
+         ◆  grok-4.6                                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ┆  Reading the loop now. The event loop drains reply line 0 reply line 1       ┊ Context
+         ┆  reply line 2 reply line 3 reply line 4 reply line 5 reply line 6 reply      ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+         ┆  line 7                                                                      ┊  ⢰⠋      ⠙⡆ 12k
+         ┆  ◲ waiting for you · run? · 0:12 · 85 tokens                                 ┊  ⢸   5%   ⡧ of 256k
+                                                                                        ┊  ⠸⣄      ⣠⠇
+                                                                                        ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+                                                                                        ┊
+                                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                                        ┊ Spend · no cap
+                                                                                        ┊ $0
+   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊ Build  ╌╌╌╌╌╌╌╌           $0
+     how this project runs                                                          ┃   ┊
+     start  docker compose up -d --wait                                             ┃   ┊
+     ready  http://localhost:8000/healthz                                           ┃   ┊
+     test   docker compose run --rm web pytest -q                                   ┃   ┊
+     stop   docker compose down                                                     ┆   ┊
+     y approve   e adjust   n reject   ↑↓ scroll                                    ┆   ┊
+   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
+                                                                                        ┊
+  ╭──────────────────────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › type to queue the next message, / for commands                          │  ┊
+  ╰──────────────────────────────────────────────────────────────────────────────────╯  ┊
+                                                                                        ┊
  y approve  e adjust  n reject  ↑↓ scroll  tab hat  ⇧tab mode  / commands  f2 instruments          focus · conversation

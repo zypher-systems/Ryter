@@ -1,26 +1,26 @@
 
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-  New session                                       ● Idle · asks first ┊ Activity
-  0.2.0-patch                                                           ┊ grok-4.6
-                                                                        ┊ Idle
+  New session                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                           ┊
+                                                                        ┊ HATS
+                                                                        ┊ ● Plan   grok-4.6     $0
+                                                                        ┊ ┃ Build               $0
+                                                                        ┊   grok-4.6
+    What are we building?                                               ┊   asks first
+                                                                        ┊ ● Audit  grok-4.6     $0
+    Describe a change, ask a question, or pick up where you             ┊ ● Scribe follows al…  $0
+    left off.                                                           ┊
+                                                                        ┊
+    / commands    Alt+3 resume a session                                ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                        ┊ Context
+                                                                        ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                                                                        ┊ 12k of 256k           5%
                                                                         ┊
                                                                         ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-                                                                        ┊ Context
-    What are we building?                                               ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                                                                        ┊ 12k of 256k           5%
-    Describe a change, ask a question, or pick up where you             ┊
-    left off.                                                           ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
                                                                         ┊ Spend · no cap
-    / commands    Alt+3 resume a session                                ┊ $0
+                                                                        ┊ $0
                                                                         ┊ Build  ╌╌╌╌╌╌╌╌       $0
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
-                                                                        ┊
                                                                         ┊
                                                                         ┊
   ╭──────────────────────────────────────────────────────────────────╮  ┊
