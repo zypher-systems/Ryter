@@ -345,7 +345,7 @@ fn draw_workspace(frame: &mut Frame, chat: Rect, view: &View, theme: Theme) {
     let y = chat.y + (chat.height / 10).min(chat.height.saturating_sub(8));
     let room = chat.y.saturating_add(chat.height).saturating_sub(y + 1);
     let max_h = room.clamp(6, 22);
-    let height = u16::try_from(rows.len() + 2)
+    let height = u16::try_from(rows.len() + usize::from(crate::panel::chrome::frame_rows(theme)))
         .unwrap_or(max_h)
         .clamp(6, max_h);
     let area = Rect {
@@ -355,7 +355,9 @@ fn draw_workspace(frame: &mut Frame, chat: Rect, view: &View, theme: Theme) {
         height,
     };
     view.covers.borrow_mut().push(area);
-    crate::panel::drop_shadow(frame, area, theme);
+    if !crate::panel::chrome::slab(theme) {
+        crate::panel::drop_shadow(frame, area, theme);
+    }
     let total = entries(view).len();
     let inner = draw_frame(
         frame,

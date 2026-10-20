@@ -2,18 +2,18 @@
   New session                                               ● Idle · asks first
   0.2.0-patch
 
-    ╭─ hooks ────────────────────────────────────────────────────────── 0 ─╮
-    │ no hooks configured                                                  │▌
-    │                                                                      │▌
-    │›+ add hook  a add · appended to ~/.ryter/hooks.toml                  │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │ enter details   a add   d remove   esc                               │▌
-    ╰──────────────────────────────────────────────────────────────────────╯▌
-     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
+      hooks                                                              0
+      no hooks configured
+
+     ›+ add hook  a add · appended to ~/.ryter/hooks.toml
+
+
+
+
+
+      enter details   a add   d remove   esc
+    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
 
 
 

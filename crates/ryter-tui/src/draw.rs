@@ -26,13 +26,37 @@ pub struct Hit {
     pub composer: Rect,
     /// Workspace chrome that a click activates.
     pub clicks: Vec<(crate::select::WorkspaceClick, Rect)>,
+    /// The welcome's text on a fresh session, for its gathering.
+    pub welcome: Option<Rect>,
+    /// The prompt's hat chip, for the sweep on a switch.
+    pub chip: Option<Rect>,
+    /// The worn hat's row on the rail, for the same sweep.
+    pub hat_row: Option<Rect>,
+}
+
+/// Places the drawing notes for the motion after it: set by whichever
+/// routine draws them, read back into the [`Hit`].
+#[derive(Debug, Clone, Default)]
+pub struct Marks {
+    /// The welcome's text.
+    pub welcome: Option<Rect>,
+    /// The prompt's hat chip.
+    pub chip: Option<Rect>,
+    /// The worn hat's row on the rail.
+    pub hat_row: Option<Rect>,
 }
 
 /// Paint one frame.
 pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> Hit {
     view.covers.borrow_mut().clear();
+    *view.marks.borrow_mut() = Marks::default();
     let mut hit = draw_screen(frame, view, theme);
     hit.covers = view.covers.borrow().clone();
+    let marks = view.marks.borrow();
+    hit.welcome = marks.welcome;
+    hit.chip = marks.chip;
+    hit.hat_row = marks.hat_row;
+    drop(marks);
     // The conversation's text starts after the pane's margin and its
     // timeline; its last column is the pane's margin too.
     let lead = 1 + layout::GUTTER as u16;

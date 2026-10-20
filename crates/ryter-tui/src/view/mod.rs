@@ -386,6 +386,9 @@ pub struct View {
     /// question, the "new rows" mark, the palette. A selection of the
     /// conversation is not painted there, and a press there is not one.
     pub covers: RefCell<Vec<ratatui::layout::Rect>>,
+    /// Where the last frame drew the welcome, the hat chip and the worn
+    /// hat's row, for the motion drawn after it.
+    pub marks: RefCell<crate::draw::Marks>,
     /// Render cache (derived; clones start empty).
     pub cache: RefCell<RenderCache>,
     /// Startup warnings not yet shown.
@@ -615,6 +618,7 @@ impl View {
             selection: None,
             flash: None,
             covers: RefCell::new(Vec::new()),
+            marks: RefCell::new(crate::draw::Marks::default()),
             cache: RefCell::new(RenderCache::new()),
             pending_warnings: Vec::new(),
             starting_product: None,

@@ -6,17 +6,17 @@
          ●  summarise the plan                                   ✓ answered  ▸
 
          ●  dusty
-         │  now implement step one
-         │
+         ┆  now implement step one
+         ┆
          ├─ read   crates/ryter-tui/src/run/mod.rs
-         │
+         ┆
          ◆  grok-4.6
-         │  Reading the loop now. The event loop drains
-         │  ⠼ writing · 0:12 · 59 tokens
-         │  reasoning · 0:12   ^r close ▴
-         │   The user wants the loop wired. I should read run.rs first, then
-         │   The user wants the loop wired. I should read run.rs first, then
-         │   The user wants the loop wired. I should read run.rs first, then
+         ┆  Reading the loop now. The event loop drains
+         ┆    writing · 0:12 · 59 tokens
+         ┆  reasoning · 0:12   ^r close ▴
+         ┆   The user wants the loop wired. I should read run.rs first, then
+         ┆   The user wants the loop wired. I should read run.rs first, then
+         ┆   The user wants the loop wired. I should read run.rs first, then
   ╭──────────────────────────────────────────────────────────────────────────╮
   │ Build  › type to queue the next message, / for commands                  │
   ╰──────────────────────────────────────────────────────────────────────────╯

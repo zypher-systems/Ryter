@@ -2,39 +2,39 @@
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-  New session                                                ● Waiting for you · asks first │ Activity
-  0.2.0-patch                                                                               │ grok-4.6
-                                                                                            │ Writing
-         ·  welcome · /help for keys                                                        │ Reading the loop now. …
-         ●  summarise the plan                                               ✓ answered  ▸  │
-                                                                                            │ ────────────────────────
-         ●  dusty                                                                           │ Context
-         │  now implement step one                                                          │ █▏
-         │                                                                                  │ 12k of 256k           5%
-         ├─ read   crates/ryter-tui/src/run/mod.rs                                          │
-         │                                                                                  │ ────────────────────────
-         ◆  grok-4.6                                                                        │ Spend · no cap
-         │  Reading the loop now. The event loop drains                                     │ $0
-         │  ⠼ writing · 0:12 · 59 tokens                                                    │ Build                 $0
-                                                                                            │
-                                                                                            │
-                                                                                            │
-                                                                                            │
-                                                                                            │
-                                                                                            │
-                                                                                            │
-                                                                                            │
-                                                                                            │
-                                                                                            │
-   ╭─ allow? · run  rm -rf target/ && cargo build --release ──────────────────── build ─╮   │
-   │ what    run  rm -rf target/ && cargo build --release                               │▌  │
-   │ risk    runs a command that can change things · /undo covers files in the project  │▌  │
-   │   rm -rf target/ && cargo build --release                                          │▌  │
-   │ ⏎ allow   n deny   r add rule                                                      │▌  │
-   ╰────────────────────────────────────────────────────────────────────────────────────╯▌  │
-    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀  │
-  ╭──────────────────────────────────────────────────────────────────────────────────────╮  │
-  │ Build  › type to queue the next message, / for commands                              │  │
-  ╰──────────────────────────────────────────────────────────────────────────────────────╯  │
-                                                                                            │
+  New session                                                ● Waiting for you · asks first ┊ Activity
+  0.2.0-patch                                                                               ┊ grok-4.6
+                                                                                            ┊ Writing
+         ·  welcome · /help for keys                                                        ┊ Reading the loop now. …
+         ●  summarise the plan                                               ✓ answered  ▸  ┊ █▁▁▁▁▁▁▁         5 tok/s
+                                                                                            ┊
+         ●  dusty                                                                           ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ┆  now implement step one                                                          ┊ Context
+         ┆                                                                                  ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+         ├─ read   crates/ryter-tui/src/run/mod.rs                                          ┊  ⢰⠋      ⠙⡆ 12k
+         ┆                                                                                  ┊  ⢸   5%   ⡧ of 256k
+         ◆  grok-4.6                                                                        ┊  ⠸⣄      ⣠⠇
+         ┆  Reading the loop now. The event loop drains                                     ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+         ┆    writing · 0:12 · 59 tokens                                                    ┊
+                                                                                            ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                                            ┊ Spend · no cap
+                                                                                            ┊ $0
+                                                                                            ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                                                                                            ┊ Build $0
+                                                                                            ┊
+                                                                                            ┊
+                                                                                            ┊
+                                                                                            ┊
+   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊
+     allow? · run  rm -rf target/ && cargo build --release                        build     ┊
+     what    run  rm -rf target/ && cargo build --release                                   ┊
+     risk    runs a command that can change things · /undo covers files in the project      ┊
+       rm -rf target/ && cargo build --release                                              ┊
+     ⏎ allow   n deny   r add rule                                                          ┊
+   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
+                                                                                            ┊
+  ╭──────────────────────────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › type to queue the next message, / for commands                              │  ┊
+  ╰──────────────────────────────────────────────────────────────────────────────────────╯  ┊
+                                                                                            ┊
  ⏎ allow  n deny  r add rule  tab hat  ⇧tab mode  / commands  f2 instruments  f6 f7 panes          focus · conversation

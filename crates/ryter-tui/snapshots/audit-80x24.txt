@@ -4,18 +4,18 @@
 
          ●  dusty  trim the query                                        ↑ 21
   ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
-         │  again
-         │
+         ┆  again
+         ┆
          ◆  claude-opus-5.5
-         │  • blocking  app/server.js:6 : an empty query returns early, but
-         │    find  still runs on  undefined  when  q  is missing.
-         │  • note: the test covers  ""  only.
-         │
-         │  VERDICT: FAIL
-         │
+         ┆  • blocking  app/server.js:6 : an empty query returns early, but
+         ┆    find  still runs on  undefined  when  q  is missing.
+         ┆  • note: the test covers  ""  only.
+         ┆
+         ┆  VERDICT: FAIL
+         ┆
          ·  audit · claude-opus-5.5 · ✗ failed, unfiled · $0.040
-         └─ ✓ answered · 3.0s
-         │
+         ╰─ ✓ answered · 3.0s
+         ┆
          ·  switched to the build hat · Tab to change it again
   ╭──────────────────────────────────────────────────────────────────────────╮
   │ Build  › what should change?                                             │

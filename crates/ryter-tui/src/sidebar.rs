@@ -19,6 +19,8 @@ use crate::view::View;
 pub const HATS: [Role; 4] = [Role::Plan, Role::Build, Role::Audit, Role::Scribe];
 /// Dots the `turns` row shows: the newest turns, oldest first.
 pub const TURN_DOTS: usize = 15;
+/// Dots the Turns row shows from the start, hollow until a turn fills one.
+pub const TURN_ROW: usize = 8;
 /// A hat's name as the screen says it: lowercase everywhere.
 pub fn hat_name(hat: Role) -> &'static str {
     hat.hat().as_str()

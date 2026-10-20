@@ -5,18 +5,18 @@
          ●  dusty  now implement step one                                 ↑ 4
   ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
          ├─ read   crates/ryter-tui/src/run/mod.rs
-         │
+         ┆
          ◆  grok-4.6
-         │  Reading the loop now. The event loop drains reply line 0 reply
-         │  line 1 reply line 2 reply line 3 reply line 4 reply line 5 reply
-         │  line 6 reply line 7
-         │  ⠼ waiting for you · allow? · 0:12 · 85 tokens
-   ╭─ allow? · run as root  sudo dnf install -y alsa-lib-devel pkgconf …   ─╮
-   │ what    run as root  sudo dnf install -y alsa-lib-devel pkgconf        │▌
-   │ risk    as root · /undo can't reach it · your password is asked next   │▌
-   │ y allow once   n deny                                                  │▌
-   ╰────────────────────────────────────────────────────────────────────────╯▌
-    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+         ┆  Reading the loop now. The event loop drains reply line 0 reply
+         ┆  line 1 reply line 2 reply line 3 reply line 4 reply line 5 reply
+         ┆  line 6 reply line 7
+         ┆    waiting for you · allow? · 0:12 · 85 tokens
+   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
+     allow? · run as root  sudo dnf install -y alsa-lib-devel pkgconf · pr…
+     what    run as root  sudo dnf install -y alsa-lib-devel pkgconf
+     risk    as root · /undo can't reach it · your password is asked next
+   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
+
   ╭──────────────────────────────────────────────────────────────────────────╮
   │ Build  › type to queue the next message, / for commands                  │
   ╰──────────────────────────────────────────────────────────────────────────╯

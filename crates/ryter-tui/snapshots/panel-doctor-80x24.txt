@@ -2,18 +2,18 @@
   New session                                               ● Idle · asks first
   0.2.0-patch
 
-         ·  welcome · /help for keys
-    ╭─ doctor ────────────────────────── running… · trusted · sandbox off ─╮
-    │ ⠋ running checks…                                                    │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │ ↑↓ move   enter details   c copy/save report   esc                   │▌
-    ╰──────────────────────────────────────────────────────────────────────╯▌
-     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
+      doctor                              running… · trusted · sandbox off
+      ⠋ running checks…
+
+
+
+
+
+
+      ↑↓ move   enter details   c copy/save report   esc
+    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
+
 
 
 

@@ -2,49 +2,49 @@
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-  ryter                    │  New session                                                                     ● Idle · asks first │ Activity
-  ⎇ 0.2.0-patch            │  0.2.0-patch                                                                                         │ grok-4.6
-                           │                                                                                                      │ Idle
-  HATS                     │         ·  welcome · /help for keys                                                                  │
-  ● Plan                $0 │             ╭─ Commands ───────────────────────────────────────────────────── 4 of 31 ─╮             │ ──────────────────────────
-    grok-4.6               │             │ mo                                                                       │▌            │ Context
-    read only              │             │›/models         Choose models: one for every hat, or one each for pl… ▸  │▌            │ █▏
-                           │             │ /permissions    Durable allow/ask/deny bash rules from the TUI        ▸  │▌            │ 12k of 256k             5%
-  ┃ Build               $0 │             │ /tools          Tool permission mode for this session                 ▸  │▌            │
-    grok-4.6               │             │ ↑↓ move  enter run  esc close                                            │▌            │ ──────────────────────────
-    asks first             │             ╰──────────────────────────────────────────────────────────────────────────╯▌            │ Spend · no cap
-                           │              ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀            │ $0
-  Specialists              │                                                                                                      │ Build                   $0
-  ● Audit               $0 │                                                                                                      │
-    grok-4.6               │                                                                                                      │
-    checkpoint             │                                                                                                      │
-                           │                                                                                                      │
-  ● Scribe              $0 │                                                                                                      │
-    follows all hats       │                                                                                                      │
-    docs only              │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │  ╭────────────────────────────────────────────────────────────────────────────────────────────────╮  │
-                           │  │ Build  › /mo█                                                                                  │  │
-                           │  ╰────────────────────────────────────────────────────────────────────────────────────────────────╯  │
-                           │                                                                                                      │
+  ryter                    ┊  New session                                                                     ● Idle · asks first ┊ Activity
+  ⎇ 0.2.0-patch            ┊  0.2.0-patch                                                                                         ┊ grok-4.6
+                           ┊                                                                                                      ┊ Idle
+  HATS                     ┊         ·  welcome · /help for keys                                                                  ┊
+  ● Plan                $0 ┊             ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖             ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+    grok-4.6               ┊               Commands                                                         4 of 31               ┊ Context
+    read only              ┊               mo                                                                                     ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+                           ┊              ›/models         Choose models: one for every hat, or one each for pl… ▸                ┊  ⢰⠋      ⠙⡆ 12k
+  ┃ Build               $0 ┊               /permissions    Durable allow/ask/deny bash rules from the TUI        ▸                ┊  ⢸   5%   ⡧ of 256k
+    grok-4.6               ┊               /tools          Tool permission mode for this session                 ▸                ┊  ⠸⣄      ⣠⠇
+    asks first             ┊               ↑↓ move  enter run  esc close                                                          ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+                           ┊             ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘             ┊
+  Specialists              ┊                                                                                                      ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+  ● Audit               $0 ┊                                                                                                      ┊ Spend · no cap
+    grok-4.6               ┊                                                                                                      ┊ $0
+    checkpoint             ┊                                                                                                      ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                           ┊                                                                                                      ┊ Build $0
+  ● Scribe              $0 ┊                                                                                                      ┊
+    follows all hats       ┊                                                                                                      ┊
+    docs only              ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊  ╭────────────────────────────────────────────────────────────────────────────────────────────────╮  ┊
+                           ┊  │ Build  › /mo█                                                                                  │  ┊
+                           ┊  ╰────────────────────────────────────────────────────────────────────────────────────────────────╯  ┊
+                           ┊                                                                                                      ┊
  ↑↓ move  enter run  esc close                                                                                                             focus · conversation

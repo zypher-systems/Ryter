@@ -22,7 +22,7 @@ use crate::select::WorkspaceClick;
 use crate::sidebar::{self, HATS};
 use crate::theme::Theme;
 use crate::view::{Focus, Page, SavedSession, View};
-use crate::{composer, draw, palette, panel};
+use crate::{composer, draw, palette, panel, ring};
 
 /// Paint one frame of the workspace.
 pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
@@ -107,6 +107,9 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
         activity,
         composer: composer_rect,
         clicks,
+        welcome: None,
+        chip: None,
+        hat_row: None,
     }
 }
 
@@ -403,24 +406,26 @@ fn draw_tabs(
         } else {
             (theme.dim, bg)
         };
-        let name_span = if active {
-            glyphs::filled(&label, fg, fill)
+        let name_spans = if active {
+            glyphs::pill(&label, fg, fill, bg, view.ui.nerd_font)
         } else {
-            Span::styled(format!(" {label} "), sty(fg, fill))
+            vec![Span::styled(format!(" {label} "), sty(fg, fill))]
         };
         let key_span = Span::styled(key, sty(theme.dim, bg));
-        let name_w = wrap::width(&name_span.content) as u16;
+        let name_w: u16 = name_spans
+            .iter()
+            .map(|s| wrap::width(&s.content) as u16)
+            .sum();
         let key_w = wrap::width(&key_span.content) as u16;
         let need = name_w + 1 + key_w + 1;
         if x + need > end {
             break;
         }
+        let mut spans = name_spans;
+        spans.push(Span::styled(" ", sty(theme.dim, bg)));
+        spans.push(key_span);
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                name_span,
-                Span::styled(" ", sty(theme.dim, bg)),
-                key_span,
-            ])),
+            Paragraph::new(Line::from(spans)),
             Rect {
                 x,
                 width: name_w + 1 + key_w,
@@ -573,15 +578,15 @@ fn draw_hat(
     let w = usize::from(area.width);
     let wearing = hat == view.mode;
     let cursor = view.focus == Focus::Sidebar && view.side_at == hat_index(hat);
-    fill(
-        frame,
-        Rect {
-            y: area.y + y,
-            height: if tall { 3 } else { 1 },
-            ..area
-        },
-        bg,
-    );
+    let row = Rect {
+        y: area.y + y,
+        height: if tall { 3 } else { 1 },
+        ..area
+    };
+    fill(frame, row, bg);
+    if wearing {
+        view.marks.borrow_mut().hat_row = Some(row);
+    }
     let pip = if wearing {
         "┃"
     } else {
@@ -686,8 +691,17 @@ fn draw_side_foot(frame: &mut Frame, area: Rect, mut y: u16, view: &View, theme:
     if !turns.is_empty() && y < area.height {
         let mut spans = vec![Span::styled(" Turns ", sty(theme.dim, bg))];
         let room = w.saturating_sub(8).min(sidebar::TURN_DOTS);
-        for hat in turns.iter().rev().take(room).rev() {
+        let shown = turns.iter().rev().take(room).rev();
+        let n = shown.len();
+        for hat in shown {
             spans.push(Span::styled("●", sty(theme.mode(*hat), bg)));
+        }
+        // The row fills to eight: the turns to come are its hollow dots.
+        if n < sidebar::TURN_ROW.min(room) {
+            spans.push(Span::styled(
+                "○".repeat(sidebar::TURN_ROW.min(room) - n),
+                sty(theme.rule, bg),
+            ));
         }
         put(frame, area, y, Line::from(spans));
         y += 1;
@@ -784,7 +798,7 @@ fn draw_conversation(
         0
     };
     let below = area.height.saturating_sub(3 + comp_h);
-    let prompt_h = panel::prompt_height(view, below);
+    let prompt_h = panel::prompt_height(view, below, theme);
     let chat_h = area.height.saturating_sub(3 + prompt_h + comp_h);
     let chat = Rect {
         y: area.y + 3,
@@ -805,7 +819,9 @@ fn draw_conversation(
     if chat.height > 0 {
         let cf = draw::draw_chat(frame, chat, view, theme);
         activity = draw::status_hit(chat, &cf);
-        if view.turn == 0 && view.messages.is_empty() {
+        // A session with nothing said yet: a fresh one counts its first
+        // turn from one, so the messages decide, not the turn.
+        if view.messages.is_empty() {
             draw_welcome(frame, chat, view, theme);
         }
     }
@@ -841,6 +857,10 @@ fn draw_welcome(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
         width,
         height: area.height.saturating_sub((area.height / 5).min(4)),
     };
+    view.marks.borrow_mut().welcome = Some(Rect {
+        height: inner.height.min(6),
+        ..inner
+    });
     let title = match view.mode {
         Role::Plan => "Start with a plan.",
         Role::Audit => "A fresh look at your work.",
@@ -1266,15 +1286,20 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
             }
             s
         };
-        put(
-            frame,
-            area,
-            y,
-            Line::from(Span::styled(
-                format!(" {verb}"),
+        // A turn in flight shimmers; a verb at rest is said in its colour.
+        let mut verb_spans = vec![Span::styled(" ", sty(theme.dim, bg))];
+        if view.activity.busy() {
+            verb_spans.extend(crate::shimmer::spans(
+                &verb,
                 sty(pill_color(view, theme), bg),
-            )),
-        );
+                theme.fg,
+                view.now_ms,
+                theme.mode,
+            ));
+        } else {
+            verb_spans.push(Span::styled(verb, sty(pill_color(view, theme), bg)));
+        }
+        put(frame, area, y, Line::from(verb_spans));
         y += 1;
         if !view.activity.current.is_empty() && y < area.height {
             let tool = if view.ui.nerd_font
@@ -1301,22 +1326,30 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
             );
             y += 1;
         }
+        // The trace: output tokens a second while the turn runs. The row
+        // is kept from the first second so the blocks below do not jump.
+        if view.activity.busy() && y < area.height {
+            let mut history = view.pulse.history(view.now_ms).to_vec();
+            history.reverse();
+            let label = format!("{} tok/s", view.pulse.rate(view.now_ms).unwrap_or(0));
+            let trace_w = w.saturating_sub(wrap::width(&label) + 4).min(24);
+            let mut spans = vec![Span::styled(" ", sty(theme.dim, bg))];
+            if history.iter().any(|n| *n > 0) && trace_w >= 4 {
+                spans.extend(trace_spans(&history, trace_w, pill_color(view, theme), bg));
+                put(
+                    frame,
+                    area,
+                    y,
+                    sidebar::ends(spans, vec![Span::styled(label, sty(theme.dim, bg))], w, bg),
+                );
+            }
+            y += 1;
+        }
         y += 1;
     }
     rule(frame, area, &mut y, theme);
     if section(frame, &mut y, "Context") && y < area.height {
         let frac = view.ctx_frac().clamp(0.0, 1.0);
-        let gauge_w = w.saturating_sub(2).clamp(4, 24);
-        let mut spans = vec![Span::styled(" ", sty(theme.dim, bg))];
-        spans.extend(gauge_spans(
-            frac,
-            gauge_w,
-            sidebar::gauge_color(view, theme),
-            theme.code_bg,
-            bg,
-        ));
-        put(frame, area, y, Line::from(spans));
-        y += 1;
         let (used, window) = match (view.ctx_tokens, view.ctx_window) {
             (Some(u), Some(n)) if n > 0 => (short_count(u), short_count(n)),
             _ => ("—".into(), "—".into()),
@@ -1325,21 +1358,78 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
             .ctx_pct
             .map(|p| format!("{p}%"))
             .unwrap_or_else(|| "—".into());
-        put(
-            frame,
-            area,
-            y,
-            sidebar::ends(
-                vec![Span::styled(
-                    format!(" {used} of {window}"),
-                    sty(theme.dim, bg),
-                )],
-                vec![Span::styled(pct, sty(theme.dim, bg))],
-                w,
+        let ring_fits = area.height >= 28
+            && w >= ring::WIDTH + 10
+            && theme.mode != crate::theme::ColorMode::Mono
+            && y + ring::HEIGHT as u16 <= area.height;
+        if ring_fits {
+            // The dial: the ring at the left, the counts beside it, the
+            // percentage in its middle.
+            let rows = ring::rows(frac, sidebar::gauge_color(view, theme), theme.rule, bg);
+            let beside_x = ring::WIDTH + 3;
+            for (i, row) in rows.into_iter().enumerate() {
+                let mut spans = vec![Span::styled("  ", sty(theme.dim, bg))];
+                spans.extend(row.spans);
+                let beside = match i {
+                    1 => Some(Span::styled(
+                        format!(" {used}"),
+                        sty(theme.fg, bg).add_modifier(Modifier::BOLD),
+                    )),
+                    2 => Some(Span::styled(format!(" of {window}"), sty(theme.dim, bg))),
+                    _ => None,
+                };
+                if let Some(s) = beside {
+                    spans.push(s);
+                }
+                put(frame, area, y + i as u16, Line::from(spans));
+            }
+            // The percentage sits in the ring's middle row, centred.
+            let mid = y + (ring::HEIGHT / 2) as u16;
+            let inner_w = ring::WIDTH - 2;
+            let text = wrap::truncate(&pct, inner_w);
+            let x = 2 + 1 + (inner_w - wrap::width(&text)) / 2;
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    text.clone(),
+                    sty(theme.fg, bg).add_modifier(Modifier::BOLD),
+                ))),
+                Rect {
+                    x: area.x + x as u16,
+                    y: area.y + mid,
+                    width: (wrap::width(&text) as u16).min(area.width.saturating_sub(x as u16)),
+                    height: 1,
+                },
+            );
+            let _ = beside_x;
+            y += ring::HEIGHT as u16 + 1;
+        } else {
+            let gauge_w = w.saturating_sub(2).clamp(4, 24);
+            let mut spans = vec![Span::styled(" ", sty(theme.dim, bg))];
+            spans.extend(gauge_spans(
+                frac,
+                gauge_w,
+                sidebar::gauge_color(view, theme),
+                theme.rule,
                 bg,
-            ),
-        );
-        y += 2;
+            ));
+            put(frame, area, y, Line::from(spans));
+            y += 1;
+            put(
+                frame,
+                area,
+                y,
+                sidebar::ends(
+                    vec![Span::styled(
+                        format!(" {used} of {window}"),
+                        sty(theme.dim, bg),
+                    )],
+                    vec![Span::styled(pct, sty(theme.dim, bg))],
+                    w,
+                    bg,
+                ),
+            );
+            y += 2;
+        }
     }
     rule(frame, area, &mut y, theme);
     let cap = sidebar::cap(view);
@@ -1367,60 +1457,95 @@ fn draw_conv_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme)
             ),
         );
         y += 1;
-        if view.budget_usd > 0.0 && view.spend.is_some() && y < area.height {
-            let frac = (view.spend.unwrap_or(0.0) / view.budget_usd).clamp(0.0, 1.0);
+        // One bar for the session: each hat's share of it in the hat's
+        // colour. Under a cap the bar is the spend's part of the cap and
+        // the rest is track; with none, the shares fill the width.
+        let shares: Vec<(Role, f64)> = HATS
+            .iter()
+            .map(|hat| {
+                (
+                    *hat,
+                    view.spend_rows_role
+                        .get(hat.as_str())
+                        .map(|r| r.usd)
+                        .unwrap_or(0.0),
+                )
+            })
+            .collect();
+        let total: f64 = shares.iter().map(|(_, usd)| usd).sum();
+        if y < area.height {
+            let bar_w = w.saturating_sub(2).clamp(4, 24);
+            // Under a cap, a spend too small for a cell still shows its cap.
+            let lit = if view.budget_usd > 0.0 {
+                let spent = view.spend.unwrap_or(0.0);
+                let cells =
+                    ((spent / view.budget_usd).clamp(0.0, 1.0) * bar_w as f64).round() as usize;
+                if spent > 0.0 { cells.max(1) } else { cells }
+            } else if total > 0.0 {
+                bar_w
+            } else {
+                0
+            };
             let mut spans = vec![Span::styled(" ", sty(theme.dim, bg))];
-            spans.extend(gauge_spans(
-                frac,
-                w.saturating_sub(2).clamp(4, 24),
-                theme.mode(view.mode),
-                theme.code_bg,
-                bg,
-            ));
+            let mut used = 0usize;
+            let lit_hats: Vec<&(Role, f64)> = shares.iter().filter(|(_, usd)| *usd > 0.0).collect();
+            for (i, (hat, usd)) in lit_hats.iter().enumerate() {
+                let cells = if i + 1 == lit_hats.len() {
+                    lit.saturating_sub(used)
+                } else {
+                    ((usd / total) * lit as f64).round() as usize
+                }
+                .min(lit.saturating_sub(used));
+                if cells == 0 {
+                    continue;
+                }
+                let ink = sty(theme.mode(*hat), bg);
+                spans.push(Span::styled("━".repeat(cells - 1), ink));
+                spans.push(Span::styled("╸", ink));
+                used += cells;
+            }
+            if used < bar_w {
+                spans.push(Span::styled("╌".repeat(bar_w - used), sty(theme.rule, bg)));
+            }
             put(frame, area, y, Line::from(spans));
             y += 1;
         }
-        let mut most = 0.0f64;
-        for hat in HATS {
-            if let Some(row) = view.spend_rows_role.get(hat.as_str()) {
-                most = most.max(row.usd);
+        if y < area.height {
+            // `Plan $0.004 · Build $0.014`: the hats that spent, else the
+            // one that is on.
+            let mut spans = vec![Span::styled(" ", sty(theme.dim, bg))];
+            let mut named = 0;
+            for (hat, usd) in &shares {
+                if *usd <= 0.0 && (*hat != view.mode || total > 0.0) {
+                    continue;
+                }
+                if named > 0 {
+                    spans.push(Span::styled(" · ", sty(theme.faint, bg)));
+                }
+                spans.push(Span::styled(
+                    glyphs::hat_label(*hat),
+                    sty(theme.mode(*hat), bg),
+                ));
+                spans.push(Span::styled(
+                    format!(" {}", sidebar::hat_spend(view, *hat)),
+                    sty(theme.dim, bg),
+                ));
+                named += 1;
             }
-        }
-        for hat in HATS {
-            if y >= area.height {
-                break;
-            }
-            let usd = view
-                .spend_rows_role
-                .get(hat.as_str())
-                .map(|r| r.usd)
-                .unwrap_or(0.0);
-            if usd <= 0.0 && hat != view.mode {
-                continue;
-            }
-            let frac = if most > 0.0 { usd / most } else { 0.0 };
-            let mut left = vec![
-                Span::styled(
-                    format!(" {:<6}", glyphs::hat_label(hat)),
-                    sty(theme.mode(hat), bg),
-                ),
-                Span::styled(" ", sty(theme.dim, bg)),
-            ];
-            left.extend(gauge_spans(frac, 8, theme.mode(hat), theme.code_bg, bg));
-            put(
-                frame,
-                area,
-                y,
-                sidebar::ends(
-                    left,
-                    vec![Span::styled(
-                        sidebar::hat_spend(view, hat),
+            let line = Line::from(spans);
+            if wrap::width(&line.to_string()) <= w {
+                put(frame, area, y, line);
+            } else {
+                put(
+                    frame,
+                    area,
+                    y,
+                    Line::from(Span::styled(
+                        wrap::truncate(&line.to_string(), w),
                         sty(theme.dim, bg),
-                    )],
-                    w,
-                    bg,
-                ),
-            );
+                    )),
+                );
+            }
             y += 1;
         }
         // B — project cost glance when the project has calls or unpriced calls.
@@ -1981,39 +2106,48 @@ fn session_cols(cells: &[String], width: usize) -> String {
     out
 }
 
-/// A bar of fractional blocks (`▏`–`█`) on a track.
+/// A thick line with a cap (`━━╸`) on a dashed track (`╌╌`). A half cell
+/// or more past the last whole one earns the cap.
 fn gauge_spans(
     frac: f64,
     width: usize,
     fill: Color,
     track: Color,
-    _bg: Color,
+    bg: Color,
 ) -> Vec<Span<'static>> {
     let width = width.max(1);
     let exact = frac.clamp(0.0, 1.0) * width as f64;
-    let mut full = exact.floor() as usize;
-    let mut eighths = ((exact - full as f64) * 8.0).round() as usize;
-    if eighths >= 8 {
-        full += 1;
-        eighths = 0;
-    }
-    let full = full.min(width);
+    let full = (exact.floor() as usize).min(width);
+    let cap = usize::from(exact - full as f64 >= 0.5 && full < width);
     let mut spans = Vec::new();
-    let ink = Style::default().fg(fill).bg(track);
-    let rest = Style::default().fg(track).bg(track);
+    let ink = Style::default().fg(fill).bg(bg);
     if full > 0 {
-        spans.push(Span::styled("█".repeat(full), ink));
+        spans.push(Span::styled("━".repeat(full), ink));
     }
-    let mut used = full;
-    if eighths > 0 && used < width {
-        let ch = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"][eighths];
-        spans.push(Span::styled(ch.to_string(), ink));
-        used += 1;
+    if cap > 0 {
+        spans.push(Span::styled("╸".to_string(), ink));
     }
+    let used = full + cap;
     if used < width {
-        spans.push(Span::styled(" ".repeat(width - used), rest));
+        spans.push(Span::styled(
+            "╌".repeat(width - used),
+            Style::default().fg(track).bg(bg),
+        ));
     }
     spans
+}
+
+/// Tokens a second over the last seconds as a wave of eighth blocks, the
+/// tallest at the busiest second.
+fn trace_spans(rate: &[u64], width: usize, ink: Color, bg: Color) -> Vec<Span<'static>> {
+    const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let shown = &rate[rate.len().saturating_sub(width)..];
+    let most = shown.iter().copied().max().unwrap_or(0).max(1);
+    let wave: String = shown
+        .iter()
+        .map(|v| BARS[((*v * 7) / most) as usize])
+        .collect();
+    vec![Span::styled(wave, Style::default().fg(ink).bg(bg))]
 }
 
 fn short_count(n: u64) -> String {
@@ -2034,7 +2168,7 @@ fn rule(frame: &mut Frame, area: Rect, y: &mut u16, theme: Theme) {
     let line = if w == 0 {
         String::new()
     } else {
-        format!(" {}", "─".repeat(w.saturating_sub(1)))
+        format!(" {}", glyphs::HAIRLINE_H.repeat(w.saturating_sub(1)))
     };
     put(
         frame,
@@ -2182,7 +2316,7 @@ fn draw_project_spend_glance(
 fn vertical_rule(frame: &mut Frame, area: Rect, color: Color, bg: Color) {
     for y in area.y..area.bottom() {
         frame.render_widget(
-            Paragraph::new("│").style(sty(color, bg)),
+            Paragraph::new(glyphs::HAIRLINE_V).style(sty(color, bg)),
             Rect {
                 y,
                 height: 1,
@@ -2753,7 +2887,7 @@ mod tests {
         // Below the top bar and the pane's breathing row, down to the hints.
         for y in 4..49 {
             let cell = &buf[(160 - right, y)];
-            assert_eq!(cell.symbol(), "│", "row {y}");
+            assert_eq!(cell.symbol(), glyphs::HAIRLINE_V, "row {y}");
             assert_eq!(cell.fg, theme.build, "row {y}");
         }
     }

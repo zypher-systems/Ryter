@@ -176,16 +176,15 @@ pub fn draw_workspace(
     if let Some(c) = chip(view) {
         let fill = theme.mode(view.mode);
         let on = theme.bg;
-        let spans = pill(&c, on, fill, theme);
+        let spans = pill(&c, on, fill, bg, theme, view.ui.nerd_font);
         let span_w: u16 = spans.iter().map(|s| wrap::width(&s.content) as u16).sum();
-        frame.render_widget(
-            Paragraph::new(Line::from(spans)),
-            Rect {
-                width: span_w.min(inner.width),
-                height: 1,
-                ..inner
-            },
-        );
+        let chip_rect = Rect {
+            width: span_w.min(inner.width),
+            height: 1,
+            ..inner
+        };
+        frame.render_widget(Paragraph::new(Line::from(spans)), chip_rect);
+        view.marks.borrow_mut().chip = Some(chip_rect);
         let step = span_w.saturating_add(1).min(inner.width);
         inner.x += step;
         inner.width = inner.width.saturating_sub(step);
@@ -193,18 +192,24 @@ pub fn draw_workspace(
     body(frame, inner, view, theme, bg, accent)
 }
 
-/// A solid chip: the label, already padded, on a fill. No half-block caps.
-fn pill(label: &str, fg: Color, fill: Color, theme: Theme) -> Vec<Span<'static>> {
+/// The hat's chip: the label on a fill, with round caps where the font
+/// has them (`glyphs::pill`).
+fn pill(
+    label: &str,
+    fg: Color,
+    fill: Color,
+    under: Color,
+    theme: Theme,
+    nerd: bool,
+) -> Vec<Span<'static>> {
     // Without colour there is no fill: reverse video marks the chip.
-    let style = if theme.mode == crate::theme::ColorMode::Mono {
-        Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
-    } else {
-        Style::default()
-            .fg(fg)
-            .bg(fill)
-            .add_modifier(Modifier::BOLD)
-    };
-    vec![Span::styled(label.to_string(), style)]
+    if theme.mode == crate::theme::ColorMode::Mono {
+        return vec![Span::styled(
+            label.to_string(),
+            Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD),
+        )];
+    }
+    crate::glyphs::pill(label.trim(), fg, fill, under, nerd)
 }
 
 /// The prompt and the text, inside whatever frame the layout drew. `mark`

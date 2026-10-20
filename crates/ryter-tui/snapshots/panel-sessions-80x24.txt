@@ -3,15 +3,15 @@
   0.2.0-patch
 
          ·  welcome · /help for keys
-    ╭─ sessions ─────────────────────────────────────────────────────── 0 ─╮
-    │ no saved sessions in this directory                                  │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │ enter resume   r rename   d delete   n new   type to filter   esc    │▌
-    ╰──────────────────────────────────────────────────────────────────────╯▌
-     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
+      sessions                                                           0
+      no saved sessions in this directory
+
+
+
+
+      enter resume   r rename   d delete   n new   type to filter   esc
+    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
 
 
 

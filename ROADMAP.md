@@ -21,6 +21,8 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 The last release is 0.32.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
+- **The softer screen, on dev unreleased (2026-10-20).** Route B and C of the design canvas, on the interface polish: dotted hairlines, slab cards with no shadow, `╰─` closing the turn, capped line gauges, pill chips with Nerd Font caps, the context ring, the spend bar, the tok/s trace, the Turns row's hollow dots, the shimmer in place of the spinner, and tachyonfx motion after the frame (card fade, hat sweep, welcome gather). Ratatui 0.30 and crossterm 0.29 came first. Untried by a person: the motion in a real terminal, the Nerd Font caps, the light theme's slab.
+
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
 - **1.0 item 1 (flow on a real project): closed 2026-10-14** (recorded in 0.28.0). Further ask friction from fiscus/tunes stays under Next (item 2). G4 closed the nested-scratch and tmux-scope holes in 0.29.0.

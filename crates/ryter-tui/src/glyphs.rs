@@ -19,13 +19,35 @@ pub fn hat_label(hat: Role) -> String {
     }
 }
 
-/// A solid chip: padded text on a fill, no half-block caps.
-pub fn filled(text: &str, fg: Color, bg: Color) -> Span<'static> {
-    Span::styled(
+/// A pill: the padded text on a fill, with round caps where the font has
+/// them. Nerd Fonts carry the Powerline half-circles; plain Unicode has
+/// no glyph that rounds a cell, so the chip stays square there. `under`
+/// is the colour behind the caps.
+pub fn pill(text: &str, fg: Color, fill: Color, under: Color, nerd: bool) -> Vec<Span<'static>> {
+    let body = Span::styled(
         format!(" {text} "),
-        Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
-    )
+        Style::default()
+            .fg(fg)
+            .bg(fill)
+            .add_modifier(Modifier::BOLD),
+    );
+    if !nerd {
+        return vec![body];
+    }
+    let cap = Style::default().fg(fill).bg(under);
+    vec![
+        Span::styled("\u{e0b6}", cap),
+        body,
+        Span::styled("\u{e0b4}", cap),
+    ]
 }
+
+/// The hairline between regions: dotted, so the screen is not ruled.
+pub const HAIRLINE_V: &str = "┊";
+/// Its horizontal twin.
+pub const HAIRLINE_H: &str = "┈";
+/// The turn's spine down the conversation's gutter.
+pub const SPINE: &str = "┆";
 
 /// A mark that has a plain-Unicode form and a Nerd Font form.
 #[derive(Clone, Copy)]

@@ -3,16 +3,16 @@
   0.2.0-patch
 
          ·  welcome · /help for keys
-            ╭─ theme ────────────────────────────────────────── 3 ─╮
-            │›◆ dark  built-in                             current │▌
-            │ ◆ light  built-in                                    │▌
-            │ ◆ default-16  built-in                               │▌
-            │                                                      │▌
-            │ ██████████████████████████  truecolor                │▌
-            │                                                      │▌
-            │ ↑↓ preview   enter apply   esc revert                │▌
-            ╰──────────────────────────────────────────────────────╯▌
-             ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+            ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
+              theme                                              3
+             ›◆ dark  built-in                             current
+              ◆ light  built-in
+              ◆ default-16  built-in
+
+              ██████████████████████████  truecolor
+
+              ↑↓ preview   enter apply   esc revert
+            ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
 
 
 

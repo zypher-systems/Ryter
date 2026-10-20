@@ -2,49 +2,49 @@
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-  ryter                    │  New session                                                          ● Waiting for you · asks first │ Activity
-  ⎇ 0.2.0-patch            │  0.2.0-patch                                                                                         │ grok-4.6
-                           │                                                                                                      │ Done
-  HATS                     │         ·  welcome · /help for keys                                                                  │
-  ● Plan                $0 │                                                                                                      │ ──────────────────────────
-    grok-4.6               │         ●  dusty                                                                                     │ Context
-    read only              │         │  trim the query                                                                            │ █▏
-                           │         │                                                                                            │ 12k of 256k             5%
-  ┃ Build               $0 │         ├─ edit   app/server.js                                                               +2 −1  │
-    grok-4.6               │         │    3                                                                                       │ ──────────────────────────
-    asks first             │         │    4   app.get('/search', (req, res) => {                                                  │ Spend · no cap
-                           │         │    5 -   const q = req.query.q                                                             │ $0
-  Specialists              │         │    5 +   const q = (req.query.q || '').trim()                                              │ Build                   $0
-  ● Audit               $0 │         │    6 +   if (!q) return res.json([])                                                       │
-    grok-4.6               │         │    7     res.json(find(q))                                                                 │
-    checkpoint             │         │    8   })                                                                                  │
-                           │         ├─ write  test/search.test.js                                                 new · 6 lines  │
-  ● Scribe              $0 │         │    1 + import { test } from 'node:test'                                                    │
-    follows all hats       │         │    2 + import assert from 'node:assert'                                                    │
-    docs only              │         │    3 +                                                                                     │
-                           │         │    4 + test('an empty query finds nothing', async () => {                                  │
-                           │         │    5 +   assert.deepEqual(await search(''), [])                                            │
-                           │         │    6 + })                                                                                  │
-                           │         └─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │                                                                                                      │
-                           │               ╭─ audit? ───────────────────────────────────────────────────────────────── audit ─╮   │
-                           │               │ x-ai/grok-4.7 on openrouter (the audit hat's model)                              │▌  │
-                           │               │ audits 2 files, +8 −1, read-only                                                 │▌  │
-                           │               │ about $0.02–$0.31 of your $5.00 limit                                            │▌  │
-                           │               │ ⏎ audit   n not now                                                              │▌  │
-                           │               ╰──────────────────────────────────────────────────────────────────────────────────╯▌  │
-                           │                ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀  │
-                           │  ╭────────────────────────────────────────────────────────────────────────────────────────────────╮  │
-                           │  │ Build  › what should change?                                                                   │  │
-                           │  ╰────────────────────────────────────────────────────────────────────────────────────────────────╯  │
-                           │                                                                                                      │
+  ryter                    ┊  New session                                                          ● Waiting for you · asks first ┊ Activity
+  ⎇ 0.2.0-patch            ┊  0.2.0-patch                                                                                         ┊ grok-4.6
+                           ┊                                                                                                      ┊ Done
+  HATS                     ┊         ·  welcome · /help for keys                                                                  ┊
+  ● Plan                $0 ┊                                                                                                      ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+    grok-4.6               ┊         ●  dusty                                                                                     ┊ Context
+    read only              ┊         ┆  trim the query                                                                            ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+                           ┊         ┆                                                                                            ┊  ⢰⠋      ⠙⡆ 12k
+  ┃ Build               $0 ┊         ├─ edit   app/server.js                                                               +2 −1  ┊  ⢸   5%   ⡧ of 256k
+    grok-4.6               ┊         ┆    3                                                                                       ┊  ⠸⣄      ⣠⠇
+    asks first             ┊         ┆    4   app.get('/search', (req, res) => {                                                  ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+                           ┊         ┆    5 -   const q = req.query.q                                                             ┊
+  Specialists              ┊         ┆    5 +   const q = (req.query.q || '').trim()                                              ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+  ● Audit               $0 ┊         ┆    6 +   if (!q) return res.json([])                                                       ┊ Spend · no cap
+    grok-4.6               ┊         ┆    7     res.json(find(q))                                                                 ┊ $0
+    checkpoint             ┊         ┆    8   })                                                                                  ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                           ┊         ├─ write  test/search.test.js                                                 new · 6 lines  ┊ Build $0
+  ● Scribe              $0 ┊         ┆    1 + import { test } from 'node:test'                                                    ┊
+    follows all hats       ┊         ┆    2 + import assert from 'node:assert'                                                    ┊
+    docs only              ┊         ┆    3 +                                                                                     ┊
+                           ┊         ┆    4 + test('an empty query finds nothing', async () => {                                  ┊
+                           ┊         ┆    5 +   assert.deepEqual(await search(''), [])                                            ┊
+                           ┊         ┆    6 + })                                                                                  ┊
+                           ┊         ╰─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊               ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊
+                           ┊                 audit?                                                                     audit     ┊
+                           ┊                 x-ai/grok-4.7 on openrouter (the audit hat's model)                                  ┊
+                           ┊                 audits 2 files, +8 −1, read-only                                                     ┊
+                           ┊                 about $0.02–$0.31 of your $5.00 limit                                                ┊
+                           ┊                 ⏎ audit   n not now                                                                  ┊
+                           ┊               ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
+                           ┊                                                                                                      ┊
+                           ┊  ╭────────────────────────────────────────────────────────────────────────────────────────────────╮  ┊
+                           ┊  │ Build  › what should change?                                                                   │  ┊
+                           ┊  ╰────────────────────────────────────────────────────────────────────────────────────────────────╯  ┊
+                           ┊                                                                                                      ┊
  ⏎ audit  n not now  tab hat  ⇧tab mode  / commands  f2 instruments  f6 f7 panes                                                           focus · conversation

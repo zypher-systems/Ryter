@@ -1,21 +1,21 @@
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
   New session                                               ● Idle · asks first
   0.2.0-patch
-       ╭─ tool permissions ─────────────────────────────────────────────╮
-       │›● ask     current                                              │▌
-       │    what the gate asks about (deleting, publishing, writing     │▌
-       │    outside the project, the project's .env) pauses for a y/n.  │▌
-       │                                                                │▌
-       │ ○ always                                                       │▌
-       │    a yes to everything inside the project; writes outside it   │▌
-       │    and to the project's .env still ask.                        │▌
-       │                                                                │▌
-       │ ○ yolo                                                         │▌
-       │    a yes to every question, outside the project too. Root      │▌
-       │    still asks; what is refused (secrets, the disk) stays       │▌
-       │ ↑↓ move   enter apply   esc   changes apply immediately        │▌
-       ╰────────────────────────────────────────────────────────────────╯▌
-        ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+       ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
+         tool permissions
+        ›● ask     current
+            what the gate asks about (deleting, publishing, writing
+            outside the project, the project's .env) pauses for a y/n.
+
+         ○ always
+            a yes to everything inside the project; writes outside it
+            and to the project's .env still ask.
+
+         ○ yolo
+            a yes to every question, outside the project too. Root
+            still asks; what is refused (secrets, the disk) stays
+         ↑↓ move   enter apply   esc   changes apply immediately
+       ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
 
   ╭──────────────────────────────────────────────────────────────────────────╮
   │ Build  › what should change?                                             │

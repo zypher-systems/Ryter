@@ -384,8 +384,9 @@ fn every_panel_fits_the_screen_at_every_width() {
     let mut v = with_panel(PanelId::Models);
     v.panel_visible = true;
     let drawn = render_to_string(&v, 110, 32);
-    let top = drawn.lines().find(|l| l.contains("models")).unwrap_or("");
-    assert!(top.contains('╮'), "{drawn}");
+    let lid = drawn.lines().find(|l| l.contains('▗')).unwrap_or("");
+    assert!(lid.contains('▖'), "{drawn}");
+    assert!(drawn.contains("models"), "{drawn}");
 }
 
 #[test]
@@ -469,7 +470,7 @@ fn panels_have_rounded_borders_and_titles() {
         let v = with_panel(id);
         let s = render_to_string(&v, 120, 40);
         assert!(
-            s.contains('╭') && s.contains('╯'),
+            (s.contains('╭') && s.contains('╯')) || (s.contains('▗') && s.contains('▘')),
             "{name}: no rounded corners\n{s}"
         );
         assert!(
@@ -1032,7 +1033,8 @@ fn workspace_be() -> View {
 fn snapshot_workspace_be() {
     all_sizes("workspace-be", &workspace_be());
     let text = render_to_string(&workspace_be(), 160, 50);
-    let top = text.lines().next().unwrap();
+    // The brand's row: the band has a row above it on a tall screen.
+    let top = text.lines().find(|l| l.contains("RYTER")).unwrap();
     assert!(
         top.contains("●●● RYTER") && top.contains("Conversation"),
         "{top}"
@@ -1080,12 +1082,13 @@ fn the_spend_drawer_is_the_prompts_width() {
         let _ = panel::open(&mut v, PanelId::SpendDrawer, &e);
         let hit = crate::draw::render_hit(&v, w, 50);
         let text = render_to_string(&v, w, 50);
+        // The drawer's lid: its corners are the slab's.
         let top = text
             .lines()
-            .find(|r| r.contains("╭─ spend"))
+            .find(|r| r.contains('▗') && r.contains('▖'))
             .unwrap_or_else(|| panic!("{w}: no drawer\n{text}"));
-        let left = top.chars().position(|c| c == '╭');
-        let right = top.chars().position(|c| c == '╮');
+        let left = top.chars().position(|c| c == '▗');
+        let right = top.chars().position(|c| c == '▖');
         assert_eq!(
             (left, right),
             (
@@ -1110,19 +1113,25 @@ fn an_offer_is_in_the_color_of_the_hat_it_offers() {
         )));
         let buf = render_buffer(&v, 160, 50, theme);
         let text = render_with_theme(&v, 160, 50, theme);
-        // The rack is drawn beside the card: find its corner by column.
+        // The rack is drawn beside the card: find its lid by column. The
+        // title is the row under the lid, a cell in from its corner.
         let row = text
             .lines()
-            .position(|l| l.contains("╭─ ") && l.contains('?'))
+            .position(|l| l.contains('▗'))
             .unwrap_or_else(|| panic!("{tool}: no modal on screen\n{text}"));
         let x = text
             .lines()
             .nth(row)
             .unwrap()
             .chars()
-            .position(|c| c == '╭')
+            .position(|c| c == '▗')
             .unwrap();
-        let corner = (x as u16, row as u16);
+        let title = text.lines().nth(row + 1).unwrap();
+        assert!(
+            title.contains('?'),
+            "{tool}: no title under the lid\n{text}"
+        );
+        let corner = (x as u16 + 2, row as u16 + 1);
         assert_eq!(buf[corner].fg, color, "{tool}");
     }
 }
@@ -1526,7 +1535,7 @@ fn the_conversation_folds_finished_turns_and_closes_each() {
         "its answer is folded away"
     );
     assert!(
-        text.contains("└─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s · $0.004"),
+        text.contains("╰─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s · $0.004"),
         "{text}"
     );
     // ^O shows everything whole.
@@ -2343,7 +2352,7 @@ fn the_hats_block_names_the_plan_and_audit_files() {
         .map(|l| {
             l.chars()
                 .skip(usize::from(160 - insp_w))
-                .filter(|c| *c != '│')
+                .filter(|c| *c != '│' && *c != '┊')
                 .collect::<String>()
         })
         .collect::<Vec<_>>()
@@ -2524,7 +2533,7 @@ fn the_reasoning_pane_opens_under_the_status_row() {
         {
             let closing = lines[..header]
                 .iter()
-                .rposition(|l| l.contains("└─"))
+                .rposition(|l| l.contains("╰─"))
                 .unwrap_or_else(|| panic!("no closing line\n{shown}"));
             assert!(header > closing, "{shown}");
         }
@@ -2767,7 +2776,7 @@ fn the_chat_moves_up_for_the_allow_card() {
     let v = asking(60);
     let drawn = render_to_string(&v, 160, 42);
     let lines: Vec<&str> = drawn.lines().collect();
-    let card = lines.iter().position(|l| l.contains("╭─ allow?")).unwrap();
+    let card = lines.iter().position(|l| l.contains('▗')).unwrap();
     let last = lines
         .iter()
         .position(|l| l.contains("reply line 59"))
@@ -2782,7 +2791,7 @@ fn the_chat_moves_up_for_the_allow_card() {
     );
     assert!(status < card, "the status row is above the card:\n{drawn}");
     // And the card is capped at a third of the column, scrolling inside.
-    let bottom = lines.iter().position(|l| l.contains("╰───")).unwrap();
+    let bottom = lines.iter().position(|l| l.contains('▝')).unwrap();
     let height = bottom - card + 1;
     assert!(height <= 42 / 3, "card is {height} rows:\n{drawn}");
     assert!(
@@ -4136,20 +4145,34 @@ fn a_docked_card_clears_its_rows() {
         let text = render_to_string(&v, w, h);
         let top = text
             .lines()
-            .position(|r| r.contains("╭─ audit"))
+            .position(|r| r.contains('▗'))
             .unwrap_or_else(|| panic!("{w}x{h}: no card\n{text}"));
+        assert!(
+            text.lines()
+                .nth(top + 1)
+                .is_some_and(|r| r.contains("audit")),
+            "{w}x{h}: no audit title under the lid\n{text}"
+        );
         let bottom = text
             .lines()
             .skip(top)
-            .position(|r| r.contains('╰'))
+            .position(|r| r.contains('▝'))
             .map(|n| top + n)
             .unwrap();
+        // The card's columns are its lid's.
+        let lid: String = text
+            .lines()
+            .nth(top)
+            .unwrap()
+            .chars()
+            .skip(lo)
+            .take(hi - lo)
+            .collect();
+        let (left, right) = (lid.find('▗').unwrap(), lid.rfind('▖').unwrap());
         // Within the prompt's columns (the band a card clears), nothing
         // but the card: the rail and the sidebar beyond them are theirs.
         for (i, row) in text.lines().enumerate().take(bottom + 1).skip(top) {
             let span: String = row.chars().skip(lo).take(hi - lo).collect();
-            let left = span.find(['╭', '╰']).or_else(|| span.find('│')).unwrap();
-            let right = span.rfind(['╮', '╯']).or_else(|| span.rfind('│')).unwrap();
             let beside: String = span
                 .chars()
                 .take(left)

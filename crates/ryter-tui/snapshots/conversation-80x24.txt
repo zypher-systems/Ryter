@@ -4,19 +4,19 @@
 
          ●  dusty  trim the query                                         ↑ 7
   ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥
-         │    5 -   const q = req.query.q
-         │    5 +   const q = (req.query.q || '').trim()
-         │    6 +   if (!q) return res.json([])
-         │    7     res.json(find(q))
-         │    8   })
+         ┆    5 -   const q = req.query.q
+         ┆    5 +   const q = (req.query.q || '').trim()
+         ┆    6 +   if (!q) return res.json([])
+         ┆    7     res.json(find(q))
+         ┆    8   })
          ├─ write  test/search.test.js                           new · 6 lines
-         │    1 + import { test } from 'node:test'
-         │    2 + import assert from 'node:assert'
-         │    3 +
-         │    4 + test('an empty query finds nothing', async () => {
-         │    5 +   assert.deepEqual(await search(''), [])
-         │    6 + })
-         └─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s · $0.004
+         ┆    1 + import { test } from 'node:test'
+         ┆    2 + import assert from 'node:assert'
+         ┆    3 +
+         ┆    4 + test('an empty query finds nothing', async () => {
+         ┆    5 +   assert.deepEqual(await search(''), [])
+         ┆    6 + })
+         ╰─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s · $0.004
   ╭──────────────────────────────────────────────────────────────────────────╮
   │ Build  › what should change?                                             │
   ╰──────────────────────────────────────────────────────────────────────────╯

@@ -2,18 +2,18 @@
   New session                                               ● Idle · asks first
   0.2.0-patch
 
-        ╭─ context ─────────────────────────────────────────────── 5% ─╮
-        │ used █░░░░░░░░░░░░░░░░░░░░░  5%  12.4k / 256k tokens         │▌
-        │ asking the agent…                                            │▌
-        │                                                              │▌
-        │ no breakdown yet · r to refresh                              │▌
-        │                                                              │▌
-        │ c compact · summarizes older turns                           │▌
-        │                                                              │▌
-        │                                                              │▌
-        │ c compact   r refresh   esc                                  │▌
-        ╰──────────────────────────────────────────────────────────────╯▌
-         ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+        ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
+          context                                                   5%
+          used █░░░░░░░░░░░░░░░░░░░░░  5%  12.4k / 256k tokens
+          asking the agent…
+
+          no breakdown yet · r to refresh
+
+          c compact · summarizes older turns
+
+
+          c compact   r refresh   esc
+        ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
 
 
 

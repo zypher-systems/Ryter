@@ -1,22 +1,22 @@
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
   New session                                               ● Idle · asks first
   0.2.0-patch
-    ╭─ permissions ───────────────────────────────── edit default (allow) ─╮
-    │ durable allows without yolo · ~/.ryter/permissions.toml · can't open │▌
-    │                                                                      │▌
-    │› edit of project files          default (allow)                      │▌
-    │                                                                      │▌
-    │  No bash rules yet. a adds one (e.g. rm -rf target, or git push* =   │▌
-    │  allow). The most specific pattern wins.                             │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │                                                                      │▌
-    │ ↑↓ move   ←→/space answer   a add   d remove   esc close             │▌
-    ╰──────────────────────────────────────────────────────────────────────╯▌
-     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
+      permissions                                     edit default (allow)
+      durable allows without yolo · ~/.ryter/permissions.toml · can't open
+
+     › edit of project files          default (allow)
+
+       No bash rules yet. a adds one (e.g. rm -rf target, or git push* =
+       allow). The most specific pattern wins.
+
+
+
+
+
+
+      ↑↓ move   ←→/space answer   a add   d remove   esc close
+    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
   ╭──────────────────────────────────────────────────────────────────────────╮
   │ Build  › what should change?                                             │
   ╰──────────────────────────────────────────────────────────────────────────╯

@@ -1,30 +1,30 @@
 
  ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-  New session                                       ● Idle · asks first │ Activity
-  0.2.0-patch                                                           │ grok-4.6
-   ╭─ Commands ─────────────────────────────────────────── 4 of 31 ─╮   │ Idle
-   │ mo                                                             │▌  │
-   │›/models         Choose models: one for every hat, or one e… ▸  │▌  │ ────────────────────────
-   │ /permissions    Durable allow/ask/deny bash rules from the… ▸  │▌  │ Context
-   │ /tools          Tool permission mode for this session       ▸  │▌  │ █▏
-   │ ↑↓ move  enter run  esc close                                  │▌  │ 12k of 256k           5%
-   ╰────────────────────────────────────────────────────────────────╯▌  │
-    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀  │ ────────────────────────
-                                                                        │ Spend · no cap
-                                                                        │ $0
-                                                                        │ Build                 $0
-                                                                        │
-                                                                        │
-                                                                        │
-                                                                        │
-                                                                        │
-                                                                        │
-                                                                        │
-                                                                        │
-                                                                        │
-  ╭──────────────────────────────────────────────────────────────────╮  │
-  │ Build  › /mo█                                                    │  │
-  ╰──────────────────────────────────────────────────────────────────╯  │
-                                                                        │
+  New session                                       ● Idle · asks first ┊ Activity
+  0.2.0-patch                                                           ┊ grok-4.6
+   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊ Idle
+     Commands                                               4 of 31     ┊
+     mo                                                                 ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+    ›/models         Choose models: one for every hat, or one e… ▸      ┊ Context
+     /permissions    Durable allow/ask/deny bash rules from the… ▸      ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+     /tools          Tool permission mode for this session       ▸      ┊ 12k of 256k           5%
+     ↑↓ move  enter run  esc close                                      ┊
+   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                        ┊ Spend · no cap
+                                                                        ┊ $0
+                                                                        ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                                                                        ┊ Build $0
+                                                                        ┊
+                                                                        ┊
+                                                                        ┊
+                                                                        ┊
+                                                                        ┊
+                                                                        ┊
+                                                                        ┊
+                                                                        ┊
+  ╭──────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › /mo█                                                    │  ┊
+  ╰──────────────────────────────────────────────────────────────────╯  ┊
+                                                                        ┊
  ↑↓ move  enter run  esc close                                                 focus · conversation
