@@ -42,13 +42,6 @@ pub fn pill(text: &str, fg: Color, fill: Color, under: Color, round: bool) -> Ve
     ]
 }
 
-/// Whether the chip and the tab take round caps: `[ui] caps = "round"`,
-/// or a Nerd Font, which has the glyphs. `auto` was decided at startup;
-/// anything else is square.
-pub fn round_caps(ui: &ryter_core::config::UiConfig) -> bool {
-    ui.caps == "round" || ui.nerd_font
-}
-
 /// Whether the terminal this run is in draws the Powerline glyphs itself,
 /// whatever its font: kitty, WezTerm, Ghostty, iTerm2 and Windows
 /// Terminal do. `env` is the environment, so a test can hand one in.
@@ -147,16 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn the_caps_follow_the_setting_and_the_font() {
-        let mut ui = ryter_core::config::UiConfig::default();
-        assert_eq!(ui.caps, "auto");
-        assert!(!round_caps(&ui), "auto unresolved is square");
-        ui.caps = "round".into();
-        assert!(round_caps(&ui));
-        ui.caps = "square".into();
-        assert!(!round_caps(&ui));
-        ui.nerd_font = true;
-        assert!(round_caps(&ui), "a Nerd Font has the glyphs");
+    fn the_pill_takes_caps_only_when_asked() {
         let round = pill("Plan", Color::Black, Color::Blue, Color::Reset, true);
         assert_eq!(round.len(), 3);
         assert_eq!(round[0].content, "\u{e0b6}");

@@ -1318,6 +1318,17 @@ fn merge_file(cfg: &mut Config, path: &Path) -> Result<()> {
         ));
         cfg.ui.start_hat = "plan".into();
     }
+    let caps = cfg.ui.caps.trim().to_ascii_lowercase();
+    if !matches!(caps.as_str(), "auto" | "round" | "square") {
+        cfg.warnings.push(format!(
+            "{}: [ui] caps = {:?} is not auto, round or square; using auto",
+            path.display(),
+            cfg.ui.caps
+        ));
+        cfg.ui.caps = "auto".into();
+    } else {
+        cfg.ui.caps = caps;
+    }
     Ok(())
 }
 
@@ -2290,6 +2301,17 @@ mod tests {
         let cfg = load_at(home.path(), None, false).unwrap();
         assert_eq!(cfg.ui.caps, "round");
         assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+        // A word that is none of the three is said and falls back to auto.
+        fs::write(home.path().join("config.toml"), "[ui]\ncaps = \"circ\"\n").unwrap();
+        let cfg = load_at(home.path(), None, false).unwrap();
+        assert_eq!(cfg.ui.caps, "auto");
+        assert!(
+            cfg.warnings
+                .iter()
+                .any(|w| w.contains("caps") && w.contains("circ")),
+            "{:?}",
+            cfg.warnings
+        );
     }
 
     /// `[ui] start_hat`: plan unless it says otherwise, and a value that is

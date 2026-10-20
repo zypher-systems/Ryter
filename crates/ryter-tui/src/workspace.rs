@@ -205,7 +205,7 @@ pub fn click(view: &mut View, kind: WorkspaceClick) -> Action {
             Action::None
         }
         WorkspaceClick::Wear(role) => {
-            view.page = Page::Hats;
+            // As Enter on the rail: the hat goes on in place.
             view.focus = Focus::Stage;
             Action::SetMode(role)
         }
@@ -409,7 +409,7 @@ fn draw_tabs(
             (theme.dim, bg)
         };
         let name_spans = if active {
-            glyphs::pill(&label, fg, fill, bg, glyphs::round_caps(&view.ui))
+            glyphs::pill(&label, fg, fill, bg, view.round_caps())
         } else {
             vec![Span::styled(format!(" {label} "), sty(fg, fill))]
         };
@@ -822,10 +822,11 @@ fn draw_conversation(
     if chat.height > 0 {
         let cf = draw::draw_chat(frame, chat, view, theme);
         activity = draw::status_hit(chat, &cf);
-        // A session with nothing said yet: a fresh one counts its first
-        // turn from one, so the messages decide, not the turn.
-        if view.messages.is_empty() {
-            draw_welcome(frame, chat, view, theme);
+        // A session with nothing said yet. A system line at its head (a
+        // config warning, `/new`'s note) is not content; the welcome sits
+        // under whatever rows such lines took.
+        if !view.has_content() {
+            draw_welcome(frame, chat, cf.doc_rows, view, theme);
         }
     }
     let cursor = if comp.height > 0 {
@@ -849,16 +850,22 @@ fn margin(area: Rect) -> Rect {
     }
 }
 
-fn draw_welcome(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
+fn draw_welcome(frame: &mut Frame, area: Rect, taken: usize, view: &View, theme: Theme) {
     if area.width < 30 || area.height < 6 {
         return;
     }
     let width = area.width.saturating_sub(6).min(58);
+    // Below the rows the transcript's system lines took, else a fifth of
+    // the way down.
+    let top = ((area.height / 5).min(4)).max(u16::try_from(taken + 1).unwrap_or(u16::MAX));
+    if top + 3 > area.height {
+        return;
+    }
     let inner = Rect {
         x: area.x + 3,
-        y: area.y + (area.height / 5).min(4),
+        y: area.y + top,
         width,
-        height: area.height.saturating_sub((area.height / 5).min(4)),
+        height: area.height.saturating_sub(top),
     };
     view.marks.borrow_mut().welcome = Some(Rect {
         height: inner.height.min(6),
@@ -1797,7 +1804,9 @@ fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
             ("f6 f7", "panes"),
         ]);
     } else {
-        if view.page == Page::Sessions || view.focus == Focus::Sidebar {
+        if view.focus == Focus::Sidebar {
+            items.extend([("↑↓", "hat"), ("enter", "wear")]);
+        } else if view.page == Page::Sessions {
             items.extend([("↑↓", "select"), ("enter", "open")]);
         }
         items.extend([
@@ -2511,6 +2520,9 @@ mod tests {
             crate::run_mouse_handle_with(&mut v, up, &hit),
             Action::SetMode(Role::Plan)
         );
+        // As Enter on the rail: the conversation keeps the screen.
+        assert_eq!(v.page, Page::Conversation);
+        assert_eq!(v.focus, Focus::Stage);
     }
 
     #[test]
@@ -2783,5 +2795,34 @@ mod tests {
             assert_eq!(cell.symbol(), glyphs::HAIRLINE_V, "row {y}");
             assert_eq!(cell.fg, theme.build, "row {y}");
         }
+    }
+
+    /// `[ui] caps`: `round` and `square` decide by hand, `square` even
+    /// with a Nerd Font; `auto` follows the terminal asked at startup, or
+    /// the font. The file's word is never rewritten.
+    #[test]
+    fn the_caps_follow_the_setting_then_the_terminal_and_the_font() {
+        let mut v = ws();
+        assert_eq!(v.ui.caps, "auto");
+        assert!(!v.round_caps(), "auto on a plain terminal is square");
+        v.caps_terminal = true;
+        assert!(
+            v.round_caps(),
+            "auto on a terminal with the glyphs is round"
+        );
+        v.ui.caps = "square".into();
+        v.ui.nerd_font = true;
+        assert!(
+            !v.round_caps(),
+            "square wins over the font and the terminal"
+        );
+        v.ui.caps = "round".into();
+        v.caps_terminal = false;
+        v.ui.nerd_font = false;
+        assert!(v.round_caps(), "round wins over a plain terminal");
+        v.ui.caps = "auto".into();
+        v.ui.nerd_font = true;
+        assert!(v.round_caps(), "auto with a Nerd Font is round");
+        assert_eq!(v.ui.caps, "auto", "the file's word stays");
     }
 }

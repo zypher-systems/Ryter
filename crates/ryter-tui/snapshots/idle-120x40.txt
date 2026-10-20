@@ -9,12 +9,12 @@
                                                                                         ┊ ┃ Build                   $0
                                                                                         ┊   grok-4.6
                                                                                         ┊   asks first
-                                                                                        ┊ ● Audit  grok-4.6         $0
+    What are we building?                                                               ┊ ● Audit  grok-4.6         $0
                                                                                         ┊ ● Scribe follows all ha…  $0
-                                                                                        ┊
-                                                                                        ┊
+    Describe a change, ask a question, or pick up where you                             ┊
+    left off.                                                                           ┊
                                                                                         ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-                                                                                        ┊ Context
+    / commands    Alt+3 resume a session                                                ┊ Context
                                                                                         ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
                                                                                         ┊  ⢰⠋      ⠙⡆ 12k
                                                                                         ┊  ⢸   5%   ⡧ of 256k

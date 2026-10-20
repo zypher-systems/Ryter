@@ -9,10 +9,10 @@
                                                                                                                     ┊ ┃ Build                               $0
                                                                                                                     ┊   grok-4.6
                                                                                                                     ┊   asks first
-                                                                                                                    ┊ ● Audit  grok-4.6                     $0
+      What are we building?                                                                                         ┊ ● Audit  grok-4.6                     $0
                                                                                                                     ┊ ● Scribe follows all hats             $0
-                                                                                                                    ┊
-                                                                                                                    ┊
+      Describe a change, ask a question, or pick up where you                                                       ┊
+      left off.                                                                                                     ┊
                                ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖                             ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
                                  theme                                              3                               ┊ Context
                                 ›◆ dark  built-in                             current                               ┊   ⢀⡴⠒⠒⠒⠒⢦⡀

@@ -368,6 +368,9 @@ pub struct View {
     pub search: SearchRow,
     /// `[ui]` settings in effect.
     pub ui: UiConfig,
+    /// Whether the terminal this run is in draws the Powerline half-circles
+    /// itself: decided once at startup, what `[ui] caps = "auto"` reads.
+    pub caps_terminal: bool,
     /// Recently run command names (`R-PAL-12`).
     pub recent_commands: Vec<String>,
     /// Connectivity test status per connection.
@@ -610,6 +613,7 @@ impl View {
             web: false,
             search: SearchRow::default(),
             ui: UiConfig::default(),
+            caps_terminal: false,
             recent_commands: Vec::new(),
             conn_tests: BTreeMap::new(),
             last_export: None,
@@ -811,6 +815,17 @@ impl View {
     }
 
     /// Anything in the transcript worth confirming before `/new`.
+    /// Whether the hat chip and the view tab take round caps: `round`
+    /// does, `square` does not, and `auto` follows the terminal decided at
+    /// startup or a Nerd Font, which has the glyphs.
+    pub fn round_caps(&self) -> bool {
+        match self.ui.caps.as_str() {
+            "round" => true,
+            "square" => false,
+            _ => self.caps_terminal || self.ui.nerd_font,
+        }
+    }
+
     pub fn has_content(&self) -> bool {
         self.messages
             .iter()

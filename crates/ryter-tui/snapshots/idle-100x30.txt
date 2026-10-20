@@ -7,12 +7,12 @@
          ·  welcome · /help for keys                                    ┊ ● Plan   grok-4.6     $0
                                                                         ┊ ┃ Build               $0
                                                                         ┊   grok-4.6
-                                                                        ┊   asks first
+    What are we building?                                               ┊   asks first
                                                                         ┊ ● Audit  grok-4.6     $0
-                                                                        ┊ ● Scribe follows al…  $0
+    Describe a change, ask a question, or pick up where you             ┊ ● Scribe follows al…  $0
+    left off.                                                           ┊
                                                                         ┊
-                                                                        ┊
-                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+    / commands    Alt+3 resume a session                                ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
                                                                         ┊ Context
                                                                         ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
                                                                         ┊ 12k of 256k           5%

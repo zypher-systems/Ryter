@@ -47,12 +47,17 @@ impl Motion {
         let colour = theme.mode == ColorMode::TrueColor;
         let any = theme.mode != ColorMode::Mono;
         let accent = theme.mode(view.mode);
-        if any && !self.welcomed {
-            self.welcomed = true;
-            if let Some(area) = hit.welcome {
+        // The welcome gathers when it appears: on the first frame of a
+        // fresh session, and again after `/new` in the same run, once the
+        // transcript between has taken it off the screen.
+        match hit.welcome {
+            Some(area) if any && !self.welcomed => {
+                self.welcomed = true;
                 self.running
                     .push(fx::coalesce((WELCOME_MS, Interpolation::QuadOut)).with_area(area));
             }
+            Some(_) => {}
+            None => self.welcomed = false,
         }
         // A cover at a place the last frame had none: a card has opened.
         // The same card redrawn, or one that moved a row as the chat
@@ -89,12 +94,14 @@ impl Motion {
                 .unwrap_or(u32::MAX),
         );
         self.last_ms = Some(now_ms);
+        // An effect whose place has left the screen (the terminal shrank
+        // under a card) is dropped, or it would never finish and the loop
+        // would redraw at frame rate for good.
         let full = frame.area();
+        self.running
+            .retain(|e| !e.area().unwrap_or(full).intersection(full).is_empty());
         for effect in &mut self.running {
             let area = effect.area().unwrap_or(full).intersection(full);
-            if area.is_empty() {
-                continue;
-            }
             frame.render_effect(effect, area, tick);
         }
         self.running.retain(|e| !e.done());
@@ -167,6 +174,54 @@ mod tests {
         term.draw(|f| m.render(f, &hit(Some(card), Some(card)), &v, theme, 16))
             .unwrap();
         assert!(!m.active());
+    }
+
+    #[test]
+    fn an_effect_off_the_screen_is_dropped() {
+        let theme = Theme::truecolor_dark();
+        let mut m = Motion::default();
+        let v = view();
+        let mut term = Terminal::new(TestBackend::new(40, 10)).unwrap();
+        let card = Rect::new(2, 8, 20, 2);
+        term.draw(|f| m.render(f, &hit(None, None), &v, theme, 0))
+            .unwrap();
+        term.draw(|f| m.render(f, &hit(Some(card), None), &v, theme, 16))
+            .unwrap();
+        assert!(m.active());
+        // The terminal shrinks under the card: the fade must not run on.
+        let mut small = Terminal::new(TestBackend::new(40, 6)).unwrap();
+        small
+            .draw(|f| m.render(f, &hit(Some(card), None), &v, theme, 32))
+            .unwrap();
+        assert!(!m.active(), "an effect with no place on the screen is gone");
+    }
+
+    #[test]
+    fn the_welcome_gathers_again_after_it_has_been_away() {
+        let theme = Theme::truecolor_dark();
+        let mut m = Motion::default();
+        let v = view();
+        let mut term = Terminal::new(TestBackend::new(40, 10)).unwrap();
+        let text = Rect::new(2, 2, 20, 3);
+        // A first frame without a welcome (a resumed session) does not
+        // spend the gathering.
+        term.draw(|f| m.render(f, &hit(None, None), &v, theme, 0))
+            .unwrap();
+        term.draw(|f| m.render(f, &hit(None, Some(text)), &v, theme, 16))
+            .unwrap();
+        assert!(m.active(), "the welcome gathers when it appears");
+        term.draw(|f| m.render(f, &hit(None, Some(text)), &v, theme, 2000))
+            .unwrap();
+        assert!(!m.active());
+        term.draw(|f| m.render(f, &hit(None, Some(text)), &v, theme, 2016))
+            .unwrap();
+        assert!(!m.active(), "the same welcome does not gather twice");
+        // Away (a turn), then `/new`: it gathers again.
+        term.draw(|f| m.render(f, &hit(None, None), &v, theme, 2032))
+            .unwrap();
+        term.draw(|f| m.render(f, &hit(None, Some(text)), &v, theme, 2048))
+            .unwrap();
+        assert!(m.active());
     }
 
     #[test]

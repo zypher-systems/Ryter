@@ -5,12 +5,12 @@
          ·  welcome · /help for keys
 
 
+    What are we building?
 
+    Describe a change, ask a question, or pick up where you
+    left off.
 
-
-
-
-
+    / commands    Alt+3 resume a session
 
 
 

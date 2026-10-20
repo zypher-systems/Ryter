@@ -4214,3 +4214,35 @@ fn the_slash_menu_files_the_hats_together() {
     let text = render_to_string(&v, 120, 40);
     assert!(text.contains("rounds a turn (0 = off)"), "{text}");
 }
+
+/// The welcome is for a session with nothing said yet: a config warning
+/// or `/new`'s note at its head is not content, and the welcome sits
+/// under such lines rather than over them.
+#[test]
+fn the_welcome_sits_under_a_system_line() {
+    let mut v = idle();
+    v.messages.clear();
+    v.system("new session");
+    let text = render_to_string(&v, 120, 40);
+    let titles = [
+        "Start with a plan.",
+        "What are we building?",
+        "A fresh look at your work.",
+        "Make the work clear.",
+    ];
+    let lines: Vec<&str> = text.lines().collect();
+    let note = lines
+        .iter()
+        .position(|l| l.contains("new session"))
+        .unwrap_or_else(|| panic!("no system line\n{text}"));
+    let welcome = lines
+        .iter()
+        .position(|l| titles.iter().any(|t| l.contains(t)))
+        .unwrap_or_else(|| panic!("no welcome under a system line\n{text}"));
+    assert!(welcome > note, "the welcome is under the note\n{text}");
+    // With a turn said, the welcome is gone.
+    let v = racked();
+    assert!(v.has_content());
+    let text = render_to_string(&v, 120, 40);
+    assert!(!titles.iter().any(|t| text.contains(t)), "{text}");
+}

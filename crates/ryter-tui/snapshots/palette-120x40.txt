@@ -9,12 +9,12 @@
         Commands                                                         4 of 31        ┊ ┃ Build                   $0
         mo                                                                              ┊   grok-4.6
        ›/models         Choose models: one for every hat, or one each for pl… ▸         ┊   asks first
-        /permissions    Durable allow/ask/deny bash rules from the TUI        ▸         ┊ ● Audit  grok-4.6         $0
+    Wh  /permissions    Durable allow/ask/deny bash rules from the TUI        ▸         ┊ ● Audit  grok-4.6         $0
         /tools          Tool permission mode for this session                 ▸         ┊ ● Scribe follows all ha…  $0
-        ↑↓ move  enter run  esc close                                                   ┊
-      ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘      ┊
+    De  ↑↓ move  enter run  esc close                                                   ┊
+    le▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘      ┊
                                                                                         ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-                                                                                        ┊ Context
+    / commands    Alt+3 resume a session                                                ┊ Context
                                                                                         ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
                                                                                         ┊  ⢰⠋      ⠙⡆ 12k
                                                                                         ┊  ⢸   5%   ⡧ of 256k

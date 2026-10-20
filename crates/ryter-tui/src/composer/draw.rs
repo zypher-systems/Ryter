@@ -176,7 +176,7 @@ pub fn draw_workspace(
     if let Some(c) = chip(view) {
         let fill = theme.mode(view.mode);
         let on = theme.bg;
-        let spans = pill(&c, on, fill, bg, theme, crate::glyphs::round_caps(&view.ui));
+        let spans = pill(&c, on, fill, bg, theme, view.round_caps());
         let span_w: u16 = spans.iter().map(|s| wrap::width(&s.content) as u16).sum();
         let chip_rect = Rect {
             width: span_w.min(inner.width),
