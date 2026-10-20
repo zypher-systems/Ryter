@@ -1,24 +1,24 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
-╭─ budget ─────────────────────────────────── off ─╮ Activity
-│ spent $?.?? · no cap                             │▌grok-4.6
-│                                                  │▌Idle
-│ SESSION                                          │▌
-│› cap spend    [ off ]                     config │▌──────────────────────────
-│  cap usd      ‹ 5.00 ›                   default │▌Context
-│  warn at usd  ‹ 1.00 ›                   default │▌█▏
-│                                                  │▌12k of 256k             5%
-│ nothing stops on cost. the spend card keeps      │▌
-│ count; watch it yourself.                        │▌──────────────────────────
-│                                                  │▌Spend · no cap
-│                                                  │▌$0
-│                                                  │▌Build                   $0
-│                                                  │▌
-│                                                  │▌──────────────────────────
-│                                                  │▌──────────────────────────
-│                                                  │▌
-│                                                  │▌
-│ ↑↓ move   space/←→ change   enter edit   esc done│▌
-╰──────────────────────────────────────────────────╯▌
- ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  tab  hat   ⇧tab  mode   /  commands                      focus · conversation
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
+    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
+      budget                                                           off
+      spent $?.?? · no cap
+
+      SESSION
+     › cap spend    [ off ]                                         config
+       cap usd      ‹ 5.00 ›                                       default
+       warn at usd  ‹ 1.00 ›                                       default
+
+      nothing stops on cost. the spend card keeps count; watch it
+      yourself.
+
+
+
+
+
+
+
+      ↑↓ move   space/←→ change   enter edit   esc done
+    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
+  ╰──────────────────────────────────────────────────────────────────────────╯
+
+ tab hat  ⇧tab mode  / commands  alt 1–3 views  f2 instruments    Build · $?.??

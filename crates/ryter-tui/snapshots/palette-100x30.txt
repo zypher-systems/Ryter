@@ -1,30 +1,30 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                     New session                 ● Idle · asks first Activity
- ⎇ 0.2.0-patch             0.2.0-patch                                     grok-4.6
-                           ╭ commands ───────────────────────── 4 of 31 ╮  Idle
- Hats                      │ mo                                         │▌
- ● Plan     $0  read only  │›/models         Choose models: one for… ▸  │▌ ────────────────────────
- ┃ Build   $0  asks first  │ /permissions    Durable allow/ask/deny… ▸  │▌ Context
- ── Specialists            │ /tools          Tool permission mode f… ▸  │▌ █▏
- ● Audit   $0  checkpoint  │  ↑↓  move   enter  run   esc  close        │▌ 12k of 256k           5%
- ● Scribe   $0  docs only  ╰────────────────────────────────────────────╯▌
-                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ ────────────────────────
-                                                                           Spend · no cap
-                                                                           $0
-                                                                           Build                 $0
 
-                                                                           ────────────────────────
-                                                                           ────────────────────────
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
-
-
-
-
-
-
-
-                           ╭────────────────────────────────────────────╮
-                           │ Build  › /mo█                              │▌
-                           ╰────────────────────────────────────────────╯▌
-                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  ↑↓  move   enter  run   esc  close                                           focus · conversation
+  New session                                       ● Idle · asks first ┊ Activity
+  0.2.0-patch                                                           ┊ grok-4.6
+   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊ Idle
+     Commands                                               4 of 31     ┊
+     mo                                                                 ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+    ›/models         Choose models: one for every hat, or one e… ▸      ┊ Context
+     /permissions    Durable allow/ask/deny bash rules from the… ▸      ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+     /tools          Tool permission mode for this session       ▸      ┊ 12k of 256k           5%
+     ↑↓ move  enter run  esc close                                      ┊
+   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                        ┊ Spend · no cap
+                                                                        ┊ $0
+                                                                        ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                                                                        ┊ Build $0
+                                                                        ┊
+                                                                        ┊
+                                                                        ┊
+                                                                        ┊
+                                                                        ┊
+                                                                        ┊
+                                                                        ┊
+                                                                        ┊
+  ╭──────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › /mo█                                                    │  ┊
+  ╰──────────────────────────────────────────────────────────────────╯  ┊
+                                                                        ┊
+ ↑↓ move  enter run  esc close                                                 focus · conversation

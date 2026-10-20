@@ -1,40 +1,40 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                           New session                           ● Done · asks first Activity
- ⎇ 0.2.0-patch                   0.2.0-patch                                               grok-4.6
-                                                                                           Done
- Hats                                   ●  dusty  trim the query                     ↑ 9
- ● Plan                      $0  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥  ────────────────────────────
-   grok-4.6                             │    7     res.json(find(q))                       Context
-   read only                            │    8   })                                        █▏
- ┃ Build                     $0         ├─ write  test/search.test.js       new · 6 lines  12k of 256k               5%
-   grok-4.6                             │    1 + import { test } from 'node:test'
-   asks first                           │    2 + import assert from 'node:assert'          ────────────────────────────
- ── Specialists                         │    3 +                                           Spend · no cap
- ● Audit ✗                   $0         │    4 + test('an empty query finds nothing', asy  $0
-   claude-opus-5.5       1 turn         │        nc () => {                                Build                     $0
-   checkpoint                           │    5 +   assert.deepEqual(await search(''), [])
- ● Scribe                    $0         │    6 + })                                        ────────────────────────────
-   follows all hats                     └─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1)…  ────────────────────────────
-   docs only                            │
-                                        ·  switched to the audit hat (claude-opus-5.5)
- Turns ●                                │  · Tab to change it again
-                                        │
-                                        ◆  claude-opus-5.5
-                                        │  • blocking  app/server.js:6 : an empty query
-                                        │    returns early, but  find  still runs on
-                                        │    undefined  when  q  is missing.
-                                        │  • note: the test covers  ""  only.
-                                        │
-                                        │  VERDICT: FAIL
-                                        │
-                                        ·  audit · claude-opus-5.5 · ✗ failed, unfiled
-                                        │  · $0.040
-                                        └─ ✓ answered · 3.0s
-                                        │
-                                        ·  switched to the build hat · Tab to change it
-                                        │  again
-                                 ╭──────────────────────────────────────────────────────╮
-                                 │ Build  › what should change?                         │▌
-                                 ╰──────────────────────────────────────────────────────╯▌
-                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views   f2  instruments                           focus · conversation
+
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
+
+
+  New session                                                           ● Done · asks first ┊ Activity
+  0.2.0-patch                                                                               ┊ grok-4.6
+                                                                                            ┊ Done
+         ●  dusty  trim the query                                                     ↑ 7   ┊
+  ‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥‥  ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ┆    5 +   const q = (req.query.q || '').trim()                                    ┊ Context
+         ┆    6 +   if (!q) return res.json([])                                             ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+         ┆    7     res.json(find(q))                                                       ┊  ⢰⠋      ⠙⡆ 12k
+         ┆    8   })                                                                        ┊  ⢸   5%   ⡧ of 256k
+         ├─ write  test/search.test.js                                       new · 6 lines  ┊  ⠸⣄      ⣠⠇
+         ┆    1 + import { test } from 'node:test'                                          ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+         ┆    2 + import assert from 'node:assert'                                          ┊
+         ┆    3 +                                                                           ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ┆    4 + test('an empty query finds nothing', async () => {                        ┊ Spend · no cap
+         ┆    5 +   assert.deepEqual(await search(''), [])                                  ┊ $0
+         ┆    6 + })                                                                        ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+         ╰─ ✓ 2 tools · 2 files (1 new, 1 changed, +8 −1) · 2.1s                            ┊ Build $0
+         ┆                                                                                  ┊
+         ·  switched to the audit hat (claude-opus-5.5) · Tab to change it again            ┊
+         ┆                                                                                  ┊
+         ◆  claude-opus-5.5                                                                 ┊
+         ┆  • blocking  app/server.js:6 : an empty query returns early, but  find  still    ┊
+         ┆    runs on  undefined  when  q  is missing.                                      ┊
+         ┆  • note: the test covers  ""  only.                                              ┊
+         ┆                                                                                  ┊
+         ┆  VERDICT: FAIL                                                                   ┊
+         ┆                                                                                  ┊
+         ·  audit · claude-opus-5.5 · ✗ failed, unfiled · $0.040                            ┊
+         ╰─ ✓ answered · 3.0s                                                               ┊
+         ┆                                                                                  ┊
+         ·  switched to the build hat · Tab to change it again                              ┊
+  ╭──────────────────────────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › what should change?                                                         │  ┊
+  ╰──────────────────────────────────────────────────────────────────────────────────────╯  ┊
+                                                                                            ┊
+ tab hat  ⇧tab mode  / commands  alt 1–3 views  f2 instruments  f6 f7 panes                        focus · conversation

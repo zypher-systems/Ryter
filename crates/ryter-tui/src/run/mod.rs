@@ -644,6 +644,7 @@ fn loop_ui(
 ) -> ryter_core::Result<()> {
     let epoch = Instant::now();
     let mut last_draw = epoch.checked_sub(FRAME).unwrap_or(epoch);
+    let mut motion = crate::motion::Motion::default();
     let mut hit = Hit::default();
     let mut dirty = true;
     let mut paint_now = false;
@@ -713,6 +714,7 @@ fn loop_ui(
 
         let now = Instant::now();
         let animating = view.busy
+            || motion.active()
             || view.quit_armed_until.is_some()
             || view.flash.is_some()
             || view.selection.as_ref().is_some_and(|s| s.pull != 0);
@@ -738,8 +740,12 @@ fn loop_ui(
             view.tick(now.duration_since(epoch).as_millis() as u64);
             let theme = cx.theme;
             let mut painted = Hit::default();
+            let now_ms = now.duration_since(epoch).as_millis() as u64;
             let drawn = terminal
-                .draw(|f| painted = draw(f, view, theme))
+                .draw(|f| {
+                    painted = draw(f, view, theme);
+                    motion.render(f, &painted, view, theme, now_ms);
+                })
                 .map_err(io_err)?;
             // A selection reads its text from what was on the screen.
             if cx.mouse_grabbed {
@@ -845,6 +851,9 @@ pub(crate) fn mouse_handle(view: &mut View, m: MouseEvent) -> Action {
         chat: Rect::default(),
         chat_text: Rect::default(),
         covers: Vec::new(),
+        welcome: None,
+        chip: None,
+        hat_row: None,
         activity: Rect::default(),
         composer: Rect::default(),
         clicks: Vec::new(),

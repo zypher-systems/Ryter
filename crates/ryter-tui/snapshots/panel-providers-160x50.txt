@@ -1,50 +1,50 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- ryter                               New session                                                         ● Idle · asks first Activity
- ⎇ 0.2.0-patch                       0.2.0-patch                                                                             grok-4.6
-                                                                                                                             Idle
- Hats                                       ·  welcome · /help for keys
- ● Plan                          $0                                                                                          ──────────────────────────────────
-   grok-4.6                                                                                                                  Context
-   read only                                                                                                                 █▏
- ┃ Build                         $0                                                                                          12k of 256k                     5%
-   grok-4.6
-   asks first                                                                                                                ──────────────────────────────────
- ── Specialists                                                                                                              Spend · no cap
- ● Audit                         $0                                                                                          $0
-   grok-4.6                                  ╭─ connections ────────────────────────────────────────────────── 2 ─╮          Build                           $0
-   checkpoint                                │›● spacexsi  spacexsi · grok-4.6                            key set │▌
- ● Scribe                        $0          │ ○ openrouter  openrouter · claude-sonnet-4.6                no key │▌         ──────────────────────────────────
-   follows all hats                          │                                                                    │▌         ──────────────────────────────────
-   docs only                                 │ ◇ web search  not set up · enter to choose                         │▌
-                                             │                                                                    │▌
-                                             │ + add connection                                                   │▌
-                                             │ ⚙ test connection  live GET /models on the highlighted row         │▌
-                                             │                                                                    │▌
-                                             │                                                                    │▌
-                                             │ enter use   k set key   t test   d remove   esc                    │▌
-                                             ╰────────────────────────────────────────────────────────────────────╯▌
-                                              ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                                     ╭────────────────────────────────────────────────────────────────────────────────────╮
-                                     │ Build  › what should change?                                                       │▌
-                                     ╰────────────────────────────────────────────────────────────────────────────────────╯▌
-                                      ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views   f2  instruments   f6 f7  panes                                                    focus · conversation
+  ryter                    ┊  New session                                                                     ● Idle · asks first ┊ Activity
+  ⎇ 0.2.0-patch            ┊  0.2.0-patch                                                                                         ┊ grok-4.6
+                           ┊                                                                                                      ┊ Idle
+  HATS                     ┊         ·  welcome · /help for keys                                                                  ┊
+  ● Plan                $0 ┊                                                                                                      ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+    grok-4.6               ┊                                                                                                      ┊ Context
+    read only              ┊                                                                                                      ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+                           ┊                                                                                                      ┊  ⢰⠋      ⠙⡆ 12k
+  ┃ Build               $0 ┊                                                                                                      ┊  ⢸   5%   ⡧ of 256k
+    grok-4.6               ┊                                                                                                      ┊  ⠸⣄      ⣠⠇
+    asks first             ┊                ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖                ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+                           ┊                  connections                                                      2                  ┊
+  Specialists              ┊                 ›● spacexsi  spacexsi · grok-4.6                            key set                  ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+  ● Audit               $0 ┊                  ○ openrouter  openrouter · claude-sonnet-4.6                no key                  ┊ Spend · no cap
+    grok-4.6               ┊                                                                                                      ┊ $0
+    checkpoint             ┊                  ◇ web search  not set up · enter to choose                                          ┊ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                           ┊                                                                                                      ┊ Build $0
+  ● Scribe              $0 ┊                  + add connection                                                                    ┊
+    follows all hats       ┊                  ⚙ test connection  live GET /models on the highlighted row                          ┊
+    docs only              ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                  enter use   k set key   t test   d remove   esc                                     ┊
+                           ┊                ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘                ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊                                                                                                      ┊
+                           ┊  ╭────────────────────────────────────────────────────────────────────────────────────────────────╮  ┊
+                           ┊  │ Build  › what should change?                                                                   │  ┊
+                           ┊  ╰────────────────────────────────────────────────────────────────────────────────────────────────╯  ┊
+                           ┊                                                                                                      ┊
+ tab hat  ⇧tab mode  / commands  alt 1–3 views  f2 instruments  f6 f7 panes                                                                focus · conversation

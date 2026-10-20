@@ -7,10 +7,11 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::action::Action;
 use crate::chat::wrap;
+use crate::panel::chrome::{Chrome, draw_frame};
 use crate::theme::Theme;
 use crate::view::View;
 use registry::{COMMANDS, Category, CommandSpec};
@@ -333,15 +334,18 @@ fn draw_workspace(frame: &mut Frame, chat: Rect, view: &View, theme: Theme) {
     let Some(p) = &view.palette else {
         return;
     };
+    if chat.width < 12 || chat.height < 8 {
+        return;
+    }
     crate::panel::dim_overlay(frame, chat, theme);
     let ms = matches(view);
     let q = filter(view);
     let rows = body_rows(view, &ms, &q);
-    let width = chat.width.saturating_sub(2).min(64);
+    let width = chat.width.saturating_sub(4).min(76);
     let y = chat.y + (chat.height / 10).min(chat.height.saturating_sub(8));
     let room = chat.y.saturating_add(chat.height).saturating_sub(y + 1);
-    let max_h = room.max(6);
-    let height = u16::try_from(rows.len() + 2)
+    let max_h = room.clamp(6, 22);
+    let height = u16::try_from(rows.len() + usize::from(crate::panel::chrome::frame_rows(theme)))
         .unwrap_or(max_h)
         .clamp(6, max_h);
     let area = Rect {
@@ -351,58 +355,22 @@ fn draw_workspace(frame: &mut Frame, chat: Rect, view: &View, theme: Theme) {
         height,
     };
     view.covers.borrow_mut().push(area);
-    crate::panel::drop_shadow(frame, area, theme);
-    frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new("").style(theme.panel()), area);
-    let accent = theme.mode(view.mode);
-    let bg = theme.panel_bg;
-    let edge = Style::default().fg(theme.rule).bg(bg);
-    let top_edge = Style::default().fg(accent).bg(bg);
-    let w = usize::from(area.width);
-    let total = entries(view).len();
-    let title = " commands ";
-    let status = format!(" {} of {} ", ms.len(), total);
-    let fill = w.saturating_sub(2 + wrap::width(title) + wrap::width(&status));
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("╭", top_edge),
-            Span::styled(title, theme.panel().add_modifier(Modifier::BOLD)),
-            Span::styled("─".repeat(fill), top_edge),
-            Span::styled(status, Style::default().fg(theme.dim).bg(bg)),
-            Span::styled("╮", top_edge),
-        ])),
-        Rect { height: 1, ..area },
-    );
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("╰", edge),
-            Span::styled("─".repeat(w.saturating_sub(2)), edge),
-            Span::styled("╯", edge),
-        ])),
-        Rect {
-            y: area.y + area.height - 1,
-            height: 1,
-            ..area
-        },
-    );
-    {
-        let buf = frame.buffer_mut();
-        for y in (area.y + 1)..(area.y + area.height - 1) {
-            for x in [area.x, area.x + area.width - 1] {
-                if x < buf.area.width && y < buf.area.height {
-                    let c = &mut buf[(x, y)];
-                    c.set_symbol("│");
-                    c.set_style(edge);
-                }
-            }
-        }
+    if !crate::panel::chrome::slab(theme) {
+        crate::panel::drop_shadow(frame, area, theme);
     }
-    let inner = Rect {
-        x: area.x + 1,
-        y: area.y + 1,
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(2),
-    };
+    let total = entries(view).len();
+    let inner = draw_frame(
+        frame,
+        area,
+        &Chrome {
+            title: "Commands".into(),
+            status: format!("{} of {total}", ms.len()),
+            legend: String::new(),
+            border: theme.panel_border,
+            heavy: false,
+        },
+        theme,
+    );
     let sel_row = rows
         .iter()
         .position(|r| matches!(r, Row::Match(i) if *i == p.selected))
@@ -469,13 +437,18 @@ fn draw_workspace(frame: &mut Frame, chat: Rect, view: &View, theme: Theme) {
 
 fn kbd_row(items: &[(&str, &str)], width: usize, theme: Theme) -> Line<'static> {
     let bg = theme.panel_bg;
-    let fill = theme.sticky_bg;
     let mut spans = vec![Span::styled(" ", Style::default().bg(bg))];
     for (i, (k, l)) in items.iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled("  ", Style::default().bg(bg)));
         }
-        spans.push(crate::glyphs::filled(k, theme.fg, fill));
+        spans.push(Span::styled(
+            k.to_string(),
+            Style::default()
+                .fg(theme.fg)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ));
         spans.push(Span::styled(
             format!(" {l}"),
             Style::default().fg(theme.dim).bg(bg),
@@ -724,7 +697,7 @@ mod tests {
         let es = entries(&v);
         assert!(es.iter().any(|e| e.name == "help" && e.shadowed));
         let s = crate::draw::render_to_string(&v, 100, 30);
-        assert!(s.contains("commands"), "{s}");
+        assert!(s.contains("Commands"), "{s}");
         assert!(s.contains("/review"), "{s}");
     }
 }

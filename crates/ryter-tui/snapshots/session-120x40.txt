@@ -1,40 +1,40 @@
- ●●● RYTER   Conversation   1    Hats   2    Sessions   3
- shop                            empty-query fix                       ● Done · asks first Activity
- ⎇ search-patch                  search-patch  ·  2 files uncommitted                      deepseek-pro-latest
-                                                                                           Done
- Hats                                   ●  search returns everything fo…    ✓ answered  ▸
- ● Plan                  $0.004         ●  build the plan      ✓ answered · 2 files (…  ▸  ────────────────────────────
-   grok-4.6              1 turn         ●  review it                        ✓ answered  ▸  Context
-   read only                                                                               █████████▏
- ┃ Build                 $0.021         ●  dusty                                           97k of 256k              38%
-   deepseek-pro-latest  2 turns         │  fix the blocking finding
-   asks first                           │                                                  ────────────────────────────
- ── Specialists                         ├─ write  app/server.js                     +1 −1  Spend · no cap
- ● Audit ✗               $0.040         │    1   app.get('/search', (req, res) => {        $0.065
-   claude-opus-5.5       1 turn         │    2 -   const q = (req.query.q || '').trim()    Plan ▊                $0.004
-   checkpoint                           │    2 +   const q = String(req.query.q ?? '').tr  Build ████▎           $0.021
- ● Scribe                    $0         │        im()                                      Audit ████████        $0.040
-   follows all hats                     │    3     if (!q) return res.json([])
-   docs only                            │    4     res.json(find(q))                       ────────────────────────────
-                                        ├─ write  test/search.test.js               +4 −0  Uncommitted · 2
- Turns ●●●●                             │     5     assert.deepEqual(await search(''), []  app/server.js          +2 −1
-                                        │         )                                        test/search.test.…       +10
-                                        │     6   })
-                                        │     7 +                                          ────────────────────────────
-                                        │     8 + test('a missing query finds nothing', a
-                                        │         sync () => {
-                                        │     9 +   assert.deepEqual(await search(), [])
-                                        │    10 + })
-                                        └─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2…
+
+ ●●● RYTER   Conversation  1  Hats  2  Sessions  3
 
 
-
-
-
-
-
-                                 ╭──────────────────────────────────────────────────────╮
-                                 │ Build  › what should change?                         │▌
-                                 ╰──────────────────────────────────────────────────────╯▌
-                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-  tab  hat   ⇧tab  mode   /  commands   alt 1–3  views   f2  instruments                           focus · conversation
+  empty-query fix                                                       ● Done · asks first ┊ Activity
+  search-patch  ·  2 files uncommitted                                                      ┊ deepseek-pro-latest
+                                                                                            ┊ Done
+         ●  search returns everything for an empty query                     ✓ answered  ▸  ┊
+         ●  build the plan                      ✓ answered · 2 files (1 new, 1 changed…  ▸  ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ●  review it                                                        ✓ answered  ▸  ┊ Context
+                                                                                            ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+         ●  dusty                                                                           ┊  ⢰⠋      ⠙⡆ 97k
+         ┆  fix the blocking finding                                                        ┊  ⢸  38%   ⡧ of 256k
+         ┆                                                                                  ┊  ⠸⣄      ⣠⠇
+         ├─ write  app/server.js                                                     +1 −1  ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+         ┆    1   app.get('/search', (req, res) => {                                        ┊
+         ┆    2 -   const q = (req.query.q || '').trim()                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ┆    2 +   const q = String(req.query.q ?? '').trim()                              ┊ Spend · no cap
+         ┆    3     if (!q) return res.json([])                                             ┊ $0.065
+         ┆    4     res.json(find(q))                                                       ┊ ╸━━━━━━╸━━━━━━━━━━━━━━╸
+         ├─ write  test/search.test.js                                               +4 −0  ┊ Plan $0.004 · Build $0.…
+         ┆     5     assert.deepEqual(await search(''), [])                                 ┊
+         ┆     6   })                                                                       ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+         ┆     7 +                                                                          ┊ Changes · 2
+         ┆     8 + test('a missing query finds nothing', async () => {                      ┊ app/server.js      +2 −1
+         ┆     9 +   assert.deepEqual(await search(), [])                                   ┊ test/search.test.js  +10
+         ┆    10 + })                                                                       ┊
+         ╰─ ✓ answered · 2 files (2 changed, +5 −1) · 1.2s · $0.009                         ┊
+                                                                                            ┊
+                                                                                            ┊
+                                                                                            ┊
+                                                                                            ┊
+                                                                                            ┊
+                                                                                            ┊
+                                                                                            ┊
+  ╭──────────────────────────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › what should change?                                                         │  ┊
+  ╰──────────────────────────────────────────────────────────────────────────────────────╯  ┊
+                                                                                            ┊
+ tab hat  ⇧tab mode  / commands  alt 1–3 views  f2 instruments  f6 f7 panes                        focus · conversation
