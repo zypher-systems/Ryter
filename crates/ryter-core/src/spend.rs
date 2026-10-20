@@ -124,7 +124,9 @@ impl Rates {
 }
 
 /// Looks up rates: TOML override → the connection's own model list → the
-/// pulled catalog (`prices.json`, see [`crate::prices`]) → the shipped tables.
+/// shipped tables → the pulled catalog (`prices.json`, see [`crate::prices`]).
+/// The shipped row wins over the pulled one for the same model: it was read
+/// by a person against the provider's page.
 #[derive(Debug, Clone, Default)]
 pub struct PriceBook {
     overrides: HashMap<String, Option<Rates>>,
@@ -164,8 +166,11 @@ impl PriceBook {
     /// under `home`, when one has been fetched.
     pub fn load(cfg: &Config, home: &Path) -> Self {
         let mut book = Self::from_config(cfg);
-        if let Ok(text) = std::fs::read_to_string(crate::prices::cache_path(home)) {
-            book.ingest_pulled(cfg, &text);
+        // `[spend] catalog = false` leaves a file pulled earlier unread too.
+        if cfg.spend.catalog {
+            if let Ok(text) = std::fs::read_to_string(crate::prices::cache_path(home)) {
+                book.ingest_pulled(cfg, &text);
+            }
         }
         book
     }
@@ -229,19 +234,13 @@ impl PriceBook {
         if let Some(r) = self.catalog.get(model) {
             return Some(*r);
         }
-        if let Some(r) = self.pulled.get(model) {
-            return Some(*r);
-        }
-        shipped_rates(model)
+        self.known(model)
     }
 
     /// What is known of `model` outside its connection's own list: the
-    /// pulled catalog, else the shipped tables.
+    /// shipped tables, else the pulled catalog.
     fn known(&self, model: &str) -> Option<Rates> {
-        self.pulled
-            .get(model)
-            .copied()
-            .or_else(|| shipped_rates(model))
+        shipped_rates(model).or_else(|| self.pulled.get(model).copied())
     }
 
     /// USD cost, or `None` when the model has no rates (`$?.??`).
@@ -837,6 +836,48 @@ mod tests {
         let r = PriceBook::load(&cfg, home.path()).rates("grok-9").unwrap();
         assert_eq!(r.long_threshold, Some(200_001));
         assert_eq!(r.long_cached_per_million, Some(1.0));
+        // Off: the file on disk is not read either.
+        cfg.spend.catalog = false;
+        assert!(PriceBook::load(&cfg, home.path()).rates("grok-9").is_none());
+    }
+
+    /// A model both sources know is priced by the shipped table, read by a
+    /// person against the provider's page; a wrong or stale pulled row
+    /// never overrides it, and a list without cache rates keeps it too.
+    #[test]
+    fn the_shipped_row_wins_over_the_pulled_one() {
+        let pulled = r#"{"fetched": 1, "source": "test", "providers": {
+            "anthropic": {"claude-opus-5-5": {"input": 99.0, "output": 199.0, "cache_read": 98.0},
+                          "claude-opus-9": {"input": 1.0, "output": 5.0, "cache_read": 0.1}}}}"#;
+        let cfg = Config::default();
+        let mut book = PriceBook::from_config(&cfg);
+        assert_eq!(book.ingest_pulled(&cfg, pulled), 2);
+        let r = book.rates("claude-opus-5-5").unwrap();
+        assert_eq!(
+            (
+                r.input_per_million,
+                r.cached_per_million,
+                r.output_per_million
+            ),
+            (4.0, 0.20, 20.0),
+            "the shipped Opus 5.5 row, not the pulled one"
+        );
+        assert_eq!(book.rates("claude-opus-9").unwrap().input_per_million, 1.0);
+        // A list row with input and output only keeps the shipped row.
+        book.ingest_model_info(&[crate::llm::ModelInfo {
+            id: "claude-opus-5-5".into(),
+            context_length: None,
+            input_per_million: Some(4.0),
+            output_per_million: Some(20.0),
+            cached_per_million: None,
+            cache_write_per_million: None,
+            connection: None,
+            created: None,
+            tools: None,
+        }]);
+        let r = book.rates("claude-opus-5-5").unwrap();
+        assert_eq!(r.cached_per_million, 0.20);
+        assert_eq!(r.cache_write_per_million, Some(5.0));
     }
 }
 #[test]

@@ -203,7 +203,7 @@ fn spend_checks(checks: &mut Vec<Check>, cfg: &Config, home: &Path) {
                 c.providers.values().map(|m| m.len()).sum::<usize>(),
                 if c.source.is_empty() { "the catalog" } else { &c.source },
                 crate::prices::age(c.fetched),
-                if cfg.spend.catalog { "" } else { " · [spend] catalog = false: not refreshed" }
+                if cfg.spend.catalog { "" } else { " · [spend] catalog = false: not read or refreshed" }
             ),
             (None, true) => "not pulled yet · fetched once a day at launch; the shipped tables price what they know".into(),
             (None, false) => "off ([spend] catalog = false) · the shipped tables price what they know".into(),

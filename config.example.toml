@@ -58,7 +58,8 @@ warn_usd = 1.00
 audit_usd = 0
 # Pull the public price catalog (models.dev) once a day, so a model the shipped
 # tables don't know is still priced, cache reads and writes included. It lands
-# in ~/.ryter/prices.json; false means no pull, and the shipped tables price what they know.
+# in ~/.ryter/prices.json and prices only what the shipped tables don't know;
+# false means no pull, the file is left unread, and the tables price what they know.
 catalog = true
 
 # How far one message may go: model rounds (a reply with its tool calls)
