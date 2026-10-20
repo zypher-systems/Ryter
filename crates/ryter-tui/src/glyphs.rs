@@ -19,11 +19,11 @@ pub fn hat_label(hat: Role) -> String {
     }
 }
 
-/// A pill: the padded text on a fill, with round caps where the font has
-/// them. Nerd Fonts carry the Powerline half-circles; plain Unicode has
-/// no glyph that rounds a cell, so the chip stays square there. `under`
-/// is the colour behind the caps.
-pub fn pill(text: &str, fg: Color, fill: Color, under: Color, nerd: bool) -> Vec<Span<'static>> {
+/// A pill: the padded text on a fill, with round caps when `round`. The
+/// caps are the Powerline half-circles, the one smooth curve a cell grid
+/// has; plain Unicode has no glyph that rounds a cell, so without them
+/// the chip is square. `under` is the colour behind the caps.
+pub fn pill(text: &str, fg: Color, fill: Color, under: Color, round: bool) -> Vec<Span<'static>> {
     let body = Span::styled(
         format!(" {text} "),
         Style::default()
@@ -31,7 +31,7 @@ pub fn pill(text: &str, fg: Color, fill: Color, under: Color, nerd: bool) -> Vec
             .bg(fill)
             .add_modifier(Modifier::BOLD),
     );
-    if !nerd {
+    if !round {
         return vec![body];
     }
     let cap = Style::default().fg(fill).bg(under);
@@ -40,6 +40,34 @@ pub fn pill(text: &str, fg: Color, fill: Color, under: Color, nerd: bool) -> Vec
         body,
         Span::styled("\u{e0b4}", cap),
     ]
+}
+
+/// Whether the chip and the tab take round caps: `[ui] caps = "round"`,
+/// or a Nerd Font, which has the glyphs. `auto` was decided at startup;
+/// anything else is square.
+pub fn round_caps(ui: &ryter_core::config::UiConfig) -> bool {
+    ui.caps == "round" || ui.nerd_font
+}
+
+/// Whether the terminal this run is in draws the Powerline glyphs itself,
+/// whatever its font: kitty, WezTerm, Ghostty, iTerm2 and Windows
+/// Terminal do. `env` is the environment, so a test can hand one in.
+pub fn caps_terminal(env: impl Fn(&str) -> Option<String>) -> bool {
+    if [
+        "KITTY_WINDOW_ID",
+        "WEZTERM_EXECUTABLE",
+        "GHOSTTY_RESOURCES_DIR",
+        "WT_SESSION",
+    ]
+    .iter()
+    .any(|k| env(k).is_some_and(|v| !v.is_empty()))
+    {
+        return true;
+    }
+    matches!(
+        env("TERM_PROGRAM").as_deref(),
+        Some("WezTerm" | "ghostty" | "iTerm.app" | "kitty")
+    )
 }
 
 /// The hairline between regions: dotted, so the screen is not ruled.
@@ -116,5 +144,45 @@ mod tests {
         assert!(!mark(Mark::File, true).is_empty());
         assert_eq!(hat_icon(Role::Build, false), "●");
         assert_ne!(hat_icon(Role::Plan, true), hat_icon(Role::Audit, true));
+    }
+
+    #[test]
+    fn the_caps_follow_the_setting_and_the_font() {
+        let mut ui = ryter_core::config::UiConfig::default();
+        assert_eq!(ui.caps, "auto");
+        assert!(!round_caps(&ui), "auto unresolved is square");
+        ui.caps = "round".into();
+        assert!(round_caps(&ui));
+        ui.caps = "square".into();
+        assert!(!round_caps(&ui));
+        ui.nerd_font = true;
+        assert!(round_caps(&ui), "a Nerd Font has the glyphs");
+        let round = pill("Plan", Color::Black, Color::Blue, Color::Reset, true);
+        assert_eq!(round.len(), 3);
+        assert_eq!(round[0].content, "\u{e0b6}");
+        assert_eq!(round[2].content, "\u{e0b4}");
+        assert_eq!(
+            pill("Plan", Color::Black, Color::Blue, Color::Reset, false).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_terminal_is_told_by_its_own_variables() {
+        let none = |_: &str| None;
+        assert!(!caps_terminal(none));
+        assert!(caps_terminal(
+            |k| (k == "KITTY_WINDOW_ID").then(|| "1".into())
+        ));
+        assert!(caps_terminal(|k| (k == "WT_SESSION").then(|| "x".into())));
+        assert!(caps_terminal(
+            |k| (k == "TERM_PROGRAM").then(|| "ghostty".into())
+        ));
+        assert!(!caps_terminal(
+            |k| (k == "TERM_PROGRAM").then(|| "Apple_Terminal".into())
+        ));
+        assert!(!caps_terminal(
+            |k| (k == "KITTY_WINDOW_ID").then(String::new)
+        ));
     }
 }

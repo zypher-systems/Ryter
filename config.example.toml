@@ -77,6 +77,7 @@ theme = "dark"             # dark | light | default-16 | <name> from ~/.ryter/th
 start_hat = "plan"         # the hat a new session opens in: plan | build | audit | last (the hat this project's last session ended in)
 bell = false               # ring the terminal bell when a question opens (a permission, a plan, ask_user)
 nerd_font = false          # icons for hats, files, git, and status. Set true when the terminal uses a Nerd Font. RYTER_NERD_FONT=1 does the same when this key is absent
+caps = "auto"              # round ends on the hat chip and the view tab: "round", "square", or "auto" (round in kitty, WezTerm, Ghostty, iTerm2 and Windows Terminal, which draw the glyphs themselves, and with nerd_font)
 reasoning = "collapsed"    # collapsed | expanded | off — startup state of the thinking strip
 mouse = true               # false disables mouse capture (use the terminal's own selection)
 panel = true               # the instruments beside the conversation at startup; ^b or F2 toggles them

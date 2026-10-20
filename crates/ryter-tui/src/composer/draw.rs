@@ -176,7 +176,7 @@ pub fn draw_workspace(
     if let Some(c) = chip(view) {
         let fill = theme.mode(view.mode);
         let on = theme.bg;
-        let spans = pill(&c, on, fill, bg, theme, view.ui.nerd_font);
+        let spans = pill(&c, on, fill, bg, theme, crate::glyphs::round_caps(&view.ui));
         let span_w: u16 = spans.iter().map(|s| wrap::width(&s.content) as u16).sum();
         let chip_rect = Rect {
             width: span_w.min(inner.width),
@@ -200,7 +200,7 @@ fn pill(
     fill: Color,
     under: Color,
     theme: Theme,
-    nerd: bool,
+    round: bool,
 ) -> Vec<Span<'static>> {
     // Without colour there is no fill: reverse video marks the chip.
     if theme.mode == crate::theme::ColorMode::Mono {
@@ -209,7 +209,7 @@ fn pill(
             Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD),
         )];
     }
-    crate::glyphs::pill(label.trim(), fg, fill, under, nerd)
+    crate::glyphs::pill(label.trim(), fg, fill, under, round)
 }
 
 /// The prompt and the text, inside whatever frame the layout drew. `mark`

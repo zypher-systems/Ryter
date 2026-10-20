@@ -201,6 +201,11 @@ pub struct UiConfig {
     /// Unicode. A terminal does not report its font. `RYTER_NERD_FONT=1`
     /// turns this on when the key is absent.
     pub nerd_font: bool,
+    /// The ends of the hat chip and the view tab: `round` draws the
+    /// Powerline half-circles, `square` draws none, `auto` draws them
+    /// where the terminal is one that has the glyphs itself (kitty,
+    /// WezTerm, Ghostty, iTerm2, Windows Terminal) or `nerd_font` is on.
+    pub caps: String,
 }
 
 impl UiConfig {}
@@ -221,6 +226,7 @@ impl Default for UiConfig {
             start_hat: "plan".into(),
             bell: false,
             nerd_font: crate::config::nerd_font_default(),
+            caps: "auto".into(),
         }
     }
 }
@@ -259,6 +265,7 @@ pub const UI_KEYS: &[&str] = &[
     "watermark",
     "bell",
     "nerd_font",
+    "caps",
 ];
 
 /// Unknown keys under `[ui]` in a TOML document (empty when none).
@@ -1398,6 +1405,8 @@ struct UiFile {
     bell: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     nerd_font: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    caps: Option<String>,
 }
 
 impl From<&UiConfig> for UiFile {
@@ -1416,6 +1425,7 @@ impl From<&UiConfig> for UiFile {
             start_hat: Some(ui.start_hat.clone()),
             bell: Some(ui.bell),
             nerd_font: Some(ui.nerd_font),
+            caps: Some(ui.caps.clone()),
         }
     }
 }
@@ -1460,6 +1470,9 @@ impl UiFile {
         }
         if let Some(v) = self.nerd_font {
             ui.nerd_font = v;
+        }
+        if let Some(v) = self.caps {
+            ui.caps = v;
         }
     }
 }
@@ -2264,6 +2277,19 @@ mod tests {
         assert!(nerd_font_flag(Some("true")));
         assert!(!nerd_font_flag(None));
         assert!(!nerd_font_flag(Some("0")));
+    }
+
+    /// `[ui] caps`: `auto` unless the file says, and the file's word wins
+    /// through the sparse overlay.
+    #[test]
+    fn caps_is_a_ui_key_that_the_file_keeps() {
+        let home = TempDir::new().unwrap();
+        let cfg = load_at(home.path(), None, false).unwrap();
+        assert_eq!(cfg.ui.caps, "auto");
+        fs::write(home.path().join("config.toml"), "[ui]\ncaps = \"round\"\n").unwrap();
+        let cfg = load_at(home.path(), None, false).unwrap();
+        assert_eq!(cfg.ui.caps, "round");
+        assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
     }
 
     /// `[ui] start_hat`: plan unless it says otherwise, and a value that is

@@ -9,7 +9,7 @@
                                                                       ┃ ┊ Context
    SPEND                                                              ┃ ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
     budget usd (0 = off)     ‹ 0.00 ›                         default ┃ ┊ 12k of 256k           5%
-    warn usd                 ‹ 1.00 ›                         default ┃ ┊
+    warn usd                 ‹ 1.00 ›                         default ┆ ┊
     rounds a turn (0 = off)  ‹ 150 ›                          default ┆ ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
     audit usd (0 = off)      ‹ 0.00 ›                         default ┆ ┊ Spend · no cap
                                                                       ┆ ┊ $0

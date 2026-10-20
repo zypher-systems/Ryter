@@ -407,7 +407,7 @@ fn draw_tabs(
             (theme.dim, bg)
         };
         let name_spans = if active {
-            glyphs::pill(&label, fg, fill, bg, view.ui.nerd_font)
+            glyphs::pill(&label, fg, fill, bg, glyphs::round_caps(&view.ui))
         } else {
             vec![Span::styled(format!(" {label} "), sty(fg, fill))]
         };
@@ -569,11 +569,10 @@ fn draw_hat(
     theme: Theme,
     tall: bool,
 ) {
-    let bg = if hat == view.mode {
-        on_bg(theme, side_bg(theme))
-    } else {
-        side_bg(theme)
-    };
+    // No tint behind the hat that is on: a block of three rows has no
+    // round in a cell grid, and the user asked for nothing square. The
+    // bar and the bold name in the hat's colour mark it.
+    let bg = side_bg(theme);
     let color = theme.mode(hat);
     let w = usize::from(area.width);
     let wearing = hat == view.mode;

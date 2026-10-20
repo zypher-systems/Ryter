@@ -475,6 +475,15 @@ fn populate_view(
     opts: &TuiOpts,
 ) {
     view.ui = cfg.ui.clone();
+    // `auto` is decided once, here, from the terminal this run is in; the
+    // drawing never asks the environment, so a frame is the same anywhere.
+    if view.ui.caps == "auto" {
+        view.ui.caps = if crate::glyphs::caps_terminal(|k| std::env::var(k).ok()) {
+            "round".into()
+        } else {
+            "square".into()
+        };
+    }
     // `[ui] panel`: the instruments beside the conversation. ^b and F2
     // show and hide them.
     view.panel_visible = cfg.ui.panel;
