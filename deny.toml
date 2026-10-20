@@ -7,8 +7,6 @@ all-features = true
 ignore = [
     # Syntect loads compiled-in syntax assets through bincode; no untrusted dumps.
     { id = "RUSTSEC-2025-0141", reason = "No maintained syntect release replaces bincode; only bundled syntax assets are deserialized. Track replacement upstream." },
-    # This proc macro runs at build time through ratatui 0.29.
-    { id = "RUSTSEC-2024-0436", reason = "Ratatui 0.29 uses paste at build time. A ratatui migration requires a separate terminal rendering review." },
 ]
 
 [licenses]
