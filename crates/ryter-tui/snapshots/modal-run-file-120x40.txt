@@ -1,5 +1,5 @@
 
- ●●● RYTER   Conversation  1  Hats  2  Sessions  3
+ ●●● RYTER
 
 
   New session                                            ● Waiting for you · asks first ┊ ryter  ⎇ 0.2.0-patch
@@ -37,4 +37,4 @@
   │ Build  › type to queue the next message, / for commands                          │  ┊
   ╰──────────────────────────────────────────────────────────────────────────────────╯  ┊
                                                                                         ┊
- y approve  e adjust  n reject  ↑↓ scroll  tab hat  ⇧tab mode  / commands  f2 instruments          focus · conversation
+ y approve  e adjust  n reject  ↑↓ scroll  tab hat  ⇧tab mode  / commands  f2 instruments

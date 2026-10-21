@@ -1,5 +1,5 @@
 
- ●●● RYTER   Conversation  1  Hats  2  Sessions  3
+ ●●● RYTER
 
   New session                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
   0.2.0-patch                                                           ┊
@@ -12,7 +12,7 @@
      ↑↓ move  enter run  esc close                                      ┊ ● Scribe follows al…  $0
    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
                                                                         ┊
-    / commands    Alt+3 resume a session                                ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+    / commands                                                          ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
                                                                         ┊ Context
                                                                         ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
                                                                         ┊ 12k of 256k           5%
@@ -27,4 +27,4 @@
   │ Build  › /mo█                                                    │  ┊
   ╰──────────────────────────────────────────────────────────────────╯  ┊
                                                                         ┊
- ↑↓ move  enter run  esc close                                                 focus · conversation
+ ↑↓ move  enter run  esc close

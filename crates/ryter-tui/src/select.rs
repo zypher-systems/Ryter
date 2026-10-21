@@ -41,9 +41,7 @@ pub enum Click {
 /// What a click on the workspace chrome does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkspaceClick {
-    /// Conversation, hats, or sessions (`1`, `2`, `3`).
-    Page(u8),
-    /// Wear this hat and open the hats page.
+    /// Wear this hat, in place.
     Wear(ryter_core::Role),
 }
 

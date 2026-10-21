@@ -1,5 +1,5 @@
 
- ●●● RYTER   Conversation  1  Hats  2  Sessions  3
+ ●●● RYTER
 
 
     New session                                                                                 ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
@@ -14,7 +14,7 @@
       Describe a chan  /tools          Tool permission mode for this session                 ▸                      ┊
       left off.        ↑↓ move  enter run  esc close                                                                ┊
                      ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘                   ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-      / commands    Alt+3 resume a session                                                                          ┊ Context
+      / commands                                                                                                    ┊ Context
                                                                                                                     ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
                                                                                                                     ┊  ⢰⠋      ⠙⡆ 12k
                                                                                                                     ┊  ⢸   5%   ⡧ of 256k
@@ -47,4 +47,4 @@
     │ Build  › /mo█                                                                                              │  ┊
     ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ┊
                                                                                                                     ┊
- ↑↓ move  enter run  esc close                                                                                                             focus · conversation
+ ↑↓ move  enter run  esc close

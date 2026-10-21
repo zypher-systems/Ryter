@@ -301,8 +301,6 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     }
     actions::load_project_spend(&mut view, &home, &cwd);
     view.workspace = Some(cwd.clone());
-    view.ryter_home = Some(home.clone());
-    crate::workspace::reload_sessions(&mut view);
     view.refresh_uncommitted();
     if config::asks_for_trust(&cwd) && !trusted {
         view.panels.push(Box::new(TrustModal::default()));

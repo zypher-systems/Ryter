@@ -1035,10 +1035,7 @@ fn snapshot_workspace_be() {
     let text = render_to_string(&workspace_be(), 160, 50);
     // The brand's row: the band has a row above it on a tall screen.
     let top = text.lines().find(|l| l.contains("RYTER")).unwrap();
-    assert!(
-        top.contains("●●● RYTER") && top.contains("Conversation"),
-        "{top}"
-    );
+    assert_eq!(top.trim(), "●●● RYTER", "the bar is the brand alone: {top}");
     assert!(!top.contains('☀') && !top.contains('☾'), "{top}");
     assert!(!top.contains(" dusty"), "{top}");
     assert!(
@@ -1333,23 +1330,19 @@ fn snapshot_conversation() {
     all_sizes("conversation", &conversation());
 }
 
-/// The Hats and Sessions views, and a session with nothing in it yet,
-/// at each size: the narrow tiers fold the panes and compact the cards.
+/// A session with nothing in it yet, at each size, with and without an
+/// earlier session to go back to.
 #[test]
-fn snapshot_workspace_views() {
-    let mut v = racked();
-    v.page = crate::view::Page::Hats;
-    all_sizes("workspace-hats", &v);
-    v.page = crate::view::Page::Sessions;
-    all_sizes("workspace-sessions", &v);
+fn snapshot_workspace_opening() {
     let mut v = idle();
     v.messages.clear();
     all_sizes("workspace-opening", &v);
+    v.sessions_count = 2;
+    all_sizes("workspace-opening-resume", &v);
 }
 
-/// Every size leaves the conversation at least 70 columns, the three view
-/// tabs to click, all four hats on the Hats view, and a queued message
-/// said on the prompt's edge, in every colour mode.
+/// Every size leaves the conversation at least 70 columns, and a queued
+/// message said on the prompt's edge, in every colour mode.
 #[test]
 fn workspace_keeps_the_conversation_and_every_hat_accessible() {
     for (width, height) in SIZES {
@@ -1363,23 +1356,6 @@ fn workspace_keeps_the_conversation_and_every_hat_accessible() {
             let mut v = racked();
             let hit = crate::draw::render_hit(&v, width, height);
             assert!(hit.chat.width >= 70, "{width}x{height}: {:?}", hit.chat);
-            for page in [1, 2, 3] {
-                assert!(
-                    hit.clicks
-                        .iter()
-                        .any(|(c, _)| *c == crate::select::WorkspaceClick::Page(page)),
-                    "{width}x{height}: no tab {page}"
-                );
-            }
-            v.page = crate::view::Page::Hats;
-            let text = render_with_theme(&v, width, height, theme);
-            for hat in ["Plan", "Build", "Audit", "Scribe"] {
-                assert!(
-                    text.contains(&format!("─ {hat} ")),
-                    "{width}x{height}: {hat}\n{text}"
-                );
-            }
-            v.page = crate::view::Page::Conversation;
             v.queued_prompt = Some("next task".into());
             let text = render_with_theme(&v, width, height, theme);
             assert!(text.contains("queued"), "{width}x{height}\n{text}");
@@ -4015,11 +3991,6 @@ fn html_gallery() {
     shots.push(("session-80x24".into(), racked(), 80, 24));
     shots.push(("workspace-be-160x50".into(), workspace_be(), 160, 50));
     for (w, h) in SIZES {
-        let mut v = racked();
-        v.page = crate::view::Page::Hats;
-        shots.push((format!("workspace-hats-{w}x{h}"), v.clone(), w, h));
-        v.page = crate::view::Page::Sessions;
-        shots.push((format!("workspace-sessions-{w}x{h}"), v, w, h));
         let mut v = idle();
         v.messages.clear();
         shots.push((format!("workspace-opening-{w}x{h}"), v, w, h));

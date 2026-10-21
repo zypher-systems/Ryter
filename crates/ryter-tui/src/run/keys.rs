@@ -61,9 +61,8 @@ fn route(view: &mut View, key: KeyEvent) -> Action {
         }
     }
 
-    // Workspace chrome: views, instruments, and which pane has focus.
-    // A palette keeps the keys. A permission card does not: these are
-    // not its answers.
+    // Workspace chrome: the rail's F2. A palette keeps the key. A
+    // permission card does not: it is not one of its answers.
     if let Some(a) = crate::workspace::chrome_key(view, key) {
         return a;
     }
@@ -124,10 +123,6 @@ fn route(view: &mut View, key: KeyEvent) -> Action {
             _ => {}
         }
         return Action::None;
-    }
-
-    if let Some(a) = crate::workspace::nav_key(view, key) {
-        return a;
     }
 
     // `$` on an empty composer opens the spend drawer. Anywhere in a

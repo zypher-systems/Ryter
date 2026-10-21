@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-21 — The Hats and Sessions views, their tabs and the rail's focus go
+
+**Decision.** The workspace has no views. The Hats page (`Alt+2`), the Sessions page (`Alt+3`), the three tabs on the top bar and `Alt+1`–`Alt+3` are gone, and so are `F6` and `F7` with the rail's cursor and its `Enter`. The top bar is the brand alone. The rail is a readout: a click on a hat row still puts that hat on, in place. The saved sessions are `/sessions`, as they were; a hat's description and reasoning level are read where they are set, in `/models`. The welcome names `/sessions` only when the project has an earlier session to go back to. The hint bar's right end is empty while the rail is up, and `hat · spend` when it is folded. `[ui] caps` now rounds the chip alone.
+
+**Why.** The user asked what the three views gave the application. The Hats page was read only: its arrows moved a highlight and its `Enter` did nothing, so the page about hats could not put one on, and everything it showed was on the rail since 0.33.0 except one sentence per hat and the reasoning level, which `/models` carries where they are changed. The Sessions page only resumed, where the `/sessions` panel filters as you type, renames, deletes and starts a new one; the page's columns were its one advantage, and one table with one set of keys is better than two that differ. `F6`/`F7` was a slower third route to a hat switch that `Tab` and `Shift+Tab` make in two presses from the prompt and a click makes in one; it existed to drive a cursor that only existed for it, and with it went the focus bar, the hint and the view's own key rows. The rule from the one-rail entry holds: nothing is said twice, and nothing on the screen is a place to go with nothing to do there.
+
+**Not done.** Below 100 columns there is no rail, so the four hats at once are only in `/models` on a narrow terminal. The `/sessions` panel did not take the page's columns (hat, messages, spend, updated); that is its own change if missed.
+
 ### 2026-10-20 — One rail, at the right, with the hats at its top
 
 **Decision.** The workspace has one column beside the conversation, at the right, from 100 columns: 28 wide there, 44 from 132. Its first block is the project and branch, then the hats, the one that is on over three rows and the others on one row each with their model and cost, then the turns and the plan and audit files; under it the context ring, the spend rows, the changes and the plan. The left rail and the three-pane tier are gone, and so is the Activity block: the hat rows name the model, and a running turn carries its own sign on its status row in the conversation, a square turning through its quadrants (`◰◳◲◱`) in the hat's colour beside the shimmer. The conversation reads from the left edge, two columns in where its column is 90 wide or more. `F2` hides the rail; `F6`/`F7` move between the two panes.
