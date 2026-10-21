@@ -73,6 +73,12 @@ pub fn save(home: &Path, connection: &str, models: &[ModelInfo]) {
     }
 }
 
+/// Drop what `connection` returned last: its list has come back empty, so
+/// the old one is not what it has.
+pub fn forget(home: &Path, connection: &str) {
+    let _ = std::fs::remove_file(path(home, connection));
+}
+
 /// `3 min`, `2 h`, `5 days`: how old a cached list is.
 pub fn age(secs: u64) -> String {
     match secs {
@@ -101,5 +107,29 @@ mod tests {
         assert!(secs < 5);
         assert_eq!(age(7200), "2 h");
         assert_eq!(age(30), "a moment");
+    }
+
+    /// A connection whose list came back empty has no last list: the
+    /// picker's next opening must not show the old one as its own.
+    #[test]
+    fn a_forgotten_list_is_gone() {
+        let home = tempfile::tempdir().unwrap();
+        let m = ModelInfo {
+            id: "m".into(),
+            context_length: None,
+            input_per_million: None,
+            output_per_million: None,
+            cached_per_million: None,
+            cache_write_per_million: None,
+            connection: None,
+            created: None,
+            tools: None,
+        };
+        save(home.path(), "c", &[m]);
+        assert!(load(home.path(), "c").is_some());
+        forget(home.path(), "c");
+        assert!(load(home.path(), "c").is_none());
+        // Forgetting what was never kept is nothing.
+        forget(home.path(), "other");
     }
 }

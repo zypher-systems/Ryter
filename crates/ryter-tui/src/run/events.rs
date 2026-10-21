@@ -385,7 +385,11 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 ),
             );
         }
-        AgentEvent::ModelsListed { models } => {
+        AgentEvent::ModelsListed {
+            models,
+            covered,
+            failed,
+        } => {
             // The list may carry every keyed connection's rows, and one id
             // can be on two of them at two prices and two windows. Only the
             // session's own connection's row is the session's.
@@ -405,7 +409,14 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             {
                 apply_model_catalog(view, m);
             }
-            panel::on_notice(view, &Notice::Models(models.clone()));
+            panel::on_notice(
+                view,
+                &Notice::Models {
+                    models: models.clone(),
+                    covered: covered.clone(),
+                    failed: failed.clone(),
+                },
+            );
         }
         AgentEvent::ModelsNote { note } => view.models_note = note.clone(),
         AgentEvent::McpStatus { servers } => {
@@ -1186,7 +1197,14 @@ mod tests {
             if !other_first {
                 models.reverse();
             }
-            apply(&mut v, AgentEvent::ModelsListed { models });
+            apply(
+                &mut v,
+                AgentEvent::ModelsListed {
+                    models,
+                    covered: vec![],
+                    failed: vec![],
+                },
+            );
             assert_eq!(v.ctx_window, Some(200_000), "other first: {other_first}");
             assert_eq!((v.price_in, v.price_out), (Some(3.0), Some(4.0)));
             assert_eq!(

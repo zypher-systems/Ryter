@@ -82,8 +82,11 @@ pub enum Focus {
 pub struct Models {
     /// Catalog rows (row 0 is the `default` sentinel).
     pub items: Vec<ModelInfo>,
-    /// Waiting for `ModelsListed`.
+    /// Some keyed connection's list is still to come.
     pub loading: bool,
+    /// Connections whose list has come, or won't (no list and no cache),
+    /// since the panel opened. `loading` ends when every keyed one is here.
+    settled: BTreeSet<String>,
     /// The seat chosen: `None` is the model every hat uses, `Some(hat)`
     /// one hat's own.
     pub assign_role: Option<String>,
@@ -137,6 +140,7 @@ impl Models {
         let mut p = Self {
             items,
             loading: true,
+            settled: BTreeSet::new(),
             assign_role,
             refusal: None,
             selected: 0,
@@ -203,30 +207,41 @@ impl Models {
         v
     }
 
-    /// Take a `ModelsListed` event: the list is every keyed connection's
+    /// Take a `ModelsListed` event. The list is every keyed connection's
     /// (the panel's opening) or one connection's (startup's, or `/provider`
-    /// choosing one). Either way it replaces the rows of the connections
-    /// it carries and keeps the rest, so a one-connection list landing
-    /// after the full one does not shrink the seats to that connection.
-    /// Rows of a connection that has lost its key go.
-    pub fn set_models(&mut self, view: &View, models: &[ModelInfo]) {
-        if !models.is_empty() {
-            let on = |m: &ModelInfo| {
-                m.connection
-                    .clone()
-                    .unwrap_or_else(|| view.connection.clone())
-            };
+    /// choosing one). It replaces the rows of the connections it carries
+    /// and of those it says it `covered`, even to none (an account with no
+    /// model that takes tools has an empty list, not its old one), and
+    /// keeps the rest, so a one-connection list landing after the full one
+    /// does not shrink the seats to that connection. Rows of a connection
+    /// that has lost its key go. "Loading" ends when every keyed
+    /// connection has been covered or has `failed` (no list and no cache:
+    /// its built-in rows stay), not on the first list to land.
+    pub fn set_models(
+        &mut self,
+        view: &View,
+        models: &[ModelInfo],
+        covered: &[String],
+        failed: &[String],
+    ) {
+        let on = |m: &ModelInfo| {
+            m.connection
+                .clone()
+                .unwrap_or_else(|| view.connection.clone())
+        };
+        if !models.is_empty() || !covered.is_empty() {
             let keyed = |c: &str| {
                 c == view.connection || view.connections.iter().any(|r| r.name == c && r.has_key)
             };
-            let came: BTreeSet<String> = models.iter().map(on).collect();
+            let mut replaced: BTreeSet<String> = models.iter().map(on).collect();
+            replaced.extend(covered.iter().cloned());
             let mut by_connection: BTreeMap<String, Vec<ModelInfo>> = BTreeMap::new();
             for m in models {
                 by_connection.entry(on(m)).or_default().push(m.clone());
             }
             for m in self.items.iter().filter(|m| !m.id.is_empty()) {
                 let c = on(m);
-                if !came.contains(&c) && keyed(&c) {
+                if !replaced.contains(&c) && keyed(&c) {
                     by_connection.entry(c).or_default().push(m.clone());
                 }
             }
@@ -235,7 +250,12 @@ impl Models {
             self.items = v;
             self.selected = self.selected.min(self.items.len().saturating_sub(1));
         }
-        self.loading = false;
+        self.settled.extend(covered.iter().cloned());
+        self.settled.extend(failed.iter().cloned());
+        self.loading = view
+            .connections
+            .iter()
+            .any(|c| c.has_key && !self.settled.contains(&c.name));
         self.select_current(view);
     }
 
@@ -835,7 +855,11 @@ impl Panel for Models {
 
     fn on_notice(&mut self, n: &Notice, view: &mut View) {
         match n {
-            Notice::Models(models) => self.set_models(view, models),
+            Notice::Models {
+                models,
+                covered,
+                failed,
+            } => self.set_models(view, models, covered, failed),
             Notice::ModelChecked {
                 model,
                 result: Err(why),
@@ -923,7 +947,7 @@ mod tests {
         let mut v = hats_view();
         v.hats.clear();
         let mut p = Models::new(&mut v, None);
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         let t = text(&p, &v);
         assert!(t.contains("›  All hats  grok-4.7"), "{t}");
         for hat in ["Plan", "Build", "Audit"] {
@@ -938,7 +962,7 @@ mod tests {
         // Down to Plan, across to its models, and enter gives it one: the
         // cursor goes on to Build.
         key(&mut p, &mut v, KeyCode::Down);
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         assert_eq!(p.seat(), 1);
         key(&mut p, &mut v, KeyCode::Right);
         v.composer.set_text("qwen");
@@ -980,7 +1004,7 @@ mod tests {
     fn all_hats_lists_every_connection_and_enter_carries_the_rows_connection() {
         let mut v = hats_view();
         let mut p = Models::new(&mut v, None);
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         key(&mut p, &mut v, KeyCode::Right);
         let t = text(&p, &v);
         assert!(
@@ -998,7 +1022,7 @@ mod tests {
         ));
         // The session is on openrouter; a model of its own carries it too.
         let mut p = Models::new(&mut v, None);
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         key(&mut p, &mut v, KeyCode::Right);
         for c in "qwen".chars() {
             key(&mut p, &mut v, KeyCode::Char(c));
@@ -1018,7 +1042,7 @@ mod tests {
     fn every_seat_is_set_without_leaving_the_panel() {
         let mut v = hats_view();
         let mut p = Models::new(&mut v, None);
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         let t = text(&p, &v);
         assert!(
             t.contains("SEATS") && t.contains("›  All hats  grok-4.7"),
@@ -1045,7 +1069,7 @@ mod tests {
         ));
         assert_eq!((p.focus, p.seat()), (Focus::Seats, 1));
         assert!(v.composer.is_empty(), "the filter is cleared");
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
 
         // The architect: enter goes to its models, typing filters there.
         key(&mut p, &mut v, KeyCode::Enter);
@@ -1112,7 +1136,7 @@ mod tests {
     fn the_list_follows_the_seat() {
         let mut v = hats_view();
         let mut p = Models::new(&mut v, None);
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         assert!(matches!(key(&mut p, &mut v, KeyCode::Up), Outcome::Stay));
         assert_eq!(p.seat(), 0);
         // The first seat's list is every connection's, with no `default`.
@@ -1122,7 +1146,7 @@ mod tests {
         key(&mut p, &mut v, KeyCode::Down);
         key(&mut p, &mut v, KeyCode::Down);
         assert_eq!(p.seat(), 3);
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         let on = p.filtered(&v)[p.selected].id.clone();
         assert_eq!(
             on, "qwen/qwen3.7-max",
@@ -1145,7 +1169,7 @@ mod tests {
     fn moving_in_the_filter_keeps_the_highlight() {
         let mut v = hats_view();
         let mut p = Models::new(&mut v, Some("build".into()));
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         let minimax = p
             .filtered(&v)
             .iter()
@@ -1164,7 +1188,7 @@ mod tests {
         // With a filter, typing goes to the first match, and moving within
         // the text doesn't.
         let mut p = Models::new(&mut v, Some("build".into()));
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         key(&mut p, &mut v, KeyCode::Char('o'));
         assert_eq!(p.selected, 0);
         key(&mut p, &mut v, KeyCode::Down);
@@ -1184,7 +1208,7 @@ mod tests {
     fn the_last_seat_opens_on_the_model_just_set() {
         let mut v = hats_view();
         let mut p = Models::new(&mut v, Some("scribe".into()));
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         assert_eq!(
             p.filtered(&v)[p.selected].id,
             "",
@@ -1211,7 +1235,7 @@ mod tests {
     fn narrow_the_facts_line_names_the_connection() {
         let mut v = hats_view();
         let mut p = Models::new(&mut v, Some("build".into()));
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         p.selected = p
             .filtered(&v)
             .iter()
@@ -1253,7 +1277,7 @@ mod tests {
         models.push(row("shared-model", "openrouter", Some((1.0, 2.0))));
         models.push(row("shared-model", "spacexsi", Some((1.0, 2.0))));
         let mut p = Models::new(&mut v, Some("scribe".into()));
-        p.set_models(&v, &models);
+        p.set_models(&v, &models, &[], &[]);
         for c in "shared".chars() {
             key(&mut p, &mut v, KeyCode::Char(c));
         }
@@ -1283,7 +1307,7 @@ mod tests {
             },
         );
         let mut p = Models::new(&mut v, Some("audit".into()));
-        p.set_models(&v, &models);
+        p.set_models(&v, &models, &[], &[]);
         assert_eq!(
             p.filtered(&v)[p.selected].connection.as_deref(),
             Some("spacexsi")
@@ -1308,7 +1332,7 @@ mod tests {
             ),
         ];
         let mut p = Models::new(&mut v, Some("build".into()));
-        p.set_models(&v, &models);
+        p.set_models(&v, &models, &[], &[]);
         p.selected = p
             .filtered(&v)
             .iter()
@@ -1408,7 +1432,7 @@ mod tests {
     fn a_failed_model_check_shows_in_the_status() {
         let mut v = hats_view();
         let mut p = Models::new(&mut v, None);
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         p.on_notice(
             &Notice::ModelChecked {
                 seat: "plan".into(),
@@ -1448,7 +1472,7 @@ mod tests {
             });
         }
         let mut p = Models::new(&mut v, None);
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         let ids = |p: &Models, v: &View| -> Vec<(String, String)> {
             p.filtered(v)
                 .iter()
@@ -1457,7 +1481,12 @@ mod tests {
         };
         assert_eq!(ids(&p, &v).len(), 4);
         // SpaceXSI's own refresh: its row changes, OpenRouter's three stay.
-        p.set_models(&v, &[row("grok-4.8", "spacexsi", Some((2.0, 6.0)))]);
+        p.set_models(
+            &v,
+            &[row("grok-4.8", "spacexsi", Some((2.0, 6.0)))],
+            &[],
+            &[],
+        );
         let got = ids(&p, &v);
         assert_eq!(
             got.iter().filter(|(c, _)| c == "openrouter").count(),
@@ -1473,7 +1502,12 @@ mod tests {
             "{got:?}"
         );
         // OpenRouter's refresh in turn keeps SpaceXSI's new row.
-        p.set_models(&v, &[row("x-ai/grok-4.7", "openrouter", Some((2.0, 6.0)))]);
+        p.set_models(
+            &v,
+            &[row("x-ai/grok-4.7", "openrouter", Some((2.0, 6.0)))],
+            &[],
+            &[],
+        );
         let got = ids(&p, &v);
         assert_eq!(
             got,
@@ -1488,7 +1522,12 @@ mod tests {
                 c.has_key = false;
             }
         });
-        p.set_models(&v, &[row("x-ai/grok-4.7", "openrouter", Some((2.0, 6.0)))]);
+        p.set_models(
+            &v,
+            &[row("x-ai/grok-4.7", "openrouter", Some((2.0, 6.0)))],
+            &[],
+            &[],
+        );
         assert_eq!(
             ids(&p, &v),
             vec![("openrouter".to_string(), "x-ai/grok-4.7".to_string())]
@@ -1497,5 +1536,51 @@ mod tests {
         p.choose_seat(&v, 1);
         assert_eq!(p.filtered(&v).len(), 2);
         assert!(p.filtered(&v)[0].id.is_empty());
+    }
+
+    /// "Loading" ends when every keyed connection's list has come or
+    /// won't, not on the first: startup's one-connection list landing
+    /// while the full batch was still out left the other connections on
+    /// their built-in rows with the panel saying the list was complete. A
+    /// connection whose list didn't come keeps its rows; one whose list
+    /// is empty loses them.
+    #[test]
+    fn loading_ends_when_every_keyed_connection_has_answered() {
+        let mut v = hats_view();
+        for name in ["openrouter", "spacexsi"] {
+            v.connections.push(crate::view::ConnRow {
+                name: name.into(),
+                kind: name.into(),
+                model: String::new(),
+                has_key: true,
+            });
+        }
+        let mut p = Models::new(&mut v, None);
+        let rows = |p: &Models, v: &View, c: &str| {
+            p.filtered(v)
+                .iter()
+                .filter(|m| m.connection.as_deref() == Some(c))
+                .count()
+        };
+        assert!(p.loading);
+        let builtin = rows(&p, &v, "spacexsi");
+        assert!(builtin > 0, "spacexsi's built-in rows");
+        // OpenRouter's list first: still loading, SpaceXSI's built-ins stay.
+        p.set_models(&v, &catalog()[..3], &["openrouter".into()], &[]);
+        assert!(p.loading);
+        assert_eq!(rows(&p, &v, "openrouter"), 3);
+        assert_eq!(rows(&p, &v, "spacexsi"), builtin);
+        assert_eq!(p.status(&v), format!("{} · loading", p.filtered(&v).len()));
+        // SpaceXSI's didn't come and it has no cache: nothing more is
+        // coming, so loading ends; its built-in rows stay.
+        p.set_models(&v, &[], &[], &["spacexsi".into()]);
+        assert!(!p.loading);
+        assert_eq!(rows(&p, &v, "spacexsi"), builtin);
+        assert!(p.status(&v).contains("sort"), "{}", p.status(&v));
+        // Its next list is empty: an answer, and its rows go.
+        p.set_models(&v, &[], &["spacexsi".into()], &[]);
+        assert_eq!(rows(&p, &v, "spacexsi"), 0);
+        assert_eq!(rows(&p, &v, "openrouter"), 3);
+        assert!(!p.loading);
     }
 }

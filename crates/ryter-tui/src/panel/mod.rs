@@ -92,7 +92,14 @@ pub enum Notice {
     /// A file export finished (`/spend e`, `/doctor c`).
     Exported(String),
     /// Models arrived for the picker (`/models`).
-    Models(Vec<ryter_core::ModelInfo>),
+    Models {
+        /// Catalog rows.
+        models: Vec<ryter_core::ModelInfo>,
+        /// The connections the rows speak for, even with no row.
+        covered: Vec<String>,
+        /// The connections whose list didn't come and have no cache.
+        failed: Vec<String>,
+    },
     /// A hat's model was checked after it was chosen in `/models`.
     ModelChecked {
         /// Seat label: `all hats`, or a hat name (`plan`, `build`, …).

@@ -2040,6 +2040,8 @@ fn render_theme_preview() {
                         m("z-ai/glm-5.3", 0.4, 1.6),
                         m("moonshotai/kimi-k3", 1.0, 4.0),
                     ],
+                    &[],
+                    &[],
                 );
                 v.panels.push(Box::new(p));
                 crate::panel::sync_composer(&mut v);
