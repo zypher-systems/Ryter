@@ -56,6 +56,9 @@ pub enum Work {
     ListModels,
     /// `GET /models` on every keyed connection (a hat's seat).
     ListAllModels,
+    /// The connections changed in `/provider` (one added or removed): the
+    /// worker's copy, which `ListAllModels` and `Reconnect` read.
+    SetConnections(BTreeMap<String, ConnectionConfig>),
     /// The price catalog was pulled: price with it from here on.
     ReloadPrices,
     /// Replace each hat's own model.
@@ -237,6 +240,23 @@ fn fetch_models(targets: Vec<(String, Arc<dyn Provider>)>, all: bool, tx: mpsc::
     });
 }
 
+/// The picker's note after a batch of lists: what stands against any
+/// connection (it didn't answer, or its stale list was kept), from this
+/// batch or an earlier one; cleared when nothing stands and nothing is in
+/// flight, as the "refreshing" note has done its work; left as it is
+/// while another connection's list is still coming.
+fn note_after(standing: &BTreeMap<String, String>, in_flight: bool) -> Option<Option<String>> {
+    if !standing.is_empty() {
+        Some(Some(
+            standing.values().cloned().collect::<Vec<_>>().join("; "),
+        ))
+    } else if !in_flight {
+        Some(None)
+    } else {
+        None
+    }
+}
+
 /// The price book for a session on `connection`: the shipped and pulled
 /// tables, with that connection's own model list (as last cached) over
 /// them for the models they don't know. One connection's list, not every
@@ -344,6 +364,10 @@ pub fn run(init: WorkerInit) {
     // Fetches in flight, and when each began: a second `/models` waits on
     // the first, and a slow one is said to be slow.
     let mut fetching: BTreeMap<(bool, String), (std::time::Instant, bool)> = BTreeMap::new();
+    // What the picker's note says of each connection whose last answer was
+    // no list or a stale one, until that connection answers again: a later
+    // batch that did not include it does not clear it.
+    let mut standing: BTreeMap<String, String> = BTreeMap::new();
     loop {
         for ((_, name), (since, told)) in fetching.iter_mut() {
             if !*told && since.elapsed() >= MODELS_SLOW {
@@ -363,9 +387,9 @@ pub fn run(init: WorkerInit) {
             let mut all = Vec::new();
             let mut covered = Vec::new();
             let mut failed = Vec::new();
-            let mut notes = Vec::new();
             for (name, result) in done.results {
                 fetching.remove(&(done.all, name.clone()));
+                standing.remove(&name);
                 match result {
                     Ok(models) => {
                         // An empty list is an answer (an account with no
@@ -383,16 +407,22 @@ pub fn run(init: WorkerInit) {
                         // Keep what the picker already shows: the cached list.
                         match ryter_core::llm::model_cache::load(&home, &name) {
                             Some((models, secs)) => {
-                                notes.push(format!(
-                                    "{name} slow · list from {} ago",
-                                    ryter_core::llm::model_cache::age(secs)
-                                ));
+                                standing.insert(
+                                    name.clone(),
+                                    format!(
+                                        "{name} slow · list from {} ago",
+                                        ryter_core::llm::model_cache::age(secs)
+                                    ),
+                                );
                                 covered.push(name.clone());
                                 all.extend(prepared(models, &name, &book));
                             }
                             None => {
                                 failed.push(name.clone());
-                                notes.push(format!("{name} didn't answer · try again"));
+                                standing.insert(
+                                    name.clone(),
+                                    format!("{name} didn't answer · try again"),
+                                );
                                 send_err(
                                     &ev_tx,
                                     format!(
@@ -421,13 +451,8 @@ pub fn run(init: WorkerInit) {
                 covered,
                 failed,
             });
-            // Nothing failed and nothing else in flight: the note ("from
-            // 3 h ago · refreshing") has done its work. While another
-            // connection's list is still coming, it stands.
-            if !notes.is_empty() || fetching.is_empty() {
-                let _ = ev_tx.send(AgentEvent::ModelsNote {
-                    note: (!notes.is_empty()).then(|| notes.join("; ")),
-                });
+            if let Some(note) = note_after(&standing, !fetching.is_empty()) {
+                let _ = ev_tx.send(AgentEvent::ModelsNote { note });
             }
         }
         match work_rx.recv_timeout(Duration::from_millis(200)) {
@@ -771,6 +796,16 @@ pub fn run(init: WorkerInit) {
                 if !targets.is_empty() {
                     fetch_models(targets, true, fetch_tx.clone());
                 }
+                // A connection that has no key now is not asked again: a
+                // note about its last answer would stand for good.
+                standing.retain(|n, _| {
+                    cfg.connections.contains_key(n)
+                        && resolve_secret(&cfg, &ConnectionId::new(n)).is_ok()
+                });
+            }
+            Ok(Work::SetConnections(connections)) => {
+                standing.retain(|n, _| connections.contains_key(n));
+                cfg.connections = connections;
             }
             Ok(Work::ReloadPrices) => {
                 if let Some(a) = &mut agent {
@@ -1035,5 +1070,37 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         last_audit_verdict: None,
         turn: 0,
         last_input_tokens,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A note about a connection that didn't answer stands until that
+    /// connection answers again: a batch that did not include it leaves it,
+    /// and the note is cleared only when nothing stands and nothing is in
+    /// flight.
+    #[test]
+    fn a_failure_note_outlives_another_connections_batch() {
+        let mut standing = BTreeMap::new();
+        standing.insert(
+            "beta".to_string(),
+            "beta didn't answer · try again".to_string(),
+        );
+        // Alpha's list came while beta's earlier failure stands.
+        assert_eq!(
+            note_after(&standing, false),
+            Some(Some("beta didn't answer · try again".into()))
+        );
+        assert_eq!(
+            note_after(&standing, true),
+            Some(Some("beta didn't answer · try again".into()))
+        );
+        // Beta answered: nothing stands. Cleared only once nothing is in
+        // flight; the "refreshing" note holds meanwhile.
+        standing.remove("beta");
+        assert_eq!(note_after(&standing, true), None);
+        assert_eq!(note_after(&standing, false), Some(None));
     }
 }

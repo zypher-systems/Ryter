@@ -251,6 +251,17 @@ pub struct View {
     /// doesn't know a model, which is most of OpenRouter's catalog. One id
     /// can be on two connections at two prices.
     pub catalog_rates: BTreeMap<(String, String), (f64, f64)>,
+    /// Context windows from the same lists, by connection and model id:
+    /// OpenRouter's `x-ai/grok-4.7` is not the `grok-4.7` Ryter knows by
+    /// name, and a chosen row's length is the one the picker's column
+    /// showed.
+    pub catalog_windows: BTreeMap<(String, String), u64>,
+    /// The header's price is to be set from the price book again: the
+    /// session's connection answered `/models` without the session's
+    /// model, so the catalog price the header showed is one the book no
+    /// longer charges the turns at. Taken by the event loop, which has the
+    /// config the book is loaded from.
+    pub reprice: bool,
     /// What this project (its git repository) has cost across sessions.
     /// Read from disk at startup and when `/spend` opens; live spend is added
     /// as it happens.
@@ -526,6 +537,8 @@ impl View {
             price_label: String::new(),
             price_in: None,
             catalog_rates: BTreeMap::new(),
+            catalog_windows: BTreeMap::new(),
+            reprice: false,
             project_spend: None,
             project_root: None,
             last_checkpoint: None,
@@ -954,6 +967,16 @@ impl View {
     }
 
     /// Context window in use for gauges.
+    /// The context window of `model` on `connection`: the length its
+    /// list row gave, else Ryter's own guess for the id, which is 200k for
+    /// one it does not know by name.
+    pub fn window_of(&self, connection: &str, model: &str) -> u64 {
+        self.catalog_windows
+            .get(&(connection.to_string(), model.to_string()))
+            .copied()
+            .unwrap_or_else(|| ryter_core::window_for(model))
+    }
+
     pub fn ctx_window_or_default(&self) -> u64 {
         self.ctx_window
             .unwrap_or_else(|| ryter_core::window_for(&self.model))

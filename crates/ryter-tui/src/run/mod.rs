@@ -655,6 +655,7 @@ fn loop_ui(
         // paint after a tool's result or a run of events, so a batch of
         // tool calls lands as rows arriving, not one flash.
         let (applied, paused) = drain_events(view, ev_rx);
+        actions::reprice(view, &cx.cfg, &cx.home);
         if applied > 0 {
             dirty = true;
         }
@@ -1036,6 +1037,7 @@ fn drain_user_prompts(
     while let Ok(ev) = ev_rx.try_recv() {
         events::apply(view, ev);
     }
+    actions::reprice(view, &cx.cfg, &cx.home);
     let ask = ask_for(&req);
     // What the question is about, for the sidebar's row under the verb:
     // a card's own words for what it asks.

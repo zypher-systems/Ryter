@@ -586,7 +586,10 @@ impl Panel for Models {
                         String::new(),
                         String::new(),
                         String::new(),
-                        m.connection.clone().unwrap_or_default(),
+                        // The connection the session is on now: the row
+                        // was made as the panel opened, and All hats may
+                        // have moved the session since.
+                        view.connection.clone(),
                     ];
                 }
                 vec![
@@ -915,6 +918,28 @@ mod tests {
                     + "\n"
             })
             .collect()
+    }
+
+    /// The `default` row names the connection the session is on now, not
+    /// the one it was on when the panel opened: All hats may have moved it.
+    #[test]
+    fn the_default_row_follows_the_sessions_connection() {
+        let mut v = hats_view();
+        let p = Models::new(&mut v, Some("plan".into()));
+        let row = |t: String| {
+            t.lines()
+                .find(|l| l.contains("default (follows all hats)"))
+                .map(str::to_string)
+                .unwrap_or_default()
+        };
+        let line = row(text(&p, &v));
+        assert!(line.contains("openrouter"), "{line}");
+        v.connection = "spacexsi".into();
+        let line = row(text(&p, &v));
+        assert!(
+            line.contains("spacexsi") && !line.contains("openrouter"),
+            "{line}"
+        );
     }
 
     fn hats_view() -> View {

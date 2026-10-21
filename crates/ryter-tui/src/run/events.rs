@@ -402,12 +402,28 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 if let (Some(i), Some(o)) = (m.input_per_million, m.output_per_million) {
                     view.catalog_rates.insert((on(m), m.id.clone()), (i, o));
                 }
+                if let Some(w) = m.context_length {
+                    view.catalog_windows.insert((on(m), m.id.clone()), w);
+                }
             }
-            if let Some(m) = models
+            let own = models
                 .iter()
-                .find(|m| m.id == view.model && on(m) == view.connection)
-            {
-                apply_model_catalog(view, m);
+                .find(|m| m.id == view.model && on(m) == view.connection);
+            match own {
+                Some(m) => apply_model_catalog(view, m),
+                // The session's connection answered without the session's
+                // model (its account's filter dropped it, or the list came
+                // back empty): the turns are priced from that list, which
+                // has no rate for it, so the catalog price the header kept
+                // would be one the book no longer charges. Drop it, and
+                // have the header set from the book again.
+                None if covered.contains(&view.connection) => {
+                    let key = (view.connection.clone(), view.model.clone());
+                    view.catalog_rates.remove(&key);
+                    view.catalog_windows.remove(&key);
+                    view.reprice = true;
+                }
+                None => {}
             }
             panel::on_notice(
                 view,
@@ -1218,5 +1234,97 @@ mod tests {
                 Some(&(3.0, 4.0))
             );
         }
+    }
+
+    /// The session's connection answers `/models` without the session's
+    /// model: the turns are priced from that list, so the catalog price the
+    /// header showed goes, and the header is to be set from the book again.
+    /// Another connection's list leaves it.
+    #[test]
+    fn a_list_without_the_sessions_model_drops_its_catalog_price() {
+        let row = |id: &str, conn: &str| ryter_core::ModelInfo {
+            id: id.into(),
+            context_length: Some(128_000),
+            input_per_million: Some(1.0),
+            output_per_million: Some(2.0),
+            cached_per_million: None,
+            cache_write_per_million: None,
+            connection: Some(conn.into()),
+            created: None,
+            tools: None,
+        };
+        let listed = |v: &mut View, models: Vec<ryter_core::ModelInfo>, covered: &[&str]| {
+            apply(
+                v,
+                AgentEvent::ModelsListed {
+                    models,
+                    covered: covered.iter().map(|c| c.to_string()).collect(),
+                    failed: vec![],
+                },
+            );
+        };
+        let key = ("openrouter".to_string(), "vendor/gone".to_string());
+        let mut v = View::new("openrouter".into(), "vendor/gone".into(), "~/p".into());
+        listed(
+            &mut v,
+            vec![row("vendor/gone", "openrouter")],
+            &["openrouter"],
+        );
+        assert_eq!(v.catalog_rates.get(&key), Some(&(1.0, 2.0)));
+        assert_eq!(v.catalog_windows.get(&key), Some(&128_000));
+        assert!(!v.reprice);
+        // Another connection's list is not this one's business.
+        listed(&mut v, vec![row("other", "anthropic")], &["anthropic"]);
+        assert_eq!(v.catalog_rates.get(&key), Some(&(1.0, 2.0)));
+        assert!(!v.reprice);
+        // The session's connection's list, without the model.
+        listed(
+            &mut v,
+            vec![row("vendor/other", "openrouter")],
+            &["openrouter"],
+        );
+        assert_eq!(v.catalog_rates.get(&key), None);
+        assert_eq!(v.catalog_windows.get(&key), None);
+        assert!(v.reprice);
+        // An empty answer from it, the same.
+        v.reprice = false;
+        listed(
+            &mut v,
+            vec![row("vendor/gone", "openrouter")],
+            &["openrouter"],
+        );
+        assert!(!v.reprice);
+        listed(&mut v, vec![], &["openrouter"]);
+        assert_eq!(v.catalog_rates.get(&key), None);
+        assert!(v.reprice);
+    }
+
+    /// A model's window is its list row's; an id the lists gave no length
+    /// for gets Ryter's own guess, 200k for one it does not know by name.
+    #[test]
+    fn the_window_of_a_model_is_its_rows() {
+        let mut v = View::new("openrouter".into(), "x-ai/grok-4.7".into(), "~/p".into());
+        assert_eq!(v.window_of("openrouter", "x-ai/grok-4.7"), 200_000);
+        assert_eq!(v.window_of("spacexsi", "grok-4.7"), 500_000);
+        apply(
+            &mut v,
+            AgentEvent::ModelsListed {
+                models: vec![ryter_core::ModelInfo {
+                    id: "x-ai/grok-4.7".into(),
+                    context_length: Some(131_072),
+                    input_per_million: None,
+                    output_per_million: None,
+                    cached_per_million: None,
+                    cache_write_per_million: None,
+                    connection: Some("openrouter".into()),
+                    created: None,
+                    tools: None,
+                }],
+                covered: vec![],
+                failed: vec![],
+            },
+        );
+        assert_eq!(v.window_of("openrouter", "x-ai/grok-4.7"), 131_072);
+        assert_eq!(v.window_of("spacexsi", "grok-4.7"), 500_000);
     }
 }

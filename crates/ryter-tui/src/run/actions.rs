@@ -788,6 +788,17 @@ fn route_from_view(view: &View) -> config::LastRoute {
     }
 }
 
+/// Set the header's price from the book again when a list event asked for
+/// it (`reprice` on the view): the session's connection answered without
+/// the session's model, so the catalog price the header showed is gone, and
+/// the book prices the model as it did before any list came.
+pub(crate) fn reprice(view: &mut View, cfg: &Config, home: &Path) {
+    if std::mem::take(&mut view.reprice) {
+        let model = view.model.clone();
+        apply_pricing(view, cfg, home, &model);
+    }
+}
+
 fn apply_pricing(view: &mut View, cfg: &Config, home: &Path, model: &str) {
     let mut book = PriceBook::load(cfg, home);
     // The picker showed a price from the provider's list; use it when the
@@ -836,7 +847,7 @@ fn use_connection(view: &mut View, cx: &mut Ctx, name: &str) {
             view.connection = name.to_string();
             view.model = model.clone();
             view.has_key = true;
-            view.ctx_window = Some(ryter_core::window_for(&model));
+            view.ctx_window = Some(view.window_of(name, &model));
             apply_pricing(view, &cx.cfg, &cx.home, &model);
             let _ = config::save_last_route(&cx.home, &route_from_view(view));
             view.system(format!("using {name} · {model}"));
@@ -892,7 +903,9 @@ fn set_model(view: &mut View, cx: &mut Ctx, connection: Option<String>, model: S
                 view.has_key = true;
             }
             view.model = model.clone();
-            view.ctx_window = Some(ryter_core::window_for(&model));
+            // The row's own length: `window_for` knows a model by Ryter's
+            // name for it, and OpenRouter's `x-ai/grok-4.7` is not that.
+            view.ctx_window = Some(view.window_of(&connection, &model));
             apply_pricing(view, &cx.cfg, &cx.home, &model);
             let _ = config::save_last_route(&cx.home, &route_from_view(view));
             // The model for all hats is every hat's: the ones that had
@@ -1043,6 +1056,10 @@ fn add_connection(view: &mut View, cx: &mut Ctx, name: &str, conn: ryter_core::C
         return;
     }
     cx.cfg.connections.insert(name.to_string(), conn.clone());
+    // The worker lists models and reconnects from its own copy of the
+    // connections: told, or a connection added here is one it never heard
+    // of, so `/models` waits on its list for good and using it fails.
+    cx.send(Work::SetConnections(cx.cfg.connections.clone()));
     view.connections.retain(|c| c.name != name);
     view.connections.push(ConnRow {
         name: name.to_string(),
@@ -1076,6 +1093,7 @@ fn remove_connection(view: &mut View, cx: &mut Ctx, name: &str) {
     match config::save_user_connections(&cx.home, &user) {
         Ok(()) => {
             cx.cfg.connections.remove(name);
+            cx.send(Work::SetConnections(cx.cfg.connections.clone()));
             view.connections.retain(|c| c.name != name);
             view.system(format!("removed connection {name}"));
         }
@@ -1352,5 +1370,28 @@ mod tests {
         assert_eq!(v.price_in, Some(0.15));
         assert_eq!(v.price_out, Some(0.6));
         assert!(!v.price_label.contains('?'), "{}", v.price_label);
+    }
+
+    /// A list from the session's connection without the session's model
+    /// took its catalog price away: the header goes back to the book's,
+    /// which has none for an id only the list knew.
+    #[test]
+    fn the_header_is_repriced_from_the_book() {
+        let mut v = View::new("openrouter".into(), "vendor/gone".into(), "/tmp".into());
+        let cfg = Config::default();
+        let home = tempfile::tempdir().unwrap();
+        v.catalog_rates
+            .insert(("openrouter".into(), "vendor/gone".into()), (1.0, 2.0));
+        apply_pricing(&mut v, &cfg, home.path(), "vendor/gone");
+        assert_eq!((v.price_in, v.price_out), (Some(1.0), Some(2.0)));
+        // Not asked: nothing moves.
+        reprice(&mut v, &cfg, home.path());
+        assert_eq!((v.price_in, v.price_out), (Some(1.0), Some(2.0)));
+        // Asked, as the list event does once the rate is gone.
+        v.catalog_rates.clear();
+        v.reprice = true;
+        reprice(&mut v, &cfg, home.path());
+        assert!(!v.reprice);
+        assert_eq!((v.price_in, v.price_out), (None, None));
     }
 }
