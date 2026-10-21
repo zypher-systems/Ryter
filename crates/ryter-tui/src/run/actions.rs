@@ -323,7 +323,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         Action::AddConnection { name, conn } => add_connection(view, cx, &name, conn),
         Action::SetSearch { provider, url } => set_search(view, cx, provider, url),
         Action::RemoveConnection(name) => remove_connection(view, cx, &name),
-        Action::SetModel(model) => set_model(view, cx, model),
+        Action::SetModel { connection, model } => set_model(view, cx, connection, model),
         Action::SetHatModel {
             role,
             connection,
@@ -347,7 +347,6 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             view.hats.remove(&role);
             save_hats(view, cx);
         }
-        Action::ListAllModels { .. } => cx.send(Work::ListAllModels),
         Action::SaveMcp => {
             persist_mcp(view, cx);
             cx.send(Work::SetMcp {
@@ -487,7 +486,9 @@ fn open_panel(view: &mut View, cx: &mut Ctx, id: PanelId) {
         perform(view, cx, then);
     }
     match id {
-        PanelId::Models => cx.send(Work::ListModels),
+        // Every keyed connection's models: the All hats seat lists them
+        // as a hat's does.
+        PanelId::Models => cx.send(Work::ListAllModels),
         // The logs are the truth; replace the live running copy with them.
         PanelId::Spend | PanelId::SpendDrawer => {
             load_project_spend(view, &cx.home, &cx.workspace);
@@ -872,9 +873,23 @@ fn set_key(view: &mut View, cx: &mut Ctx, name: &str, key: &str) {
     }
 }
 
-fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
-    match resolve_secret(&cx.cfg, &ConnectionId::new(&view.connection)) {
+/// The model every hat runs on. With a connection that is not the
+/// session's, the session moves there first: the All hats seat lists every
+/// keyed connection, as a hat's seat does, and a model is run by the
+/// connection its row came from.
+fn set_model(view: &mut View, cx: &mut Ctx, connection: Option<String>, model: String) {
+    let connection = connection.unwrap_or_else(|| view.connection.clone());
+    if !cx.cfg.connections.contains_key(&connection) {
+        view.error(format!("unknown connection {connection}"));
+        return;
+    }
+    match resolve_secret(&cx.cfg, &ConnectionId::new(&connection)) {
         Ok(key) => {
+            let moved = connection != view.connection;
+            if moved {
+                view.connection = connection.clone();
+                view.has_key = true;
+            }
             view.model = model.clone();
             view.ctx_window = Some(ryter_core::window_for(&model));
             apply_pricing(view, &cx.cfg, &cx.home, &model);
@@ -885,20 +900,23 @@ fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
             if !own.is_empty() {
                 save_hats(view, cx);
             }
-            view.system(format!("model · {model}{}", crate::view::followed(&own)));
-            check_model(
-                cx,
-                view.connection.clone(),
-                model.clone(),
-                "all hats".into(),
-            );
+            let on = if moved {
+                format!(" · using {connection}")
+            } else {
+                String::new()
+            };
+            view.system(format!(
+                "model · {model}{on}{}",
+                crate::view::followed(&own)
+            ));
+            check_model(cx, connection.clone(), model.clone(), "all hats".into());
             cx.send(Work::Reconnect {
-                name: view.connection.clone(),
+                name: connection,
                 model,
                 key,
             });
         }
-        Err(_) => perform(view, cx, Action::BeginSetKey(view.connection.clone())),
+        Err(_) => perform(view, cx, Action::BeginSetKey(connection)),
     }
 }
 

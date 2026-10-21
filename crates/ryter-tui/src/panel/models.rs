@@ -85,9 +85,6 @@ pub struct Models {
     /// The seat chosen: `None` is the model every hat uses, `Some(hat)`
     /// one hat's own.
     pub assign_role: Option<String>,
-    /// Every connection's models were asked for (a hat's list has them
-    /// all; the first seat's has its connection's).
-    all_listed: bool,
     /// Why the last Enter did nothing.
     refusal: Option<String>,
     selected: usize,
@@ -114,8 +111,9 @@ impl Models {
             .map(|c| c.kind.clone())
             .unwrap_or_default();
         let _ = kind;
-        // Every seat's rows: the first shows its connection's, a hat's all
-        // of them and `default` (follows the others).
+        // Every seat's rows: every keyed connection's models, and for a
+        // hat `default` (follows the others). The live lists come with
+        // the panel's opening.
         let mut items = vec![default_row(&view.connection)];
         for c in view.connections.clone() {
             if !c.has_key && c.name != view.connection {
@@ -137,7 +135,6 @@ impl Models {
         let mut p = Self {
             items,
             loading: true,
-            all_listed: assign_role.is_some(),
             assign_role,
             refusal: None,
             selected: 0,
@@ -155,17 +152,10 @@ impl Models {
             .items
             .iter()
             .filter(|m| {
-                // The first seat: its connection's models, no `default`.
-                if self.assign_role.is_none() {
-                    if m.id.is_empty() {
-                        return false;
-                    }
-                    if m.connection
-                        .as_deref()
-                        .is_some_and(|c| c != view.connection)
-                    {
-                        return false;
-                    }
+                // The first seat: every connection's models, as a hat's,
+                // and no `default` (there is nothing for it to follow).
+                if self.assign_role.is_none() && m.id.is_empty() {
+                    return false;
                 }
                 // `default` stays unless the filter rules it out: typing a
                 // model's name and pressing enter picked `default` above it.
@@ -279,22 +269,14 @@ impl Models {
         }
     }
 
-    /// Choose seat `to`. The first role chosen asks for every connection's
-    /// models (the first seat's list is its own connection's).
-    fn choose_seat(&mut self, view: &View, to: usize) -> Option<Action> {
+    /// Choose seat `to`: every seat reads the same list, every keyed
+    /// connection's models, asked for when the panel opened.
+    fn choose_seat(&mut self, view: &View, to: usize) {
         let to = to.min(SEATS - 1);
         self.assign_role = (to > 0).then(|| view.seat_roles()[to - 1].to_string());
         self.selected = 0;
         self.refusal = None;
         self.select_current(view);
-        match &self.assign_role {
-            Some(role) if !self.all_listed => {
-                self.all_listed = true;
-                self.loading = true;
-                Some(Action::ListAllModels { role: role.clone() })
-            }
-            _ => None,
-        }
     }
 
     /// What a seat runs on now, short, and whether it follows the others.
@@ -437,10 +419,15 @@ impl Models {
     /// models, and typing starts a filter there.
     fn seat_key(&mut self, key: KeyEvent, view: &mut View) -> Outcome {
         let seat = self.seat();
-        let act = |list: Option<Action>| list.map_or(Outcome::Stay, Outcome::Act);
         match key.code {
-            KeyCode::Up => act(self.choose_seat(view, seat.saturating_sub(1))),
-            KeyCode::Down => act(self.choose_seat(view, seat + 1)),
+            KeyCode::Up => {
+                self.choose_seat(view, seat.saturating_sub(1));
+                Outcome::Stay
+            }
+            KeyCode::Down => {
+                self.choose_seat(view, seat + 1);
+                Outcome::Stay
+            }
             KeyCode::Right | KeyCode::Enter => {
                 self.focus = Focus::Models;
                 Outcome::Stay
@@ -779,7 +766,12 @@ impl Panel for Models {
                         connection: m.connection.unwrap_or_else(|| view.connection.clone()),
                         model: m.id,
                     },
-                    None => Action::SetModel(m.id),
+                    // All hats: the model, on the connection its row came
+                    // from; the session moves there if it is not on it.
+                    None => Action::SetModel {
+                        connection: Some(m.connection.unwrap_or_else(|| view.connection.clone())),
+                        model: m.id,
+                    },
                 };
                 let seat = self.seat();
                 self.changed[seat] = true;
@@ -789,7 +781,9 @@ impl Panel for Models {
                     // model just set: reading the seat now would find the
                     // one before, as the set hasn't been applied yet.
                     let (model, connection) = match &set {
-                        Action::SetModel(id) => (id.clone(), Some(view.connection.clone())),
+                        Action::SetModel { model, connection } => {
+                            (model.clone(), connection.clone())
+                        }
                         Action::SetHatModel {
                             model, connection, ..
                         } => (model.clone(), Some(connection.clone())),
@@ -798,10 +792,8 @@ impl Panel for Models {
                     self.highlight(view, &model, connection.as_deref());
                     return Outcome::Act(set);
                 }
-                match self.choose_seat(view, seat + 1) {
-                    Some(list) => Outcome::Act(Action::Many(vec![set, list])),
-                    None => Outcome::Act(set),
-                }
+                self.choose_seat(view, seat + 1);
+                Outcome::Act(set)
             }
             _ => {
                 self.filter_key(key, view);
@@ -953,6 +945,45 @@ mod tests {
         assert_eq!(v.hat_model(), "qwen/qwen3.7-max");
     }
 
+    /// The All hats seat lists every keyed connection's models, as a hat's
+    /// seat does, and enter carries the row's connection: a model from
+    /// another connection moves the session there. It used to list the
+    /// session's connection alone, so with two keys the other's models
+    /// were under every hat but not under All hats.
+    #[test]
+    fn all_hats_lists_every_connection_and_enter_carries_the_rows_connection() {
+        let mut v = hats_view();
+        let mut p = Models::new(&mut v, None);
+        p.set_models(&v, &catalog());
+        key(&mut p, &mut v, KeyCode::Right);
+        let t = text(&p, &v);
+        assert!(
+            t.contains("grok-4.6 ") && t.contains("spacexsi") && t.contains("grok-4.7"),
+            "both connections:\n{t}"
+        );
+        assert!(!t.contains("default"), "{t}");
+        for c in "grok-4.6".chars() {
+            key(&mut p, &mut v, KeyCode::Char(c));
+        }
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetModel { model, connection })
+                if model == "grok-4.6" && connection.as_deref() == Some("spacexsi")
+        ));
+        // The session is on openrouter; a model of its own carries it too.
+        let mut p = Models::new(&mut v, None);
+        p.set_models(&v, &catalog());
+        key(&mut p, &mut v, KeyCode::Right);
+        for c in "qwen".chars() {
+            key(&mut p, &mut v, KeyCode::Char(c));
+        }
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetModel { model, connection })
+                if model == "qwen/qwen3.7-max" && connection.as_deref() == Some("openrouter")
+        ));
+    }
+
     /// Every seat is set in one visit: the seats beside the list, and
     /// enter sets the seat's model and goes back to the seats, on the next
     /// one. It used to close after every seat, so four seats took four
@@ -975,20 +1006,17 @@ mod tests {
         assert_eq!(p.title(&v), "models");
 
         // All hats: → to its models, enter sets it, and the cursor is back
-        // on the seats, on the architect, whose list (every connection's)
-        // is asked for in the same breath.
+        // on the seats, on the architect.
         assert!(matches!(key(&mut p, &mut v, KeyCode::Right), Outcome::Stay));
         assert_eq!(p.focus, Focus::Models);
         // On this seat the choice is every hat's, and the keys say so.
         assert!(p.legend(&v).contains("enter set for all hats"));
         v.composer.set_text("grok-4.7");
-        match key(&mut p, &mut v, KeyCode::Enter) {
-            Outcome::Act(Action::Many(acts)) => {
-                assert!(matches!(&acts[0], Action::SetModel(m) if m == "x-ai/grok-4.7"));
-                assert!(matches!(&acts[1], Action::ListAllModels { role } if role == "plan"));
-            }
-            _ => panic!("set the first seat and list the plan hat's models"),
-        }
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetModel { model, connection })
+                if model == "x-ai/grok-4.7" && connection.as_deref() == Some("openrouter")
+        ));
         assert_eq!((p.focus, p.seat()), (Focus::Seats, 1));
         assert!(v.composer.is_empty(), "the filter is cleared");
         p.set_models(&v, &catalog());
@@ -1061,13 +1089,10 @@ mod tests {
         p.set_models(&v, &catalog());
         assert!(matches!(key(&mut p, &mut v, KeyCode::Up), Outcome::Stay));
         assert_eq!(p.seat(), 0);
-        // The first seat's list is its own connection's, with no `default`.
+        // The first seat's list is every connection's, with no `default`.
         let t = text(&p, &v);
-        assert!(!t.contains("grok-4.6 ") && !t.contains("default"), "{t}");
-        assert!(matches!(
-            key(&mut p, &mut v, KeyCode::Down),
-            Outcome::Act(Action::ListAllModels { role }) if role == "plan"
-        ));
+        assert!(t.contains("grok-4.6 ") && !t.contains("default"), "{t}");
+        assert!(matches!(key(&mut p, &mut v, KeyCode::Down), Outcome::Stay));
         key(&mut p, &mut v, KeyCode::Down);
         key(&mut p, &mut v, KeyCode::Down);
         assert_eq!(p.seat(), 3);

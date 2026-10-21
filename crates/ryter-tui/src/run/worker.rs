@@ -695,6 +695,10 @@ pub fn run(init: WorkerInit) {
                             ryter_core::llm::model_cache::age(oldest)
                         )),
                     });
+                } else if targets.is_empty() {
+                    // No connection with a key: the panel keeps its
+                    // built-in rows and stops saying "loading".
+                    let _ = ev_tx.send(AgentEvent::ModelsListed { models: vec![] });
                 }
                 if !targets.is_empty() {
                     fetch_models(targets, true, fetch_tx.clone());

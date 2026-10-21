@@ -111,8 +111,14 @@ pub enum Action {
     },
     /// Remove a user connection.
     RemoveConnection(String),
-    /// Switch model id on the current connection.
-    SetModel(String),
+    /// The model every hat runs on: on `connection` when given (the
+    /// session switches to it), else on the current one.
+    SetModel {
+        /// The connection the model is on, or the current one.
+        connection: Option<String>,
+        /// The model id.
+        model: String,
+    },
     /// Tool permission mode: ask, always, or yolo.
     SetTools {
         /// The mode.
@@ -129,11 +135,6 @@ pub enum Action {
     },
     /// Put a hat back to following the model every hat uses.
     ResetHatModel(String),
-    /// List every connection's models, for a hat's seat.
-    ListAllModels {
-        /// Role.
-        role: String,
-    },
     /// Stop the in-flight turn.
     Cancel,
     /// Open a popout.
