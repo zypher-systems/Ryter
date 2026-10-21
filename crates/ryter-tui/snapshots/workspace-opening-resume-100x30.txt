@@ -1,0 +1,30 @@
+
+ ●●● RYTER
+
+  New session                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+  0.2.0-patch                                                           ┊
+                                                                        ┊ HATS
+                                                                        ┊ ● Plan   grok-4.6     $0
+                                                                        ┊ ┃ Build               $0
+                                                                        ┊   grok-4.6
+    What are we building?                                               ┊   asks first
+                                                                        ┊ ● Audit  grok-4.6     $0
+    Describe a change, ask a question, or pick up where you             ┊ ● Scribe follows al…  $0
+    left off.                                                           ┊
+                                                                        ┊
+    / commands    /sessions resume one                                  ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                        ┊ Context
+                                                                        ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                                                                        ┊ 12k of 256k           5%
+                                                                        ┊
+                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                        ┊ Spend · no cap
+                                                                        ┊ $0
+                                                                        ┊ Build  ╌╌╌╌╌╌╌╌       $0
+                                                                        ┊
+                                                                        ┊
+  ╭──────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › what should change?                                     │  ┊
+  ╰──────────────────────────────────────────────────────────────────╯  ┊
+                                                                        ┊
+ tab hat  ⇧tab mode  / commands  f2 instruments

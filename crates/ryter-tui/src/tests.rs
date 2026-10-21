@@ -1035,10 +1035,7 @@ fn snapshot_workspace_be() {
     let text = render_to_string(&workspace_be(), 160, 50);
     // The brand's row: the band has a row above it on a tall screen.
     let top = text.lines().find(|l| l.contains("RYTER")).unwrap();
-    assert!(
-        top.contains("●●● RYTER") && top.contains("Conversation"),
-        "{top}"
-    );
+    assert_eq!(top.trim(), "●●● RYTER", "the bar is the brand alone: {top}");
     assert!(!top.contains('☀') && !top.contains('☾'), "{top}");
     assert!(!top.contains(" dusty"), "{top}");
     assert!(
@@ -1333,23 +1330,150 @@ fn snapshot_conversation() {
     all_sizes("conversation", &conversation());
 }
 
-/// The Hats and Sessions views, and a session with nothing in it yet,
-/// at each size: the narrow tiers fold the panes and compact the cards.
+/// The count behind the welcome's `/sessions` hint follows the disk: it
+/// is read again when the open session changes and after a delete, the
+/// open session is never counted, and a session with nothing in it is
+/// nothing to go back to.
 #[test]
-fn snapshot_workspace_views() {
-    let mut v = racked();
-    v.page = crate::view::Page::Hats;
-    all_sizes("workspace-hats", &v);
-    v.page = crate::view::Page::Sessions;
-    all_sizes("workspace-sessions", &v);
+fn the_sessions_count_follows_new_and_delete() {
+    use ryter_core::Session;
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let create = || Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+    let mut v = idle();
+    v.messages.clear();
+    v.ryter_home = Some(home.path().to_path_buf());
+    v.workspace = Some(cwd.path().to_path_buf());
+    let mut a = create();
+    a.push_message(ryter_core::Message {
+        role: "user".into(),
+        content: "hi".into(),
+        tool_call_id: None,
+        tool_calls: None,
+        messages_blocks: None,
+    })
+    .unwrap();
+    v.session_id = a.meta.id.to_string();
+    v.refresh_sessions_count();
+    assert_eq!(
+        v.sessions_count, 0,
+        "the open session is not one to go back to"
+    );
+    assert!(!render_to_string(&v, 120, 40).contains("/sessions"));
+    // `/new`: the worker says which session is open now, and the one
+    // just left is on disk with a message in it.
+    let b = create();
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::Session {
+            id: b.meta.id.to_string(),
+            title: String::new(),
+        },
+    );
+    assert_eq!(v.sessions_count, 1, "the session just left counts");
+    let text = render_to_string(&v, 120, 40);
+    assert!(text.contains("/sessions"), "{text}");
+    // `/new` again from the empty one: nothing more to go back to.
+    let c = create();
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::Session {
+            id: c.meta.id.to_string(),
+            title: String::new(),
+        },
+    );
+    assert_eq!(v.sessions_count, 1, "an empty session is not counted");
+    // The one with a message deleted: the hint goes.
+    let dir = a.dir.clone();
+    drop(a);
+    Session::remove(&dir).unwrap();
+    v.refresh_sessions_count();
+    assert_eq!(v.sessions_count, 0);
+    assert!(!render_to_string(&v, 120, 40).contains("/sessions"));
+}
+
+/// The startup path itself: a project with a session on disk opens with
+/// the hint, and one without opens without it. `populate_view` is given
+/// the home and the project the way `run` gives them, and sets the view's
+/// own copies before it counts; nothing is set by hand here.
+#[test]
+fn the_startup_reads_the_sessions_count_from_the_disk() {
+    use ryter_core::Session;
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let cfg = ryter_core::Config::default();
+    let opts = crate::TuiOpts {
+        always_approve: false,
+        yolo: false,
+        rounds: None,
+        connection: None,
+        model: None,
+        sandbox: None,
+        session: None,
+        hat: None,
+    };
+    let create = || Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+    // First start: nothing on disk but the session just created.
+    let first = create();
+    let mut v = idle();
+    v.messages.clear();
+    crate::run_populate_view(
+        &mut v,
+        &cfg,
+        home.path(),
+        cwd.path(),
+        true,
+        &first,
+        true,
+        &opts,
+    );
+    assert_eq!(v.sessions_count, 0, "a fresh project");
+    assert!(!render_to_string(&v, 120, 40).contains("/sessions"));
+    // A turn, then the binary is started again in the same project.
+    let mut first = first;
+    first
+        .push_message(ryter_core::Message {
+            role: "user".into(),
+            content: "hi".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            messages_blocks: None,
+        })
+        .unwrap();
+    drop(first);
+    let second = create();
+    let mut v = idle();
+    v.messages.clear();
+    crate::run_populate_view(
+        &mut v,
+        &cfg,
+        home.path(),
+        cwd.path(),
+        true,
+        &second,
+        true,
+        &opts,
+    );
+    assert_eq!(v.sessions_count, 1, "the earlier session is on disk");
+    assert_eq!(v.workspace.as_deref(), Some(cwd.path()));
+    assert_eq!(v.ryter_home.as_deref(), Some(home.path()));
+    let text = render_to_string(&v, 120, 40);
+    assert!(text.contains("/sessions"), "{text}");
+}
+
+/// A session with nothing in it yet, at each size, with and without an
+/// earlier session to go back to.
+#[test]
+fn snapshot_workspace_opening() {
     let mut v = idle();
     v.messages.clear();
     all_sizes("workspace-opening", &v);
+    v.sessions_count = 2;
+    all_sizes("workspace-opening-resume", &v);
 }
 
-/// Every size leaves the conversation at least 70 columns, the three view
-/// tabs to click, all four hats on the Hats view, and a queued message
-/// said on the prompt's edge, in every colour mode.
+/// Every size leaves the conversation at least 70 columns, and a queued
+/// message said on the prompt's edge, in every colour mode.
 #[test]
 fn workspace_keeps_the_conversation_and_every_hat_accessible() {
     for (width, height) in SIZES {
@@ -1363,23 +1487,6 @@ fn workspace_keeps_the_conversation_and_every_hat_accessible() {
             let mut v = racked();
             let hit = crate::draw::render_hit(&v, width, height);
             assert!(hit.chat.width >= 70, "{width}x{height}: {:?}", hit.chat);
-            for page in [1, 2, 3] {
-                assert!(
-                    hit.clicks
-                        .iter()
-                        .any(|(c, _)| *c == crate::select::WorkspaceClick::Page(page)),
-                    "{width}x{height}: no tab {page}"
-                );
-            }
-            v.page = crate::view::Page::Hats;
-            let text = render_with_theme(&v, width, height, theme);
-            for hat in ["Plan", "Build", "Audit", "Scribe"] {
-                assert!(
-                    text.contains(&format!("─ {hat} ")),
-                    "{width}x{height}: {hat}\n{text}"
-                );
-            }
-            v.page = crate::view::Page::Conversation;
             v.queued_prompt = Some("next task".into());
             let text = render_with_theme(&v, width, height, theme);
             assert!(text.contains("queued"), "{width}x{height}\n{text}");
@@ -4015,11 +4122,6 @@ fn html_gallery() {
     shots.push(("session-80x24".into(), racked(), 80, 24));
     shots.push(("workspace-be-160x50".into(), workspace_be(), 160, 50));
     for (w, h) in SIZES {
-        let mut v = racked();
-        v.page = crate::view::Page::Hats;
-        shots.push((format!("workspace-hats-{w}x{h}"), v.clone(), w, h));
-        v.page = crate::view::Page::Sessions;
-        shots.push((format!("workspace-sessions-{w}x{h}"), v, w, h));
         let mut v = idle();
         v.messages.clear();
         shots.push((format!("workspace-opening-{w}x{h}"), v, w, h));

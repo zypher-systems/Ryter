@@ -201,7 +201,7 @@ pub struct UiConfig {
     /// Unicode. A terminal does not report its font. `RYTER_NERD_FONT=1`
     /// turns this on when the key is absent.
     pub nerd_font: bool,
-    /// The ends of the hat chip and the view tab: `round` draws the
+    /// The ends of the hat chip: `round` draws the
     /// Powerline half-circles, `square` draws none, `auto` draws them
     /// where the terminal is one that has the glyphs itself (kitty,
     /// WezTerm, Ghostty, iTerm2, Windows Terminal) or `nerd_font` is on.

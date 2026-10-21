@@ -1,13 +1,12 @@
-//! The workspace screen: a hat rack, three views, and the instruments.
+//! The workspace screen: the conversation and one rail.
 //!
-//! This is the default layout (`[ui] layout = "workspace"`). RYTER sits on
-//! the top bar, with Conversation, Hats, and Sessions beside it. The rack
-//! is the sidebar. The conversation, the hats, or the sessions fill the
-//! middle, and activity, context, spend (session + project glance), files,
-//! and the plan sit on the right. It is the one screen: the ledger and
-//! classic layouts went on 2026-10-19 (`DECISIONS.md`).
+//! RYTER sits on the top bar. The conversation fills the left, and the
+//! rail at the right carries the hats, the context, the spend (session +
+//! project glance), the files and the plan. It is the one screen: the
+//! ledger and classic layouts went on 2026-10-19, and the Hats and
+//! Sessions views with their tabs on 2026-10-21 (`DECISIONS.md`).
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -21,7 +20,7 @@ use crate::glyphs::{self, Mark};
 use crate::select::WorkspaceClick;
 use crate::sidebar::{self, HATS};
 use crate::theme::Theme;
-use crate::view::{Focus, Page, SavedSession, View};
+use crate::view::View;
 use crate::{composer, draw, palette, panel, ring};
 
 /// Paint one frame of the workspace.
@@ -49,9 +48,7 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
             height: 1,
             ..top
         },
-        view,
         theme,
-        &mut clicks,
     );
     let (side_w, insp_w) = columns(full.width, view.panel_visible);
     let side = Rect {
@@ -99,11 +96,6 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
     let cursor = panel::draw(frame, full, panel::Ground::over(ground, slot), view, theme);
     if cursor.is_some() {
         composer::draw::paint_cursor(frame, cursor, theme);
-    } else if view.page == Page::Conversation
-        && (view.panels.is_empty() || view.panels.wants_input(view).is_some())
-    {
-        // The composer paints its own cursor inside `draw_stage` only when
-        // no panel claimed it. Re-read it from the composer rect.
     }
     draw::Hit {
         chat,
@@ -118,199 +110,24 @@ pub fn draw(frame: &mut Frame, view: &View, theme: Theme) -> draw::Hit {
     }
 }
 
-/// `F2`, `F6`, `F7`, and `Alt+1`–`Alt+3`. `None` when the key is not one of
-/// those, or this is not the workspace. A palette swallows them.
+/// `F2`, which hides and shows the rail. `None` when the key is not that,
+/// or this is not the workspace. A palette swallows it.
 pub fn chrome_key(view: &mut View, key: KeyEvent) -> Option<Action> {
-    if false {
-        return None;
-    }
-    let alt =
-        key.modifiers.contains(KeyModifiers::ALT) && !key.modifiers.contains(KeyModifiers::CONTROL);
-    let plain = key.modifiers.is_empty();
-    let chrome = match key.code {
-        KeyCode::F(2 | 6 | 7) if plain => true,
-        KeyCode::Char('1' | '2' | '3') if alt => true,
-        _ => false,
-    };
-    if !chrome {
+    if key.code != KeyCode::F(2) || !key.modifiers.is_empty() {
         return None;
     }
     if view.palette.is_some() {
         return Some(Action::None);
     }
-    match key.code {
-        KeyCode::F(2) => {
-            view.panel_visible = !view.panel_visible;
-            if !view.panel_visible && matches!(view.focus, Focus::Inspector | Focus::Sidebar) {
-                view.focus = Focus::Stage;
-            }
-        }
-        KeyCode::F(6) => move_focus(view, -1),
-        KeyCode::F(7) => move_focus(view, 1),
-        KeyCode::Char(c @ '1'..='3') => {
-            view.page = match c {
-                '1' => Page::Conversation,
-                '2' => Page::Hats,
-                _ => Page::Sessions,
-            };
-            view.focus = Focus::Stage;
-            if view.page == Page::Sessions {
-                reload_sessions(view);
-            }
-        }
-        _ => {}
-    }
+    view.panel_visible = !view.panel_visible;
     Some(Action::None)
 }
 
-/// Arrows and Enter while the sidebar, the hats page, or the sessions list
-/// has focus. `None` when the composer should keep the key.
-pub fn nav_key(view: &mut View, key: KeyEvent) -> Option<Action> {
-    if view.palette.is_some() {
-        return None;
-    }
-    if !key.modifiers.is_empty() {
-        return None;
-    }
-    let dir = match key.code {
-        KeyCode::Up => -1,
-        KeyCode::Down => 1,
-        KeyCode::Enter => 0,
-        _ => return None,
-    };
-    match view.focus {
-        Focus::Sidebar => Some(sidebar_key(view, dir)),
-        Focus::Stage if view.page == Page::Hats && dir != 0 => {
-            view.seat = step_hat(view.seat, dir);
-            Some(Action::None)
-        }
-        Focus::Stage if view.page == Page::Sessions => Some(sessions_key(view, dir)),
-        _ => None,
-    }
-}
-
-/// A click on the rack, a view tab, or the theme button.
-pub fn click(view: &mut View, kind: WorkspaceClick) -> Action {
+/// A click on a hat row of the rail: the hat goes on in place.
+pub fn click(kind: WorkspaceClick) -> Action {
     match kind {
-        WorkspaceClick::Page(n) => {
-            view.page = match n {
-                2 => Page::Hats,
-                3 => Page::Sessions,
-                _ => Page::Conversation,
-            };
-            view.focus = Focus::Stage;
-            if view.page == Page::Sessions {
-                reload_sessions(view);
-            }
-            Action::None
-        }
-        WorkspaceClick::Wear(role) => {
-            // As Enter on the rail: the hat goes on in place.
-            view.focus = Focus::Stage;
-            Action::SetMode(role)
-        }
+        WorkspaceClick::Wear(role) => Action::SetMode(role),
     }
-}
-
-/// Read this project's saved sessions into the view.
-pub fn reload_sessions(view: &mut View) {
-    let (Some(home), Some(cwd)) = (view.ryter_home.clone(), view.workspace.clone()) else {
-        return;
-    };
-    let Ok(list) = ryter_core::Session::list(&home, &cwd) else {
-        return;
-    };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    view.sessions = list
-        .into_iter()
-        .map(|s| SavedSession {
-            id: s.meta.id.to_string(),
-            title: if s.meta.title.trim().is_empty() {
-                s.preview.clone()
-            } else {
-                s.meta.title.clone()
-            },
-            sub: s.short_id(),
-            hat: s
-                .meta
-                .mode
-                .map(|m| m.hat().as_str().to_string())
-                .unwrap_or_else(|| "build".into()),
-            messages: s.messages,
-            spend: session_spend(s.meta.spend_usd_total, s.messages),
-            updated: panel::sessions::relative(now, s.updated_millis()),
-        })
-        .collect();
-    if !view.session_id.is_empty() && view.sessions.iter().all(|s| s.id != view.session_id) {
-        view.sessions.insert(0, current_saved(view));
-    }
-    view.sessions_count = view
-        .sessions
-        .iter()
-        .filter(|s| s.id != view.session_id)
-        .count();
-    if view.session_at >= view.sessions.len() {
-        view.session_at = 0;
-    }
-}
-
-fn sidebar_key(view: &mut View, dir: i32) -> Action {
-    let n = HATS.len();
-    if dir == 0 {
-        // Enter puts the hat on and gives the conversation the focus
-        // back; the Hats page is a view of its own, on `Alt+2`.
-        let hat = HATS[view.side_at.min(n - 1)];
-        view.focus = Focus::Stage;
-        return Action::SetMode(hat);
-    }
-    let at = view.side_at as i32 + dir;
-    view.side_at = at.rem_euclid(n as i32) as usize;
-    Action::None
-}
-
-fn sessions_key(view: &mut View, dir: i32) -> Action {
-    let rows = shown_sessions(view);
-    if rows.is_empty() {
-        return Action::None;
-    }
-    if dir == 0 {
-        let row = &rows[view.session_at.min(rows.len() - 1)];
-        if row.id.is_empty() || row.id == view.session_id {
-            return Action::None;
-        }
-        return Action::Resume(row.id.clone());
-    }
-    let at = view.session_at as i32 + dir;
-    view.session_at = at.rem_euclid(rows.len() as i32) as usize;
-    Action::None
-}
-
-fn move_focus(view: &mut View, dir: i32) {
-    let (w, _) = view.screen.get();
-    let (_, rail) = columns(w, view.panel_visible);
-    // Two panes: the conversation and the rail, whose cursor walks the hats.
-    let mut panes = vec![Focus::Stage];
-    if rail > 0 {
-        panes.push(Focus::Sidebar);
-    }
-    let i = panes.iter().position(|p| *p == view.focus).unwrap_or(0);
-    let n = panes.len() as i32;
-    view.focus = panes[(i as i32 + dir).rem_euclid(n) as usize];
-    if view.focus == Focus::Sidebar {
-        view.side_at = hat_index(view.mode);
-    }
-}
-
-fn step_hat(seat: Role, dir: i32) -> Role {
-    let i = hat_index(seat) as i32;
-    HATS[(i + dir).rem_euclid(HATS.len() as i32) as usize]
-}
-
-fn hat_index(role: Role) -> usize {
-    HATS.iter().position(|h| *h == role.hat()).unwrap_or(0)
 }
 
 pub(crate) fn columns(width: u16, instruments: bool) -> (u16, u16) {
@@ -324,21 +141,15 @@ pub(crate) fn columns(width: u16, instruments: bool) -> (u16, u16) {
     (0, width.saturating_sub(88).clamp(28, 44))
 }
 
-fn draw_top(
-    frame: &mut Frame,
-    area: Rect,
-    view: &View,
-    theme: Theme,
-    clicks: &mut Vec<(WorkspaceClick, Rect)>,
-) {
+fn draw_top(frame: &mut Frame, area: Rect, theme: Theme) {
     let bg = side_bg(theme);
     fill(frame, area, bg);
     if area.height == 0 {
         return;
     }
-    // Brand mark: three hat-color dots + bold RYTER. Quiet chrome still drops
-    // the top-right avatar/theme cluster and the hairline under the bar.
-    let mark_w = 1 + 3 + 1 + 5 + 2;
+    // Brand mark: three hat-color dots + bold RYTER, and nothing else.
+    // Quiet chrome drops the top-right avatar/theme cluster and the
+    // hairline under the bar; the view tabs went with the views.
     put(
         frame,
         area,
@@ -351,99 +162,6 @@ fn draw_top(
             Span::styled(" RYTER", sty(theme.fg, bg).add_modifier(Modifier::BOLD)),
         ]),
     );
-    draw_top_controls(frame, area, view, theme, clicks, mark_w);
-}
-
-/// View tabs on the baseline of the top bar. The brand occupies the first
-/// `skip` columns. Theme switching stays on `/theme` — no top-right cluster.
-fn draw_top_controls(
-    frame: &mut Frame,
-    area: Rect,
-    view: &View,
-    theme: Theme,
-    clicks: &mut Vec<(WorkspaceClick, Rect)>,
-    skip: u16,
-) {
-    let tabs = Rect {
-        x: area.x + skip.min(area.width),
-        width: area.width.saturating_sub(skip),
-        ..area
-    };
-    draw_tabs(frame, tabs, view, theme, clicks);
-}
-
-fn draw_tabs(
-    frame: &mut Frame,
-    area: Rect,
-    view: &View,
-    theme: Theme,
-    clicks: &mut Vec<(WorkspaceClick, Rect)>,
-) {
-    if area.width < 8 {
-        return;
-    }
-    let bg = side_bg(theme);
-    let pages = [
-        (Page::Conversation, "Conversation", "1", 1u8),
-        (Page::Hats, "Hats", "2", 2),
-        (Page::Sessions, "Sessions", "3", 3),
-    ];
-    let compact = area.width < 52;
-    let mut x = area.x;
-    let end = area.x + area.width;
-    for (page, name, key, n) in pages {
-        let mut label = if compact && page == Page::Conversation {
-            "Chat"
-        } else {
-            name
-        }
-        .to_string();
-        if !compact && page == Page::Sessions && view.sessions_count > 0 {
-            label.push(' ');
-            label.push_str(&view.sessions_count.to_string());
-        }
-        let active = view.page == page;
-        let (fg, fill) = if active {
-            (theme.fg, theme.selection_bg)
-        } else {
-            (theme.dim, bg)
-        };
-        let name_spans = if active {
-            glyphs::pill(&label, fg, fill, bg, view.round_caps())
-        } else {
-            vec![Span::styled(format!(" {label} "), sty(fg, fill))]
-        };
-        let key_span = Span::styled(key, sty(theme.dim, bg));
-        let name_w: u16 = name_spans
-            .iter()
-            .map(|s| wrap::width(&s.content) as u16)
-            .sum();
-        let key_w = wrap::width(&key_span.content) as u16;
-        let need = name_w + 1 + key_w + 1;
-        if x + need > end {
-            break;
-        }
-        let mut spans = name_spans;
-        spans.push(Span::styled(" ", sty(theme.dim, bg)));
-        spans.push(key_span);
-        frame.render_widget(
-            Paragraph::new(Line::from(spans)),
-            Rect {
-                x,
-                width: name_w + 1 + key_w,
-                ..area
-            },
-        );
-        clicks.push((
-            WorkspaceClick::Page(n),
-            Rect {
-                x,
-                width: name_w + 1 + key_w,
-                ..area
-            },
-        ));
-        x += need;
-    }
 }
 
 /// The rail's first block: the project and its branch, then the hats,
@@ -526,13 +244,11 @@ fn draw_hats_block(
 }
 
 /// A hat that is not on: its pip, its name, its model and its cost on one
-/// row. The cursor takes the pad column, as on the worn hat's rows.
+/// row, after the pad column the worn hat's rows keep too.
 fn draw_hat_compact(frame: &mut Frame, area: Rect, y: u16, hat: Role, view: &View, theme: Theme) {
     let bg = side_bg(theme);
     let w = usize::from(area.width);
     let color = theme.mode(hat);
-    let cursor = view.focus == Focus::Sidebar && view.side_at == hat_index(hat);
-    let mark = if cursor { "▸" } else { " " };
     let name = glyphs::hat_label(hat);
     let spend = sidebar::hat_spend(view, hat);
     let model = crate::chat::short_model(view.model_of(hat));
@@ -542,15 +258,12 @@ fn draw_hat_compact(frame: &mut Frame, area: Rect, y: u16, hat: Role, view: &Vie
     } else {
         model.to_string()
     };
-    let pip = format!("{mark}{} ", glyphs::hat_icon(hat, view.ui.nerd_font));
+    let pip = format!(" {} ", glyphs::hat_icon(hat, view.ui.nerd_font));
     let label = format!("{name:<7}");
     let room = w.saturating_sub(wrap::width(&pip) + wrap::width(&label) + wrap::width(&spend) + 2);
     let left = vec![
         Span::styled(pip, sty(color, bg)),
-        Span::styled(
-            label,
-            sty(if cursor { color } else { theme.fg }, bg).add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(label, sty(theme.fg, bg).add_modifier(Modifier::BOLD)),
         Span::styled(wrap::truncate(&model, room), sty(theme.dim, bg)),
     ];
     put(
@@ -577,7 +290,6 @@ fn draw_hat(
     let color = theme.mode(hat);
     let w = usize::from(area.width);
     let wearing = hat == view.mode;
-    let cursor = view.focus == Focus::Sidebar && view.side_at == hat_index(hat);
     let row = Rect {
         y: area.y + y,
         height: if tall { 3 } else { 1 },
@@ -593,13 +305,11 @@ fn draw_hat(
         glyphs::hat_icon(hat, view.ui.nerd_font)
     };
     let name = glyphs::hat_label(hat);
-    // The cursor occupies the pad column, so a focused row does not shift.
-    let mark = if cursor { "▸" } else { " " };
     let mut name_spans = vec![
-        Span::styled(format!("{mark}{pip} "), sty(color, bg)),
+        Span::styled(format!(" {pip} "), sty(color, bg)),
         Span::styled(
             name,
-            sty(if wearing || cursor { color } else { theme.fg }, bg).add_modifier(Modifier::BOLD),
+            sty(if wearing { color } else { theme.fg }, bg).add_modifier(Modifier::BOLD),
         ),
     ];
     if hat == Role::Audit
@@ -742,17 +452,7 @@ fn draw_stage(
     theme: Theme,
 ) -> (Rect, Rect, Option<Rect>, Rect) {
     fill(frame, area, theme.bg);
-    match view.page {
-        Page::Hats => {
-            draw_hats_page(frame, area, view, theme);
-            (area, Rect::default(), None, Rect::default())
-        }
-        Page::Sessions => {
-            draw_sessions_page(frame, area, view, theme);
-            (area, Rect::default(), None, Rect::default())
-        }
-        Page::Conversation => draw_conversation(frame, area, view, theme),
-    }
+    draw_conversation(frame, area, view, theme)
 }
 
 fn draw_conversation(
@@ -907,327 +607,19 @@ fn draw_welcome(frame: &mut Frame, area: Rect, taken: usize, view: &View, theme:
         y += 1;
     }
     if y + 2 < inner.height {
-        put(
-            frame,
-            inner,
-            y + 1,
-            Line::from(vec![
-                Span::styled(
-                    "/ ",
-                    sty(theme.mode(view.mode), theme.bg).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("commands    ", sty(theme.dim, theme.bg)),
-                Span::styled("Alt+3 ", sty(theme.fg, theme.bg)),
-                Span::styled("resume a session", sty(theme.dim, theme.bg)),
-            ]),
-        );
-    }
-}
-
-fn draw_hats_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
-    let w = usize::from(area.width);
-    let mut y = 0u16;
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(
-            " Hats",
-            sty(theme.fg, theme.bg).add_modifier(Modifier::BOLD),
-        )),
-    );
-    y += 1;
-    let compact = area.height < 30;
-    let lede = if compact {
-        "Tab cycles hats. Shift+Tab switches mode."
-    } else {
-        "One conversation, four seats. Tab cycles hats. Shift+Tab switches mode."
-    };
-    for row in wrap::wrap_plain(lede, w.saturating_sub(2)) {
-        if y >= area.height {
-            return;
-        }
-        put(
-            frame,
-            area,
-            y,
-            Line::from(Span::styled(format!(" {row}"), sty(theme.dim, theme.bg))),
-        );
-        y += 1;
-    }
-    y += 1;
-    if !compact && y < area.height {
-        let model = crate::chat::short_model(&view.model);
-        put(
-            frame,
-            area,
-            y,
-            Line::from(vec![
-                Span::styled(" All hats  ", sty(theme.dim, theme.bg)),
-                Span::styled(
-                    model.to_string(),
-                    sty(theme.fg, theme.bg).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("  ·  default", sty(theme.dim, theme.bg)),
-            ]),
-        );
-        y += 2;
-    }
-    let groups: [(&str, &[Role]); 2] = [
-        ("", &[Role::Plan, Role::Build]),
-        ("Specialists", &[Role::Audit, Role::Scribe]),
-    ];
-    for (label, hats) in groups {
-        if y >= area.height {
-            return;
-        }
-        if !label.is_empty() {
-            put(
-                frame,
-                area,
-                y,
-                Line::from(Span::styled(
-                    format!(" {label}"),
-                    sty(theme.faint, theme.bg),
-                )),
-            );
-            y += 1;
-        }
-        for hat in hats {
-            if y + if compact { 3 } else { 4 } > area.height {
-                // No room for the card: the hat on one line, so a short
-                // screen never hides a hat.
-                if y < area.height {
-                    put(frame, area, y, seat_line(*hat, view, theme, w));
-                    y += 1;
-                }
-                continue;
-            }
-            y = draw_seat(frame, area, y, *hat, view, theme, compact);
-        }
-        y += 1;
-    }
-}
-
-/// A seat as one line: its name, its model and its standing.
-fn seat_line(hat: Role, view: &View, theme: Theme, w: usize) -> Line<'static> {
-    let color = theme.mode(hat);
-    let wearing = hat == view.mode;
-    let mut title: Vec<char> = hat.hat().as_str().chars().collect();
-    if let Some(c) = title.first_mut() {
-        *c = c.to_ascii_uppercase();
-    }
-    let title: String = title.into_iter().collect();
-    let name = format!(" {} {title}", if wearing { "┃" } else { " " });
-    let rest = format!(
-        "  {}  ·  {}",
-        crate::chat::short_model(view.model_of(hat)),
-        crate::sidebar::hat_may(hat)
-    );
-    Line::from(vec![
-        Span::styled(name, sty(color, theme.bg).add_modifier(Modifier::BOLD)),
-        Span::styled(
-            wrap::truncate(&rest, w.saturating_sub(14)),
-            sty(theme.dim, theme.bg),
-        ),
-    ])
-}
-
-fn draw_seat(
-    frame: &mut Frame,
-    area: Rect,
-    y: u16,
-    hat: Role,
-    view: &View,
-    theme: Theme,
-    compact: bool,
-) -> u16 {
-    let inset = Rect {
-        x: area.x + 1,
-        y: area.y + y,
-        width: area.width.saturating_sub(2),
-        height: if compact { 3 } else { 4 },
-    };
-    if inset.width < 8 {
-        return y + 5;
-    }
-    let color = theme.mode(hat);
-    let wearing = hat == view.mode;
-    let on = view.seat == hat || wearing;
-    let bg = if on {
-        on_bg(theme, theme.composer_bg)
-    } else {
-        theme.composer_bg
-    };
-    let border = if wearing { color } else { theme.rule };
-    let edge = Style::default().fg(border).bg(bg);
-    frame.render_widget(Block::default().style(Style::default().bg(bg)), inset);
-    let w = usize::from(inset.width);
-    let name = glyphs::hat_label(hat);
-    let name_text = format!(" {name} ");
-    let tag = if wearing { "wearing " } else { "" };
-    let fill = w.saturating_sub(3 + wrap::width(&name_text) + wrap::width(tag));
-    put(
-        frame,
-        inset,
-        0,
-        Line::from(vec![
-            Span::styled("╭", edge),
-            Span::styled("─", edge),
-            Span::styled(name_text, sty(color, bg).add_modifier(Modifier::BOLD)),
-            Span::styled(tag.to_string(), sty(color, bg)),
-            Span::styled("─".repeat(fill), edge),
-            Span::styled("╮", edge),
-        ]),
-    );
-    {
-        let buf = frame.buffer_mut();
-        for row in 1..inset.height - 1 {
-            let yy = inset.y + row;
-            for x in [inset.x, inset.x + inset.width - 1] {
-                if x < buf.area.width && yy < buf.area.height {
-                    let c = &mut buf[(x, yy)];
-                    c.set_symbol("│");
-                    c.set_style(edge);
-                }
-            }
-        }
-    }
-    let inner_w = w.saturating_sub(4);
-    let model = crate::chat::short_model(view.model_of(hat));
-    let description = if compact {
-        format!("{model} · {}", sidebar::hat_may(hat))
-    } else {
-        hat.describe().to_string()
-    };
-    put(
-        frame,
-        inset,
-        1,
-        Line::from(vec![
-            Span::styled("│ ", edge),
-            Span::styled(wrap::truncate(&description, inner_w), sty(theme.fg, bg)),
-        ]),
-    );
-    let own = view.hats.get(hat.as_str()).is_some_and(|m| m.is_override());
-    let follows = if own { "own model" } else { "follows all hats" };
-    let meta = format!(
-        "{model}  ·  {follows}   {} · {}  {}",
-        view.rack.of(hat).turns,
-        sidebar::hat_spend(view, hat),
-        sidebar::hat_may(hat)
-    );
-    if !compact {
-        put(
-            frame,
-            inset,
-            2,
-            Line::from(vec![
-                Span::styled("│ ", edge),
-                Span::styled(wrap::truncate(&meta, inner_w), sty(theme.dim, bg)),
-            ]),
-        );
-    }
-    put(
-        frame,
-        inset,
-        inset.height - 1,
-        Line::from(vec![
-            Span::styled("╰", edge),
-            Span::styled("─".repeat(w.saturating_sub(2)), edge),
-            Span::styled("╯", edge),
-        ]),
-    );
-    y + inset.height + u16::from(!compact)
-}
-
-fn draw_sessions_page(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
-    let w = usize::from(area.width);
-    let mut y = 0u16;
-    let n = shown_sessions(view).len();
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(
-            " Sessions",
-            sty(theme.fg, theme.bg).add_modifier(Modifier::BOLD),
-        )),
-    );
-    y += 1;
-    let lede = format!(
-        "{n} in {}. Resume keeps the hat the session was left in. Enter resumes.",
-        folder_name(view)
-    );
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(
-            format!(" {}", wrap::truncate(&lede, w.saturating_sub(2))),
-            sty(theme.dim, theme.bg),
-        )),
-    );
-    y += 2;
-    if y >= area.height {
-        return;
-    }
-    // Two spaces: the row mark sits in front of the title, and the header
-    // lines up with the title rather than the mark.
-    let head = ["  Session", "Left in", "Msgs", "Spend", "Updated"];
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(
-            format!(" {}", session_cols(&head.map(str::to_string), w)),
-            sty(theme.faint, theme.bg),
-        )),
-    );
-    y += 1;
-    let rows = shown_sessions(view);
-    if rows.is_empty() {
-        put(
-            frame,
-            area,
-            y,
-            Line::from(Span::styled(
-                " No saved sessions yet.",
-                sty(theme.dim, theme.bg),
-            )),
-        );
-        return;
-    }
-    let sel = view.session_at.min(rows.len() - 1);
-    let room = usize::from(area.height.saturating_sub(y));
-    let first = sel.saturating_sub(room.saturating_sub(1));
-    for (i, row) in rows.iter().enumerate().skip(first).take(room) {
-        let on = i == sel && view.focus == Focus::Stage;
-        let bg = if on { theme.selection_bg } else { theme.bg };
-        let hat = hat_from_name(&row.hat);
-        let mark = if row.id == view.session_id {
-            format!("{} ", glyphs::mark(Mark::Status, view.ui.nerd_font))
-        } else {
-            "  ".to_string()
-        };
-        let cells = [
-            format!("{mark}{}", row.title),
-            glyphs::hat_label(hat),
-            row.messages.to_string(),
-            row.spend.clone(),
-            row.updated.clone(),
+        let mut keys = vec![
+            Span::styled(
+                "/ ",
+                sty(theme.mode(view.mode), theme.bg).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("commands", sty(theme.dim, theme.bg)),
         ];
-        let line = session_cols(&cells, w);
-        put(
-            frame,
-            area,
-            y,
-            Line::from(vec![
-                Span::styled(" ", sty(theme.fg, bg)),
-                Span::styled(line, sty(theme.fg, bg)),
-            ]),
-        );
-        y += 1;
+        // Only a project with a session to go back to is told how.
+        if view.sessions_count > 0 {
+            keys.push(Span::styled("    /sessions ", sty(theme.fg, theme.bg)));
+            keys.push(Span::styled("resume one", sty(theme.dim, theme.bg)));
+        }
+        put(frame, inner, y + 1, Line::from(keys));
     }
 }
 
@@ -1240,29 +632,16 @@ fn draw_inspector(
 ) {
     let bg = side_bg(theme);
     fill(frame, area, bg);
-    // One column of pad lives in the strings. The right column stays empty,
-    // matching the sidebar. The focus bar covers that pad when this pane is on.
+    // One column of pad lives in the strings, after the hairline. The
+    // right column stays empty.
     let inner = Rect {
         x: area.x + 1,
         width: area.width.saturating_sub(3),
         ..area
     };
-    match view.page {
-        Page::Hats => draw_hat_inspector(frame, inner, view, theme),
-        Page::Sessions => draw_session_inspector(frame, inner, view, theme),
-        Page::Conversation => draw_conv_inspector(frame, inner, view, theme, clicks),
-    }
+    draw_conv_inspector(frame, inner, view, theme, clicks);
     if area.width > 0 {
-        vertical_rule(
-            frame,
-            Rect { width: 1, ..area },
-            if matches!(view.focus, Focus::Inspector | Focus::Sidebar) {
-                theme.mode(view.mode)
-            } else {
-                theme.rule
-            },
-            bg,
-        );
+        vertical_rule(frame, Rect { width: 1, ..area }, theme.rule, bg);
     }
 }
 
@@ -1559,221 +938,6 @@ fn draw_conv_inspector(
     }
 }
 
-fn draw_hat_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
-    let bg = side_bg(theme);
-    let w = usize::from(area.width);
-    let mut y = 0u16;
-    let wearing = glyphs::hat_label(view.mode);
-    let line = if view.busy && view.mode != view.working_hat() {
-        format!(
-            " Wearing {wearing} for the next message. {} is still in flight.",
-            glyphs::hat_label(view.working_hat())
-        )
-    } else {
-        format!(" Wearing {wearing}.")
-    };
-    for row in wrap::wrap_plain(&line, w.saturating_sub(1)) {
-        if y >= area.height {
-            return;
-        }
-        put(
-            frame,
-            area,
-            y,
-            Line::from(Span::styled(row, sty(theme.fg, bg))),
-        );
-        y += 1;
-    }
-    y += 1;
-    let hat = view.seat;
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(" Seat", sty(theme.faint, bg))),
-    );
-    y += 1;
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(
-            format!(" {}", glyphs::hat_label(hat)),
-            sty(theme.mode(hat), bg).add_modifier(Modifier::BOLD),
-        )),
-    );
-    y += 1;
-    for row in wrap::wrap_plain(hat.describe(), w.saturating_sub(2)) {
-        if y >= area.height {
-            return;
-        }
-        put(
-            frame,
-            area,
-            y,
-            Line::from(Span::styled(format!(" {row}"), sty(theme.dim, bg))),
-        );
-        y += 1;
-    }
-    y += 1;
-    if y >= area.height {
-        return;
-    }
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(" Model", sty(theme.faint, bg))),
-    );
-    y += 1;
-    let model = view.model_of(hat);
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(
-            format!(" {}", crate::chat::short_model(model)),
-            sty(theme.fg, bg).add_modifier(Modifier::BOLD),
-        )),
-    );
-    y += 1;
-    let own = view.hats.get(hat.as_str()).is_some_and(|m| m.is_override());
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(
-            format!(" {}", if own { "own model" } else { "follows all hats" }),
-            sty(theme.dim, bg),
-        )),
-    );
-    y += 2;
-    if y >= area.height {
-        return;
-    }
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(" Reasoning", sty(theme.faint, bg))),
-    );
-    y += 1;
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(
-            format!(" {}", view.reasoning_label(model)),
-            sty(theme.fg, bg),
-        )),
-    );
-    y += 2;
-    if y < area.height {
-        put(
-            frame,
-            area,
-            y,
-            Line::from(Span::styled(" Saved", sty(theme.faint, bg))),
-        );
-        y += 1;
-        put(
-            frame,
-            area,
-            y,
-            Line::from(Span::styled(" ~/.ryter/hats.toml", sty(theme.dim, bg))),
-        );
-    }
-}
-
-fn draw_session_inspector(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
-    let bg = side_bg(theme);
-    let w = usize::from(area.width);
-    let rows = shown_sessions(view);
-    let Some(row) = rows.get(view.session_at.min(rows.len().saturating_sub(1))) else {
-        put(
-            frame,
-            area,
-            0,
-            Line::from(Span::styled(" No session.", sty(theme.dim, bg))),
-        );
-        return;
-    };
-    let hat = hat_from_name(&row.hat);
-    let mut y = 0u16;
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(" Session", sty(theme.faint, bg))),
-    );
-    y += 1;
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(
-            format!(" {}", wrap::truncate(&row.title, w.saturating_sub(2))),
-            sty(theme.fg, bg).add_modifier(Modifier::BOLD),
-        )),
-    );
-    y += 1;
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(
-            format!(" {}", wrap::truncate(&row.sub, w.saturating_sub(2))),
-            sty(theme.dim, bg),
-        )),
-    );
-    y += 2;
-    let current = row.id == view.session_id || row.id.is_empty();
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(
-            if current {
-                " Current"
-            } else {
-                " Enter resumes"
-            },
-            sty(theme.mode(view.mode), bg),
-        )),
-    );
-    y += 2;
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(" Left in", sty(theme.faint, bg))),
-    );
-    y += 1;
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(
-            format!(
-                " {} {}",
-                glyphs::mark(Mark::Status, view.ui.nerd_font),
-                glyphs::hat_label(hat)
-            ),
-            sty(theme.mode(hat), bg).add_modifier(Modifier::BOLD),
-        )),
-    );
-    y += 2;
-    put(
-        frame,
-        area,
-        y,
-        Line::from(Span::styled(
-            format!(" {}  ·  {}", row.spend, row.updated),
-            sty(theme.dim, bg),
-        )),
-    );
-}
-
 fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     let bg = side_bg(theme);
     fill(frame, area, bg);
@@ -1801,37 +965,21 @@ fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
             ("⇧tab", "mode"),
             ("/", "commands"),
             ("f2", "instruments"),
-            ("f6 f7", "panes"),
         ]);
     } else {
-        if view.focus == Focus::Sidebar {
-            items.extend([("↑↓", "hat"), ("enter", "wear")]);
-        } else if view.page == Page::Sessions {
-            items.extend([("↑↓", "select"), ("enter", "open")]);
-        }
         items.extend([
             ("tab", "hat"),
             ("⇧tab", "mode"),
             ("/", "commands"),
-            ("alt 1–3", "views"),
             ("f2", "instruments"),
-            ("f6 f7", "panes"),
         ]);
     }
-    let focus = match view.focus {
-        Focus::Sidebar => "sidebar",
-        Focus::Stage => match view.page {
-            Page::Conversation => "conversation",
-            Page::Hats => "hats",
-            Page::Sessions => "sessions",
-        },
-        Focus::Inspector => "instruments",
-    };
-    // With the instruments folded away, the hat and the spend take their place.
+    // With the rail folded away, the hat and the spend sit at the right;
+    // with it up, they are on the rail and nothing is said twice.
     let focus_s = if columns(area.width, view.panel_visible).1 == 0 {
         format!("{} · {}", glyphs::hat_label(view.mode), view.spend_label())
     } else {
-        format!("focus · {focus}")
+        String::new()
     };
     let w = usize::from(area.width);
     while items.len() > 1 {
@@ -1860,34 +1008,6 @@ fn draw_hint(frame: &mut Frame, area: Rect, view: &View, theme: Theme) {
     spans.push(Span::styled(" ".repeat(gap), sty(theme.dim, bg)));
     spans.push(Span::styled(focus_s, sty(theme.dim, bg)));
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
-}
-
-fn shown_sessions(view: &View) -> Vec<SavedSession> {
-    if !view.sessions.is_empty() {
-        return view.sessions.clone();
-    }
-    vec![current_saved(view)]
-}
-
-fn current_saved(view: &View) -> SavedSession {
-    let title = if view.session_title.trim().is_empty() {
-        "New session".into()
-    } else {
-        view.session_title.clone()
-    };
-    let sub = view
-        .git_branch
-        .clone()
-        .unwrap_or_else(|| "this session".into());
-    SavedSession {
-        id: view.session_id.clone(),
-        title,
-        sub,
-        hat: view.mode.as_str().to_string(),
-        messages: view.turn as usize,
-        spend: view.spend_label(),
-        updated: "now".into(),
-    }
 }
 
 fn subline(view: &View) -> String {
@@ -1975,49 +1095,6 @@ fn folder_name(view: &View) -> String {
         .unwrap_or(raw)
 }
 
-fn hat_from_name(name: &str) -> Role {
-    match name {
-        "plan" => Role::Plan,
-        "audit" => Role::Audit,
-        "scribe" => Role::Scribe,
-        _ => Role::Build,
-    }
-}
-
-fn session_cols(cells: &[String], width: usize) -> String {
-    let width = width.saturating_sub(1);
-    // Keep the title first, then spend and recency. The other columns come
-    // back when the table has room; every row uses the same columns.
-    let mut fields = Vec::new();
-    if width >= 66 {
-        fields.extend([(1, 8, false), (2, 5, true)]);
-    }
-    if width >= 28 {
-        fields.push((3, 8, true));
-    }
-    if width >= 42 {
-        fields.push((4, 10, true));
-    }
-    let meta_w: usize = fields.iter().map(|(_, n, _)| n + 1).sum();
-    fields.insert(0, (0, width.saturating_sub(meta_w), false));
-    let mut out = String::new();
-    for (i, (field, n, right)) in fields.iter().enumerate() {
-        if i > 0 {
-            out.push(' ');
-        }
-        let shown = wrap::truncate(cells.get(*field).map(String::as_str).unwrap_or(""), *n);
-        let pad = n.saturating_sub(wrap::width(&shown));
-        if *right {
-            out.push_str(&" ".repeat(pad));
-            out.push_str(&shown);
-        } else {
-            out.push_str(&shown);
-            out.push_str(&" ".repeat(pad));
-        }
-    }
-    out
-}
-
 /// A thick line with a cap (`━━╸`) on a dashed track (`╌╌`). A half cell
 /// or more past the last whole one earns the cap.
 fn gauge_spans(
@@ -2076,29 +1153,6 @@ fn rule(frame: &mut Frame, area: Rect, y: &mut u16, theme: Theme) {
         Line::from(Span::styled(line, sty(theme.rule, side_bg(theme)))),
     );
     *y += 1;
-}
-
-/// Sidebar and instruments, a step off the conversation. In 256-color the
-/// two truecolor tints can quantize to one index; step the gray ramp then.
-/// The fill under the row that is on. In sixteen colours the fill is the
-/// terminal's dark grey, and a hat's colour on it is nothing to read, so
-/// the row keeps `plain` and is marked by its bar and its bold name.
-fn on_bg(theme: Theme, plain: Color) -> Color {
-    if theme.mode == crate::theme::ColorMode::Ansi16 {
-        plain
-    } else {
-        theme.selection_bg
-    }
-}
-
-/// A session's cost as the list says it: `$0` before anything has run,
-/// `$?.??` only when something ran and had no price.
-fn session_spend(total: Option<f64>, messages: usize) -> String {
-    match total {
-        None if messages == 0 => "$0".into(),
-        None => ryter_core::format_usd(None),
-        Some(usd) => crate::chat::turn_usd(usd),
-    }
 }
 
 fn side_bg(theme: Theme) -> Color {
@@ -2276,41 +1330,27 @@ mod tests {
     }
 
     #[test]
-    fn alt_switches_views_and_fkeys_move_focus_and_instruments() {
+    fn f2_hides_and_shows_the_rail_and_the_old_chrome_keys_are_typed() {
         let mut v = ws();
         v.screen.set((160, 50));
-        assert_eq!(
-            crate::run_keys_handle(&mut v, press(KeyCode::Char('2'), KeyModifiers::ALT)),
-            Action::None
-        );
-        assert_eq!(v.page, Page::Hats);
-        assert_eq!(
-            crate::run_keys_handle(&mut v, press(KeyCode::Char('3'), KeyModifiers::ALT)),
-            Action::None
-        );
-        assert_eq!(v.page, Page::Sessions);
-        assert_eq!(
-            crate::run_keys_handle(&mut v, press(KeyCode::Char('1'), KeyModifiers::ALT)),
-            Action::None
-        );
-        assert_eq!(v.page, Page::Conversation);
         assert!(v.panel_visible);
         crate::run_keys_handle(&mut v, press(KeyCode::F(2), KeyModifiers::NONE));
         assert!(!v.panel_visible);
         crate::run_keys_handle(&mut v, press(KeyCode::F(2), KeyModifiers::NONE));
         assert!(v.panel_visible);
-        crate::run_keys_handle(&mut v, press(KeyCode::F(6), KeyModifiers::NONE));
-        assert_eq!(v.focus, Focus::Sidebar);
-        crate::run_keys_handle(&mut v, press(KeyCode::F(7), KeyModifiers::NONE));
-        assert_eq!(v.focus, Focus::Stage);
-        // Two panes: the conversation and the one rail.
-        crate::run_keys_handle(&mut v, press(KeyCode::F(7), KeyModifiers::NONE));
-        assert_eq!(v.focus, Focus::Sidebar);
-        // The rail hidden, the conversation is the one pane.
-        v.panel_visible = false;
-        v.focus = Focus::Stage;
-        crate::run_keys_handle(&mut v, press(KeyCode::F(7), KeyModifiers::NONE));
-        assert_eq!(v.focus, Focus::Stage);
+        // F6, F7 and Alt+1–3 are nobody's: the views and the rail's focus
+        // went on 2026-10-21. They change nothing and type nothing.
+        for key in [
+            press(KeyCode::F(6), KeyModifiers::NONE),
+            press(KeyCode::F(7), KeyModifiers::NONE),
+            press(KeyCode::Char('2'), KeyModifiers::ALT),
+            press(KeyCode::Char('3'), KeyModifiers::ALT),
+        ] {
+            assert_eq!(crate::run_keys_handle(&mut v, key), Action::None);
+        }
+        assert!(v.panel_visible);
+        assert_eq!(v.composer.text(), "");
+        assert_eq!(v.mode, Role::Build);
     }
 
     #[test]
@@ -2337,41 +1377,6 @@ mod tests {
         assert_eq!(a, Action::None);
         assert_eq!(v.composer.text(), "1");
         assert_eq!(v.mode, Role::Audit);
-    }
-
-    #[test]
-    fn sidebar_enter_wears_a_hat_and_sessions_enter_resumes() {
-        let mut v = ws();
-        v.focus = Focus::Sidebar;
-        v.side_at = 0; // plan
-        assert!(matches!(
-            crate::run_keys_handle(&mut v, press(KeyCode::Enter, KeyModifiers::NONE)),
-            Action::SetMode(Role::Plan)
-        ));
-        // The hat goes on in place: the conversation keeps the screen.
-        assert_eq!(v.page, Page::Conversation);
-        assert_eq!(v.focus, Focus::Stage);
-        v.page = Page::Sessions;
-        v.focus = Focus::Stage;
-        v.sessions = vec![
-            current_saved(&v),
-            SavedSession {
-                id: "other".into(),
-                title: "Checkout tax".into(),
-                sub: "main".into(),
-                hat: "plan".into(),
-                messages: 2,
-                spend: "$0.02".into(),
-                updated: "Yesterday".into(),
-            },
-        ];
-        v.session_at = 0;
-        crate::run_keys_handle(&mut v, press(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(v.session_at, 1);
-        assert_eq!(
-            crate::run_keys_handle(&mut v, press(KeyCode::Enter, KeyModifiers::NONE)),
-            Action::Resume("other".into())
-        );
     }
 
     #[test]
@@ -2433,15 +1438,16 @@ mod tests {
         assert!(!text.contains("█▀█"), "the block wordmark is gone");
         assert!(!text.contains('\u{1D5D4}'), "math-sans headings are gone");
         assert!(!text.contains("Search commands"), "{text}");
-        assert!(text.contains("Conversation"), "{text}");
+        assert!(!text.contains("Conversation"), "no view tabs: {text}");
+        assert!(!text.contains("Sessions"), "no view tabs: {text}");
         assert!(text.contains("HATS"), "{text}");
         assert!(text.contains("Build"), "{text}");
-        assert!(text.contains("alt 1"), "{text}");
-        assert!(text.contains("focus · conversation"), "{text}");
+        assert!(!text.contains("alt 1") && !text.contains("f6"), "{text}");
+        assert!(!text.contains("focus ·"), "{text}");
         assert!(text.contains("tab") && text.contains("commands"), "{text}");
         assert!(text.contains(" mode"), "{text}");
         assert!(!text.contains("row"), "{text}");
-        // No number badge on a hat. The view key is "alt 1", not a hat number.
+        // No number badge on a hat.
         assert!(!text.contains("1 plan") && !text.contains("[1]"), "{text}");
         assert!(!text.contains('▐'), "half-block pill caps are gone");
         let theme = Theme::truecolor_dark();
@@ -2455,33 +1461,6 @@ mod tests {
         let light_text = crate::draw::render_with_theme(&v, 160, 50, light);
         assert!(light_text.contains("RYTER"), "{light_text}");
         assert!(!light_text.contains('\u{1D5D4}'), "{light_text}");
-        let mut hats = v.clone();
-        hats.page = Page::Hats;
-        let hats_text = crate::draw::render_to_string(&hats, 160, 50);
-        assert!(hats_text.contains("wearing"), "{hats_text}");
-        assert!(
-            hats_text.contains("Shift+Tab") || hats_text.contains("four seats"),
-            "{hats_text}"
-        );
-        let mut sessions = v.clone();
-        sessions.page = Page::Sessions;
-        sessions.sessions = vec![
-            current_saved(&sessions),
-            SavedSession {
-                id: "tax".into(),
-                title: "Checkout tax rounding".into(),
-                sub: "main".into(),
-                hat: "plan".into(),
-                messages: 2,
-                spend: "$0.02".into(),
-                updated: "Yesterday".into(),
-            },
-        ];
-        let sessions_text = crate::draw::render_to_string(&sessions, 160, 50);
-        assert!(
-            sessions_text.contains("Checkout tax rounding"),
-            "{sessions_text}"
-        );
         let mut pal = v.clone();
         crate::run_keys_handle(&mut pal, press(KeyCode::Char('/'), KeyModifiers::NONE));
         let pal_text = crate::draw::render_to_string(&pal, 160, 50);
@@ -2520,38 +1499,6 @@ mod tests {
             crate::run_mouse_handle_with(&mut v, up, &hit),
             Action::SetMode(Role::Plan)
         );
-        // As Enter on the rail: the conversation keeps the screen.
-        assert_eq!(v.page, Page::Conversation);
-        assert_eq!(v.focus, Focus::Stage);
-    }
-
-    #[test]
-    fn a_click_on_a_view_tab_switches_the_page() {
-        let v = ws();
-        let hit = crate::draw::render_hit(&v, 160, 50);
-        let rect = hit
-            .clicks
-            .iter()
-            .find(|(c, _)| *c == WorkspaceClick::Page(2))
-            .map(|(_, r)| *r)
-            .expect("hats tab");
-        let mut v = v;
-        let down = crossterm::event::MouseEvent {
-            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-            column: rect.x + 1,
-            row: rect.y,
-            modifiers: KeyModifiers::NONE,
-        };
-        let up = crossterm::event::MouseEvent {
-            kind: crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
-            ..down
-        };
-        assert_eq!(
-            crate::run_mouse_handle_with(&mut v, down, &hit),
-            Action::None
-        );
-        assert_eq!(crate::run_mouse_handle_with(&mut v, up, &hit), Action::None);
-        assert_eq!(v.page, Page::Hats);
     }
 
     #[test]
@@ -2584,7 +1531,7 @@ mod tests {
         // the second.
         let top = text.lines().nth(1).unwrap();
         assert!(top.contains("RYTER"), "{top}");
-        assert!(top.contains("Conversation"), "{top}");
+        assert_eq!(top.trim(), "●●● RYTER", "the bar is the brand alone: {top}");
         // Brand logo: three colored dots before RYTER.
         assert!(top.contains("●●● RYTER"), "{top}");
         assert!(!top.contains('☀') && !top.contains('☾'), "{top}");
@@ -2598,8 +1545,8 @@ mod tests {
         assert!(
             hit.clicks
                 .iter()
-                .all(|(c, _)| matches!(c, WorkspaceClick::Page(_) | WorkspaceClick::Wear(_))),
-            "only page/hat clicks remain: {:?}",
+                .all(|(c, _)| matches!(c, WorkspaceClick::Wear(_))),
+            "only hat clicks remain: {:?}",
             hit.clicks
         );
     }
@@ -2723,26 +1670,6 @@ mod tests {
         );
     }
 
-    /// On a short screen the Hats page still names every hat: a hat
-    /// with no room for its card gets one line.
-    #[test]
-    fn a_short_hats_page_names_every_hat() {
-        let mut v = ws();
-        v.page = Page::Hats;
-        let text = crate::draw::render_to_string(&v, 80, 24);
-        for hat in ["Audit", "Scribe"] {
-            assert!(text.contains(hat), "{hat} missing\n{text}");
-        }
-    }
-
-    /// A new session costs nothing yet; `$?.??` is for a run with no price.
-    #[test]
-    fn a_new_sessions_cost_is_nothing_yet() {
-        assert_eq!(session_spend(None, 0), "$0");
-        assert_eq!(session_spend(None, 3), "$?.??");
-        assert_eq!(session_spend(Some(0.004), 3), "$0.004");
-    }
-
     /// A project that has cost a few tenths of a cent says so on the
     /// total and this-month rows, as the hats do: never a fake `$0.00`.
     #[test]
@@ -2765,27 +1692,11 @@ mod tests {
         );
     }
 
+    /// The rail's hairline runs the whole pane in the rule colour: there
+    /// is no focus to mark since the rail stopped taking the keys.
     #[test]
-    fn session_columns_fit_without_sacrificing_the_title() {
-        let cells = [
-            "A long session about 日本語 and Unicode",
-            "Build",
-            "123",
-            "$12.34",
-            "Yesterday",
-        ]
-        .map(str::to_string);
-        for width in 12..160 {
-            let row = session_cols(&cells, width);
-            assert_eq!(wrap::width(&row), width - 1, "{width}: {row}");
-            assert!(row.starts_with("A long"), "{width}: {row}");
-        }
-    }
-
-    #[test]
-    fn focus_rule_runs_down_the_entire_pane() {
-        let mut v = ws();
-        v.focus = Focus::Inspector;
+    fn the_rails_hairline_runs_down_the_entire_pane() {
+        let v = ws();
         let theme = Theme::truecolor_dark();
         let buf = crate::draw::render_buffer(&v, 160, 50, theme);
         let (_, right) = columns(160, true);
@@ -2793,7 +1704,7 @@ mod tests {
         for y in 4..49 {
             let cell = &buf[(160 - right, y)];
             assert_eq!(cell.symbol(), glyphs::HAIRLINE_V, "row {y}");
-            assert_eq!(cell.fg, theme.build, "row {y}");
+            assert_eq!(cell.fg, theme.rule, "row {y}");
         }
     }
 

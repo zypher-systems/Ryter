@@ -1,0 +1,50 @@
+
+ ●●● RYTER
+
+
+    New session                                                                                 ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+    0.2.0-patch                                                                                                     ┊
+                                                                                                                    ┊ HATS
+                                                                                                                    ┊ ● Plan   grok-4.6                     $0
+                                                                                                                    ┊ ┃ Build                               $0
+                                                                                                                    ┊   grok-4.6
+                                                                                                                    ┊   asks first
+      What are we building?                                                                                         ┊ ● Audit  grok-4.6                     $0
+                                                                                                                    ┊ ● Scribe follows all hats             $0
+      Describe a change, ask a question, or pick up where you                                                       ┊
+      left off.                                                                                                     ┊
+                                                                                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+      / commands    /sessions resume one                                                                            ┊ Context
+                                                                                                                    ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+                                                                                                                    ┊  ⢰⠋      ⠙⡆ 12k
+                                                                                                                    ┊  ⢸   5%   ⡧ of 256k
+                                                                                                                    ┊  ⠸⣄      ⣠⠇
+                                                                                                                    ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+                                                                                                                    ┊
+                                                                                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                                                                    ┊ Spend · no cap
+                                                                                                                    ┊ $0
+                                                                                                                    ┊ Build  ╌╌╌╌╌╌╌╌                       $0
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+    ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ┊
+    │ Build  › what should change?                                                                               │  ┊
+    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ┊
+                                                                                                                    ┊
+ tab hat  ⇧tab mode  / commands  f2 instruments

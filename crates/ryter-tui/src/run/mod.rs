@@ -300,9 +300,6 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         ));
     }
     actions::load_project_spend(&mut view, &home, &cwd);
-    view.workspace = Some(cwd.clone());
-    view.ryter_home = Some(home.clone());
-    crate::workspace::reload_sessions(&mut view);
     view.refresh_uncommitted();
     if config::asks_for_trust(&cwd) && !trusted {
         view.panels.push(Box::new(TrustModal::default()));
@@ -464,7 +461,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn populate_view(
+pub(crate) fn populate_view(
     view: &mut View,
     cfg: &ryter_core::Config,
     home: &Path,
@@ -482,11 +479,6 @@ fn populate_view(
     // `[ui] panel`: the instruments beside the conversation. ^b and F2
     // show and hide them.
     view.panel_visible = cfg.ui.panel;
-    // How many earlier sessions this project has, for the opening screen:
-    // the one just created is not one to go back to.
-    view.sessions_count = Session::list(home, cwd).map_or(0, |v| {
-        v.iter().filter(|s| s.meta.id != session.meta.id).count()
-    });
     view.activity = crate::activity::Activity::new(ActivityMode::parse(&cfg.ui.reasoning));
     view.username = resolve_username(
         &cfg.ui.username,
@@ -525,6 +517,12 @@ fn populate_view(
     view.mcp_tokens = config::list_mcp_tokens(home).into_iter().collect();
     view.session_id = session.meta.id.to_string();
     view.session_title = session.meta.title.clone();
+    // How many earlier sessions this project has, for the opening screen:
+    // the one just created is not one to go back to. The count is read
+    // from the home and the project, so both are set here, first.
+    view.ryter_home = Some(home.to_path_buf());
+    view.workspace = Some(cwd.to_path_buf());
+    view.refresh_sessions_count();
     view.ctx_tokens = Some(0);
     view.ctx_pct = Some(0);
     view.ctx_window = Some(ryter_core::window_for(&view.model));
@@ -1008,9 +1006,7 @@ fn on_mouse(view: &mut View, m: MouseEvent, hit: &Hit) -> Action {
                         Action::None
                     }
                     Some(crate::select::Click::Open(id)) => Action::OpenPanel(id),
-                    Some(crate::select::Click::Workspace(kind)) => {
-                        crate::workspace::click(view, kind)
-                    }
+                    Some(crate::select::Click::Workspace(kind)) => crate::workspace::click(kind),
                     None => Action::None,
                 },
                 None => Action::None,

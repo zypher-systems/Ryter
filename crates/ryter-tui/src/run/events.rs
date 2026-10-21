@@ -260,6 +260,9 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
         AgentEvent::Session { id, title } => {
             view.session_id = id.clone();
             view.session_title = title.clone();
+            // The session just left is on disk now, or the one resumed
+            // is open: the welcome's count follows.
+            view.refresh_sessions_count();
         }
         AgentEvent::Notice { message } => view.system(message.clone()),
         AgentEvent::Product {

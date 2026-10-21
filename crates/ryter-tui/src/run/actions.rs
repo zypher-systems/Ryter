@@ -580,6 +580,7 @@ fn delete_session(view: &mut View, cx: &mut Ctx, id: &str) {
                     if current {
                         new_session(view, cx);
                     }
+                    view.refresh_sessions_count();
                     view.system(format!("deleted session {short}"));
                     cx.notice(Notice::SessionsChanged);
                 }
