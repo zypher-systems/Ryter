@@ -19,9 +19,8 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.33.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.34.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
-- **The views and the rail's focus go (dev, unreleased).** On the user's call of 2026-10-21: the Hats and Sessions pages, their tabs and `Alt+1`–`Alt+3`, and `F6`/`F7` with the rail's cursor are removed; the top bar is the brand alone, the rail is a readout with a click to wear a hat, `/sessions` is the one list of sessions and the welcome names it only when there is a session to resume. `DECISIONS.md` 2026-10-21, `docs/sidebar-design.md` §19. Open: the `/sessions` panel did not take the page's columns.
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
 - **1.0 item 1 (flow on a real project): closed 2026-10-14** (recorded in 0.28.0). Further ask friction from fiscus/tunes stays under Next (item 2). G4 closed the nested-scratch and tmux-scope holes in 0.29.0.
@@ -67,6 +66,15 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.34.0 — the views go (2026-10-21)
+
+Released 2026-10-21 (PR #98, three rounds: the first rejected on the welcome's sessions count read once at startup, the second on my fix running before the view knew the project, both fixed; the third approved). The note is `docs/releases/v0.34.0.md`.
+
+- **No views.** The Hats page, the Sessions page, the three tabs on the top bar and `Alt+1`–`Alt+3` are gone on the user's call: the Hats page was read only and said what the rail says, the Sessions page only resumed where `/sessions` does everything. The top bar is the brand alone. `DECISIONS.md` 2026-10-21, `docs/sidebar-design.md` §19.
+- **The rail is a readout.** `F6`/`F7`, the cursor on the hats and `Enter` to wear one are gone; a click on a hat row still wears it, `Tab` and `Shift+Tab` reach every hat from the prompt. The hint bar's right end is empty while the rail is up, `hat · spend` when it is folded.
+- **The welcome names `/sessions`** only when the project has an earlier session with something in it; the count is read from disk at startup, on `/new` and a resume, and after a delete, and a test follows the real startup path.
+- Open: the `/sessions` panel did not take the page's columns (hat, messages, spend, updated) and prints `$0.00` for an unpriced session where the rail says `$?.??`; below 100 columns the four hats at once are only in `/models`; the README screenshots still show the tabbed screen; the light theme's slab untried by a person; a card does not dissolve on closing.
 
 ### 0.33.0 — one rail, the softer screen, round ends, motion (2026-10-20)
 
