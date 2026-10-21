@@ -1,6 +1,6 @@
 //! Modal interrupts: permission, ask_user, trust (`R-POP-75..80`).
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ryter_core::Permission;
@@ -30,9 +30,11 @@ pub struct PermissionModal {
     pub summary: String,
     /// For an edit: the change it would make, as tinted diff rows.
     pub preview: Option<Box<ryter_core::diff::FileDiff>>,
-    /// Only `y` answers yes: destruction an undo may not reach.
+    /// Destruction an undo may not reach: asked every time, with no
+    /// "for the session".
     pub strict: bool,
-    /// What `a` allows for the session, in words; `None`: no `a`.
+    /// What Shift+Enter (or `a`) allows for the session, in words;
+    /// `None`: no such answer.
     pub scope: Option<String>,
     /// What the model said just before asking.
     pub why: Option<String>,
@@ -43,7 +45,7 @@ pub struct PermissionModal {
     pub opened_ms: u64,
     /// The card is the only view of the change there will be (the user's
     /// rules: the file isn't in the project, so `/changes` never has it).
-    /// All of it is here to scroll through, and `y` answers only once its
+    /// All of it is here to scroll through, and yes answers only once its
     /// end has been on screen.
     pub whole: bool,
     /// First row of the change asked for, when it is longer than the card.
@@ -154,28 +156,29 @@ impl PermissionModal {
         self.question().is_some()
     }
 
-    /// A write outside the project: asked every time, so no `a`.
+    /// A write outside the project: asked every time, so no "for the session".
     fn is_outside(&self) -> bool {
         self.tool.ends_with(ryter_core::tools::OUTSIDE)
     }
 
-    /// A write to the project's own `.env`: asked every time, so no `a`.
+    /// A write to the project's own `.env`: asked every time.
     fn is_secret(&self) -> bool {
         self.tool.ends_with(ryter_core::tools::SECRET)
     }
 
-    /// A command run as root: asked every time, so no `a`.
+    /// A command run as root: asked every time.
     fn is_root(&self) -> bool {
         self.tool.ends_with(ryter_core::tools::AS_ROOT)
     }
 
-    /// Only `y` answers yes.
-    fn y_only(&self) -> bool {
+    /// Asked every time: Enter allows this once, and there is no answer
+    /// for the session.
+    fn every_time(&self) -> bool {
         self.strict || self.is_outside() || self.is_secret() || self.is_root()
     }
 
     fn can_allow_session(&self) -> bool {
-        !self.is_hat() && !self.y_only() && self.scope.is_some()
+        !self.is_hat() && !self.every_time() && self.scope.is_some()
     }
 
     /// `r` opens `/permissions` with a draft for this bash ask. Outside,
@@ -287,8 +290,8 @@ impl Panel for PermissionModal {
             title.into()
         } else if self.is_hat() {
             "allow?".into()
-        } else if self.y_only() {
-            format!("allow? · {} · press y", self.what())
+        } else if self.every_time() {
+            format!("allow? · {} · asked every time", self.what())
         } else {
             format!("allow? · {}", self.what())
         }
@@ -304,9 +307,7 @@ impl Panel for PermissionModal {
             .unwrap_or(view.working_hat())
             .as_str()
             .to_string();
-        let guarded = self.question().is_none()
-            && !self.y_only()
-            && view.now_ms < self.opened_ms + ENTER_GUARD_MS;
+        let guarded = self.question().is_none() && view.now_ms < self.opened_ms + ENTER_GUARD_MS;
         if guarded {
             format!("{hat} · ⏎ in 0.5s")
         } else {
@@ -317,8 +318,8 @@ impl Panel for PermissionModal {
     fn legend(&self, _view: &View) -> String {
         let mut keys = if let Some((_, yes, no)) = self.question() {
             format!("⏎ {yes} · n {no}")
-        } else if self.y_only() {
-            "y allow once · n deny".into()
+        } else if self.every_time() {
+            "⏎ allow once · n deny".into()
         } else if let (true, Some(scope)) = (self.can_allow_session(), &self.scope) {
             // The kind of action in a word: `edits`, not `edits to files in
             // the project`, so the row holds all of its keys on a column
@@ -330,7 +331,7 @@ impl Panel for PermissionModal {
                 .split(" in ")
                 .next()
                 .unwrap_or(scope);
-            format!("⏎ allow · a allow {scope} this session · n deny")
+            format!("⏎ allow · ⇧⏎ allow {scope} this session · n deny")
         } else {
             "⏎ allow · n deny".into()
         };
@@ -594,14 +595,9 @@ impl Panel for PermissionModal {
     fn key(&mut self, key: KeyEvent, view: &mut View) -> Outcome {
         let reply = |p: Permission| Outcome::CloseAct(Action::PermissionReply(p));
         match key.code {
-            // Enter answers yes, but not a press that arrived with the
-            // prompt: Enter is also the send key, and a prompt can open
-            // under a message being typed. Never for destruction an undo
-            // may not reach.
-            KeyCode::Enter if self.y_only() => {
-                self.nudge = Some("Enter doesn't approve this one: press y to allow it, n to deny");
-                Outcome::Stay
-            }
+            // Enter answers yes, as on every question, but not a press that
+            // arrived with the prompt: Enter is also the send key, and a
+            // prompt can open under a message being typed.
             KeyCode::Enter if view.now_ms < self.opened_ms + ENTER_GUARD_MS => Outcome::Stay,
             // A change that must be read whole: move through it, a row at a
             // time or a page less a row. Several of these can arrive before
@@ -627,12 +623,12 @@ impl Panel for PermissionModal {
                 self.nudge = None;
                 Outcome::Stay
             }
-            // And `y` is a yes to all of it, so it answers only once every
+            // And a yes is a yes to all of it, so it answers only once every
             // row has been drawn, and not in the moment the card appeared
             // under whatever was being typed.
-            KeyCode::Char('y' | 'Y') if self.whole && !self.read.get() => {
+            KeyCode::Enter | KeyCode::Char('y' | 'Y') if self.whole && !self.read.get() => {
                 self.nudge =
-                    Some("There's more of this change below: read to its end (↓ PgDn), then y");
+                    Some("There's more of this change below: read to its end (↓ PgDn), then ⏎");
                 Outcome::Stay
             }
             KeyCode::Char('y' | 'Y')
@@ -640,11 +636,16 @@ impl Panel for PermissionModal {
             {
                 Outcome::Stay
             }
+            // Shift+Enter allows this kind of action for the session, named
+            // on the card, in one press. `a` does the same, unsaid, for a
+            // terminal that sends a shifted Enter as a plain one.
+            KeyCode::Enter
+                if key.modifiers.contains(KeyModifiers::SHIFT) && self.can_allow_session() =>
+            {
+                reply(Permission::Always)
+            }
             KeyCode::Enter | KeyCode::Char('y' | 'Y') => reply(Permission::Allow),
             KeyCode::Char('n' | 'N') | KeyCode::Esc => reply(Permission::Deny),
-            // `a` allows this kind of action for the session, named on the
-            // card, in one press. It used to allow everything, and needed
-            // a second press because of it.
             KeyCode::Char('a' | 'A') if self.can_allow_session() => reply(Permission::Always),
             // `r` stacks `/permissions` with a draft; the card stays until
             // answered. Outside / .env / root do not offer this.
@@ -816,7 +817,6 @@ impl Panel for PasswordModal {
     }
 
     fn key(&mut self, key: KeyEvent, view: &mut View) -> Outcome {
-        use crossterm::event::KeyModifiers;
         let chord = key
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
@@ -1002,7 +1002,8 @@ impl Panel for AskModal {
     }
 }
 
-/// Generic `y/n` confirmation that runs an action on yes (`R-POP-09`).
+/// Generic yes/no confirmation that runs an action on yes (`R-POP-09`):
+/// Enter is yes, `n` is no, as on every question.
 #[derive(Debug, Clone)]
 pub struct Confirm {
     title: String,
@@ -1031,7 +1032,7 @@ impl Panel for Confirm {
     }
 
     fn legend(&self, _view: &View) -> String {
-        "y confirm · n / esc cancel".into()
+        "⏎ yes · n no · esc".into()
     }
 
     fn size(&self, _view: &View) -> (u16, u16) {
@@ -1051,7 +1052,7 @@ impl Panel for Confirm {
         lines.push(widgets::blank(theme));
         lines.push(Line::from(vec![
             Span::styled(
-                " y ",
+                " ⏎ ",
                 Style::default()
                     .fg(theme.success)
                     .bg(theme.panel_bg)
@@ -1155,10 +1156,9 @@ impl Panel for StopModal {
 }
 
 /// Trust-this-project prompt shown at startup when `.ryter/` is untrusted.
+/// Enter trusts, `n` skips, as on every question.
 #[derive(Debug, Clone, Default)]
-pub struct TrustModal {
-    selected: usize,
-}
+pub struct TrustModal;
 
 impl Panel for TrustModal {
     fn kind(&self) -> &'static str {
@@ -1170,7 +1170,7 @@ impl Panel for TrustModal {
     }
 
     fn legend(&self, _view: &View) -> String {
-        "y trust · n skip · enter choose".into()
+        "⏎ trust · n skip".into()
     }
 
     fn size(&self, _view: &View) -> (u16, u16) {
@@ -1199,7 +1199,7 @@ impl Panel for TrustModal {
             "trust",
             "load project skills and memory",
             "",
-            self.selected == 0,
+            true,
             w,
             theme,
             Some(theme.success),
@@ -1209,7 +1209,7 @@ impl Panel for TrustModal {
             "skip",
             "user-level config only",
             "",
-            self.selected == 1,
+            false,
             w,
             theme,
             Some(theme.dim),
@@ -1222,15 +1222,12 @@ impl Panel for TrustModal {
 
     fn key(&mut self, key: KeyEvent, _view: &mut View) -> Outcome {
         match key.code {
-            KeyCode::Char('y' | 'Y') => Outcome::CloseAct(Action::TrustProject(true)),
+            KeyCode::Enter | KeyCode::Char('y' | 'Y') => {
+                Outcome::CloseAct(Action::TrustProject(true))
+            }
             KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                 Outcome::CloseAct(Action::TrustProject(false))
             }
-            KeyCode::Up | KeyCode::Down | KeyCode::Tab => {
-                self.selected = 1 - self.selected;
-                Outcome::Stay
-            }
-            KeyCode::Enter => Outcome::CloseAct(Action::TrustProject(self.selected == 0)),
             _ => Outcome::Stay,
         }
     }
@@ -1283,13 +1280,16 @@ mod tests {
         let m = PermissionModal::new("bash".into(), script.into())
             .with_answers(true, None)
             .asking(Some("rm -f \"$TASKS_FILE\"".into()));
-        assert_eq!(m.title(&v), "allow? · run  rm -f \"$TASKS_FILE\" · press y");
+        assert_eq!(
+            m.title(&v),
+            "allow? · run  rm -f \"$TASKS_FILE\" · asked every time"
+        );
         assert_eq!(m.summary, script);
         // Nothing named: the first line, as before.
         let first = PermissionModal::new("bash".into(), script.into())
             .with_answers(true, None)
             .asking(Some("  ".into()));
-        assert_eq!(first.title(&v), "allow? · run  set -e · press y");
+        assert_eq!(first.title(&v), "allow? · run  set -e · asked every time");
     }
 
     /// A hat switch is a yes/no question: no "allow all", which would
@@ -1329,24 +1329,34 @@ mod tests {
         assert!(matches!(press(&mut e, 'a'), Outcome::Stay));
         assert!(e.risk().0.contains("secret file"), "{}", e.risk().0);
         assert!(e.what().starts_with("rewrite  .env"), "{}", e.what());
-        // An ordinary command: `a` allows that kind of command for the
-        // session, in one press, and the card says which.
+        // An ordinary command: Shift+Enter allows that kind of command for
+        // the session, in one press, and the card says which; `a` does the
+        // same unsaid.
         let mut t = PermissionModal::new("bash".into(), "cargo test".into())
             .with_answers(false, Some("`cargo test` commands".into()));
         assert!(
             t.legend(&v)
-                .contains("a allow `cargo test` commands this session")
+                .contains("⇧⏎ allow `cargo test` commands this session")
         );
         assert!(t.legend(&v).contains("r add rule"), "{}", t.legend(&v));
+        let mut later = v.clone();
+        later.now_ms = 10_000;
+        assert!(matches!(
+            t.key(
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+                &mut later
+            ),
+            Outcome::CloseAct(Action::PermissionReply(Permission::Always))
+        ));
         assert!(matches!(
             press(&mut t, 'a'),
             Outcome::CloseAct(Action::PermissionReply(Permission::Always))
         ));
-        // Destruction an undo may not reach: `y` only; `r` still offers a
+        // Destruction an undo may not reach: once only; `r` still offers a
         // durable rule (the point of carving allows without yolo).
         let mut d =
             PermissionModal::new("bash".into(), "rm -rf target".into()).with_answers(true, None);
-        assert_eq!(d.legend(&v), "y allow once · n deny · r add rule");
+        assert_eq!(d.legend(&v), "⏎ allow once · n deny · r add rule");
         assert!(matches!(press(&mut d, 'a'), Outcome::Stay));
         assert!(matches!(press(&mut d, 'r'), Outcome::Push(_)));
         // Outside / .env / root: no durable carve-out from the card.
@@ -1364,10 +1374,10 @@ mod tests {
     }
 
     /// Enter approves, but not in the first half-second, when it may be a
-    /// press meant to send a message; and never a strict prompt.
+    /// press meant to send a message. A strict prompt takes Enter too, as
+    /// every question does, with no answer for the session.
     #[test]
-    fn enter_approves_after_a_moment_and_never_destruction() {
-        use crossterm::event::KeyModifiers;
+    fn enter_approves_after_a_moment_and_destruction_once() {
         let mut v = crate::view::View::new("spacexsi".into(), "grok-4.6".into(), "/tmp".into());
         let enter = |m: &mut PermissionModal, v: &mut crate::view::View| {
             m.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), v)
@@ -1386,7 +1396,17 @@ mod tests {
         let mut d = PermissionModal::new("bash".into(), "git reset --hard".into())
             .with_answers(true, None)
             .with_context(None, 0);
-        assert!(matches!(enter(&mut d, &mut v), Outcome::Stay));
+        assert_eq!(d.legend(&v), "⏎ allow once · n deny · r add rule");
+        // With no answer for the session, a shifted Enter is a plain yes:
+        // a terminal without the keyboard protocol sends it as one anyway.
+        assert!(matches!(
+            d.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT), &mut v),
+            Outcome::CloseAct(Action::PermissionReply(Permission::Allow))
+        ));
+        assert!(matches!(
+            enter(&mut d, &mut v),
+            Outcome::CloseAct(Action::PermissionReply(Permission::Allow))
+        ));
         let shown: String = d
             .render(&v, 90, 12, Theme::truecolor_dark())
             .lines
@@ -1399,7 +1419,6 @@ mod tests {
                     + "\n"
             })
             .collect();
-        assert!(shown.contains("press y to allow it"), "{shown}");
         assert!(shown.contains("/undo may not reach it"), "{shown}");
     }
     fn text(body: &Body) -> Vec<String> {
@@ -1496,10 +1515,10 @@ mod tests {
         assert!(is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
     }
 
-    /// A short change is all there at once, and `y` answers, though not in
-    /// the moment the card appeared under whatever was being typed.
+    /// A short change is all there at once, and Enter answers, though not
+    /// in the moment the card appeared under whatever was being typed.
     #[test]
-    fn a_short_rules_change_takes_y_once_it_has_been_up_a_moment() {
+    fn a_short_rules_change_takes_enter_once_it_has_been_up_a_moment() {
         let theme = Theme::truecolor_dark();
         let mut v = view();
         v.now_ms = 10_000;
@@ -1515,9 +1534,9 @@ mod tests {
             !is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))),
             "too soon"
         );
-        // Enter never answers this card.
+        assert!(!is_yes(&key(&mut m, &mut v, KeyCode::Enter)), "too soon");
         v.now_ms = 11_000;
-        assert!(!is_yes(&key(&mut m, &mut v, KeyCode::Enter)));
+        assert!(is_yes(&key(&mut m, &mut v, KeyCode::Enter)));
         assert!(is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
         assert!(matches!(
             key(&mut m, &mut v, KeyCode::Char('n')),

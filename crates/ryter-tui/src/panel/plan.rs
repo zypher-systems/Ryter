@@ -235,11 +235,11 @@ impl Panel for PlanModal {
 
     fn legend(&self, _view: &View) -> String {
         match (&self.pane, &self.shown) {
-            (Pane::Read, Shown::Plan(_)) => "↑↓ scroll · y approve · e adjust · n reject".into(),
+            (Pane::Read, Shown::Plan(_)) => "↑↓ scroll · ⏎ approve · e adjust · n reject".into(),
             (Pane::Read, Shown::Run { .. }) if self.max_top.get() > 0 => {
-                "y approve · e adjust · n reject · ↑↓ scroll".into()
+                "⏎ approve · e adjust · n reject · ↑↓ scroll".into()
             }
-            (Pane::Read, Shown::Run { .. }) => "y approve · e adjust · n reject".into(),
+            (Pane::Read, Shown::Run { .. }) => "⏎ approve · e adjust · n reject".into(),
             (Pane::Adjust, _) => "type what to change · enter send · esc back".into(),
         }
     }
@@ -340,18 +340,21 @@ impl Panel for PlanModal {
                     KeyCode::PageDown | KeyCode::Char(' ') => self.top = (top + page).min(max),
                     KeyCode::Home => self.top = 0,
                     KeyCode::End => self.top = max,
-                    // A `y` in the moment the panel appeared was typed at
-                    // something else.
-                    KeyCode::Char('y' | 'Y') if view.now_ms < self.opened_ms + ENTER_GUARD_MS => {}
+                    // Enter approves, as on every question; a press in the
+                    // moment the panel appeared was typed at something else.
+                    KeyCode::Enter | KeyCode::Char('y' | 'Y')
+                        if view.now_ms < self.opened_ms + ENTER_GUARD_MS => {}
                     // A run file's commands run without another question:
                     // all of them have to have been on screen.
-                    KeyCode::Char('y' | 'Y')
+                    KeyCode::Enter | KeyCode::Char('y' | 'Y')
                         if matches!(self.shown, Shown::Run { .. }) && !self.seen_end.get() =>
                     {
                         self.error = Some("there is more below: scroll to the end (↓) first");
                         return Outcome::Stay;
                     }
-                    KeyCode::Char('y' | 'Y') => return Self::answer(PlanAnswer::Approve),
+                    KeyCode::Enter | KeyCode::Char('y' | 'Y') => {
+                        return Self::answer(PlanAnswer::Approve);
+                    }
                     KeyCode::Char('e' | 'E') => {
                         self.error = None;
                         view.composer.clear();
@@ -359,17 +362,6 @@ impl Panel for PlanModal {
                     }
                     KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                         return Self::answer(PlanAnswer::Reject);
-                    }
-                    // Enter starts work on nothing: `y` is the yes.
-                    KeyCode::Enter => {
-                        self.error = Some(match self.shown {
-                            Shown::Plan(_) => {
-                                "Enter doesn't approve a plan: y approves, e adjusts, n rejects"
-                            }
-                            Shown::Run { .. } => {
-                                "Enter doesn't approve this: y approves, e adjusts, n rejects"
-                            }
-                        });
                     }
                     _ => {}
                 }
@@ -454,7 +446,7 @@ mod tests {
         let v = view();
         let p = PlanModal::new("Add CSV export to reports".into(), PLAN.into(), 0);
         assert_eq!(p.title(&v), "plan · Add CSV export to reports");
-        assert_eq!(p.legend(&v), "↑↓ scroll · y approve · e adjust · n reject");
+        assert_eq!(p.legend(&v), "↑↓ scroll · ⏎ approve · e adjust · n reject");
         let shown = rows(&p, &v, 40).join("\n");
         let mut at = 0;
         for want in [
@@ -527,21 +519,21 @@ mod tests {
         assert!(rows(&p, &v, 10).iter().any(|r| r.contains("step number 1")));
     }
 
-    /// `y` approves, though not in the moment the panel appeared; `n` and
-    /// Esc reject; Enter does neither.
+    /// Enter approves, as on every question, though not in the moment the
+    /// panel appeared; `n` and Esc reject.
     #[test]
     fn the_three_answers() {
         let mut v = view();
         let mut p = PlanModal::new("T".into(), PLAN.into(), 10_000);
         v.now_ms = 10_100;
+        assert_eq!(answered(&press(&mut p, &mut v, KeyCode::Enter)), None);
         assert_eq!(answered(&press(&mut p, &mut v, KeyCode::Char('y'))), None);
         v.now_ms = 11_000;
-        assert_eq!(answered(&press(&mut p, &mut v, KeyCode::Enter)), None);
-        assert!(
-            rows(&p, &v, 30)
-                .iter()
-                .any(|r| r.contains("Enter doesn't approve"))
+        assert_eq!(
+            answered(&press(&mut p, &mut v, KeyCode::Enter)),
+            Some(PlanAnswer::Approve)
         );
+        let mut p = PlanModal::new("T".into(), PLAN.into(), 0);
         assert_eq!(
             answered(&press(&mut p, &mut v, KeyCode::Char('y'))),
             Some(PlanAnswer::Approve)
@@ -626,7 +618,7 @@ mod run_tests {
         v.now_ms = 10_000;
         let mut p = PlanModal::run(rows(), None, 0);
         assert_eq!(p.title(&v), "how this project runs");
-        assert_eq!(p.legend(&v), "y approve · e adjust · n reject");
+        assert_eq!(p.legend(&v), "⏎ approve · e adjust · n reject");
         assert_eq!(
             text(&p, &v, 56),
             [
@@ -653,15 +645,6 @@ mod run_tests {
         };
         assert!(matches!(
             press(&mut p, &mut v, KeyCode::Enter),
-            Outcome::Stay
-        ));
-        assert!(
-            text(&p, &v, 56)
-                .last()
-                .is_some_and(|l| l.contains("Enter doesn't approve this")),
-        );
-        assert!(matches!(
-            press(&mut p, &mut v, KeyCode::Char('y')),
             Outcome::CloseAct(Action::PlanReply(PlanAnswer::Approve))
         ));
         let mut p = PlanModal::run(rows(), None, 0);

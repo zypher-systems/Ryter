@@ -21,4 +21,4 @@
   │ Build  › type to queue the next message, / for commands                  │
   ╰──────────────────────────────────────────────────────────────────────────╯
 
- ⏎ allow  a allow edits this session  n deny  tab hat  ⇧tab mode  Build · $?.??
+ ⏎ allow  ⇧⏎ allow edits this session  n deny  tab hat            Build · $?.??

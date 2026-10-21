@@ -150,7 +150,7 @@ impl Panel for Permissions {
         match self.pane {
             Pane::Home => "↑↓ move · ←→/space answer · a add · d remove · esc close".into(),
             Pane::Add => "type pattern [= allow|ask|deny] · enter save · esc back".into(),
-            Pane::ConfirmRemove(_) => "y remove · n keep".into(),
+            Pane::ConfirmRemove(_) => "⏎ remove · n keep".into(),
         }
     }
 
@@ -389,7 +389,7 @@ impl Panel for Permissions {
                 }
             },
             Pane::ConfirmRemove(i) => match key.code {
-                KeyCode::Char('y' | 'Y') => {
+                KeyCode::Enter | KeyCode::Char('y' | 'Y') => {
                     let keys = Self::bash_keys(&view.permissions);
                     if let Some(pat) = keys.get(i).cloned() {
                         view.permissions.bash.remove(&pat);

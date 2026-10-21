@@ -2951,7 +2951,7 @@ fn the_foot_shows_the_cards_keys_in_warn() {
     );
 }
 
-/// The allow card's own key row holds `⏎`, `a` and `n` on a narrow column
+/// The allow card's own key row holds `⏎`, `⇧⏎` and `n` on a narrow column
 /// too: the scope is said in a word, and a key that doesn't fit is left
 /// out without taking the ones after it.
 #[test]
@@ -2964,7 +2964,7 @@ fn the_allow_cards_key_row_keeps_its_keys_when_narrow() {
             .find(|l| l.contains("⏎ allow"))
             .unwrap_or_else(|| panic!("{w}x{h}: no key row\n{shown}"));
         assert!(
-            row.contains("a allow edits this session") && row.contains("n deny"),
+            row.contains("⇧⏎ allow edits this session") && row.contains("n deny"),
             "{w}x{h}: {row}"
         );
     }
@@ -3059,7 +3059,7 @@ fn snapshot_root_permission_card() {
     );
     assert!(drawn.contains("your password is asked next"), "{drawn}");
     assert!(
-        drawn.contains("y allow once") && !drawn.contains("always"),
+        drawn.contains("⏎ allow once") && !drawn.contains("always"),
         "{drawn}"
     );
     all_sizes("modal-permission-root", &v);
@@ -3560,6 +3560,74 @@ fn a_code_block_is_copied_without_its_frame() {
             "numbers: {numbers}"
         );
     }
+}
+
+/// Deleting a session is a question like every other: `d` asks, Enter
+/// deletes, `n` keeps. Nothing is typed to confirm.
+#[test]
+fn deleting_a_session_is_a_plain_question() {
+    use ryter_core::Session;
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let my_env = PanelEnv {
+        home: home.path().to_path_buf(),
+        cwd: cwd.path().to_path_buf(),
+        trusted: true,
+        sandbox: ryter_core::sandbox::SandboxProfile::Off,
+    };
+    let mut old = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+    old.set_title("the pager fix").unwrap();
+    let id = old.meta.id.to_string();
+    drop(old);
+    let mut v = idle();
+    v.session_id = "another".into();
+    let _ = panel::open(&mut v, PanelId::Sessions(SessionsMode::Browse), &my_env);
+    let legend = |v: &View| v.panels.top().map(|p| p.legend(v)).unwrap_or_default();
+    let press = |v: &mut View, code: KeyCode| {
+        crate::run_keys_handle(v, KeyEvent::new(code, KeyModifiers::NONE))
+    };
+    assert!(legend(&v).contains("d delete"), "{}", legend(&v));
+    press(&mut v, KeyCode::Char('d'));
+    assert_eq!(legend(&v), "⏎ delete · n keep · esc");
+    let shown = render_to_string(&v, 120, 40);
+    assert!(
+        shown.contains("delete \u{201c}the pager fix\u{201d}"),
+        "{shown}"
+    );
+    assert!(!shown.contains("type `"), "{shown}");
+    // `n` keeps it: back to the list, nothing deleted.
+    assert_eq!(press(&mut v, KeyCode::Char('n')), Action::None);
+    assert!(legend(&v).contains("d delete"), "{}", legend(&v));
+    assert_eq!(Session::list(home.path(), cwd.path()).unwrap().len(), 1);
+    // Enter deletes it.
+    press(&mut v, KeyCode::Char('d'));
+    assert_eq!(press(&mut v, KeyCode::Enter), Action::DeleteSession(id));
+}
+
+/// Removing a hook is the same question: Enter removes, `n` keeps, and
+/// the word `remove` is no longer typed.
+#[test]
+fn removing_a_hook_is_a_plain_question() {
+    let mut v = idle();
+    v.hooks = vec![ryter_core::HookConfig {
+        event: "PreToolUse".into(),
+        command: Some("echo hi".into()),
+        url: None,
+        matcher: None,
+    }];
+    let _ = panel::open(&mut v, PanelId::Hooks, &env());
+    let legend = |v: &View| v.panels.top().map(|p| p.legend(v)).unwrap_or_default();
+    let press = |v: &mut View, code: KeyCode| {
+        crate::run_keys_handle(v, KeyEvent::new(code, KeyModifiers::NONE))
+    };
+    press(&mut v, KeyCode::Char('d'));
+    assert_eq!(legend(&v), "⏎ remove · n keep · esc");
+    assert!(render_to_string(&v, 120, 40).contains("remove PreToolUse → echo hi?"));
+    press(&mut v, KeyCode::Char('n'));
+    assert_eq!(v.hooks.len(), 1, "n keeps the hook");
+    press(&mut v, KeyCode::Char('d'));
+    assert_eq!(press(&mut v, KeyCode::Enter), Action::SaveHooks);
+    assert!(v.hooks.is_empty(), "Enter removes it");
 }
 
 /// A field is edited from what it holds: the session's title in `/rename`,

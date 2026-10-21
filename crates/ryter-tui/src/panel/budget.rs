@@ -175,7 +175,7 @@ impl Panel for Budget {
 
     fn legend(&self, _view: &View) -> String {
         if self.confirm_discard {
-            "y save · n discard · esc keep editing".into()
+            "⏎ save · n discard · esc keep editing".into()
         } else if self.editing {
             "type · enter apply · esc cancel".into()
         } else {

@@ -21,6 +21,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 The last release is 0.34.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
+- **One answer for every question (dev, unreleased).** On the user's call of 2026-10-21: `Enter` is yes on every card and panel, `Shift+Enter` is yes for the session where that exists, `n` is no; deleting a session and removing a hook are a plain are-you-sure. `DECISIONS.md` 2026-10-21. Open: `Shift+Enter` is its own key only under the kitty keyboard protocol; elsewhere it allows once.
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
 - **1.0 item 1 (flow on a real project): closed 2026-10-14** (recorded in 0.28.0). Further ask friction from fiscus/tunes stays under Next (item 2). G4 closed the nested-scratch and tmux-scope holes in 0.29.0.

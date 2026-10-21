@@ -105,7 +105,7 @@ impl Panel for Hooks {
             Pane::Home => "enter details · a add · d remove · esc".into(),
             Pane::Event { .. } => "↑↓ choose · enter next · esc back".into(),
             Pane::Review { .. } => "enter write ~/.ryter/hooks.toml · esc back".into(),
-            Pane::ConfirmRemove(_) => "type `remove` · enter · esc".into(),
+            Pane::ConfirmRemove(_) => "⏎ remove · n keep · esc".into(),
             _ => "type · enter next · esc back".into(),
         }
     }
@@ -114,7 +114,7 @@ impl Panel for Hooks {
         match &self.pane {
             Pane::Target { .. } => Some("command or url".into()),
             Pane::Matcher { .. } => Some("matcher".into()),
-            Pane::ConfirmRemove(_) => Some("confirm".into()),
+            Pane::ConfirmRemove(_) => None,
             _ => None,
         }
     }
@@ -295,25 +295,19 @@ impl Panel for Hooks {
                     _ => Outcome::Stay,
                 }
             }
+            // A question like every other: Enter removes, `n` keeps.
             Pane::ConfirmRemove(i) => match key.code {
-                KeyCode::Esc => {
+                KeyCode::Esc | KeyCode::Char('n' | 'N') => {
                     self.go(view, Pane::Home);
                     Outcome::Stay
                 }
-                KeyCode::Enter => {
-                    if view.composer.text().trim() == "remove" && i < view.hooks.len() {
-                        view.hooks.remove(i);
-                        self.go(view, Pane::Home);
-                        self.selected = 0;
-                        Outcome::Act(Action::SaveHooks)
-                    } else {
-                        Outcome::Stay
-                    }
+                KeyCode::Enter | KeyCode::Char('y' | 'Y') if i < view.hooks.len() => {
+                    view.hooks.remove(i);
+                    self.go(view, Pane::Home);
+                    self.selected = 0;
+                    Outcome::Act(Action::SaveHooks)
                 }
-                _ => {
-                    super::edit_field(&mut view.composer, key);
-                    Outcome::Stay
-                }
+                _ => Outcome::Stay,
             },
             Pane::Event { idx } => match key.code {
                 KeyCode::Esc => {

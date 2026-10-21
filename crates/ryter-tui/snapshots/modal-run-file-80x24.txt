@@ -21,4 +21,4 @@
   │ Build  › type to queue the next message, / for commands                  │
   ╰──────────────────────────────────────────────────────────────────────────╯
 
- y approve  e adjust  n reject  tab hat  ⇧tab mode  / commands    Build · $?.??
+ ⏎ approve  e adjust  n reject  tab hat  ⇧tab mode  / commands    Build · $?.??

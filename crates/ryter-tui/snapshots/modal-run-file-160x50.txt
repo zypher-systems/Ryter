@@ -40,11 +40,11 @@
                                                                                                                     ┊
                    saved to .ryter/run.toml                                                                         ┊
                    ryter runs these without asking                                                                  ┊
-                   y approve   e adjust   n reject                                                                  ┊
+                   ⏎ approve   e adjust   n reject                                                                  ┊
                  ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
                                                                                                                     ┊
     ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ┊
     │ Build  › type to queue the next message, / for commands                                                    │  ┊
     ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ┊
                                                                                                                     ┊
- y approve  e adjust  n reject  ↑↓ scroll  tab hat  ⇧tab mode  / commands  f2 instruments
+ ⏎ approve  e adjust  n reject  ↑↓ scroll  tab hat  ⇧tab mode  / commands  f2 instruments

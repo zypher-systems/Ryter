@@ -27,4 +27,4 @@
   │ Build  › type to queue the next message, / for commands          │  ┊
   ╰──────────────────────────────────────────────────────────────────╯  ┊
                                                                         ┊
- y allow once  n deny  tab hat  ⇧tab mode  / commands  f2 instruments
+ ⏎ allow once  n deny  tab hat  ⇧tab mode  / commands  f2 instruments

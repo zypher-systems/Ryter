@@ -679,7 +679,7 @@ fn legend_line(legend: &str, width: usize, theme: Theme) -> Line<'static> {
     for item in legend.split(" · ") {
         let (key, label) = item.split_once(' ').unwrap_or((item, ""));
         let color = match key {
-            "⏎" | "y" | "enter" => theme.success,
+            "⏎" | "⇧⏎" | "y" | "enter" => theme.success,
             "n" | "esc" => theme.error,
             _ => theme.accent,
         };
