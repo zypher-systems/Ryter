@@ -33,4 +33,5 @@ mod tests;
 use run::{
     events::apply as run_events_apply, keys::handle as run_keys_handle,
     mouse_handle as run_mouse_handle, mouse_handle_with as run_mouse_handle_with,
+    populate_view as run_populate_view,
 };

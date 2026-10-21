@@ -1392,6 +1392,75 @@ fn the_sessions_count_follows_new_and_delete() {
     assert!(!render_to_string(&v, 120, 40).contains("/sessions"));
 }
 
+/// The startup path itself: a project with a session on disk opens with
+/// the hint, and one without opens without it. `populate_view` is given
+/// the home and the project the way `run` gives them, and sets the view's
+/// own copies before it counts; nothing is set by hand here.
+#[test]
+fn the_startup_reads_the_sessions_count_from_the_disk() {
+    use ryter_core::Session;
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let cfg = ryter_core::Config::default();
+    let opts = crate::TuiOpts {
+        always_approve: false,
+        yolo: false,
+        rounds: None,
+        connection: None,
+        model: None,
+        sandbox: None,
+        session: None,
+        hat: None,
+    };
+    let create = || Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+    // First start: nothing on disk but the session just created.
+    let first = create();
+    let mut v = idle();
+    v.messages.clear();
+    crate::run_populate_view(
+        &mut v,
+        &cfg,
+        home.path(),
+        cwd.path(),
+        true,
+        &first,
+        true,
+        &opts,
+    );
+    assert_eq!(v.sessions_count, 0, "a fresh project");
+    assert!(!render_to_string(&v, 120, 40).contains("/sessions"));
+    // A turn, then the binary is started again in the same project.
+    let mut first = first;
+    first
+        .push_message(ryter_core::Message {
+            role: "user".into(),
+            content: "hi".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            messages_blocks: None,
+        })
+        .unwrap();
+    drop(first);
+    let second = create();
+    let mut v = idle();
+    v.messages.clear();
+    crate::run_populate_view(
+        &mut v,
+        &cfg,
+        home.path(),
+        cwd.path(),
+        true,
+        &second,
+        true,
+        &opts,
+    );
+    assert_eq!(v.sessions_count, 1, "the earlier session is on disk");
+    assert_eq!(v.workspace.as_deref(), Some(cwd.path()));
+    assert_eq!(v.ryter_home.as_deref(), Some(home.path()));
+    let text = render_to_string(&v, 120, 40);
+    assert!(text.contains("/sessions"), "{text}");
+}
+
 /// A session with nothing in it yet, at each size, with and without an
 /// earlier session to go back to.
 #[test]

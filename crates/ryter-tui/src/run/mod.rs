@@ -300,7 +300,6 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         ));
     }
     actions::load_project_spend(&mut view, &home, &cwd);
-    view.workspace = Some(cwd.clone());
     view.refresh_uncommitted();
     if config::asks_for_trust(&cwd) && !trusted {
         view.panels.push(Box::new(TrustModal::default()));
@@ -462,7 +461,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn populate_view(
+pub(crate) fn populate_view(
     view: &mut View,
     cfg: &ryter_core::Config,
     home: &Path,
@@ -519,8 +518,10 @@ fn populate_view(
     view.session_id = session.meta.id.to_string();
     view.session_title = session.meta.title.clone();
     // How many earlier sessions this project has, for the opening screen:
-    // the one just created is not one to go back to.
+    // the one just created is not one to go back to. The count is read
+    // from the home and the project, so both are set here, first.
     view.ryter_home = Some(home.to_path_buf());
+    view.workspace = Some(cwd.to_path_buf());
     view.refresh_sessions_count();
     view.ctx_tokens = Some(0);
     view.ctx_pct = Some(0);
