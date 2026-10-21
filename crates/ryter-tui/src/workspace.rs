@@ -124,7 +124,7 @@ pub fn chrome_key(view: &mut View, key: KeyEvent) -> Option<Action> {
 }
 
 /// A click on a hat row of the rail: the hat goes on in place.
-pub fn click(_view: &mut View, kind: WorkspaceClick) -> Action {
+pub fn click(kind: WorkspaceClick) -> Action {
     match kind {
         WorkspaceClick::Wear(role) => Action::SetMode(role),
     }

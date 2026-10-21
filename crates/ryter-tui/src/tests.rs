@@ -1330,6 +1330,68 @@ fn snapshot_conversation() {
     all_sizes("conversation", &conversation());
 }
 
+/// The count behind the welcome's `/sessions` hint follows the disk: it
+/// is read again when the open session changes and after a delete, the
+/// open session is never counted, and a session with nothing in it is
+/// nothing to go back to.
+#[test]
+fn the_sessions_count_follows_new_and_delete() {
+    use ryter_core::Session;
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let create = || Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+    let mut v = idle();
+    v.messages.clear();
+    v.ryter_home = Some(home.path().to_path_buf());
+    v.workspace = Some(cwd.path().to_path_buf());
+    let mut a = create();
+    a.push_message(ryter_core::Message {
+        role: "user".into(),
+        content: "hi".into(),
+        tool_call_id: None,
+        tool_calls: None,
+        messages_blocks: None,
+    })
+    .unwrap();
+    v.session_id = a.meta.id.to_string();
+    v.refresh_sessions_count();
+    assert_eq!(
+        v.sessions_count, 0,
+        "the open session is not one to go back to"
+    );
+    assert!(!render_to_string(&v, 120, 40).contains("/sessions"));
+    // `/new`: the worker says which session is open now, and the one
+    // just left is on disk with a message in it.
+    let b = create();
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::Session {
+            id: b.meta.id.to_string(),
+            title: String::new(),
+        },
+    );
+    assert_eq!(v.sessions_count, 1, "the session just left counts");
+    let text = render_to_string(&v, 120, 40);
+    assert!(text.contains("/sessions"), "{text}");
+    // `/new` again from the empty one: nothing more to go back to.
+    let c = create();
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::Session {
+            id: c.meta.id.to_string(),
+            title: String::new(),
+        },
+    );
+    assert_eq!(v.sessions_count, 1, "an empty session is not counted");
+    // The one with a message deleted: the hint goes.
+    let dir = a.dir.clone();
+    drop(a);
+    Session::remove(&dir).unwrap();
+    v.refresh_sessions_count();
+    assert_eq!(v.sessions_count, 0);
+    assert!(!render_to_string(&v, 120, 40).contains("/sessions"));
+}
+
 /// A session with nothing in it yet, at each size, with and without an
 /// earlier session to go back to.
 #[test]

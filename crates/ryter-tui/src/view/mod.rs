@@ -378,9 +378,12 @@ pub struct View {
     pub screen: std::cell::Cell<(u16, u16)>,
     /// How fast the model is writing.
     pub pulse: Pulse,
-    /// Earlier sessions this project has: the welcome says how to resume
-    /// one only when there is one.
+    /// Earlier sessions of this project with something in them: the
+    /// welcome says how to resume one only when there is one. Read from
+    /// disk by [`View::refresh_sessions_count`].
     pub sessions_count: usize,
+    /// `~/.ryter`, so that count can be read again.
+    pub ryter_home: Option<std::path::PathBuf>,
     /// Checkbox lines of `.ryter/plan.md`, in order.
     pub plan_steps: Vec<(bool, String)>,
 }
@@ -585,6 +588,7 @@ impl View {
             screen: std::cell::Cell::new((0, 0)),
             pulse: Pulse::default(),
             sessions_count: 0,
+            ryter_home: None,
             plan_steps: Vec::new(),
         }
     }
@@ -760,6 +764,24 @@ impl View {
             "square" => false,
             _ => self.caps_terminal || self.ui.nerd_font,
         }
+    }
+
+    /// Count the earlier sessions of this project with something in them,
+    /// other than the one open. The welcome names `/sessions` on it, so
+    /// it is read again whenever the open session changes (`/new`, a
+    /// resume) and after a delete, not once at the start. A session with
+    /// no messages is nothing to go back to.
+    pub fn refresh_sessions_count(&mut self) {
+        let (Some(home), Some(cwd)) = (&self.ryter_home, &self.workspace) else {
+            return;
+        };
+        let open = self.session_id.as_str();
+        let n = ryter_core::Session::list(home, cwd).map_or(0, |v| {
+            v.iter()
+                .filter(|s| s.meta.id.as_str() != open && s.messages > 0)
+                .count()
+        });
+        self.sessions_count = n;
     }
 
     /// Anything in the transcript worth confirming before `/new`.
