@@ -197,7 +197,7 @@ impl Panel for Providers {
                 "enter write ~/.ryter/connections.toml · esc back".into()
             }
             Mode::Add(_) => "type · enter next · esc back".into(),
-            Mode::ConfirmRemove(n) => format!("type `{n}` · enter remove · esc cancel"),
+            Mode::ConfirmRemove(_) => "⏎ remove · n keep · esc".into(),
             Mode::PickSearch { .. } => "↑↓ choose · enter · esc back".into(),
             Mode::SearxUrl => "type · enter save · esc back".into(),
         }
@@ -206,7 +206,6 @@ impl Panel for Providers {
     fn input(&self, _view: &View) -> Option<String> {
         match &self.mode {
             Mode::Add(s) if s.takes_text() => Some(s.title().into()),
-            Mode::ConfirmRemove(_) => Some("confirm".into()),
             Mode::SearxUrl => Some("searxng address".into()),
             _ => None,
         }
@@ -531,26 +530,18 @@ impl Panel for Providers {
                     _ => Outcome::Stay,
                 }
             }
+            // The one question's keys: Enter yes, n (or Esc) no.
             Mode::ConfirmRemove(name) => match key.code {
-                KeyCode::Esc => {
+                KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                     self.mode = Mode::Browse;
-                    view.composer.clear();
                     Outcome::Stay
                 }
-                KeyCode::Enter => {
-                    if view.composer.text().trim() == name {
-                        view.composer.clear();
-                        self.mode = Mode::Browse;
-                        self.selected = 0;
-                        Outcome::Act(Action::RemoveConnection(name))
-                    } else {
-                        Outcome::Stay
-                    }
+                KeyCode::Enter | KeyCode::Char('y' | 'Y') => {
+                    self.mode = Mode::Browse;
+                    self.selected = 0;
+                    Outcome::Act(Action::RemoveConnection(name))
                 }
-                _ => {
-                    super::edit_field(&mut view.composer, key);
-                    Outcome::Stay
-                }
+                _ => Outcome::Stay,
             },
             Mode::PickSearch { idx } => match key.code {
                 KeyCode::Esc => {

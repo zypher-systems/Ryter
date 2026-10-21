@@ -173,6 +173,8 @@ pub struct PlanModal {
     rows: std::cell::RefCell<Option<(usize, Vec<Line<'static>>)>>,
     /// `view.now_ms` when it opened: a `y` typed as it appeared isn't an answer.
     opened_ms: u64,
+    /// When the last Enter arrived, to tell a held key from a press.
+    last_enter_ms: Option<u64>,
     error: Option<&'static str>,
     /// The last row has been on screen. A run file is approved only once
     /// it has: its commands run without another question.
@@ -211,6 +213,7 @@ impl PlanModal {
             page: std::cell::Cell::new(1),
             rows: std::cell::RefCell::new(None),
             opened_ms,
+            last_enter_ms: None,
             error: None,
             seen_end: std::cell::Cell::new(false),
         }
@@ -328,6 +331,8 @@ impl Panel for PlanModal {
     }
 
     fn key(&mut self, key: KeyEvent, view: &mut View) -> Outcome {
+        let held = key.code == KeyCode::Enter
+            && super::modal::enter_held(self.opened_ms, &mut self.last_enter_ms, view.now_ms);
         match self.pane {
             Pane::Read => {
                 let max = self.max_top.get();
@@ -341,9 +346,10 @@ impl Panel for PlanModal {
                     KeyCode::Home => self.top = 0,
                     KeyCode::End => self.top = max,
                     // Enter approves, as on every question; a press in the
-                    // moment the panel appeared was typed at something else.
-                    KeyCode::Enter | KeyCode::Char('y' | 'Y')
-                        if view.now_ms < self.opened_ms + ENTER_GUARD_MS => {}
+                    // moment the panel appeared was typed at something else,
+                    // and a key still held from then is not a press.
+                    KeyCode::Enter if held => {}
+                    KeyCode::Char('y' | 'Y') if view.now_ms < self.opened_ms + ENTER_GUARD_MS => {}
                     // A run file's commands run without another question:
                     // all of them have to have been on screen.
                     KeyCode::Enter | KeyCode::Char('y' | 'Y')
@@ -517,6 +523,28 @@ mod tests {
         }
         press(&mut p, &mut v, KeyCode::Home);
         assert!(rows(&p, &v, 10).iter().any(|r| r.contains("step number 1")));
+    }
+
+    /// A key still held down when the guard ends is not a press: a held
+    /// Enter is a run of presses 30–50 ms apart, and the plan is approved
+    /// only by an Enter further than that from the last.
+    #[test]
+    fn a_held_enter_does_not_approve() {
+        let mut v = view();
+        let mut p = PlanModal::new("T".into(), PLAN.into(), 10_000);
+        for at in [10_000, 10_300, 10_490, 10_520, 10_700] {
+            v.now_ms = at;
+            assert_eq!(
+                answered(&press(&mut p, &mut v, KeyCode::Enter)),
+                None,
+                "at {at}"
+            );
+        }
+        v.now_ms = 10_950;
+        assert_eq!(
+            answered(&press(&mut p, &mut v, KeyCode::Enter)),
+            Some(PlanAnswer::Approve)
+        );
     }
 
     /// Enter approves, as on every question, though not in the moment the

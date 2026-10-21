@@ -165,14 +165,13 @@ impl Panel for Mcp {
             Pane::Inbound => "enter toggle/copy · v reveal token · esc back".into(),
             Pane::Add(Step::Review { .. }) => "enter write ~/.ryter/mcp.toml · esc back".into(),
             Pane::Add(_) => "type · enter next · esc back".into(),
-            Pane::ConfirmRemove(n) => format!("type `{n}` · enter · esc"),
+            Pane::ConfirmRemove(_) => "⏎ remove · n keep · esc".into(),
         }
     }
 
     fn input(&self, _view: &View) -> Option<String> {
         match &self.pane {
             Pane::Add(s) if !matches!(s, Step::Review { .. }) => Some(s.title().into()),
-            Pane::ConfirmRemove(_) => Some("confirm".into()),
             _ => None,
         }
     }
@@ -417,28 +416,20 @@ impl Panel for Mcp {
                     _ => Outcome::Stay,
                 }
             }
+            // The one question's keys: Enter yes, n (or Esc) no.
             Pane::ConfirmRemove(name) => match key.code {
-                KeyCode::Esc => {
+                KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                     self.pane = Pane::Home;
-                    view.composer.clear();
                     Outcome::Stay
                 }
-                KeyCode::Enter => {
-                    if view.composer.text().trim() == name {
-                        view.mcp_servers.remove(&name);
-                        view.mcp_status.remove(&name);
-                        view.composer.clear();
-                        self.pane = Pane::Home;
-                        self.selected = 0;
-                        Outcome::Act(Action::SaveMcp)
-                    } else {
-                        Outcome::Stay
-                    }
+                KeyCode::Enter | KeyCode::Char('y' | 'Y') => {
+                    view.mcp_servers.remove(&name);
+                    view.mcp_status.remove(&name);
+                    self.pane = Pane::Home;
+                    self.selected = 0;
+                    Outcome::Act(Action::SaveMcp)
                 }
-                _ => {
-                    super::edit_field(&mut view.composer, key);
-                    Outcome::Stay
-                }
+                _ => Outcome::Stay,
             },
             Pane::Inbound => match key.code {
                 KeyCode::Esc => {

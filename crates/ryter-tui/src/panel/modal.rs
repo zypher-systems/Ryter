@@ -15,6 +15,23 @@ use crate::view::View;
 /// press meant to send a message can't approve what appeared under it.
 pub const ENTER_GUARD_MS: u64 = 500;
 
+/// Enters closer together than this are one key held down: a terminal
+/// without key-release reports sends a held Enter as a run of presses, so
+/// a card that opened under one would be answered the moment the guard
+/// ended. Autorepeat runs at 30–50 ms; a second press by hand is further.
+pub const ENTER_REPEAT_MS: u64 = 200;
+
+/// Whether an Enter arriving at `now_ms` is no answer to a card that opened
+/// on its own at `opened_ms`: it came with the card (the first half second),
+/// or it is the same key still held from before (an Enter less than
+/// [`ENTER_REPEAT_MS`] earlier). Records this Enter either way.
+pub fn enter_held(opened_ms: u64, last_enter_ms: &mut Option<u64>, now_ms: u64) -> bool {
+    let held = now_ms < opened_ms + ENTER_GUARD_MS
+        || last_enter_ms.is_some_and(|t| now_ms < t + ENTER_REPEAT_MS);
+    *last_enter_ms = Some(now_ms);
+    held
+}
+
 /// The narrowest card that can show a change whole: a line number, its
 /// sign, and text beside them.
 const MIN_WHOLE_WIDTH: usize = 16;
@@ -43,6 +60,8 @@ pub struct PermissionModal {
     pub asks: Option<String>,
     /// `view.now_ms` when the prompt opened, for the Enter guard.
     pub opened_ms: u64,
+    /// When the last Enter arrived, to tell a held key from a press.
+    pub last_enter_ms: Option<u64>,
     /// The card is the only view of the change there will be (the user's
     /// rules: the file isn't in the project, so `/changes` never has it).
     /// All of it is here to scroll through, and yes answers only once its
@@ -81,6 +100,7 @@ impl PermissionModal {
             why: None,
             asks: None,
             opened_ms: 0,
+            last_enter_ms: None,
             whole: false,
             top: 0,
             max_top: std::cell::Cell::new(0),
@@ -537,7 +557,7 @@ impl Panel for PermissionModal {
                     let below = total - (top + shown);
                     let note = match (below > 0, self.whole) {
                         (true, true) => format!(
-                            "↓ {below} more row{} · read to the end (↓ PgDn), then y",
+                            "↓ {below} more row{} · read to the end (↓ PgDn), then ⏎",
                             if below == 1 { "" } else { "s" }
                         ),
                         (true, false) => format!(
@@ -594,11 +614,14 @@ impl Panel for PermissionModal {
 
     fn key(&mut self, key: KeyEvent, view: &mut View) -> Outcome {
         let reply = |p: Permission| Outcome::CloseAct(Action::PermissionReply(p));
+        let held = key.code == KeyCode::Enter
+            && enter_held(self.opened_ms, &mut self.last_enter_ms, view.now_ms);
         match key.code {
             // Enter answers yes, as on every question, but not a press that
-            // arrived with the prompt: Enter is also the send key, and a
-            // prompt can open under a message being typed.
-            KeyCode::Enter if view.now_ms < self.opened_ms + ENTER_GUARD_MS => Outcome::Stay,
+            // arrived with the prompt (Enter is also the send key, and a
+            // prompt can open under a message being typed), nor the same
+            // key still held down when the guard ends.
+            KeyCode::Enter if held => Outcome::Stay,
             // A change that must be read whole: move through it, a row at a
             // time or a page less a row. Several of these can arrive before
             // the next frame, so none goes past what has been drawn: the
@@ -1050,24 +1073,10 @@ impl Panel for Confirm {
             lines.push(widgets::text(&row, theme));
         }
         lines.push(widgets::blank(theme));
-        lines.push(Line::from(vec![
-            Span::styled(
-                " ⏎ ",
-                Style::default()
-                    .fg(theme.success)
-                    .bg(theme.panel_bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("· yes   ", theme.panel()),
-            Span::styled(
-                "n ",
-                Style::default()
-                    .fg(theme.error)
-                    .bg(theme.panel_bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("· no", theme.panel()),
-        ]));
+        lines.push(answer_row(
+            &[("⏎", "yes", theme.success), ("n", "no", theme.error)],
+            theme,
+        ));
         Body {
             lines,
             scroll: None,
@@ -1155,6 +1164,28 @@ impl Panel for StopModal {
     }
 }
 
+/// The answers a question takes, on one row: each key bold in its colour,
+/// then what it does.
+fn answer_row(answers: &[(&str, &str, ratatui::style::Color)], theme: Theme) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (i, (key, what, color)) in answers.iter().enumerate() {
+        spans.push(Span::styled(
+            if i == 0 {
+                format!(" {key} ")
+            } else {
+                format!("{key} ")
+            },
+            Style::default()
+                .fg(*color)
+                .bg(theme.panel_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        let gap = if i + 1 < answers.len() { "   " } else { "" };
+        spans.push(Span::styled(format!("· {what}{gap}"), theme.panel()));
+    }
+    Line::from(spans)
+}
+
 /// Trust-this-project prompt shown at startup when `.ryter/` is untrusted.
 /// Enter trusts, `n` skips, as on every question.
 #[derive(Debug, Clone, Default)]
@@ -1194,25 +1225,13 @@ impl Panel for TrustModal {
             lines.push(widgets::text(&row, theme));
         }
         lines.push(widgets::blank(theme));
-        lines.push(widgets::list_row(
-            "✓",
-            "trust",
-            "load project skills and memory",
-            "",
-            true,
-            w,
+        lines.push(answer_row(
+            &[("⏎", "trust: load project skills and memory", theme.success)],
             theme,
-            Some(theme.success),
         ));
-        lines.push(widgets::list_row(
-            "○",
-            "skip",
-            "user-level config only",
-            "",
-            false,
-            w,
+        lines.push(answer_row(
+            &[("n", "skip: user-level config only", theme.dim)],
             theme,
-            Some(theme.dim),
         ));
         Body {
             lines,
@@ -1403,6 +1422,9 @@ mod tests {
             d.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT), &mut v),
             Outcome::CloseAct(Action::PermissionReply(Permission::Allow))
         ));
+        // (A second Enter on the same card, as if it had stayed up: a
+        // moment later, so it is a press and not the first one held.)
+        v.now_ms += 300;
         assert!(matches!(
             enter(&mut d, &mut v),
             Outcome::CloseAct(Action::PermissionReply(Permission::Allow))
@@ -1760,5 +1782,97 @@ mod tests {
         }
         m.render(&v, 70, 12, theme);
         assert!(is_yes(&key(&mut m, &mut v, KeyCode::Char('y'))));
+    }
+
+    /// A key still held down when the guard ends is not a press. Without
+    /// key-release reports a held Enter is a run of presses 30–50 ms apart;
+    /// the card answers only to an Enter further than that from the last.
+    #[test]
+    fn a_held_enter_is_not_an_answer() {
+        let mut v = crate::view::View::new("spacexsi".into(), "grok-4.6".into(), "/tmp".into());
+        let enter = |m: &mut PermissionModal, v: &mut crate::view::View, at: u64| {
+            v.now_ms = at;
+            m.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), v)
+        };
+        let mut m = PermissionModal::new("bash".into(), "git reset --hard".into())
+            .with_answers(true, None)
+            .with_context(None, 10_000);
+        // Held from before the card: presses through the guard and past it.
+        for at in [10_000, 10_040, 10_300, 10_490, 10_520, 10_560, 10_700] {
+            assert!(
+                matches!(enter(&mut m, &mut v, at), Outcome::Stay),
+                "at {at}"
+            );
+        }
+        // Let go, then pressed: an answer.
+        assert!(matches!(
+            enter(&mut m, &mut v, 10_950),
+            Outcome::CloseAct(Action::PermissionReply(Permission::Allow))
+        ));
+        // A shifted Enter held the same way is no session answer either.
+        let mut m = PermissionModal::new("search_replace".into(), "a.rs".into())
+            .with_answers(false, Some("edits to files in the project".into()))
+            .with_context(None, 10_000);
+        for at in [10_490, 10_520] {
+            v.now_ms = at;
+            assert!(matches!(
+                m.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT), &mut v),
+                Outcome::Stay
+            ));
+        }
+        v.now_ms = 10_800;
+        assert!(matches!(
+            m.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT), &mut v),
+            Outcome::CloseAct(Action::PermissionReply(Permission::Always))
+        ));
+    }
+
+    /// The trust question is Enter or `n`, with no row to move onto: the
+    /// body says which key does what, and Down then Enter trusts, as Enter
+    /// alone does.
+    #[test]
+    fn the_trust_question_is_enter_or_n() {
+        let mut v = crate::view::View::new("c".into(), "m".into(), "/tmp/proj".into());
+        let press = |v: &mut crate::view::View, code: KeyCode| {
+            TrustModal.key(KeyEvent::new(code, KeyModifiers::NONE), v)
+        };
+        assert_eq!(TrustModal.legend(&v), "⏎ trust · n skip");
+        let shown: String = TrustModal
+            .render(&v, 70, 10, Theme::truecolor_dark())
+            .lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect();
+        assert!(
+            shown.contains("⏎ · trust: load project skills and memory"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("n · skip: user-level config only"),
+            "{shown}"
+        );
+        assert!(
+            !shown.contains('›') && !shown.contains('✓'),
+            "no cursor: {shown}"
+        );
+        assert!(matches!(press(&mut v, KeyCode::Down), Outcome::Stay));
+        assert!(matches!(
+            press(&mut v, KeyCode::Enter),
+            Outcome::CloseAct(Action::TrustProject(true))
+        ));
+        assert!(matches!(
+            press(&mut v, KeyCode::Char('n')),
+            Outcome::CloseAct(Action::TrustProject(false))
+        ));
+        assert!(matches!(
+            press(&mut v, KeyCode::Esc),
+            Outcome::CloseAct(Action::TrustProject(false))
+        ));
     }
 }

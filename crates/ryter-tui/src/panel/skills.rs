@@ -144,16 +144,18 @@ impl Panel for Skills {
             Pane::SkillReview { .. } | Pane::CmdReview { .. } => {
                 "enter write file · esc back".into()
             }
-            Pane::ConfirmRemove(_) => "type `remove` · enter · esc".into(),
+            Pane::ConfirmRemove(_) => "⏎ remove · n keep · esc".into(),
             _ => "type · enter next · esc back".into(),
         }
     }
 
     fn input(&self, _view: &View) -> Option<String> {
         match &self.pane {
-            Pane::Home | Pane::SkillReview { .. } | Pane::CmdReview { .. } => None,
+            Pane::Home
+            | Pane::SkillReview { .. }
+            | Pane::CmdReview { .. }
+            | Pane::ConfirmRemove(_) => None,
             Pane::Args { .. } => Some("arguments".into()),
-            Pane::ConfirmRemove(_) => Some("confirm".into()),
             p => Self::step_of(p).map(|(_, _, t)| t.to_string()),
         }
     }
@@ -343,24 +345,18 @@ impl Panel for Skills {
                     _ => Outcome::Stay,
                 }
             }
+            // The one question's keys: Enter yes, n (or Esc) no.
             Pane::ConfirmRemove(p) => match key.code {
-                KeyCode::Esc => {
+                KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                     self.go(view, Pane::Home);
                     Outcome::Stay
                 }
-                KeyCode::Enter => {
-                    if view.composer.text().trim() == "remove" {
-                        self.go(view, Pane::Home);
-                        self.selected = 0;
-                        Outcome::Act(Action::RemoveCatalog(p))
-                    } else {
-                        Outcome::Stay
-                    }
+                KeyCode::Enter | KeyCode::Char('y' | 'Y') => {
+                    self.go(view, Pane::Home);
+                    self.selected = 0;
+                    Outcome::Act(Action::RemoveCatalog(p))
                 }
-                _ => {
-                    super::edit_field(&mut view.composer, key);
-                    Outcome::Stay
-                }
+                _ => Outcome::Stay,
             },
             Pane::Args { name } => match key.code {
                 KeyCode::Esc => {

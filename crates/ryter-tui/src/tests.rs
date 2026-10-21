@@ -3630,6 +3630,145 @@ fn removing_a_hook_is_a_plain_question() {
     assert!(v.hooks.is_empty(), "Enter removes it");
 }
 
+/// `x` in `/changes` asks before putting a file back, and the question
+/// takes the one answer: Enter puts it back, `n` keeps it, another key is
+/// nothing. It used to want `y`, with Enter dismissing the question.
+#[test]
+fn putting_a_file_back_is_a_plain_question() {
+    let repo = changes_repo();
+    let home = tempfile::tempdir().unwrap();
+    let my_env = PanelEnv {
+        home: home.path().to_path_buf(),
+        cwd: repo.path().to_path_buf(),
+        trusted: true,
+        sandbox: ryter_core::sandbox::SandboxProfile::Off,
+    };
+    let mut v = idle();
+    let _ = panel::open(&mut v, PanelId::Changes, &my_env);
+    let legend = |v: &View| v.panels.top().map(|p| p.legend(v)).unwrap_or_default();
+    let press = |v: &mut View, code: KeyCode| {
+        crate::run_keys_handle(v, KeyEvent::new(code, KeyModifiers::NONE))
+    };
+    assert!(legend(&v).contains("x undo file"), "{}", legend(&v));
+    press(&mut v, KeyCode::Char('x'));
+    assert_eq!(legend(&v), "⏎ put it back · n keep · esc");
+    let shown = render_to_string(&v, 120, 40);
+    assert!(
+        shown.contains("put config.rs back as it was at the last commit?  ⏎ yes · n no"),
+        "{shown}"
+    );
+    // Another key leaves the question up; `n` takes it down and keeps the file.
+    assert_eq!(press(&mut v, KeyCode::Char('k')), Action::None);
+    assert_eq!(legend(&v), "⏎ put it back · n keep · esc");
+    assert_eq!(press(&mut v, KeyCode::Char('n')), Action::None);
+    assert!(legend(&v).contains("x undo file"), "{}", legend(&v));
+    press(&mut v, KeyCode::Char('x'));
+    assert!(
+        matches!(press(&mut v, KeyCode::Enter), Action::Revert { path, .. } if path == "config.rs"),
+        "Enter puts it back"
+    );
+}
+
+/// Removing a connection, an MCP server or a skill is the same question
+/// as removing a hook: Enter removes, `n` keeps. Each used to want its
+/// name (or the word `remove`) typed, then Enter.
+#[test]
+fn removing_a_connection_a_server_or_a_skill_is_a_plain_question() {
+    let legend = |v: &View| v.panels.top().map(|p| p.legend(v)).unwrap_or_default();
+    let press = |v: &mut View, code: KeyCode| {
+        crate::run_keys_handle(v, KeyEvent::new(code, KeyModifiers::NONE))
+    };
+    // A connection.
+    let mut v = with_panel(PanelId::Providers);
+    press(&mut v, KeyCode::Char('d'));
+    assert_eq!(legend(&v), "⏎ remove · n keep · esc");
+    assert!(
+        render_to_string(&v, 120, 40).contains("remove `spacexsi` from ~/.ryter/connections.toml?")
+    );
+    assert_eq!(press(&mut v, KeyCode::Char('n')), Action::None);
+    assert!(legend(&v).contains("d remove"), "{}", legend(&v));
+    press(&mut v, KeyCode::Char('d'));
+    assert_eq!(
+        press(&mut v, KeyCode::Enter),
+        Action::RemoveConnection("spacexsi".into())
+    );
+    // An MCP server.
+    let mut v = idle();
+    v.mcp_servers.insert(
+        "docs".into(),
+        ryter_core::McpServerConfig {
+            command: "docs-mcp".into(),
+            args: vec![],
+            enabled: true,
+            env: Default::default(),
+            timeout_secs: None,
+        },
+    );
+    let _ = panel::open(&mut v, PanelId::Mcp, &env());
+    press(&mut v, KeyCode::Down);
+    press(&mut v, KeyCode::Char('d'));
+    assert_eq!(legend(&v), "⏎ remove · n keep · esc");
+    assert!(render_to_string(&v, 120, 40).contains("remove server `docs`?"));
+    assert_eq!(press(&mut v, KeyCode::Char('n')), Action::None);
+    assert_eq!(v.mcp_servers.len(), 1, "n keeps the server");
+    press(&mut v, KeyCode::Char('d'));
+    assert_eq!(press(&mut v, KeyCode::Enter), Action::SaveMcp);
+    assert!(v.mcp_servers.is_empty(), "Enter removes it");
+    // A skill.
+    let mut v = idle();
+    v.catalog.skills.push(ryter_core::Skill {
+        name: "review".into(),
+        description: "review the diff".into(),
+        user_invocable: true,
+        model_invocable: true,
+        body: "Review.".into(),
+        source: PathBuf::from("/home/u/.ryter/skills/review/SKILL.md"),
+    });
+    let _ = panel::open(&mut v, PanelId::Skills, &env());
+    press(&mut v, KeyCode::Char('d'));
+    assert_eq!(legend(&v), "⏎ remove · n keep · esc");
+    assert!(render_to_string(&v, 120, 40).contains("delete "));
+    assert_eq!(press(&mut v, KeyCode::Char('n')), Action::None);
+    assert!(legend(&v).contains("d remove"), "{}", legend(&v));
+    press(&mut v, KeyCode::Char('d'));
+    assert!(
+        matches!(press(&mut v, KeyCode::Enter), Action::RemoveCatalog(p) if p.ends_with("SKILL.md")),
+        "Enter removes it"
+    );
+}
+
+/// The delete question stays on screen however long the list: the list
+/// gives up its last two rows while the question is up. With 18 sessions
+/// the panel is at its 20-row cap and the sentence fell off its bottom.
+#[test]
+fn the_delete_question_is_on_screen_in_a_long_list() {
+    use ryter_core::Session;
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let my_env = PanelEnv {
+        home: home.path().to_path_buf(),
+        cwd: cwd.path().to_path_buf(),
+        trusted: true,
+        sandbox: ryter_core::sandbox::SandboxProfile::Off,
+    };
+    for i in 0..24 {
+        let mut s = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+        s.set_title(&format!("session number {i}")).unwrap();
+    }
+    let mut v = idle();
+    v.session_id = "another".into();
+    let _ = panel::open(&mut v, PanelId::Sessions(SessionsMode::Browse), &my_env);
+    let press = |v: &mut View, code: KeyCode| {
+        crate::run_keys_handle(v, KeyEvent::new(code, KeyModifiers::NONE))
+    };
+    press(&mut v, KeyCode::Char('d'));
+    let shown = render_to_string(&v, 120, 40);
+    assert!(
+        shown.contains("? this removes its folder and its transcript"),
+        "{shown}"
+    );
+}
+
 /// A field is edited from what it holds: the session's title in `/rename`,
 /// the cap in `/budget`, a name in `/settings`. Each set its text and then
 /// had it cleared as the composer became its field, so each opened empty.

@@ -224,7 +224,7 @@ impl Panel for Changes {
 
     fn legend(&self, _view: &View) -> String {
         if self.confirm_revert {
-            "y put it back · n keep".into()
+            "⏎ put it back · n keep · esc".into()
         } else {
             "↑↓ file · pgup/pgdn diff · tab scope · x undo file · c commit · r refresh · esc".into()
         }
@@ -305,7 +305,7 @@ impl Panel for Changes {
                 } else {
                     format!("put {} back as it was {when}?", f.path)
                 };
-                widgets::colored(&format!("{what}  y yes · n no"), theme.warn, theme)
+                widgets::colored(&format!("{what}  ⏎ yes · n no"), theme.warn, theme)
             })
         } else {
             self.note
@@ -329,14 +329,19 @@ impl Panel for Changes {
     fn key(&mut self, key: KeyEvent, view: &mut View) -> Outcome {
         self.note = None;
         if self.confirm_revert {
-            self.confirm_revert = false;
-            if matches!(key.code, KeyCode::Char('y' | 'Y')) {
-                if let (Ok(base), Some(f)) = (self.base(view), self.current()) {
-                    return Outcome::Act(Action::Revert {
-                        base,
-                        path: f.path.clone(),
-                    });
+            // The one question's keys: Enter yes, n (or Esc) no.
+            match key.code {
+                KeyCode::Enter | KeyCode::Char('y' | 'Y') => {
+                    self.confirm_revert = false;
+                    if let (Ok(base), Some(f)) = (self.base(view), self.current()) {
+                        return Outcome::Act(Action::Revert {
+                            base,
+                            path: f.path.clone(),
+                        });
+                    }
                 }
+                KeyCode::Char('n' | 'N') | KeyCode::Esc => self.confirm_revert = false,
+                _ => {}
             }
             return Outcome::Stay;
         }

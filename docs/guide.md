@@ -148,7 +148,7 @@ Type a message and press `Enter`. `Shift+Enter` (or `Alt+Enter`) inserts a newli
 - **the change**: the diff for an edit, or the command.
 
 Every question Ryter asks takes the same keys: `Enter` is yes, `Shift+Enter` is yes and don't ask again where that answer exists, and `n` is no. The keys are on the card's last row:
-- **`⏎`** allows this call. An Enter pressed in the first half-second after the card opens is ignored, since it may have been meant to send a message.
+- **`⏎`** allows this call. An Enter pressed in the first half-second after the card opens is ignored, since it may have been meant to send a message, and so is an Enter still held down from then: the card answers to a press, not to a key that was down as it opened.
 - **`⇧⏎`** (Shift+Enter) allows the kind of action the card names for the rest of the session: "edits to files in the project", or "`cargo test` commands". Anything else still asks. A terminal that sends a shifted Enter as a plain one allows once instead; `a` gives the same answer on any terminal.
 - **`r`** on a bash ask opens `/permissions` with that command as a draft, so you can save a durable allow without yolo. The card stays until you answer. Outside-project writes, the project's `.env`, and root do not offer `r`.
 - **`n`** or **`Esc`** denies.
@@ -187,7 +187,7 @@ If nobody answers for five minutes, the call ends with **timed out waiting for u
 | `Ctrl+↑` / `Ctrl+↓` | previous / next turn |
 | `F1` | `/help` |
 
-Inside a panel: `↑↓` move, `PgUp`/`PgDn` page, `Enter` activate, `Tab` next field, `Space` or `←→` change a toggle/select, `Esc` back. `Esc` on a form with changes (`/settings`, `/budget`) asks whether to save them; `^s` still saves at once. Each panel’s legend line names its own extra keys (`t` test a connection, `d` remove, `c` compact, and so on).
+Inside a panel: `↑↓` move, `PgUp`/`PgDn` page, `Enter` activate, `Tab` next field, `Space` or `←→` change a toggle/select, `Esc` back. `Esc` on a form with changes (`/settings`, `/budget`) asks whether to save them; `^s` still saves at once. Each panel’s legend line names its own extra keys (`t` test a connection, `d` remove, `c` compact, and so on). Wherever a panel asks before removing something (a connection, an MCP server, a skill, a hook, a rule, a session), the question is the same: `Enter` removes, `n` keeps.
 
 Mouse: wheel scrolls the chat, clicking a card opens its panel, clicking the status row under the model, or the reasoning pane's header, toggles the pane.
 
@@ -434,7 +434,7 @@ A folder that isn't a repository gets git set up before the first change, and Ry
 
 Keys:
 - `↑↓` picks a file, and `PgUp`/`PgDn` scroll its diff.
-- `x` puts one file back as it was at that point, deleting it if the file is new. Ryter snapshots first, so `/undo` brings it back.
+- `x` puts one file back as it was at that point, deleting it if the file is new. It asks first: `Enter` puts it back, `n` keeps it. Ryter snapshots first, so `/undo` brings it back.
 - `c` opens `/commit`.
 
 The panel updates when a turn finishes. You can open it while a turn is running, but undoing a file and committing wait for the turn to finish.
@@ -533,7 +533,7 @@ The plan and audit hats have `web_search` and `web_fetch`; the build and scribe 
 
 ## MCP
 
-**Outbound.** `[mcp_servers.<name>]` stdio children. The model discovers them with `search_tool` and calls one with `use_tool`. Child env does not inherit API keys unless that server’s `env` table asks. In the TUI, `/mcp` is a panel: `Enter` toggles a server, `r` reconnects, `d` removes it (type the name to confirm), and `Enter` on the trailing `+ add server` row walks name → command → args → review. Each server row shows its live status (`connected · 5 tools`, `error: …`, `disabled`).
+**Outbound.** `[mcp_servers.<name>]` stdio children. The model discovers them with `search_tool` and calls one with `use_tool`. Child env does not inherit API keys unless that server’s `env` table asks. In the TUI, `/mcp` is a panel: `Enter` toggles a server, `r` reconnects, `d` removes it (it asks; `Enter` removes, `n` keeps), and `Enter` on the trailing `+ add server` row walks name → command → args → review. Each server row shows its live status (`connected · 5 tools`, `error: …`, `disabled`).
 
 `search_tool` matches every word of its query against a tool's name and description, and lists each tool's arguments. A server has 60 seconds to start and list its tools. A tool call may run for 120 seconds, or for the server's `timeout_secs`:
 
@@ -571,7 +571,7 @@ Status and spend remain available during a prompt; the CLI reports the last comp
 | --- | --- |
 | Prompt | `prompts/solo.md`, the one prompt every hat shares; override with `~/.ryter/prompts/solo.md`, then a trusted project's `.ryter/prompts/solo.md` |
 | Rules | `~/.ryter/RYTER.md` for every project; `RYTER.md` (or `AGENTS.md`) at a project's top for that project. See [Your rules](#your-rules). |
-| Skills | `/skills` panel. Files: `~/.ryter/skills/<name>/SKILL.md` (frontmatter `user-invocable`, `model-invocable`). `Enter` runs (optional args), `e` opens the file in `$EDITOR`, `a` writes a stub, `d` deletes a user skill (not a project overlay or a built-in one). |
+| Skills | `/skills` panel. Files: `~/.ryter/skills/<name>/SKILL.md` (frontmatter `user-invocable`, `model-invocable`). `Enter` runs (optional args), `e` opens the file in `$EDITOR`, `a` writes a stub, `d` deletes a user skill (not a project overlay or a built-in one; it asks, and `Enter` deletes). |
 | User slash | Same `/skills` list (`command` rows). `~/.ryter/commands/<name>.md` (`$ARGUMENTS`) |
 | Hooks | `/hooks` panel. `a` adds: event (`PreToolUse`, `PostToolUse`, `SessionStart`) → command or URL → optional matcher. `d` removes. Live list is `~/.ryter/hooks.toml` (does not rewrite `config.toml`). Command gets JSON on stdin; exit 2 or HTTP 403 denies. |
 | Themes | `/theme` panel previews as you move: `dark`, `light`, `default-16`, or `~/.ryter/themes/<name>.toml`. `Enter` persists to `~/.ryter/settings.toml`. `NO_COLOR` or a 16-color `TERM` degrades automatically. |

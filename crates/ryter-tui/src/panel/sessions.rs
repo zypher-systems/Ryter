@@ -197,7 +197,10 @@ impl Panel for Sessions {
         let list = self.filtered(view);
         let n = list.len();
         let sel = self.selected.min(n.saturating_sub(1));
-        let rows_h = h.saturating_sub(1).max(1);
+        // The delete question takes two rows under the list, so the list
+        // gives them up: the sentence is on screen however long the list.
+        let asking = self.mode == Mode::ConfirmDelete;
+        let rows_h = h.saturating_sub(1 + if asking { 2 } else { 0 }).max(1);
         let first = super::window(sel, n, rows_h);
         let now = wall_ms();
         let mut lines: Vec<Line<'static>> = Vec::new();
@@ -240,13 +243,18 @@ impl Panel for Sessions {
                 theme,
             ));
         }
-        if self.mode == Mode::ConfirmDelete {
+        if asking {
             if let Some(r) = list.get(sel) {
+                let rest = format!(
+                    "delete \u{201c}\u{201d} ({})? this removes its folder and its transcript",
+                    r.short
+                );
+                let room = w.saturating_sub(wrap::width(&rest)).max(12);
                 lines.push(widgets::blank(theme));
                 lines.push(widgets::colored(
                     &format!(
                         "delete \u{201c}{}\u{201d} ({})? this removes its folder and its transcript",
-                        wrap::truncate(&r.title, w.saturating_sub(60).max(12)),
+                        wrap::truncate(&r.title, room),
                         r.short
                     ),
                     theme.warn,
