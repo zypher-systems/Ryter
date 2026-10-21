@@ -19,9 +19,8 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.35.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.36.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
-- **All hats lists every connection (dev, unreleased).** On the user's call of 2026-10-21: the *All hats* seat in `/models` has the same list as a hat's, every keyed connection's models, and a model from another connection moves the session there. `DECISIONS.md` 2026-10-21.
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
 - **1.0 item 1 (flow on a real project): closed 2026-10-14** (recorded in 0.28.0). Further ask friction from fiscus/tunes stays under Next (item 2). G4 closed the nested-scratch and tmux-scope holes in 0.29.0.
@@ -67,6 +66,14 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.36.0 — All hats lists every connection (2026-10-21)
+
+Released 2026-10-21 (PR #100, six rounds: one review approved every round, the other rejected five times on the list leaking across connections and the worker's stale copies — the session's row matched by id alone, the book kept from the old cache, a dropped model's price left on the header, the worker's startup copy of the connections, the merged route save, the tables-first header, a removed connection's late list, the old `spacexai` name on the view, the first frame priced from the tables, a fetch's answer landing in the wrong slot; all fixed; the sixth approved by both). The note is `docs/releases/v0.36.0.md`.
+
+- **All hats lists every connection**, on the user's call of 2026-10-21: the *All hats* seat in `/models` has the same list as a hat's, every keyed connection's models, each row naming its connection, and a row from another connection moves the session there with its key, prices, route, model check and live connection (`model · id · using connection`). `/model <id>` by hand stays on the current connection. `DECISIONS.md` 2026-10-21.
+- **Each connection's rows are its own.** A list refreshes its connection's rows alone, one id on two connections keeps the session's own price and window, the price book and the header are built from the same book (the connection's list first, the tables behind it) at the first frame, on Enter and as a list lands, the saved route records the header as shown (an unpriced model included), "loading" lasts until every keyed connection has answered or failed, and a connection added or removed in `/provider` reaches the worker at once: a removed connection's late answer is nobody's, one fetch per connection, each with a generation.
+- Open: the generation logic in the worker loop is covered by the offline drives, not a unit test; `last.toml` holds the canonical name for a session saved under `spacexai`; the seats column shows the model, not the connection; the 0.35.0 and 0.34.0 items.
 
 ### 0.35.0 — one answer for every question (2026-10-21)
 
