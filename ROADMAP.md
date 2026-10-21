@@ -19,9 +19,9 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.34.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.35.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
-- **One answer for every question (dev, unreleased).** On the user's call of 2026-10-21: `Enter` is yes on every card and panel, `Shift+Enter` is yes for the session where that exists, `n` is no; deleting a session and removing a hook are a plain are-you-sure. `DECISIONS.md` 2026-10-21. Open: `Shift+Enter` is its own key only under the kitty keyboard protocol; elsewhere it allows once.
+- **All hats lists every connection (dev, unreleased).** On the user's call of 2026-10-21: the *All hats* seat in `/models` has the same list as a hat's, every keyed connection's models, and a model from another connection moves the session there. `DECISIONS.md` 2026-10-21.
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
 - **1.0 item 1 (flow on a real project): closed 2026-10-14** (recorded in 0.28.0). Further ask friction from fiscus/tunes stays under Next (item 2). G4 closed the nested-scratch and tmux-scope holes in 0.29.0.
@@ -67,6 +67,14 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.35.0 — one answer for every question (2026-10-21)
+
+Released 2026-10-21 (PR #99, three rounds: the first rejected on the trust card's leftover cursor, four questions the pass had missed and a held Enter answering a destruction card when the guard ended; the second on the `/sessions` delete line losing its sentence at 80 columns; all fixed; the third approved by both). The note is `docs/releases/v0.35.0.md`.
+
+- **Every question takes the same keys**, on the user's call: `Enter` is yes, `Shift+Enter` is yes for the session on the allow card where that answer exists, `n` is no; `y` and `a` still work unsaid. Sixteen questions had five schemes. The allow card, the cards asked every time, the plan and audit cards, `/new`, the trust card, save-or-discard in `/settings` and `/budget`, the removes in `/rules`, `/permissions`, `/hooks`, `/skills`, `/mcp` and `/provider`, `x` in `/changes` and `d` in `/sessions`. No typed id, name or word anywhere. `DECISIONS.md` 2026-10-21.
+- **A held key is not a press.** The half-second guard stays, and an Enter less than 200 ms after the previous one on a card is the same key still down (autorepeat without key-release reports) and answers nothing, on the allow card and the plan panel.
+- Open: `Shift+Enter` is its own key only under the kitty keyboard protocol, elsewhere it allows once; Ctrl+Enter and Alt+Enter on a card answer allow once (a reviewer's note, left); `d` in `/skills` on a built-in or project-overlay skill asks, then the core refuses; the 0.34.0 items (the `/sessions` panel's columns and `$0.00`, the README screenshots, the light theme's slab, the card not dissolving on closing).
 
 ### 0.34.0 — the views go (2026-10-21)
 

@@ -9,7 +9,6 @@ use ryter_core::config::{self, resolve_secret};
 use ryter_core::ids::ConnectionId;
 use ryter_core::sandbox::SandboxProfile;
 use ryter_core::session::Session;
-use ryter_core::spend::PriceBook;
 use ryter_core::{Config, HookSet, InboundHost, Permission, Provider, format_usd, load_catalog};
 
 use super::worker::Work;
@@ -323,7 +322,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         Action::AddConnection { name, conn } => add_connection(view, cx, &name, conn),
         Action::SetSearch { provider, url } => set_search(view, cx, provider, url),
         Action::RemoveConnection(name) => remove_connection(view, cx, &name),
-        Action::SetModel(model) => set_model(view, cx, model),
+        Action::SetModel { connection, model } => set_model(view, cx, connection, model),
         Action::SetHatModel {
             role,
             connection,
@@ -347,7 +346,6 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             view.hats.remove(&role);
             save_hats(view, cx);
         }
-        Action::ListAllModels { .. } => cx.send(Work::ListAllModels),
         Action::SaveMcp => {
             persist_mcp(view, cx);
             cx.send(Work::SetMcp {
@@ -487,7 +485,9 @@ fn open_panel(view: &mut View, cx: &mut Ctx, id: PanelId) {
         perform(view, cx, then);
     }
     match id {
-        PanelId::Models => cx.send(Work::ListModels),
+        // Every keyed connection's models: the All hats seat lists them
+        // as a hat's does.
+        PanelId::Models => cx.send(Work::ListAllModels),
         // The logs are the truth; replace the live running copy with them.
         PanelId::Spend | PanelId::SpendDrawer => {
             load_project_spend(view, &cx.home, &cx.workspace);
@@ -628,7 +628,10 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
     view.agent_hat = view.mode;
     view.spend = session.meta.spend_usd_total;
     view.spend_unknown = session.meta.spend_unknown;
-    view.connection = session.meta.connection.clone();
+    // A session saved under a connection's old name (`spacexai`) keeps it
+    // on disk and runs on the new one: the worker fetches, tags and prices
+    // by the new name, and the view must ask by the same.
+    view.connection = ryter_core::canonical_connection(&session.meta.connection).to_string();
     view.model = session.meta.model.clone();
     // The saved messages don't say which hat's model wrote each, so they
     // carry the one every hat uses.
@@ -787,12 +790,31 @@ fn route_from_view(view: &View) -> config::LastRoute {
     }
 }
 
+/// Price the header from the book for the current connection, the one
+/// the worker charges with, when a list event asked for it (`reprice` on
+/// the view): the session's connection answered, with the session's model
+/// on the list or without it. The route is saved with that header, an
+/// unknown price included.
+pub(crate) fn reprice(view: &mut View, cfg: &Config, home: &Path) {
+    if std::mem::take(&mut view.reprice) {
+        let model = view.model.clone();
+        apply_pricing(view, cfg, home, &model);
+        // The route carries the header as it is, an unpriced model
+        // included: a merge would keep the price the book has just lost.
+        let _ = config::save_route(home, &route_from_view(view));
+    }
+}
+
+/// The header's price for `model`: what the session's turns are charged
+/// at, from the book built as the worker builds it (the shipped and pulled
+/// tables with this connection's own list over them), so the two never
+/// part. The picker's in-memory price for the pair is the fallback when
+/// the book has none.
 fn apply_pricing(view: &mut View, cfg: &Config, home: &Path, model: &str) {
-    let mut book = PriceBook::load(cfg, home);
-    // The picker showed a price from the provider's list; use it when the
-    // built-in book has none, rather than saying "price unknown".
+    let mut book = super::worker::book_for(cfg, home, &view.connection);
     if book.rates(model).is_none() {
-        if let Some(&(i, o)) = view.catalog_rates.get(model) {
+        let key = (view.connection.clone(), model.to_string());
+        if let Some(&(i, o)) = view.catalog_rates.get(&key) {
             book.ingest_model_info(&[ryter_core::ModelInfo {
                 id: model.to_string(),
                 context_length: None,
@@ -834,9 +856,9 @@ fn use_connection(view: &mut View, cx: &mut Ctx, name: &str) {
             view.connection = name.to_string();
             view.model = model.clone();
             view.has_key = true;
-            view.ctx_window = Some(ryter_core::window_for(&model));
+            view.ctx_window = Some(view.window_of(name, &model));
             apply_pricing(view, &cx.cfg, &cx.home, &model);
-            let _ = config::save_last_route(&cx.home, &route_from_view(view));
+            let _ = config::save_route(&cx.home, &route_from_view(view));
             view.system(format!("using {name} · {model}"));
             cx.send(Work::Reconnect {
                 name: name.to_string(),
@@ -872,33 +894,52 @@ fn set_key(view: &mut View, cx: &mut Ctx, name: &str, key: &str) {
     }
 }
 
-fn set_model(view: &mut View, cx: &mut Ctx, model: String) {
-    match resolve_secret(&cx.cfg, &ConnectionId::new(&view.connection)) {
+/// The model every hat runs on. With a connection that is not the
+/// session's, the session moves there first: the All hats seat lists every
+/// keyed connection, as a hat's seat does, and a model is run by the
+/// connection its row came from.
+fn set_model(view: &mut View, cx: &mut Ctx, connection: Option<String>, model: String) {
+    let connection = connection.unwrap_or_else(|| view.connection.clone());
+    if !cx.cfg.connections.contains_key(&connection) {
+        view.error(format!("unknown connection {connection}"));
+        return;
+    }
+    match resolve_secret(&cx.cfg, &ConnectionId::new(&connection)) {
         Ok(key) => {
+            let moved = connection != view.connection;
+            if moved {
+                view.connection = connection.clone();
+                view.has_key = true;
+            }
             view.model = model.clone();
-            view.ctx_window = Some(ryter_core::window_for(&model));
+            // The row's own length: `window_for` knows a model by Ryter's
+            // name for it, and OpenRouter's `x-ai/grok-4.7` is not that.
+            view.ctx_window = Some(view.window_of(&connection, &model));
             apply_pricing(view, &cx.cfg, &cx.home, &model);
-            let _ = config::save_last_route(&cx.home, &route_from_view(view));
+            let _ = config::save_route(&cx.home, &route_from_view(view));
             // The model for all hats is every hat's: the ones that had
             // their own follow it again, and the line says which.
             let own = view.hats_follow();
             if !own.is_empty() {
                 save_hats(view, cx);
             }
-            view.system(format!("model · {model}{}", crate::view::followed(&own)));
-            check_model(
-                cx,
-                view.connection.clone(),
-                model.clone(),
-                "all hats".into(),
-            );
+            let on = if moved {
+                format!(" · using {connection}")
+            } else {
+                String::new()
+            };
+            view.system(format!(
+                "model · {model}{on}{}",
+                crate::view::followed(&own)
+            ));
+            check_model(cx, connection.clone(), model.clone(), "all hats".into());
             cx.send(Work::Reconnect {
-                name: view.connection.clone(),
+                name: connection,
                 model,
                 key,
             });
         }
-        Err(_) => perform(view, cx, Action::BeginSetKey(view.connection.clone())),
+        Err(_) => perform(view, cx, Action::BeginSetKey(connection)),
     }
 }
 
@@ -1024,6 +1065,10 @@ fn add_connection(view: &mut View, cx: &mut Ctx, name: &str, conn: ryter_core::C
         return;
     }
     cx.cfg.connections.insert(name.to_string(), conn.clone());
+    // The worker lists models and reconnects from its own copy of the
+    // connections: told, or a connection added here is one it never heard
+    // of, so `/models` waits on its list for good and using it fails.
+    cx.send(Work::SetConnections(cx.cfg.connections.clone()));
     view.connections.retain(|c| c.name != name);
     view.connections.push(ConnRow {
         name: name.to_string(),
@@ -1057,6 +1102,7 @@ fn remove_connection(view: &mut View, cx: &mut Ctx, name: &str) {
     match config::save_user_connections(&cx.home, &user) {
         Ok(()) => {
             cx.cfg.connections.remove(name);
+            cx.send(Work::SetConnections(cx.cfg.connections.clone()));
             view.connections.retain(|c| c.name != name);
             view.system(format!("removed connection {name}"));
         }
@@ -1320,11 +1366,80 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         apply_pricing(&mut v, &cfg, home.path(), "vendor/new-model");
         assert_eq!(v.price_in, None, "unknown to the book and no catalog yet");
+        // Another connection's price for the same id is not this one's.
         v.catalog_rates
-            .insert("vendor/new-model".into(), (0.15, 0.6));
+            .insert(("spacexsi".into(), "vendor/new-model".into()), (9.0, 9.0));
+        apply_pricing(&mut v, &cfg, home.path(), "vendor/new-model");
+        assert_eq!(v.price_in, None, "priced on another connection only");
+        v.catalog_rates.insert(
+            ("openrouter".into(), "vendor/new-model".into()),
+            (0.15, 0.6),
+        );
         apply_pricing(&mut v, &cfg, home.path(), "vendor/new-model");
         assert_eq!(v.price_in, Some(0.15));
         assert_eq!(v.price_out, Some(0.6));
         assert!(!v.price_label.contains('?'), "{}", v.price_label);
+    }
+
+    /// A list from the session's connection without the session's model
+    /// took its catalog price away: the header goes back to the book's,
+    /// which has none for an id only the list knew.
+    #[test]
+    fn the_header_is_repriced_from_the_book() {
+        let mut v = View::new("openrouter".into(), "vendor/gone".into(), "/tmp".into());
+        let cfg = Config::default();
+        let home = tempfile::tempdir().unwrap();
+        v.catalog_rates
+            .insert(("openrouter".into(), "vendor/gone".into()), (1.0, 2.0));
+        apply_pricing(&mut v, &cfg, home.path(), "vendor/gone");
+        assert_eq!((v.price_in, v.price_out), (Some(1.0), Some(2.0)));
+        // Not asked: nothing moves.
+        reprice(&mut v, &cfg, home.path());
+        assert_eq!((v.price_in, v.price_out), (Some(1.0), Some(2.0)));
+        // Asked, as the list event does once the rate is gone.
+        v.catalog_rates.clear();
+        v.reprice = true;
+        reprice(&mut v, &cfg, home.path());
+        assert!(!v.reprice);
+        assert_eq!((v.price_in, v.price_out), (None, None));
+        // The route carries the unpriced header: not a merge.
+        let route = config::load_last_route(home.path()).unwrap();
+        assert_eq!(route.model, "vendor/gone");
+        assert_eq!(route.input_per_million, None);
+    }
+
+    /// The header is priced as the book charges: a list row with its own
+    /// cache price is the book's rate for that id even where the shipped
+    /// table knows it, so the header takes the row, not the table.
+    #[test]
+    fn the_header_is_priced_as_the_book_charges() {
+        let mut v = View::new("openrouter".into(), "grok-4.6".into(), "/tmp".into());
+        let cfg = Config::default();
+        let home = tempfile::tempdir().unwrap();
+        apply_pricing(&mut v, &cfg, home.path(), "grok-4.6");
+        let shipped = v.price_in.expect("the shipped table knows grok-4.6");
+        ryter_core::llm::model_cache::save(
+            home.path(),
+            "openrouter",
+            &[ryter_core::ModelInfo {
+                id: "grok-4.6".into(),
+                context_length: None,
+                input_per_million: Some(7.0),
+                output_per_million: Some(8.0),
+                cached_per_million: Some(1.0),
+                cache_write_per_million: None,
+                connection: None,
+                created: None,
+                tools: None,
+            }],
+        );
+        apply_pricing(&mut v, &cfg, home.path(), "grok-4.6");
+        assert_ne!(shipped, 7.0);
+        assert_eq!((v.price_in, v.price_out), (Some(7.0), Some(8.0)));
+        let book = super::super::worker::book_for(&cfg, home.path(), "openrouter");
+        assert_eq!(
+            book.rates("grok-4.6").map(|r| r.input_per_million),
+            Some(7.0)
+        );
     }
 }

@@ -299,6 +299,16 @@ pub enum AgentEvent {
     ModelsListed {
         /// Catalog rows.
         models: Vec<crate::llm::ModelInfo>,
+        /// The connections these rows speak for: each one's rows are the
+        /// rows here tagged with it, even none (an account with no model
+        /// that takes tools has an empty list, not its old one).
+        #[serde(default)]
+        covered: Vec<String>,
+        /// The connections whose list didn't come and have no cached one:
+        /// nothing more is coming for them, and what the picker shows for
+        /// them stays.
+        #[serde(default)]
+        failed: Vec<String>,
     },
     /// Where the model list stands: shown from the cache while a fresh one
     /// downloads, or why the fresh one didn't come. `None` when it's current.

@@ -385,16 +385,57 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 ),
             );
         }
-        AgentEvent::ModelsListed { models } => {
+        AgentEvent::ModelsListed {
+            models,
+            covered,
+            failed,
+        } => {
+            // The list may carry every keyed connection's rows, and one id
+            // can be on two of them at two prices and two windows. Only the
+            // session's own connection's row is the session's. Names are
+            // compared as the worker knows them: a session saved under a
+            // connection's old name runs, and is listed, under the new.
+            let canon = |c: &str| ryter_core::canonical_connection(c).to_string();
+            let on = |m: &ryter_core::ModelInfo| {
+                canon(m.connection.as_deref().unwrap_or(&view.connection))
+            };
+            let mine = canon(&view.connection);
+            let covers = |c: &str| covered.iter().any(|x| canon(x) == c);
+            // A covering list is the whole of what that connection lists:
+            // its earlier rows go, so a model it no longer carries (its
+            // account's filter dropped it, or the list came back empty)
+            // has no stale price to fall back on.
+            view.catalog_rates.retain(|(c, _), _| !covers(c));
+            view.catalog_windows.retain(|(c, _), _| !covers(c));
             for m in models {
                 if let (Some(i), Some(o)) = (m.input_per_million, m.output_per_million) {
-                    view.catalog_rates.insert(m.id.clone(), (i, o));
+                    view.catalog_rates.insert((on(m), m.id.clone()), (i, o));
+                }
+                if let Some(w) = m.context_length {
+                    view.catalog_windows.insert((on(m), m.id.clone()), w);
                 }
             }
-            if let Some(m) = models.iter().find(|m| m.id == view.model) {
-                apply_model_catalog(view, m);
+            let own = models.iter().find(|m| m.id == view.model && on(m) == mine);
+            if let Some(w) = own.and_then(|m| m.context_length) {
+                view.ctx_window = Some(w);
             }
-            panel::on_notice(view, &Notice::Models(models.clone()));
+            // The header's price is the book's, which charges the turns.
+            // The row's own price is one input to that book (a shipped
+            // cache tier can win over it), so the event loop sets the
+            // header from the book built as the worker builds it, and
+            // saves the route with it: a model the list no longer carries
+            // is priced as the book prices it, which may be not at all.
+            if own.is_some() || covers(&mine) {
+                view.reprice = true;
+            }
+            panel::on_notice(
+                view,
+                &Notice::Models {
+                    models: models.clone(),
+                    covered: covered.clone(),
+                    failed: failed.clone(),
+                },
+            );
         }
         AgentEvent::ModelsNote { note } => view.models_note = note.clone(),
         AgentEvent::McpStatus { servers } => {
@@ -732,18 +773,6 @@ fn on_spend(
         let window = view.ctx_window_or_default();
         view.ctx_window = Some(window);
         view.ctx_pct = Some(((used.min(window) * 100) / window.max(1)) as u8);
-    }
-}
-
-/// Pull the picker row for the active model into the header / info cards.
-pub fn apply_model_catalog(view: &mut View, m: &ryter_core::ModelInfo) {
-    if let Some(w) = m.context_length {
-        view.ctx_window = Some(w);
-    }
-    if let (Some(i), Some(o)) = (m.input_per_million, m.output_per_million) {
-        view.price_in = Some(i);
-        view.price_out = Some(o);
-        view.price_label = ryter_core::format_rates(Some(ryter_core::Rates::per_million(i, o)));
     }
 }
 
@@ -1147,5 +1176,181 @@ mod tests {
             }
         ));
         assert_eq!(last.body, "transcript compacted · 180k → 42k tokens");
+    }
+
+    /// One model id on two connections, at two prices and two windows: the
+    /// session's connection's row is the one the header and the price take,
+    /// whichever comes first in the list, and each row's rate is kept under
+    /// its own connection.
+    #[test]
+    fn the_sessions_row_is_its_own_connections() {
+        let row = |conn: &str, ctx: u64, i: f64, o: f64| ryter_core::ModelInfo {
+            id: "shared-model".into(),
+            context_length: Some(ctx),
+            input_per_million: Some(i),
+            output_per_million: Some(o),
+            cached_per_million: None,
+            cache_write_per_million: None,
+            connection: Some(conn.into()),
+            created: None,
+            tools: None,
+        };
+        for other_first in [true, false] {
+            let mut v = View::new("openrouter".into(), "shared-model".into(), "~/p".into());
+            let mut models = vec![
+                row("anthropic", 100_000, 1.0, 2.0),
+                row("openrouter", 200_000, 3.0, 4.0),
+            ];
+            if !other_first {
+                models.reverse();
+            }
+            apply(
+                &mut v,
+                AgentEvent::ModelsListed {
+                    models,
+                    covered: vec![],
+                    failed: vec![],
+                },
+            );
+            assert_eq!(v.ctx_window, Some(200_000), "other first: {other_first}");
+            assert!(v.reprice, "the header is priced from the book");
+            assert_eq!(
+                v.catalog_rates
+                    .get(&("anthropic".to_string(), "shared-model".to_string())),
+                Some(&(1.0, 2.0))
+            );
+            assert_eq!(
+                v.catalog_rates
+                    .get(&("openrouter".to_string(), "shared-model".to_string())),
+                Some(&(3.0, 4.0))
+            );
+        }
+    }
+
+    /// The session's connection answers `/models` without the session's
+    /// model: the turns are priced from that list, so the catalog price the
+    /// header showed goes, and the header is to be set from the book again.
+    /// Another connection's list leaves it.
+    #[test]
+    fn a_list_without_the_sessions_model_drops_its_catalog_price() {
+        let row = |id: &str, conn: &str| ryter_core::ModelInfo {
+            id: id.into(),
+            context_length: Some(128_000),
+            input_per_million: Some(1.0),
+            output_per_million: Some(2.0),
+            cached_per_million: None,
+            cache_write_per_million: None,
+            connection: Some(conn.into()),
+            created: None,
+            tools: None,
+        };
+        let listed = |v: &mut View, models: Vec<ryter_core::ModelInfo>, covered: &[&str]| {
+            apply(
+                v,
+                AgentEvent::ModelsListed {
+                    models,
+                    covered: covered.iter().map(|c| c.to_string()).collect(),
+                    failed: vec![],
+                },
+            );
+        };
+        let key = ("openrouter".to_string(), "vendor/gone".to_string());
+        let mut v = View::new("openrouter".into(), "vendor/gone".into(), "~/p".into());
+        listed(
+            &mut v,
+            vec![row("vendor/gone", "openrouter")],
+            &["openrouter"],
+        );
+        assert_eq!(v.catalog_rates.get(&key), Some(&(1.0, 2.0)));
+        assert_eq!(v.catalog_windows.get(&key), Some(&128_000));
+        assert!(v.reprice, "the session's own row: priced from the book");
+        v.reprice = false;
+        // Another connection's list is not this one's business.
+        listed(&mut v, vec![row("other", "anthropic")], &["anthropic"]);
+        assert_eq!(v.catalog_rates.get(&key), Some(&(1.0, 2.0)));
+        assert!(!v.reprice);
+        // The session's connection's list, without the model.
+        listed(
+            &mut v,
+            vec![row("vendor/other", "openrouter")],
+            &["openrouter"],
+        );
+        assert_eq!(v.catalog_rates.get(&key), None);
+        assert_eq!(v.catalog_windows.get(&key), None);
+        assert!(v.reprice);
+        // An empty answer from it, the same.
+        v.reprice = false;
+        listed(
+            &mut v,
+            vec![row("vendor/gone", "openrouter")],
+            &["openrouter"],
+        );
+        assert_eq!(v.catalog_rates.get(&key), Some(&(1.0, 2.0)));
+        v.reprice = false;
+        listed(&mut v, vec![], &["openrouter"]);
+        assert_eq!(v.catalog_rates.get(&key), None);
+        assert!(v.reprice);
+    }
+
+    /// A model's window is its list row's; an id the lists gave no length
+    /// for gets Ryter's own guess, 200k for one it does not know by name.
+    #[test]
+    fn the_window_of_a_model_is_its_rows() {
+        let mut v = View::new("openrouter".into(), "x-ai/grok-4.7".into(), "~/p".into());
+        assert_eq!(v.window_of("openrouter", "x-ai/grok-4.7"), 200_000);
+        assert_eq!(v.window_of("spacexsi", "grok-4.7"), 500_000);
+        apply(
+            &mut v,
+            AgentEvent::ModelsListed {
+                models: vec![ryter_core::ModelInfo {
+                    id: "x-ai/grok-4.7".into(),
+                    context_length: Some(131_072),
+                    input_per_million: None,
+                    output_per_million: None,
+                    cached_per_million: None,
+                    cache_write_per_million: None,
+                    connection: Some("openrouter".into()),
+                    created: None,
+                    tools: None,
+                }],
+                covered: vec![],
+                failed: vec![],
+            },
+        );
+        assert_eq!(v.window_of("openrouter", "x-ai/grok-4.7"), 131_072);
+        assert_eq!(v.window_of("spacexsi", "grok-4.7"), 500_000);
+    }
+
+    /// A session saved under a connection's old name (`spacexai`) is
+    /// listed, tagged and covered under the new (`spacexsi`): the row is
+    /// still the session's own, and its window and price reach the view.
+    #[test]
+    fn a_row_under_the_connections_new_name_is_the_sessions() {
+        let mut v = View::new("spacexai".into(), "grok-4.6".into(), "~/p".into());
+        apply(
+            &mut v,
+            AgentEvent::ModelsListed {
+                models: vec![ryter_core::ModelInfo {
+                    id: "grok-4.6".into(),
+                    context_length: Some(512_000),
+                    input_per_million: Some(2.0),
+                    output_per_million: Some(6.0),
+                    cached_per_million: None,
+                    cache_write_per_million: None,
+                    connection: Some("spacexsi".into()),
+                    created: None,
+                    tools: None,
+                }],
+                covered: vec!["spacexsi".into()],
+                failed: vec![],
+            },
+        );
+        assert_eq!(v.ctx_window, Some(512_000));
+        assert!(v.reprice);
+        assert_eq!(
+            v.catalog_rates
+                .get(&("spacexsi".to_string(), "grok-4.6".to_string())),
+            Some(&(2.0, 6.0))
+        );
     }
 }

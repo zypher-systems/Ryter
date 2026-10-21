@@ -1947,9 +1947,22 @@ pub fn load_last_route(home: &Path) -> Option<LastRoute> {
         .filter(|r: &LastRoute| !r.connection.trim().is_empty() && !r.model.trim().is_empty())
 }
 
-/// Remember the last used provider and model. Also updates `default_connection`.
-pub fn save_last_route(home: &Path, route: &LastRoute) -> Result<()> {
+/// Remember the last used provider and model as given: a `None` window or
+/// price is recorded as unknown. The TUI saves this way, its header being
+/// the whole of what it knows, so a price the book no longer charges is not
+/// kept from an earlier save. Also updates `default_connection`.
+pub fn save_route(home: &Path, route: &LastRoute) -> Result<()> {
     fs::create_dir_all(home).map_err(|e| Error::Config(e.to_string()))?;
+    let body = toml::to_string(route).map_err(|e| Error::Config(e.to_string()))?;
+    fs::write(last_route_path(home), body).map_err(|e| Error::Config(e.to_string()))?;
+    write_default_connection(home, &route.connection)?;
+    Ok(())
+}
+
+/// Remember the last used provider and model, a `None` taken as "not
+/// provided": the previous window and price for the same connection and
+/// model stay. The CLI's [`LastRoute::new`] saves this way.
+pub fn save_last_route(home: &Path, route: &LastRoute) -> Result<()> {
     let mut stored = route.clone();
     if let Some(prev) = load_last_route(home) {
         if prev.connection == stored.connection && prev.model == stored.model {
@@ -1964,10 +1977,7 @@ pub fn save_last_route(home: &Path, route: &LastRoute) -> Result<()> {
             }
         }
     }
-    let body = toml::to_string(&stored).map_err(|e| Error::Config(e.to_string()))?;
-    fs::write(last_route_path(home), body).map_err(|e| Error::Config(e.to_string()))?;
-    write_default_connection(home, &stored.connection)?;
-    Ok(())
+    save_route(home, &stored)
 }
 
 /// CLI flags beat last-used, which beats config defaults.
@@ -2773,6 +2783,39 @@ mod tests {
         assert_eq!(live.hooks.len(), 1);
         assert_eq!(live.hooks[0].event, "PreToolUse");
         assert_eq!(live.hooks[0].matcher.as_deref(), Some("bash"));
+    }
+
+    /// A route saved as given records an unknown price; a partial save
+    /// keeps the previous one for the same route.
+    #[test]
+    fn a_route_saved_as_given_records_an_unknown_price() {
+        let dir = TempDir::new().unwrap();
+        let priced = LastRoute {
+            connection: "openrouter".into(),
+            model: "vendor/gone".into(),
+            context_length: Some(200_000),
+            input_per_million: Some(3.0),
+            output_per_million: Some(3.0),
+        };
+        save_route(dir.path(), &priced).unwrap();
+        save_last_route(dir.path(), &LastRoute::new("openrouter", "vendor/gone")).unwrap();
+        assert_eq!(
+            load_last_route(dir.path()).unwrap().input_per_million,
+            Some(3.0),
+            "a partial save keeps the price"
+        );
+        save_route(
+            dir.path(),
+            &LastRoute {
+                input_per_million: None,
+                output_per_million: None,
+                ..priced.clone()
+            },
+        )
+        .unwrap();
+        let last = load_last_route(dir.path()).unwrap();
+        assert_eq!(last.input_per_million, None, "saved as given: unpriced");
+        assert_eq!(last.context_length, Some(200_000));
     }
 
     #[test]

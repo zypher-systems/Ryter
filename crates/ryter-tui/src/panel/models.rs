@@ -1,5 +1,7 @@
 //! `/models` — model picker (`R-POP-24..29`).
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::text::{Line, Span};
 use ryter_core::{ModelInfo, format_rates, format_tokens};
@@ -80,14 +82,14 @@ pub enum Focus {
 pub struct Models {
     /// Catalog rows (row 0 is the `default` sentinel).
     pub items: Vec<ModelInfo>,
-    /// Waiting for `ModelsListed`.
+    /// Some keyed connection's list is still to come.
     pub loading: bool,
+    /// Connections whose list has come, or won't (no list and no cache),
+    /// since the panel opened. `loading` ends when every keyed one is here.
+    settled: BTreeSet<String>,
     /// The seat chosen: `None` is the model every hat uses, `Some(hat)`
     /// one hat's own.
     pub assign_role: Option<String>,
-    /// Every connection's models were asked for (a hat's list has them
-    /// all; the first seat's has its connection's).
-    all_listed: bool,
     /// Why the last Enter did nothing.
     refusal: Option<String>,
     selected: usize,
@@ -114,8 +116,9 @@ impl Models {
             .map(|c| c.kind.clone())
             .unwrap_or_default();
         let _ = kind;
-        // Every seat's rows: the first shows its connection's, a hat's all
-        // of them and `default` (follows the others).
+        // Every seat's rows: every keyed connection's models, and for a
+        // hat `default` (follows the others). The live lists come with
+        // the panel's opening.
         let mut items = vec![default_row(&view.connection)];
         for c in view.connections.clone() {
             if !c.has_key && c.name != view.connection {
@@ -137,7 +140,7 @@ impl Models {
         let mut p = Self {
             items,
             loading: true,
-            all_listed: assign_role.is_some(),
+            settled: BTreeSet::new(),
             assign_role,
             refusal: None,
             selected: 0,
@@ -155,17 +158,10 @@ impl Models {
             .items
             .iter()
             .filter(|m| {
-                // The first seat: its connection's models, no `default`.
-                if self.assign_role.is_none() {
-                    if m.id.is_empty() {
-                        return false;
-                    }
-                    if m.connection
-                        .as_deref()
-                        .is_some_and(|c| c != view.connection)
-                    {
-                        return false;
-                    }
+                // The first seat: every connection's models, as a hat's,
+                // and no `default` (there is nothing for it to follow).
+                if self.assign_role.is_none() && m.id.is_empty() {
+                    return false;
                 }
                 // `default` stays unless the filter rules it out: typing a
                 // model's name and pressing enter picked `default` above it.
@@ -211,15 +207,59 @@ impl Models {
         v
     }
 
-    /// Replace the catalog from a `ModelsListed` event.
-    pub fn set_models(&mut self, view: &View, models: &[ModelInfo]) {
-        if !models.is_empty() {
+    /// Take a `ModelsListed` event. The list is every keyed connection's
+    /// (the panel's opening) or one connection's (startup's, or `/provider`
+    /// choosing one). It replaces the rows of the connections it carries
+    /// and of those it says it `covered`, even to none (an account with no
+    /// model that takes tools has an empty list, not its old one), and
+    /// keeps the rest, so a one-connection list landing after the full one
+    /// does not shrink the seats to that connection. Rows of a connection
+    /// that has lost its key go. "Loading" ends when every keyed
+    /// connection has been covered or has `failed` (no list and no cache:
+    /// its built-in rows stay), not on the first list to land.
+    pub fn set_models(
+        &mut self,
+        view: &View,
+        models: &[ModelInfo],
+        covered: &[String],
+        failed: &[String],
+    ) {
+        let on = |m: &ModelInfo| {
+            m.connection
+                .clone()
+                .unwrap_or_else(|| view.connection.clone())
+        };
+        if !models.is_empty() || !covered.is_empty() {
+            let keyed = |c: &str| {
+                c == view.connection || view.connections.iter().any(|r| r.name == c && r.has_key)
+            };
+            let mut replaced: BTreeSet<String> = models.iter().map(on).collect();
+            replaced.extend(covered.iter().cloned());
+            let mut by_connection: BTreeMap<String, Vec<ModelInfo>> = BTreeMap::new();
+            for m in models {
+                // A row of a connection that has no key now (removed in
+                // `/provider` while its list was out) is nobody's.
+                if keyed(&on(m)) {
+                    by_connection.entry(on(m)).or_default().push(m.clone());
+                }
+            }
+            for m in self.items.iter().filter(|m| !m.id.is_empty()) {
+                let c = on(m);
+                if !replaced.contains(&c) && keyed(&c) {
+                    by_connection.entry(c).or_default().push(m.clone());
+                }
+            }
             let mut v = vec![default_row(&view.connection)];
-            v.extend(models.iter().cloned());
+            v.extend(by_connection.into_values().flatten());
             self.items = v;
             self.selected = self.selected.min(self.items.len().saturating_sub(1));
         }
-        self.loading = false;
+        self.settled.extend(covered.iter().cloned());
+        self.settled.extend(failed.iter().cloned());
+        self.loading = view
+            .connections
+            .iter()
+            .any(|c| c.has_key && !self.settled.contains(&c.name));
         self.select_current(view);
     }
 
@@ -279,22 +319,14 @@ impl Models {
         }
     }
 
-    /// Choose seat `to`. The first role chosen asks for every connection's
-    /// models (the first seat's list is its own connection's).
-    fn choose_seat(&mut self, view: &View, to: usize) -> Option<Action> {
+    /// Choose seat `to`: every seat reads the same list, every keyed
+    /// connection's models, asked for when the panel opened.
+    fn choose_seat(&mut self, view: &View, to: usize) {
         let to = to.min(SEATS - 1);
         self.assign_role = (to > 0).then(|| view.seat_roles()[to - 1].to_string());
         self.selected = 0;
         self.refusal = None;
         self.select_current(view);
-        match &self.assign_role {
-            Some(role) if !self.all_listed => {
-                self.all_listed = true;
-                self.loading = true;
-                Some(Action::ListAllModels { role: role.clone() })
-            }
-            _ => None,
-        }
     }
 
     /// What a seat runs on now, short, and whether it follows the others.
@@ -437,10 +469,15 @@ impl Models {
     /// models, and typing starts a filter there.
     fn seat_key(&mut self, key: KeyEvent, view: &mut View) -> Outcome {
         let seat = self.seat();
-        let act = |list: Option<Action>| list.map_or(Outcome::Stay, Outcome::Act);
         match key.code {
-            KeyCode::Up => act(self.choose_seat(view, seat.saturating_sub(1))),
-            KeyCode::Down => act(self.choose_seat(view, seat + 1)),
+            KeyCode::Up => {
+                self.choose_seat(view, seat.saturating_sub(1));
+                Outcome::Stay
+            }
+            KeyCode::Down => {
+                self.choose_seat(view, seat + 1);
+                Outcome::Stay
+            }
             KeyCode::Right | KeyCode::Enter => {
                 self.focus = Focus::Models;
                 Outcome::Stay
@@ -553,7 +590,10 @@ impl Panel for Models {
                         String::new(),
                         String::new(),
                         String::new(),
-                        m.connection.clone().unwrap_or_default(),
+                        // The connection the session is on now: the row
+                        // was made as the panel opened, and All hats may
+                        // have moved the session since.
+                        view.connection.clone(),
                     ];
                 }
                 vec![
@@ -779,7 +819,12 @@ impl Panel for Models {
                         connection: m.connection.unwrap_or_else(|| view.connection.clone()),
                         model: m.id,
                     },
-                    None => Action::SetModel(m.id),
+                    // All hats: the model, on the connection its row came
+                    // from; the session moves there if it is not on it.
+                    None => Action::SetModel {
+                        connection: Some(m.connection.unwrap_or_else(|| view.connection.clone())),
+                        model: m.id,
+                    },
                 };
                 let seat = self.seat();
                 self.changed[seat] = true;
@@ -789,7 +834,9 @@ impl Panel for Models {
                     // model just set: reading the seat now would find the
                     // one before, as the set hasn't been applied yet.
                     let (model, connection) = match &set {
-                        Action::SetModel(id) => (id.clone(), Some(view.connection.clone())),
+                        Action::SetModel { model, connection } => {
+                            (model.clone(), connection.clone())
+                        }
                         Action::SetHatModel {
                             model, connection, ..
                         } => (model.clone(), Some(connection.clone())),
@@ -798,10 +845,8 @@ impl Panel for Models {
                     self.highlight(view, &model, connection.as_deref());
                     return Outcome::Act(set);
                 }
-                match self.choose_seat(view, seat + 1) {
-                    Some(list) => Outcome::Act(Action::Many(vec![set, list])),
-                    None => Outcome::Act(set),
-                }
+                self.choose_seat(view, seat + 1);
+                Outcome::Act(set)
             }
             _ => {
                 self.filter_key(key, view);
@@ -817,7 +862,11 @@ impl Panel for Models {
 
     fn on_notice(&mut self, n: &Notice, view: &mut View) {
         match n {
-            Notice::Models(models) => self.set_models(view, models),
+            Notice::Models {
+                models,
+                covered,
+                failed,
+            } => self.set_models(view, models, covered, failed),
             Notice::ModelChecked {
                 model,
                 result: Err(why),
@@ -875,9 +924,65 @@ mod tests {
             .collect()
     }
 
+    /// A list for a connection that has no key now, removed in `/provider`
+    /// while its list was out, puts no rows on the picker.
+    #[test]
+    fn a_list_for_a_connection_without_a_key_is_ignored() {
+        let mut v = hats_view();
+        let mut p = Models::new(&mut v, None);
+        p.set_models(
+            &v,
+            &[
+                row("x-ai/grok-4.7", "openrouter", Some((2.0, 6.0))),
+                row("grok-4.6", "gone", Some((2.0, 6.0))),
+            ],
+            &["openrouter".into(), "spacexsi".into(), "gone".into()],
+            &[],
+        );
+        let conns: Vec<String> = p
+            .filtered(&v)
+            .iter()
+            .map(|m| m.connection.clone().unwrap_or_default())
+            .collect();
+        assert_eq!(conns, vec!["openrouter".to_string()]);
+        assert!(!p.loading);
+    }
+
+    /// The `default` row names the connection the session is on now, not
+    /// the one it was on when the panel opened: All hats may have moved it.
+    #[test]
+    fn the_default_row_follows_the_sessions_connection() {
+        let mut v = hats_view();
+        let p = Models::new(&mut v, Some("plan".into()));
+        let row = |t: String| {
+            t.lines()
+                .find(|l| l.contains("default (follows all hats)"))
+                .map(str::to_string)
+                .unwrap_or_default()
+        };
+        let line = row(text(&p, &v));
+        assert!(line.contains("openrouter"), "{line}");
+        v.connection = "spacexsi".into();
+        let line = row(text(&p, &v));
+        assert!(
+            line.contains("spacexsi") && !line.contains("openrouter"),
+            "{line}"
+        );
+    }
+
+    /// The view with two keyed connections, as the rows of both reach the
+    /// picker only for connections it lists as keyed.
     fn hats_view() -> View {
         let mut v = View::new("openrouter".into(), "x-ai/grok-4.7".into(), "/tmp".into());
         v.mode = ryter_core::Role::Build;
+        for name in ["openrouter", "spacexsi"] {
+            v.connections.push(crate::view::ConnRow {
+                name: name.into(),
+                kind: name.into(),
+                model: String::new(),
+                has_key: true,
+            });
+        }
         v.hats.insert(
             "audit".into(),
             ryter_core::RoleModel {
@@ -905,7 +1010,7 @@ mod tests {
         let mut v = hats_view();
         v.hats.clear();
         let mut p = Models::new(&mut v, None);
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         let t = text(&p, &v);
         assert!(t.contains("›  All hats  grok-4.7"), "{t}");
         for hat in ["Plan", "Build", "Audit"] {
@@ -920,7 +1025,7 @@ mod tests {
         // Down to Plan, across to its models, and enter gives it one: the
         // cursor goes on to Build.
         key(&mut p, &mut v, KeyCode::Down);
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         assert_eq!(p.seat(), 1);
         key(&mut p, &mut v, KeyCode::Right);
         v.composer.set_text("qwen");
@@ -953,6 +1058,45 @@ mod tests {
         assert_eq!(v.hat_model(), "qwen/qwen3.7-max");
     }
 
+    /// The All hats seat lists every keyed connection's models, as a hat's
+    /// seat does, and enter carries the row's connection: a model from
+    /// another connection moves the session there. It used to list the
+    /// session's connection alone, so with two keys the other's models
+    /// were under every hat but not under All hats.
+    #[test]
+    fn all_hats_lists_every_connection_and_enter_carries_the_rows_connection() {
+        let mut v = hats_view();
+        let mut p = Models::new(&mut v, None);
+        p.set_models(&v, &catalog(), &[], &[]);
+        key(&mut p, &mut v, KeyCode::Right);
+        let t = text(&p, &v);
+        assert!(
+            t.contains("grok-4.6 ") && t.contains("spacexsi") && t.contains("grok-4.7"),
+            "both connections:\n{t}"
+        );
+        assert!(!t.contains("default"), "{t}");
+        for c in "grok-4.6".chars() {
+            key(&mut p, &mut v, KeyCode::Char(c));
+        }
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetModel { model, connection })
+                if model == "grok-4.6" && connection.as_deref() == Some("spacexsi")
+        ));
+        // The session is on openrouter; a model of its own carries it too.
+        let mut p = Models::new(&mut v, None);
+        p.set_models(&v, &catalog(), &[], &[]);
+        key(&mut p, &mut v, KeyCode::Right);
+        for c in "qwen".chars() {
+            key(&mut p, &mut v, KeyCode::Char(c));
+        }
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetModel { model, connection })
+                if model == "qwen/qwen3.7-max" && connection.as_deref() == Some("openrouter")
+        ));
+    }
+
     /// Every seat is set in one visit: the seats beside the list, and
     /// enter sets the seat's model and goes back to the seats, on the next
     /// one. It used to close after every seat, so four seats took four
@@ -961,7 +1105,7 @@ mod tests {
     fn every_seat_is_set_without_leaving_the_panel() {
         let mut v = hats_view();
         let mut p = Models::new(&mut v, None);
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         let t = text(&p, &v);
         assert!(
             t.contains("SEATS") && t.contains("›  All hats  grok-4.7"),
@@ -975,23 +1119,20 @@ mod tests {
         assert_eq!(p.title(&v), "models");
 
         // All hats: → to its models, enter sets it, and the cursor is back
-        // on the seats, on the architect, whose list (every connection's)
-        // is asked for in the same breath.
+        // on the seats, on the architect.
         assert!(matches!(key(&mut p, &mut v, KeyCode::Right), Outcome::Stay));
         assert_eq!(p.focus, Focus::Models);
         // On this seat the choice is every hat's, and the keys say so.
         assert!(p.legend(&v).contains("enter set for all hats"));
         v.composer.set_text("grok-4.7");
-        match key(&mut p, &mut v, KeyCode::Enter) {
-            Outcome::Act(Action::Many(acts)) => {
-                assert!(matches!(&acts[0], Action::SetModel(m) if m == "x-ai/grok-4.7"));
-                assert!(matches!(&acts[1], Action::ListAllModels { role } if role == "plan"));
-            }
-            _ => panic!("set the first seat and list the plan hat's models"),
-        }
+        assert!(matches!(
+            key(&mut p, &mut v, KeyCode::Enter),
+            Outcome::Act(Action::SetModel { model, connection })
+                if model == "x-ai/grok-4.7" && connection.as_deref() == Some("openrouter")
+        ));
         assert_eq!((p.focus, p.seat()), (Focus::Seats, 1));
         assert!(v.composer.is_empty(), "the filter is cleared");
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
 
         // The architect: enter goes to its models, typing filters there.
         key(&mut p, &mut v, KeyCode::Enter);
@@ -1058,20 +1199,17 @@ mod tests {
     fn the_list_follows_the_seat() {
         let mut v = hats_view();
         let mut p = Models::new(&mut v, None);
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         assert!(matches!(key(&mut p, &mut v, KeyCode::Up), Outcome::Stay));
         assert_eq!(p.seat(), 0);
-        // The first seat's list is its own connection's, with no `default`.
+        // The first seat's list is every connection's, with no `default`.
         let t = text(&p, &v);
-        assert!(!t.contains("grok-4.6 ") && !t.contains("default"), "{t}");
-        assert!(matches!(
-            key(&mut p, &mut v, KeyCode::Down),
-            Outcome::Act(Action::ListAllModels { role }) if role == "plan"
-        ));
+        assert!(t.contains("grok-4.6 ") && !t.contains("default"), "{t}");
+        assert!(matches!(key(&mut p, &mut v, KeyCode::Down), Outcome::Stay));
         key(&mut p, &mut v, KeyCode::Down);
         key(&mut p, &mut v, KeyCode::Down);
         assert_eq!(p.seat(), 3);
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         let on = p.filtered(&v)[p.selected].id.clone();
         assert_eq!(
             on, "qwen/qwen3.7-max",
@@ -1094,7 +1232,7 @@ mod tests {
     fn moving_in_the_filter_keeps_the_highlight() {
         let mut v = hats_view();
         let mut p = Models::new(&mut v, Some("build".into()));
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         let minimax = p
             .filtered(&v)
             .iter()
@@ -1113,7 +1251,7 @@ mod tests {
         // With a filter, typing goes to the first match, and moving within
         // the text doesn't.
         let mut p = Models::new(&mut v, Some("build".into()));
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         key(&mut p, &mut v, KeyCode::Char('o'));
         assert_eq!(p.selected, 0);
         key(&mut p, &mut v, KeyCode::Down);
@@ -1133,7 +1271,7 @@ mod tests {
     fn the_last_seat_opens_on_the_model_just_set() {
         let mut v = hats_view();
         let mut p = Models::new(&mut v, Some("scribe".into()));
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         assert_eq!(
             p.filtered(&v)[p.selected].id,
             "",
@@ -1160,7 +1298,7 @@ mod tests {
     fn narrow_the_facts_line_names_the_connection() {
         let mut v = hats_view();
         let mut p = Models::new(&mut v, Some("build".into()));
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         p.selected = p
             .filtered(&v)
             .iter()
@@ -1202,7 +1340,7 @@ mod tests {
         models.push(row("shared-model", "openrouter", Some((1.0, 2.0))));
         models.push(row("shared-model", "spacexsi", Some((1.0, 2.0))));
         let mut p = Models::new(&mut v, Some("scribe".into()));
-        p.set_models(&v, &models);
+        p.set_models(&v, &models, &[], &[]);
         for c in "shared".chars() {
             key(&mut p, &mut v, KeyCode::Char(c));
         }
@@ -1232,7 +1370,7 @@ mod tests {
             },
         );
         let mut p = Models::new(&mut v, Some("audit".into()));
-        p.set_models(&v, &models);
+        p.set_models(&v, &models, &[], &[]);
         assert_eq!(
             p.filtered(&v)[p.selected].connection.as_deref(),
             Some("spacexsi")
@@ -1257,7 +1395,7 @@ mod tests {
             ),
         ];
         let mut p = Models::new(&mut v, Some("build".into()));
-        p.set_models(&v, &models);
+        p.set_models(&v, &models, &[], &[]);
         p.selected = p
             .filtered(&v)
             .iter()
@@ -1357,7 +1495,7 @@ mod tests {
     fn a_failed_model_check_shows_in_the_status() {
         let mut v = hats_view();
         let mut p = Models::new(&mut v, None);
-        p.set_models(&v, &catalog());
+        p.set_models(&v, &catalog(), &[], &[]);
         p.on_notice(
             &Notice::ModelChecked {
                 seat: "plan".into(),
@@ -1379,5 +1517,117 @@ mod tests {
             &mut v,
         );
         assert!(p.refusal.is_none());
+    }
+
+    /// A one-connection list (startup's, or `/provider` choosing one) after
+    /// the full list replaces that connection's rows and keeps the others',
+    /// so the seats never shrink to one connection. A connection that has
+    /// lost its key drops out with the next list.
+    #[test]
+    fn a_one_connection_list_keeps_the_other_connections_rows() {
+        let mut v = hats_view();
+        let mut p = Models::new(&mut v, None);
+        p.set_models(&v, &catalog(), &[], &[]);
+        let ids = |p: &Models, v: &View| -> Vec<(String, String)> {
+            p.filtered(v)
+                .iter()
+                .map(|m| (m.connection.clone().unwrap_or_default(), m.id.clone()))
+                .collect()
+        };
+        assert_eq!(ids(&p, &v).len(), 4);
+        // SpaceXSI's own refresh: its row changes, OpenRouter's three stay.
+        p.set_models(
+            &v,
+            &[row("grok-4.8", "spacexsi", Some((2.0, 6.0)))],
+            &[],
+            &[],
+        );
+        let got = ids(&p, &v);
+        assert_eq!(
+            got.iter().filter(|(c, _)| c == "openrouter").count(),
+            3,
+            "{got:?}"
+        );
+        assert!(
+            got.contains(&("spacexsi".into(), "grok-4.8".into())),
+            "{got:?}"
+        );
+        assert!(
+            !got.contains(&("spacexsi".into(), "grok-4.6".into())),
+            "{got:?}"
+        );
+        // OpenRouter's refresh in turn keeps SpaceXSI's new row.
+        p.set_models(
+            &v,
+            &[row("x-ai/grok-4.7", "openrouter", Some((2.0, 6.0)))],
+            &[],
+            &[],
+        );
+        let got = ids(&p, &v);
+        assert_eq!(
+            got,
+            vec![
+                ("openrouter".to_string(), "x-ai/grok-4.7".to_string()),
+                ("spacexsi".to_string(), "grok-4.8".to_string()),
+            ]
+        );
+        // A key removed: the next list drops that connection's rows.
+        v.connections.iter_mut().for_each(|c| {
+            if c.name == "spacexsi" {
+                c.has_key = false;
+            }
+        });
+        p.set_models(
+            &v,
+            &[row("x-ai/grok-4.7", "openrouter", Some((2.0, 6.0)))],
+            &[],
+            &[],
+        );
+        assert_eq!(
+            ids(&p, &v),
+            vec![("openrouter".to_string(), "x-ai/grok-4.7".to_string())]
+        );
+        // A hat's seat has the same rows and `default` above them.
+        p.choose_seat(&v, 1);
+        assert_eq!(p.filtered(&v).len(), 2);
+        assert!(p.filtered(&v)[0].id.is_empty());
+    }
+
+    /// "Loading" ends when every keyed connection's list has come or
+    /// won't, not on the first: startup's one-connection list landing
+    /// while the full batch was still out left the other connections on
+    /// their built-in rows with the panel saying the list was complete. A
+    /// connection whose list didn't come keeps its rows; one whose list
+    /// is empty loses them.
+    #[test]
+    fn loading_ends_when_every_keyed_connection_has_answered() {
+        let mut v = hats_view();
+        let mut p = Models::new(&mut v, None);
+        let rows = |p: &Models, v: &View, c: &str| {
+            p.filtered(v)
+                .iter()
+                .filter(|m| m.connection.as_deref() == Some(c))
+                .count()
+        };
+        assert!(p.loading);
+        let builtin = rows(&p, &v, "spacexsi");
+        assert!(builtin > 0, "spacexsi's built-in rows");
+        // OpenRouter's list first: still loading, SpaceXSI's built-ins stay.
+        p.set_models(&v, &catalog()[..3], &["openrouter".into()], &[]);
+        assert!(p.loading);
+        assert_eq!(rows(&p, &v, "openrouter"), 3);
+        assert_eq!(rows(&p, &v, "spacexsi"), builtin);
+        assert_eq!(p.status(&v), format!("{} · loading", p.filtered(&v).len()));
+        // SpaceXSI's didn't come and it has no cache: nothing more is
+        // coming, so loading ends; its built-in rows stay.
+        p.set_models(&v, &[], &[], &["spacexsi".into()]);
+        assert!(!p.loading);
+        assert_eq!(rows(&p, &v, "spacexsi"), builtin);
+        assert!(p.status(&v).contains("sort"), "{}", p.status(&v));
+        // Its next list is empty: an answer, and its rows go.
+        p.set_models(&v, &[], &["spacexsi".into()], &[]);
+        assert_eq!(rows(&p, &v, "spacexsi"), 0);
+        assert_eq!(rows(&p, &v, "openrouter"), 3);
+        assert!(!p.loading);
     }
 }

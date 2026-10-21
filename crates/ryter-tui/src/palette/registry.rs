@@ -652,7 +652,10 @@ fn run_models(_view: &mut View, rest: &str) -> Action {
     if rest.is_empty() {
         Action::OpenPanel(PanelId::Models)
     } else {
-        Action::SetModel(rest.to_string())
+        Action::SetModel {
+            connection: None,
+            model: rest.to_string(),
+        }
     }
 }
 
