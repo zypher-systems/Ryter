@@ -3753,7 +3753,10 @@ fn the_delete_question_is_on_screen_in_a_long_list() {
     };
     for i in 0..24 {
         let mut s = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
-        s.set_title(&format!("session number {i}")).unwrap();
+        s.set_title(&format!(
+            "session number {i} with a title that runs on and on"
+        ))
+        .unwrap();
     }
     let mut v = idle();
     v.session_id = "another".into();
@@ -3766,6 +3769,20 @@ fn the_delete_question_is_on_screen_in_a_long_list() {
     assert!(
         shown.contains("? this removes its folder and its transcript"),
         "{shown}"
+    );
+    // At 80 columns the title is cut to what the sentence leaves, down to
+    // an ellipsis: the sentence is whole and nothing runs past the border.
+    let shown = render_to_string(&v, 80, 24);
+    let row = shown
+        .lines()
+        .find(|l| l.contains("this removes its folder"))
+        .unwrap_or_else(|| panic!("no question row\n{shown}"));
+    assert!(row.contains("…\u{201d}"), "title not shortened: {row}");
+    let whole = "? this removes its folder and its transcript";
+    let after = row.find(whole).map(|i| &row[i + whole.len()..]);
+    assert!(
+        after.is_some_and(|a| !a.starts_with(|c: char| c.is_alphanumeric())),
+        "sentence cut: {row}"
     );
 }
 

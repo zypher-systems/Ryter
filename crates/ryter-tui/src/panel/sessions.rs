@@ -249,7 +249,9 @@ impl Panel for Sessions {
                     "delete \u{201c}\u{201d} ({})? this removes its folder and its transcript",
                     r.short
                 );
-                let room = w.saturating_sub(wrap::width(&rest)).max(12);
+                // The row's leading space counts too; the title takes what
+                // is left, down to an ellipsis, so the sentence stays whole.
+                let room = w.saturating_sub(1 + wrap::width(&rest));
                 lines.push(widgets::blank(theme));
                 lines.push(widgets::colored(
                     &format!(
