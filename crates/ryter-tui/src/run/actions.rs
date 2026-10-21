@@ -628,7 +628,10 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
     view.agent_hat = view.mode;
     view.spend = session.meta.spend_usd_total;
     view.spend_unknown = session.meta.spend_unknown;
-    view.connection = session.meta.connection.clone();
+    // A session saved under a connection's old name (`spacexai`) keeps it
+    // on disk and runs on the new one: the worker fetches, tags and prices
+    // by the new name, and the view must ask by the same.
+    view.connection = ryter_core::canonical_connection(&session.meta.connection).to_string();
     view.model = session.meta.model.clone();
     // The saved messages don't say which hat's model wrote each, so they
     // carry the one every hat uses.
@@ -787,10 +790,11 @@ fn route_from_view(view: &View) -> config::LastRoute {
     }
 }
 
-/// Set the header's price from the book again when a list event asked for
-/// it (`reprice` on the view): the session's connection answered without
-/// the session's model, so the catalog price the header showed is gone, and
-/// the book prices the model as it did before any list came.
+/// Price the header from the book for the current connection, the one
+/// the worker charges with, when a list event asked for it (`reprice` on
+/// the view): the session's connection answered, with the session's model
+/// on the list or without it. The route is saved with that header, an
+/// unknown price included.
 pub(crate) fn reprice(view: &mut View, cfg: &Config, home: &Path) {
     if std::mem::take(&mut view.reprice) {
         let model = view.model.clone();

@@ -194,12 +194,14 @@ const MODELS_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Model lists fetched off the worker's thread, one per connection.
 struct Fetched {
-    results: Vec<(String, Result<Vec<ryter_core::ModelInfo>, String>)>,
+    /// Per connection: its name, the generation of the fetch (the slot's
+    /// at the time it started), and the list or the error.
+    results: Vec<(String, u64, Result<Vec<ryter_core::ModelInfo>, String>)>,
 }
 
 /// Fetch each connection's model list on a thread of its own, so a slow
 /// catalog never holds up a turn, and send what came back.
-fn fetch_models(targets: Vec<(String, Arc<dyn Provider>)>, tx: mpsc::Sender<Fetched>) {
+fn fetch_models(targets: Vec<(String, u64, Arc<dyn Provider>)>, tx: mpsc::Sender<Fetched>) {
     std::thread::spawn(move || {
         // A thread that could not report would leave its connections
         // marked as fetching for good, and every later `/models` waiting
@@ -212,7 +214,7 @@ fn fetch_models(targets: Vec<(String, Arc<dyn Provider>)>, tx: mpsc::Sender<Fetc
             Err(e) => {
                 let results = targets
                     .into_iter()
-                    .map(|(name, _)| (name, Err(format!("no runtime for the fetch: {e}"))))
+                    .map(|(name, g, _)| (name, g, Err(format!("no runtime for the fetch: {e}"))))
                     .collect();
                 let _ = tx.send(Fetched { results });
                 return;
@@ -220,7 +222,7 @@ fn fetch_models(targets: Vec<(String, Arc<dyn Provider>)>, tx: mpsc::Sender<Fetc
         };
         let results = targets
             .into_iter()
-            .map(|(name, p)| {
+            .map(|(name, g, p)| {
                 // The timer is made inside the runtime: made outside it, it
                 // panicked and took the thread down with no word.
                 let got = rt.block_on(async {
@@ -231,7 +233,7 @@ fn fetch_models(targets: Vec<(String, Arc<dyn Provider>)>, tx: mpsc::Sender<Fetc
                     Ok(Err(e)) => Err(e.to_string()),
                     Err(_) => Err(format!("no full answer in {}s", MODELS_TIMEOUT.as_secs())),
                 };
-                (name, r)
+                (name, g, r)
             })
             .collect();
         let _ = tx.send(Fetched { results });
@@ -363,14 +365,18 @@ pub fn run(init: WorkerInit) {
     // the first, and a slow one is said to be slow. One fetch per
     // connection at a time, whichever opening asked (startup's, or a hat's
     // seat): a second answer would overwrite the first's cache, book and
-    // note, and an older one could land last.
-    let mut fetching: BTreeMap<String, (std::time::Instant, bool)> = BTreeMap::new();
+    // note, and an older one could land last. Each fetch has a generation,
+    // and only the one the slot holds is current: a connection removed and
+    // added again has a new fetch out, and the old thread's answer is
+    // nobody's.
+    let mut fetching: BTreeMap<String, (std::time::Instant, bool, u64)> = BTreeMap::new();
+    let mut generation = 0u64;
     // What the picker's note says of each connection whose last answer was
     // no list or a stale one, until that connection answers again: a later
     // batch that did not include it does not clear it.
     let mut standing: BTreeMap<String, String> = BTreeMap::new();
     loop {
-        for (name, (since, told)) in fetching.iter_mut() {
+        for (name, (since, told, _)) in fetching.iter_mut() {
             if !*told && since.elapsed() >= MODELS_SLOW {
                 *told = true;
                 let note = match ryter_core::llm::model_cache::load(&home, name) {
@@ -383,87 +389,9 @@ pub fn run(init: WorkerInit) {
                 let _ = ev_tx.send(AgentEvent::ModelsNote { note: Some(note) });
             }
         }
-        while let Ok(done) = fetch_rx.try_recv() {
-            let book = PriceBook::load(&cfg, &home);
-            let mut all = Vec::new();
-            let mut covered = Vec::new();
-            let mut failed = Vec::new();
-            for (name, result) in done.results {
-                fetching.remove(&name);
-                // Removed in `/provider` while its list was out: the
-                // answer is nobody's, and its cache is not written.
-                if !cfg.connections.contains_key(&name) {
-                    continue;
-                }
-                standing.remove(&name);
-                match result {
-                    Ok(models) => {
-                        // An empty list is an answer (an account with no
-                        // model that takes tools), not a failure: the last
-                        // list goes with it, or the next opening shows it.
-                        if models.is_empty() {
-                            ryter_core::llm::model_cache::forget(&home, &name);
-                        } else {
-                            ryter_core::llm::model_cache::save(&home, &name, &models);
-                        }
-                        covered.push(name.clone());
-                        all.extend(prepared(models, &name, &book));
-                    }
-                    Err(e) => {
-                        // Keep what the picker already shows: the cached list.
-                        match ryter_core::llm::model_cache::load(&home, &name) {
-                            Some((models, secs)) => {
-                                standing.insert(
-                                    name.clone(),
-                                    format!(
-                                        "{name} slow · list from {} ago",
-                                        ryter_core::llm::model_cache::age(secs)
-                                    ),
-                                );
-                                covered.push(name.clone());
-                                all.extend(prepared(models, &name, &book));
-                            }
-                            None => {
-                                failed.push(name.clone());
-                                standing.insert(
-                                    name.clone(),
-                                    format!("{name} didn't answer · try again"),
-                                );
-                                send_err(
-                                    &ev_tx,
-                                    format!(
-                                        "{name}'s model list didn't come ({e}). Its catalog \
-                                         endpoint is slow right now; /models again in a moment."
-                                    ),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            if let Some(a) = &mut agent {
-                // The book prices the session's turns. It was built from
-                // the last list at startup, and it keeps the first rate it
-                // sees for an id, so the fresh list is laid in by building
-                // it again from the file just written, from the provider's
-                // own rows: ingesting the picker's rows over it would have
-                // kept every old rate.
-                if covered.contains(&a.connection) {
-                    a.book = book_for(&cfg, &home, &a.connection);
-                }
-            }
-            let _ = ev_tx.send(AgentEvent::ModelsListed {
-                models: all,
-                covered,
-                failed,
-            });
-            if let Some(note) = note_after(&standing, !fetching.is_empty()) {
-                let _ = ev_tx.send(AgentEvent::ModelsNote { note });
-            }
-        }
         match work_rx.recv_timeout(Duration::from_millis(200)) {
             Ok(Work::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
-            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Timeout) => {}
             Ok(Work::Turn {
                 text,
                 reply,
@@ -551,7 +479,11 @@ pub fn run(init: WorkerInit) {
                             swap_session(a, s);
                             let _ = a.put_on(role);
                             a.model = a.session.meta.model.clone();
-                            a.connection = a.session.meta.connection.clone();
+                            // A session saved under a connection's old
+                            // name runs on the new one, as at startup.
+                            a.connection =
+                                ryter_core::canonical_connection(&a.session.meta.connection)
+                                    .to_string();
                             refresh_live(a, &live_status, &live_spend, &live_transcript);
                             let _ = ev_tx.send(session_event(a));
                             let _ = ev_tx.send(a.checkpoint_event());
@@ -755,7 +687,7 @@ pub fn run(init: WorkerInit) {
                 let book = PriceBook::load(&cfg, &home);
                 let mut shown = Vec::new();
                 let mut oldest = 0u64;
-                let mut targets: Vec<(String, Arc<dyn Provider>)> = Vec::new();
+                let mut targets: Vec<(String, u64, Arc<dyn Provider>)> = Vec::new();
                 let mut keyed = 0usize;
                 let mut cached = Vec::new();
                 for (name, conn) in &cfg.connections {
@@ -771,8 +703,13 @@ pub fn run(init: WorkerInit) {
                     if let std::collections::btree_map::Entry::Vacant(slot) =
                         fetching.entry(name.clone())
                     {
-                        slot.insert((std::time::Instant::now(), false));
-                        targets.push((name.clone(), Arc::new(http_provider(conn, key))));
+                        generation += 1;
+                        slot.insert((std::time::Instant::now(), false, generation));
+                        targets.push((
+                            name.clone(),
+                            generation,
+                            Arc::new(http_provider(conn, key)),
+                        ));
                     }
                 }
                 if !shown.is_empty() {
@@ -849,7 +786,8 @@ pub fn run(init: WorkerInit) {
                 if let std::collections::btree_map::Entry::Vacant(slot) =
                     fetching.entry(name.clone())
                 {
-                    slot.insert((std::time::Instant::now(), false));
+                    generation += 1;
+                    slot.insert((std::time::Instant::now(), false, generation));
                     // A client of its own, made on the thread that uses it. The
                     // agent's client keeps its connections on the worker's
                     // runtime, which only runs while the worker is busy; a
@@ -862,7 +800,7 @@ pub fn run(init: WorkerInit) {
                         }
                         None => a.provider.clone(),
                     };
-                    fetch_models(vec![(name, provider)], fetch_tx.clone());
+                    fetch_models(vec![(name, generation, provider)], fetch_tx.clone());
                 }
             }
             Ok(Work::Reconnect {
@@ -914,6 +852,95 @@ pub fn run(init: WorkerInit) {
                     let _ = a.announce_product();
                     agent = Some(a);
                 }
+            }
+        }
+        // The lists that came, after the work: a `SetConnections` sent
+        // before a result arrived is applied first, so the result of a
+        // fetch for a connection removed meanwhile is nobody's.
+        while let Ok(done) = fetch_rx.try_recv() {
+            let book = PriceBook::load(&cfg, &home);
+            let mut all = Vec::new();
+            let mut covered = Vec::new();
+            let mut failed = Vec::new();
+            for (name, fetched, result) in done.results {
+                // Only the fetch the slot holds is current. One whose slot
+                // is gone (removed in `/provider` while its list was out)
+                // or taken by a newer fetch (added again since) is
+                // nobody's: its cache is not written, and it is neither
+                // covered nor failed.
+                match fetching.get(&name) {
+                    Some((_, _, g)) if *g == fetched => {
+                        fetching.remove(&name);
+                    }
+                    _ => continue,
+                }
+                if !cfg.connections.contains_key(&name) {
+                    continue;
+                }
+                standing.remove(&name);
+                match result {
+                    Ok(models) => {
+                        // An empty list is an answer (an account with no
+                        // model that takes tools), not a failure: the last
+                        // list goes with it, or the next opening shows it.
+                        if models.is_empty() {
+                            ryter_core::llm::model_cache::forget(&home, &name);
+                        } else {
+                            ryter_core::llm::model_cache::save(&home, &name, &models);
+                        }
+                        covered.push(name.clone());
+                        all.extend(prepared(models, &name, &book));
+                    }
+                    Err(e) => {
+                        // Keep what the picker already shows: the cached list.
+                        match ryter_core::llm::model_cache::load(&home, &name) {
+                            Some((models, secs)) => {
+                                standing.insert(
+                                    name.clone(),
+                                    format!(
+                                        "{name} slow · list from {} ago",
+                                        ryter_core::llm::model_cache::age(secs)
+                                    ),
+                                );
+                                covered.push(name.clone());
+                                all.extend(prepared(models, &name, &book));
+                            }
+                            None => {
+                                failed.push(name.clone());
+                                standing.insert(
+                                    name.clone(),
+                                    format!("{name} didn't answer · try again"),
+                                );
+                                send_err(
+                                    &ev_tx,
+                                    format!(
+                                        "{name}'s model list didn't come ({e}). Its catalog \
+                                         endpoint is slow right now; /models again in a moment."
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(a) = &mut agent {
+                // The book prices the session's turns. It was built from
+                // the last list at startup, and it keeps the first rate it
+                // sees for an id, so the fresh list is laid in by building
+                // it again from the file just written, from the provider's
+                // own rows: ingesting the picker's rows over it would have
+                // kept every old rate.
+                if covered.contains(&a.connection) {
+                    a.book = book_for(&cfg, &home, &a.connection);
+                }
+            }
+            let _ = ev_tx.send(AgentEvent::ModelsListed {
+                models: all,
+                covered,
+                failed,
+            });
+            if let Some(note) = note_after(&standing, !fetching.is_empty()) {
+                let _ = ev_tx.send(AgentEvent::ModelsNote { note });
             }
         }
     }

@@ -392,19 +392,21 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
         } => {
             // The list may carry every keyed connection's rows, and one id
             // can be on two of them at two prices and two windows. Only the
-            // session's own connection's row is the session's.
+            // session's own connection's row is the session's. Names are
+            // compared as the worker knows them: a session saved under a
+            // connection's old name runs, and is listed, under the new.
+            let canon = |c: &str| ryter_core::canonical_connection(c).to_string();
             let on = |m: &ryter_core::ModelInfo| {
-                m.connection
-                    .clone()
-                    .unwrap_or_else(|| view.connection.clone())
+                canon(m.connection.as_deref().unwrap_or(&view.connection))
             };
+            let mine = canon(&view.connection);
+            let covers = |c: &str| covered.iter().any(|x| canon(x) == c);
             // A covering list is the whole of what that connection lists:
             // its earlier rows go, so a model it no longer carries (its
             // account's filter dropped it, or the list came back empty)
             // has no stale price to fall back on.
-            view.catalog_rates.retain(|(c, _), _| !covered.contains(c));
-            view.catalog_windows
-                .retain(|(c, _), _| !covered.contains(c));
+            view.catalog_rates.retain(|(c, _), _| !covers(c));
+            view.catalog_windows.retain(|(c, _), _| !covers(c));
             for m in models {
                 if let (Some(i), Some(o)) = (m.input_per_million, m.output_per_million) {
                     view.catalog_rates.insert((on(m), m.id.clone()), (i, o));
@@ -413,9 +415,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                     view.catalog_windows.insert((on(m), m.id.clone()), w);
                 }
             }
-            let own = models
-                .iter()
-                .find(|m| m.id == view.model && on(m) == view.connection);
+            let own = models.iter().find(|m| m.id == view.model && on(m) == mine);
             if let Some(w) = own.and_then(|m| m.context_length) {
                 view.ctx_window = Some(w);
             }
@@ -425,7 +425,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             // header from the book built as the worker builds it, and
             // saves the route with it: a model the list no longer carries
             // is priced as the book prices it, which may be not at all.
-            if own.is_some() || covered.contains(&view.connection) {
+            if own.is_some() || covers(&mine) {
                 view.reprice = true;
             }
             panel::on_notice(
@@ -1319,5 +1319,38 @@ mod tests {
         );
         assert_eq!(v.window_of("openrouter", "x-ai/grok-4.7"), 131_072);
         assert_eq!(v.window_of("spacexsi", "grok-4.7"), 500_000);
+    }
+
+    /// A session saved under a connection's old name (`spacexai`) is
+    /// listed, tagged and covered under the new (`spacexsi`): the row is
+    /// still the session's own, and its window and price reach the view.
+    #[test]
+    fn a_row_under_the_connections_new_name_is_the_sessions() {
+        let mut v = View::new("spacexai".into(), "grok-4.6".into(), "~/p".into());
+        apply(
+            &mut v,
+            AgentEvent::ModelsListed {
+                models: vec![ryter_core::ModelInfo {
+                    id: "grok-4.6".into(),
+                    context_length: Some(512_000),
+                    input_per_million: Some(2.0),
+                    output_per_million: Some(6.0),
+                    cached_per_million: None,
+                    cache_write_per_million: None,
+                    connection: Some("spacexsi".into()),
+                    created: None,
+                    tools: None,
+                }],
+                covered: vec!["spacexsi".into()],
+                failed: vec![],
+            },
+        );
+        assert_eq!(v.ctx_window, Some(512_000));
+        assert!(v.reprice);
+        assert_eq!(
+            v.catalog_rates
+                .get(&("spacexsi".to_string(), "grok-4.6".to_string())),
+            Some(&(2.0, 6.0))
+        );
     }
 }

@@ -1209,6 +1209,75 @@ fn there_is_no_watermark_anywhere() {
     }
 }
 
+/// A session saved under a connection's old name keeps it on disk and
+/// runs on the new one: the view asks for lists, windows and prices by
+/// the name the worker uses.
+#[test]
+fn a_session_saved_under_the_old_name_fills_the_view_with_the_new() {
+    let home = tempfile::TempDir::new().unwrap();
+    let cwd = tempfile::TempDir::new().unwrap();
+    let s = ryter_core::Session::create(
+        home.path(),
+        cwd.path(),
+        "spacexai".into(),
+        "grok-4.6".into(),
+    )
+    .unwrap();
+    let mut v = conversation();
+    crate::run::fill_view_from_session(&mut v, &s);
+    assert_eq!(v.connection, "spacexsi");
+    assert_eq!(s.meta.connection, "spacexai", "the file keeps its name");
+}
+
+/// The opening screen is priced from the book the agent is built with:
+/// this connection's last list over the shipped tables, not the tables
+/// alone, so the header shows what the turns are charged at from the
+/// first frame.
+#[test]
+fn the_opening_screen_is_priced_from_the_agents_book() {
+    let home = tempfile::TempDir::new().unwrap();
+    let cwd = tempfile::TempDir::new().unwrap();
+    let s = ryter_core::Session::create(home.path(), cwd.path(), "c".into(), "vendor/m".into())
+        .unwrap();
+    ryter_core::llm::model_cache::save(
+        home.path(),
+        "c",
+        &[ryter_core::ModelInfo {
+            id: "vendor/m".into(),
+            context_length: None,
+            input_per_million: Some(5.0),
+            output_per_million: Some(6.0),
+            cached_per_million: None,
+            cache_write_per_million: None,
+            connection: None,
+            created: None,
+            tools: None,
+        }],
+    );
+    let mut v = View::new("c".into(), "vendor/m".into(), "~/p".into());
+    let opts = crate::run::TuiOpts {
+        always_approve: false,
+        yolo: false,
+        rounds: None,
+        connection: None,
+        model: None,
+        sandbox: None,
+        session: None,
+        hat: None,
+    };
+    crate::run::populate_view(
+        &mut v,
+        &ryter_core::Config::default(),
+        home.path(),
+        cwd.path(),
+        false,
+        &s,
+        true,
+        &opts,
+    );
+    assert_eq!((v.price_in, v.price_out), (Some(5.0), Some(6.0)));
+}
+
 /// `R-CORE-01`: a resumed session's rack is the one it had. The saved
 /// chat is replayed without its hats; the event log has what happened.
 #[test]

@@ -33,7 +33,6 @@ use ryter_core::config::{self, resolve_secret};
 use ryter_core::ids::ConnectionId;
 use ryter_core::sandbox::{self, SandboxProfile};
 use ryter_core::session::Session;
-use ryter_core::spend::PriceBook;
 use ryter_core::{
     AgentEvent, Cancel, HookSet, InboundHost, StatusSnapshot, UserIo, UserRequest, load_catalog,
 };
@@ -267,16 +266,13 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         key.is_some(),
         &opts,
     );
+    // The window the last session's list gave the model, until this one's
+    // list lands. The price is not taken from the route: the header is
+    // priced from the book the agent is built with (`populate_view`).
     if let Some(last) = &last {
         if last.model == model {
             if let Some(w) = last.context_length {
                 view.ctx_window = Some(w);
-            }
-            if let (Some(i), Some(o)) = (last.input_per_million, last.output_per_million) {
-                view.price_in = Some(i);
-                view.price_out = Some(o);
-                view.price_label =
-                    ryter_core::format_rates(Some(ryter_core::Rates::per_million(i, o)));
             }
         }
     }
@@ -526,7 +522,10 @@ pub(crate) fn populate_view(
     view.ctx_tokens = Some(0);
     view.ctx_pct = Some(0);
     view.ctx_window = Some(ryter_core::window_for(&view.model));
-    let book = PriceBook::load(cfg, home);
+    // The book the agent is built with: this connection's last list over
+    // the shipped and pulled tables. The header shows what the turns are
+    // charged at from the first frame, not the tables' price alone.
+    let book = worker::book_for(cfg, home, &view.connection);
     view.price_label = book.format_model_rates(&view.model);
     if let Some(r) = book.rates(&view.model) {
         view.price_in = Some(r.input_per_million);
