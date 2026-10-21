@@ -446,7 +446,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     if let Some(p) = sock_path {
         let _ = std::fs::remove_file(p);
     }
-    let _ = config::save_last_route(
+    let _ = config::save_route(
         &home,
         &config::LastRoute {
             connection: view.connection.clone(),

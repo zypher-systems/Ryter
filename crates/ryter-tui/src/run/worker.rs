@@ -194,14 +194,12 @@ const MODELS_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Model lists fetched off the worker's thread, one per connection.
 struct Fetched {
-    /// From every connection (a hat's seat), not the active one alone.
-    all: bool,
     results: Vec<(String, Result<Vec<ryter_core::ModelInfo>, String>)>,
 }
 
 /// Fetch each connection's model list on a thread of its own, so a slow
 /// catalog never holds up a turn, and send what came back.
-fn fetch_models(targets: Vec<(String, Arc<dyn Provider>)>, all: bool, tx: mpsc::Sender<Fetched>) {
+fn fetch_models(targets: Vec<(String, Arc<dyn Provider>)>, tx: mpsc::Sender<Fetched>) {
     std::thread::spawn(move || {
         // A thread that could not report would leave its connections
         // marked as fetching for good, and every later `/models` waiting
@@ -216,7 +214,7 @@ fn fetch_models(targets: Vec<(String, Arc<dyn Provider>)>, all: bool, tx: mpsc::
                     .into_iter()
                     .map(|(name, _)| (name, Err(format!("no runtime for the fetch: {e}"))))
                     .collect();
-                let _ = tx.send(Fetched { all, results });
+                let _ = tx.send(Fetched { results });
                 return;
             }
         };
@@ -236,7 +234,7 @@ fn fetch_models(targets: Vec<(String, Arc<dyn Provider>)>, all: bool, tx: mpsc::
                 (name, r)
             })
             .collect();
-        let _ = tx.send(Fetched { all, results });
+        let _ = tx.send(Fetched { results });
     });
 }
 
@@ -262,7 +260,7 @@ fn note_after(standing: &BTreeMap<String, String>, in_flight: bool) -> Option<Op
 /// them for the models they don't know. One connection's list, not every
 /// connection's: the book keeps the first rate it sees for an id, and one
 /// id can be on two connections at two prices.
-fn book_for(cfg: &Config, home: &Path, connection: &str) -> PriceBook {
+pub(super) fn book_for(cfg: &Config, home: &Path, connection: &str) -> PriceBook {
     let mut book = PriceBook::load(cfg, home);
     if let Some((models, _)) = ryter_core::llm::model_cache::load(home, connection) {
         book.ingest_model_info(&models);
@@ -362,14 +360,17 @@ pub fn run(init: WorkerInit) {
     }
     let (fetch_tx, fetch_rx) = mpsc::channel::<Fetched>();
     // Fetches in flight, and when each began: a second `/models` waits on
-    // the first, and a slow one is said to be slow.
-    let mut fetching: BTreeMap<(bool, String), (std::time::Instant, bool)> = BTreeMap::new();
+    // the first, and a slow one is said to be slow. One fetch per
+    // connection at a time, whichever opening asked (startup's, or a hat's
+    // seat): a second answer would overwrite the first's cache, book and
+    // note, and an older one could land last.
+    let mut fetching: BTreeMap<String, (std::time::Instant, bool)> = BTreeMap::new();
     // What the picker's note says of each connection whose last answer was
     // no list or a stale one, until that connection answers again: a later
     // batch that did not include it does not clear it.
     let mut standing: BTreeMap<String, String> = BTreeMap::new();
     loop {
-        for ((_, name), (since, told)) in fetching.iter_mut() {
+        for (name, (since, told)) in fetching.iter_mut() {
             if !*told && since.elapsed() >= MODELS_SLOW {
                 *told = true;
                 let note = match ryter_core::llm::model_cache::load(&home, name) {
@@ -388,7 +389,12 @@ pub fn run(init: WorkerInit) {
             let mut covered = Vec::new();
             let mut failed = Vec::new();
             for (name, result) in done.results {
-                fetching.remove(&(done.all, name.clone()));
+                fetching.remove(&name);
+                // Removed in `/provider` while its list was out: the
+                // answer is nobody's, and its cache is not written.
+                if !cfg.connections.contains_key(&name) {
+                    continue;
+                }
                 standing.remove(&name);
                 match result {
                     Ok(models) => {
@@ -763,7 +769,7 @@ pub fn run(init: WorkerInit) {
                         shown.extend(prepared(models, name, &book));
                     }
                     if let std::collections::btree_map::Entry::Vacant(slot) =
-                        fetching.entry((true, name.clone()))
+                        fetching.entry(name.clone())
                     {
                         slot.insert((std::time::Instant::now(), false));
                         targets.push((name.clone(), Arc::new(http_provider(conn, key))));
@@ -794,7 +800,7 @@ pub fn run(init: WorkerInit) {
                     });
                 }
                 if !targets.is_empty() {
-                    fetch_models(targets, true, fetch_tx.clone());
+                    fetch_models(targets, fetch_tx.clone());
                 }
                 // A connection that has no key now is not asked again: a
                 // note about its last answer would stand for good.
@@ -805,6 +811,7 @@ pub fn run(init: WorkerInit) {
             }
             Ok(Work::SetConnections(connections)) => {
                 standing.retain(|n, _| connections.contains_key(n));
+                fetching.retain(|n, _| connections.contains_key(n));
                 cfg.connections = connections;
             }
             Ok(Work::ReloadPrices) => {
@@ -840,7 +847,7 @@ pub fn run(init: WorkerInit) {
                     });
                 }
                 if let std::collections::btree_map::Entry::Vacant(slot) =
-                    fetching.entry((false, name.clone()))
+                    fetching.entry(name.clone())
                 {
                     slot.insert((std::time::Instant::now(), false));
                     // A client of its own, made on the thread that uses it. The
@@ -855,7 +862,7 @@ pub fn run(init: WorkerInit) {
                         }
                         None => a.provider.clone(),
                     };
-                    fetch_models(vec![(name, provider)], false, fetch_tx.clone());
+                    fetch_models(vec![(name, provider)], fetch_tx.clone());
                 }
             }
             Ok(Work::Reconnect {

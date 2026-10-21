@@ -237,7 +237,11 @@ impl Models {
             replaced.extend(covered.iter().cloned());
             let mut by_connection: BTreeMap<String, Vec<ModelInfo>> = BTreeMap::new();
             for m in models {
-                by_connection.entry(on(m)).or_default().push(m.clone());
+                // A row of a connection that has no key now (removed in
+                // `/provider` while its list was out) is nobody's.
+                if keyed(&on(m)) {
+                    by_connection.entry(on(m)).or_default().push(m.clone());
+                }
             }
             for m in self.items.iter().filter(|m| !m.id.is_empty()) {
                 let c = on(m);
@@ -920,6 +924,30 @@ mod tests {
             .collect()
     }
 
+    /// A list for a connection that has no key now, removed in `/provider`
+    /// while its list was out, puts no rows on the picker.
+    #[test]
+    fn a_list_for_a_connection_without_a_key_is_ignored() {
+        let mut v = hats_view();
+        let mut p = Models::new(&mut v, None);
+        p.set_models(
+            &v,
+            &[
+                row("x-ai/grok-4.7", "openrouter", Some((2.0, 6.0))),
+                row("grok-4.6", "gone", Some((2.0, 6.0))),
+            ],
+            &["openrouter".into(), "spacexsi".into(), "gone".into()],
+            &[],
+        );
+        let conns: Vec<String> = p
+            .filtered(&v)
+            .iter()
+            .map(|m| m.connection.clone().unwrap_or_default())
+            .collect();
+        assert_eq!(conns, vec!["openrouter".to_string()]);
+        assert!(!p.loading);
+    }
+
     /// The `default` row names the connection the session is on now, not
     /// the one it was on when the panel opened: All hats may have moved it.
     #[test]
@@ -942,9 +970,19 @@ mod tests {
         );
     }
 
+    /// The view with two keyed connections, as the rows of both reach the
+    /// picker only for connections it lists as keyed.
     fn hats_view() -> View {
         let mut v = View::new("openrouter".into(), "x-ai/grok-4.7".into(), "/tmp".into());
         v.mode = ryter_core::Role::Build;
+        for name in ["openrouter", "spacexsi"] {
+            v.connections.push(crate::view::ConnRow {
+                name: name.into(),
+                kind: name.into(),
+                model: String::new(),
+                has_key: true,
+            });
+        }
         v.hats.insert(
             "audit".into(),
             ryter_core::RoleModel {
@@ -1488,14 +1526,6 @@ mod tests {
     #[test]
     fn a_one_connection_list_keeps_the_other_connections_rows() {
         let mut v = hats_view();
-        for (name, has_key) in [("openrouter", true), ("spacexsi", true)] {
-            v.connections.push(crate::view::ConnRow {
-                name: name.into(),
-                kind: name.into(),
-                model: String::new(),
-                has_key,
-            });
-        }
         let mut p = Models::new(&mut v, None);
         p.set_models(&v, &catalog(), &[], &[]);
         let ids = |p: &Models, v: &View| -> Vec<(String, String)> {
@@ -1572,14 +1602,6 @@ mod tests {
     #[test]
     fn loading_ends_when_every_keyed_connection_has_answered() {
         let mut v = hats_view();
-        for name in ["openrouter", "spacexsi"] {
-            v.connections.push(crate::view::ConnRow {
-                name: name.into(),
-                kind: name.into(),
-                model: String::new(),
-                has_key: true,
-            });
-        }
         let mut p = Models::new(&mut v, None);
         let rows = |p: &Models, v: &View, c: &str| {
             p.filtered(v)

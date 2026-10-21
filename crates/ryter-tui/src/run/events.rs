@@ -398,6 +398,13 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                     .clone()
                     .unwrap_or_else(|| view.connection.clone())
             };
+            // A covering list is the whole of what that connection lists:
+            // its earlier rows go, so a model it no longer carries (its
+            // account's filter dropped it, or the list came back empty)
+            // has no stale price to fall back on.
+            view.catalog_rates.retain(|(c, _), _| !covered.contains(c));
+            view.catalog_windows
+                .retain(|(c, _), _| !covered.contains(c));
             for m in models {
                 if let (Some(i), Some(o)) = (m.input_per_million, m.output_per_million) {
                     view.catalog_rates.insert((on(m), m.id.clone()), (i, o));
@@ -409,21 +416,17 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             let own = models
                 .iter()
                 .find(|m| m.id == view.model && on(m) == view.connection);
-            match own {
-                Some(m) => apply_model_catalog(view, m),
-                // The session's connection answered without the session's
-                // model (its account's filter dropped it, or the list came
-                // back empty): the turns are priced from that list, which
-                // has no rate for it, so the catalog price the header kept
-                // would be one the book no longer charges. Drop it, and
-                // have the header set from the book again.
-                None if covered.contains(&view.connection) => {
-                    let key = (view.connection.clone(), view.model.clone());
-                    view.catalog_rates.remove(&key);
-                    view.catalog_windows.remove(&key);
-                    view.reprice = true;
-                }
-                None => {}
+            if let Some(w) = own.and_then(|m| m.context_length) {
+                view.ctx_window = Some(w);
+            }
+            // The header's price is the book's, which charges the turns.
+            // The row's own price is one input to that book (a shipped
+            // cache tier can win over it), so the event loop sets the
+            // header from the book built as the worker builds it, and
+            // saves the route with it: a model the list no longer carries
+            // is priced as the book prices it, which may be not at all.
+            if own.is_some() || covered.contains(&view.connection) {
+                view.reprice = true;
             }
             panel::on_notice(
                 view,
@@ -770,18 +773,6 @@ fn on_spend(
         let window = view.ctx_window_or_default();
         view.ctx_window = Some(window);
         view.ctx_pct = Some(((used.min(window) * 100) / window.max(1)) as u8);
-    }
-}
-
-/// Pull the picker row for the active model into the header / info cards.
-pub fn apply_model_catalog(view: &mut View, m: &ryter_core::ModelInfo) {
-    if let Some(w) = m.context_length {
-        view.ctx_window = Some(w);
-    }
-    if let (Some(i), Some(o)) = (m.input_per_million, m.output_per_million) {
-        view.price_in = Some(i);
-        view.price_out = Some(o);
-        view.price_label = ryter_core::format_rates(Some(ryter_core::Rates::per_million(i, o)));
     }
 }
 
@@ -1222,7 +1213,7 @@ mod tests {
                 },
             );
             assert_eq!(v.ctx_window, Some(200_000), "other first: {other_first}");
-            assert_eq!((v.price_in, v.price_out), (Some(3.0), Some(4.0)));
+            assert!(v.reprice, "the header is priced from the book");
             assert_eq!(
                 v.catalog_rates
                     .get(&("anthropic".to_string(), "shared-model".to_string())),
@@ -1272,7 +1263,8 @@ mod tests {
         );
         assert_eq!(v.catalog_rates.get(&key), Some(&(1.0, 2.0)));
         assert_eq!(v.catalog_windows.get(&key), Some(&128_000));
-        assert!(!v.reprice);
+        assert!(v.reprice, "the session's own row: priced from the book");
+        v.reprice = false;
         // Another connection's list is not this one's business.
         listed(&mut v, vec![row("other", "anthropic")], &["anthropic"]);
         assert_eq!(v.catalog_rates.get(&key), Some(&(1.0, 2.0)));
@@ -1293,7 +1285,8 @@ mod tests {
             vec![row("vendor/gone", "openrouter")],
             &["openrouter"],
         );
-        assert!(!v.reprice);
+        assert_eq!(v.catalog_rates.get(&key), Some(&(1.0, 2.0)));
+        v.reprice = false;
         listed(&mut v, vec![], &["openrouter"]);
         assert_eq!(v.catalog_rates.get(&key), None);
         assert!(v.reprice);

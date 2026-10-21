@@ -9,7 +9,6 @@ use ryter_core::config::{self, resolve_secret};
 use ryter_core::ids::ConnectionId;
 use ryter_core::sandbox::SandboxProfile;
 use ryter_core::session::Session;
-use ryter_core::spend::PriceBook;
 use ryter_core::{Config, HookSet, InboundHost, Permission, Provider, format_usd, load_catalog};
 
 use super::worker::Work;
@@ -796,13 +795,19 @@ pub(crate) fn reprice(view: &mut View, cfg: &Config, home: &Path) {
     if std::mem::take(&mut view.reprice) {
         let model = view.model.clone();
         apply_pricing(view, cfg, home, &model);
+        // The route carries the header as it is, an unpriced model
+        // included: a merge would keep the price the book has just lost.
+        let _ = config::save_route(home, &route_from_view(view));
     }
 }
 
+/// The header's price for `model`: what the session's turns are charged
+/// at, from the book built as the worker builds it (the shipped and pulled
+/// tables with this connection's own list over them), so the two never
+/// part. The picker's in-memory price for the pair is the fallback when
+/// the book has none.
 fn apply_pricing(view: &mut View, cfg: &Config, home: &Path, model: &str) {
-    let mut book = PriceBook::load(cfg, home);
-    // The picker showed a price from the provider's list; use it when the
-    // built-in book has none, rather than saying "price unknown".
+    let mut book = super::worker::book_for(cfg, home, &view.connection);
     if book.rates(model).is_none() {
         let key = (view.connection.clone(), model.to_string());
         if let Some(&(i, o)) = view.catalog_rates.get(&key) {
@@ -849,7 +854,7 @@ fn use_connection(view: &mut View, cx: &mut Ctx, name: &str) {
             view.has_key = true;
             view.ctx_window = Some(view.window_of(name, &model));
             apply_pricing(view, &cx.cfg, &cx.home, &model);
-            let _ = config::save_last_route(&cx.home, &route_from_view(view));
+            let _ = config::save_route(&cx.home, &route_from_view(view));
             view.system(format!("using {name} · {model}"));
             cx.send(Work::Reconnect {
                 name: name.to_string(),
@@ -907,7 +912,7 @@ fn set_model(view: &mut View, cx: &mut Ctx, connection: Option<String>, model: S
             // name for it, and OpenRouter's `x-ai/grok-4.7` is not that.
             view.ctx_window = Some(view.window_of(&connection, &model));
             apply_pricing(view, &cx.cfg, &cx.home, &model);
-            let _ = config::save_last_route(&cx.home, &route_from_view(view));
+            let _ = config::save_route(&cx.home, &route_from_view(view));
             // The model for all hats is every hat's: the ones that had
             // their own follow it again, and the line says which.
             let own = view.hats_follow();
@@ -1393,5 +1398,44 @@ mod tests {
         reprice(&mut v, &cfg, home.path());
         assert!(!v.reprice);
         assert_eq!((v.price_in, v.price_out), (None, None));
+        // The route carries the unpriced header: not a merge.
+        let route = config::load_last_route(home.path()).unwrap();
+        assert_eq!(route.model, "vendor/gone");
+        assert_eq!(route.input_per_million, None);
+    }
+
+    /// The header is priced as the book charges: a list row with its own
+    /// cache price is the book's rate for that id even where the shipped
+    /// table knows it, so the header takes the row, not the table.
+    #[test]
+    fn the_header_is_priced_as_the_book_charges() {
+        let mut v = View::new("openrouter".into(), "grok-4.6".into(), "/tmp".into());
+        let cfg = Config::default();
+        let home = tempfile::tempdir().unwrap();
+        apply_pricing(&mut v, &cfg, home.path(), "grok-4.6");
+        let shipped = v.price_in.expect("the shipped table knows grok-4.6");
+        ryter_core::llm::model_cache::save(
+            home.path(),
+            "openrouter",
+            &[ryter_core::ModelInfo {
+                id: "grok-4.6".into(),
+                context_length: None,
+                input_per_million: Some(7.0),
+                output_per_million: Some(8.0),
+                cached_per_million: Some(1.0),
+                cache_write_per_million: None,
+                connection: None,
+                created: None,
+                tools: None,
+            }],
+        );
+        apply_pricing(&mut v, &cfg, home.path(), "grok-4.6");
+        assert_ne!(shipped, 7.0);
+        assert_eq!((v.price_in, v.price_out), (Some(7.0), Some(8.0)));
+        let book = super::super::worker::book_for(&cfg, home.path(), "openrouter");
+        assert_eq!(
+            book.rates("grok-4.6").map(|r| r.input_per_million),
+            Some(7.0)
+        );
     }
 }
