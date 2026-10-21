@@ -1,5 +1,7 @@
 //! `/models` — model picker (`R-POP-24..29`).
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::text::{Line, Span};
 use ryter_core::{ModelInfo, format_rates, format_tokens};
@@ -201,11 +203,35 @@ impl Models {
         v
     }
 
-    /// Replace the catalog from a `ModelsListed` event.
+    /// Take a `ModelsListed` event: the list is every keyed connection's
+    /// (the panel's opening) or one connection's (startup's, or `/provider`
+    /// choosing one). Either way it replaces the rows of the connections
+    /// it carries and keeps the rest, so a one-connection list landing
+    /// after the full one does not shrink the seats to that connection.
+    /// Rows of a connection that has lost its key go.
     pub fn set_models(&mut self, view: &View, models: &[ModelInfo]) {
         if !models.is_empty() {
+            let on = |m: &ModelInfo| {
+                m.connection
+                    .clone()
+                    .unwrap_or_else(|| view.connection.clone())
+            };
+            let keyed = |c: &str| {
+                c == view.connection || view.connections.iter().any(|r| r.name == c && r.has_key)
+            };
+            let came: BTreeSet<String> = models.iter().map(on).collect();
+            let mut by_connection: BTreeMap<String, Vec<ModelInfo>> = BTreeMap::new();
+            for m in models {
+                by_connection.entry(on(m)).or_default().push(m.clone());
+            }
+            for m in self.items.iter().filter(|m| !m.id.is_empty()) {
+                let c = on(m);
+                if !came.contains(&c) && keyed(&c) {
+                    by_connection.entry(c).or_default().push(m.clone());
+                }
+            }
             let mut v = vec![default_row(&view.connection)];
-            v.extend(models.iter().cloned());
+            v.extend(by_connection.into_values().flatten());
             self.items = v;
             self.selected = self.selected.min(self.items.len().saturating_sub(1));
         }
@@ -1404,5 +1430,72 @@ mod tests {
             &mut v,
         );
         assert!(p.refusal.is_none());
+    }
+
+    /// A one-connection list (startup's, or `/provider` choosing one) after
+    /// the full list replaces that connection's rows and keeps the others',
+    /// so the seats never shrink to one connection. A connection that has
+    /// lost its key drops out with the next list.
+    #[test]
+    fn a_one_connection_list_keeps_the_other_connections_rows() {
+        let mut v = hats_view();
+        for (name, has_key) in [("openrouter", true), ("spacexsi", true)] {
+            v.connections.push(crate::view::ConnRow {
+                name: name.into(),
+                kind: name.into(),
+                model: String::new(),
+                has_key,
+            });
+        }
+        let mut p = Models::new(&mut v, None);
+        p.set_models(&v, &catalog());
+        let ids = |p: &Models, v: &View| -> Vec<(String, String)> {
+            p.filtered(v)
+                .iter()
+                .map(|m| (m.connection.clone().unwrap_or_default(), m.id.clone()))
+                .collect()
+        };
+        assert_eq!(ids(&p, &v).len(), 4);
+        // SpaceXSI's own refresh: its row changes, OpenRouter's three stay.
+        p.set_models(&v, &[row("grok-4.8", "spacexsi", Some((2.0, 6.0)))]);
+        let got = ids(&p, &v);
+        assert_eq!(
+            got.iter().filter(|(c, _)| c == "openrouter").count(),
+            3,
+            "{got:?}"
+        );
+        assert!(
+            got.contains(&("spacexsi".into(), "grok-4.8".into())),
+            "{got:?}"
+        );
+        assert!(
+            !got.contains(&("spacexsi".into(), "grok-4.6".into())),
+            "{got:?}"
+        );
+        // OpenRouter's refresh in turn keeps SpaceXSI's new row.
+        p.set_models(&v, &[row("x-ai/grok-4.7", "openrouter", Some((2.0, 6.0)))]);
+        let got = ids(&p, &v);
+        assert_eq!(
+            got,
+            vec![
+                ("openrouter".to_string(), "x-ai/grok-4.7".to_string()),
+                ("spacexsi".to_string(), "grok-4.8".to_string()),
+            ]
+        );
+        // A key removed: the next list drops that connection's rows.
+        v.connections.iter_mut().for_each(|c| {
+            if c.name == "spacexsi" {
+                c.has_key = false;
+            }
+        });
+        p.set_models(&v, &[row("x-ai/grok-4.7", "openrouter", Some((2.0, 6.0)))]);
+        assert_eq!(
+            ids(&p, &v),
+            vec![("openrouter".to_string(), "x-ai/grok-4.7".to_string())]
+        );
+        // A hat's seat has the same rows and `default` above them.
+        p.choose_seat(&v, 1);
+        assert_eq!(p.filtered(&v).len(), 2);
+        assert!(p.filtered(&v)[0].id.is_empty());
     }
 }

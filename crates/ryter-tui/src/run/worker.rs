@@ -200,11 +200,22 @@ struct Fetched {
 /// catalog never holds up a turn, and send what came back.
 fn fetch_models(targets: Vec<(String, Arc<dyn Provider>)>, all: bool, tx: mpsc::Sender<Fetched>) {
     std::thread::spawn(move || {
-        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+        // A thread that could not report would leave its connections
+        // marked as fetching for good, and every later `/models` waiting
+        // on a list that never comes.
+        let rt = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-        else {
-            return;
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                let results = targets
+                    .into_iter()
+                    .map(|(name, _)| (name, Err(format!("no runtime for the fetch: {e}"))))
+                    .collect();
+                let _ = tx.send(Fetched { all, results });
+                return;
+            }
         };
         let results = targets
             .into_iter()
@@ -224,6 +235,19 @@ fn fetch_models(targets: Vec<(String, Arc<dyn Provider>)>, all: bool, tx: mpsc::
             .collect();
         let _ = tx.send(Fetched { all, results });
     });
+}
+
+/// The price book for a session on `connection`: the shipped and pulled
+/// tables, with that connection's own model list (as last cached) over
+/// them for the models they don't know. One connection's list, not every
+/// connection's: the book keeps the first rate it sees for an id, and one
+/// id can be on two connections at two prices.
+fn book_for(cfg: &Config, home: &Path, connection: &str) -> PriceBook {
+    let mut book = PriceBook::load(cfg, home);
+    if let Some((models, _)) = ryter_core::llm::model_cache::load(home, connection) {
+        book.ingest_model_info(&models);
+    }
+    book
 }
 
 /// Rows ready for the picker: priced from the book, tagged with their
@@ -370,7 +394,15 @@ pub fn run(init: WorkerInit) {
                 }
             }
             if let Some(a) = &mut agent {
-                a.book.ingest_model_info(&all);
+                // The book prices the session's turns, and it keeps the
+                // first rate it sees for an id: another connection's copy
+                // of the session's model must not be the one it keeps.
+                let own: Vec<ryter_core::ModelInfo> = all
+                    .iter()
+                    .filter(|m| m.connection.as_deref() == Some(a.connection.as_str()))
+                    .cloned()
+                    .collect();
+                a.book.ingest_model_info(&own);
             }
             let _ = ev_tx.send(AgentEvent::ModelsListed { models: all });
             let _ = ev_tx.send(AgentEvent::ModelsNote {
@@ -672,10 +704,12 @@ pub fn run(init: WorkerInit) {
                 let mut shown = Vec::new();
                 let mut oldest = 0u64;
                 let mut targets: Vec<(String, Arc<dyn Provider>)> = Vec::new();
+                let mut keyed = 0usize;
                 for (name, conn) in &cfg.connections {
                     let Ok(key) = resolve_secret(&cfg, &ConnectionId::new(name)) else {
                         continue;
                     };
+                    keyed += 1;
                     if let Some((models, secs)) = ryter_core::llm::model_cache::load(&home, name) {
                         oldest = oldest.max(secs);
                         shown.extend(prepared(models, name, &book));
@@ -695,9 +729,12 @@ pub fn run(init: WorkerInit) {
                             ryter_core::llm::model_cache::age(oldest)
                         )),
                     });
-                } else if targets.is_empty() {
+                } else if keyed == 0 {
                     // No connection with a key: the panel keeps its
-                    // built-in rows and stops saying "loading".
+                    // built-in rows and stops saying "loading". With keys
+                    // and no cache, the lists are on their way (this
+                    // opening's, or an earlier one's still in flight), and
+                    // the panel keeps saying so until they come.
                     let _ = ev_tx.send(AgentEvent::ModelsListed { models: vec![] });
                 }
                 if !targets.is_empty() {
@@ -706,15 +743,7 @@ pub fn run(init: WorkerInit) {
             }
             Ok(Work::ReloadPrices) => {
                 if let Some(a) = &mut agent {
-                    // The book as at startup, with the connections' own
-                    // lists over the catalog, as `ListModels` lays them.
-                    let mut book = PriceBook::load(&cfg, &home);
-                    for name in cfg.connections.keys() {
-                        if let Some((models, _)) = ryter_core::llm::model_cache::load(&home, name) {
-                            book.ingest_model_info(&models);
-                        }
-                    }
-                    a.book = book;
+                    a.book = book_for(&cfg, &home, &a.connection);
                 }
             }
             Ok(Work::ListModels) => {
@@ -766,6 +795,9 @@ pub fn run(init: WorkerInit) {
                 };
                 if let Some(a) = &mut agent {
                     a.provider = Arc::new(http_provider(&c, new_key));
+                    // The session's turns are priced on the connection
+                    // they run on: the book takes that connection's list.
+                    a.book = book_for(&cfg, &home, &name);
                     a.connection = name.clone();
                     a.model = new_model.clone();
                     let _ = a.session.set_route(name, new_model);
@@ -915,7 +947,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
     let last_input_tokens = b.session.last_input_tokens();
     Agent {
         provider: Arc::new(provider),
-        book: PriceBook::load(b.cfg, b.home),
+        book: book_for(b.cfg, b.home, &b.conn_name),
         session: b.session,
         ctx: ToolContext {
             sandbox: sandbox::Scope::for_profile(b.profile, b.home),

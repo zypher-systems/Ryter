@@ -246,10 +246,11 @@ pub struct View {
     pub price_in: Option<f64>,
     /// Last known USD / million output.
     pub price_out: Option<f64>,
-    /// Prices from the model lists providers returned (`/models`): the
-    /// fallback when the built-in price book doesn't know a
-    /// model, which is most of OpenRouter's catalog.
-    pub catalog_rates: BTreeMap<String, (f64, f64)>,
+    /// Prices from the model lists providers returned (`/models`), by
+    /// connection and model id: the fallback when the built-in price book
+    /// doesn't know a model, which is most of OpenRouter's catalog. One id
+    /// can be on two connections at two prices.
+    pub catalog_rates: BTreeMap<(String, String), (f64, f64)>,
     /// What this project (its git repository) has cost across sessions.
     /// Read from disk at startup and when `/spend` opens; live spend is added
     /// as it happens.

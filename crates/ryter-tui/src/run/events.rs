@@ -386,12 +386,23 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             );
         }
         AgentEvent::ModelsListed { models } => {
+            // The list may carry every keyed connection's rows, and one id
+            // can be on two of them at two prices and two windows. Only the
+            // session's own connection's row is the session's.
+            let on = |m: &ryter_core::ModelInfo| {
+                m.connection
+                    .clone()
+                    .unwrap_or_else(|| view.connection.clone())
+            };
             for m in models {
                 if let (Some(i), Some(o)) = (m.input_per_million, m.output_per_million) {
-                    view.catalog_rates.insert(m.id.clone(), (i, o));
+                    view.catalog_rates.insert((on(m), m.id.clone()), (i, o));
                 }
             }
-            if let Some(m) = models.iter().find(|m| m.id == view.model) {
+            if let Some(m) = models
+                .iter()
+                .find(|m| m.id == view.model && on(m) == view.connection)
+            {
                 apply_model_catalog(view, m);
             }
             panel::on_notice(view, &Notice::Models(models.clone()));
@@ -1147,5 +1158,47 @@ mod tests {
             }
         ));
         assert_eq!(last.body, "transcript compacted · 180k → 42k tokens");
+    }
+
+    /// One model id on two connections, at two prices and two windows: the
+    /// session's connection's row is the one the header and the price take,
+    /// whichever comes first in the list, and each row's rate is kept under
+    /// its own connection.
+    #[test]
+    fn the_sessions_row_is_its_own_connections() {
+        let row = |conn: &str, ctx: u64, i: f64, o: f64| ryter_core::ModelInfo {
+            id: "shared-model".into(),
+            context_length: Some(ctx),
+            input_per_million: Some(i),
+            output_per_million: Some(o),
+            cached_per_million: None,
+            cache_write_per_million: None,
+            connection: Some(conn.into()),
+            created: None,
+            tools: None,
+        };
+        for other_first in [true, false] {
+            let mut v = View::new("openrouter".into(), "shared-model".into(), "~/p".into());
+            let mut models = vec![
+                row("anthropic", 100_000, 1.0, 2.0),
+                row("openrouter", 200_000, 3.0, 4.0),
+            ];
+            if !other_first {
+                models.reverse();
+            }
+            apply(&mut v, AgentEvent::ModelsListed { models });
+            assert_eq!(v.ctx_window, Some(200_000), "other first: {other_first}");
+            assert_eq!((v.price_in, v.price_out), (Some(3.0), Some(4.0)));
+            assert_eq!(
+                v.catalog_rates
+                    .get(&("anthropic".to_string(), "shared-model".to_string())),
+                Some(&(1.0, 2.0))
+            );
+            assert_eq!(
+                v.catalog_rates
+                    .get(&("openrouter".to_string(), "shared-model".to_string())),
+                Some(&(3.0, 4.0))
+            );
+        }
     }
 }

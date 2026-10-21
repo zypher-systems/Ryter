@@ -793,7 +793,8 @@ fn apply_pricing(view: &mut View, cfg: &Config, home: &Path, model: &str) {
     // The picker showed a price from the provider's list; use it when the
     // built-in book has none, rather than saying "price unknown".
     if book.rates(model).is_none() {
-        if let Some(&(i, o)) = view.catalog_rates.get(model) {
+        let key = (view.connection.clone(), model.to_string());
+        if let Some(&(i, o)) = view.catalog_rates.get(&key) {
             book.ingest_model_info(&[ryter_core::ModelInfo {
                 id: model.to_string(),
                 context_length: None,
@@ -1338,8 +1339,15 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         apply_pricing(&mut v, &cfg, home.path(), "vendor/new-model");
         assert_eq!(v.price_in, None, "unknown to the book and no catalog yet");
+        // Another connection's price for the same id is not this one's.
         v.catalog_rates
-            .insert("vendor/new-model".into(), (0.15, 0.6));
+            .insert(("spacexsi".into(), "vendor/new-model".into()), (9.0, 9.0));
+        apply_pricing(&mut v, &cfg, home.path(), "vendor/new-model");
+        assert_eq!(v.price_in, None, "priced on another connection only");
+        v.catalog_rates.insert(
+            ("openrouter".into(), "vendor/new-model".into()),
+            (0.15, 0.6),
+        );
         apply_pricing(&mut v, &cfg, home.path(), "vendor/new-model");
         assert_eq!(v.price_in, Some(0.15));
         assert_eq!(v.price_out, Some(0.6));
