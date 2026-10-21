@@ -12,7 +12,7 @@
          ┆  line 6 reply line 7
          ┆  ◲ waiting for you · allow? · 0:12 · 85 tokens
    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
-     allow? · run as root  sudo dnf install -y alsa-lib-devel pkgconf · pr…
+     allow? · run as root  sudo dnf install -y alsa-lib-devel pkgconf · as…
      what    run as root  sudo dnf install -y alsa-lib-devel pkgconf
      risk    as root · /undo can't reach it · your password is asked next
    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
@@ -21,4 +21,4 @@
   │ Build  › type to queue the next message, / for commands                  │
   ╰──────────────────────────────────────────────────────────────────────────╯
 
- y allow once  n deny  tab hat  ⇧tab mode  / commands             Build · $?.??
+ ⏎ allow once  n deny  tab hat  ⇧tab mode  / commands             Build · $?.??

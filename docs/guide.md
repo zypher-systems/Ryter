@@ -139,7 +139,7 @@ Type a message and press `Enter`. `Shift+Enter` (or `Alt+Enter`) inserts a newli
 
 **Scrolling.** The transcript follows the bottom until you scroll up (`PgUp`, `Shift+↑`, or the mouse wheel over the chat); then it holds still and the scrollbar turns amber. `Ctrl+End` reattaches. `Ctrl+↑`/`Ctrl+↓` jump between turns. While detached, a sticky header at the top of the chat keeps the in-flight user message in view.
 
-`/sessions` (alias `/resume`) is one browser for this directory’s sessions: `Enter` resumes, `r` renames, `d` deletes (type the short id to confirm), `n` starts a new one. `ryter sessions` and `ryter resume [id]` are the CLI equivalents.
+`/sessions` (alias `/resume`) is one browser for this directory’s sessions: `Enter` resumes, `r` renames, `d` deletes (it asks; `Enter` deletes, `n` keeps), `n` starts a new one. `ryter sessions` and `ryter resume [id]` are the CLI equivalents.
 
 **Approving.** When the build hat needs your yes, a card opens in the conversation's column, between the chat and the message box: inset from the column's edges so it reads as a card, a slab on its own tint with its title in the warn color. The chat moves up to make room for it, so the last lines of the reply stay in sight above it; nothing is painted over. The card never takes more than a third of the column, and a change longer than that scrolls inside it with `↑↓` or the mouse wheel. It is announced where you are looking: the row under the model says `waiting for you · allow?`, the header's state word is in the warn color, and the foot line shows the card's keys in the warn color. `[ui] bell = true`, or *bell on a question* in `/settings`, rings the terminal's bell once when a card opens; it is off by default. The card has these rows:
 - **what** the call does (`edit stats.js`, `run cargo test`);
@@ -147,12 +147,12 @@ Type a message and press `Enter`. `Shift+Enter` (or `Alt+Enter`) inserts a newli
 - **risk** in plain words, including whether `/undo` can put it back;
 - **the change**: the diff for an edit, or the command.
 
-The keys are on the card's last row:
-- **`⏎`** allows this call. An Enter pressed in the first half-second after the card opens is ignored, since it may have been meant to send a message.
-- **`a`** allows the kind of action the card names for the rest of the session: "edits to files in the project", or "`cargo test` commands". Anything else still asks.
+Every question Ryter asks takes the same keys: `Enter` is yes, `Shift+Enter` is yes and don't ask again where that answer exists, and `n` is no. The keys are on the card's last row:
+- **`⏎`** allows this call. An Enter pressed in the first half-second after the card opens is ignored, since it may have been meant to send a message, and so is an Enter still held down from then: the card answers to a press, not to a key that was down as it opened.
+- **`⇧⏎`** (Shift+Enter) allows the kind of action the card names for the rest of the session: "edits to files in the project", or "`cargo test` commands". Anything else still asks. A terminal that sends a shifted Enter as a plain one allows once instead; `a` gives the same answer on any terminal.
 - **`r`** on a bash ask opens `/permissions` with that command as a draft, so you can save a durable allow without yolo. The card stays until you answer. Outside-project writes, the project's `.env`, and root do not offer `r`.
 - **`n`** or **`Esc`** denies.
-- **Commands that delete, move, or discard files** (`rm`, `mv`, `git reset --hard`, `git clean`, deleting a branch) **writes outside the project that ask** (see "Outside the project") and **a command as root** (see "As root") take only **`y`**. Enter says so instead of approving, and there's no `a` for them.
+- **Commands that delete, move, or discard files** (`rm`, `mv`, `git reset --hard`, `git clean`, deleting a branch) **writes outside the project that ask** (see "Outside the project") and **a command as root** (see "As root") are asked every time: `Enter` allows once, and there is no answer for the session.
 
 If nobody answers for five minutes, the call ends with **timed out waiting for user — not a denial**. That is not the same as pressing `n`: the model is told silence is not a no. `ask_user` questions and the first-run “trust this project?” prompt are modals with a heavy top border. `^c` on a prompt while a turn runs stops the turn.
 
@@ -187,7 +187,7 @@ If nobody answers for five minutes, the call ends with **timed out waiting for u
 | `Ctrl+↑` / `Ctrl+↓` | previous / next turn |
 | `F1` | `/help` |
 
-Inside a panel: `↑↓` move, `PgUp`/`PgDn` page, `Enter` activate, `Tab` next field, `Space` or `←→` change a toggle/select, `Esc` back. `Esc` on a form with changes (`/settings`, `/budget`) asks whether to save them; `^s` still saves at once. Each panel’s legend line names its own extra keys (`t` test a connection, `d` remove, `c` compact, and so on).
+Inside a panel: `↑↓` move, `PgUp`/`PgDn` page, `Enter` activate, `Tab` next field, `Space` or `←→` change a toggle/select, `Esc` back. `Esc` on a form with changes (`/settings`, `/budget`) asks whether to save them; `^s` still saves at once. Each panel’s legend line names its own extra keys (`t` test a connection, `d` remove, `c` compact, and so on). Wherever a panel asks before removing something (a connection, an MCP server, a skill, a hook, a rule, a session), the question is the same: `Enter` removes, `n` keeps.
 
 Mouse: wheel scrolls the chat, clicking a card opens its panel, clicking the status row under the model, or the reasoning pane's header, toggles the pane.
 
@@ -218,7 +218,7 @@ One model works in your project, in the plan hat to start with. The hats are in 
 
 **Switching while a hat works.** A switch during a turn (`Tab`, `Shift+Tab`, `/plan`, `/build`, `/scribe`) chooses the hat for your next message and nothing else: the hat that started the turn finishes it, on its own model. The prompt's chip and the sidebar's mark move to the hat you chose at once; the spinner stays on the hat working, and the `now` block, the status row and the name over the reply stay its model's. When the turn ends the switch lands, and a message you queued meanwhile goes to the new hat. Two hats working at once is not something Ryter does.
 
-**The hat a session starts in** is `[ui] start_hat`, also *start in* at the top of `/settings`: `plan` (the default: read and propose first), `build` (straight to work), `audit` (open on an audit, with "Audit this project" in the prompt), or `last` (the hat this project's most recent session ended in; plan when there is none). A resumed session opens in the hat it was left in. `ryter --hat build` opens in that hat for one run, whatever the setting. `/new` keeps the hat you are in. Headless runs (`ryter -p`) are not affected: they are in the build hat unless `--hat` says otherwise. A switch applies to your next message. The model can also offer a switch itself: after an audit ("fix these?") it asks with a yes/no prompt, and on `y` it carries on in the new hat in the same turn. A plan has its own panel, below.
+**The hat a session starts in** is `[ui] start_hat`, also *start in* at the top of `/settings`: `plan` (the default: read and propose first), `build` (straight to work), `audit` (open on an audit, with "Audit this project" in the prompt), or `last` (the hat this project's most recent session ended in; plan when there is none). A resumed session opens in the hat it was left in. `ryter --hat build` opens in that hat for one run, whatever the setting. `/new` keeps the hat you are in. Headless runs (`ryter -p`) are not affected: they are in the build hat unless `--hat` says otherwise. A switch applies to your next message. The model can also offer a switch itself: after an audit ("fix these?") it asks with a yes/no prompt, and on `Enter` it carries on in the new hat in the same turn. A plan has its own panel, below.
 
 | Hat | May | May not |
 | --- | --- | --- |
@@ -245,8 +245,8 @@ test  = [
 stop  = "docker compose down"
 ```
 
-- **The model drafts it, you approve it.** The first time a hat needs it, it reads the project and proposes the commands on a card under the conversation, where Ryter's questions are asked, with the reply still in view above it: `y` approves and saves the file, `e` says what to change, `n` rejects. Leave out what the project doesn't have.
-- **You are shown every word.** A command longer than the panel wraps under itself, and `y` is taken only once the last row has been on screen: what you approve here runs without another question. A command that deletes or discards something is pointed out above the list.
+- **The model drafts it, you approve it.** The first time a hat needs it, it reads the project and proposes the commands on a card under the conversation, where Ryter's questions are asked, with the reply still in view above it: `Enter` approves and saves the file, `e` says what to change, `n` rejects. Leave out what the project doesn't have.
+- **You are shown every word.** A command longer than the panel wraps under itself, and `Enter` is taken only once the last row has been on screen: what you approve here runs without another question. A command that deletes or discards something is pointed out above the list.
 - **Ryter runs what you approved, itself.** Starting waits for HTTP 200–399 from `ready`, for up to five minutes. HTTPS performs normal TLS certificate verification. A TCP connection or a 401/404 is not ready. If the address is already occupied, stop that service or choose another address before starting. A start command that stays in the foreground (`npm run dev`, `cargo run`) is kept running by Ryter; through the shell tool it would be cut off when the command didn't return.
 - **Approval is of what you were shown.** Quoted spaces and line breaks in commands survive saving and reloading unchanged. Approval is kept in `~/.ryter/run-approved.toml`, not in the project. A run file that came with a clone, or that anyone changed since (you, the model, a `git pull`), is shown to you again before anything in it runs, and a file rewritten while you were reading is not the one you approved.
 - **It is the project's own file, or it is not read.** Ryter writes the run file, and its plans, decisions and reports, into the project and never through a link: a project that arrives with a link where one of those files goes has the link replaced, not followed, and a link there is not read either.
@@ -263,11 +263,11 @@ stop  = "docker compose down"
 
 **Approving a plan.** When the model has a plan, it shows it in a panel instead of writing it into the chat: the goal, the steps, the files, the risks, and how to verify it. `↑`/`↓` and `PgUp`/`PgDn` scroll a long one. You answer:
 
-- **`y` approves.** The plan is saved in the project as `.ryter/plan.md`, the fixed path every hat reads, and as `.ryter/plans/<date>-<title>.md`, the dated copy that stays when the next plan replaces it; Ryter switches to the build hat, and the model builds from that file in the same turn. Earlier plans are kept beside it, and whether to commit them is yours to decide.
+- **`Enter` approves.** The plan is saved in the project as `.ryter/plan.md`, the fixed path every hat reads, and as `.ryter/plans/<date>-<title>.md`, the dated copy that stays when the next plan replaces it; Ryter switches to the build hat, and the model builds from that file in the same turn. Earlier plans are kept beside it, and whether to commit them is yours to decide.
 - **`e` adjusts.** Type what should change. The model revises the plan and shows it again. Nothing is saved yet.
 - **`n` (or `Esc`) rejects.** Nothing is saved, and the hat stays as it was.
 
-`Enter` approves nothing here. The panel waits as long as you take to read. A headless run (`ryter -p`) has nobody to approve a plan, so nothing is saved and the plan comes back as the answer.
+An `Enter` in the first half-second after the panel opens is ignored, as on every card, since it may have been meant to send a message. The panel waits as long as you take to read. A headless run (`ryter -p`) has nobody to approve a plan, so nothing is saved and the plan comes back as the answer.
 
 **When the work differs from the plan.** An approved plan is not edited afterwards. Where the work comes to differ from it, the difference and its reason are recorded in `.ryter/decisions.md` in the project, under the plan they belong to:
 
@@ -294,7 +294,7 @@ stop  = "docker compose down"
 - **Anything else you say in the hat is answered without a card:** a question about a finding, or about the code. The chat says what an audit with the hat's model should cost before the model is sent anything, "audit hat · an audit with grok-4.7: about $0.25–$2.18", because the auditor may take your words for a request to audit.
 - **It runs everything.** The auditor reads the diff against the plan and the decisions, then runs the project's tests through the run file, its end-to-end checks, and the product itself at its address. It may run what the build hat may: toolchains, scripts, containers, inline code.
 - **It changes nothing, by a checkpoint.** Before the turn Ryter snapshots the files as it does before a build turn; after it, whatever the audit left changed is put back, and the audit says which files. Its own files, `.ryter/audit.md` and the dated copies under `.ryter/audits/`, are left as written. Git stays read-only for it. In a folder that is not a git repository there is no checkpoint: the audit is told, and held to tests, linters and reading for that turn.
-- **It ends on a card.** The auditor files its findings with a tool, and the audit opens over the chat: the verdict and a summary, the findings worst first, each failure with where it is, what is wrong and what was run and seen, then what ran, whether the tree changed, and where it was written. `↑↓`, `PgUp`/`PgDn` and the mouse wheel scroll it; `o` opens the file; `n` or `esc` closes it. **A failed audit goes to the build hat on `⏎`:** the hat switches and the builder's next turn is the audit, under "Repair what this audit found; run the checks it ran." That switch is yours, not Ryter's. A passed audit has nothing to repair: `⏎` closes it. The verdict and the findings agree: Ryter does not take a verdict of pass filed over a finding that failed, and tells the auditor to make the verdict a fail or the finding a pass with what it saw. One with no verdict, from an auditor that filed nothing and gave none, says `no verdict` in its title and closes on `⏎` too. `y` is not one of the card's keys. An audit that gives its verdict in words without filing is said so in the chat, and its last `VERDICT:` line stands.
+- **It ends on a card.** The auditor files its findings with a tool, and the audit opens over the chat: the verdict and a summary, the findings worst first, each failure with where it is, what is wrong and what was run and seen, then what ran, whether the tree changed, and where it was written. `↑↓`, `PgUp`/`PgDn` and the mouse wheel scroll it; `o` opens the file; `n` or `esc` closes it. **A failed audit goes to the build hat on `⏎`:** the hat switches and the builder's next turn is the audit, under "Repair what this audit found; run the checks it ran." That switch is yours, not Ryter's. A passed audit has nothing to repair: `⏎` closes it. The verdict and the findings agree: Ryter does not take a verdict of pass filed over a finding that failed, and tells the auditor to make the verdict a fail or the finding a pass with what it saw. One with no verdict, from an auditor that filed nothing and gave none, says `no verdict` in its title and closes on `⏎` too. An audit that gives its verdict in words without filing is said so in the chat, and its last `VERDICT:` line stands.
 - **`audit.md` is read by the builder.** When `.ryter/audit.md` is newer than the plan it works from, the build hat reads it before changing anything and says which findings the work addresses. The guard card shows the latest audit's date, or `writing…` while one runs.
 - **It checks against the plan.** If you approved a plan, the auditor is pointed at `.ryter/plan.md` and that plan's entries in `.ryter/decisions.md`: what you decided to do differently is not held against the work. With no plan it checks against what you asked for. Then whether it works, whether it is correct, whether it is safe.
 - **The commit says whether the work was audited.** The receipt on `/commit` ends with "review ✓ grok-4.7", "review ✗ grok-4.7", "not reviewed", or "not reviewed after the last change". A verdict holds for the files the auditor read: change one afterwards, by hand or with the model, and the receipt says so.
@@ -311,7 +311,7 @@ stop  = "docker compose down"
 - **Throwing work away in git:** `git reset --hard`, `git clean`, `git checkout -- <path>`, `git restore`, `git stash drop`, `git branch -D`.
 - **Ending every `tmux` session:** `tmux kill-server`, and `tmux kill-session -a`. A `kill-session` of a session this turn started with `-s` runs; any other session asks. Ryter does not end sessions it did not start.
 - **Leaving the machine:** `git push`, `cargo publish`, `npm publish`, `docker push`, a login; `curl` or `wget` sending a file or data to a host that isn't this machine, or a header, `-u`, user-agent, referer or `-w` value that expands a `$VAR` or looks like a secret to such a host; and a tool that works on a service somewhere else (`gh pr create`, `aws s3 sync`, `kubectl apply`, `terraform apply`, `fly deploy`, and their kind). Their looks run: `gh pr view`, `kubectl get`, `terraform plan`, and a download.
-- **Writing anywhere but the project, scratch space or your home folder:** `/opt`, `/srv`, another disk, and a `cd` there followed by work. Those prompts say "outside the project" and offer only `y` (allow once) or `n`.
+- **Writing anywhere but the project, scratch space or your home folder:** `/opt`, `/srv`, another disk, and a `cd` there followed by work. Those prompts say "outside the project" and offer `Enter` (allow once) or `n`.
 - **The project's `.env`:** the build hat may write or copy one into being, asked every time (see "Safety").
 - **As root:** `sudo <command>`, asked every time, and followed by sudo's own question for your password (see "As root").
 - **A path only the shell can read:** `cat "$FILE"`, files handed over by `xargs`, a `cd "$DIR"` and everything after it. The gate can't see where it leads. `$PWD`, `$(pwd)` and `$HOME` it reads. What `curl` sends as text is not a path: a `$(date +%s)` inside a `-d` body or a `-F` field, a header, a `-w` format. `-d @file`, `-F name=@file`, `-T` and `-o` name files, and a variable in those is one the gate can't see.
@@ -365,7 +365,7 @@ What the gate can read but not see through (a path in a variable, files handed o
 
 **As root.** A build sometimes needs what only root can do, most often a system package: the headers a crate links against, a database's client library. In the build hat the model may run `sudo <command>`, and two things then happen on your screen, in this order:
 
-1. **A card, "run as root".** It shows the whole command. Only `y` runs it; Enter does not, there is no "always", and `/tools always`, `--always-approve`, a rule in `[permissions]` and `/yolo` do not answer it for you. `n` or Esc refuses, and the model is told not to try again.
+1. **A card, "run as root".** It shows the whole command. `Enter` runs it, once; there is no "always", and `/tools always`, `--always-approve`, a rule in `[permissions]` and `/yolo` do not answer it for you. `n` or Esc refuses, and the model is told not to try again.
 2. **sudo's question for your password**, in a panel of its own. What you type is shown as dots, held in that panel and handed to sudo: it is not in the composer, not in the conversation, not sent to the model, and not written to the session's log or to disk. Esc sends nothing, and sudo gives up.
 
 By default the password is kept in memory for five minutes, so the next root command shows its card and then runs without asking again; `Tab` on the panel turns that off for a password you'd rather type each time. A password sudo turns down is dropped at once and asked for again, and the panel says so. Mind your system's limit on wrong tries (`pam_faillock` locks an account after a few).
@@ -395,7 +395,7 @@ With these exceptions:
 - **Another project:** a folder under your home that is a git repository other than this one can be read, but writing there asks each time in the build hat and is refused in the others.
 - **Deleting or moving** anything outside the project asks each time, scratch space and your home folder included.
 
-Anywhere else (`/opt`, `/srv`, another disk), the build hat asks each time and no other hat writes. Those prompts say "outside the project" and offer only `y` (allow once) or `n`. "Allow all" and `--always-approve` don't cover them, so headless refuses them; `--yolo` does.
+Anywhere else (`/opt`, `/srv`, another disk), the build hat asks each time and no other hat writes. Those prompts say "outside the project" and offer `Enter` (allow once) or `n`. "Allow all" and `--always-approve` don't cover them, so headless refuses them; `--yolo` does.
 
 The plan hat changes nothing in the project and writes nothing in your home folder. What it may write is scratch space: a place to keep a test's output. Not a file a tool would read as configuration on its way up from the project: for a project kept in `/tmp`, that rules out a `conftest.py` or a `.cargo/config.toml` beside it, while `/tmp/out.txt` is fine. The audit hat runs as the build hat does, and changes nothing by a checkpoint instead (see "Audit before you commit").
 
@@ -434,7 +434,7 @@ A folder that isn't a repository gets git set up before the first change, and Ry
 
 Keys:
 - `↑↓` picks a file, and `PgUp`/`PgDn` scroll its diff.
-- `x` puts one file back as it was at that point, deleting it if the file is new. Ryter snapshots first, so `/undo` brings it back.
+- `x` puts one file back as it was at that point, deleting it if the file is new. It asks first: `Enter` puts it back, `n` keeps it. Ryter snapshots first, so `/undo` brings it back.
 - `c` opens `/commit`.
 
 The panel updates when a turn finishes. You can open it while a turn is running, but undoing a file and committing wait for the turn to finish.
@@ -533,7 +533,7 @@ The plan and audit hats have `web_search` and `web_fetch`; the build and scribe 
 
 ## MCP
 
-**Outbound.** `[mcp_servers.<name>]` stdio children. The model discovers them with `search_tool` and calls one with `use_tool`. Child env does not inherit API keys unless that server’s `env` table asks. In the TUI, `/mcp` is a panel: `Enter` toggles a server, `r` reconnects, `d` removes it (type the name to confirm), and `Enter` on the trailing `+ add server` row walks name → command → args → review. Each server row shows its live status (`connected · 5 tools`, `error: …`, `disabled`).
+**Outbound.** `[mcp_servers.<name>]` stdio children. The model discovers them with `search_tool` and calls one with `use_tool`. Child env does not inherit API keys unless that server’s `env` table asks. In the TUI, `/mcp` is a panel: `Enter` toggles a server, `r` reconnects, `d` removes it (it asks; `Enter` removes, `n` keeps), and `Enter` on the trailing `+ add server` row walks name → command → args → review. Each server row shows its live status (`connected · 5 tools`, `error: …`, `disabled`).
 
 `search_tool` matches every word of its query against a tool's name and description, and lists each tool's arguments. A server has 60 seconds to start and list its tools. A tool call may run for 120 seconds, or for the server's `timeout_secs`:
 
@@ -571,7 +571,7 @@ Status and spend remain available during a prompt; the CLI reports the last comp
 | --- | --- |
 | Prompt | `prompts/solo.md`, the one prompt every hat shares; override with `~/.ryter/prompts/solo.md`, then a trusted project's `.ryter/prompts/solo.md` |
 | Rules | `~/.ryter/RYTER.md` for every project; `RYTER.md` (or `AGENTS.md`) at a project's top for that project. See [Your rules](#your-rules). |
-| Skills | `/skills` panel. Files: `~/.ryter/skills/<name>/SKILL.md` (frontmatter `user-invocable`, `model-invocable`). `Enter` runs (optional args), `e` opens the file in `$EDITOR`, `a` writes a stub, `d` deletes a user skill (not a project overlay or a built-in one). |
+| Skills | `/skills` panel. Files: `~/.ryter/skills/<name>/SKILL.md` (frontmatter `user-invocable`, `model-invocable`). `Enter` runs (optional args), `e` opens the file in `$EDITOR`, `a` writes a stub, `d` deletes a user skill (not a project overlay or a built-in one; it asks, and `Enter` deletes). |
 | User slash | Same `/skills` list (`command` rows). `~/.ryter/commands/<name>.md` (`$ARGUMENTS`) |
 | Hooks | `/hooks` panel. `a` adds: event (`PreToolUse`, `PostToolUse`, `SessionStart`) → command or URL → optional matcher. `d` removes. Live list is `~/.ryter/hooks.toml` (does not rewrite `config.toml`). Command gets JSON on stdin; exit 2 or HTTP 403 denies. |
 | Themes | `/theme` panel previews as you move: `dark`, `light`, `default-16`, or `~/.ryter/themes/<name>.toml`. `Enter` persists to `~/.ryter/settings.toml`. `NO_COLOR` or a 16-color `TERM` degrades automatically. |
@@ -609,7 +609,7 @@ Your rules come first, and where the two differ the project's win. You can edit 
 
 - **Tab** switches between *every project* and *this project*. The line under the tabs names the file and says how many rules it holds.
 - **`a`** adds a rule under the selected line. What you type becomes a bullet; a line you start with `#` is kept as a heading.
-- **`d`** removes the selected line, after you answer `y`.
+- **`d`** removes the selected line, after you answer `Enter` (`n` keeps it).
 - **`e`** opens the file in your editor (`$VISUAL`, then `$EDITOR`, then `vi`).
 
 The first rule you add creates the file. For this project that is `RYTER.md`, unless the project already keeps an `AGENTS.md`, which is then the one read and added to. A change takes effect from your next message.
@@ -618,8 +618,8 @@ The first rule you add creates the file. For this project that is `RYTER.md`, un
 
 - **The prompt holds the whole change.** Every added and removed line is there, and long lines are wrapped, not cut. This file isn't in your project, so `/changes` never shows it; the prompt is the only place to read the change.
 - **A change longer than the prompt scrolls.** `↓` and `PgDn` move through it, `↑` and `PgUp` go back, and a line under the change says how many rows are left.
-- **Only `y` saves it, and only once every row of the change has been on screen.** Before that, `y` tells you there is more to read. Ryter counts the rows it has drawn, not the keys pressed, so holding `PgDn` or pressing it many times at once skips nothing: each screenful starts where the last one ended. If you resize the window part-way through, the reading starts again from the top.
-- **In a window too small to show any of the change,** the prompt says so, and `y` does nothing until there is room. There's no "always" for this prompt, and `--always-approve` doesn't skip it, because the file steers every later session.
+- **Only `Enter` saves it, and only once every row of the change has been on screen.** Before that, `Enter` tells you there is more to read. Ryter counts the rows it has drawn, not the keys pressed, so holding `PgDn` or pressing it many times at once skips nothing: each screenful starts where the last one ended. If you resize the window part-way through, the reading starts again from the top.
+- **In a window too small to show any of the change,** the prompt says so, and `Enter` does nothing until there is room. There's no "always" for this prompt, and `--always-approve` doesn't skip it, because the file steers every later session.
 - **The rules are plain text.** A change holding a character the screen wouldn't show as it is (a control code, an invisible character, or one that reverses the direction of text) is refused before you are asked.
 - If you say no, the file is left as it was, and the model is told so.
 - In a headless run (`ryter -p`) nobody can answer, so nothing is saved.
@@ -713,8 +713,8 @@ Plans, decisions and audits stored in the project follow the workspace’s acces
 - **Plan:** reading and read-only commands; it may write the project's memory files and its own notes, nothing else.
 - **Audit:** what the build hat runs, behind a checkpoint that puts the tree back when the turn ends; git stays read-only (`git stash list` and `show` included); its only files are `.ryter/audit.md` and the dated copies. Without a git repository there is no checkpoint, and it is held to reading, tests and linters.
 - **Scribe:** reading, read-only commands, and documentation files. It does not write code or Ryter's own files.
-- Denied in every hat: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files. An example file (`.env.example`, `.env.sample`) is not a secret. One exception: the build hat may **write** the project's own `.env` (or `.env.local`, `config/.env.production`, `local.env`) whole, or copy it from its example (`cp .env.example .env`), with your `y` each time, since a project that needs one can't run without it. The card shows what would be written; nothing reads it back, and an edit in place stays refused, as does every other hat. An approved plan, `a` and `--always-approve` don't cover it; headless refuses it.
-- Shell commands are judged per segment (`a && b` is two commands). Privilege escalation and piping into a shell are denied. `git push` asks. What each hat may write is in [Hats](#hats). In the TUI a card shows the tool and its arguments: `⏎` or `y` allow this call, `n` deny, `a` allow that kind of action for the rest of the session, `r` add a durable rule in `/permissions` for a bash ask; destructive commands and writes outside the project take only `y` (see [Approving](#talking-to-ryter)). Headless, an ask is refused unless `--always-approve` or `--yolo` is set, and those two still stop at what [Hats](#hats) says they stop at.
+- Denied in every hat: `.env`, `*.pem`, `*credential*`, `~/.ssh`, Ryter credential files. An example file (`.env.example`, `.env.sample`) is not a secret. One exception: the build hat may **write** the project's own `.env` (or `.env.local`, `config/.env.production`, `local.env`) whole, or copy it from its example (`cp .env.example .env`), with your `Enter` each time, since a project that needs one can't run without it. The card shows what would be written; nothing reads it back, and an edit in place stays refused, as does every other hat. An approved plan, `a` and `--always-approve` don't cover it; headless refuses it.
+- Shell commands are judged per segment (`a && b` is two commands). Privilege escalation and piping into a shell are denied. `git push` asks. What each hat may write is in [Hats](#hats). In the TUI a card shows the tool and its arguments: `⏎` allows this call, `n` denies, `⇧⏎` allows that kind of action for the rest of the session, `r` adds a durable rule in `/permissions` for a bash ask; destructive commands and writes outside the project are asked every time, with no answer for the session (see [Approving](#talking-to-ryter)). Headless, an ask is refused unless `--always-approve` or `--yolo` is set, and those two still stop at what [Hats](#hats) says they stop at.
 - `ask_user` lets the model ask a question; the TUI shows it as a modal (number keys pick a choice, or type free text).
 - `check_package` tells the plan and audit hats a dependency's latest release and its known advisories, from its registry (crates.io, npm, PyPI, the Go module proxy) and OSV.dev: fixed public hosts, read-only, no key, on by default. The build and scribe hats are refused it and told who asks.
 - `[features] web` (on by default) offers `web_fetch` and `web_search` to the plan and audit hats; the build and scribe hats are refused them and told who uses them. `web_fetch` refuses localhost, private, link-local and metadata addresses, and follows no redirect into them. `web_search` goes through the provider in `[search]` and nowhere else (see [Web search](#web-search)); without one it says what to set.
@@ -747,7 +747,7 @@ If an interrupted append leaves a torn final record, resume keeps the valid hist
   notes/           # the plan hat's notes, and project.log: the output of a product run_project started
 ```
 
-`events.jsonl` is the same stream `ryter -p --json` prints. A `turn_started` line carries the turn number, its hat and `at` (milliseconds since the Unix epoch); every `tool_call` carries its `turn` and `at`; and each permission card is an `asked` line beside the call that put it up: the card's title (`tool`), what it asked (`what`), whether only `y` would do (`strict`), the `answer` (`allow`, `always`, `deny`, or `none` when nobody answered) and `waited_ms`. So a session's asks can be counted from its log:
+`events.jsonl` is the same stream `ryter -p --json` prints. A `turn_started` line carries the turn number, its hat and `at` (milliseconds since the Unix epoch); every `tool_call` carries its `turn` and `at`; and each permission card is an `asked` line beside the call that put it up: the card's title (`tool`), what it asked (`what`), whether it is asked every time (`strict`), the `answer` (`allow`, `always`, `deny`, or `none` when nobody answered) and `waited_ms`. So a session's asks can be counted from its log:
 
 ```sh
 jq -r 'select(.kind=="asked") | "\(.turn)\t\(.answer)\t\(.what)"' events.jsonl

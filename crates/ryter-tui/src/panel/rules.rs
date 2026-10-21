@@ -268,7 +268,7 @@ impl Panel for Rules {
         match self.pane {
             Pane::Home => "tab file · a add · d remove · e editor · esc close".into(),
             Pane::Add => "type the rule · enter add · esc back".into(),
-            Pane::ConfirmRemove(_) => "y remove · n keep".into(),
+            Pane::ConfirmRemove(_) => "⏎ remove · n keep".into(),
         }
     }
 
@@ -498,7 +498,7 @@ impl Panel for Rules {
                 }
             },
             Pane::ConfirmRemove(i) => match key.code {
-                KeyCode::Char('y' | 'Y') => {
+                KeyCode::Enter | KeyCode::Char('y' | 'Y') => {
                     match self.remove(i) {
                         Ok(said) => {
                             self.error = None;
@@ -667,7 +667,7 @@ mod tests {
         assert_eq!(p.pane, Pane::Add, "still asking");
         assert!(rows(&p, &f).iter().any(|r| r.contains("type the rule")));
         press(&mut p, &mut f, KeyCode::Esc);
-        // Remove asks first; `n` keeps it, `y` removes it.
+        // Remove asks first; `n` keeps it, Enter removes it.
         let before = ryter_core::rules::read(f.home.path()).unwrap();
         press(&mut p, &mut f, KeyCode::Char('d'));
         assert!(
@@ -675,11 +675,11 @@ mod tests {
                 .iter()
                 .any(|r| r.contains("remove \"## Tone\"?"))
         );
-        assert_eq!(p.legend(&f.view), "y remove · n keep");
+        assert_eq!(p.legend(&f.view), "⏎ remove · n keep");
         press(&mut p, &mut f, KeyCode::Char('n'));
         assert_eq!(ryter_core::rules::read(f.home.path()).unwrap(), before);
         press(&mut p, &mut f, KeyCode::Char('d'));
-        press(&mut p, &mut f, KeyCode::Char('y'));
+        press(&mut p, &mut f, KeyCode::Enter);
         assert!(
             !ryter_core::rules::read(f.home.path())
                 .unwrap()

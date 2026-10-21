@@ -30,11 +30,11 @@
      ready  http://localhost:8000/healthz                                           ┃   ┊
      test   docker compose run --rm web pytest -q                                   ┃   ┊
      stop   docker compose down                                                     ┆   ┊
-     y approve   e adjust   n reject   ↑↓ scroll                                    ┆   ┊
+     ⏎ approve   e adjust   n reject   ↑↓ scroll                                    ┆   ┊
    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
                                                                                         ┊
   ╭──────────────────────────────────────────────────────────────────────────────────╮  ┊
   │ Build  › type to queue the next message, / for commands                          │  ┊
   ╰──────────────────────────────────────────────────────────────────────────────────╯  ┊
                                                                                         ┊
- y approve  e adjust  n reject  ↑↓ scroll  tab hat  ⇧tab mode  / commands  f2 instruments
+ ⏎ approve  e adjust  n reject  ↑↓ scroll  tab hat  ⇧tab mode  / commands  f2 instruments

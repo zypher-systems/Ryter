@@ -545,7 +545,7 @@ pub fn save_prompt(
     theme: Theme,
 ) -> Vec<Line<'static>> {
     const ASK: &str = "save your changes?";
-    const KEYS: &str = "y save · n discard · esc keep editing";
+    const KEYS: &str = "⏎ save · n discard · esc keep editing";
     let inner = crate::chat::wrap::width(KEYS) + 2;
     let bw = (inner + 2).min(width.saturating_sub(2));
     let left = width.saturating_sub(bw) / 2;

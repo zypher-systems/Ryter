@@ -30,11 +30,11 @@
      why     Next the form text                                                         ┊
      risk    changes a file in your project · /undo puts it back                        ┊
      change  app/server.js  +1 −1                                                       ┊
-     ⏎ allow   a allow edits this session   n deny                                      ┊
+     ⏎ allow   ⇧⏎ allow edits this session   n deny                                     ┊
    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
                                                                                         ┊
   ╭──────────────────────────────────────────────────────────────────────────────────╮  ┊
   │ Build  › type to queue the next message, / for commands                          │  ┊
   ╰──────────────────────────────────────────────────────────────────────────────────╯  ┊
                                                                                         ┊
- ⏎ allow  a allow edits this session  n deny  tab hat  ⇧tab mode  / commands  f2 instruments
+ ⏎ allow  ⇧⏎ allow edits this session  n deny  tab hat  ⇧tab mode  / commands  f2 instruments

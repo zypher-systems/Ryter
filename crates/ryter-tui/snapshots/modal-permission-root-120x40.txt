@@ -26,15 +26,15 @@
                                                                                         ┊ $0
                                                                                         ┊ Build  ╌╌╌╌╌╌╌╌           $0
    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊
-     allow? · run as root  sudo dnf install -y alsa-lib-devel pkgconf · press y bu…     ┊
+     allow? · run as root  sudo dnf install -y alsa-lib-devel pkgconf · asked ever…     ┊
      what    run as root  sudo dnf install -y alsa-lib-devel pkgconf                    ┊
      risk    as root · /undo can't reach it · your password is asked next               ┊
        sudo dnf install -y alsa-lib-devel pkgconf                                       ┊
-     y allow once   n deny                                                              ┊
+     ⏎ allow once   n deny                                                              ┊
    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
                                                                                         ┊
   ╭──────────────────────────────────────────────────────────────────────────────────╮  ┊
   │ Build  › type to queue the next message, / for commands                          │  ┊
   ╰──────────────────────────────────────────────────────────────────────────────────╯  ┊
                                                                                         ┊
- y allow once  n deny  tab hat  ⇧tab mode  / commands  f2 instruments
+ ⏎ allow once  n deny  tab hat  ⇧tab mode  / commands  f2 instruments

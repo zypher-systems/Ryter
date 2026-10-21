@@ -164,29 +164,22 @@ impl Panel for Sessions {
         format!("{}", self.filtered(view).len())
     }
 
-    fn legend(&self, view: &View) -> String {
+    fn legend(&self, _view: &View) -> String {
         match self.mode {
             Mode::Browse => {
                 "enter resume · r rename · d delete · n new · type to filter · esc".into()
             }
             Mode::Rename => "type the new title · enter save · esc cancel".into(),
-            Mode::ConfirmDelete => {
-                let short = self
-                    .filtered(view)
-                    .get(self.selected)
-                    .map(|r| r.short.clone())
-                    .unwrap_or_default();
-                format!("type `{short}` to delete · enter · esc cancel")
-            }
+            Mode::ConfirmDelete => "⏎ delete · n keep · esc".into(),
         }
     }
 
     fn input(&self, _view: &View) -> Option<String> {
-        Some(match self.mode {
-            Mode::Browse => "filter".into(),
-            Mode::Rename => "title".into(),
-            Mode::ConfirmDelete => "confirm".into(),
-        })
+        match self.mode {
+            Mode::Browse => Some("filter".into()),
+            Mode::Rename => Some("title".into()),
+            Mode::ConfirmDelete => None,
+        }
     }
 
     /// `/rename` opens on the title as it is, to be edited.
@@ -204,7 +197,10 @@ impl Panel for Sessions {
         let list = self.filtered(view);
         let n = list.len();
         let sel = self.selected.min(n.saturating_sub(1));
-        let rows_h = h.saturating_sub(1).max(1);
+        // The delete question takes two rows under the list, so the list
+        // gives them up: the sentence is on screen however long the list.
+        let asking = self.mode == Mode::ConfirmDelete;
+        let rows_h = h.saturating_sub(1 + if asking { 2 } else { 0 }).max(1);
         let first = super::window(sel, n, rows_h);
         let now = wall_ms();
         let mut lines: Vec<Line<'static>> = Vec::new();
@@ -247,12 +243,26 @@ impl Panel for Sessions {
                 theme,
             ));
         }
-        if self.mode == Mode::ConfirmDelete {
-            lines.push(widgets::colored(
-                "this removes the session directory and its transcript",
-                theme.warn,
-                theme,
-            ));
+        if asking {
+            if let Some(r) = list.get(sel) {
+                let rest = format!(
+                    "delete \u{201c}\u{201d} ({})? this removes its folder and its transcript",
+                    r.short
+                );
+                // The row's leading space counts too; the title takes what
+                // is left, down to an ellipsis, so the sentence stays whole.
+                let room = w.saturating_sub(1 + wrap::width(&rest));
+                lines.push(widgets::blank(theme));
+                lines.push(widgets::colored(
+                    &format!(
+                        "delete \u{201c}{}\u{201d} ({})? this removes its folder and its transcript",
+                        wrap::truncate(&r.title, room),
+                        r.short
+                    ),
+                    theme.warn,
+                    theme,
+                ));
+            }
         }
         Body {
             lines,
@@ -287,28 +297,20 @@ impl Panel for Sessions {
                 };
             }
             Mode::ConfirmDelete => {
+                // A question like every other: Enter deletes, `n` keeps.
                 return match key.code {
-                    KeyCode::Esc => {
+                    KeyCode::Esc | KeyCode::Char('n' | 'N') => {
                         self.mode = Mode::Browse;
-                        view.composer.clear();
                         Outcome::Stay
                     }
-                    KeyCode::Enter => {
+                    KeyCode::Enter | KeyCode::Char('y' | 'Y') => {
                         let Some(r) = self.filtered(view).get(sel).cloned().cloned() else {
                             return Outcome::Stay;
                         };
-                        if view.composer.text().trim() == r.short {
-                            view.composer.clear();
-                            self.mode = Mode::Browse;
-                            Outcome::Act(Action::DeleteSession(r.id))
-                        } else {
-                            Outcome::Stay
-                        }
+                        self.mode = Mode::Browse;
+                        Outcome::Act(Action::DeleteSession(r.id))
                     }
-                    _ => {
-                        super::edit_field(&mut view.composer, key);
-                        Outcome::Stay
-                    }
+                    _ => Outcome::Stay,
                 };
             }
             Mode::Browse => {}

@@ -302,7 +302,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     actions::load_project_spend(&mut view, &home, &cwd);
     view.refresh_uncommitted();
     if config::asks_for_trust(&cwd) && !trusted {
-        view.panels.push(Box::new(TrustModal::default()));
+        view.panels.push(Box::new(TrustModal));
     }
 
     // -- theme ----------------------------------------------------------------

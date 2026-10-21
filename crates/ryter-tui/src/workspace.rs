@@ -1428,6 +1428,15 @@ mod tests {
             crate::run_keys_handle(&mut v, press(KeyCode::Char('a'), KeyModifiers::NONE)),
             Action::PermissionReply(Permission::Always)
         );
+        // Shift+Enter is the said key for the session; `a` the unsaid one.
+        v.panels.push(Box::new(
+            PermissionModal::new("search_replace".into(), "app/server.js".into())
+                .with_answers(false, Some("edits".into())),
+        ));
+        assert_eq!(
+            crate::run_keys_handle(&mut v, press(KeyCode::Enter, KeyModifiers::SHIFT)),
+            Action::PermissionReply(Permission::Always)
+        );
     }
 
     #[test]
