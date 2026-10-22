@@ -302,6 +302,15 @@ pub const TOOL_NAMES: &[&str] = &[
     "bash",
 ];
 
+/// The scout's tools: reading alone. It has no shell, so a read-only
+/// command the plan hat may run is not the scout's to run.
+pub const SCOUT_TOOLS: &[&str] = &["read_file", "list_dir", "grep", "glob"];
+
+/// JSON-schema tool specs for the scout.
+pub fn scout_specs() -> Vec<ToolSpec> {
+    SCOUT_TOOLS.iter().filter_map(|n| spec(n)).collect()
+}
+
 /// JSON-schema tool specs for this role (what the model is offered).
 pub fn specs_for(role: Role) -> Vec<ToolSpec> {
     specs_for_opts(role, false)
@@ -460,24 +469,30 @@ fn spec(name: &str) -> Option<ToolSpec> {
              The start command may return (`docker compose up -d --wait`) or stay in the \
              foreground (`npm run dev`): Ryter runs it and keeps it up. Approved, it is \
              saved as `.ryter/run.toml` and Ryter runs these commands with run_project, \
-             without asking again. Leave out what the project doesn't have.",
+             without asking again. `check` is the project's fast check (`cargo check`, \
+             `tsc --noEmit`, `pyright`, `go vet`): Ryter runs it itself after each build \
+             round that edited files and hands you the errors, so you need not run it. \
+             Leave out what the project doesn't have.",
             json!({"type":"object","properties":{
                 "start":{"type":"string","description":"starts the product"},
                 "ready":{"type":"string","description":"an http address on this machine that answers once it is up, e.g. http://localhost:8000/healthz"},
-                "test":{"type":"array","items":{"type":"string"},"description":"the project's test and check commands, in order"},
+                "test":{"type":"array","items":{"type":"string"},"description":"the project's test commands, in order"},
+                "check":{"type":"string","description":"the project's fast check, run by Ryter after your edits: cargo check, tsc --noEmit, pyright, go vet"},
                 "stop":{"type":"string","description":"stops what start started"}
             }}),
         ),
         "run_project" => (
             "Run the project's own approved commands from `.ryter/run.toml`. `start` \
              starts the product and waits until it is up; it stays up after your turn. \
-             `test` runs the project's test commands and returns their output. `stop` \
-             stops what was started (the user usually does this, with /stop: leave the \
-             product running when you finish). `status` says whether it is up. With no \
-             run file yet, propose one with propose_run. The build and audit hats run \
-             these; the plan hat starts nothing.",
+             `test` runs the project's test commands and returns their output. `check` \
+             runs its fast check and returns the errors (Ryter also runs it by itself \
+             after each build round that edited files). `stop` stops what was started \
+             (the user usually does this, with /stop: leave the product running when you \
+             finish). `status` says whether it is up. With no run file yet, propose one \
+             with propose_run. The build and audit hats run these; the plan hat starts \
+             nothing.",
             json!({"type":"object","properties":{
-                "action":{"type":"string","enum":["start","test","stop","status"]}
+                "action":{"type":"string","enum":["start","test","check","stop","status"]}
             },"required":["action"]}),
         ),
         "request_hat" => (
@@ -503,6 +518,18 @@ fn spec(name: &str) -> Option<ToolSpec> {
                 "name":{"type":"string","description":"the package as its registry names it (`serde`, `@fastify/cookie`, `fastapi`, `github.com/gin-gonic/gin`)"},
                 "version":{"type":"string","description":"the version in use, if any; advisories are then for it alone"}
             },"required":["ecosystem","name"]}),
+        ),
+        "scout" => (
+            "Send one question about the project to a scout: a fresh model with only the read \
+             tools (read_file, list_dir, grep, glob), which reads what it needs and answers \
+             with its conclusion and the file paths and lines it rests on. Its reading stays \
+             out of this conversation, so use it for a question that takes reading several \
+             files (where something is defined and used, how a flow works, what a module \
+             does). Say what the answer is for. For the plan and audit hats.",
+            json!({"type":"object","properties":{
+                "question":{"type":"string","description":"one question, with what the answer is for"},
+                "hint":{"type":"string","description":"where to start: paths, names, a symbol"}
+            },"required":["question"]}),
         ),
         "web_fetch" => (
             "HTTP GET a public URL and return its text. For the plan and audit hats. No localhost \
@@ -553,6 +580,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "check_package",
             "web_fetch",
             "web_search",
+            "scout",
         ],
         // A role from crew mode, which is gone: nothing runs as it.
         Role::Crew => &[],
@@ -578,9 +606,9 @@ fn execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutp
         "ask_user" => ask_user(args, ctx),
         // The agent loop answers this itself: it changes who the agent is.
         "request_hat" | "present_plan" | "record_decision" | "load_skill" | "show_page"
-        | "update_rules" | "propose_run" | "run_project" | "file_audit" => Ok(ToolOutput::err(
-            format!("{name} is handled by the agent loop"),
-        )),
+        | "update_rules" | "propose_run" | "run_project" | "file_audit" | "scout" => Ok(
+            ToolOutput::err(format!("{name} is handled by the agent loop")),
+        ),
         "check_package" => packages::check_package(args, ctx),
         "web_fetch" => web::web_fetch(args, ctx),
         "web_search" => web::web_search(args, ctx),
@@ -786,6 +814,13 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
             "denied: check_package (a dependency's latest release and known advisories) is the \
              plan and audit hats' question; the {} hat does not ask it. Tell the user, who can \
              switch to plan or audit.",
+            ctx.role
+        ))),
+        // The looking hats send a scout; the hats that build and document
+        // read for themselves.
+        Decision::Deny if name == "scout" => Ok(ToolOutput::err(format!(
+            "denied: scout is the plan and audit hats' tool; the {} hat reads for itself. \
+             Tell the user, who can switch to plan or audit.",
             ctx.role
         ))),
         // Say which gate refused. "not allowed for <role>" on every denial

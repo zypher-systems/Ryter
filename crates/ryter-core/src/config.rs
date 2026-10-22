@@ -33,6 +33,9 @@ pub struct Config {
     /// `[limits]`: how far one message may go.
     #[serde(default)]
     pub limits: LimitsConfig,
+    /// `[scout]`: the read-only scout the looking hats send questions to.
+    #[serde(default)]
+    pub scout: ScoutConfig,
     /// Per-model USD rates; always wins over shipped / catalog prices.
     #[serde(default)]
     pub pricing: BTreeMap<String, PriceOverride>,
@@ -147,6 +150,7 @@ impl Default for Config {
             hats: BTreeMap::new(),
             spend: SpendConfig::default(),
             limits: LimitsConfig::default(),
+            scout: ScoutConfig::default(),
             pricing: BTreeMap::new(),
             context_windows: BTreeMap::new(),
             mcp: McpSettings::default(),
@@ -426,6 +430,36 @@ pub struct SpendConfig {
 
 fn usd() -> String {
     "USD".into()
+}
+
+/// `[scout]`: the scout the plan and audit hats send questions to, a fresh
+/// model with the read tools alone. Its model is the calling hat's unless
+/// one is named here; its caps are per question.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScoutConfig {
+    /// The connection the scout runs on; the calling hat's when absent.
+    pub connection: Option<String>,
+    /// The model the scout runs on; the calling hat's when absent. A cheap
+    /// one does: it reads and reports.
+    pub model: Option<String>,
+    /// Model rounds one question may use (a round is one reply, with its
+    /// reads). The scout answers with what it has when they run out.
+    pub rounds: u32,
+    /// The most one question may cost, in USD; `0` lifts the cap. The
+    /// session budget still applies.
+    pub max_usd: f64,
+}
+
+impl Default for ScoutConfig {
+    fn default() -> Self {
+        Self {
+            connection: None,
+            model: None,
+            rounds: 12,
+            max_usd: 0.25,
+        }
+    }
 }
 
 /// `[limits]`: how far one message may go before Ryter stops the turn and
@@ -1380,6 +1414,7 @@ struct ConfigFile {
     permissions: Option<crate::permissions::Permissions>,
     #[serde(default)]
     limits: Option<LimitsConfig>,
+    scout: Option<ScoutConfig>,
     ui: Option<UiFile>,
     update: Option<UpdateConfig>,
     reasoning_effort: BTreeMap<String, String>,
@@ -1553,6 +1588,9 @@ impl ConfigFile {
         }
         if let Some(l) = self.limits {
             cfg.limits = l;
+        }
+        if let Some(sc) = self.scout {
+            cfg.scout = sc;
         }
         // Rules add up across files; a later file's answer for the same
         // pattern replaces an earlier one's.
@@ -1980,23 +2018,45 @@ pub fn save_last_route(home: &Path, route: &LastRoute) -> Result<()> {
     save_route(home, &stored)
 }
 
-/// CLI flags beat last-used, which beats config defaults.
+/// CLI flags beat last-used, which beats config defaults, and a connection
+/// without a key loses to one with one.
+///
+/// `keyed` says whether a connection can be called: a key in the
+/// environment, in the key store or in the file, or a local server that
+/// needs none. A `--connection` flag is taken as given, so the error names
+/// the connection the user asked for. Otherwise the last-used connection
+/// and then the default are tried, and the first that is keyed is the
+/// route. When neither is, the first keyed connection in the config is,
+/// so a first run with one key exported starts on that key rather than on
+/// the built-in default without one. With no key anywhere the default
+/// stands, and the screen says so.
 pub fn resolve_route(
     cfg: &Config,
     last: Option<&LastRoute>,
     cli_connection: Option<&str>,
     cli_model: Option<&str>,
+    keyed: impl Fn(&str) -> bool,
 ) -> (String, String) {
-    let conn = cli_connection
-        .map(str::to_string)
-        .or_else(|| {
-            last.and_then(|l| {
+    let conn = cli_connection.map(str::to_string).unwrap_or_else(|| {
+        let last_conn = last
+            .map(|l| l.connection.as_str())
+            .filter(|c| cfg.connections.contains_key(*c));
+        let candidates = last_conn
+            .into_iter()
+            .chain(std::iter::once(cfg.default_connection.as_str()));
+        candidates
+            .clone()
+            .find(|c| keyed(c))
+            .or_else(|| {
                 cfg.connections
-                    .contains_key(&l.connection)
-                    .then(|| l.connection.clone())
+                    .keys()
+                    .map(String::as_str)
+                    .find(|c| keyed(c))
             })
-        })
-        .unwrap_or_else(|| cfg.default_connection.clone());
+            .or_else(|| candidates.clone().next())
+            .unwrap_or(cfg.default_connection.as_str())
+            .to_string()
+    });
     let conn_cfg = cfg.connections.get(&conn);
     let model = cli_model
         .map(str::to_string)
@@ -2005,7 +2065,18 @@ pub fn resolve_route(
                 (l.connection == conn && !l.model.trim().is_empty()).then(|| l.model.clone())
             })
         })
-        .or_else(|| cfg.all_hats.model.clone())
+        // The All hats model is an id on its own connection: the built-in
+        // `grok-4.6` is SpaceXSI's and is not asked of OpenRouter, where the
+        // same model is `x-ai/grok-4.6`. With no connection named it is
+        // taken as the user's choice for any.
+        .or_else(|| {
+            cfg.all_hats.model.clone().filter(|_| {
+                cfg.all_hats
+                    .connection
+                    .as_deref()
+                    .is_none_or(|c| canonical_connection(c) == canonical_connection(&conn))
+            })
+        })
         .or_else(|| conn_cfg.and_then(|c| c.default_model.clone()))
         .unwrap_or_else(|| "grok-4.6".into());
     (conn, model)
@@ -2836,15 +2907,75 @@ mod tests {
         // Built-in [orchestrator] is still grok-4.6; last.toml must win.
         assert_eq!(cfg.all_hats.model.as_deref(), Some("grok-4.6"));
         let last = load_last_route(dir.path()).unwrap();
-        let (conn, model) = resolve_route(&cfg, Some(&last), None, None);
+        let (conn, model) = resolve_route(&cfg, Some(&last), None, None, |_| true);
         assert_eq!(conn, "openrouter");
         assert_eq!(model, "anthropic/claude-sonnet-4.6");
         assert_eq!(last.context_length, Some(200_000));
         assert_eq!(last.input_per_million, Some(3.0));
         assert_eq!(last.output_per_million, Some(15.0));
-        let (conn, model) = resolve_route(&cfg, Some(&last), Some("spacexsi"), None);
+        let (conn, model) = resolve_route(&cfg, Some(&last), Some("spacexsi"), None, |_| true);
         assert_eq!(conn, "spacexsi");
         assert_ne!(model, "anthropic/claude-sonnet-4.6");
+    }
+
+    /// A first run with one key exported starts on that key: the built-in
+    /// default without one loses to a connection that has one, and the
+    /// connection's own default model comes with it.
+    #[test]
+    fn a_keyed_connection_beats_the_keyless_default() {
+        let cfg = Config::default();
+        assert_eq!(cfg.default_connection, "spacexsi");
+        let (conn, model) = resolve_route(&cfg, None, None, None, |c| c == "openrouter");
+        assert_eq!(conn, "openrouter");
+        assert_eq!(
+            Some(model.as_str()),
+            cfg.connections["openrouter"].default_model.as_deref()
+        );
+    }
+
+    /// The last-used connection that lost its key loses to the default
+    /// that has one; a default without one loses to any keyed connection;
+    /// with no key anywhere the last-used connection stands as before.
+    #[test]
+    fn a_connection_without_a_key_loses_to_one_with_one() {
+        let cfg = Config::default();
+        let last = LastRoute::new("openrouter", "anthropic/claude-sonnet-4.6");
+        let (conn, _) = resolve_route(&cfg, Some(&last), None, None, |c| c == "spacexsi");
+        assert_eq!(conn, "spacexsi");
+        let (conn, _) = resolve_route(&cfg, Some(&last), None, None, |c| c == "anthropic");
+        assert_eq!(conn, "anthropic");
+        let (conn, model) = resolve_route(&cfg, Some(&last), None, None, |_| false);
+        assert_eq!(conn, "openrouter");
+        assert_eq!(model, "anthropic/claude-sonnet-4.6");
+    }
+
+    /// The All hats model named with a connection is that connection's id
+    /// and goes nowhere else; named without one it goes everywhere.
+    #[test]
+    fn the_all_hats_model_stays_on_its_connection() {
+        let mut cfg = Config::default();
+        cfg.all_hats.connection = Some("spacexai".into());
+        cfg.all_hats.model = Some("grok-4.6".into());
+        let (_, model) = resolve_route(&cfg, None, None, None, |c| c == "spacexsi");
+        assert_eq!(model, "grok-4.6");
+        let (_, model) = resolve_route(&cfg, None, None, None, |c| c == "anthropic");
+        assert_eq!(
+            Some(model.as_str()),
+            cfg.connections["anthropic"].default_model.as_deref()
+        );
+        cfg.all_hats.connection = None;
+        cfg.all_hats.model = Some("any-model".into());
+        let (_, model) = resolve_route(&cfg, None, None, None, |c| c == "anthropic");
+        assert_eq!(model, "any-model");
+    }
+
+    /// `--connection` is taken as given, keyed or not, so the error names
+    /// the connection the user asked for.
+    #[test]
+    fn the_connection_flag_is_taken_as_given() {
+        let cfg = Config::default();
+        let (conn, _) = resolve_route(&cfg, None, Some("openai"), None, |c| c == "openrouter");
+        assert_eq!(conn, "openai");
     }
 
     #[test]

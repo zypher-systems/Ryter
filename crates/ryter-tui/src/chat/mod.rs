@@ -290,16 +290,7 @@ impl Message {
 /// What one turn cost: `$0.004`, `<$0.001`, `$0.12`. A turn is often a
 /// fraction of a cent, which `$0.00` would hide.
 pub fn turn_usd(c: f64) -> String {
-    let c = c.max(0.0);
-    if c == 0.0 {
-        "$0".into()
-    } else if c < 0.001 {
-        "<$0.001".into()
-    } else if c < 0.1 {
-        format!("${c:.3}")
-    } else {
-        format_usd(Some(c))
-    }
+    ryter_core::format_usd_fine(c)
 }
 
 /// `0.2s` / `12s` / `1:04` for tool durations.

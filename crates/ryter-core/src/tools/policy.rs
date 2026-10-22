@@ -95,6 +95,15 @@ pub fn decide(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
                 Decision::Deny
             }
         }
+        // A question sent to the scout, which reads under this hat's own
+        // gate: the looking hats' tool, like `check_package`.
+        "scout" => {
+            if matches!(ctx.role, Role::Plan | Role::Audit) {
+                Decision::Allow
+            } else {
+                Decision::Deny
+            }
+        }
         _ => Decision::Deny,
     }
 }
@@ -12476,6 +12485,29 @@ mod tests {
             ctx.web = true;
             assert_eq!(
                 decide("check_package", &args, &ctx),
+                Decision::Deny,
+                "{role:?}"
+            );
+        }
+    }
+
+    /// `scout` is the plan and audit hats' tool, as `check_package` is: the
+    /// build and scribe hats read for themselves.
+    #[test]
+    fn the_looking_hats_send_a_scout_and_the_others_do_not() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path();
+        let args = json!({"question": "where is the route resolved?"});
+        for role in [Role::Plan, Role::Audit] {
+            assert_eq!(
+                decide("scout", &args, &ctx_for(role, d)),
+                Decision::Allow,
+                "{role:?}"
+            );
+        }
+        for role in [Role::Build, Role::Scribe] {
+            assert_eq!(
+                decide("scout", &args, &ctx_for(role, d)),
                 Decision::Deny,
                 "{role:?}"
             );

@@ -346,6 +346,21 @@ fn override_rates(o: &PriceOverride) -> Option<Rates> {
     })
 }
 
+/// What one call or turn cost: `$0.004`, `<$0.001`, `$0.12`. A turn is
+/// often a fraction of a cent, which `$0.00` would hide.
+pub fn format_usd_fine(c: f64) -> String {
+    let c = c.max(0.0);
+    if c == 0.0 {
+        "$0".into()
+    } else if c < 0.001 {
+        "<$0.001".into()
+    } else if c < 0.1 {
+        format!("${c:.3}")
+    } else {
+        format_usd(Some(c))
+    }
+}
+
 /// Format a priced total for the status line. Unknown is `$?.??`, never `$0.00` unless the value is actually zero.
 pub fn format_usd(total: Option<f64>) -> String {
     match total {

@@ -197,6 +197,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         last.as_ref(),
         opts.connection.as_deref(),
         opts.model.as_deref(),
+        |c| config::has_secret(&cfg, c),
     );
     let mut conn = cfg
         .connections
